@@ -337,23 +337,27 @@ impl BreezClient {
 
     /// Prepare a USDt (or any Liquid asset) send payment.
     /// `amount` is in base units; `precision` is the asset's decimal precision (8 for USDt).
+    /// `from_asset` enables cross-asset swaps via SideSwap when it differs from `asset_id`.
     /// Returns a `PrepareSendResponse` that must be passed to `send_payment()`.
-    pub async fn prepare_send_usdt(
+    pub async fn prepare_send_asset(
         &self,
         destination: String,
-        asset_id: &str,
+        to_asset_id: &str,
         amount: u64,
         precision: u8,
+        from_asset_id: Option<&str>,
     ) -> Result<breez::PrepareSendResponse, BreezError> {
         let receiver_amount = safe_base_units_to_f64(amount, precision)?;
+        // Cross-asset swaps (from_asset != to_asset) cannot use asset fees per SDK constraint
+        let is_cross_asset = from_asset_id.is_some_and(|from| from != to_asset_id);
         self.get_sdk()?
             .prepare_send_payment(&breez::PrepareSendRequest {
                 destination,
                 amount: Some(breez::PayAmount::Asset {
-                    to_asset: asset_id.to_string(),
+                    to_asset: to_asset_id.to_string(),
                     receiver_amount,
-                    estimate_asset_fees: Some(true),
-                    from_asset: None,
+                    estimate_asset_fees: if is_cross_asset { None } else { Some(true) },
+                    from_asset: from_asset_id.map(|s| s.to_string()),
                 }),
                 disable_mrh: None,
                 payment_timeout_sec: None,

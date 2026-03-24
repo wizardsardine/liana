@@ -47,7 +47,6 @@ pub trait Close {
 #[derive(Debug, Clone)]
 pub enum VaultReceiveMessage {
     Copy(String),
-    ClearToast,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +94,7 @@ pub enum Message {
     LiquidSettings(LiquidSettingsMessage),
     PreselectPayment(Payment),
     ShowError(String),
+    ShowToast(log::Level, String),
     DismissToast(usize),
     UsdtOverview(UsdtOverviewMessage),
     ToggleUsdt,
@@ -212,6 +212,7 @@ pub enum SettingsMessage {
     NodeSettings(NodeSettingsMessage),
     InstallStatsSection,
     InstallStats(InstallStatsViewMessage),
+    TestToast(log::Level),
 }
 
 #[derive(Debug, Clone)]
@@ -359,7 +360,8 @@ pub enum UsdtOverviewMessage {
 pub enum LiquidSendMessage {
     PresetAsset(crate::app::state::liquid::send::SendAsset),
     InputEdited(String),
-    InputValidated(Option<InputType>),
+    /// Carries (original_input, validation_result) so stale async results are discarded.
+    InputValidated(String, Option<InputType>),
     Send,
     History,
     SelectTransaction(usize),
@@ -408,7 +410,6 @@ pub enum SendPopupMessage {
 pub enum LiquidReceiveMessage {
     ToggleMethod(ReceiveMethod),
     Copy,
-    ClearToast,
     GenerateAddress,
     AddressGenerated(ReceiveMethod, Result<String, String>),
     AmountInput(String),

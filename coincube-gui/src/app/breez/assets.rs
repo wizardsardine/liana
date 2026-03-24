@@ -58,6 +58,14 @@ impl AssetKind {
             AssetKind::Usdt => USDT_PRECISION,
         }
     }
+
+    /// Returns the asset ID string for this kind on the given network.
+    pub fn asset_id(self, network: Network) -> Option<&'static str> {
+        match self {
+            AssetKind::Lbtc => lbtc_asset_id(network),
+            AssetKind::Usdt => usdt_asset_id(network),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

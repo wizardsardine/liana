@@ -9,7 +9,10 @@ use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{component::form, widget::*};
 use iced::Task;
 
-use crate::app::breez::assets::{parse_asset_to_minor_units, usdt_asset_id, USDT_PRECISION};
+use crate::app::breez::assets::{
+    asset_kind_for_id, lbtc_asset_id, parse_asset_to_minor_units, usdt_asset_id, AssetKind,
+    USDT_PRECISION,
+};
 use crate::app::menu::{LiquidSubMenu, Menu, UsdtSubMenu};
 use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::state::{redirect, State};
@@ -21,7 +24,7 @@ use crate::utils::format_time_ago;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendAsset {
-    Btc,
+    Lbtc,
     Usdt,
 }
 
@@ -54,7 +57,11 @@ pub struct LiquidSend {
     amount: Amount,
     amount_input: form::Value<String>,
     usdt_amount_input: form::Value<String>,
-    send_asset: SendAsset,
+    /// The asset the recipient will receive.
+    to_asset: SendAsset,
+    /// The asset the user is paying with. Equals `to_asset` for same-asset sends;
+    /// differs for cross-asset swaps (via SideSwap).
+    from_asset: SendAsset,
     recent_transaction: Vec<view::liquid::RecentTransaction>,
     recent_payments: Vec<Payment>,
     selected_payment: Option<Payment>,
@@ -62,6 +69,8 @@ pub struct LiquidSend {
     input_type: Option<InputType>,
     lightning_limits: Option<(u64, u64)>, // (min_sats, max_sats)
     onchain_limits: Option<(u64, u64)>,   // (min_sats, max_sats)
+    /// The asset requested by the URI (locked once detected from BIP21 asset_id).
+    uri_asset: Option<AssetKind>,
     flow_state: LiquidSendFlowState,
     description: Option<String>,
     comment: Option<String>,
@@ -81,11 +90,13 @@ impl LiquidSend {
             amount: Amount::from_sat(0),
             amount_input: form::Value::default(),
             usdt_amount_input: form::Value::default(),
-            send_asset: SendAsset::Btc,
+            to_asset: SendAsset::Lbtc,
+            from_asset: SendAsset::Lbtc,
             recent_transaction: Vec::new(),
             recent_payments: Vec::new(),
             selected_payment: None,
             input: form::Value::default(),
+            uri_asset: None,
             error: None,
             flow_state: LiquidSendFlowState::Main { modal: Modal::None },
             input_type: None,
@@ -102,7 +113,8 @@ impl LiquidSend {
     pub fn new_usdt_only(breez_client: Arc<BreezClient>) -> Self {
         Self {
             usdt_only: true,
-            send_asset: SendAsset::Usdt,
+            to_asset: SendAsset::Usdt,
+            from_asset: SendAsset::Usdt,
             ..Self::new(breez_client)
         }
     }
@@ -213,7 +225,9 @@ impl State for LiquidSend {
                 input: &self.input,
                 amount_input: &self.amount_input,
                 usdt_amount_input: &self.usdt_amount_input,
-                send_asset: self.send_asset,
+                to_asset: self.to_asset,
+                from_asset: self.from_asset,
+                uri_asset: self.uri_asset,
                 usdt_asset_id: usdt_asset_id(self.breez_client.network()).unwrap_or(""),
                 comment,
                 description: self.description.as_deref(),
@@ -227,6 +241,12 @@ impl State for LiquidSend {
                 onchain_limits: self.onchain_limits,
                 bitcoin_unit: cache.bitcoin_unit,
                 prepare_onchain_response: self.prepare_onchain_response.as_ref(),
+                error: self.error.as_deref(),
+                // Cross-asset swaps require SideSwap (mainnet only)
+                cross_asset_supported: matches!(
+                    self.breez_client.network(),
+                    breez_sdk_liquid::bitcoin::Network::Bitcoin
+                ),
             })
         }
     }
@@ -240,10 +260,10 @@ impl State for LiquidSend {
         if let Message::View(view::Message::LiquidSend(ref msg)) = message {
             match msg {
                 view::LiquidSendMessage::PresetAsset(asset) => {
-                    if *asset == SendAsset::Btc && self.usdt_only {
+                    if *asset == SendAsset::Lbtc && self.usdt_only {
                         // usdt_only invariant: ignore attempts to switch to BTC
-                    } else if *asset != self.send_asset {
-                        self.send_asset = *asset;
+                    } else if *asset != self.to_asset {
+                        self.to_asset = *asset;
                         self.amount = Amount::ZERO;
                     }
                 }
@@ -256,11 +276,15 @@ impl State for LiquidSend {
                     let value_owned = value.clone();
                     // TODO: Add some kind of debouncing mechanism here, so that we don't call breez
                     // API again and again
+                    let value_for_callback = value.clone();
                     let validate_input = Task::perform(
                         async move { breez.validate_input(value_owned).await },
-                        |input| {
+                        move |input| {
                             Message::View(view::Message::LiquidSend(
-                                view::LiquidSendMessage::InputValidated(input),
+                                view::LiquidSendMessage::InputValidated(
+                                    value_for_callback.clone(),
+                                    input,
+                                ),
                             ))
                         },
                     );
@@ -509,15 +533,128 @@ impl State for LiquidSend {
                 view::LiquidSendMessage::Error(err) => {
                     self.error = Some(err.to_string());
                     self.is_sending = false; // Reset sending flag on error
-                                             // Wire to global toast
-                    return Task::done(Message::View(view::Message::ShowError(err.to_string())));
+                                             // When a modal is open, the error toast renders inside the modal
+                                             // overlay (above the backdrop). Otherwise use the global toast.
+                    let modal_open = matches!(
+                        self.flow_state,
+                        LiquidSendFlowState::Main {
+                            modal: Modal::AmountInput | Modal::FiatInput { .. }
+                        }
+                    );
+                    if !modal_open {
+                        return Task::done(Message::View(view::Message::ShowError(
+                            err.to_string(),
+                        )));
+                    }
                 }
                 view::LiquidSendMessage::ClearError => {
                     self.error = None;
                 }
-                view::LiquidSendMessage::InputValidated(input_type) => {
+                view::LiquidSendMessage::InputValidated(original_input, input_type) => {
+                    // Discard stale async validation results — the user may have
+                    // edited the input while validation was in-flight.
+                    if *original_input != self.input.value {
+                        return Task::none();
+                    }
                     self.input.valid = input_type.is_some();
                     self.input_type = input_type.clone();
+
+                    // Auto-detect asset from Liquid URI's asset_id
+                    if let Some(InputType::LiquidAddress { address }) = &input_type {
+                        let network = self.breez_client.network();
+                        if let Some(ref uri_asset_id) = address.asset_id {
+                            match asset_kind_for_id(uri_asset_id, network) {
+                                Some(kind) => {
+                                    self.uri_asset = Some(kind);
+                                    let target_asset = match kind {
+                                        AssetKind::Usdt => SendAsset::Usdt,
+                                        AssetKind::Lbtc => SendAsset::Lbtc,
+                                    };
+                                    // On usdt_only screen with L-BTC URI: auto-enable
+                                    // cross-asset (pay from USDt, receiver gets L-BTC).
+                                    // Only on mainnet where SideSwap is available.
+                                    let cross_asset_supported = matches!(
+                                        network,
+                                        breez_sdk_liquid::bitcoin::Network::Bitcoin
+                                    );
+                                    if self.usdt_only
+                                        && target_asset == SendAsset::Lbtc
+                                        && cross_asset_supported
+                                    {
+                                        self.to_asset = SendAsset::Lbtc;
+                                        self.from_asset = SendAsset::Usdt;
+                                    } else if self.usdt_only && target_asset != SendAsset::Usdt {
+                                        // Non-mainnet: cross-asset not available, keep USDt
+                                        self.to_asset = SendAsset::Usdt;
+                                        self.from_asset = self.to_asset;
+                                    } else {
+                                        self.to_asset = target_asset;
+                                        self.from_asset = self.to_asset;
+                                    }
+                                }
+                                None => {
+                                    // Unknown asset_id — only reset to_asset if we're
+                                    // clearing a previously set URI lock. Otherwise preserve
+                                    // the user's current asset selection.
+                                    if self.uri_asset.is_some() {
+                                        self.to_asset = if self.usdt_only {
+                                            SendAsset::Usdt
+                                        } else {
+                                            SendAsset::Lbtc
+                                        };
+                                    }
+                                    self.uri_asset = None;
+                                    self.from_asset = self.to_asset;
+                                }
+                            }
+                        } else {
+                            // No asset_id in URI — only reset to_asset if we're
+                            // clearing a previously set URI lock.
+                            if self.uri_asset.is_some() {
+                                self.to_asset = if self.usdt_only {
+                                    SendAsset::Usdt
+                                } else {
+                                    SendAsset::Lbtc
+                                };
+                            }
+                            self.uri_asset = None;
+                            self.from_asset = self.to_asset;
+                        }
+
+                        // Pre-fill amount from URI if present, or clear stale values
+                        if self.to_asset == SendAsset::Usdt {
+                            if let Some(amount) = address.amount {
+                                self.usdt_amount_input.value = amount.to_string();
+                                self.usdt_amount_input.valid = amount > 0.0;
+                            } else {
+                                self.usdt_amount_input = form::Value::default();
+                            }
+                        }
+                        if self.to_asset == SendAsset::Lbtc {
+                            if let Some(amount_sat) = address.amount_sat {
+                                self.amount = Amount::from_sat(amount_sat);
+                                self.amount_input.value =
+                                    if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                        Amount::from_sat(amount_sat).to_btc().to_string()
+                                    } else {
+                                        amount_sat.to_string()
+                                    };
+                                self.amount_input.valid = true;
+                            } else {
+                                self.amount = Amount::ZERO;
+                                self.amount_input = form::Value::default();
+                            }
+                        }
+                    } else {
+                        // Not a LiquidAddress — clear URI asset state and restore default
+                        self.uri_asset = None;
+                        self.to_asset = if self.usdt_only {
+                            SendAsset::Usdt
+                        } else {
+                            SendAsset::Lbtc
+                        };
+                        self.from_asset = self.to_asset;
+                    }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::AmountEdited(v)) => {
                     if let LiquidSendFlowState::Main {
@@ -540,9 +677,12 @@ impl State for LiquidSend {
                         ) {
                             self.amount = amount;
                             let amount_sats = amount.to_sat();
+                            let is_cross_asset = self.from_asset != self.to_asset;
 
-                            // Check balance first
-                            if amount > self.btc_balance {
+                            // Skip balance check in cross-asset mode — the receiver amount
+                            // is in a different denomination than the paying asset; the SDK
+                            // validates actual balance during prepare.
+                            if !is_cross_asset && amount > self.btc_balance {
                                 self.amount_input.valid = false;
                                 self.amount_input.warning = Some("Insufficient balance");
                             }
@@ -655,6 +795,7 @@ impl State for LiquidSend {
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatInputEdited(
                     fiat_input,
                 )) => {
+                    let is_cross_asset = self.from_asset != self.to_asset;
                     if let LiquidSendFlowState::Main {
                         modal:
                             Modal::FiatInput {
@@ -681,8 +822,9 @@ impl State for LiquidSend {
                                     if let Ok(btc_amount) = converter.convert_to_btc(&fiat_amount) {
                                         let amount_sats = btc_amount.to_sat();
 
-                                        // Validate against balance and limits
-                                        if btc_amount > self.btc_balance {
+                                        // Skip balance check in cross-asset mode — receiver
+                                        // amount denomination differs from paying asset.
+                                        if !is_cross_asset && btc_amount > self.btc_balance {
                                             current_input.valid = false;
                                             current_input.warning = Some("Insufficient balance");
                                         } else if let Some((min_sat, max_sat)) =
@@ -750,6 +892,7 @@ impl State for LiquidSend {
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatDone) => {
+                    let is_cross_asset = self.from_asset != self.to_asset;
                     if let LiquidSendFlowState::Main {
                         modal:
                             Modal::FiatInput {
@@ -780,8 +923,12 @@ impl State for LiquidSend {
                                         };
                                         let amount_sats = btc_amount.to_sat();
 
-                                        // Validate the converted BTC amount
-                                        let (valid, warning) = if btc_amount > self.btc_balance {
+                                        // Validate the converted BTC amount.
+                                        // Skip balance check in cross-asset mode — receiver
+                                        // amount denomination differs from paying asset.
+                                        let (valid, warning) = if !is_cross_asset
+                                            && btc_amount > self.btc_balance
+                                        {
                                             (false, Some("Amount exceeds available balance"))
                                         } else {
                                             let limits = if matches!(
@@ -842,7 +989,7 @@ impl State for LiquidSend {
                         if let Some(input_type) = &self.input_type {
                             // USDt send path: Liquid address + USDt asset selected
                             if matches!(input_type, InputType::LiquidAddress { .. })
-                                && self.send_asset == SendAsset::Usdt
+                                && self.to_asset == SendAsset::Usdt
                             {
                                 let usdt_val_str = self.usdt_amount_input.value.trim().to_string();
                                 let usdt_base =
@@ -856,7 +1003,7 @@ impl State for LiquidSend {
                                         }
                                     };
                                 let network = self.breez_client.network();
-                                let asset_id = match usdt_asset_id(network) {
+                                let to_asset_id = match usdt_asset_id(network) {
                                     Some(id) => id.to_string(),
                                     None => {
                                         self.error =
@@ -864,6 +1011,26 @@ impl State for LiquidSend {
                                         return Task::none();
                                     }
                                 };
+                                // Resolve from_asset for cross-asset swap
+                                let from_asset_id: Option<String> =
+                                    if self.from_asset != self.to_asset {
+                                        let kind = match self.from_asset {
+                                            SendAsset::Lbtc => AssetKind::Lbtc,
+                                            SendAsset::Usdt => AssetKind::Usdt,
+                                        };
+                                        match kind.asset_id(network) {
+                                            Some(id) => Some(id.to_string()),
+                                            None => {
+                                                self.error = Some(format!(
+                                                    "{} not available on this network",
+                                                    kind.ticker()
+                                                ));
+                                                return Task::none();
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    };
                                 let destination = match input_type {
                                     InputType::LiquidAddress { address } => address.address.clone(),
                                     _ => unreachable!(),
@@ -872,11 +1039,12 @@ impl State for LiquidSend {
                                 return Task::perform(
                                     async move {
                                         breez_client
-                                            .prepare_send_usdt(
+                                            .prepare_send_asset(
                                                 destination,
-                                                &asset_id,
+                                                &to_asset_id,
                                                 usdt_base,
                                                 USDT_PRECISION,
+                                                from_asset_id.as_deref(),
                                             )
                                             .await
                                     },
@@ -890,7 +1058,7 @@ impl State for LiquidSend {
                                         }
                                         Err(e) => Message::View(view::Message::LiquidSend(
                                             view::LiquidSendMessage::Error(format!(
-                                                "Failed to prepare USDt payment: {}",
+                                                "Failed to prepare payment: {}",
                                                 e
                                             )),
                                         )),
@@ -908,6 +1076,64 @@ impl State for LiquidSend {
                                     return Task::none();
                                 }
                             };
+
+                            // Cross-asset swap: from_asset differs from to_asset
+                            // Use PayAmount::Asset with the appropriate asset IDs
+                            if self.from_asset != self.to_asset {
+                                let network = self.breez_client.network();
+                                let to_asset_id = match lbtc_asset_id(network) {
+                                    Some(id) => id.to_string(),
+                                    None => {
+                                        self.error =
+                                            Some("L-BTC not available on this network".to_string());
+                                        return Task::none();
+                                    }
+                                };
+                                let from_kind = match self.from_asset {
+                                    SendAsset::Lbtc => AssetKind::Lbtc,
+                                    SendAsset::Usdt => AssetKind::Usdt,
+                                };
+                                let from_asset_id = match from_kind.asset_id(network) {
+                                    Some(id) => id.to_string(),
+                                    None => {
+                                        self.error = Some(format!(
+                                            "{} not available on this network",
+                                            from_kind.ticker()
+                                        ));
+                                        return Task::none();
+                                    }
+                                };
+                                let amount_sat = self.amount.to_sat();
+                                let breez_client = self.breez_client.clone();
+                                return Task::perform(
+                                    async move {
+                                        breez_client
+                                            .prepare_send_asset(
+                                                destination,
+                                                &to_asset_id,
+                                                amount_sat,
+                                                crate::app::breez::assets::LBTC_PRECISION,
+                                                Some(&from_asset_id),
+                                            )
+                                            .await
+                                    },
+                                    |result| match result {
+                                        Ok(prepare_response) => {
+                                            Message::View(view::Message::LiquidSend(
+                                                view::LiquidSendMessage::PrepareResponseReceived(
+                                                    prepare_response,
+                                                ),
+                                            ))
+                                        }
+                                        Err(e) => Message::View(view::Message::LiquidSend(
+                                            view::LiquidSendMessage::Error(format!(
+                                                "Failed to prepare cross-asset payment: {}",
+                                                e
+                                            )),
+                                        )),
+                                    },
+                                );
+                            }
 
                             let breez_client = self.breez_client.clone();
                             let breez_clone = self.breez_client.clone();
@@ -999,15 +1225,85 @@ impl State for LiquidSend {
                         modal: Modal::AmountInput,
                     } = &self.flow_state
                     {
-                        let next = match self.send_asset {
-                            SendAsset::Btc => SendAsset::Usdt,
-                            SendAsset::Usdt => SendAsset::Btc,
-                        };
-                        if !(next == SendAsset::Btc && self.usdt_only) {
-                            self.send_asset = next;
-                            self.amount = Amount::ZERO;
-                            self.usdt_amount_input = form::Value::default();
-                            self.amount_input = form::Value::default();
+                        // Cross-asset swaps require SideSwap (mainnet only)
+                        let cross_asset_supported = matches!(
+                            self.breez_client.network(),
+                            breez_sdk_liquid::bitcoin::Network::Bitcoin
+                        );
+                        if self.uri_asset.is_some() && cross_asset_supported {
+                            // URI locked the to_asset — toggle changes from_asset (cross-asset swap)
+                            let opposite = match self.to_asset {
+                                SendAsset::Lbtc => SendAsset::Usdt,
+                                SendAsset::Usdt => SendAsset::Lbtc,
+                            };
+                            if self.from_asset != self.to_asset {
+                                // Already in cross-asset mode — toggle back to same-asset.
+                                // On usdt_only screen: if to_asset was forced to Lbtc by URI,
+                                // we can't go back to same-asset Lbtc send — block the toggle.
+                                if self.usdt_only && self.to_asset != SendAsset::Usdt {
+                                    // Can't disable cross-asset on usdt_only screen when URI
+                                    // requires a non-USDt asset — ignore toggle
+                                } else {
+                                    self.from_asset = self.to_asset;
+                                }
+                            } else {
+                                // Enable cross-asset: pay with the opposite asset
+                                self.from_asset = opposite;
+                            }
+
+                            // Re-validate amount inputs after cross-asset mode change.
+                            // Balance checks depend on is_cross_asset, which just changed.
+                            let is_cross_asset = self.from_asset != self.to_asset;
+                            match self.to_asset {
+                                SendAsset::Lbtc => {
+                                    if !self.amount_input.value.trim().is_empty() {
+                                        if !is_cross_asset && self.amount > self.btc_balance {
+                                            self.amount_input.valid = false;
+                                            self.amount_input.warning =
+                                                Some("Insufficient balance");
+                                        } else if self.amount_input.warning
+                                            == Some("Insufficient balance")
+                                        {
+                                            // Clear stale balance warning
+                                            self.amount_input.valid = true;
+                                            self.amount_input.warning = None;
+                                        }
+                                    }
+                                }
+                                SendAsset::Usdt => {
+                                    let trimmed = self.usdt_amount_input.value.trim();
+                                    if !trimmed.is_empty() {
+                                        if let Some(base_units) =
+                                            parse_asset_to_minor_units(trimmed, USDT_PRECISION)
+                                        {
+                                            if !is_cross_asset && base_units > self.usdt_balance {
+                                                self.usdt_amount_input.valid = false;
+                                                self.usdt_amount_input.warning =
+                                                    Some("Insufficient USDt balance");
+                                            } else if self.usdt_amount_input.warning
+                                                == Some("Insufficient USDt balance")
+                                            {
+                                                // Clear stale balance warning
+                                                self.usdt_amount_input.valid = true;
+                                                self.usdt_amount_input.warning = None;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // No URI lock — legacy behavior: toggle to_asset directly
+                            let next = match self.to_asset {
+                                SendAsset::Lbtc => SendAsset::Usdt,
+                                SendAsset::Usdt => SendAsset::Lbtc,
+                            };
+                            if !(next == SendAsset::Lbtc && self.usdt_only) {
+                                self.to_asset = next;
+                                self.from_asset = self.to_asset;
+                                self.amount = Amount::ZERO;
+                                self.usdt_amount_input = form::Value::default();
+                                self.amount_input = form::Value::default();
+                            }
                         }
                     }
                 }
@@ -1024,11 +1320,15 @@ impl State for LiquidSend {
                         } else if let Some(base_units) =
                             parse_asset_to_minor_units(trimmed, USDT_PRECISION)
                         {
+                            let is_cross_asset = self.from_asset != self.to_asset;
+
                             if base_units == 0 {
                                 self.usdt_amount_input.valid = false;
                                 self.usdt_amount_input.warning =
                                     Some("Amount must be greater than zero");
-                            } else if base_units > self.usdt_balance {
+                            } else if !is_cross_asset && base_units > self.usdt_balance {
+                                // Skip balance check in cross-asset mode — receiver amount
+                                // denomination differs from paying asset; SDK validates during prepare.
                                 self.usdt_amount_input.valid = false;
                                 self.usdt_amount_input.warning = Some("Insufficient USDt balance");
                             } else {
@@ -1043,19 +1343,22 @@ impl State for LiquidSend {
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::Close) => {
                     self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
+                    self.error = None;
                     self.amount = Amount::ZERO;
                     self.lightning_limits = None;
                     self.description = None;
                     self.comment = None;
                     self.amount_input = form::Value::default();
                     self.usdt_amount_input = form::Value::default();
-                    self.send_asset = if self.usdt_only {
+                    self.to_asset = if self.usdt_only {
                         SendAsset::Usdt
                     } else {
-                        SendAsset::Btc
+                        SendAsset::Lbtc
                     };
                     self.input = form::Value::default();
                     self.input_type = None;
+                    self.uri_asset = None;
+                    self.from_asset = self.to_asset;
                 }
                 view::LiquidSendMessage::ConfirmSend => {
                     if let LiquidSendFlowState::FinalCheck = &self.flow_state {
@@ -1068,7 +1371,14 @@ impl State for LiquidSend {
                         if let Some(prepare_response) = self.prepare_response.clone() {
                             let breez_client = self.breez_client.clone();
                             let comment = self.comment.clone();
-                            let use_asset_fees = matches!(self.send_asset, SendAsset::Usdt);
+                            // Cross-asset swaps cannot use asset fees per SDK constraint.
+                            // Only same-asset USDt sends can pay fees in USDt.
+                            let is_cross_asset = self.from_asset != self.to_asset;
+                            let use_asset_fees = if is_cross_asset {
+                                false
+                            } else {
+                                matches!(self.to_asset, SendAsset::Usdt)
+                            };
 
                             return Task::perform(
                                 async move {
@@ -1158,12 +1468,14 @@ impl State for LiquidSend {
                     self.amount = Amount::ZERO;
                     self.amount_input = form::Value::default();
                     self.usdt_amount_input = form::Value::default();
-                    self.send_asset = if self.usdt_only {
+                    self.to_asset = if self.usdt_only {
                         SendAsset::Usdt
                     } else {
-                        SendAsset::Btc
+                        SendAsset::Lbtc
                     };
                     self.input_type = None;
+                    self.uri_asset = None;
+                    self.from_asset = self.to_asset;
                     self.description = None;
                     self.comment = None;
                     self.lightning_limits = None;
@@ -1178,6 +1490,7 @@ impl State for LiquidSend {
                     self.onchain_limits = Some((*min_sat, *max_sat));
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatClose) => {
+                    self.error = None;
                     self.flow_state = LiquidSendFlowState::Main {
                         modal: Modal::AmountInput,
                     }

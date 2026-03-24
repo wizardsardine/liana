@@ -732,27 +732,39 @@ pub fn placeholder<'a, T: Into<Element<'a, Message>>>(
         .into()
 }
 
-pub fn error_toast_overlay<'a, I: Iterator<Item = (usize, &'a str)>>(
+pub fn toast_overlay<'a, I: Iterator<Item = (usize, log::Level, &'a str)>>(
     iter: I,
+    theme: &coincube_ui::theme::Theme,
 ) -> coincube_ui::widget::Element<'a, Message> {
-    use coincube_ui::{color, component::text, icon::cross_icon};
+    use coincube_ui::{color, component::text, icon::cross_icon, theme::notification};
 
-    let toast = |id: usize, content: &'a str| {
+    // Color mapping for toast levels using the theme
+    let toast = |id: usize, level: log::Level, content: &'a str| {
+        let content_owned = content.to_string();
         const WIDGET_HEIGHT: u32 = 80;
-        iced::widget::row![
-            container(text::p1_bold(content).color(color::WHITE))
+
+        // Use theme palette for the toast background
+        let palette = notification::palette_for_level(&level, theme);
+        let bg_color = palette.background;
+        let border_color = palette.border.unwrap_or(palette.background);
+        let text_color = palette.text.unwrap_or(color::WHITE);
+
+        let bg = iced::Background::Color(bg_color);
+        let border = iced::Border {
+            width: 1.0,
+            color: border_color,
+            radius: 25.0.into(),
+        };
+
+        let inner = iced::widget::row![
+            container(text::p1_bold(content_owned).color(text_color))
                 .width(600)
                 .height(WIDGET_HEIGHT)
                 .padding(15)
-                .align_y(iced::Alignment::Center)
-                .style(|_| {
-                    iced::widget::container::Style::default()
-                        .background(iced::Color::BLACK)
-                        .border(iced::Border::default().width(1).color(color::RED))
-                }),
+                .align_y(iced::Alignment::Center),
             iced::widget::Button::new(
                 cross_icon()
-                    .color(color::BLACK)
+                    .color(text_color)
                     .size(36)
                     .align_x(iced::Alignment::Center)
                     .align_y(iced::Alignment::Center)
@@ -760,9 +772,29 @@ pub fn error_toast_overlay<'a, I: Iterator<Item = (usize, &'a str)>>(
             )
             .height(WIDGET_HEIGHT)
             .width(60)
-            .style(|_, _| iced::widget::button::Style::default().with_background(color::RED))
+            .style(move |_, status| {
+                let base = iced::widget::button::Style::default();
+                match status {
+                    iced::widget::button::Status::Hovered => base.with_background(iced::Color {
+                        a: 0.2,
+                        ..color::BLACK
+                    }),
+                    _ => base,
+                }
+            })
             .on_press(Message::DismissToast(id))
-        ]
+        ];
+
+        // Wrap the entire row in a single styled container so the close
+        // button sits inside the rounded rectangle. clip(true) ensures
+        // the hover highlight respects the border radius.
+        container(inner)
+            .style(move |_| {
+                iced::widget::container::Style::default()
+                    .background(bg)
+                    .border(border)
+            })
+            .clip(true)
     };
 
     let centered = iced::widget::row![
@@ -770,8 +802,10 @@ pub fn error_toast_overlay<'a, I: Iterator<Item = (usize, &'a str)>>(
         iced::widget::Space::new().width(190.0),
         // center toasts horizontally
         iced::widget::Space::new().width(iced::Length::Fill),
-        iced::widget::Column::from_iter(iter.map(|(id, content)| toast(id, content).into()))
-            .spacing(10),
+        iced::widget::Column::from_iter(
+            iter.map(|(id, level, content)| toast(id, level, content).into())
+        )
+        .spacing(10),
         iced::widget::Space::new().width(iced::Length::Fill),
     ];
 

@@ -849,15 +849,13 @@ impl Modal for SignModal {
             },
             _ => {}
         };
+
+        // Use global toast overlay instead of local toast
         Task::none()
     }
 
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
-        let content = toast::Manager::new(
-            content,
-            view::vault::psbt::sign_action_toasts(&self.hws.list, &self.signing),
-        )
-        .into();
+        // Use global toast overlay instead of local toast
         if self.display_modal {
             if let Some(recon) = &self.border_wallet_recon {
                 modal::Modal::new(content, view::vault::psbt::border_wallet_recon_view(recon))
