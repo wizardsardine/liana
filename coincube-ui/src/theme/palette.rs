@@ -510,7 +510,7 @@ impl std::default::Default for Palette {
             notifications: Notifications {
                 pending: ContainerPalette {
                     background: color::GREEN,
-                    text: color::WHITE.into(),
+                    text: color::BLACK.into(),
                     border: Some(color::GREEN),
                 },
                 error: ContainerPalette {
