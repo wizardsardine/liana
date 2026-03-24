@@ -566,7 +566,6 @@ impl State for LiquidSend {
                             match asset_kind_for_id(uri_asset_id, network) {
                                 Some(kind) => {
                                     self.uri_asset = Some(kind);
-                                    self.from_asset = self.to_asset; // reset cross-asset on new URI
                                     let target_asset = match kind {
                                         AssetKind::Usdt => SendAsset::Usdt,
                                         AssetKind::Lbtc => SendAsset::Lbtc,
@@ -584,8 +583,13 @@ impl State for LiquidSend {
                                     {
                                         self.to_asset = SendAsset::Lbtc;
                                         self.from_asset = SendAsset::Usdt;
+                                    } else if self.usdt_only && target_asset != SendAsset::Usdt {
+                                        // Non-mainnet: cross-asset not available, keep USDt
+                                        self.to_asset = SendAsset::Usdt;
+                                        self.from_asset = self.to_asset;
                                     } else {
                                         self.to_asset = target_asset;
+                                        self.from_asset = self.to_asset;
                                     }
                                 }
                                 None => {
@@ -644,12 +648,12 @@ impl State for LiquidSend {
                     } else {
                         // Not a LiquidAddress — clear URI asset state and restore default
                         self.uri_asset = None;
-                        self.from_asset = self.to_asset;
                         self.to_asset = if self.usdt_only {
                             SendAsset::Usdt
                         } else {
                             SendAsset::Lbtc
                         };
+                        self.from_asset = self.to_asset;
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::AmountEdited(v)) => {
