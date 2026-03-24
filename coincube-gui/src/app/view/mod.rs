@@ -70,7 +70,14 @@ fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
 }
 
 // TODO: Rework sidebar UI and implementation, use buttons without rounded borders
-pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<'a, Message> {
+pub fn sidebar<'a>(
+    menu: &Menu,
+    cache: &'a Cache,
+    has_vault: bool,
+    cube_name: &'a str,
+    avatar_handle: Option<&'a iced::widget::image::Handle>,
+    lightning_address: Option<&'a str>,
+) -> Container<'a, Message> {
     // Top-level Home button
     let home_button = if *menu == Menu::Home {
         row!(
@@ -101,16 +108,65 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     };
 
     // Build the main menu column
-    let mut menu_column = Column::new()
-        .spacing(0)
-        .width(Length::Fill)
-        .push(
-            Container::new(coincube_logotype().width(Length::Fill))
-                .padding(10)
-                .align_x(iced::Alignment::Center)
-                .width(Length::Fill),
-        )
-        .push(home_button);
+    let mut menu_column = Column::new().spacing(0).width(Length::Fill).push(
+        Container::new(coincube_logotype().width(Length::Fill))
+            .padding(10)
+            .align_x(iced::Alignment::Center)
+            .width(Length::Fill),
+    );
+
+    // Avatar + Cube name + Lightning Address below logo
+    {
+        let avatar_widget: Element<Message> = if let Some(handle) = avatar_handle {
+            iced::widget::image(handle.clone())
+                .width(Length::Fixed(60.0))
+                .height(Length::Fixed(60.0))
+                .into()
+        } else {
+            container(cube_icon().size(30).color(color::GREY_3))
+                .width(Length::Fixed(60.0))
+                .height(Length::Fixed(60.0))
+                .center_x(Length::Fixed(60.0))
+                .center_y(Length::Fixed(60.0))
+                .style(|_| container::Style {
+                    background: Some(iced::Background::Color(color::GREY_6)),
+                    border: iced::Border {
+                        radius: 30.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .into()
+        };
+
+        let mut info_col = Column::new()
+            .push(avatar_widget)
+            .push(Space::new().height(Length::Fixed(6.0)))
+            .push(
+                text::p2_bold(cube_name)
+                    .color(color::WHITE)
+                    .align_x(iced::Alignment::Center),
+            )
+            .align_x(iced::Alignment::Center)
+            .width(Length::Fill);
+
+        if let Some(addr) = lightning_address {
+            info_col = info_col.push(
+                text::caption(addr)
+                    .color(color::GREY_3)
+                    .align_x(iced::Alignment::Center),
+            );
+        }
+
+        menu_column = menu_column.push(
+            container(info_col)
+                .padding(iced::Padding::from([8, 10]))
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+        );
+    }
+
+    menu_column = menu_column.push(home_button);
 
     // Check if Liquid submenu is expanded from cache
     let is_liquid_expanded = cache.liquid_expanded;
@@ -634,25 +690,6 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     if is_connect_expanded && is_connect_authenticated {
         use crate::app::menu::ConnectSubMenu;
 
-        let connect_overview_button = if matches!(menu, Menu::Connect(ConnectSubMenu::Overview)) {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(home_icon()), "Overview")
-                    .on_press(Message::Reload)
-                    .width(iced::Length::Fill),
-                menu_bar_highlight()
-            )
-            .width(Length::Fill)
-        } else {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu(Some(home_icon()), "Overview")
-                    .on_press(Message::Menu(Menu::Connect(ConnectSubMenu::Overview)))
-                    .width(iced::Length::Fill),
-            )
-            .width(Length::Fill)
-        };
-
         let connect_ln_address_button =
             if matches!(menu, Menu::Connect(ConnectSubMenu::LightningAddress)) {
                 row!(
@@ -694,63 +731,6 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .width(Length::Fill)
         };
 
-        let connect_plan_button = if matches!(menu, Menu::Connect(ConnectSubMenu::PlanBilling)) {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(receipt_icon()), "Plan & Billing")
-                    .on_press(Message::Reload)
-                    .width(iced::Length::Fill),
-                menu_bar_highlight()
-            )
-            .width(Length::Fill)
-        } else {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu(Some(receipt_icon()), "Plan & Billing")
-                    .on_press(Message::Menu(Menu::Connect(ConnectSubMenu::PlanBilling)))
-                    .width(iced::Length::Fill),
-            )
-            .width(Length::Fill)
-        };
-
-        let connect_security_button = if matches!(menu, Menu::Connect(ConnectSubMenu::Security)) {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(settings_icon()), "Security")
-                    .on_press(Message::Reload)
-                    .width(iced::Length::Fill),
-                menu_bar_highlight()
-            )
-            .width(Length::Fill)
-        } else {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu(Some(settings_icon()), "Security")
-                    .on_press(Message::Menu(Menu::Connect(ConnectSubMenu::Security)))
-                    .width(iced::Length::Fill),
-            )
-            .width(Length::Fill)
-        };
-
-        let connect_duress_button = if matches!(menu, Menu::Connect(ConnectSubMenu::Duress)) {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(vault_icon()), "Duress")
-                    .on_press(Message::Reload)
-                    .width(iced::Length::Fill),
-                menu_bar_highlight()
-            )
-            .width(Length::Fill)
-        } else {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu(Some(vault_icon()), "Duress")
-                    .on_press(Message::Menu(Menu::Connect(ConnectSubMenu::Duress)))
-                    .width(iced::Length::Fill),
-            )
-            .width(Length::Fill)
-        };
-
         let connect_invites_button = if matches!(menu, Menu::Connect(ConnectSubMenu::Invites)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
@@ -771,12 +751,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         };
 
         menu_column = menu_column
-            .push(connect_overview_button)
             .push(connect_ln_address_button)
             .push(connect_avatar_button)
-            .push(connect_plan_button)
-            .push(connect_security_button)
-            .push(connect_duress_button)
             .push(connect_invites_button);
     }
 
@@ -821,12 +797,30 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     cache: &'a Cache,
     content: T,
 ) -> Element<'a, Message> {
-    let has_vault = cache.has_vault; // Copy the bool value before moving into closure
+    dashboard_with_info(menu, cache, content, "", None, None)
+}
+
+pub fn dashboard_with_info<'a, T: Into<Element<'a, Message>>>(
+    menu: &'a Menu,
+    cache: &'a Cache,
+    content: T,
+    cube_name: &'a str,
+    avatar_handle: Option<&'a iced::widget::image::Handle>,
+    lightning_address: Option<&'a str>,
+) -> Element<'a, Message> {
+    let has_vault = cache.has_vault;
     Row::new()
         .push(
-            sidebar(menu, cache, has_vault)
-                .height(Length::Fill)
-                .width(Length::Fixed(190.0)),
+            sidebar(
+                menu,
+                cache,
+                has_vault,
+                cube_name,
+                avatar_handle,
+                lightning_address,
+            )
+            .height(Length::Fill)
+            .width(Length::Fixed(190.0)),
         )
         .push(
             Column::new()

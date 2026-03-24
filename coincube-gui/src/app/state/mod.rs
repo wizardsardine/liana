@@ -21,7 +21,7 @@ use crate::daemon::{
     model::{remaining_sequence, Coin},
     Daemon,
 };
-pub use connect::ConnectPanel;
+pub use connect::{ConnectAccountPanel, ConnectCubePanel, ConnectPanel};
 pub use global_home::GlobalHome;
 pub use liquid::overview::LiquidOverview;
 pub use liquid::receive::LiquidReceive;

@@ -1007,6 +1007,7 @@ pub fn create_app_with_remote_backend(
             connect_expanded: false,
             connect_authenticated: false,
             has_vault: true,
+            cube_name: cube_settings.name.clone(),
         },
         Arc::new(
             Wallet::new(wallet.descriptor)
