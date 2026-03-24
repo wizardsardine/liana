@@ -690,6 +690,19 @@ impl Launcher {
                             .update_message(ConnectAccountMessage::Init),
                     );
                 }
+                // Load Security data on demand (mirrors App::set_current_panel)
+                if matches!(
+                    self.active_section,
+                    LauncherSection::Connect(app::menu::ConnectSubMenu::Security)
+                ) && self.connect_account.is_authenticated()
+                {
+                    return map_connect_task(
+                        crate::app::state::connect::account::load_security_data(
+                            &self.connect_account.client,
+                            self.connect_account.session_generation(),
+                        ),
+                    );
+                }
                 Task::none()
             }
 
@@ -705,6 +718,16 @@ impl Launcher {
                 if !was_authenticated && self.connect_account.is_authenticated() {
                     self.connect_expanded = true;
                 }
+                // Sync account tier from the Connect plan data
+                self.account_tier =
+                    self.connect_account
+                        .plan
+                        .as_ref()
+                        .map_or(AccountTier::default(), |plan| match plan.tier {
+                            crate::services::coincube::PlanTier::Free => AccountTier::Free,
+                            crate::services::coincube::PlanTier::Pro => AccountTier::Pro,
+                            crate::services::coincube::PlanTier::Legacy => AccountTier::Legacy,
+                        });
                 task
             }
 

@@ -81,6 +81,10 @@ impl ConnectAccountPanel {
         matches!(self.step, ConnectFlowStep::Dashboard)
     }
 
+    pub fn session_generation(&self) -> u64 {
+        self.session_generation
+    }
+
     fn load_session_from_keyring(&mut self) -> Option<LoginResponse> {
         match keyring::Entry::new(KEYRING_SERVICE_NAME, KEYRING_USER_KEY) {
             Ok(entry) => match entry.get_secret() {
@@ -234,10 +238,20 @@ impl ConnectAccountPanel {
                 let email_val = email.clone();
                 let client = self.client.clone();
                 return iced::Task::perform(
-                    async move { client.login_send_otp(OtpRequest { email: email_val }).await },
+                    async move {
+                        client
+                            .login_send_otp(OtpRequest {
+                                email: email_val.clone(),
+                            })
+                            .await
+                            .map(|()| email_val)
+                    },
                     |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpChanged(String::new()),
+                        Ok(email) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::OtpRequested {
+                                email,
+                                is_signup: false,
+                            },
                         )),
                         Err(e) => Message::View(view::Message::ConnectAccount(
                             ConnectAccountMessage::Error(e.to_string()),
@@ -256,12 +270,18 @@ impl ConnectAccountPanel {
                 return iced::Task::perform(
                     async move {
                         client
-                            .signup_send_otp(OtpRequest { email: email_val })
+                            .signup_send_otp(OtpRequest {
+                                email: email_val.clone(),
+                            })
                             .await
+                            .map(|()| email_val)
                     },
                     |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpChanged(String::new()),
+                        Ok(email) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::OtpRequested {
+                                email,
+                                is_signup: true,
+                            },
                         )),
                         Err(e) => Message::View(view::Message::ConnectAccount(
                             ConnectAccountMessage::Error(e.to_string()),
@@ -277,26 +297,22 @@ impl ConnectAccountPanel {
                 };
             }
 
+            ConnectAccountMessage::OtpRequested { email, is_signup } => {
+                self.step = ConnectFlowStep::OtpVerification {
+                    email,
+                    otp: String::new(),
+                    sending: false,
+                    is_signup,
+                    cooldown: 60,
+                };
+                return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpCooldownTick,
+                )));
+            }
+
             ConnectAccountMessage::OtpChanged(otp) => {
                 if let ConnectFlowStep::OtpVerification { otp: o, .. } = &mut self.step {
                     *o = otp;
-                } else {
-                    let email = match &self.step {
-                        ConnectFlowStep::Login { email, .. } => email.clone(),
-                        ConnectFlowStep::Register { email, .. } => email.clone(),
-                        _ => String::new(),
-                    };
-                    let is_signup = matches!(self.step, ConnectFlowStep::Register { .. });
-                    self.step = ConnectFlowStep::OtpVerification {
-                        email,
-                        otp,
-                        sending: false,
-                        is_signup,
-                        cooldown: 60,
-                    };
-                    return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                        ConnectAccountMessage::OtpCooldownTick,
-                    )));
                 }
             }
 
@@ -409,14 +425,16 @@ impl ConnectAccountPanel {
                 );
             }
 
-            ConnectAccountMessage::VerifiedDevicesLoaded(devices) => {
-                if matches!(self.step, ConnectFlowStep::Dashboard) {
+            ConnectAccountMessage::VerifiedDevicesLoaded(devices, gen) => {
+                if gen == self.session_generation && matches!(self.step, ConnectFlowStep::Dashboard)
+                {
                     self.verified_devices = Some(devices);
                 }
             }
 
-            ConnectAccountMessage::LoginActivityLoaded(activity) => {
-                if matches!(self.step, ConnectFlowStep::Dashboard) {
+            ConnectAccountMessage::LoginActivityLoaded(activity, gen) => {
+                if gen == self.session_generation && matches!(self.step, ConnectFlowStep::Dashboard)
+                {
                     self.login_activity = Some(activity);
                 }
             }
@@ -448,15 +466,15 @@ impl Default for ConnectAccountPanel {
 }
 
 /// Load Security tab data (verified devices + login activity).
-pub fn load_security_data(client: &CoincubeClient) -> iced::Task<Message> {
+pub fn load_security_data(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
     let c1 = client.clone();
     let c2 = client.clone();
     iced::Task::batch([
         iced::Task::perform(
             async move { c1.get_verified_devices().await },
-            |res| match res {
+            move |res| match res {
                 Ok(devices) => Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::VerifiedDevicesLoaded(devices),
+                    ConnectAccountMessage::VerifiedDevicesLoaded(devices, generation),
                 )),
                 Err(e) => Message::View(view::Message::ConnectAccount(
                     ConnectAccountMessage::Error(e.to_string()),
@@ -465,9 +483,9 @@ pub fn load_security_data(client: &CoincubeClient) -> iced::Task<Message> {
         ),
         iced::Task::perform(
             async move { c2.get_login_activity().await },
-            |res| match res {
+            move |res| match res {
                 Ok(activity) => Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::LoginActivityLoaded(activity),
+                    ConnectAccountMessage::LoginActivityLoaded(activity, generation),
                 )),
                 Err(e) => Message::View(view::Message::ConnectAccount(
                     ConnectAccountMessage::Error(e.to_string()),

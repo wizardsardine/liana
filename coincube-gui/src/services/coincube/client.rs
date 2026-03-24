@@ -256,13 +256,19 @@ impl CoincubeClient {
             let resp: super::ApiResponse<super::CheckUsernameResponse> =
                 serde_json::from_str(&body)?;
             Ok(resp.data)
-        } else if let Ok(err_resp) = serde_json::from_str::<super::ApiErrorResponse>(&body) {
-            Ok(super::CheckUsernameResponse {
-                available: false,
-                username: username.to_string(),
-                error_message: Some(err_resp.error.message),
-            })
+        } else if status.is_client_error() && !matches!(status.as_u16(), 401 | 403) {
+            // Validation errors (400, 409, 422, etc.) — treat as "not available"
+            if let Ok(err_resp) = serde_json::from_str::<super::ApiErrorResponse>(&body) {
+                Ok(super::CheckUsernameResponse {
+                    available: false,
+                    username: username.to_string(),
+                    error_message: Some(err_resp.error.message),
+                })
+            } else {
+                Err(CoincubeError::Api(body))
+            }
         } else {
+            // Auth errors (401/403), server errors (5xx), etc.
             Err(CoincubeError::Api(body))
         }
     }

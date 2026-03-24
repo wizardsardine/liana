@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use iced::task::Handle as TaskHandle;
+
 use crate::{
     app::{
         breez::BreezClient,
@@ -36,6 +38,7 @@ pub struct ConnectCubePanel {
     pub ln_claiming: bool,
     pub ln_checking: bool,
     ln_check_version: u32,
+    ln_check_abort: Option<TaskHandle>,
     breez_client: Arc<BreezClient>,
     /// API client with JWT set — obtained from ConnectAccountPanel after login.
     pub client: Option<CoincubeClient>,
@@ -68,6 +71,7 @@ impl ConnectCubePanel {
             ln_claiming: false,
             ln_checking: false,
             ln_check_version: 0,
+            ln_check_abort: None,
             breez_client,
             client: None,
             avatar_step: AvatarFlowStep::Idle,
@@ -84,10 +88,27 @@ impl ConnectCubePanel {
         self.client = Some(client);
     }
 
-    /// Clear the API client (called on account logout).
+    /// Clear the API client and all session-scoped state (called on account logout).
     pub fn clear_client(&mut self) {
         self.client = None;
         self.server_cube_id = None;
+        self.lightning_address = None;
+        self.ln_username_input.clear();
+        self.ln_username_available = None;
+        self.ln_username_error = None;
+        self.ln_claim_error = None;
+        self.ln_claiming = false;
+        self.ln_checking = false;
+        self.ln_check_version += 1;
+        if let Some(handle) = self.ln_check_abort.take() {
+            handle.abort();
+        }
+        self.avatar_step = AvatarFlowStep::Idle;
+        self.avatar_data = None;
+        self.avatar_generating = false;
+        self.avatar_error = None;
+        self.avatar_image_cache.clear();
+        self.avatar_draft = AvatarUserTraits::default();
     }
 
     /// Returns the server-side cube ID as a string for API paths.
@@ -124,12 +145,14 @@ impl ConnectCubePanel {
                             cube_resp.id
                         );
                         self.server_cube_id = Some(cube_resp.id);
-                        // If the cube already has a lightning address, store it
+                        // Store the lightning address from the backend (or clear if None)
                         if cube_resp.lightning_address.is_some() {
                             self.lightning_address = Some(LightningAddress {
                                 lightning_address: cube_resp.lightning_address,
                                 bolt12_offer: cube_resp.bolt12_offer,
                             });
+                        } else {
+                            self.lightning_address = None;
                         }
                     }
                     Err(e) => {
@@ -151,6 +174,9 @@ impl ConnectCubePanel {
                 // Client-side validation
                 if let Some(err) = validate_ln_username(&self.ln_username_input) {
                     self.ln_check_version += 1;
+                    if let Some(handle) = self.ln_check_abort.take() {
+                        handle.abort();
+                    }
                     self.ln_checking = false;
                     self.ln_username_error = Some(err);
                     return iced::Task::none();
@@ -161,7 +187,10 @@ impl ConnectCubePanel {
                     return iced::Task::none();
                 };
 
-                // Debounced availability check
+                // Debounced availability check — abort any previous in-flight task
+                if let Some(handle) = self.ln_check_abort.take() {
+                    handle.abort();
+                }
                 self.ln_check_version += 1;
                 let version = self.ln_check_version;
                 let username = self.ln_username_input.clone();
@@ -170,7 +199,7 @@ impl ConnectCubePanel {
                     return iced::Task::none();
                 };
                 self.ln_checking = true;
-                return iced::Task::perform(
+                let (task, abort_handle) = iced::Task::perform(
                     async move {
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                         let res = client.check_lightning_address(&cube_id, &username).await;
@@ -185,10 +214,17 @@ impl ConnectCubePanel {
                             },
                         )),
                         Err(e) => Message::View(view::Message::ConnectCube(
-                            ConnectCubeMessage::Error(e.to_string()),
+                            ConnectCubeMessage::LnUsernameChecked {
+                                available: false,
+                                error_message: Some(e.to_string()),
+                                version: v,
+                            },
                         )),
                     },
-                );
+                )
+                .abortable();
+                self.ln_check_abort = Some(abort_handle);
+                return task;
             }
 
             ConnectCubeMessage::CheckLnUsername => {}

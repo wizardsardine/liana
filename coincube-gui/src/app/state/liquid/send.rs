@@ -389,19 +389,27 @@ impl State for LiquidSend {
                                             amount_str.trim(),
                                             USDT_PRECISION,
                                         );
-                                        if let Some(base_units) = base_units_opt {
-                                            self.usdt_amount_input.value = amount_str;
-                                            if base_units == 0 {
+                                        match base_units_opt {
+                                            Some(base_units) => {
+                                                self.usdt_amount_input.value = amount_str;
+                                                if base_units == 0 {
+                                                    self.usdt_amount_input.valid = false;
+                                                    self.usdt_amount_input.warning =
+                                                        Some("Amount must be greater than zero");
+                                                } else if base_units > self.usdt_balance {
+                                                    self.usdt_amount_input.valid = false;
+                                                    self.usdt_amount_input.warning =
+                                                        Some("Insufficient USDt balance");
+                                                } else {
+                                                    self.usdt_amount_input.valid = true;
+                                                    self.usdt_amount_input.warning = None;
+                                                }
+                                            }
+                                            None => {
+                                                self.usdt_amount_input.value = String::new();
                                                 self.usdt_amount_input.valid = false;
                                                 self.usdt_amount_input.warning =
-                                                    Some("Amount must be greater than zero");
-                                            } else if base_units > self.usdt_balance {
-                                                self.usdt_amount_input.valid = false;
-                                                self.usdt_amount_input.warning =
-                                                    Some("Insufficient USDt balance");
-                                            } else {
-                                                self.usdt_amount_input.valid = true;
-                                                self.usdt_amount_input.warning = None;
+                                                    Some("Invalid amount");
                                             }
                                         }
                                     }

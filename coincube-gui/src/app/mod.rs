@@ -897,6 +897,7 @@ impl App {
                 if matches!(submenu, menu::ConnectSubMenu::Security) {
                     let security_task = crate::app::state::connect::account::load_security_data(
                         &self.panels.connect.account.client,
+                        self.panels.connect.account.session_generation(),
                     );
                     self.panels.current = menu;
                     return security_task;

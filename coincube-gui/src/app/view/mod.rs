@@ -115,8 +115,8 @@ pub fn sidebar<'a>(
             .width(Length::Fill),
     );
 
-    // Avatar + Cube name + Lightning Address below logo
-    {
+    // Avatar + Cube name + Lightning Address below logo (skip if no identity set)
+    if !cube_name.is_empty() || avatar_handle.is_some() || lightning_address.is_some() {
         let avatar_widget: Element<Message> = if let Some(handle) = avatar_handle {
             iced::widget::image(handle.clone())
                 .width(Length::Fixed(60.0))
@@ -797,7 +797,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     cache: &'a Cache,
     content: T,
 ) -> Element<'a, Message> {
-    dashboard_with_info(menu, cache, content, "", None, None)
+    dashboard_with_info(menu, cache, content, &cache.cube_name, None, None)
 }
 
 pub fn dashboard_with_info<'a, T: Into<Element<'a, Message>>>(
