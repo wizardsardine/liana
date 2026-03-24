@@ -306,13 +306,36 @@ impl BreezClient {
     /// ensures the same offer is reused across calls.
     pub async fn receive_bolt12_offer(&self) -> Result<String, BreezError> {
         let sdk = self.get_sdk()?;
-        let prepare = sdk
+
+        // Try prepare first to get fee info (needed for offer creation).
+        // If prepare fails (Boltz API issue), try receive directly — it may
+        // return a cached offer without needing fresh fee data.
+        let prepare = match sdk
             .prepare_receive_payment(&breez::PrepareReceiveRequest {
                 payment_method: breez::PaymentMethod::Bolt12Offer,
                 amount: None,
             })
             .await
-            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+        {
+            Ok(p) => p,
+            Err(prepare_err) => {
+                log::warn!(
+                    "[BREEZ] prepare_receive_payment for Bolt12 failed: {}. \
+                     Trying receive_payment with fallback prepare response.",
+                    prepare_err
+                );
+                // Construct a minimal PrepareReceiveResponse so receive_payment
+                // can check the local cache for an existing offer.
+                breez::PrepareReceiveResponse {
+                    payment_method: breez::PaymentMethod::Bolt12Offer,
+                    amount: None,
+                    fees_sat: 0,
+                    min_payer_amount_sat: None,
+                    max_payer_amount_sat: None,
+                    swapper_feerate: None,
+                }
+            }
+        };
 
         let response = sdk
             .receive_payment(&breez::ReceivePaymentRequest {

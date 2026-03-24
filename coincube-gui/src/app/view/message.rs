@@ -98,7 +98,8 @@ pub enum Message {
     DismissToast(usize),
     UsdtOverview(UsdtOverviewMessage),
     ToggleUsdt,
-    Connect(ConnectMessage),
+    ConnectAccount(ConnectAccountMessage),
+    ConnectCube(ConnectCubeMessage),
     ToggleConnect,
 }
 
@@ -427,8 +428,9 @@ impl From<SettingsMessage> for Message {
     }
 }
 
+/// Account-level Connect messages (login/session, plan, security, etc.).
 #[derive(Debug, Clone)]
-pub enum ConnectMessage {
+pub enum ConnectAccountMessage {
     Init,
     RefreshSession {
         refresh_token: String,
@@ -438,6 +440,8 @@ pub enum ConnectMessage {
         user: crate::services::coincube::User,
         plan: Option<crate::services::coincube::ConnectPlan>,
     },
+    PlanLoaded(Option<crate::services::coincube::ConnectPlan>, u64),
+    RefreshFailed(String),
     LogOut,
     EmailChanged(String),
     SubmitLogin,
@@ -445,10 +449,18 @@ pub enum ConnectMessage {
     CreateAccount,
     OtpChanged(String),
     OtpCooldownTick,
+    ResendOtp,
+    OtpResent,
     VerifyOtp,
     VerifiedDevicesLoaded(Vec<crate::services::coincube::VerifiedDevice>),
     LoginActivityLoaded(Vec<crate::services::coincube::LoginActivity>),
-    // Lightning Address
+    CopyToClipboard(String),
+    Error(String),
+}
+
+/// Per-Cube Connect messages (Lightning Address, Avatar).
+#[derive(Debug, Clone)]
+pub enum ConnectCubeMessage {
     LnUsernameChanged(String),
     CheckLnUsername,
     LnUsernameChecked {
@@ -459,8 +471,50 @@ pub enum ConnectMessage {
     ClaimLightningAddress,
     LightningAddressClaimed(crate::services::coincube::LightningAddress),
     LightningAddressLoaded(Option<crate::services::coincube::LightningAddress>),
+    /// Result of registering the cube with the backend (POST /connect/cubes).
+    CubeRegistered(Result<crate::services::coincube::CubeResponse, String>),
     CopyToClipboard(String),
     Error(String),
+    Avatar(AvatarMessage),
+}
+
+#[derive(Debug, Clone)]
+pub enum AvatarMessage {
+    /// Enter the Avatar sub-menu — triggers GET /avatar load.
+    Enter,
+    /// Result of GET /api/v1/connect/avatar.
+    Loaded(Result<crate::services::coincube::GetAvatarData, String>),
+    /// Navigate to a specific avatar flow step.
+    SetStep(crate::app::state::connect::AvatarFlowStep),
+    // Questionnaire field changes
+    GenderChanged(crate::services::coincube::AvatarGender),
+    ArchetypeChanged(crate::services::coincube::AvatarArchetype),
+    AgeFeelChanged(crate::services::coincube::AvatarAgeFeel),
+    DemeanorChanged(crate::services::coincube::AvatarDemeanor),
+    ArmorStyleChanged(crate::services::coincube::AvatarArmorStyle),
+    AccentMotifChanged(crate::services::coincube::AvatarAccentMotif),
+    LaserEyesToggled(bool),
+    /// Submit the questionnaire — triggers POST /avatar/generate.
+    Generate,
+    /// Result of POST /api/v1/connect/avatar/generate.
+    GenerateComplete(Result<crate::services::coincube::AvatarGenerateData, String>),
+    /// User picks a variant from the gallery.
+    SelectVariant(u64),
+    /// Result of POST /api/v1/connect/avatar/select.
+    VariantSelected(Result<crate::services::coincube::AvatarSelectData, String>),
+    /// Result of GET /api/v1/connect/avatar/regenerations.
+    RegenerationsLoaded(Result<crate::services::coincube::RegenerationData, String>),
+    /// PNG bytes fetched for a variant.
+    ImageLoaded {
+        variant_id: u64,
+        result: Result<Vec<u8>, String>,
+    },
+    /// Retry after a generation error.
+    Retry,
+    /// User pressed Download — save active variant PNG to disk.
+    DownloadAvatar,
+    /// No-op — used as a return message for tasks that don't need state changes.
+    Noop,
 }
 
 #[derive(Debug, Clone)]

@@ -47,6 +47,8 @@ pub struct Cache {
     pub connect_authenticated: bool,
     /// Whether this cube has a vault wallet configured
     pub has_vault: bool,
+    /// Display name of the current Cube
+    pub cube_name: String,
 }
 
 /// only used for tests.
@@ -68,6 +70,7 @@ impl std::default::Default for Cache {
             connect_expanded: false,
             connect_authenticated: false,
             has_vault: false,
+            cube_name: String::new(),
         }
     }
 }

@@ -95,6 +95,8 @@ impl Panels {
         datadir: &CoincubeDirectory,
         network: bitcoin::Network,
         cube_id: String,
+        cube_name: String,
+        cube_network: String,
     ) -> Panels {
         // NO VAULT - All vault panels are None, but Liquid panels always work
         // The UI layer prevents navigation to vault panels when has_vault=false
@@ -158,7 +160,12 @@ impl Panels {
             create_spend: None,
             vault_settings: None,
             buy_sell: None,
-            connect: ConnectPanel::new(breez_client.clone()),
+            connect: ConnectPanel::new(
+                breez_client.clone(),
+                cube_id.clone(),
+                cube_name,
+                cube_network,
+            ),
         }
     }
 
@@ -173,6 +180,8 @@ impl Panels {
         config: Arc<Config>,
         restored_from_backup: bool,
         cube_id: String,
+        cube_name: String,
+        cube_network: String,
     ) -> Panels {
         let show_rescan_warning = restored_from_backup
             && daemon_backend.is_coincubed()
@@ -281,7 +290,12 @@ impl Panels {
                 internal_bitcoind.is_some(),
                 config.clone(),
             )),
-            connect: ConnectPanel::new(breez_client.clone()),
+            connect: ConnectPanel::new(
+                breez_client.clone(),
+                cube_id.clone(),
+                cube_name,
+                cube_network,
+            ),
             buy_sell: Some(crate::app::view::buysell::BuySellPanel::new(
                 cache.network,
                 wallet,
@@ -474,6 +488,14 @@ impl Panels {
 /// Interval between bitcoind sync progress polls (in seconds).
 const BITCOIND_SYNC_POLL_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Convert a bitcoin::Network to the API network string ("mainnet" or "testnet").
+fn network_api_string(network: bitcoin::Network) -> String {
+    match network {
+        bitcoin::Network::Bitcoin => "mainnet".to_string(),
+        _ => "testnet".to_string(),
+    }
+}
+
 pub struct App {
     cache: Cache,
     wallet: Option<Arc<Wallet>>,
@@ -581,6 +603,8 @@ impl App {
             config_arc.clone(),
             restored_from_backup,
             cube_settings.id.clone(),
+            cube_settings.name.clone(),
+            network_api_string(cache.network),
         );
         let mut tasks = vec![];
         if let Some(vault_overview) = panels.vault_overview.as_mut() {
@@ -641,6 +665,7 @@ impl App {
             datadir_path: datadir.clone(),
             has_vault: false,
             bitcoin_unit,
+            cube_name: cube_settings.name.clone(),
             ..Default::default()
         };
 
@@ -650,6 +675,8 @@ impl App {
             &datadir,
             network,
             cube_settings.id.clone(),
+            cube_settings.name.clone(),
+            network_api_string(network),
         );
 
         let cmd = panels.global_home.reload(None, None);
@@ -865,13 +892,25 @@ impl App {
                 }
             }
             menu::Menu::Connect(submenu) => {
-                self.panels.connect.active_sub = submenu.clone();
+                self.panels.connect.account.active_sub = submenu.clone();
                 // Load Security data on demand
                 if matches!(submenu, menu::ConnectSubMenu::Security) {
-                    let security_task =
-                        crate::app::state::connect::load_security_data(&self.panels.connect.client);
+                    let security_task = crate::app::state::connect::account::load_security_data(
+                        &self.panels.connect.account.client,
+                    );
                     self.panels.current = menu;
                     return security_task;
+                }
+                // Trigger avatar load on demand
+                if matches!(submenu, menu::ConnectSubMenu::Avatar) {
+                    self.panels.current = menu;
+                    return iced::Task::done(Message::View(
+                        crate::app::view::Message::ConnectCube(
+                            crate::app::view::ConnectCubeMessage::Avatar(
+                                crate::app::view::AvatarMessage::Enter,
+                            ),
+                        ),
+                    ));
                 }
             }
             menu::Menu::Liquid(_submenu) => {
@@ -1397,58 +1436,67 @@ impl App {
             Message::View(view::Message::ToggleVault) => {
                 self.panels.vault_expanded = !self.panels.vault_expanded;
                 self.cache.vault_expanded = self.panels.vault_expanded;
-                // If we're expanding Vault, collapse Liquid and USDt
                 if self.panels.vault_expanded {
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
                     self.panels.usdt_expanded = false;
                     self.cache.usdt_expanded = false;
+                    self.panels.connect_expanded = false;
+                    self.cache.connect_expanded = false;
                 }
             }
             Message::View(view::Message::ToggleLiquid) => {
                 self.panels.liquid_expanded = !self.panels.liquid_expanded;
                 self.cache.liquid_expanded = self.panels.liquid_expanded;
-                // If we're expanding Liquid, collapse Vault and USDt
                 if self.panels.liquid_expanded {
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
                     self.panels.usdt_expanded = false;
                     self.cache.usdt_expanded = false;
+                    self.panels.connect_expanded = false;
+                    self.cache.connect_expanded = false;
                 }
             }
             Message::View(view::Message::ToggleUsdt) => {
                 self.panels.usdt_expanded = !self.panels.usdt_expanded;
                 self.cache.usdt_expanded = self.panels.usdt_expanded;
-                // If we're expanding USDt, collapse Liquid and Vault
                 if self.panels.usdt_expanded {
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
+                    self.panels.connect_expanded = false;
+                    self.cache.connect_expanded = false;
                 }
             }
             Message::View(view::Message::ToggleConnect) => {
                 self.panels.connect_expanded = !self.panels.connect_expanded;
                 self.cache.connect_expanded = self.panels.connect_expanded;
+                if self.panels.connect_expanded {
+                    self.panels.vault_expanded = false;
+                    self.cache.vault_expanded = false;
+                    self.panels.liquid_expanded = false;
+                    self.cache.liquid_expanded = false;
+                    self.panels.usdt_expanded = false;
+                    self.cache.usdt_expanded = false;
+                }
                 // When expanding, navigate to the Connect panel unless already
                 // on a Connect sub-page while authenticated.
                 let already_on_connect = self.cache.connect_authenticated
                     && matches!(self.panels.current, Menu::Connect(_));
                 if self.panels.connect_expanded && !already_on_connect {
                     return self.set_current_panel(Menu::Connect(
-                        crate::app::menu::ConnectSubMenu::Overview,
+                        crate::app::menu::ConnectSubMenu::LightningAddress,
                     ));
                 }
             }
-            msg @ Message::View(view::Message::Connect(_)) => {
+            msg @ Message::View(view::Message::ConnectAccount(_))
+            | msg @ Message::View(view::Message::ConnectCube(_)) => {
                 let task = self
                     .panels
                     .connect
                     .update(self.daemon.clone(), &self.cache, msg);
-                self.cache.connect_authenticated = matches!(
-                    self.panels.connect.step,
-                    crate::app::state::connect::ConnectFlowStep::Dashboard
-                );
+                self.cache.connect_authenticated = self.panels.connect.account.is_authenticated();
                 return task;
             }
             Message::View(view::Message::OpenUrl(url)) => {

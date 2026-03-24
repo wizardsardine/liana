@@ -7,6 +7,7 @@ use crate::services::http::ResponseExt;
 pub struct CoincubeClient {
     pub client: Client,
     pub base_url: &'static str,
+    token: Option<String>,
 }
 
 impl Default for CoincubeClient {
@@ -34,11 +35,14 @@ impl CoincubeClient {
                 .build()
                 .unwrap(),
             base_url,
+            token: None,
         }
     }
 
     /// A JWT is needed for some authenticated endpoints, acquired after a user successfully logs in
     pub fn set_token(&mut self, token: &str) {
+        self.token = Some(token.to_string());
+
         let mut headers = reqwest::header::HeaderMap::new();
         headers.append(
             "Authorization",
@@ -205,8 +209,30 @@ impl CoincubeClient {
         Ok(res.json().await?)
     }
 
-    pub async fn get_lightning_address(&self) -> Result<super::LightningAddress, CoincubeError> {
-        let url = format!("{}/api/v1/connect/lightning-address", self.base_url);
+    /// POST /api/v1/connect/cubes — register (or retrieve) a cube on the backend.
+    /// Idempotent on UUID: returns the existing cube if same user+UUID.
+    pub async fn register_cube(
+        &self,
+        req: super::RegisterCubeRequest,
+    ) -> Result<super::CubeResponse, CoincubeError> {
+        let url = format!("{}/api/v1/connect/cubes", self.base_url);
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::CubeResponse> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    // --- Cube-scoped endpoints (Lightning Address, Avatar) ---
+    // All use /connect/cubes/{cubeId}/... paths (server-side numeric ID)
+
+    pub async fn get_lightning_address(
+        &self,
+        cube_id: &str,
+    ) -> Result<super::LightningAddress, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/lightning-address",
+            self.base_url, cube_id
+        );
         let res = self.client.get(&url).send().await?;
         let res = res.check_success().await?;
         let resp: super::ApiResponse<super::LightningAddress> = res.json().await?;
@@ -215,45 +241,147 @@ impl CoincubeClient {
 
     pub async fn check_lightning_address(
         &self,
+        cube_id: &str,
         username: &str,
     ) -> Result<super::CheckUsernameResponse, CoincubeError> {
         let url = format!(
-            "{}/api/v1/connect/lightning-address/check?username={}",
-            self.base_url, username
+            "{}/api/v1/connect/cubes/{}/lightning-address/check?username={}",
+            self.base_url, cube_id, username
         );
         let res = self.client.get(&url).send().await?;
-        // The API returns error HTTP status for invalid/reserved usernames.
-        // Parse the body in all cases to extract structured info.
         let status = res.status();
-        let body = res.text().await.map_err(|e| CoincubeError::Network(e))?;
+        let body = res.text().await.map_err(CoincubeError::Network)?;
 
         if status.is_success() {
             let resp: super::ApiResponse<super::CheckUsernameResponse> =
                 serde_json::from_str(&body)?;
             Ok(resp.data)
+        } else if let Ok(err_resp) = serde_json::from_str::<super::ApiErrorResponse>(&body) {
+            Ok(super::CheckUsernameResponse {
+                available: false,
+                username: username.to_string(),
+                error_message: Some(err_resp.error.message),
+            })
         } else {
-            // Try to extract the error message from the JSON body
-            if let Ok(err_resp) = serde_json::from_str::<super::ApiErrorResponse>(&body) {
-                Ok(super::CheckUsernameResponse {
-                    available: false,
-                    username: username.to_string(),
-                    error_message: Some(err_resp.error.message),
-                })
-            } else {
-                Err(CoincubeError::Api(body))
-            }
+            Err(CoincubeError::Api(body))
         }
     }
 
     pub async fn claim_lightning_address(
         &self,
+        cube_id: &str,
         req: super::ClaimLightningAddressRequest,
     ) -> Result<super::LightningAddress, CoincubeError> {
-        let url = format!("{}/api/v1/connect/lightning-address", self.base_url);
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/lightning-address",
+            self.base_url, cube_id
+        );
         let res = self.client.post(&url).json(&req).send().await?;
         let res = res.check_success().await?;
         let resp: super::ApiResponse<super::LightningAddress> = res.json().await?;
         Ok(resp.data)
+    }
+}
+
+impl CoincubeClient {
+    /// Builds an Authorization HeaderMap from the stored token.
+    fn auth_headers(&self) -> reqwest::header::HeaderMap {
+        let mut map = reqwest::header::HeaderMap::new();
+        if let Some(ref t) = self.token {
+            if let Ok(val) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", t)) {
+                map.insert("Authorization", val);
+            }
+        }
+        map
+    }
+
+    /// GET /api/v1/connect/cubes/{cubeId}/avatar
+    pub async fn get_avatar(&self, cube_id: &str) -> Result<super::GetAvatarData, CoincubeError> {
+        let url = format!("{}/api/v1/connect/cubes/{}/avatar", self.base_url, cube_id);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::GetAvatarData> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// POST /api/v1/connect/cubes/{cubeId}/avatar/generate
+    pub async fn post_avatar_generate(
+        &self,
+        cube_id: &str,
+        req: super::AvatarGenerateRequest,
+    ) -> Result<super::AvatarGenerateData, CoincubeError> {
+        let slow_client = reqwest::ClientBuilder::new()
+            .timeout(std::time::Duration::from_secs(120))
+            .https_only(!self.base_url.starts_with("http://"))
+            .default_headers(self.auth_headers())
+            .build()
+            .map_err(CoincubeError::Network)?;
+
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/avatar/generate",
+            self.base_url, cube_id
+        );
+        let res = slow_client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::AvatarGenerateData> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// POST /api/v1/connect/cubes/{cubeId}/avatar/select
+    pub async fn post_avatar_select(
+        &self,
+        cube_id: &str,
+        req: super::AvatarSelectRequest,
+    ) -> Result<super::AvatarSelectData, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/avatar/select",
+            self.base_url, cube_id
+        );
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::AvatarSelectData> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// GET /api/v1/connect/cubes/{cubeId}/avatar/regenerations
+    pub async fn get_avatar_regenerations(
+        &self,
+        cube_id: &str,
+    ) -> Result<super::RegenerationData, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/avatar/regenerations",
+            self.base_url, cube_id
+        );
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::RegenerationData> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// GET /api/v1/connect/avatar/public/{lightning_address} (public, no cube scope)
+    pub async fn get_public_avatar(
+        &self,
+        lightning_address: &str,
+    ) -> Result<super::PublicAvatarData, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/avatar/public/{}",
+            self.base_url, lightning_address
+        );
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::PublicAvatarData> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// GET /api/v1/connect/avatar/image/{id} (public, no cube scope)
+    pub async fn fetch_avatar_image(&self, variant_id: u64) -> Result<Vec<u8>, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/avatar/image/{}",
+            self.base_url, variant_id
+        );
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.bytes().await.map_err(CoincubeError::Network)?.to_vec())
     }
 }
 

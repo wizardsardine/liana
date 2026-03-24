@@ -15,6 +15,7 @@ pub enum Menu {
 pub enum ConnectSubMenu {
     Overview,
     LightningAddress,
+    Avatar,
     PlanBilling,
     Security,
     Duress,
