@@ -24,7 +24,7 @@ use crate::utils::format_time_ago;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendAsset {
-    Btc,
+    Lbtc,
     Usdt,
 }
 
@@ -89,7 +89,7 @@ impl LiquidSend {
             amount: Amount::from_sat(0),
             amount_input: form::Value::default(),
             usdt_amount_input: form::Value::default(),
-            send_asset: SendAsset::Btc,
+            send_asset: SendAsset::Lbtc,
             recent_transaction: Vec::new(),
             recent_payments: Vec::new(),
             selected_payment: None,
@@ -258,7 +258,7 @@ impl State for LiquidSend {
         if let Message::View(view::Message::LiquidSend(ref msg)) = message {
             match msg {
                 view::LiquidSendMessage::PresetAsset(asset) => {
-                    if *asset == SendAsset::Btc && self.usdt_only {
+                    if *asset == SendAsset::Lbtc && self.usdt_only {
                         // usdt_only invariant: ignore attempts to switch to BTC
                     } else if *asset != self.send_asset {
                         self.send_asset = *asset;
@@ -567,7 +567,7 @@ impl State for LiquidSend {
                                     self.from_asset = None; // reset cross-asset on new URI
                                     let target_asset = match kind {
                                         AssetKind::Usdt => SendAsset::Usdt,
-                                        AssetKind::Lbtc => SendAsset::Btc,
+                                        AssetKind::Lbtc => SendAsset::Lbtc,
                                     };
                                     // On usdt_only screen with L-BTC URI: auto-enable
                                     // cross-asset (pay from USDt, receiver gets L-BTC).
@@ -577,10 +577,10 @@ impl State for LiquidSend {
                                         breez_sdk_liquid::bitcoin::Network::Bitcoin
                                     );
                                     if self.usdt_only
-                                        && target_asset == SendAsset::Btc
+                                        && target_asset == SendAsset::Lbtc
                                         && cross_asset_supported
                                     {
-                                        self.send_asset = SendAsset::Btc;
+                                        self.send_asset = SendAsset::Lbtc;
                                         self.from_asset = Some(SendAsset::Usdt);
                                     } else {
                                         self.send_asset = target_asset;
@@ -594,7 +594,7 @@ impl State for LiquidSend {
                                         self.send_asset = if self.usdt_only {
                                             SendAsset::Usdt
                                         } else {
-                                            SendAsset::Btc
+                                            SendAsset::Lbtc
                                         };
                                     }
                                     self.uri_asset = None;
@@ -608,7 +608,7 @@ impl State for LiquidSend {
                                 self.send_asset = if self.usdt_only {
                                     SendAsset::Usdt
                                 } else {
-                                    SendAsset::Btc
+                                    SendAsset::Lbtc
                                 };
                             }
                             self.uri_asset = None;
@@ -624,7 +624,7 @@ impl State for LiquidSend {
                                 self.usdt_amount_input = form::Value::default();
                             }
                         }
-                        if self.send_asset == SendAsset::Btc {
+                        if self.send_asset == SendAsset::Lbtc {
                             if let Some(amount_sat) = address.amount_sat {
                                 self.amount = Amount::from_sat(amount_sat);
                                 self.amount_input.value =
@@ -646,7 +646,7 @@ impl State for LiquidSend {
                         self.send_asset = if self.usdt_only {
                             SendAsset::Usdt
                         } else {
-                            SendAsset::Btc
+                            SendAsset::Lbtc
                         };
                     }
                 }
@@ -1010,7 +1010,7 @@ impl State for LiquidSend {
                                 let from_asset_id: Option<String> = match self.from_asset {
                                     Some(fa) => {
                                         let kind = match fa {
-                                            SendAsset::Btc => AssetKind::Lbtc,
+                                            SendAsset::Lbtc => AssetKind::Lbtc,
                                             SendAsset::Usdt => AssetKind::Usdt,
                                         };
                                         match kind.asset_id(network) {
@@ -1087,7 +1087,7 @@ impl State for LiquidSend {
                                         }
                                     };
                                     let from_kind = match from {
-                                        SendAsset::Btc => AssetKind::Lbtc,
+                                        SendAsset::Lbtc => AssetKind::Lbtc,
                                         SendAsset::Usdt => AssetKind::Usdt,
                                     };
                                     let from_asset_id = match from_kind.asset_id(network) {
@@ -1233,8 +1233,8 @@ impl State for LiquidSend {
                         if self.uri_asset.is_some() && cross_asset_supported {
                             // URI locked the to_asset — toggle changes from_asset (cross-asset swap)
                             let opposite = match self.send_asset {
-                                SendAsset::Btc => SendAsset::Usdt,
-                                SendAsset::Usdt => SendAsset::Btc,
+                                SendAsset::Lbtc => SendAsset::Usdt,
+                                SendAsset::Usdt => SendAsset::Lbtc,
                             };
                             if self.from_asset.is_some() {
                                 // Already in cross-asset mode — toggle back to same-asset.
@@ -1256,7 +1256,7 @@ impl State for LiquidSend {
                             let is_cross_asset =
                                 self.from_asset.is_some_and(|fa| fa != self.send_asset);
                             match self.send_asset {
-                                SendAsset::Btc => {
+                                SendAsset::Lbtc => {
                                     if !self.amount_input.value.trim().is_empty() {
                                         if !is_cross_asset && self.amount > self.btc_balance {
                                             self.amount_input.valid = false;
@@ -1295,10 +1295,10 @@ impl State for LiquidSend {
                         } else {
                             // No URI lock — legacy behavior: toggle send_asset directly
                             let next = match self.send_asset {
-                                SendAsset::Btc => SendAsset::Usdt,
-                                SendAsset::Usdt => SendAsset::Btc,
+                                SendAsset::Lbtc => SendAsset::Usdt,
+                                SendAsset::Usdt => SendAsset::Lbtc,
                             };
-                            if !(next == SendAsset::Btc && self.usdt_only) {
+                            if !(next == SendAsset::Lbtc && self.usdt_only) {
                                 self.send_asset = next;
                                 self.from_asset = None;
                                 self.amount = Amount::ZERO;
@@ -1355,7 +1355,7 @@ impl State for LiquidSend {
                     self.send_asset = if self.usdt_only {
                         SendAsset::Usdt
                     } else {
-                        SendAsset::Btc
+                        SendAsset::Lbtc
                     };
                     self.input = form::Value::default();
                     self.input_type = None;
@@ -1474,7 +1474,7 @@ impl State for LiquidSend {
                     self.send_asset = if self.usdt_only {
                         SendAsset::Usdt
                     } else {
-                        SendAsset::Btc
+                        SendAsset::Lbtc
                     };
                     self.input_type = None;
                     self.uri_asset = None;
