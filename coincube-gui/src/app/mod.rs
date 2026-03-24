@@ -19,7 +19,7 @@ use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
 pub use coincube_core::miniscript::bitcoin;
-use coincube_ui::{component::network_banner, widget::Element};
+use coincube_ui::{component::network_banner, theme as ui_theme, widget::Element};
 pub use coincubed::{
     commands::CoinStatus,
     config::{BitcoindRpcAuth, Config as DaemonConfig},
@@ -476,7 +476,7 @@ pub struct App {
     config: Arc<Config>,
     datadir: CoincubeDirectory,
     panels: Panels,
-    errors: std::collections::BinaryHeap<(usize, std::time::Instant, String)>,
+    errors: Vec<(usize, std::time::Instant, log::Level, String)>,
     current_error_id: usize,
     /// True while a check_bitcoind_sync_progress probe is in flight; prevents
     /// multiple concurrent RPC calls from piling up across subscription ticks.
@@ -599,7 +599,7 @@ impl App {
                 cube_settings,
                 config: config_arc,
                 datadir: data_dir,
-                errors: std::collections::BinaryHeap::with_capacity(8),
+                errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
             },
@@ -657,7 +657,7 @@ impl App {
                 cube_settings,
                 config: config_arc,
                 datadir,
-                errors: std::collections::BinaryHeap::with_capacity(8),
+                errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
             },
@@ -1074,8 +1074,16 @@ impl App {
                 self.errors.retain(|(i, ..)| *i != id);
             }
             Message::View(view::Message::ShowError(msg)) => {
+                // Redirect ShowError to ShowToast with Error level
+                return self.update(Message::View(view::Message::ShowToast(
+                    log::Level::Error,
+                    msg,
+                )));
+            }
+            Message::View(view::Message::ShowToast(level, msg)) => {
+                // Show toast with specified level
                 self.errors
-                    .push((self.current_error_id, std::time::Instant::now(), msg));
+                    .push((self.current_error_id, std::time::Instant::now(), level, msg));
                 self.current_error_id += 1;
 
                 let id = self.current_error_id - 1;
@@ -1695,18 +1703,27 @@ impl App {
             view.map(Message::View)
         };
 
-        // Overlay error toast at bottom if present
+        // Overlay toast at bottom if present
         match self.errors.is_empty() {
             true => content,
-            false => iced::widget::Stack::new()
-                .push(content)
-                .push(
-                    view::error_toast_overlay(
-                        self.errors.iter().map(|(id, _, msg)| (*id, msg.as_str())),
+            false => {
+                // Errors are already in chronological order (Vec is append-only)
+                let error_snapshot: Vec<_> = self.errors.iter().collect();
+
+                let theme = ui_theme::Theme::default();
+                iced::widget::Stack::new()
+                    .push(content)
+                    .push(
+                        view::toast_overlay(
+                            error_snapshot
+                                .iter()
+                                .map(|(id, _, level, msg)| (*id, *level, msg.as_str())),
+                            &theme,
+                        )
+                        .map(Message::View),
                     )
-                    .map(Message::View),
-                )
-                .into(),
+                    .into()
+            }
         }
     }
 

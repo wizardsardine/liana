@@ -112,6 +112,9 @@ pub struct Notifications {
     pub pending: ContainerPalette,
     pub error: ContainerPalette,
     pub success: ContainerPalette,
+    pub warning: ContainerPalette,
+    pub info: ContainerPalette,
+    pub debug: ContainerPalette,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -511,14 +514,29 @@ impl std::default::Default for Palette {
                     border: Some(color::GREEN),
                 },
                 error: ContainerPalette {
-                    background: color::RED,
-                    text: color::BLACK.into(),
-                    border: Some(color::RED),
+                    background: color::ERROR_RED,
+                    text: color::WHITE.into(),
+                    border: Some(color::ERROR_RED),
                 },
                 success: ContainerPalette {
-                    background: color::GREEN,
-                    text: color::BLACK.into(),
-                    border: Some(color::GREEN),
+                    background: color::SUCCESS_GREEN,
+                    text: color::WHITE.into(),
+                    border: Some(color::SUCCESS_GREEN),
+                },
+                warning: ContainerPalette {
+                    background: color::WARN_ORANGE,
+                    text: color::WHITE.into(),
+                    border: Some(color::WARN_ORANGE),
+                },
+                info: ContainerPalette {
+                    background: color::INFO_BLUE,
+                    text: color::WHITE.into(),
+                    border: Some(color::INFO_BLUE),
+                },
+                debug: ContainerPalette {
+                    background: color::GREY_4,
+                    text: color::WHITE.into(),
+                    border: Some(color::GREY_4),
                 },
             },
             text_inputs: TextInputs {

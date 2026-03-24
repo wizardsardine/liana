@@ -20,16 +20,45 @@ pub fn general_section<'a>(
     new_price_setting: &'a PriceSetting,
     new_unit_setting: &'a UnitSetting,
     currencies_list: &'a [Currency],
+    developer_mode: bool,
 ) -> Element<'a, Message> {
-    dashboard(
-        menu,
-        cache,
+    let mut col = Column::new()
+        .spacing(20)
+        .push(super::header("General", SettingsMessage::GeneralSection))
+        .push(bitcoin_display_unit(new_unit_setting))
+        .push(fiat_price(new_price_setting, currencies_list));
+
+    if developer_mode {
+        col = col.push(toast_testing());
+    }
+
+    dashboard(menu, cache, col)
+}
+
+fn toast_testing<'a>() -> Element<'a, Message> {
+    let btn = |label: &'static str, level: log::Level| {
+        iced::widget::Button::new(text(label).bold())
+            .padding([8, 16])
+            .style(theme::button::secondary)
+            .on_press(SettingsMessage::TestToast(level).into())
+    };
+
+    card::simple(
         Column::new()
-            .spacing(20)
-            .push(super::header("General", SettingsMessage::GeneralSection))
-            .push(bitcoin_display_unit(new_unit_setting))
-            .push(fiat_price(new_price_setting, currencies_list)),
+            .spacing(15)
+            .push(text("Toast Testing").bold())
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .push(btn("Error", log::Level::Error))
+                    .push(btn("Warn", log::Level::Warn))
+                    .push(btn("Info", log::Level::Info))
+                    .push(btn("Debug", log::Level::Debug))
+                    .push(btn("Trace", log::Level::Trace)),
+            ),
     )
+    .width(Length::Fill)
+    .into()
 }
 
 pub fn bitcoin_display_unit<'a>(new_unit_setting: &'a UnitSetting) -> Element<'a, Message> {

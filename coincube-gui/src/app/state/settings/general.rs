@@ -106,6 +106,7 @@ pub struct GeneralSettingsState {
     new_price_setting: PriceSetting,
     new_unit_setting: UnitSetting,
     currencies: Vec<Currency>,
+    developer_mode: bool,
     error: Option<Error>,
 }
 
@@ -116,12 +117,21 @@ impl From<GeneralSettingsState> for Box<dyn State> {
 }
 
 impl GeneralSettingsState {
-    pub fn new(cube_id: String, price_setting: PriceSetting, unit_setting: UnitSetting) -> Self {
+    pub fn new(
+        cube_id: String,
+        price_setting: PriceSetting,
+        unit_setting: UnitSetting,
+        datadir_path: &CoincubeDirectory,
+    ) -> Self {
+        use crate::app::settings::global::GlobalSettings;
+        let developer_mode =
+            GlobalSettings::load_developer_mode(&GlobalSettings::path(datadir_path));
         Self {
             cube_id,
             new_price_setting: price_setting,
             new_unit_setting: unit_setting,
             currencies: Vec::new(),
+            developer_mode,
             error: None,
         }
     }
@@ -135,6 +145,7 @@ impl State for GeneralSettingsState {
             &self.new_price_setting,
             &self.new_unit_setting,
             &self.currencies,
+            self.developer_mode,
         )
     }
 
@@ -349,6 +360,19 @@ impl State for GeneralSettingsState {
                         }
                     },
                 );
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::TestToast(level))) => {
+                let label = match level {
+                    log::Level::Error => "Error",
+                    log::Level::Warn => "Warn",
+                    log::Level::Info => "Info",
+                    log::Level::Debug => "Debug",
+                    log::Level::Trace => "Trace",
+                };
+                Task::done(Message::View(view::Message::ShowToast(
+                    level,
+                    format!("Test {} toast", label),
+                )))
             }
             _ => Task::none(),
         }

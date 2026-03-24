@@ -10,7 +10,6 @@ use coincube_core::{
 use coincubed::commands::CoinStatus;
 use iced::Task;
 
-use coincube_ui::component::toast;
 use coincube_ui::{widget::modal, widget::Element};
 
 use crate::daemon::model::LabelsLoader;
@@ -601,15 +600,13 @@ impl Modal for SignModal {
             },
             _ => {}
         };
+
+        // Use global toast overlay instead of local toast
         Task::none()
     }
 
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
-        let content = toast::Manager::new(
-            content,
-            view::vault::psbt::sign_action_toasts(&self.hws.list, &self.signing),
-        )
-        .into();
+        // Use global toast overlay instead of local toast
         if self.display_modal {
             modal::Modal::new(
                 content,
