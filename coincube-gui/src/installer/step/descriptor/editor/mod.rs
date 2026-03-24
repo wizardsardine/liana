@@ -1,3 +1,4 @@
+pub mod border_wallet_wizard;
 pub mod key;
 pub mod template;
 
@@ -243,6 +244,13 @@ impl Step for DefineDescriptor {
                     self.paths.push(Path::new_safety_net_path());
                 }
             }
+            Message::DefineDescriptor(message::DefineDescriptor::OpenBorderWalletWizard(
+                coordinates,
+            )) => {
+                let modal =
+                    border_wallet_wizard::BorderWalletWizard::new(self.network, coordinates);
+                self.modal = Some(Box::new(modal));
+            }
             Message::DefineDescriptor(message::DefineDescriptor::KeysEdited(coordinates, key)) => {
                 match key {
                     key::SelectedKey::Existing(fingerprint) => {
@@ -487,6 +495,10 @@ impl Step for DefineDescriptor {
                             master_fingerprint,
                             name: key.name.clone(),
                             provider_key: key.source.provider_key(),
+                            is_border_wallet: matches!(
+                                key.source,
+                                crate::installer::descriptor::KeySource::BorderWallet
+                            ),
                         },
                     );
                     if key.source.device_kind().is_some() {
@@ -523,6 +535,10 @@ impl Step for DefineDescriptor {
                                 master_fingerprint,
                                 name: key.name.clone(),
                                 provider_key: key.source.provider_key(),
+                                is_border_wallet: matches!(
+                                    key.source,
+                                    crate::installer::descriptor::KeySource::BorderWallet
+                                ),
                             },
                         );
                         if key.source.device_kind().is_some() {

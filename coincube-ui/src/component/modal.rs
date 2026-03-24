@@ -74,7 +74,7 @@ where
     let msg = if !collapsed { collapse() } else { fold() };
 
     let row = Row::new()
-        .push(text::p1_bold(&title))
+        .push(text::p1_bold(title))
         .push(icon)
         .align_y(Vertical::Center)
         .spacing(H_SPACING);

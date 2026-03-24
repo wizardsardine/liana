@@ -86,6 +86,9 @@ pub enum Message {
     CubeSaveFailed(String),
     RetryCubeSave,
     CoincubeConnect(CoincubeConnectMsg),
+    BorderWalletWizard(
+        super::step::descriptor::editor::border_wallet_wizard::BorderWalletWizardMessage,
+    ),
     None,
 }
 
@@ -166,6 +169,11 @@ pub enum DefineNode {
 
 #[derive(Debug, Clone)]
 pub enum SelectBitcoindTypeMsg {
+    // Default card
+    ContinueWithConnect,
+    ToggleInstallNode,
+    ToggleAdvanced,
+    // Advanced options
     UseExternal(bool),
     UseConnect,
 }
@@ -209,6 +217,8 @@ pub enum DefineDescriptor {
     ThresholdSequenceModal(ThresholdSequenceModal),
     Reset,
     AliasEdited(Fingerprint, String /* alias*/),
+    /// Open the Border Wallet wizard for the given path coordinates.
+    OpenBorderWalletWizard(Vec<(usize, usize)>),
 }
 
 #[allow(clippy::large_enum_variant)]

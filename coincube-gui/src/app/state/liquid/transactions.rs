@@ -1,13 +1,14 @@
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use breez_sdk_liquid::model::RefundRequest;
+use breez_sdk_liquid::model::{PaymentDetails, RefundRequest};
 use breez_sdk_liquid::prelude::{Payment, RefundableSwap};
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::component::form;
 use coincube_ui::widget::*;
 use iced::Task;
 
+use crate::app::breez::assets::usdt_asset_id;
 use crate::app::view::FeeratePriority;
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
@@ -34,6 +35,7 @@ pub struct LiquidTransactions {
     refund_feerate: form::Value<String>,
     fee_estimator: FeeEstimator,
     refunding: bool,
+    usdt_only: bool,
 }
 
 impl LiquidTransactions {
@@ -51,6 +53,14 @@ impl LiquidTransactions {
             refund_feerate: form::Value::default(),
             fee_estimator: FeeEstimator::new(),
             refunding: false,
+            usdt_only: false,
+        }
+    }
+
+    pub fn new_usdt_only(breez_client: Arc<BreezClient>) -> Self {
+        Self {
+            usdt_only: true,
+            ..Self::new(breez_client)
         }
     }
 
@@ -60,9 +70,27 @@ impl LiquidTransactions {
 
     fn calculate_balance(&self) -> Amount {
         use breez_sdk_liquid::prelude::PaymentType;
+        let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
         let mut balance: i64 = 0;
 
         for payment in &self.payments {
+            let is_usdt = matches!(
+                &payment.details,
+                PaymentDetails::Liquid { asset_id, .. } if !usdt_id.is_empty() && asset_id == usdt_id
+            );
+
+            if self.usdt_only {
+                // USDt view: only count USDt payments (amount_sat is in asset base units)
+                if !is_usdt {
+                    continue;
+                }
+            } else {
+                // L-BTC view: skip USDt payments whose amount_sat is asset base units, not sats
+                if is_usdt {
+                    continue;
+                }
+            }
+
             match payment.payment_type {
                 PaymentType::Receive => {
                     balance += payment.amount_sat as i64;
@@ -84,7 +112,12 @@ impl State for LiquidTransactions {
             view::dashboard(
                 menu,
                 cache,
-                view::liquid::transaction_detail_view(payment, fiat_converter, cache.bitcoin_unit),
+                view::liquid::transaction_detail_view(
+                    payment,
+                    fiat_converter,
+                    cache.bitcoin_unit,
+                    usdt_asset_id(self.breez_client.network()).unwrap_or(""),
+                ),
             )
         } else if let Some(refundable) = &self.selected_refundable {
             view::dashboard(
@@ -110,6 +143,7 @@ impl State for LiquidTransactions {
                     fiat_converter,
                     self.loading,
                     cache.bitcoin_unit,
+                    usdt_asset_id(self.breez_client.network()).unwrap_or(""),
                 ),
             )
         };
@@ -151,7 +185,30 @@ impl State for LiquidTransactions {
         match message {
             Message::PaymentsLoaded(Ok(payments)) => {
                 self.loading = false;
-                self.payments = payments;
+                let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
+                self.payments = if self.usdt_only {
+                    payments
+                        .into_iter()
+                        .filter(|p| {
+                            matches!(
+                                &p.details,
+                                PaymentDetails::Liquid { asset_id, .. }
+                                    if asset_id == usdt_id
+                            )
+                        })
+                        .collect()
+                } else {
+                    payments
+                        .into_iter()
+                        .filter(|p| {
+                            !matches!(
+                                &p.details,
+                                PaymentDetails::Liquid { asset_id, .. }
+                                    if asset_id == usdt_id
+                            )
+                        })
+                        .collect()
+                };
                 self.balance = self.calculate_balance();
                 Task::none()
             }

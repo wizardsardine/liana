@@ -998,9 +998,13 @@ pub fn create_app_with_remote_backend(
             },
             fiat_price: None,
             bitcoin_unit: cube_settings.unit_setting.display_unit,
+            node_bitcoind_sync_progress: None,
+            node_bitcoind_ibd: None,
+            node_bitcoind_last_log: None,
             vault_expanded: false,
             liquid_expanded: false,
             p2p_expanded: false,
+            usdt_expanded: false,
             has_vault: true,
         },
         Arc::new(
@@ -1010,6 +1014,7 @@ pub fn create_app_with_remote_backend(
                 .with_pinned_at(wallet_settings.pinned_at)
                 .with_key_aliases(aliases)
                 .with_provider_keys(provider_keys)
+                .with_border_wallet_fingerprints(wallet_settings.border_wallet_fingerprints())
                 .with_hardware_wallets(hws)
                 .load_hotsigners(&coincube_dir, network)
                 .expect("Datadir should be conform"),

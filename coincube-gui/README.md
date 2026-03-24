@@ -22,12 +22,6 @@ In addition, if you want to build the project from source, you will need:
 cargo run --bin coincube
 ```
 
-To enable Mavapay for supported countries:
-
-```bash
-ENABLE_MAVAPAY=true cargo run --package coincube-gui
-```
-
 ## Regtest
 In order to test out the "Liquid" wallet which utilizes the Breez Liquid SDK, please follow these directions [Breez SDK Regtest Setup](/docs/BREEZ_SDK_REGTEST.md)
 

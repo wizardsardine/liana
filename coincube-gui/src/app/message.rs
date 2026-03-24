@@ -19,9 +19,13 @@ use crate::{
     daemon::model::*,
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
-    services::fiat::{
-        api::{ListCurrenciesResult, PriceApiError},
-        PriceSource,
+    node::bitcoind::Bitcoind,
+    services::{
+        coincube::{DownloadStats, TimeseriesPoint},
+        fiat::{
+            api::{ListCurrenciesResult, PriceApiError},
+            PriceSource,
+        },
     },
 };
 
@@ -78,6 +82,30 @@ pub enum Message {
     BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
     SettingsSaved,
     SettingsSaveFailed(Error),
+    /// Store the Bitcoind handle produced by configure_and_start_internal_bitcoind so
+    /// that its LockFile is kept alive for the lifetime of the App.
+    SetInternalBitcoind(Bitcoind),
+    /// Fired by the bitcoind-sync subscription to trigger a progress probe.
+    PollBitcoindSync,
+    /// Result of polling the pending local bitcoind's IBD sync progress.
+    /// Carries `(verificationprogress, initialblockdownload)`.
+    BitcoindSyncProgress(Result<(f64, bool), String>),
+    /// Latest UpdateTip/blockheaders line streamed from the pending internal
+    /// bitcoind's debug.log.  `None` means no matching line found yet.
+    PendingBitcoindLog(Option<String>),
+    InstallStats(InstallStatsMessage),
+}
+
+#[derive(Debug)]
+pub enum InstallStatsMessage {
+    /// u64 is the fetch generation — handlers ignore stale responses.
+    DownloadStatsLoaded(u64, Result<DownloadStats, String>),
+    TodayStatsLoaded(u64, Result<u32, String>),
+    TimeseriesLoaded(
+        u64,
+        crate::services::coincube::StatsPeriod,
+        Result<Vec<TimeseriesPoint>, String>,
+    ),
 }
 
 impl From<ImportExportMessage> for Message {

@@ -874,8 +874,8 @@ impl P2PPanel {
                 if !self.create_sats_amount.value.is_empty() {
                     sats_col = sats_col.push(caption(warn).style(theme::text::warning));
                 }
-            } else if let Some(ref warn) = v.sats_range {
-                sats_col = sats_col.push(caption(warn.as_str()).style(theme::text::warning));
+            } else if let Some(warn) = v.sats_range.clone() {
+                sats_col = sats_col.push(caption(warn).style(theme::text::warning));
             }
             // Show node limits hint
             if let (Some(min), Some(max)) = (self.node_min_order_sats, self.node_max_order_sats) {
@@ -2071,14 +2071,17 @@ impl P2PPanel {
                 super::mostro::get_chat_identity_info(&cube_name, &self.mnemonic, &trade.id);
             let cp_nickname = identity
                 .counterparty_nickname
-                .as_deref()
-                .unwrap_or("Unknown");
+                .clone()
+                .unwrap_or_else(|| "Unknown".to_string());
             let cp_pubkey_full = identity
                 .counterparty_pubkey
                 .as_deref()
                 .unwrap_or("Unknown")
                 .to_string();
-            let our_nickname = identity.our_nickname.as_deref().unwrap_or("Unknown");
+            let our_nickname = identity
+                .our_nickname
+                .clone()
+                .unwrap_or_else(|| "Unknown".to_string());
             let our_pubkey_full = identity
                 .our_trade_pubkey
                 .as_deref()
@@ -2202,7 +2205,7 @@ impl P2PPanel {
                 } else {
                     msg_col = msg_col.push(
                         column![
-                            caption(peer_nick.as_str()).style(theme::text::primary),
+                            caption(peer_nick.clone()).style(theme::text::primary),
                             row![
                                 container(p1_regular(text))
                                     .padding([10, 16])
@@ -2528,7 +2531,7 @@ impl P2PPanel {
                 row![
                     column![
                         p2_bold(node.name.as_str()),
-                        p2_regular(truncated_pubkey.as_str()).style(theme::text::secondary),
+                        p2_regular(truncated_pubkey).style(theme::text::secondary),
                     ]
                     .spacing(4)
                     .width(Length::Fill),

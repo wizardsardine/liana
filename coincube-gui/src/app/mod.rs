@@ -19,16 +19,19 @@ use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
 pub use coincube_core::miniscript::bitcoin;
-use coincube_ui::{component::network_banner, widget::Element};
-pub use coincubed::{commands::CoinStatus, config::Config as DaemonConfig};
+use coincube_ui::{component::network_banner, theme as ui_theme, widget::Element};
+pub use coincubed::{
+    commands::CoinStatus,
+    config::{BitcoindRpcAuth, Config as DaemonConfig},
+};
 
 pub use config::Config;
 pub use message::Message;
 
 use state::{
     CoinsPanel, CreateSpendPanel, GlobalHome, LiquidOverview, LiquidReceive, LiquidSend,
-    LiquidSettings, LiquidTransactions, PsbtsPanel, State, VaultOverview, VaultReceivePanel,
-    VaultTransactionsPanel,
+    LiquidSettings, LiquidTransactions, PsbtsPanel, State, UsdtOverview, UsdtReceive, UsdtSend,
+    UsdtTransactions, VaultOverview, VaultReceivePanel, VaultTransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
 
@@ -42,9 +45,12 @@ use crate::{
         settings::WalletId,
         wallet::Wallet,
     },
-    daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend},
+    daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend, DaemonError},
     dir::CoincubeDirectory,
-    node::{bitcoind::Bitcoind, NodeType},
+    node::{
+        bitcoind::{internal_bitcoind_datadir, internal_bitcoind_debug_log_path, Bitcoind},
+        NodeType,
+    },
 };
 
 use self::state::settings::SettingsState as GeneralSettingsState;
@@ -55,6 +61,7 @@ struct Panels {
     vault_expanded: bool,
     liquid_expanded: bool,
     p2p_expanded: bool,
+    usdt_expanded: bool,
     // Always available panels
     global_home: GlobalHome,
     liquid_overview: LiquidOverview,
@@ -62,6 +69,10 @@ struct Panels {
     liquid_receive: LiquidReceive,
     liquid_transactions: LiquidTransactions,
     liquid_settings: LiquidSettings,
+    usdt_overview: UsdtOverview,
+    usdt_send: UsdtSend,
+    usdt_receive: UsdtReceive,
+    usdt_transactions: UsdtTransactions,
     global_settings: GeneralSettingsState,
     // Vault-only panels - None when no vault exists
     vault_overview: Option<VaultOverview>,
@@ -93,6 +104,7 @@ impl Panels {
             vault_expanded: false,
             liquid_expanded: false,
             p2p_expanded: false,
+            usdt_expanded: false,
             // Liquid panels always available (use BreezClient, not Vault wallet)
             global_home: if let Some(w) = &wallet {
                 GlobalHome::new(
@@ -114,7 +126,13 @@ impl Panels {
             liquid_send: LiquidSend::new(breez_client.clone()),
             liquid_receive: LiquidReceive::new(breez_client.clone()),
             liquid_transactions: LiquidTransactions::new(breez_client.clone()),
-            liquid_settings: LiquidSettings::new(breez_client),
+            liquid_settings: LiquidSettings::new(breez_client.clone()),
+            usdt_overview: UsdtOverview::new(breez_client.clone()),
+            usdt_send: UsdtSend::new(LiquidSend::new_usdt_only(breez_client.clone())),
+            usdt_receive: UsdtReceive::new(LiquidReceive::new(breez_client.clone())),
+            usdt_transactions: UsdtTransactions::new(LiquidTransactions::new_usdt_only(
+                breez_client.clone(),
+            )),
             global_settings: {
                 let network_dir = datadir.network_directory(network);
                 let settings_file = settings::Settings::from_file(&network_dir).ok();
@@ -169,6 +187,7 @@ impl Panels {
             vault_expanded: false,
             liquid_expanded: false,
             p2p_expanded: false,
+            usdt_expanded: false,
             global_home: GlobalHome::new(
                 wallet.clone(),
                 breez_client.clone(),
@@ -194,6 +213,12 @@ impl Panels {
             liquid_receive: LiquidReceive::new(breez_client.clone()),
             liquid_transactions: LiquidTransactions::new(breez_client.clone()),
             liquid_settings: LiquidSettings::new(breez_client.clone()),
+            usdt_overview: UsdtOverview::new(breez_client.clone()),
+            usdt_send: UsdtSend::new(LiquidSend::new_usdt_only(breez_client.clone())),
+            usdt_receive: UsdtReceive::new(LiquidReceive::new(breez_client.clone())),
+            usdt_transactions: UsdtTransactions::new(LiquidTransactions::new_usdt_only(
+                breez_client.clone(),
+            )),
             global_settings: {
                 let network_dir = data_dir.network_directory(cache.network);
                 let settings_file = settings::Settings::from_file(&network_dir).ok();
@@ -364,6 +389,12 @@ impl Panels {
                 crate::app::menu::LiquidSubMenu::Transactions(_) => Some(&self.liquid_transactions),
                 crate::app::menu::LiquidSubMenu::Settings(_) => Some(&self.liquid_settings),
             },
+            Menu::Usdt(submenu) => match submenu {
+                crate::app::menu::UsdtSubMenu::Overview => Some(&self.usdt_overview),
+                crate::app::menu::UsdtSubMenu::Send => Some(&self.usdt_send),
+                crate::app::menu::UsdtSubMenu::Receive => Some(&self.usdt_receive),
+                crate::app::menu::UsdtSubMenu::Transactions(_) => Some(&self.usdt_transactions),
+            },
             Menu::Vault(submenu) => match submenu {
                 crate::app::menu::VaultSubMenu::Overview => {
                     self.vault_overview.as_ref().map(|v| v as &dyn State)
@@ -408,6 +439,12 @@ impl Panels {
                 }
                 crate::app::menu::LiquidSubMenu::Settings(_) => Some(&mut self.liquid_settings),
             },
+            Menu::Usdt(submenu) => match submenu {
+                crate::app::menu::UsdtSubMenu::Overview => Some(&mut self.usdt_overview),
+                crate::app::menu::UsdtSubMenu::Send => Some(&mut self.usdt_send),
+                crate::app::menu::UsdtSubMenu::Receive => Some(&mut self.usdt_receive),
+                crate::app::menu::UsdtSubMenu::Transactions(_) => Some(&mut self.usdt_transactions),
+            },
             Menu::Vault(submenu) => match submenu {
                 crate::app::menu::VaultSubMenu::Overview => {
                     self.vault_overview.as_mut().map(|v| v as &mut dyn State)
@@ -441,6 +478,9 @@ impl Panels {
     }
 }
 
+/// Interval between bitcoind sync progress polls (in seconds).
+const BITCOIND_SYNC_POLL_INTERVAL: Duration = Duration::from_secs(10);
+
 pub struct App {
     cache: Cache,
     wallet: Option<Arc<Wallet>>,
@@ -451,8 +491,76 @@ pub struct App {
     config: Arc<Config>,
     datadir: CoincubeDirectory,
     panels: Panels,
-    toasts: std::collections::BinaryHeap<(usize, std::time::Instant, String, bool)>,
+    errors: Vec<(usize, std::time::Instant, log::Level, String)>,
     current_error_id: usize,
+    /// True while a check_bitcoind_sync_progress probe is in flight; prevents
+    /// multiple concurrent RPC calls from piling up across subscription ticks.
+    bitcoind_sync_probe_in_progress: bool,
+}
+
+/// Returns true when a `DaemonError` indicates the daemon process is no longer
+/// reachable (transport / stopped), as opposed to a transient RPC application
+/// error that does not warrant a backend switch.
+fn is_daemon_unreachable(e: &Error) -> bool {
+    matches!(
+        e,
+        Error::Daemon(
+            DaemonError::DaemonStopped | DaemonError::NoAnswer | DaemonError::RpcSocket(..)
+        )
+    )
+}
+
+/// Poll the local bitcoind's IBD progress via its JSON-RPC interface.
+/// Returns `(verificationprogress, initialblockdownload)` or an error string.
+async fn check_bitcoind_sync_progress(
+    cfg: coincubed::config::BitcoindConfig,
+) -> Result<(f64, bool), String> {
+    use coincubed::config::BitcoindRpcAuth;
+
+    let (user, pass) = match &cfg.rpc_auth {
+        BitcoindRpcAuth::CookieFile(path) => {
+            let cookie = tokio::fs::read_to_string(path)
+                .await
+                .map_err(|e| format!("Cannot read bitcoind cookie: {}", e))?;
+            let trimmed = cookie.trim();
+            let sep = trimmed
+                .find(':')
+                .ok_or_else(|| "Invalid cookie file format".to_string())?;
+            (trimmed[..sep].to_string(), trimmed[sep + 1..].to_string())
+        }
+        BitcoindRpcAuth::UserPass(u, p) => (u.clone(), p.clone()),
+    };
+
+    let url = format!("http://{}/", cfg.addr);
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "getblockchaininfo",
+        "params": [],
+        "id": 1
+    });
+
+    let resp: serde_json::Value = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("bitcoind RPC client build failed: {}", e))?
+        .post(&url)
+        .basic_auth(&user, Some(&pass))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("bitcoind RPC request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("bitcoind RPC response parse failed: {}", e))?;
+
+    let result = &resp["result"];
+    let progress = result["verificationprogress"]
+        .as_f64()
+        .ok_or_else(|| "Missing verificationprogress in bitcoind response".to_string())?;
+    let ibd = result["initialblockdownload"]
+        .as_bool()
+        .ok_or_else(|| "Missing initialblockdownload in bitcoind response".to_string())?;
+    Ok((progress, ibd))
 }
 
 impl App {
@@ -506,8 +614,9 @@ impl App {
                 cube_settings,
                 config: config_arc,
                 datadir: data_dir,
-                toasts: std::collections::BinaryHeap::with_capacity(8),
+                errors: Vec::with_capacity(8),
                 current_error_id: 256,
+                bitcoind_sync_probe_in_progress: false,
             },
             cmd,
         )
@@ -563,8 +672,9 @@ impl App {
                 cube_settings,
                 config: config_arc,
                 datadir,
-                toasts: std::collections::BinaryHeap::with_capacity(8),
+                errors: Vec::with_capacity(8),
                 current_error_id: 256,
+                bitcoind_sync_probe_in_progress: false,
             },
             cmd,
         )
@@ -765,6 +875,9 @@ impl App {
                 // Liquid transaction preselection is handled via PreselectPayment message
                 // since Payment objects are passed directly instead of fetching by ID
             }
+            menu::Menu::Usdt(_submenu) => {
+                // USDt panels: preselection handled via PreselectPayment message
+            }
             _ => {
                 tracing::debug!(
                     "Menu variant {:?} has no special handling in set_current_panel",
@@ -825,6 +938,19 @@ impl App {
             );
         }
 
+        // Poll pending local Bitcoind IBD progress on a fixed interval,
+        // independent of the variable-rate tick subscription.
+        if self
+            .daemon
+            .as_ref()
+            .and_then(|d| d.config())
+            .and_then(|c| c.pending_bitcoind.as_ref())
+            .is_some()
+        {
+            subscriptions
+                .push(time::every(BITCOIND_SYNC_POLL_INTERVAL).map(|_| Message::PollBitcoindSync));
+        }
+
         // Current panel's subscription
         subscriptions.push(
             self.panels
@@ -832,6 +958,30 @@ impl App {
                 .unwrap_or(&self.panels.global_home)
                 .subscription(),
         );
+
+        // Stream the pending internal bitcoind's debug.log for UpdateTip lines.
+        if let Some(pending_cfg) = self
+            .daemon
+            .as_ref()
+            .and_then(|d| d.config())
+            .and_then(|c| c.pending_bitcoind.clone())
+        {
+            let internal_datadir = internal_bitcoind_datadir(&self.cache.datadir_path);
+            let is_internal = match &pending_cfg.rpc_auth {
+                BitcoindRpcAuth::CookieFile(path) => path.starts_with(&internal_datadir),
+                _ => false,
+            };
+            if is_internal {
+                let log_path =
+                    internal_bitcoind_debug_log_path(&self.cache.datadir_path, self.cache.network);
+                subscriptions.push(
+                    iced::Subscription::run_with(log_path, |p| {
+                        crate::loader::get_bitcoind_log(p.clone())
+                    })
+                    .map(Message::PendingBitcoindLog),
+                );
+            }
+        }
 
         Subscription::batch(subscriptions)
     }
@@ -929,17 +1079,26 @@ impl App {
                 ));
             }
         }
+
         Task::batch(tasks)
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::View(view::Message::DismissToast(id)) => {
-                self.toasts.retain(|(i, ..)| *i != id);
+                self.errors.retain(|(i, ..)| *i != id);
             }
             Message::View(view::Message::ShowError(msg)) => {
-                self.toasts
-                    .push((self.current_error_id, std::time::Instant::now(), msg, false));
+                // Redirect ShowError to ShowToast with Error level
+                return self.update(Message::View(view::Message::ShowToast(
+                    log::Level::Error,
+                    msg,
+                )));
+            }
+            Message::View(view::Message::ShowToast(level, msg)) => {
+                // Show toast with specified level
+                self.errors
+                    .push((self.current_error_id, std::time::Instant::now(), level, msg));
                 self.current_error_id += 1;
 
                 let id = self.current_error_id - 1;
@@ -948,16 +1107,87 @@ impl App {
                     move |_| Message::View(view::Message::DismissToast(id)),
                 );
             }
-            Message::View(view::Message::ShowSuccess(msg)) => {
-                self.toasts
-                    .push((self.current_error_id, std::time::Instant::now(), msg, true));
-                self.current_error_id += 1;
-
-                let id = self.current_error_id - 1;
-                return Task::perform(
-                    async move { tokio::time::sleep(Duration::from_secs(8)).await },
-                    move |_| Message::View(view::Message::DismissToast(id)),
-                );
+            Message::PendingBitcoindLog(log) => {
+                if let Some(line) = log {
+                    self.cache.node_bitcoind_last_log = Some(line);
+                }
+            }
+            Message::InstallStats(_) => {
+                if let Some(panel) = self.panels.current_mut() {
+                    return panel.update(self.daemon.clone(), &self.cache, message);
+                }
+            }
+            Message::SetInternalBitcoind(bitcoind) => {
+                self.internal_bitcoind = Some(bitcoind);
+            }
+            Message::PollBitcoindSync => {
+                if !self.bitcoind_sync_probe_in_progress {
+                    if let Some(pending_cfg) = self
+                        .daemon
+                        .as_ref()
+                        .and_then(|d| d.config())
+                        .and_then(|c| c.pending_bitcoind.clone())
+                    {
+                        self.bitcoind_sync_probe_in_progress = true;
+                        return Task::perform(
+                            check_bitcoind_sync_progress(pending_cfg),
+                            Message::BitcoindSyncProgress,
+                        );
+                    }
+                }
+            }
+            Message::BitcoindSyncProgress(res) => {
+                self.bitcoind_sync_probe_in_progress = false;
+                match res {
+                    Err(e) => tracing::warn!("Bitcoind sync check failed: {}", e),
+                    Ok((progress, ibd)) => {
+                        let was_in_ibd = self.cache.node_bitcoind_ibd == Some(true);
+                        self.cache.node_bitcoind_sync_progress = Some(progress);
+                        self.cache.node_bitcoind_ibd = Some(ibd);
+                        // Only auto-switch when we have observed the node transition
+                        // OUT of IBD (was_in_ibd=true → ibd=false).  This prevents
+                        // the immediately reversal that occurs when ConnectLoginVerified
+                        // saves an already-synced Bitcoind into pending_bitcoind: the
+                        // first poll would otherwise see ibd=false and switch back.
+                        if !ibd && was_in_ibd {
+                            let switch =
+                                self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
+                                    let pending = c.pending_bitcoind.clone()?;
+                                    // Preserve the current Connect config as the new fallback.
+                                    let old_esplora = match &c.bitcoin_backend {
+                                        Some(coincubed::config::BitcoinBackend::Esplora(e)) => {
+                                            Some(e.clone())
+                                        }
+                                        _ => None,
+                                    };
+                                    let mut new_cfg = c.clone();
+                                    new_cfg.bitcoin_backend =
+                                        Some(coincubed::config::BitcoinBackend::Bitcoind(pending));
+                                    new_cfg.pending_bitcoind = None;
+                                    new_cfg.fallback_esplora = old_esplora;
+                                    Some(new_cfg)
+                                });
+                            if let Some(new_cfg) = switch {
+                                let datadir = self.cache.datadir_path.clone();
+                                match self.load_daemon_config(datadir, new_cfg) {
+                                    Ok(()) => {
+                                        info!("Switched to local Bitcoind — IBD complete");
+                                        self.cache.node_bitcoind_sync_progress = None;
+                                        self.cache.node_bitcoind_ibd = None;
+                                        self.cache.node_bitcoind_last_log = None;
+                                        let cfg_task =
+                                            self.update(Message::DaemonConfigLoaded(Ok(())));
+                                        return Task::batch([
+                                            cfg_task,
+                                            Task::done(Message::CacheUpdated),
+                                        ]);
+                                    }
+                                    Err(e) => error!("Failed to switch to Bitcoind: {}", e),
+                                }
+                            }
+                        }
+                    }
+                }
             }
             Message::SettingsSaved => {
                 // Settings saved - reload unit preference and fiat_price from cube settings
@@ -1016,7 +1246,49 @@ impl App {
                     self.cache.daemon_cache = daemon_cache;
                     return Task::done(Message::CacheUpdated);
                 }
-                Err(e) => tracing::error!("Failed to update daemon cache: {}", e),
+                Err(e) => {
+                    tracing::error!("Failed to update daemon cache: {}", e);
+                    // If the active Bitcoind daemon has failed and a Connect
+                    // Esplora fallback is configured (set when IBD completed),
+                    // restart using Connect — but only on transport/stopped
+                    // errors, not transient RPC application-level responses.
+                    if is_daemon_unreachable(&e) {
+                        let fallback = self
+                            .daemon
+                            .as_ref()
+                            .filter(|d| {
+                                matches!(
+                                    d.backend(),
+                                    DaemonBackend::EmbeddedCoincubed(Some(NodeType::Bitcoind))
+                                )
+                            })
+                            .and_then(|d| d.config())
+                            .and_then(|c| {
+                                c.fallback_esplora.as_ref().map(|fb| {
+                                    let mut new_cfg = c.clone();
+                                    new_cfg.bitcoin_backend = Some(
+                                        coincubed::config::BitcoinBackend::Esplora(fb.clone()),
+                                    );
+                                    new_cfg.fallback_esplora = None;
+                                    new_cfg
+                                })
+                            });
+                        if let Some(new_cfg) = fallback {
+                            let datadir = self.cache.datadir_path.clone();
+                            match self.load_daemon_config(datadir, new_cfg) {
+                                Ok(()) => {
+                                    info!("Switched to COINCUBE | Connect fallback after Bitcoind failure");
+                                    let cfg_task = self.update(Message::DaemonConfigLoaded(Ok(())));
+                                    return Task::batch([
+                                        cfg_task,
+                                        Task::done(Message::CacheUpdated),
+                                    ]);
+                                }
+                                Err(e) => error!("Failed to activate Connect fallback: {}", e),
+                            }
+                        }
+                    }
+                }
             },
             Message::CacheUpdated => {
                 // Update vault panels with cache if they exist
@@ -1068,6 +1340,21 @@ impl App {
             Message::LoadDaemonConfig(cfg) => {
                 // Only load daemon config if we have a vault (daemon and wallet exist)
                 if self.daemon.is_some() && self.wallet.is_some() {
+                    // If pending_bitcoind is being cleared (e.g. manual SwitchToBitcoind),
+                    // clear the associated sync progress fields so the vault overview
+                    // stops showing a stale "syncing" card.
+                    let pending_cleared = self
+                        .daemon
+                        .as_ref()
+                        .and_then(|d| d.config())
+                        .map(|c| c.pending_bitcoind.is_some())
+                        .unwrap_or(false)
+                        && cfg.pending_bitcoind.is_none();
+                    if pending_cleared {
+                        self.cache.node_bitcoind_sync_progress = None;
+                        self.cache.node_bitcoind_ibd = None;
+                        self.cache.node_bitcoind_last_log = None;
+                    }
                     let res = self.load_daemon_config(self.cache.datadir_path.clone(), *cfg);
                     return self.update(Message::DaemonConfigLoaded(res));
                 } else {
@@ -1115,10 +1402,13 @@ impl App {
             Message::View(view::Message::ToggleVault) => {
                 self.panels.vault_expanded = !self.panels.vault_expanded;
                 self.cache.vault_expanded = self.panels.vault_expanded;
-                // If we're expanding Vault, collapse Liquid and P2P
+
+                // If we're expanding Vault, collapse Liquid, USDt and P2P
                 if self.panels.vault_expanded {
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
+                    self.panels.usdt_expanded = false;
+                    self.cache.usdt_expanded = false;
                     self.panels.p2p_expanded = false;
                     self.cache.p2p_expanded = false;
                 }
@@ -1126,10 +1416,13 @@ impl App {
             Message::View(view::Message::ToggleLiquid) => {
                 self.panels.liquid_expanded = !self.panels.liquid_expanded;
                 self.cache.liquid_expanded = self.panels.liquid_expanded;
-                // If we're expanding Liquid, collapse Vault and P2P
+
+                // If we're expanding Liquid, collapse Vault, USDt and P2P
                 if self.panels.liquid_expanded {
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
+                    self.panels.usdt_expanded = false;
+                    self.cache.usdt_expanded = false;
                     self.panels.p2p_expanded = false;
                     self.cache.p2p_expanded = false;
                 }
@@ -1137,12 +1430,29 @@ impl App {
             Message::View(view::Message::ToggleP2P) => {
                 self.panels.p2p_expanded = !self.panels.p2p_expanded;
                 self.cache.p2p_expanded = self.panels.p2p_expanded;
-                // If we're expanding P2P, collapse Vault and Liquid
+
+                // If we're expanding P2P, collapse Vault, Liquid and USDt
                 if self.panels.p2p_expanded {
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
+                    self.panels.usdt_expanded = false;
+                    self.cache.usdt_expanded = false;
+                }
+            }
+            Message::View(view::Message::ToggleUsdt) => {
+                self.panels.usdt_expanded = !self.panels.usdt_expanded;
+                self.cache.usdt_expanded = self.panels.usdt_expanded;
+
+                // If we're expanding USDt, collapse Liquid and Vault
+                if self.panels.usdt_expanded {
+                    self.panels.liquid_expanded = false;
+                    self.cache.liquid_expanded = false;
+                    self.panels.vault_expanded = false;
+                    self.cache.vault_expanded = false;
+                    self.panels.p2p_expanded = false;
+                    self.cache.p2p_expanded = false;
                 }
             }
             Message::View(view::Message::OpenUrl(url)) => {
@@ -1257,6 +1567,9 @@ impl App {
                             Task::done(Message::View(view::Message::LiquidOverview(
                                 view::LiquidOverviewMessage::RefreshRequested,
                             ))),
+                            Task::done(Message::View(view::Message::UsdtOverview(
+                                view::UsdtOverviewMessage::RefreshRequested,
+                            ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
                             ))),
@@ -1277,6 +1590,9 @@ impl App {
                             ))),
                             Task::done(Message::View(view::Message::LiquidOverview(
                                 view::LiquidOverviewMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::UsdtOverview(
+                                view::UsdtOverviewMessage::RefreshRequested,
                             ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
@@ -1299,6 +1615,9 @@ impl App {
                             Task::done(Message::View(view::Message::LiquidOverview(
                                 view::LiquidOverviewMessage::RefreshRequested,
                             ))),
+                            Task::done(Message::View(view::Message::UsdtOverview(
+                                view::UsdtOverviewMessage::RefreshRequested,
+                            ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
                             ))),
@@ -1314,6 +1633,9 @@ impl App {
                             ))),
                             Task::done(Message::View(view::Message::LiquidOverview(
                                 view::LiquidOverviewMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::UsdtOverview(
+                                view::UsdtOverviewMessage::RefreshRequested,
                             ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
@@ -1346,11 +1668,42 @@ impl App {
         datadir_path: CoincubeDirectory,
         cfg: DaemonConfig,
     ) -> Result<(), Error> {
+        // Keep a copy of the running config so we can recover if the new
+        // daemon fails to start and the user would otherwise be stuck with
+        // no daemon at all.
+        let recovery_cfg = self.daemon.as_ref().and_then(|d| d.config().cloned());
+
         if let Some(daemon) = &self.daemon {
             Handle::current().block_on(async { daemon.stop().await })?;
         }
         let network = cfg.bitcoin_config.network;
-        let daemon = EmbeddedDaemon::start(cfg)?;
+        let daemon = match EmbeddedDaemon::start(cfg) {
+            Ok(d) => d,
+            Err(start_err) => {
+                // New daemon failed to start.  Try to bring the old one back
+                // so the app is left in a usable state rather than dead.
+                if let Some(old_cfg) = recovery_cfg {
+                    match EmbeddedDaemon::start(old_cfg) {
+                        Ok(old_daemon) => {
+                            self.daemon = Some(Arc::new(old_daemon));
+                            warn!(
+                                "New daemon failed to start; recovered previous daemon. \
+                                 Start error: {}",
+                                start_err
+                            );
+                        }
+                        Err(recovery_err) => {
+                            error!(
+                                "New daemon failed to start and recovery also failed: \
+                                 start={} recovery={}",
+                                start_err, recovery_err
+                            );
+                        }
+                    }
+                }
+                return Err(start_err.into());
+            }
+        };
         self.daemon = Some(Arc::new(daemon));
         let mut daemon_config_path = datadir_path
             .network_directory(network)
@@ -1389,19 +1742,26 @@ impl App {
         };
 
         // Overlay toast at bottom if present
-        match self.toasts.is_empty() {
+        match self.errors.is_empty() {
             true => content,
-            false => iced::widget::Stack::new()
-                .push(content)
-                .push(
-                    view::toast_overlay(
-                        self.toasts
-                            .iter()
-                            .map(|(id, _, msg, success)| (*id, msg.as_str(), *success)),
+            false => {
+                // Errors are already in chronological order (Vec is append-only)
+                let error_snapshot: Vec<_> = self.errors.iter().collect();
+
+                let theme = ui_theme::Theme::default();
+                iced::widget::Stack::new()
+                    .push(content)
+                    .push(
+                        view::toast_overlay(
+                            error_snapshot
+                                .iter()
+                                .map(|(id, _, level, msg)| (*id, *level, msg.as_str())),
+                            &theme,
+                        )
+                        .map(Message::View),
                     )
-                    .map(Message::View),
-                )
-                .into(),
+                    .into()
+            }
         }
     }
 

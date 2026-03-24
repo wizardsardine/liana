@@ -301,6 +301,71 @@ impl BreezClient {
         .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
+    /// Generate a Liquid address for receiving USDt (or any Liquid asset).
+    /// `amount` is in base units (e.g. 100_000_000 = 1 USDt); pass `None` for amountless.
+    /// `precision` is the asset's decimal precision (8 for USDt).
+    pub async fn receive_usdt(
+        &self,
+        asset_id: &str,
+        amount: Option<u64>,
+        precision: u8,
+    ) -> Result<breez::ReceivePaymentResponse, BreezError> {
+        let sdk = self.get_sdk()?;
+        let payer_amount = amount
+            .map(|a| safe_base_units_to_f64(a, precision))
+            .transpose()?;
+        let prepare = sdk
+            .prepare_receive_payment(&breez::PrepareReceiveRequest {
+                payment_method: breez::PaymentMethod::LiquidAddress,
+                amount: Some(breez::ReceiveAmount::Asset {
+                    asset_id: asset_id.to_string(),
+                    payer_amount,
+                }),
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+        sdk.receive_payment(&breez::ReceivePaymentRequest {
+            prepare_response: prepare,
+            description: None,
+            payer_note: None,
+            description_hash: None,
+        })
+        .await
+        .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    /// Prepare a USDt (or any Liquid asset) send payment.
+    /// `amount` is in base units; `precision` is the asset's decimal precision (8 for USDt).
+    /// `from_asset` enables cross-asset swaps via SideSwap when it differs from `asset_id`.
+    /// Returns a `PrepareSendResponse` that must be passed to `send_payment()`.
+    pub async fn prepare_send_asset(
+        &self,
+        destination: String,
+        to_asset_id: &str,
+        amount: u64,
+        precision: u8,
+        from_asset_id: Option<&str>,
+    ) -> Result<breez::PrepareSendResponse, BreezError> {
+        let receiver_amount = safe_base_units_to_f64(amount, precision)?;
+        // Cross-asset swaps (from_asset != to_asset) cannot use asset fees per SDK constraint
+        let is_cross_asset = from_asset_id.is_some_and(|from| from != to_asset_id);
+        self.get_sdk()?
+            .prepare_send_payment(&breez::PrepareSendRequest {
+                destination,
+                amount: Some(breez::PayAmount::Asset {
+                    to_asset: to_asset_id.to_string(),
+                    receiver_amount,
+                    estimate_asset_fees: if is_cross_asset { None } else { Some(true) },
+                    from_asset: from_asset_id.map(|s| s.to_string()),
+                }),
+                disable_mrh: None,
+                payment_timeout_sec: None,
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
     pub async fn pay_invoice(
         &self,
         invoice: String,
@@ -513,6 +578,28 @@ fn make_breez_stream(state: &BreezSubscriptionState) -> impl Stream<Item = breez
             std::future::pending().await
         },
     )
+}
+
+/// Converts `amount` base-units to an `f64` display value by dividing by `10^precision`.
+///
+/// Returns `Err(BreezError::Sdk)` if:
+/// - `amount` exceeds 2^53 (largest exactly-representable f64 integer), or
+/// - `precision` is so large that `10^precision` overflows `u64` (precision > 19).
+fn safe_base_units_to_f64(amount: u64, precision: u8) -> Result<f64, BreezError> {
+    const MAX_EXACT_F64_INT: u64 = 1u64 << 53;
+    if amount > MAX_EXACT_F64_INT {
+        return Err(BreezError::Sdk(format!(
+            "amount {} exceeds maximum exactly-representable f64 integer (2^53 = {})",
+            amount, MAX_EXACT_F64_INT,
+        )));
+    }
+    let divisor = 10_u64.checked_pow(precision as u32).ok_or_else(|| {
+        BreezError::Sdk(format!(
+            "precision {} causes 10^precision to overflow u64",
+            precision,
+        ))
+    })?;
+    Ok(amount as f64 / divisor as f64)
 }
 
 struct BreezEventListener {

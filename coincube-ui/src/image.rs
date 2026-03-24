@@ -19,47 +19,47 @@ pub fn coincube_window_icon() -> icon::Icon {
     icon::from_rgba(buffer, width, height).unwrap()
 }
 
-pub fn coincube_logotype() -> Svg<'static, Theme> {
+pub fn coincube_logotype<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(COINCUBE_LOGOTYPE);
     Svg::new(h)
 }
 
-pub fn coincube_logotype_grey() -> Svg<'static, Theme> {
+pub fn coincube_logotype_grey<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(COINCUBE_LOGOTYPE_GREY);
     Svg::new(h)
 }
 
 const CREATE_NEW_WALLET_ICON: &[u8] = include_bytes!("../static/icons/blueprint.svg");
 
-pub fn create_new_wallet_icon() -> Svg<'static, Theme> {
+pub fn create_new_wallet_icon<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(CREATE_NEW_WALLET_ICON);
     Svg::new(h)
 }
 
 const PARTICIPATE_IN_NEW_WALLET_ICON: &[u8] = include_bytes!("../static/icons/discussion.svg");
 
-pub fn participate_in_new_wallet_icon() -> Svg<'static, Theme> {
+pub fn participate_in_new_wallet_icon<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(PARTICIPATE_IN_NEW_WALLET_ICON);
     Svg::new(h)
 }
 
 const RESTORE_WALLET_ICON: &[u8] = include_bytes!("../static/icons/syncdata.svg");
 
-pub fn restore_wallet_icon() -> Svg<'static, Theme> {
+pub fn restore_wallet_icon<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(RESTORE_WALLET_ICON);
     Svg::new(h)
 }
 
 const SUCCESS_MARK_ICON: &[u8] = include_bytes!("../static/icons/success-mark.svg");
 
-pub fn success_mark_icon() -> Svg<'static, Theme> {
+pub fn success_mark_icon<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(SUCCESS_MARK_ICON);
     Svg::new(h)
 }
 
 const KEY_MARK_ICON: &[u8] = include_bytes!("../static/icons/key-mark.svg");
 
-pub fn key_mark_icon() -> Svg<'static, Theme> {
+pub fn key_mark_icon<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(KEY_MARK_ICON);
     Svg::new(h)
 }
@@ -67,7 +67,7 @@ pub fn key_mark_icon() -> Svg<'static, Theme> {
 const INHERITANCE_TEMPLATE_DESC: &[u8] =
     include_bytes!("../static/images/inheritance_template_description.svg");
 
-pub fn inheritance_template_description() -> Svg<'static, Theme> {
+pub fn inheritance_template_description<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(INHERITANCE_TEMPLATE_DESC);
     Svg::new(h)
 }
@@ -75,7 +75,7 @@ pub fn inheritance_template_description() -> Svg<'static, Theme> {
 const CUSTOM_TEMPLATE_DESC: &[u8] =
     include_bytes!("../static/images/custom_template_description.svg");
 
-pub fn custom_template_description() -> Svg<'static, Theme> {
+pub fn custom_template_description<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(CUSTOM_TEMPLATE_DESC);
     Svg::new(h)
 }
@@ -83,7 +83,7 @@ pub fn custom_template_description() -> Svg<'static, Theme> {
 const MULTISIG_SECURITY_TEMPLATE_DESC: &[u8] =
     include_bytes!("../static/images/multisig_security_template.svg");
 
-pub fn multisig_security_template_description() -> Svg<'static, Theme> {
+pub fn multisig_security_template_description<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(MULTISIG_SECURITY_TEMPLATE_DESC);
     Svg::new(h)
 }

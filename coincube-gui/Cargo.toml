@@ -35,7 +35,7 @@ iced = { version = "0.14.0", default-features = false, features = [
 	"qr_code",
 	"image-without-codecs",
 	"advanced",
-	"tiny-skia",
+	"wgpu",
 	"sipper",
 	"crisp",
 ] }
@@ -99,6 +99,8 @@ keyring = { version = "3.2.0", features = [
 encrypted_backup = { version = "0.0.1", default-features = false, features = [
 	"miniscript_12_0",
 ], package = "bitcoin-encrypted-backup" }
+
+zeroize = "1"
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features = false, features = [

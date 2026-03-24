@@ -8,9 +8,10 @@ use crate::{
         },
     },
     export::ImportExportMessage,
-    node::bitcoind::RpcAuthType,
+    node::bitcoind::{Bitcoind, RpcAuthType},
     services::fiat::{Currency, PriceSource},
 };
+use coincubed::config::BitcoindConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FeeratePriority {
@@ -46,7 +47,6 @@ pub trait Close {
 #[derive(Debug, Clone)]
 pub enum VaultReceiveMessage {
     Copy(String),
-    ClearToast,
 }
 
 #[derive(Debug, Clone)]
@@ -96,7 +96,10 @@ pub enum Message {
     PreselectPayment(Payment),
     ShowError(String),
     ShowSuccess(String),
+    ShowToast(log::Level, String),
     DismissToast(usize),
+    UsdtOverview(UsdtOverviewMessage),
+    ToggleUsdt,
     P2P(P2PMessage),
 }
 
@@ -146,9 +149,42 @@ pub enum SpendTxMessage {
     Confirm,
     Cancel,
     SelectHotSigner,
+    SelectBorderWallet(Fingerprint),
+    BorderWalletRecon(BorderWalletReconMessage),
     EditPsbt,
     PsbtEdited(String),
     Next,
+}
+
+/// Messages for the Border Wallet reconstruction wizard within the signing flow.
+#[derive(Clone)]
+pub enum BorderWalletReconMessage {
+    PhraseWordEdited(usize, String),
+    Next,
+    Previous,
+    ToggleCell(u16, u8),
+    UndoLastCell,
+    ClearPattern,
+    Cancel,
+}
+
+// Manual Debug impl to redact recovery phrase words from logs.
+impl std::fmt::Debug for BorderWalletReconMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PhraseWordEdited(idx, _) => f
+                .debug_tuple("PhraseWordEdited")
+                .field(idx)
+                .field(&"<redacted>")
+                .finish(),
+            Self::Next => write!(f, "Next"),
+            Self::Previous => write!(f, "Previous"),
+            Self::ToggleCell(r, c) => f.debug_tuple("ToggleCell").field(r).field(c).finish(),
+            Self::UndoLastCell => write!(f, "UndoLastCell"),
+            Self::ClearPattern => write!(f, "ClearPattern"),
+            Self::Cancel => write!(f, "Cancel"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -176,6 +212,43 @@ pub enum SettingsMessage {
     GeneralSection,
     DisplayUnitChanged(BitcoinDisplayUnit),
     Fiat(FiatMessage),
+    NodeSettings(NodeSettingsMessage),
+    InstallStatsSection,
+    InstallStats(InstallStatsViewMessage),
+    TestToast(log::Level),
+}
+
+#[derive(Debug, Clone)]
+pub enum InstallStatsViewMessage {
+    PeriodChanged(crate::services::coincube::StatsPeriod),
+    Refresh,
+}
+
+#[derive(Debug, Clone)]
+pub enum NodeSettingsMessage {
+    SwitchToConnect,
+    SwitchToBitcoind,
+    // COINCUBE | Connect re-authentication sub-flow (gates the Switch to Connect action)
+    ConnectLoginEmailChanged(String),
+    ConnectLoginRequestOtp,
+    ConnectLoginOtpRequested(Result<(), String>),
+    ConnectLoginOtpChanged(String),
+    ConnectLoginVerifyOtp,
+    ConnectLoginVerified(Result<String, String>), // Ok(jwt_token)
+    ConnectLoginCancel,
+    // "Set up local node while on Connect" sub-flow
+    SetupLocalNode,
+    SetupLocalNodeCancel,
+    SetupLocalNodeAddrChanged(String),
+    SetupLocalNodeAuthTypeSelected(RpcAuthType),
+    SetupLocalNodeFieldEdited(&'static str, String),
+    SetupLocalNodeConfirm,
+    // Mode picker: false = self-managed external, true = COINCUBE-managed internal
+    SetupLocalNodeModeSelected(bool),
+    // Internal (COINCUBE-managed) node setup progress
+    SetupLocalNodeDownloadProgress(f32),
+    SetupLocalNodeDownloadComplete(Result<Vec<u8>, String>),
+    SetupLocalNodeStartResult(Result<(BitcoindConfig, Bitcoind), String>),
 }
 
 #[derive(Debug, Clone)]
@@ -208,7 +281,6 @@ pub enum BuySellMessage {
     // state management
     SessionError(&'static str, String), // inline description + runtime error
     ResetWidget,
-    BackToAddressView,
     SelectBuyOrSell(super::buysell::BuyOrSell),
     StartSession,
     RefreshLogin {
@@ -261,8 +333,8 @@ pub enum FiatMessage {
 
 #[derive(Debug, Clone)]
 pub enum LiquidOverviewMessage {
-    Send,
-    Receive,
+    SendLbtc,
+    ReceiveLbtc,
     History,
     SelectTransaction(usize),
     DataLoaded {
@@ -274,14 +346,31 @@ pub enum LiquidOverviewMessage {
 }
 
 #[derive(Debug, Clone)]
+pub enum UsdtOverviewMessage {
+    SendUsdt,
+    ReceiveUsdt,
+    History,
+    SelectTransaction(usize),
+    DataLoaded {
+        usdt_balance: u64,
+        recent_payment: Vec<Payment>,
+    },
+    Error(String),
+    RefreshRequested,
+}
+
+#[derive(Debug, Clone)]
 pub enum LiquidSendMessage {
+    PresetAsset(crate::app::state::liquid::send::SendAsset),
     InputEdited(String),
-    InputValidated(Option<InputType>),
+    /// Carries (original_input, validation_result) so stale async results are discarded.
+    InputValidated(String, Option<InputType>),
     Send,
     History,
     SelectTransaction(usize),
     DataLoaded {
         balance: Amount,
+        usdt_balance: u64,
         recent_payment: Vec<Payment>,
     },
     Error(String),
@@ -316,16 +405,18 @@ pub enum SendPopupMessage {
     FiatClose,
     Done,
     Close,
+    ToggleSendAsset,
+    UsdtAmountEdited(String),
 }
 
 #[derive(Debug, Clone)]
 pub enum LiquidReceiveMessage {
     ToggleMethod(ReceiveMethod),
     Copy,
-    ClearToast,
     GenerateAddress,
     AddressGenerated(ReceiveMethod, Result<String, String>),
     AmountInput(String),
+    UsdtAmountInput(String),
     DescriptionInput(String),
     Error(String),
     ClearError,
@@ -338,6 +429,7 @@ pub enum ReceiveMethod {
     Lightning,
     Liquid,
     OnChain,
+    Usdt,
 }
 
 #[derive(Debug, Clone)]
@@ -379,6 +471,8 @@ pub enum HomeMessage {
     PreviousStep,
     Error(String),
     LiquidBalanceUpdated(Amount),
+    UsdtBalanceUpdated(u64),
+    UsdtBalanceFetchFailed,
     OnChainLimitsFetched {
         send: (u64, u64),    // (min_sat, max_sat)
         receive: (u64, u64), // (min_sat, max_sat)
@@ -406,6 +500,12 @@ pub enum HomeMessage {
         swap_id: String,
     },
     PendingTransferAnimationTick,
+    PendingAmountsUpdated {
+        liquid_send_sats: u64,
+        usdt_send_sats: u64,
+        liquid_receive_sats: u64,
+        usdt_receive_sats: u64,
+    },
 }
 
 #[derive(Debug, Clone)]

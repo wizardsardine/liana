@@ -4,6 +4,7 @@ use coincube_core::miniscript::bitcoin::{OutPoint, Txid};
 pub enum Menu {
     Home,
     Liquid(LiquidSubMenu),
+    Usdt(UsdtSubMenu),
     Vault(VaultSubMenu),
     BuySell,
     P2P(P2PSubMenu),
@@ -16,6 +17,14 @@ pub enum P2PSubMenu {
     MyTrades,
     CreateOrder,
     Settings,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UsdtSubMenu {
+    Overview,
+    Send,
+    Receive,
+    Transactions(Option<Txid>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

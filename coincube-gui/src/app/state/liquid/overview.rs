@@ -7,6 +7,7 @@ use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::widget::*;
 use iced::Task;
 
+use crate::app::breez::assets::usdt_asset_id;
 use crate::app::menu::{LiquidSubMenu, Menu};
 use crate::app::state::{redirect, State};
 use crate::app::{breez::BreezClient, cache::Cache};
@@ -42,7 +43,7 @@ impl LiquidOverview {
         Task::perform(
             async move {
                 let info = breez_client.info().await;
-                let payments = breez_client.list_payments(Some(2)).await;
+                let payments = breez_client.list_payments(Some(20)).await;
 
                 let balance = info
                     .as_ref()
@@ -90,7 +91,12 @@ impl State for LiquidOverview {
             view::dashboard(
                 menu,
                 cache,
-                view::liquid::transaction_detail_view(payment, fiat_converter, cache.bitcoin_unit),
+                view::liquid::transaction_detail_view(
+                    payment,
+                    fiat_converter,
+                    cache.bitcoin_unit,
+                    usdt_asset_id(self.breez_client.network()).unwrap_or(""),
+                ),
             )
         } else {
             let send_view = view::liquid::liquid_overview_view(
@@ -114,11 +120,18 @@ impl State for LiquidOverview {
     ) -> Task<Message> {
         if let Message::View(view::Message::LiquidOverview(ref msg)) = message {
             match msg {
-                view::LiquidOverviewMessage::Send => {
+                view::LiquidOverviewMessage::SendLbtc => {
                     return redirect(Menu::Liquid(LiquidSubMenu::Send));
                 }
-                view::LiquidOverviewMessage::Receive => {
-                    return redirect(Menu::Liquid(LiquidSubMenu::Receive));
+                view::LiquidOverviewMessage::ReceiveLbtc => {
+                    return Task::batch(vec![
+                        redirect(Menu::Liquid(LiquidSubMenu::Receive)),
+                        Task::done(Message::View(view::Message::LiquidReceive(
+                            view::LiquidReceiveMessage::ToggleMethod(
+                                view::ReceiveMethod::Lightning,
+                            ),
+                        ))),
+                    ]);
                 }
                 view::LiquidOverviewMessage::History => {
                     return redirect(Menu::Liquid(LiquidSubMenu::Transactions(None)));
@@ -138,22 +151,41 @@ impl State for LiquidOverview {
                 } => {
                     self.error = None;
                     self.btc_balance = *balance;
-                    self.recent_payments = recent_payment.clone();
 
-                    if !recent_payment.is_empty() {
+                    // Filter to L-BTC only first so SelectTransaction indices align with
+                    // what the UI renders. Fetch more items upstream so this list can
+                    // reach up to 5 entries even when USDt payments are interleaved.
+                    let lbtc_id =
+                        crate::app::breez::assets::lbtc_asset_id(self.breez_client.network())
+                            .unwrap_or("");
+                    let lbtc_payments: Vec<Payment> = recent_payment
+                        .iter()
+                        .filter(|payment| {
+                            !matches!(
+                                &payment.details,
+                                PaymentDetails::Liquid { asset_id, .. }
+                                    if !asset_id.is_empty() && asset_id != lbtc_id
+                            )
+                        })
+                        .take(5)
+                        .cloned()
+                        .collect();
+                    self.recent_payments = lbtc_payments.clone();
+
+                    if !lbtc_payments.is_empty() {
                         let fiat_converter: Option<view::FiatAmountConverter> =
                             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
-                        let txns = recent_payment
+                        let txns = lbtc_payments
                             .iter()
                             .map(|payment| {
-                                let amount = Amount::from_sat(payment.amount_sat);
                                 let status = payment.status;
                                 let time_ago = format_time_ago(payment.timestamp.into());
+                                let amount = Amount::from_sat(payment.amount_sat);
                                 let fiat_amount = fiat_converter
                                     .as_ref()
                                     .map(|c: &view::FiatAmountConverter| c.convert(amount));
 
-                                let desc = match &payment.details {
+                                let desc: &str = match &payment.details {
                                     PaymentDetails::Lightning {
                                         payer_note,
                                         description,
@@ -170,7 +202,6 @@ impl State for LiquidOverview {
                                         .as_ref()
                                         .filter(|s| !s.is_empty())
                                         .unwrap_or(description),
-
                                     PaymentDetails::Bitcoin { description, .. } => description,
                                 };
 

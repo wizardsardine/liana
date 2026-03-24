@@ -34,3 +34,22 @@ pub fn error(theme: &Theme) -> Style {
 pub fn success(theme: &Theme) -> Style {
     notification(&theme.colors.notifications.success)
 }
+
+pub fn warning(theme: &Theme) -> Style {
+    notification(&theme.colors.notifications.warning)
+}
+
+pub fn info(theme: &Theme) -> Style {
+    notification(&theme.colors.notifications.info)
+}
+
+/// Map log::Level to the notification palette for consistent styling
+pub fn palette_for_level<'a>(level: &log::Level, theme: &'a Theme) -> &'a ContainerPalette {
+    match level {
+        log::Level::Error => &theme.colors.notifications.error,
+        log::Level::Warn => &theme.colors.notifications.warning,
+        log::Level::Info => &theme.colors.notifications.info,
+        log::Level::Debug => &theme.colors.notifications.debug,
+        log::Level::Trace => &theme.colors.notifications.debug,
+    }
+}

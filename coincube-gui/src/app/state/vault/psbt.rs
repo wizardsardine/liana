@@ -4,13 +4,18 @@ use std::sync::Arc;
 use iced::Subscription;
 
 use coincube_core::{
+    border_wallet::{
+        build_mnemonic, sign_psbt_with_border_wallet, CellRef, GridRecoveryPhrase, OrderedPattern,
+        WordGrid, PATTERN_LENGTH,
+    },
     descriptors::CoincubePolicy,
     miniscript::bitcoin::{bip32::Fingerprint, psbt::Psbt, Network, Txid},
 };
 use coincubed::commands::CoinStatus;
 use iced::Task;
+use zeroize::{Zeroize, Zeroizing};
 
-use coincube_ui::component::toast;
+use coincube_ui::component::form;
 use coincube_ui::{widget::modal, widget::Element};
 
 use crate::daemon::model::LabelsLoader;
@@ -22,6 +27,7 @@ use crate::{
         message::Message,
         state::vault::label::{label_item_from_str, LabelsEdited},
         view,
+        view::BorderWalletReconMessage,
         wallet::{Wallet, WalletError},
     },
     daemon::{
@@ -460,15 +466,200 @@ impl Modal for DeleteModal {
     }
 }
 
+/// Reconstruction step within the border wallet signing flow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReconStep {
+    RecoveryPhrase,
+    Grid,
+}
+
+/// State for reconstructing a Border Wallet key to sign a PSBT.
+///
+/// This is embedded within `SignModal` and represents a multi-step wizard
+/// where the user re-enters their recovery phrase and pattern to transiently
+/// reconstruct the private key for signing.
+pub struct BorderWalletReconstructionState {
+    pub target_fingerprint: Fingerprint,
+    pub network: Network,
+    pub step: ReconStep,
+
+    // Recovery phrase (12 words) — zeroized on drop.
+    pub phrase_words: Vec<form::Value<String>>,
+    pub phrase_valid: bool,
+
+    // Grid + pattern
+    pub grid: Option<WordGrid>,
+    pub pattern: OrderedPattern,
+
+    // Derived checksum word — displayed for visual confirmation once pattern is complete.
+    pub checksum_word: Option<String>,
+
+    pub error: Option<String>,
+}
+
+impl BorderWalletReconstructionState {
+    fn new(target_fingerprint: Fingerprint, network: Network) -> Self {
+        Self {
+            target_fingerprint,
+            network,
+            step: ReconStep::RecoveryPhrase,
+            phrase_words: vec![form::Value::default(); 12],
+            phrase_valid: false,
+            grid: None,
+            pattern: OrderedPattern::new(),
+            checksum_word: None,
+            error: None,
+        }
+    }
+
+    /// Recompute the checksum word if the pattern is complete, otherwise clear it.
+    fn refresh_checksum(&mut self) {
+        if self.pattern.is_complete() {
+            if let Some(grid) = &self.grid {
+                if let Ok((_mnemonic, checksum)) = build_mnemonic(grid, &self.pattern) {
+                    self.checksum_word = Some(checksum.to_string());
+                    return;
+                }
+            }
+        }
+        self.checksum_word = None;
+    }
+
+    /// Handle a reconstruction message. Returns `Some((fingerprint, mnemonic))`
+    /// when reconstruction is complete and ready to sign.
+    fn update(
+        &mut self,
+        msg: BorderWalletReconMessage,
+    ) -> Option<(Fingerprint, coincube_core::bip39::Mnemonic)> {
+        match msg {
+            BorderWalletReconMessage::PhraseWordEdited(index, word) => {
+                if index < 12 {
+                    self.phrase_words[index].value = word;
+                    self.phrase_words[index].valid = true;
+                    self.phrase_words[index].warning = None;
+                }
+                self.phrase_valid = self.phrase_words.iter().all(|w| !w.value.trim().is_empty());
+            }
+            BorderWalletReconMessage::Next => {
+                self.error = None;
+                match self.step {
+                    ReconStep::RecoveryPhrase => {
+                        let phrase_str = Zeroizing::new(
+                            self.phrase_words
+                                .iter()
+                                .map(|w| w.value.trim().to_lowercase())
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        );
+                        match GridRecoveryPhrase::from_phrase(&phrase_str) {
+                            Ok(rp) => {
+                                self.grid = Some(rp.generate_grid());
+                                self.pattern = OrderedPattern::new();
+                                self.step = ReconStep::Grid;
+                            }
+                            Err(_) => {
+                                self.error = Some(
+                                    "Invalid recovery phrase. Please enter a valid 12-word BIP39 mnemonic."
+                                        .to_string(),
+                                );
+                            }
+                        }
+                    }
+                    ReconStep::Grid => {
+                        if !self.pattern.is_complete() {
+                            self.error = Some(format!(
+                                "Please select exactly {} cells. Currently selected: {}",
+                                PATTERN_LENGTH,
+                                self.pattern.len()
+                            ));
+                            return None;
+                        }
+                        if let Some(grid) = &self.grid {
+                            match build_mnemonic(grid, &self.pattern) {
+                                Ok((mnemonic, _checksum)) => {
+                                    return Some((self.target_fingerprint, mnemonic));
+                                }
+                                Err(e) => {
+                                    self.error =
+                                        Some(format!("Mnemonic construction failed: {:?}", e));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            BorderWalletReconMessage::Previous => {
+                self.error = None;
+                match self.step {
+                    ReconStep::RecoveryPhrase => {
+                        // Will be handled as cancel by the caller
+                    }
+                    ReconStep::Grid => {
+                        self.step = ReconStep::RecoveryPhrase;
+                    }
+                }
+            }
+            BorderWalletReconMessage::ToggleCell(row, col) => {
+                let cell = CellRef::new(row, col);
+                if let Some(pos) = self.pattern.cells().iter().position(|c| c == &cell) {
+                    self.pattern.remove_at(pos);
+                    self.error = None;
+                } else {
+                    match self.pattern.add(cell) {
+                        Ok(()) => self.error = None,
+                        Err(e) => self.error = Some(format!("{:?}", e)),
+                    }
+                }
+                self.refresh_checksum();
+            }
+            BorderWalletReconMessage::UndoLastCell => {
+                self.pattern.undo_last();
+                self.error = None;
+                self.refresh_checksum();
+            }
+            BorderWalletReconMessage::ClearPattern => {
+                self.pattern.clear();
+                self.error = None;
+                self.refresh_checksum();
+            }
+            BorderWalletReconMessage::Cancel => {
+                // Handled by the caller (SignModal) to clear the reconstruction state
+            }
+        }
+        None
+    }
+}
+
+/// Zeroize all secret-bearing buffers when the reconstruction state is dropped.
+///
+/// This covers the recovery phrase words, the checksum word, the grid
+/// (a deterministic permutation of BIP39 words derived from the phrase),
+/// and the pattern (cell selections that reconstruct the mnemonic).
+impl Drop for BorderWalletReconstructionState {
+    fn drop(&mut self) {
+        for word in &mut self.phrase_words {
+            word.value.zeroize();
+        }
+        if let Some(ref mut cw) = self.checksum_word {
+            cw.zeroize();
+        }
+        self.checksum_word = None;
+        self.grid = None;
+        self.pattern.clear();
+    }
+}
+
 pub struct SignModal {
     wallet: Arc<Wallet>,
     hws: HardwareWallets,
+    network: Network,
     error: Option<Error>,
     signing: HashSet<Fingerprint>,
     signed: HashSet<Fingerprint>,
     is_saved: bool,
     display_modal: bool,
     recovery_timelock: Option<u16>,
+    border_wallet_recon: Option<BorderWalletReconstructionState>,
 }
 
 impl SignModal {
@@ -484,16 +675,26 @@ impl SignModal {
             signing: HashSet::new(),
             hws: HardwareWallets::new(datadir_path, network).with_wallet(wallet.clone()),
             wallet,
+            network,
             error: None,
             signed,
             is_saved,
             display_modal: true,
             recovery_timelock,
+            border_wallet_recon: None,
         }
     }
 
     pub fn is_signing(&self) -> bool {
         !self.signing.is_empty()
+    }
+}
+
+/// Ensure any in-progress Border Wallet reconstruction state is dropped
+/// (triggering its own `Drop` zeroization) when the sign modal goes away.
+impl Drop for SignModal {
+    fn drop(&mut self) {
+        self.border_wallet_recon = None;
     }
 }
 
@@ -531,6 +732,55 @@ impl Modal for SignModal {
                     sign_psbt_with_hot_signer(self.wallet.clone(), tx.psbt.clone()),
                     |(fg, res)| Message::Signed(fg, res),
                 );
+            }
+            Message::View(view::Message::Spend(view::SpendTxMessage::SelectBorderWallet(fg))) => {
+                let network = self.network;
+                self.border_wallet_recon = Some(BorderWalletReconstructionState::new(fg, network));
+                // Keep modal displayed but now showing the reconstruction wizard
+            }
+            Message::View(view::Message::Spend(view::SpendTxMessage::BorderWalletRecon(msg))) => {
+                let is_cancel = matches!(msg, BorderWalletReconMessage::Cancel);
+                let is_previous_on_phrase = matches!(msg, BorderWalletReconMessage::Previous)
+                    && self
+                        .border_wallet_recon
+                        .as_ref()
+                        .is_some_and(|r| r.step == ReconStep::RecoveryPhrase);
+
+                if is_cancel || is_previous_on_phrase {
+                    self.border_wallet_recon = None;
+                    return Task::none();
+                }
+
+                if let Some(recon) = &mut self.border_wallet_recon {
+                    if let Some((fingerprint, mnemonic)) = recon.update(msg) {
+                        let network = recon.network;
+                        let psbt = tx.psbt.clone();
+                        // Clear reconstruction state (zeroizes phrase words via Drop).
+                        self.border_wallet_recon = None;
+                        self.display_modal = false;
+                        self.signing.insert(fingerprint);
+                        return Task::perform(
+                            async move {
+                                let result = sign_psbt_with_border_wallet(
+                                    mnemonic,
+                                    fingerprint,
+                                    network,
+                                    psbt,
+                                );
+                                match result {
+                                    Ok((fg, signed_psbt)) => (fg, Ok(signed_psbt)),
+                                    Err(e) => (
+                                        fingerprint,
+                                        Err(Error::Wallet(WalletError::BorderWallet(
+                                            e.to_string(),
+                                        ))),
+                                    ),
+                                }
+                            },
+                            |(fg, res)| Message::Signed(fg, res),
+                        );
+                    }
+                }
             }
             Message::Signed(fingerprint, res) => {
                 self.signing.remove(&fingerprint);
@@ -601,33 +851,41 @@ impl Modal for SignModal {
             },
             _ => {}
         };
+
+        // Use global toast overlay instead of local toast
         Task::none()
     }
 
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
-        let content = toast::Manager::new(
-            content,
-            view::vault::psbt::sign_action_toasts(&self.hws.list, &self.signing),
-        )
-        .into();
+        // Use global toast overlay instead of local toast
         if self.display_modal {
-            modal::Modal::new(
-                content,
-                view::vault::psbt::sign_action(
-                    &self.hws.list,
-                    &self.wallet.main_descriptor,
-                    self.wallet.signer.as_ref().map(|s| s.fingerprint()),
-                    self.wallet
-                        .signer
-                        .as_ref()
-                        .and_then(|signer| self.wallet.keys_aliases.get(&signer.fingerprint)),
-                    &self.signed,
-                    &self.signing,
-                    self.recovery_timelock,
-                ),
-            )
-            .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
-            .into()
+            if let Some(recon) = &self.border_wallet_recon {
+                modal::Modal::new(content, view::vault::psbt::border_wallet_recon_view(recon))
+                    .on_blur(Some(view::Message::Spend(
+                        view::SpendTxMessage::BorderWalletRecon(BorderWalletReconMessage::Cancel),
+                    )))
+                    .into()
+            } else {
+                modal::Modal::new(
+                    content,
+                    view::vault::psbt::sign_action(
+                        &self.hws.list,
+                        &self.wallet.main_descriptor,
+                        self.wallet.signer.as_ref().map(|s| s.fingerprint()),
+                        self.wallet
+                            .signer
+                            .as_ref()
+                            .and_then(|signer| self.wallet.keys_aliases.get(&signer.fingerprint)),
+                        &self.signed,
+                        &self.signing,
+                        self.recovery_timelock,
+                        &self.wallet.border_wallet_fingerprints,
+                        &self.wallet.keys_aliases,
+                    ),
+                )
+                .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+                .into()
+            }
         } else {
             content
         }
