@@ -318,3 +318,7 @@ pub fn star_fill_icon() -> Text<'static> {
 pub fn calendar_icon() -> Text<'static> {
     bootstrap_icon('\u{F1F4}')
 }
+
+pub fn chat_icon() -> Text<'static> {
+    bootstrap_icon('\u{F268}')
+}

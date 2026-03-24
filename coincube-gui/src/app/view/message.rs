@@ -446,6 +446,8 @@ pub enum P2PMessage {
     MostroSelectActiveNode(String),
     MostroNodeInfoReceived {
         currencies: Vec<String>,
+        min_order_sats: Option<i64>,
+        max_order_sats: Option<i64>,
     },
     ConfirmOrder,
     CancelConfirmation,
@@ -480,4 +482,18 @@ pub enum P2PMessage {
     },
     // Timer tick for trade detail countdown
     TradeTimerTick,
+    // Chat
+    OpenChat,
+    CloseChat,
+    ChatInputEdited(String),
+    SendChatMessage,
+    ChatMessageSent(Result<(), String>),
+    ToggleChatTradeInfo,
+    ToggleChatUserInfo,
+    // Dispute chat
+    OpenDisputeChat,
+    CloseDisputeChat,
+    DisputeChatInputEdited(String),
+    SendDisputeChatMessage,
+    DisputeChatMessageSent(Result<(), String>),
 }

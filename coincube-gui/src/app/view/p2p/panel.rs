@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use coincube_ui::{
@@ -6,7 +7,7 @@ use coincube_ui::{
     widget::*,
 };
 use iced::{
-    widget::{column, combo_box, container, qr_code, row, Space},
+    widget::{column, combo_box, container, qr_code, row, slider, Space},
     Alignment, Length, Subscription, Task,
 };
 
@@ -28,6 +29,31 @@ use super::components::{
 };
 use super::config::{load_mostro_config, save_mostro_config, MostroConfig, MostroNode};
 
+/// Per-field validation warnings for the order creation form.
+#[derive(Default)]
+struct FormValidation {
+    amount: Option<&'static str>,
+    max_amount: Option<&'static str>,
+    sats: Option<&'static str>,
+    /// Owned string for dynamic range messages (includes node limits).
+    sats_range: Option<String>,
+    premium: Option<&'static str>,
+    payment: Option<&'static str>,
+    /// True when node limits haven't been fetched yet (market price only).
+    node_limits_missing: bool,
+}
+
+impl FormValidation {
+    fn has_errors(&self) -> bool {
+        self.amount.is_some()
+            || self.max_amount.is_some()
+            || self.sats.is_some()
+            || self.sats_range.is_some()
+            || self.premium.is_some()
+            || self.payment.is_some()
+    }
+}
+
 /// Returns true if this DM action starts a countdown timer.
 fn is_countdown_action(action: &str) -> bool {
     matches!(
@@ -46,13 +72,82 @@ fn detail_row(label: impl ToString, value: impl ToString) -> Element<'static, vi
     .into()
 }
 
+/// Chat bubble style for own messages (accent tint, rounded).
+fn chat_bubble_own(_theme: &coincube_ui::theme::Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(iced::Background::Color(iced::color!(0x2A1A00))),
+        border: iced::Border {
+            radius: 14.0.into(),
+            width: 1.0,
+            color: iced::color!(0x5A3A10),
+        },
+        ..Default::default()
+    }
+}
+
+/// Chat bubble style for counterparty messages (dark foreground, rounded).
+fn chat_bubble_peer(theme: &coincube_ui::theme::Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(iced::Background::Color(theme.colors.general.foreground)),
+        border: iced::Border {
+            radius: 14.0.into(),
+            width: 1.0,
+            color: iced::color!(0x3F3F3F),
+        },
+        ..Default::default()
+    }
+}
+
+/// Info row style (card-like background for the trade info section in chat).
+fn chat_info_card(theme: &coincube_ui::theme::Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(iced::Background::Color(theme.colors.general.foreground)),
+        border: iced::Border {
+            radius: 8.0.into(),
+            width: 1.0,
+            color: iced::color!(0x2A2A2A),
+        },
+        ..Default::default()
+    }
+}
+
+/// Extract the text content from a SendDm payload JSON.
+fn extract_chat_text(payload_json: &str) -> String {
+    // Payload is serialized as e.g. {"TextMessage":"hello"}
+    if let Ok(Some(mostro_core::message::Payload::TextMessage(text))) =
+        serde_json::from_str::<Option<mostro_core::message::Payload>>(payload_json)
+    {
+        return text;
+    }
+    // Fallback: try to parse as a simple JSON string value
+    if let Ok(text) = serde_json::from_str::<String>(payload_json) {
+        return text;
+    }
+    payload_json.to_string()
+}
+
+/// Data for a chat message whose send is in-flight.
+struct PendingChatMessage {
+    order_id: String,
+    cube_name: String,
+    payload: String,
+    timestamp: u64,
+    /// Original input text, restored on send failure.
+    original_text: String,
+}
+
 pub struct P2PPanel {
     wallet: Option<Arc<Wallet>>,
     mnemonic: String,
-    // Node currencies (fetched from info event, empty = use fallback)
+    // Node info (fetched from info event)
     node_currencies: Vec<String>,
+    node_min_order_sats: Option<i64>,
+    node_max_order_sats: Option<i64>,
     // Order book state
     orders: Vec<P2POrder>,
+    /// Order IDs we created locally — used to ensure is_mine stays true even
+    /// if the subscription delivers the event before the session is persisted.
+    my_created_order_ids: HashSet<String>,
     buy_sell_filter: BuySellFilter,
     selected_order: Option<String>,
     // Trades state
@@ -87,6 +182,19 @@ pub struct P2PPanel {
     trade_rating: u8, // 1-5 star rating for counterparty
     // Hold invoice to display (seller must pay after taking a buy order)
     pending_payment_invoice: Option<(String, String, Option<i64>, qr_code::Data)>, // (order_id, invoice, amount_sats, qr_data)
+    // Chat
+    show_chat: bool,
+    chat_input: form::Value<String>,
+    /// Holds the data for a chat message that is currently being sent.
+    /// On success the message is appended to the transcript; on error the
+    /// input text is restored and no phantom entry is created.
+    pending_chat_message: Option<PendingChatMessage>,
+    chat_show_trade_info: bool,
+    chat_show_user_info: bool,
+    // Dispute chat
+    show_dispute_chat: bool,
+    dispute_chat_input: form::Value<String>,
+    pending_dispute_chat_message: Option<PendingChatMessage>,
     // Mostro settings
     mostro_config: MostroConfig,
     new_relay_input: form::Value<String>,
@@ -100,7 +208,10 @@ impl P2PPanel {
             wallet,
             mnemonic,
             node_currencies: Vec::new(),
+            node_min_order_sats: None,
+            node_max_order_sats: None,
             orders: Vec::new(),
+            my_created_order_ids: HashSet::new(),
             buy_sell_filter: BuySellFilter::Sell,
             selected_order: None,
             trades: Vec::new(),
@@ -136,6 +247,14 @@ impl P2PPanel {
             trade_action_loading: false,
             trade_rating: 0,
             pending_payment_invoice: None,
+            show_chat: false,
+            chat_input: Default::default(),
+            pending_chat_message: None,
+            chat_show_trade_info: false,
+            chat_show_user_info: false,
+            show_dispute_chat: false,
+            dispute_chat_input: Default::default(),
+            pending_dispute_chat_message: None,
             mostro_config: load_mostro_config(),
             new_relay_input: Default::default(),
             new_node_name_input: Default::default(),
@@ -286,6 +405,111 @@ impl P2PPanel {
         !self.create_min_amount.value.is_empty() && !self.create_max_amount.value.is_empty()
     }
 
+    /// Validate the create-order form and return per-field warnings.
+    fn validate_order_form(&self) -> FormValidation {
+        let is_range = self.is_range_order();
+        let effective_pricing_fixed = !is_range && self.create_pricing_mode == PricingMode::Fixed;
+
+        let mut v = FormValidation::default();
+
+        // Maximum reasonable fiat amount (no real P2P trade exceeds this in any currency)
+        const MAX_FIAT: i64 = 999_999_999;
+
+        // --- Amount (fiat — must be a positive integer, matching Mostro's i64 field) ---
+        let min_amt: Option<i64> = self.create_min_amount.value.parse::<i64>().ok();
+        if self.create_min_amount.value.is_empty() {
+            v.amount = Some("Amount is required");
+        } else if min_amt.is_none() {
+            v.amount = Some("Enter a whole number");
+        } else if min_amt.unwrap_or(0) <= 0 {
+            v.amount = Some("Amount must be greater than 0");
+        } else if min_amt.unwrap_or(0) > MAX_FIAT {
+            v.amount = Some("Amount is too large");
+        }
+
+        // --- Max amount (range — must be a positive integer greater than min) ---
+        if is_range {
+            let max_amt: Option<i64> = self.create_max_amount.value.parse::<i64>().ok();
+            if max_amt.is_none() {
+                v.max_amount = Some("Enter a whole number");
+            } else if max_amt.unwrap_or(0) <= 0 {
+                v.max_amount = Some("Max must be greater than 0");
+            } else if max_amt.unwrap_or(0) > MAX_FIAT {
+                v.max_amount = Some("Max amount is too large");
+            } else if let (Some(min), Some(max)) = (min_amt, max_amt) {
+                if max <= min {
+                    v.max_amount = Some("Max must be greater than min");
+                }
+            }
+        }
+
+        // --- Sats amount (fixed price — validated against node limits) ---
+        if effective_pricing_fixed {
+            let node_min = self.node_min_order_sats;
+            let node_max = self.node_max_order_sats;
+
+            if self.create_sats_amount.value.is_empty() {
+                v.sats = Some("Sats amount is required for fixed price");
+            } else if let Ok(sats) = self.create_sats_amount.value.parse::<i64>() {
+                if sats <= 0 {
+                    v.sats = Some("Sats must be greater than 0");
+                } else if node_min.is_none() || node_max.is_none() {
+                    // Node limits not loaded — block until we know the range
+                    v.sats = Some("Waiting for node limits...");
+                } else {
+                    if let Some(min) = node_min {
+                        if sats < min {
+                            v.sats_range = Some(format!(
+                                "Below minimum ({} sats)",
+                                super::components::format_with_separators(min as u64),
+                            ));
+                        }
+                    }
+                    if v.sats_range.is_none() {
+                        if let Some(max) = node_max {
+                            if sats > max {
+                                v.sats_range = Some(format!(
+                                    "Above maximum ({} sats)",
+                                    super::components::format_with_separators(max as u64),
+                                ));
+                            }
+                        }
+                    }
+                }
+            } else {
+                v.sats = Some("Enter a valid number");
+            }
+        }
+
+        // --- Market price: warn if node limits not loaded ---
+        if !effective_pricing_fixed
+            && (self.node_min_order_sats.is_none() || self.node_max_order_sats.is_none())
+            && !self.create_min_amount.value.is_empty()
+        {
+            v.node_limits_missing = true;
+        }
+
+        // --- Premium ---
+        if !effective_pricing_fixed && !self.create_premium.value.is_empty() {
+            if let Ok(p) = self.create_premium.value.parse::<i64>() {
+                if !(-100..=100).contains(&p) {
+                    v.premium = Some("Premium must be between -100 and 100");
+                }
+            } else {
+                v.premium = Some("Enter a valid number");
+            }
+        }
+
+        // --- Payment methods ---
+        let has_payment = !self.create_payment_methods.is_empty()
+            || !self.create_custom_payment_method.value.trim().is_empty();
+        if !has_payment {
+            v.payment = Some("Select at least one payment method");
+        }
+
+        v
+    }
+
     /// Build a `TradeActionData` for the selected trade, dispatch the given async
     /// action, and route the result to `TradeActionResult`.
     fn perform_trade_action<F, Fut>(&mut self, invoice: Option<String>, action: F) -> Task<Message>
@@ -412,6 +636,9 @@ impl P2PPanel {
             &self.create_pricing_mode
         };
 
+        // Form validation (computed each render — only show after user has typed something)
+        let v = self.validate_order_form();
+
         // Order type toggle
         let buy_btn = if self.create_order_type == OrderType::Buy {
             button::primary(None, "Buy")
@@ -485,28 +712,49 @@ impl P2PPanel {
             OrderType::Sell => "Enter amount you want to receive",
         };
 
-        let amount_card = card::simple(
-            column![
-                p2_regular(amount_label).style(theme::text::secondary),
-                row![
-                    icon::coins_icon().style(theme::text::success),
-                    form::Form::new_amount_numeric("Amount", &self.create_min_amount, |v| {
-                        view::Message::P2P(P2PMessage::MinAmountEdited(v))
-                    })
-                    .padding(10),
-                    form::Form::new_amount_numeric(
-                        "Max (optional)",
-                        &self.create_max_amount,
-                        |v| { view::Message::P2P(P2PMessage::MaxAmountEdited(v)) }
-                    )
-                    .padding(10),
-                ]
-                .spacing(8)
-                .align_y(iced::alignment::Vertical::Center),
+        let mut amount_col = column![
+            p2_regular(amount_label).style(theme::text::secondary),
+            row![
+                icon::coins_icon().style(theme::text::success),
+                form::Form::new_amount_sats("Amount", &self.create_min_amount, |v| {
+                    view::Message::P2P(P2PMessage::MinAmountEdited(v))
+                })
+                .padding(10),
+                form::Form::new_amount_sats("Max (optional)", &self.create_max_amount, |v| {
+                    view::Message::P2P(P2PMessage::MaxAmountEdited(v))
+                })
+                .padding(10),
             ]
-            .spacing(12),
-        )
-        .width(Length::Fill);
+            .spacing(8)
+            .align_y(iced::alignment::Vertical::Center),
+        ]
+        .spacing(12);
+        // Show amount warning (only after user started typing to avoid initial noise)
+        if let Some(warn) = v.amount {
+            if !self.create_min_amount.value.is_empty() {
+                amount_col = amount_col.push(caption(warn).style(theme::text::warning));
+            }
+        }
+        if let Some(warn) = v.max_amount {
+            amount_col = amount_col.push(caption(warn).style(theme::text::warning));
+        }
+        // Show node order limits as a hint, or a warning if not loaded
+        if let (Some(min), Some(max)) = (self.node_min_order_sats, self.node_max_order_sats) {
+            amount_col = amount_col.push(
+                caption(format!(
+                    "Node accepts orders between {} and {} sats",
+                    super::components::format_with_separators(min as u64),
+                    super::components::format_with_separators(max as u64),
+                ))
+                .style(theme::text::secondary),
+            );
+        } else if v.node_limits_missing {
+            amount_col = amount_col.push(
+                caption("Node limits not loaded — order may be rejected")
+                    .style(theme::text::warning),
+            );
+        }
+        let amount_card = card::simple(amount_col).width(Length::Fill);
 
         // Payment method card
         let pm_combo = combo_box(
@@ -542,29 +790,30 @@ impl P2PPanel {
             .into()
         };
 
-        let payment_card = card::simple(
-            column![
-                p2_regular("Payment methods for").style(theme::text::secondary),
-                row![icon::card_icon().style(theme::text::success), pm_combo,]
-                    .spacing(12)
-                    .align_y(iced::alignment::Vertical::Center),
-                pm_tags,
-                form::Form::new_trimmed(
-                    "Enter custom payment method",
-                    &self.create_custom_payment_method,
-                    |v| { view::Message::P2P(P2PMessage::CustomPaymentMethodEdited(v)) }
-                )
-                .padding(10),
-                if self.create_custom_payment_method.value.is_empty() {
-                    button::secondary(None, "Add Custom")
-                } else {
-                    button::secondary(None, "Add Custom")
-                        .on_press(view::Message::P2P(P2PMessage::AddCustomPaymentMethod))
-                },
-            ]
-            .spacing(12),
-        )
-        .width(Length::Fill);
+        let mut payment_col = column![
+            p2_regular("Payment methods for").style(theme::text::secondary),
+            row![icon::card_icon().style(theme::text::success), pm_combo,]
+                .spacing(12)
+                .align_y(iced::alignment::Vertical::Center),
+            pm_tags,
+            form::Form::new_trimmed(
+                "Enter custom payment method",
+                &self.create_custom_payment_method,
+                |v| { view::Message::P2P(P2PMessage::CustomPaymentMethodEdited(v)) }
+            )
+            .padding(10),
+            if self.create_custom_payment_method.value.is_empty() {
+                button::secondary(None, "Add Custom")
+            } else {
+                button::secondary(None, "Add Custom")
+                    .on_press(view::Message::P2P(P2PMessage::AddCustomPaymentMethod))
+            },
+        ]
+        .spacing(12);
+        if let Some(warn) = v.payment {
+            payment_col = payment_col.push(caption(warn).style(theme::text::warning));
+        }
+        let payment_card = card::simple(payment_col).width(Length::Fill);
 
         // Price type card
         let market_btn = if *effective_pricing_mode == PricingMode::Market {
@@ -602,48 +851,81 @@ impl P2PPanel {
         .width(Length::Fill);
 
         // Pricing-mode-dependent field card
-        let pricing_card: Element<'a, view::Message> =
-            if *effective_pricing_mode == PricingMode::Fixed {
-                card::simple(
-                    column![
-                        p2_regular("Sats Amount").style(theme::text::secondary),
-                        row![
-                            icon::bitcoin_icon().style(theme::text::success),
-                            form::Form::new_amount_sats(
-                                "Enter sats amount",
-                                &self.create_sats_amount,
-                                |v| { view::Message::P2P(P2PMessage::SatsAmountEdited(v)) }
-                            )
-                            .padding(10),
-                        ]
-                        .spacing(12)
-                        .align_y(iced::alignment::Vertical::Center),
-                    ]
-                    .spacing(12),
-                )
-                .width(Length::Fill)
-                .into()
+        let pricing_card: Element<'a, view::Message> = if *effective_pricing_mode
+            == PricingMode::Fixed
+        {
+            let mut sats_col = column![
+                p2_regular("Sats Amount").style(theme::text::secondary),
+                row![
+                    icon::bitcoin_icon().style(theme::text::success),
+                    form::Form::new_amount_sats(
+                        "Enter sats amount",
+                        &self.create_sats_amount,
+                        |v| { view::Message::P2P(P2PMessage::SatsAmountEdited(v)) }
+                    )
+                    .padding(10),
+                ]
+                .spacing(12)
+                .align_y(iced::alignment::Vertical::Center),
+            ]
+            .spacing(12);
+            // Show sats warnings (range warnings only after user started typing)
+            if let Some(warn) = v.sats {
+                if !self.create_sats_amount.value.is_empty() {
+                    sats_col = sats_col.push(caption(warn).style(theme::text::warning));
+                }
+            } else if let Some(ref warn) = v.sats_range {
+                sats_col = sats_col.push(caption(warn.as_str()).style(theme::text::warning));
+            }
+            // Show node limits hint
+            if let (Some(min), Some(max)) = (self.node_min_order_sats, self.node_max_order_sats) {
+                sats_col = sats_col.push(
+                    caption(format!(
+                        "Allowed: {} - {} sats",
+                        super::components::format_with_separators(min as u64),
+                        super::components::format_with_separators(max as u64),
+                    ))
+                    .style(theme::text::secondary),
+                );
+            }
+            card::simple(sats_col).width(Length::Fill).into()
+        } else {
+            let premium_val: f32 = self.create_premium.value.parse::<f32>().unwrap_or(0.0);
+            // Dynamic slider range: expand beyond ±10 if the current value is outside
+            let slider_min: f32 = (-10.0f32).min(premium_val).max(-100.0);
+            let slider_max: f32 = (10.0f32).max(premium_val).min(100.0);
+            let premium_int = premium_val as i64;
+            let premium_label = if premium_int > 0 {
+                format!("+{}%", premium_int)
             } else {
-                card::simple(
-                    column![
-                        p2_regular("Premium (%)").style(theme::text::secondary),
-                        row![
-                            icon::coins_icon().style(theme::text::success),
-                            form::Form::new_amount_numeric(
-                                "Enter premium percentage",
-                                &self.create_premium,
-                                |v| { view::Message::P2P(P2PMessage::PremiumEdited(v)) }
-                            )
-                            .padding(10),
-                        ]
-                        .spacing(12)
-                        .align_y(iced::alignment::Vertical::Center),
-                    ]
-                    .spacing(12),
-                )
-                .width(Length::Fill)
-                .into()
+                format!("{}%", premium_int)
             };
+
+            let mut premium_col = column![
+                p2_regular("Premium").style(theme::text::secondary),
+                row![
+                    icon::coins_icon().style(theme::text::success),
+                    form::Form::new_trimmed("e.g. 5 or -3", &self.create_premium, |v| {
+                        view::Message::P2P(P2PMessage::PremiumEdited(v))
+                    })
+                    .padding(10),
+                    p1_bold(premium_label),
+                ]
+                .spacing(12)
+                .align_y(iced::alignment::Vertical::Center),
+                slider(slider_min..=slider_max, premium_val, |v: f32| {
+                    view::Message::P2P(P2PMessage::PremiumEdited((v as i64).to_string()))
+                })
+                .step(1.0),
+            ]
+            .spacing(12);
+            if !self.create_premium.value.is_empty() {
+                if let Some(warn) = v.premium {
+                    premium_col = premium_col.push(caption(warn).style(theme::text::warning));
+                }
+            }
+            card::simple(premium_col).width(Length::Fill).into()
+        };
 
         // Lightning address card (Buy orders only)
         let lightning_address_card: Element<'a, view::Message> =
@@ -679,21 +961,9 @@ impl P2PPanel {
             column![].into()
         };
 
-        // Submit: validate all required fields parse correctly
-        let has_amount = self.create_min_amount.value.parse::<f64>().is_ok();
-        let has_payment_method = !self.create_payment_methods.is_empty()
-            || !self.create_custom_payment_method.value.is_empty();
-        let pricing_valid = if is_range {
-            // Range orders require max_amount
-            self.create_max_amount.value.parse::<f64>().is_ok()
-        } else if *effective_pricing_mode == PricingMode::Fixed {
-            // Fixed pricing requires sats amount
-            self.create_sats_amount.value.parse::<u64>().is_ok()
-        } else {
-            true
-        };
+        // Submit: use form validation
         let can_submit =
-            has_amount && has_payment_method && pricing_valid && !self.order_submitting;
+            !v.has_errors() && !self.order_submitting && !self.create_min_amount.value.is_empty();
 
         let submit_btn = if self.order_submitting {
             button::primary(None, "Submit").width(Length::Fill)
@@ -887,12 +1157,12 @@ impl P2PPanel {
                 .spacing(8),
                 detail_row(
                     "Amount",
-                    &format!("{:.2} {}", trade.fiat_amount, trade.fiat_currency)
+                    format!("{:.2} {}", trade.fiat_amount, trade.fiat_currency)
                 ),
                 if trade.is_fixed_price() {
-                    detail_row("Sats", &format!("{}", trade.sats_amount.unwrap_or(0)))
+                    detail_row("Sats", format!("{}", trade.sats_amount.unwrap_or(0)))
                 } else {
-                    detail_row("Price", &format!("Market {}", trade.premium_text()))
+                    detail_row("Price", format!("Market {}", trade.premium_text()))
                 },
                 if !trade.payment_method.is_empty() {
                     detail_row("Payment", &trade.payment_method)
@@ -1078,13 +1348,19 @@ impl P2PPanel {
                             p1_bold("Admin reviewing dispute"),
                             p2_regular(
                                 "A dispute resolver has been assigned to your case. \
-                                They will contact you to help resolve the issue.",
+                                Use the chat below to communicate with the admin.",
                             )
                             .style(theme::text::secondary),
                         ]
                         .spacing(4),
                     )
                     .width(Length::Fill),
+                );
+                // Chat with Admin button
+                actions = actions.push(
+                    button::primary(Some(icon::chat_icon()), "Chat with Admin")
+                        .on_press(p2p(P2PMessage::OpenDisputeChat))
+                        .width(Length::Fill),
                 );
             }
 
@@ -1528,51 +1804,79 @@ impl P2PPanel {
             }
 
             // --- Cancel / Dispute footer buttons ---
-            // Hide after sats are released (too late to cancel/dispute meaningfully)
-            let past_release = matches!(dm_action, Some("Released" | "Release" | "PaymentFailed"));
-            if !loading && !past_release {
+            // Dispute only available once the trade is active (hold invoice paid)
+            let can_dispute = matches!(
+                trade.status,
+                TradeStatus::Active | TradeStatus::FiatSent | TradeStatus::CooperativelyCanceled
+            );
+            // Hide once the trade is complete or past release
+            let trade_complete = matches!(
+                dm_action,
+                Some(
+                    "Released"
+                        | "Release"
+                        | "HoldInvoicePaymentSettled"
+                        | "PurchaseCompleted"
+                        | "Rate"
+                        | "RateReceived"
+                        | "AdminSettled"
+                        | "AdminCanceled"
+                        | "CooperativeCancelAccepted"
+                )
+            ) || matches!(
+                trade.status,
+                TradeStatus::Success | TradeStatus::Canceled | TradeStatus::CooperativelyCanceled
+            );
+            if !loading && !trade_complete {
                 if cancel_initiated_by_peer {
-                    actions = actions.push(
-                        row![
-                            button::secondary(None, "Close")
-                                .on_press(p2p(P2PMessage::CloseTradeDetail))
-                                .width(Length::Fill),
-                            button::alert(None, "Accept Cancel")
-                                .on_press(p2p(P2PMessage::CancelTrade))
-                                .width(Length::Fill),
+                    let mut btn_row = row![
+                        button::secondary(None, "Close")
+                            .on_press(p2p(P2PMessage::CloseTradeDetail))
+                            .width(Length::Fill),
+                        button::alert(None, "Accept Cancel")
+                            .on_press(p2p(P2PMessage::CancelTrade))
+                            .width(Length::Fill),
+                    ]
+                    .spacing(8);
+                    if can_dispute {
+                        btn_row = btn_row.push(
                             button::alert(None, "Dispute")
                                 .on_press(p2p(P2PMessage::OpenDispute))
                                 .width(Length::Fill),
-                        ]
-                        .spacing(8),
-                    );
+                        );
+                    }
+                    actions = actions.push(btn_row);
                 } else if cancel_initiated_by_you {
-                    actions = actions.push(
-                        row![
-                            button::secondary(None, "Close")
-                                .on_press(p2p(P2PMessage::CloseTradeDetail))
-                                .width(Length::Fill),
+                    let mut btn_row = row![button::secondary(None, "Close")
+                        .on_press(p2p(P2PMessage::CloseTradeDetail))
+                        .width(Length::Fill),]
+                    .spacing(8);
+                    if can_dispute {
+                        btn_row = btn_row.push(
                             button::alert(None, "Dispute")
                                 .on_press(p2p(P2PMessage::OpenDispute))
                                 .width(Length::Fill),
-                        ]
-                        .spacing(8),
-                    );
+                        );
+                    }
+                    actions = actions.push(btn_row);
                 } else if !dispute_initiated {
-                    actions = actions.push(
-                        row![
-                            button::secondary(None, "Close")
-                                .on_press(p2p(P2PMessage::CloseTradeDetail))
-                                .width(Length::Fill),
-                            button::secondary(None, "Cancel")
-                                .on_press(p2p(P2PMessage::CancelTrade))
-                                .width(Length::Fill),
+                    let mut btn_row = row![
+                        button::secondary(None, "Close")
+                            .on_press(p2p(P2PMessage::CloseTradeDetail))
+                            .width(Length::Fill),
+                        button::secondary(None, "Cancel")
+                            .on_press(p2p(P2PMessage::CancelTrade))
+                            .width(Length::Fill),
+                    ]
+                    .spacing(8);
+                    if can_dispute {
+                        btn_row = btn_row.push(
                             button::alert(None, "Dispute")
                                 .on_press(p2p(P2PMessage::OpenDispute))
                                 .width(Length::Fill),
-                        ]
-                        .spacing(8),
-                    );
+                        );
+                    }
+                    actions = actions.push(btn_row);
                 } else {
                     // In dispute — only Close
                     actions = actions.push(
@@ -1598,10 +1902,372 @@ impl P2PPanel {
             );
         }
 
-        column![info_card, id_card, actions]
+        // ── Contact button ──
+        // Show contact/chat button for active trades only (not completed/canceled)
+        let chat_available = matches!(
+            trade.status,
+            TradeStatus::Active
+                | TradeStatus::FiatSent
+                | TradeStatus::SettledHoldInvoice
+                | TradeStatus::CooperativelyCanceled
+                | TradeStatus::Dispute
+                | TradeStatus::PaymentFailed
+        );
+
+        let mut content = column![info_card, id_card, actions]
             .spacing(12)
+            .width(Length::Fill);
+
+        if chat_available {
+            content = content.push(
+                button::secondary(Some(icon::chat_icon()), "Contact")
+                    .on_press(p2p(P2PMessage::OpenChat))
+                    .width(Length::Fill),
+            );
+        }
+
+        content.into()
+    }
+
+    fn chat_view<'a>(&'a self, trade: &'a P2PTrade) -> Element<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+
+        let chat_enabled = matches!(
+            trade.status,
+            TradeStatus::Active
+                | TradeStatus::FiatSent
+                | TradeStatus::SettledHoldInvoice
+                | TradeStatus::CooperativelyCanceled
+                | TradeStatus::Dispute
+                | TradeStatus::PaymentFailed
+        );
+
+        let cube_name = self
+            .wallet
+            .as_ref()
+            .map(|w| w.name.clone())
+            .unwrap_or_else(|| "default".to_string());
+        let all_messages = super::mostro::get_trade_messages(&cube_name, &trade.id);
+        let chat_messages: Vec<&super::mostro::TradeMessage> = all_messages
+            .iter()
+            .filter(|m| m.action == "SendDm")
+            .collect();
+
+        // Nicknames for chat bubbles
+        let peer_nick = trade
+            .counterparty_pubkey
+            .as_deref()
+            .map(super::mostro::nickname_from_pubkey)
+            .unwrap_or_else(|| "Peer".to_string());
+
+        // ── Accordion tab buttons (Trade Information / User Information) ──
+        let trade_info_btn = if self.chat_show_trade_info {
+            button::primary(Some(icon::receipt_icon()), "Trade Information")
+                .on_press(p2p(P2PMessage::ToggleChatTradeInfo))
+                .width(Length::Fill)
+        } else {
+            button::secondary(Some(icon::receipt_icon()), "Trade Information")
+                .on_press(p2p(P2PMessage::ToggleChatTradeInfo))
+                .width(Length::Fill)
+        };
+        let user_info_btn = if self.chat_show_user_info {
+            button::primary(Some(icon::person_icon()), "User Information")
+                .on_press(p2p(P2PMessage::ToggleChatUserInfo))
+                .width(Length::Fill)
+        } else {
+            button::secondary(Some(icon::person_icon()), "User Information")
+                .on_press(p2p(P2PMessage::ToggleChatUserInfo))
+                .width(Length::Fill)
+        };
+        let tab_row = container(row![trade_info_btn, user_info_btn].spacing(8))
+            .padding([12, 16])
+            .width(Length::Fill);
+
+        // ── Trade Information panel (expandable) ──
+        let order_short = &trade.id[..8.min(trade.id.len())];
+        let trade_type_label = match trade.order_type {
+            OrderType::Buy => "Buying",
+            OrderType::Sell => "Selling",
+        };
+        let sats_text = trade
+            .sats_amount
+            .map(|s| format!("{} sats", super::components::format_with_separators(s)))
+            .unwrap_or_else(|| "Market price".to_string());
+        let created_date = {
+            let dt = chrono::DateTime::from_timestamp(trade.created_at_ts, 0)
+                .unwrap_or_default()
+                .with_timezone(&chrono::Local);
+            dt.format("%B %d, %Y").to_string()
+        };
+
+        let trade_info_panel: Element<'_, view::Message> = if self.chat_show_trade_info {
+            container(
+                column![
+                    // Order ID
+                    row![
+                        p2_regular("Order ID:").style(theme::text::secondary),
+                        Space::new().width(Length::Fill),
+                        p2_regular(order_short),
+                    ]
+                    .spacing(8),
+                    // Trade summary
+                    container(
+                        column![
+                            p1_bold(format!(
+                                "{} {} {}",
+                                trade_type_label, sats_text, trade.fiat_currency
+                            )),
+                            p2_regular(format!(
+                                "for {:.2} {}",
+                                trade.fiat_amount, trade.fiat_currency
+                            ))
+                            .style(theme::text::secondary),
+                        ]
+                        .spacing(4),
+                    )
+                    .padding(12)
+                    .width(Length::Fill)
+                    .style(chat_info_card as fn(&_) -> _),
+                    // Payment method
+                    row![
+                        icon::cash_icon().style(theme::text::secondary),
+                        column![
+                            p2_regular("Payment Method").style(theme::text::secondary),
+                            p2_bold(&trade.payment_method),
+                        ]
+                        .spacing(2),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::alignment::Vertical::Center),
+                    // Created date
+                    row![
+                        icon::calendar_icon().style(theme::text::secondary),
+                        column![
+                            p2_regular("Created on").style(theme::text::secondary),
+                            p2_bold(created_date),
+                        ]
+                        .spacing(2),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::alignment::Vertical::Center),
+                ]
+                .spacing(12),
+            )
+            .padding(iced::Padding {
+                top: 0.0,
+                right: 16.0,
+                bottom: 12.0,
+                left: 16.0,
+            })
             .width(Length::Fill)
             .into()
+        } else {
+            Space::new().height(0).into()
+        };
+
+        // ── User Information panel (expandable) ──
+        let user_info_panel: Element<'_, view::Message> = if self.chat_show_user_info {
+            let identity =
+                super::mostro::get_chat_identity_info(&cube_name, &self.mnemonic, &trade.id);
+            let cp_nickname = identity
+                .counterparty_nickname
+                .as_deref()
+                .unwrap_or("Unknown");
+            let cp_pubkey_full = identity
+                .counterparty_pubkey
+                .as_deref()
+                .unwrap_or("Unknown")
+                .to_string();
+            let our_nickname = identity.our_nickname.as_deref().unwrap_or("Unknown");
+            let our_pubkey_full = identity
+                .our_trade_pubkey
+                .as_deref()
+                .unwrap_or("Unknown")
+                .to_string();
+            let shared_key_full = identity
+                .shared_key
+                .as_deref()
+                .unwrap_or("Not available")
+                .to_string();
+
+            container(
+                column![
+                    // Counterparty
+                    row![
+                        icon::person_icon().style(theme::text::secondary),
+                        column![
+                            p2_regular("Peer").style(theme::text::secondary),
+                            p1_bold(cp_nickname),
+                            caption(cp_pubkey_full).style(theme::text::secondary),
+                        ]
+                        .spacing(2),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::alignment::Vertical::Center),
+                    // Our trade key
+                    row![
+                        icon::key_icon().style(theme::text::secondary),
+                        column![
+                            p2_regular("You").style(theme::text::secondary),
+                            p1_bold(our_nickname),
+                            caption(our_pubkey_full).style(theme::text::secondary),
+                        ]
+                        .spacing(2),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::alignment::Vertical::Center),
+                    // Shared key
+                    row![
+                        icon::lock_icon().style(theme::text::secondary),
+                        column![
+                            p2_regular("Shared Key").style(theme::text::secondary),
+                            p2_bold(shared_key_full),
+                        ]
+                        .spacing(2),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::alignment::Vertical::Center),
+                ]
+                .spacing(12),
+            )
+            .padding(iced::Padding {
+                top: 0.0,
+                right: 16.0,
+                bottom: 12.0,
+                left: 16.0,
+            })
+            .width(Length::Fill)
+            .into()
+        } else {
+            Space::new().height(0).into()
+        };
+
+        // Thin divider
+        let divider: Element<'_, view::Message> =
+            container(Space::new().height(1).width(Length::Fill))
+                .style(
+                    |_theme: &coincube_ui::theme::Theme| iced::widget::container::Style {
+                        background: Some(iced::Background::Color(iced::color!(0x333333))),
+                        ..Default::default()
+                    },
+                )
+                .into();
+
+        // ── Message list ──
+        let mut msg_col = column![].spacing(10).padding([12, 16]);
+
+        if chat_messages.is_empty() {
+            msg_col = msg_col.push(
+                container(
+                    column![
+                        icon::chat_icon().size(40.0).style(theme::text::secondary),
+                        p1_regular("No messages yet").style(theme::text::secondary),
+                        p2_regular("Send a message to start the conversation")
+                            .style(theme::text::secondary),
+                    ]
+                    .spacing(8)
+                    .align_x(iced::alignment::Horizontal::Center),
+                )
+                .padding(60)
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+            );
+        } else {
+            for msg in &chat_messages {
+                let text = extract_chat_text(&msg.payload_json);
+                let ts = chrono::DateTime::from_timestamp(msg.timestamp as i64, 0)
+                    .unwrap_or_default()
+                    .with_timezone(&chrono::Local);
+                let time_str = ts.format("%H:%M").to_string();
+
+                if msg.is_own {
+                    msg_col = msg_col.push(
+                        column![
+                            container(caption("You").style(theme::text::secondary))
+                                .width(Length::Fill)
+                                .align_right(Length::Fill),
+                            row![
+                                Space::new().width(Length::FillPortion(3)),
+                                container(p1_regular(text))
+                                    .padding([10, 16])
+                                    .style(chat_bubble_own as fn(&_) -> _)
+                                    .max_width(480),
+                            ],
+                            container(caption(time_str).style(theme::text::secondary))
+                                .width(Length::Fill)
+                                .align_right(Length::Fill),
+                        ]
+                        .spacing(2),
+                    );
+                } else {
+                    msg_col = msg_col.push(
+                        column![
+                            caption(peer_nick.as_str()).style(theme::text::primary),
+                            row![
+                                container(p1_regular(text))
+                                    .padding([10, 16])
+                                    .style(chat_bubble_peer as fn(&_) -> _)
+                                    .max_width(480),
+                                Space::new().width(Length::FillPortion(3)),
+                            ],
+                            caption(time_str).style(theme::text::secondary),
+                        ]
+                        .spacing(2),
+                    );
+                }
+            }
+        }
+
+        let chat_scroll = iced::widget::scrollable(msg_col)
+            .height(Length::Fill)
+            .anchor_bottom();
+
+        // ── Input area ──
+        let input_area: Element<'_, view::Message> = if chat_enabled {
+            let can_send =
+                !self.chat_input.value.trim().is_empty() && self.pending_chat_message.is_none();
+            let send_btn = if can_send {
+                button::primary(Some(icon::send_icon()), "Send")
+                    .on_press(p2p(P2PMessage::SendChatMessage))
+            } else {
+                button::primary(Some(icon::send_icon()), "Send")
+            };
+            container(
+                row![
+                    form::Form::new("Type a message...", &self.chat_input, |v| {
+                        view::Message::P2P(P2PMessage::ChatInputEdited(v))
+                    })
+                    .padding(10),
+                    send_btn,
+                ]
+                .spacing(8)
+                .align_y(iced::alignment::Vertical::Center),
+            )
+            .padding([12, 16])
+            .width(Length::Fill)
+            .into()
+        } else if !chat_messages.is_empty() {
+            container(p2_regular("Chat is read-only").style(theme::text::secondary))
+                .padding([12, 16])
+                .width(Length::Fill)
+                .center_x(Length::Fill)
+                .into()
+        } else {
+            Space::new().height(0).into()
+        };
+
+        column![
+            tab_row,
+            trade_info_panel,
+            user_info_panel,
+            divider,
+            chat_scroll,
+            input_area,
+        ]
+        .spacing(0)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
     fn payment_invoice_modal_view<'a>(
@@ -1675,6 +2341,152 @@ impl P2PPanel {
             ]
             .spacing(16)
             .align_x(Alignment::Center),
+        )
+        .width(Length::Fixed(450.0))
+        .into()
+    }
+
+    fn dispute_chat_view<'a>(&'a self, trade: &'a P2PTrade) -> Element<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+
+        let chat_enabled =
+            trade.admin_pubkey.is_some() && matches!(trade.status, TradeStatus::Dispute);
+
+        let cube_name = self
+            .wallet
+            .as_ref()
+            .map(|w| w.name.clone())
+            .unwrap_or_else(|| "default".to_string());
+        let all_messages = super::mostro::get_trade_messages(&cube_name, &trade.id);
+        let admin_messages: Vec<&super::mostro::TradeMessage> = all_messages
+            .iter()
+            .filter(|m| m.action == "AdminDm")
+            .collect();
+
+        // Message list
+        let mut msg_col = column![].spacing(10).padding([12, 16]);
+
+        if !chat_enabled && admin_messages.is_empty() {
+            msg_col = msg_col.push(
+                container(
+                    column![
+                        icon::lock_icon().size(40.0).style(theme::text::secondary),
+                        p1_regular("Waiting for admin assignment").style(theme::text::secondary),
+                        p2_regular("An admin will be assigned to review your dispute")
+                            .style(theme::text::secondary),
+                    ]
+                    .spacing(8)
+                    .align_x(iced::alignment::Horizontal::Center),
+                )
+                .padding(60)
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+            );
+        } else if admin_messages.is_empty() {
+            msg_col = msg_col.push(
+                container(
+                    column![
+                        icon::chat_icon().size(40.0).style(theme::text::secondary),
+                        p1_regular("Admin assigned").style(theme::text::secondary),
+                        p2_regular("Send a message to describe your issue")
+                            .style(theme::text::secondary),
+                    ]
+                    .spacing(8)
+                    .align_x(iced::alignment::Horizontal::Center),
+                )
+                .padding(60)
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+            );
+        } else {
+            for msg in &admin_messages {
+                let text = extract_chat_text(&msg.payload_json);
+                let ts = chrono::DateTime::from_timestamp(msg.timestamp as i64, 0)
+                    .unwrap_or_default()
+                    .with_timezone(&chrono::Local);
+                let time_str = ts.format("%H:%M").to_string();
+
+                if msg.is_own {
+                    msg_col = msg_col.push(
+                        column![
+                            container(caption("You").style(theme::text::secondary))
+                                .width(Length::Fill)
+                                .align_right(Length::Fill),
+                            row![
+                                Space::new().width(Length::FillPortion(3)),
+                                container(p1_regular(text))
+                                    .padding([10, 16])
+                                    .style(chat_bubble_own as fn(&_) -> _)
+                                    .max_width(480),
+                            ],
+                            container(caption(time_str).style(theme::text::secondary))
+                                .width(Length::Fill)
+                                .align_right(Length::Fill),
+                        ]
+                        .spacing(2),
+                    );
+                } else {
+                    msg_col = msg_col.push(
+                        column![
+                            caption("Admin").style(theme::text::primary),
+                            row![
+                                container(p1_regular(text))
+                                    .padding([10, 16])
+                                    .style(chat_bubble_peer as fn(&_) -> _)
+                                    .max_width(480),
+                                Space::new().width(Length::FillPortion(3)),
+                            ],
+                            caption(time_str).style(theme::text::secondary),
+                        ]
+                        .spacing(2),
+                    );
+                }
+            }
+        }
+
+        let chat_scroll = iced::widget::scrollable(msg_col)
+            .height(Length::Fill)
+            .anchor_bottom();
+
+        // Input area
+        let input_area: Element<'_, view::Message> = if chat_enabled {
+            let can_send = !self.dispute_chat_input.value.trim().is_empty()
+                && self.pending_dispute_chat_message.is_none();
+            let send_btn = if can_send {
+                button::primary(Some(icon::send_icon()), "Send")
+                    .on_press(p2p(P2PMessage::SendDisputeChatMessage))
+            } else {
+                button::primary(Some(icon::send_icon()), "Send")
+            };
+            container(
+                row![
+                    form::Form::new("Type a message...", &self.dispute_chat_input, |v| {
+                        view::Message::P2P(P2PMessage::DisputeChatInputEdited(v))
+                    })
+                    .padding(10),
+                    send_btn,
+                ]
+                .spacing(8)
+                .align_y(iced::alignment::Vertical::Center),
+            )
+            .padding(12)
+            .width(Length::Fill)
+            .into()
+        } else {
+            container(
+                p2_regular("Chat will be available when an admin is assigned")
+                    .style(theme::text::secondary),
+            )
+            .padding(12)
+            .width(Length::Fill)
+            .center_x(Length::Fill)
+            .into()
+        };
+
+        container(
+            column![chat_scroll, input_area,]
+                .spacing(0)
+                .width(Length::Fill),
         )
         .width(Length::Fixed(450.0))
         .into()
@@ -1826,6 +2638,8 @@ impl State for P2PPanel {
             match submenu {
                 P2PSubMenu::Overview => {
                     // If an order is selected, show its detail view
+                    // Built separately (not inside dashboard's scrollable) to avoid
+                    // first-click issues when switching from the order list.
                     if let Some(ref selected_id) = self.selected_order {
                         if let Some(order) = self.orders.iter().find(|o| o.id == *selected_id) {
                             let take_state = if self.taking_order {
@@ -1837,10 +2651,11 @@ impl State for P2PPanel {
                             } else {
                                 None
                             };
-                            let content: Element<'_, view::Message> = view::dashboard(
-                                menu,
-                                cache,
+                            let has_vault = cache.has_vault;
+                            let detail_content = iced::widget::scrollable(row![
+                                Space::new().width(Length::FillPortion(1)),
                                 column![
+                                    Space::new().height(Length::Fixed(30.0)),
                                     column![
                                         h1("Order Details"),
                                         p2_regular("View order information")
@@ -1849,14 +2664,37 @@ impl State for P2PPanel {
                                     .spacing(8)
                                     .width(Length::Fill)
                                     .padding(20),
-                                    container(order_detail(order, take_state,))
+                                    container(order_detail(order, take_state))
                                         .padding([0, 20])
                                         .width(Length::Fill),
+                                    Space::new().height(Length::Fixed(40.0)),
                                 ]
-                                .spacing(16),
-                            );
+                                .spacing(16)
+                                .width(Length::FillPortion(8))
+                                .max_width(1500),
+                                Space::new().width(Length::FillPortion(1)),
+                            ]);
 
-                            return content;
+                            return row![]
+                                .push(
+                                    view::sidebar(menu, cache, has_vault)
+                                        .height(Length::Fill)
+                                        .width(Length::Fixed(190.0)),
+                                )
+                                .push(
+                                    iced::widget::Column::new()
+                                        .push(view::warn(None))
+                                        .push(
+                                            container(detail_content)
+                                                .center_x(Length::Fill)
+                                                .style(theme::container::background)
+                                                .height(Length::Fill),
+                                        )
+                                        .width(Length::Fill),
+                                )
+                                .width(Length::Fill)
+                                .height(Length::Fill)
+                                .into();
                         }
                     }
 
@@ -1913,6 +2751,7 @@ impl State for P2PPanel {
                                     .padding([0, 20]),
                                 )
                             },
+                            Space::new().height(Length::Fixed(40.0)),
                         ]
                         .spacing(16),
                     );
@@ -1931,9 +2770,122 @@ impl State for P2PPanel {
                     }
                 }
                 P2PSubMenu::MyTrades => {
-                    // If a trade is selected, show its detail view
+                    // If a trade is selected, show its detail or chat view
                     if let Some(ref selected_id) = self.selected_trade {
                         if let Some(trade) = self.trades.iter().find(|t| t.id == *selected_id) {
+                            if self.show_chat {
+                                // Separate chat view — built without dashboard()
+                                // to avoid nested scrollables.
+                                let has_vault = cache.has_vault;
+                                let order_short = &trade.id[..8.min(trade.id.len())];
+                                let trade_type_label = match trade.order_type {
+                                    OrderType::Buy => "BUY",
+                                    OrderType::Sell => "SELL",
+                                };
+                                let peer_nick = trade
+                                    .counterparty_pubkey
+                                    .as_deref()
+                                    .map(super::mostro::nickname_from_pubkey)
+                                    .unwrap_or_else(|| "Peer".to_string());
+
+                                // Header bar
+                                let header = container(
+                                    row![
+                                        button::secondary(Some(icon::previous_icon()), "Back",)
+                                            .on_press(view::Message::P2P(P2PMessage::CloseChat)),
+                                        Space::new().width(Length::Fill),
+                                        column![
+                                            p1_bold(peer_nick),
+                                            p2_regular(format!(
+                                                "{} Order {}",
+                                                trade_type_label, order_short
+                                            ))
+                                            .style(theme::text::secondary),
+                                        ]
+                                        .spacing(2)
+                                        .align_x(iced::alignment::Horizontal::Center),
+                                        Space::new().width(Length::Fill),
+                                        // Spacer to balance the Back button
+                                        Space::new().width(Length::Fixed(80.0)),
+                                    ]
+                                    .align_y(iced::alignment::Vertical::Center),
+                                )
+                                .padding([16, 20])
+                                .width(Length::Fill)
+                                .style(theme::container::foreground);
+
+                                return row![]
+                                    .push(
+                                        view::sidebar(menu, cache, has_vault)
+                                            .height(Length::Fill)
+                                            .width(Length::Fixed(190.0)),
+                                    )
+                                    .push(
+                                        iced::widget::Column::new()
+                                            .push(view::warn(None))
+                                            .push(header)
+                                            .push(
+                                                container(self.chat_view(trade))
+                                                    .padding(20)
+                                                    .width(Length::Fill)
+                                                    .height(Length::Fill)
+                                                    .style(theme::container::background),
+                                            )
+                                            .width(Length::Fill),
+                                    )
+                                    .width(Length::Fill)
+                                    .height(Length::Fill)
+                                    .into();
+                            } else if self.show_dispute_chat {
+                                // Dispute chat view
+                                let has_vault = cache.has_vault;
+                                let order_short = &trade.id[..8.min(trade.id.len())];
+                                let header = container(
+                                    row![
+                                        button::secondary(Some(icon::previous_icon()), "Back",)
+                                            .on_press(view::Message::P2P(
+                                                P2PMessage::CloseDisputeChat,
+                                            )),
+                                        Space::new().width(Length::Fill),
+                                        column![
+                                            p1_bold("Dispute Chat"),
+                                            p2_regular(format!("Order {}", order_short))
+                                                .style(theme::text::secondary),
+                                        ]
+                                        .spacing(2)
+                                        .align_x(iced::alignment::Horizontal::Center),
+                                        Space::new().width(Length::Fill),
+                                        Space::new().width(Length::Fixed(80.0)),
+                                    ]
+                                    .align_y(iced::alignment::Vertical::Center),
+                                )
+                                .padding(12)
+                                .width(Length::Fill)
+                                .style(theme::container::foreground);
+
+                                return row![]
+                                    .push(
+                                        view::sidebar(menu, cache, has_vault)
+                                            .height(Length::Fill)
+                                            .width(Length::Fixed(190.0)),
+                                    )
+                                    .push(
+                                        iced::widget::Column::new()
+                                            .push(view::warn(None))
+                                            .push(header)
+                                            .push(
+                                                container(self.dispute_chat_view(trade))
+                                                    .padding(20)
+                                                    .width(Length::Fill)
+                                                    .height(Length::Fill)
+                                                    .style(theme::container::background),
+                                            )
+                                            .width(Length::Fill),
+                                    )
+                                    .width(Length::Fill)
+                                    .height(Length::Fill)
+                                    .into();
+                            }
                             return view::dashboard(
                                 menu,
                                 cache,
@@ -1949,6 +2901,7 @@ impl State for P2PPanel {
                                     container(self.trade_detail_view(trade))
                                         .padding([0, 20])
                                         .width(Length::Fill),
+                                    Space::new().height(Length::Fixed(40.0)),
                                 ]
                                 .spacing(16),
                             );
@@ -1991,6 +2944,7 @@ impl State for P2PPanel {
                                         .padding([0, 20]),
                                 )
                             },
+                            Space::new().height(Length::Fixed(40.0)),
                         ]
                         .spacing(16),
                     )
@@ -2013,6 +2967,7 @@ impl State for P2PPanel {
                             container(self.create_order_view())
                                 .padding([0, 20])
                                 .width(Length::Fill),
+                            Space::new().height(Length::Fixed(40.0)),
                         ]
                         .spacing(16),
                     );
@@ -2043,6 +2998,7 @@ impl State for P2PPanel {
                         container(self.mostro_settings_view())
                             .padding([0, 20])
                             .width(Length::Fill),
+                        Space::new().height(Length::Fixed(40.0)),
                     ]
                     .spacing(16),
                 ),
@@ -2072,8 +3028,8 @@ impl State for P2PPanel {
         let mostro_sub =
             super::mostro::mostro_subscription(cube_name, mnemonic, active_pubkey, relays);
 
-        // Tick every second when viewing a trade or order detail (for countdown timer)
-        if self.selected_trade.is_some() || self.selected_order.is_some() {
+        // Tick every second when viewing a trade detail (for action countdown timer)
+        if self.selected_trade.is_some() {
             let timer = iced::time::every(std::time::Duration::from_secs(1))
                 .map(|_| Message::View(view::Message::P2P(P2PMessage::TradeTimerTick)));
             Subscription::batch([mostro_sub, timer])
@@ -2101,7 +3057,13 @@ impl State for P2PPanel {
                 self.rebuild_payment_method_combo();
             }
             P2PMessage::SatsAmountEdited(v) => self.create_sats_amount.value = v,
-            P2PMessage::PremiumEdited(v) => self.create_premium.value = v,
+            P2PMessage::PremiumEdited(v) => {
+                // Allow empty, minus sign, or valid integers in -100..100 range
+                let trimmed = v.trim();
+                if trimmed.is_empty() || trimmed == "-" || trimmed.parse::<i64>().is_ok() {
+                    self.create_premium.value = v;
+                }
+            }
             P2PMessage::PaymentMethodSelected(v) => {
                 if !self.create_payment_methods.contains(&v) {
                     self.create_payment_methods.push(v);
@@ -2140,6 +3102,10 @@ impl State for P2PPanel {
             }
             P2PMessage::ExpiryDaysEdited(_) => {}
             P2PMessage::SubmitOrder => {
+                // Double-check validation before showing confirmation
+                if self.validate_order_form().has_errors() {
+                    return Task::none();
+                }
                 self.order_submit_error = None;
                 self.confirming_order = true;
             }
@@ -2147,6 +3113,11 @@ impl State for P2PPanel {
                 self.confirming_order = false;
             }
             P2PMessage::ConfirmOrder => {
+                // Final validation gate before sending to network
+                if self.validate_order_form().has_errors() {
+                    self.confirming_order = false;
+                    return Task::none();
+                }
                 self.confirming_order = false;
                 self.order_submitting = true;
                 self.order_submit_error = None;
@@ -2158,11 +3129,38 @@ impl State for P2PPanel {
                 });
             }
             P2PMessage::ClearForm => self.clear_create_form(),
-            P2PMessage::MostroNodeInfoReceived { currencies } => {
-                self.node_currencies = currencies;
-                self.rebuild_currency_combo();
+            P2PMessage::MostroNodeInfoReceived {
+                currencies,
+                min_order_sats,
+                max_order_sats,
+            } => {
+                if !currencies.is_empty() {
+                    self.node_currencies = currencies;
+                    self.rebuild_currency_combo();
+                    // Reset selected currency if no longer supported by this node
+                    if !self.node_currencies.contains(&self.create_fiat_currency) {
+                        self.create_fiat_currency = self
+                            .node_currencies
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| "USD".to_string());
+                        self.create_payment_methods.clear();
+                        self.rebuild_payment_method_combo();
+                    }
+                }
+                self.node_min_order_sats = min_order_sats;
+                self.node_max_order_sats = max_order_sats;
             }
-            P2PMessage::MostroOrdersReceived(orders) => self.orders = orders,
+            P2PMessage::MostroOrdersReceived(mut orders) => {
+                // Patch is_mine for orders we created locally (handles race where
+                // the subscription delivers the event before the session is persisted)
+                for order in &mut orders {
+                    if self.my_created_order_ids.contains(&order.id) {
+                        order.is_mine = true;
+                    }
+                }
+                self.orders = orders;
+            }
             P2PMessage::MostroTradesReceived(trades) => self.trades = trades,
             P2PMessage::BuySellFilterChanged(filter) => self.buy_sell_filter = filter,
             P2PMessage::TradeFilterChanged(filter) => {
@@ -2185,7 +3183,13 @@ impl State for P2PPanel {
                     self.trade_filters.push(filter);
                 }
             }
-            P2PMessage::SelectOrder(id) => self.selected_order = Some(id),
+            P2PMessage::SelectOrder(id) => {
+                self.selected_order = Some(id);
+                self.taking_order = false;
+                self.take_order_amount = Default::default();
+                self.take_order_invoice = Default::default();
+                self.take_order_submitting = false;
+            }
             P2PMessage::CloseOrderDetail => {
                 self.selected_order = None;
                 self.taking_order = false;
@@ -2233,6 +3237,12 @@ impl State for P2PPanel {
                     Ok(resp) => {
                         let super::mostro::OrderSubmitResponse::Success { order_id } = resp;
                         tracing::info!("Order created: {}", order_id);
+                        // Track this order ID so we always mark it as ours, even if
+                        // the subscription delivered the event before the session was saved.
+                        self.my_created_order_ids.insert(order_id.clone());
+                        if let Some(order) = self.orders.iter_mut().find(|o| o.id == order_id) {
+                            order.is_mine = true;
+                        }
                         self.clear_create_form();
                         return Task::done(Message::View(view::Message::ShowSuccess(format!(
                             "Order created successfully ({})",
@@ -2318,10 +3328,33 @@ impl State for P2PPanel {
             }
             // Take order flow
             P2PMessage::TakeOrder => {
-                self.taking_order = true;
-                self.take_order_amount = Default::default();
-                self.take_order_invoice = Default::default();
-                self.take_order_submitting = false;
+                // Check if this order needs user input before confirming.
+                // Non-range orders where user is selling don't need any input,
+                // so skip straight to confirmation to avoid an invisible intermediate state.
+                let needs_input = self
+                    .selected_order
+                    .as_ref()
+                    .and_then(|id| self.orders.iter().find(|o| o.id == *id))
+                    .map(|order| {
+                        let is_buying = order.order_type == OrderType::Sell;
+                        order.is_range_order() || is_buying
+                    })
+                    .unwrap_or(true);
+
+                if needs_input {
+                    self.taking_order = true;
+                    self.take_order_amount = Default::default();
+                    self.take_order_invoice = Default::default();
+                    self.take_order_submitting = false;
+                } else {
+                    // No input needed — proceed directly
+                    self.taking_order = true;
+                    return self.update(
+                        _daemon,
+                        _cache,
+                        Message::View(view::Message::P2P(P2PMessage::ConfirmTakeOrder)),
+                    );
+                }
             }
             P2PMessage::TakeOrderAmountEdited(v) => {
                 self.take_order_amount.value = v;
@@ -2454,12 +3487,16 @@ impl State for P2PPanel {
                 self.trade_invoice_input = Default::default();
                 self.trade_action_loading = false;
                 self.trade_rating = 0;
+                self.show_chat = false;
+                self.chat_input = Default::default();
             }
             P2PMessage::CloseTradeDetail => {
                 self.selected_trade = None;
                 self.trade_invoice_input = Default::default();
                 self.trade_rating = 0;
                 self.trade_action_loading = false;
+                self.show_chat = false;
+                self.chat_input = Default::default();
             }
             // Trade actions
             P2PMessage::TradeInvoiceEdited(v) => {
@@ -2547,6 +3584,7 @@ impl State for P2PPanel {
                                     timestamp: chrono::Utc::now().timestamp() as u64,
                                     action: new_status.clone(),
                                     payload_json: String::new(),
+                                    is_own: false,
                                 },
                             );
                         }
@@ -2561,6 +3599,177 @@ impl State for P2PPanel {
                     }
                 }
             }
+            // Chat
+            P2PMessage::OpenChat => {
+                self.show_chat = true;
+                self.chat_input = Default::default();
+            }
+            P2PMessage::CloseChat => {
+                self.show_chat = false;
+                self.chat_input = Default::default();
+            }
+            P2PMessage::ChatInputEdited(v) => {
+                self.chat_input.value = v;
+            }
+            P2PMessage::ToggleChatTradeInfo => {
+                self.chat_show_trade_info = !self.chat_show_trade_info;
+                if self.chat_show_trade_info {
+                    self.chat_show_user_info = false;
+                }
+            }
+            P2PMessage::ToggleChatUserInfo => {
+                self.chat_show_user_info = !self.chat_show_user_info;
+                if self.chat_show_user_info {
+                    self.chat_show_trade_info = false;
+                }
+            }
+            // Dispute chat
+            P2PMessage::OpenDisputeChat => {
+                self.show_dispute_chat = true;
+                self.dispute_chat_input = Default::default();
+            }
+            P2PMessage::CloseDisputeChat => {
+                self.show_dispute_chat = false;
+            }
+            P2PMessage::DisputeChatInputEdited(v) => {
+                self.dispute_chat_input.value = v;
+            }
+            P2PMessage::SendDisputeChatMessage => {
+                let text = self.dispute_chat_input.value.trim().to_string();
+                if text.is_empty() || self.pending_dispute_chat_message.is_some() {
+                    return Task::none();
+                }
+                if let Some(ref order_id) = self.selected_trade {
+                    let cube_name = self
+                        .wallet
+                        .as_ref()
+                        .map(|w| w.name.clone())
+                        .unwrap_or_else(|| "default".to_string());
+                    let payload = serde_json::to_string(&Some(
+                        mostro_core::message::Payload::TextMessage(text.clone()),
+                    ))
+                    .unwrap_or_default();
+                    self.pending_dispute_chat_message = Some(PendingChatMessage {
+                        order_id: order_id.clone(),
+                        cube_name: cube_name.clone(),
+                        payload,
+                        timestamp: chrono::Utc::now().timestamp() as u64,
+                        original_text: text.clone(),
+                    });
+                    self.dispute_chat_input = Default::default();
+                    let data = super::mostro::TradeActionData {
+                        order_id: order_id.clone(),
+                        cube_name,
+                        mnemonic: self.mnemonic.clone(),
+                        invoice: Some(text),
+                        mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
+                        relay_urls: self.mostro_config.relays.clone(),
+                    };
+                    return Task::perform(super::mostro::send_admin_chat_message(data), |result| {
+                        Message::View(view::Message::P2P(P2PMessage::DisputeChatMessageSent(
+                            result,
+                        )))
+                    });
+                }
+            }
+            P2PMessage::DisputeChatMessageSent(result) => {
+                if let Some(pending) = self.pending_dispute_chat_message.take() {
+                    match result {
+                        Ok(()) => {
+                            super::mostro::append_trade_message(
+                                &pending.cube_name,
+                                &pending.order_id,
+                                super::mostro::TradeMessage {
+                                    timestamp: pending.timestamp,
+                                    action: "AdminDm".to_string(),
+                                    payload_json: pending.payload,
+                                    is_own: true,
+                                },
+                            );
+                        }
+                        Err(e) => {
+                            // Only restore input if the user is still viewing the same trade
+                            if self.selected_trade.as_deref() == Some(&pending.order_id) {
+                                self.dispute_chat_input.value = pending.original_text;
+                            }
+                            return Task::done(Message::View(view::Message::ShowError(format!(
+                                "Dispute chat send failed: {}",
+                                e
+                            ))));
+                        }
+                    }
+                }
+            }
+            P2PMessage::SendChatMessage => {
+                let text = self.chat_input.value.trim().to_string();
+                if text.is_empty() || self.pending_chat_message.is_some() {
+                    return Task::none();
+                }
+                if let Some(ref order_id) = self.selected_trade {
+                    let cube_name = self
+                        .wallet
+                        .as_ref()
+                        .map(|w| w.name.clone())
+                        .unwrap_or_else(|| "default".to_string());
+
+                    // Build payload but defer persisting until send succeeds
+                    let payload = serde_json::to_string(&Some(
+                        mostro_core::message::Payload::TextMessage(text.clone()),
+                    ))
+                    .unwrap_or_default();
+
+                    self.pending_chat_message = Some(PendingChatMessage {
+                        order_id: order_id.clone(),
+                        cube_name: cube_name.clone(),
+                        payload,
+                        timestamp: chrono::Utc::now().timestamp() as u64,
+                        original_text: text.clone(),
+                    });
+
+                    self.chat_input = Default::default();
+
+                    // Fire async send
+                    let data = super::mostro::TradeActionData {
+                        order_id: order_id.clone(),
+                        cube_name,
+                        mnemonic: self.mnemonic.clone(),
+                        invoice: Some(text),
+                        mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
+                        relay_urls: self.mostro_config.relays.clone(),
+                    };
+                    return Task::perform(super::mostro::send_chat_message(data), |result| {
+                        Message::View(view::Message::P2P(P2PMessage::ChatMessageSent(result)))
+                    });
+                }
+            }
+            P2PMessage::ChatMessageSent(result) => {
+                if let Some(pending) = self.pending_chat_message.take() {
+                    match result {
+                        Ok(()) => {
+                            super::mostro::append_trade_message(
+                                &pending.cube_name,
+                                &pending.order_id,
+                                super::mostro::TradeMessage {
+                                    timestamp: pending.timestamp,
+                                    action: "SendDm".to_string(),
+                                    payload_json: pending.payload,
+                                    is_own: true,
+                                },
+                            );
+                        }
+                        Err(e) => {
+                            // Only restore input if the user is still viewing the same trade
+                            if self.selected_trade.as_deref() == Some(&pending.order_id) {
+                                self.chat_input.value = pending.original_text;
+                            }
+                            return Task::done(Message::View(view::Message::ShowError(format!(
+                                "Chat send failed: {}",
+                                e
+                            ))));
+                        }
+                    }
+                }
+            }
             // Timer tick — no-op; re-render happens automatically
             P2PMessage::TradeTimerTick => {}
             // Real-time DM updates
@@ -2571,24 +3780,34 @@ impl State for P2PPanel {
             } => {
                 tracing::info!("Trade update for {}: {}", order_id, action);
 
+                let is_chat = action == "SendDm" || action == "AdminDm";
+
                 // Update last_dm_action and status on the matching in-memory trade
-                let now_ts = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                if let Some(trade) = self.trades.iter_mut().find(|t| t.id == order_id) {
-                    trade.last_dm_action = Some(action.clone());
-                    if is_countdown_action(&action) {
-                        trade.countdown_start_ts = Some(now_ts);
-                    } else {
-                        trade.countdown_start_ts = None;
-                    }
-                    if let Some(new_status) = super::mostro::dm_action_to_status(&action) {
-                        trade.status = new_status;
+                // (skip for chat messages — they don't change trade status)
+                if !is_chat {
+                    let now_ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    if let Some(trade) = self.trades.iter_mut().find(|t| t.id == order_id) {
+                        trade.last_dm_action = Some(action.clone());
+                        if is_countdown_action(&action) {
+                            trade.countdown_start_ts = Some(now_ts);
+                        } else {
+                            trade.countdown_start_ts = None;
+                        }
+                        if let Some(new_status) = super::mostro::dm_action_to_status(&action) {
+                            trade.status = new_status;
+                        }
                     }
                 }
 
-                // Persist full message to disk (deduplication handled inside)
+                // Chat messages are already persisted by process_dm_notifications
+                if is_chat {
+                    return Task::none();
+                }
+
+                // Persist non-chat protocol messages to disk
                 let cube_name = self
                     .wallet
                     .as_ref()
@@ -2601,6 +3820,7 @@ impl State for P2PPanel {
                         timestamp: chrono::Utc::now().timestamp() as u64,
                         action: action.clone(),
                         payload_json,
+                        is_own: false,
                     },
                 );
 

@@ -13,9 +13,14 @@ use super::components::{OrderType, P2POrder, P2PTrade};
 use crate::app::view::message::P2PMessage;
 use crate::app::{message::Message, view};
 
-const FETCH_INTERVAL_SECS: u64 = 10;
+const FETCH_INTERVAL_SECS: u64 = 60; // Fallback polling; primary updates via subscription
 const ORDER_LOOKBACK_SECS: u64 = 48 * 3600; // 48 hours, same as mobile
 const MOSTRO_INFO_EVENT_KIND: u16 = 38385;
+
+/// Check if the client has at least one connected relay.
+async fn has_connected_relay(client: &Client) -> bool {
+    client.relays().await.values().any(|r| r.is_connected())
+}
 
 // ── Key management ──────────────────────────────────────────────────────
 
@@ -33,6 +38,9 @@ pub struct TradeMessage {
     pub timestamp: u64,
     pub action: String,
     pub payload_json: String,
+    /// True when this message was sent by us (chat messages only).
+    #[serde(default)]
+    pub is_own: bool,
 }
 
 /// A trade session persisted to disk so we can track the user's own orders.
@@ -53,6 +61,12 @@ pub struct TradeSession {
     pub role: String,
     #[serde(default)]
     pub messages: Vec<TradeMessage>,
+    /// Counterparty's trade pubkey (hex) for P2P chat, set when trade becomes active.
+    #[serde(default)]
+    pub counterparty_trade_pubkey: Option<String>,
+    /// Admin/solver's trade pubkey (hex) for dispute chat, set when AdminTookDispute is received.
+    #[serde(default)]
+    pub admin_trade_pubkey: Option<String>,
 }
 
 fn default_role() -> String {
@@ -124,10 +138,11 @@ fn save_data(cube_name: &str, data: &MostroData) -> Result<(), String> {
 pub fn append_trade_message(cube_name: &str, order_id: &str, msg: TradeMessage) {
     let mut data = load_data(cube_name);
     if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
-        let is_dup = session
-            .messages
-            .iter()
-            .any(|m| m.timestamp == msg.timestamp && m.action == msg.action);
+        let is_dup = session.messages.iter().any(|m| {
+            m.timestamp == msg.timestamp
+                && m.action == msg.action
+                && m.payload_json == msg.payload_json
+        });
         if !is_dup {
             session.messages.push(msg);
             session.messages.sort_by_key(|m| m.timestamp);
@@ -138,16 +153,77 @@ pub fn append_trade_message(cube_name: &str, order_id: &str, msg: TradeMessage) 
     }
 }
 
-/// Get the latest DM action for a trade from its message history.
+/// Update the counterparty's trade pubkey for a given order (persisted to disk).
+pub fn set_counterparty_pubkey(cube_name: &str, order_id: &str, pubkey: &str) {
+    let mut data = load_data(cube_name);
+    if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
+        if session.counterparty_trade_pubkey.as_deref() != Some(pubkey) {
+            session.counterparty_trade_pubkey = Some(pubkey.to_string());
+            if let Err(e) = save_data(cube_name, &data) {
+                tracing::warn!("Failed to persist counterparty pubkey: {e}");
+            }
+        }
+    }
+}
+
+/// Update the admin/solver's trade pubkey for a given order (persisted to disk).
+fn set_admin_pubkey(cube_name: &str, order_id: &str, pubkey: &str) {
+    let mut data = load_data(cube_name);
+    if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
+        if session.admin_trade_pubkey.as_deref() != Some(pubkey) {
+            session.admin_trade_pubkey = Some(pubkey.to_string());
+            if let Err(e) = save_data(cube_name, &data) {
+                tracing::warn!("Failed to persist admin pubkey: {e}");
+            }
+        }
+    }
+}
+
+/// Extract the counterparty's trade pubkey from a SmallOrder payload.
+/// `our_trade_pubkey_hex` is our own trade pubkey for this session so we can
+/// identify which of buyer/seller pubkey is the counterparty's.
+fn extract_counterparty_pubkey(
+    order: &mostro_core::order::SmallOrder,
+    our_trade_pubkey_hex: &str,
+) -> Option<String> {
+    let buyer = order.buyer_trade_pubkey.as_deref();
+    let seller = order.seller_trade_pubkey.as_deref();
+    match (buyer, seller) {
+        (Some(b), Some(s)) => {
+            if b == our_trade_pubkey_hex {
+                Some(s.to_string())
+            } else {
+                Some(b.to_string())
+            }
+        }
+        (Some(b), None) if b != our_trade_pubkey_hex => Some(b.to_string()),
+        (None, Some(s)) if s != our_trade_pubkey_hex => Some(s.to_string()),
+        _ => None,
+    }
+}
+
+/// Get the latest protocol DM action for a trade from its message history.
+/// Skips non-protocol chat entries (e.g. "SendDm") so that P2P chat
+/// messages do not affect protocol state detection.
 pub fn latest_dm_action(session: &TradeSession) -> Option<&str> {
-    session.messages.last().map(|m| m.action.as_str())
+    session
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.action != "SendDm")
+        .map(|m| m.action.as_str())
 }
 
 /// Find the timestamp of the DM that started the current countdown phase.
 /// For WaitingBuyerInvoice status → find the AddInvoice/WaitingBuyerInvoice message
 /// For WaitingPayment status → find the PayInvoice/WaitingSellerToPay message
 pub fn countdown_start_timestamp(session: &TradeSession) -> Option<u64> {
-    let last_action = session.messages.last().map(|m| m.action.as_str())?;
+    let last_action = session
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.action != "SendDm")
+        .map(|m| m.action.as_str())?;
 
     let target_actions: &[&str] = match last_action {
         "AddInvoice" | "WaitingBuyerInvoice" => &["AddInvoice", "WaitingBuyerInvoice"],
@@ -160,8 +236,7 @@ pub fn countdown_start_timestamp(session: &TradeSession) -> Option<u64> {
         .messages
         .iter()
         .rev()
-        .filter(|m| target_actions.contains(&m.action.as_str()) && m.timestamp > 0)
-        .last()
+        .rfind(|m| target_actions.contains(&m.action.as_str()) && m.timestamp > 0)
         .map(|m| m.timestamp)
 }
 
@@ -169,7 +244,7 @@ pub fn countdown_start_timestamp(session: &TradeSession) -> Option<u64> {
 /// 1. Send RestoreSession → get order IDs + trade indices
 /// 2. Send Orders request → get full order details
 /// 3. Send LastTradeIndex → get the correct last index
-/// Returns the number of trades recovered.
+///    Returns the number of trades recovered.
 pub async fn restore_trades(
     cube_name: &str,
     mnemonic: &str,
@@ -333,12 +408,17 @@ pub async fn restore_trades(
         let trade_keys = derive_trade_keys(mnemonic, *trade_index).ok();
         let our_pubkey = trade_keys.as_ref().map(|k| k.public_key().to_hex());
         let role = if let (Some(d), Some(ref pk)) = (details, &our_pubkey) {
-            if d.buyer_trade_pubkey.as_deref() == Some(pk) {
-                "taker" // We're the buyer, likely took a sell order
-            } else if d.seller_trade_pubkey.as_deref() == Some(pk) {
-                "taker" // We're the seller, likely took a buy order
-            } else {
+            let is_creator = match d.kind.as_ref() {
+                Some(mostro_core::order::Kind::Buy) => d.buyer_trade_pubkey.as_deref() == Some(pk),
+                Some(mostro_core::order::Kind::Sell) => {
+                    d.seller_trade_pubkey.as_deref() == Some(pk)
+                }
+                None => false,
+            };
+            if is_creator {
                 "creator"
+            } else {
+                "taker"
             }
         } else {
             "unknown"
@@ -357,6 +437,7 @@ pub async fn restore_trades(
                 timestamp: chrono::Utc::now().timestamp() as u64,
                 action: status.clone(),
                 payload_json: String::new(),
+                is_own: false,
             }]
         } else {
             Vec::new()
@@ -380,12 +461,20 @@ pub async fn restore_trades(
                 .unwrap_or_else(|| chrono::Utc::now().timestamp()),
             role: role.to_string(),
             messages,
+            counterparty_trade_pubkey: details.and_then(|d| {
+                // During restore, try to pick up the counterparty pubkey from the order
+                let our_hex = derive_trade_keys(mnemonic, *trade_index)
+                    .map(|k| k.public_key().to_hex())
+                    .unwrap_or_default();
+                extract_counterparty_pubkey(d, &our_hex)
+            }),
+            admin_trade_pubkey: None, // admin pubkey is only set via DM, not restorable
         });
     }
 
     let count = sessions.len();
     let data = MostroData {
-        last_trade_index: last_trade_index,
+        last_trade_index,
         trades: sessions,
     };
     save_data(cube_name, &data)?;
@@ -492,6 +581,9 @@ async fn fetch_mostro_info(client: &Client, mostro_pubkey: PublicKey) -> MostroN
         .limit(1);
 
     let mut info = MostroNodeInfo::default();
+    if !has_connected_relay(client).await {
+        return info;
+    }
     if let Ok(events) = client.fetch_events(filter, Duration::from_secs(5)).await {
         if let Some(event) = events.iter().next() {
             for tag in event.tags.iter() {
@@ -615,6 +707,7 @@ async fn send_mostro_message(
             .map_err(|e| format!("Failed to add relay {relay_url}: {e}"))?;
     }
     client.connect().await;
+    client.wait_for_connection(Duration::from_secs(10)).await;
 
     // Fetch Mostro instance info (used for contextual error messages)
     let limits = fetch_mostro_info(&client, mostro_pubkey).await;
@@ -677,6 +770,63 @@ async fn send_mostro_message(
     Ok((response_message, limits))
 }
 
+// ── Trade index synchronization ─────────────────────────────────────────
+
+/// Query the Mostro server for the authoritative last_trade_index and update local storage.
+/// Returns the synced index.
+async fn sync_last_trade_index(
+    cube_name: &str,
+    mnemonic: &str,
+    mostro_pubkey_hex: &str,
+    relay_urls: &[String],
+) -> Result<i64, String> {
+    tracing::info!("Syncing last_trade_index from Mostro server");
+    let temp_trade_index: i64 = 1;
+    let last_index_kind = mostro_core::message::MessageKind::new(
+        None,
+        None,
+        None,
+        mostro_core::message::Action::LastTradeIndex,
+        None,
+    );
+    let last_index_msg = mostro_core::message::Message::Restore(last_index_kind);
+    let (resp, _) = send_mostro_message(
+        mnemonic,
+        temp_trade_index,
+        mostro_pubkey_hex,
+        relay_urls,
+        last_index_msg,
+    )
+    .await?;
+
+    let inner = resp.get_inner_message_kind();
+    let idx = inner.trade_index();
+    if idx <= 0 {
+        return Err("Server returned invalid last_trade_index".to_string());
+    }
+
+    let mut data = load_data(cube_name);
+    tracing::info!(
+        "Trade index sync: local={}, server={}",
+        data.last_trade_index,
+        idx
+    );
+    data.last_trade_index = idx;
+    save_data(cube_name, &data)?;
+
+    Ok(idx)
+}
+
+/// Check if a CantDo payload is an InvalidTradeIndex error.
+fn is_invalid_trade_index(inner: &mostro_core::message::MessageKind) -> bool {
+    matches!(
+        &inner.payload,
+        Some(mostro_core::message::Payload::CantDo(Some(
+            mostro_core::error::CantDoReason::InvalidTradeIndex
+        )))
+    )
+}
+
 // ── Order submission ────────────────────────────────────────────────────
 
 /// Data extracted from the create order form.
@@ -704,123 +854,142 @@ pub enum OrderSubmitResponse {
 }
 
 /// Submit an order to Mostro via NIP-59 gift wrap.
+/// On InvalidTradeIndex, automatically re-syncs from the server and retries once.
 pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, String> {
-    let mut data = load_data(&form.cube_name);
-    let next_idx = data.last_trade_index + 1;
+    for attempt in 0..2u8 {
+        let mut data = load_data(&form.cube_name);
+        let next_idx = data.last_trade_index + 1;
 
-    // Expiration based on user-chosen days (0 = no expiration)
-    let expires_at = if form.expiry_days > 0 {
-        let now = chrono::Utc::now();
-        let exp = now + chrono::Duration::days(form.expiry_days as i64);
-        Some(exp.timestamp())
-    } else {
-        None
-    };
-
-    // Save copies before they're moved into SmallOrder
-    let saved_fiat_code = form.fiat_code.clone();
-    let saved_payment_method = form.payment_method.clone();
-
-    // Build SmallOrder
-    let small_order = mostro_core::order::SmallOrder::new(
-        None,
-        Some(form.kind),
-        Some(mostro_core::order::Status::Pending),
-        form.amount,
-        form.fiat_code,
-        form.min_amount,
-        form.max_amount,
-        form.fiat_amount,
-        form.payment_method,
-        form.premium,
-        None,
-        None,
-        form.buyer_invoice,
-        Some(0),
-        expires_at,
-    );
-
-    // Create Mostro message
-    let request_id = uuid::Uuid::new_v4().as_u128() as u64;
-    let order_content = mostro_core::message::Payload::Order(small_order);
-    let message = mostro_core::message::Message::new_order(
-        None,
-        Some(request_id),
-        Some(next_idx),
-        mostro_core::message::Action::NewOrder,
-        Some(order_content),
-    );
-
-    tracing::info!(
-        "Order sent via gift wrap, trade_index={}, request_id={}",
-        next_idx,
-        request_id
-    );
-
-    let (response_message, limits) = send_mostro_message(
-        &form.mnemonic,
-        next_idx,
-        &form.mostro_pubkey_hex,
-        &form.relay_urls,
-        message,
-    )
-    .await?;
-
-    let inner = response_message.get_inner_message_kind();
-
-    // Check for CantDo action (error response)
-    if inner.action == mostro_core::message::Action::CantDo {
-        let reason = match &inner.payload {
-            Some(mostro_core::message::Payload::CantDo(Some(reason))) => {
-                cant_do_description(reason, &limits)
-            }
-            Some(mostro_core::message::Payload::CantDo(None)) => {
-                "Order rejected by Mostro".to_string()
-            }
-            _ => "Order rejected by Mostro".to_string(),
+        // Expiration based on user-chosen days (0 = no expiration)
+        let expires_at = if form.expiry_days > 0 {
+            let now = chrono::Utc::now();
+            let exp = now + chrono::Duration::days(form.expiry_days as i64);
+            Some(exp.timestamp())
+        } else {
+            None
         };
-        return Err(reason);
+
+        // Build SmallOrder (clone fields consumed by SmallOrder::new)
+        let small_order = mostro_core::order::SmallOrder::new(
+            None,
+            Some(form.kind),
+            Some(mostro_core::order::Status::Pending),
+            form.amount,
+            form.fiat_code.clone(),
+            form.min_amount,
+            form.max_amount,
+            form.fiat_amount,
+            form.payment_method.clone(),
+            form.premium,
+            None,
+            None,
+            form.buyer_invoice.clone(),
+            Some(0),
+            expires_at,
+        );
+
+        // Create Mostro message
+        let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+        let order_content = mostro_core::message::Payload::Order(small_order);
+        let message = mostro_core::message::Message::new_order(
+            None,
+            Some(request_id),
+            Some(next_idx),
+            mostro_core::message::Action::NewOrder,
+            Some(order_content),
+        );
+
+        tracing::info!(
+            "Order sent via gift wrap, trade_index={}, request_id={}, attempt={}",
+            next_idx,
+            request_id,
+            attempt
+        );
+
+        let (response_message, limits) = send_mostro_message(
+            &form.mnemonic,
+            next_idx,
+            &form.mostro_pubkey_hex,
+            &form.relay_urls,
+            message,
+        )
+        .await?;
+
+        let inner = response_message.get_inner_message_kind();
+
+        // Check for CantDo action (error response)
+        if inner.action == mostro_core::message::Action::CantDo {
+            // On InvalidTradeIndex, re-sync from server and retry once
+            if is_invalid_trade_index(inner) && attempt == 0 {
+                tracing::warn!(
+                    "InvalidTradeIndex (local={}), syncing from server and retrying",
+                    data.last_trade_index
+                );
+                sync_last_trade_index(
+                    &form.cube_name,
+                    &form.mnemonic,
+                    &form.mostro_pubkey_hex,
+                    &form.relay_urls,
+                )
+                .await?;
+                continue;
+            }
+            let reason = match &inner.payload {
+                Some(mostro_core::message::Payload::CantDo(Some(reason))) => {
+                    cant_do_description(reason, &limits)
+                }
+                Some(mostro_core::message::Payload::CantDo(None)) => {
+                    "Order rejected by Mostro".to_string()
+                }
+                _ => "Order rejected by Mostro".to_string(),
+            };
+            return Err(reason);
+        }
+
+        // Extract order ID from response
+        let order_id = match &inner.payload {
+            Some(mostro_core::message::Payload::Order(order)) => order
+                .id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            _ => "unknown".to_string(),
+        };
+
+        tracing::info!("Order created successfully, order_id={}", order_id);
+
+        // Update trade index
+        data.last_trade_index = next_idx;
+        save_data(&form.cube_name, &data)?;
+
+        // Persist trade session to disk (best-effort — order already succeeded)
+        let session = TradeSession {
+            order_id: order_id.clone(),
+            trade_index: next_idx,
+            kind: match form.kind {
+                mostro_core::order::Kind::Buy => "buy".to_string(),
+                mostro_core::order::Kind::Sell => "sell".to_string(),
+            },
+            fiat_code: form.fiat_code.clone(),
+            fiat_amount: form.fiat_amount,
+            min_amount: form.min_amount,
+            max_amount: form.max_amount,
+            amount: form.amount,
+            premium: form.premium,
+            payment_method: form.payment_method.clone(),
+            created_at: chrono::Utc::now().timestamp(),
+            role: "creator".to_string(),
+            messages: Vec::new(),
+            counterparty_trade_pubkey: None, // set later when someone takes the order
+            admin_trade_pubkey: None,
+        };
+        if let Err(e) = append_trade(&form.cube_name, session) {
+            tracing::warn!("Failed to persist trade session: {e}");
+        }
+
+        return Ok(OrderSubmitResponse::Success { order_id });
     }
 
-    // Extract order ID from response
-    let order_id = match &inner.payload {
-        Some(mostro_core::message::Payload::Order(order)) => order
-            .id
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "unknown".to_string()),
-        _ => "unknown".to_string(),
-    };
-
-    tracing::info!("Order created successfully, order_id={}", order_id);
-
-    // Update trade index
-    data.last_trade_index = next_idx;
-    save_data(&form.cube_name, &data)?;
-
-    // Persist trade session to disk (best-effort — order already succeeded)
-    let session = TradeSession {
-        order_id: order_id.clone(),
-        trade_index: next_idx,
-        kind: match form.kind {
-            mostro_core::order::Kind::Buy => "buy".to_string(),
-            mostro_core::order::Kind::Sell => "sell".to_string(),
-        },
-        fiat_code: saved_fiat_code,
-        fiat_amount: form.fiat_amount,
-        min_amount: form.min_amount,
-        max_amount: form.max_amount,
-        amount: form.amount,
-        premium: form.premium,
-        payment_method: saved_payment_method,
-        created_at: chrono::Utc::now().timestamp(),
-        role: "creator".to_string(),
-        messages: Vec::new(),
-    };
-    if let Err(e) = append_trade(&form.cube_name, session) {
-        tracing::warn!("Failed to persist trade session: {e}");
-    }
-
-    Ok(OrderSubmitResponse::Success { order_id })
+    Err("Order failed after trade index sync retry".to_string())
 }
 
 // ── Take order ──────────────────────────────────────────────────────────
@@ -856,10 +1025,8 @@ pub enum TakeOrderResponse {
 }
 
 /// Take an existing order from the order book.
+/// On InvalidTradeIndex, automatically re-syncs from the server and retries once.
 pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String> {
-    let mut mdata = load_data(&data.cube_name);
-    let next_idx = mdata.last_trade_index + 1;
-
     let order_uuid =
         uuid::Uuid::parse_str(&data.order_id).map_err(|e| format!("Invalid order ID: {e}"))?;
 
@@ -869,124 +1036,163 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
         OrderType::Buy => mostro_core::message::Action::TakeBuy,
     };
 
-    let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+    for attempt in 0..2u8 {
+        let mut mdata = load_data(&data.cube_name);
+        let next_idx = mdata.last_trade_index + 1;
 
-    // Build payload per mostro protocol:
-    // TakeSell (buyer): PaymentRequest(None, invoice, amount) or Amount(amount)
-    // TakeBuy (seller): Amount(amount) or None
-    let payload = match action {
-        mostro_core::message::Action::TakeSell => {
-            // User is buyer
-            match (&data.lightning_invoice, data.amount) {
-                (Some(inv), Some(amt)) => Some(mostro_core::message::Payload::PaymentRequest(
-                    None,
-                    inv.clone(),
-                    Some(amt),
-                )),
-                (Some(inv), None) => Some(mostro_core::message::Payload::PaymentRequest(
-                    None,
-                    inv.clone(),
-                    None,
-                )),
-                (None, Some(amt)) => Some(mostro_core::message::Payload::Amount(amt)),
-                (None, None) => None,
+        let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+
+        // Build payload per mostro protocol:
+        // TakeSell (buyer): PaymentRequest(None, invoice, amount) or Amount(amount)
+        // TakeBuy (seller): Amount(amount) or None
+        let payload = match action {
+            mostro_core::message::Action::TakeSell => {
+                // User is buyer
+                match (&data.lightning_invoice, data.amount) {
+                    (Some(inv), Some(amt)) => Some(mostro_core::message::Payload::PaymentRequest(
+                        None,
+                        inv.clone(),
+                        Some(amt),
+                    )),
+                    (Some(inv), None) => Some(mostro_core::message::Payload::PaymentRequest(
+                        None,
+                        inv.clone(),
+                        None,
+                    )),
+                    (None, Some(amt)) => Some(mostro_core::message::Payload::Amount(amt)),
+                    (None, None) => None,
+                }
             }
-        }
-        mostro_core::message::Action::TakeBuy => {
-            // User is seller
-            data.amount.map(mostro_core::message::Payload::Amount)
-        }
-        _ => None,
-    };
-
-    tracing::info!(
-        "Taking order {}, action={:?}, trade_index={}",
-        data.order_id,
-        action,
-        next_idx
-    );
-
-    let message = mostro_core::message::Message::new_order(
-        Some(order_uuid),
-        Some(request_id),
-        Some(next_idx),
-        action,
-        payload,
-    );
-
-    let (response_message, limits) = send_mostro_message(
-        &data.mnemonic,
-        next_idx,
-        &data.mostro_pubkey_hex,
-        &data.relay_urls,
-        message,
-    )
-    .await?;
-
-    let inner = response_message.get_inner_message_kind();
-
-    if inner.action == mostro_core::message::Action::CantDo {
-        let reason = match &inner.payload {
-            Some(mostro_core::message::Payload::CantDo(Some(reason))) => {
-                cant_do_description(reason, &limits)
+            mostro_core::message::Action::TakeBuy => {
+                // User is seller
+                data.amount.map(mostro_core::message::Payload::Amount)
             }
-            _ => "Failed to take order".to_string(),
+            _ => None,
         };
-        return Err(reason);
-    }
 
-    // Update trade index
-    mdata.last_trade_index = next_idx;
-    save_data(&data.cube_name, &mdata)?;
+        tracing::info!(
+            "Taking order {}, action={:?}, trade_index={}, attempt={}",
+            data.order_id,
+            action,
+            next_idx,
+            attempt
+        );
 
-    // Determine our role's order kind: if we take a sell, we're buying
-    let our_kind = match data.order_type {
-        OrderType::Sell => "buy",
-        OrderType::Buy => "sell",
-    };
+        let message = mostro_core::message::Message::new_order(
+            Some(order_uuid),
+            Some(request_id),
+            Some(next_idx),
+            action.clone(),
+            payload,
+        );
 
-    let session = TradeSession {
-        order_id: data.order_id.clone(),
-        trade_index: next_idx,
-        kind: our_kind.to_string(),
-        fiat_code: String::new(),
-        fiat_amount: data.amount.unwrap_or(0),
-        min_amount: None,
-        max_amount: None,
-        amount: 0,
-        premium: 0,
-        payment_method: String::new(),
-        created_at: chrono::Utc::now().timestamp(),
-        role: "taker".to_string(),
-        messages: Vec::new(),
-    };
-    if let Err(e) = append_trade(&data.cube_name, session) {
-        tracing::warn!("Failed to persist take-order session: {e}");
-    }
+        let (response_message, limits) = send_mostro_message(
+            &data.mnemonic,
+            next_idx,
+            &data.mostro_pubkey_hex,
+            &data.relay_urls,
+            message,
+        )
+        .await?;
 
-    // Check response payload: PaymentRequest means seller must pay a hold invoice
-    match &inner.payload {
-        Some(mostro_core::message::Payload::PaymentRequest(_order, invoice, amount)) => {
-            tracing::info!(
-                "Received PaymentRequest for order {} — seller must pay invoice",
-                data.order_id
-            );
-            Ok(TakeOrderResponse::PaymentRequired {
-                order_id: data.order_id,
-                trade_index: next_idx,
-                invoice: invoice.clone(),
-                amount_sats: *amount,
-            })
+        let inner = response_message.get_inner_message_kind();
+
+        if inner.action == mostro_core::message::Action::CantDo {
+            // On InvalidTradeIndex, re-sync from server and retry once
+            if is_invalid_trade_index(inner) && attempt == 0 {
+                tracing::warn!(
+                    "InvalidTradeIndex on take_order (local={}), syncing from server and retrying",
+                    mdata.last_trade_index
+                );
+                sync_last_trade_index(
+                    &data.cube_name,
+                    &data.mnemonic,
+                    &data.mostro_pubkey_hex,
+                    &data.relay_urls,
+                )
+                .await?;
+                continue;
+            }
+            let reason = match &inner.payload {
+                Some(mostro_core::message::Payload::CantDo(Some(reason))) => {
+                    cant_do_description(reason, &limits)
+                }
+                _ => "Failed to take order".to_string(),
+            };
+            return Err(reason);
         }
-        _ => {
-            let status = format!("{:?}", inner.action);
-            Ok(TakeOrderResponse::Success {
-                order_id: data.order_id,
-                trade_index: next_idx,
-                status,
-            })
+
+        // Update trade index
+        mdata.last_trade_index = next_idx;
+        save_data(&data.cube_name, &mdata)?;
+
+        // Determine our role's order kind: if we take a sell, we're buying
+        let our_kind = match data.order_type {
+            OrderType::Sell => "buy",
+            OrderType::Buy => "sell",
+        };
+
+        // Extract counterparty trade pubkey from the response payload
+        let our_trade_hex = derive_trade_keys(&data.mnemonic, next_idx)
+            .map(|k| k.public_key().to_hex())
+            .unwrap_or_default();
+        let counterparty_trade_pubkey = match &inner.payload {
+            Some(mostro_core::message::Payload::Order(order)) => {
+                extract_counterparty_pubkey(order, &our_trade_hex)
+            }
+            Some(mostro_core::message::Payload::PaymentRequest(Some(order), _, _)) => {
+                extract_counterparty_pubkey(order, &our_trade_hex)
+            }
+            _ => None,
+        };
+
+        let session = TradeSession {
+            order_id: data.order_id.clone(),
+            trade_index: next_idx,
+            kind: our_kind.to_string(),
+            fiat_code: String::new(),
+            fiat_amount: data.amount.unwrap_or(0),
+            min_amount: None,
+            max_amount: None,
+            amount: 0,
+            premium: 0,
+            payment_method: String::new(),
+            created_at: chrono::Utc::now().timestamp(),
+            role: "taker".to_string(),
+            messages: Vec::new(),
+            counterparty_trade_pubkey,
+            admin_trade_pubkey: None,
+        };
+        if let Err(e) = append_trade(&data.cube_name, session) {
+            tracing::warn!("Failed to persist take-order session: {e}");
         }
+
+        // Check response payload: PaymentRequest means seller must pay a hold invoice
+        return match &inner.payload {
+            Some(mostro_core::message::Payload::PaymentRequest(_order, invoice, amount)) => {
+                tracing::info!(
+                    "Received PaymentRequest for order {} — seller must pay invoice",
+                    data.order_id
+                );
+                Ok(TakeOrderResponse::PaymentRequired {
+                    order_id: data.order_id,
+                    trade_index: next_idx,
+                    invoice: invoice.clone(),
+                    amount_sats: *amount,
+                })
+            }
+            _ => {
+                let status = format!("{:?}", inner.action);
+                Ok(TakeOrderResponse::Success {
+                    order_id: data.order_id,
+                    trade_index: next_idx,
+                    status,
+                })
+            }
+        };
     }
+
+    Err("Take order failed after trade index sync retry".to_string())
 }
 
 // ── Trade actions ───────────────────────────────────────────────────────
@@ -1153,6 +1359,449 @@ async fn trade_action(
     Ok(TradeActionResponse::Success { new_status })
 }
 
+// ── Chat ────────────────────────────────────────────────────────────────
+
+/// Compute the ECDH shared key between our trade key and the counterparty's
+/// trade pubkey.  Both parties derive the same shared key.  The shared key's
+/// public part is used as the p-tag recipient in chat gift wraps so that
+/// neither party's real trade pubkey is leaked to relay operators.
+fn derive_shared_chat_keys(
+    our_keys: &Keys,
+    counterparty_pubkey: &PublicKey,
+) -> Result<Keys, String> {
+    let shared_bytes =
+        nostr_sdk::util::generate_shared_key(our_keys.secret_key(), counterparty_pubkey)
+            .map_err(|e| format!("Failed to compute shared key: {e}"))?;
+    let shared_secret = nostr_sdk::SecretKey::from_slice(&shared_bytes)
+        .map_err(|e| format!("Invalid shared secret: {e}"))?;
+    Ok(Keys::new(shared_secret))
+}
+
+/// Send a chat message directly to the counterparty via P2P NIP-59 gift wrap.
+/// Messages are encrypted to the ECDH shared key (not the counterparty's trade
+/// pubkey) per the Mostro chat protocol.
+pub async fn send_chat_message(data: TradeActionData) -> Result<(), String> {
+    let text = data.invoice.clone().ok_or("Chat text is required")?;
+    if text.trim().is_empty() {
+        return Err("Empty message".to_string());
+    }
+
+    let sessions = load_data(&data.cube_name).trades;
+    let session = sessions
+        .iter()
+        .find(|s| s.order_id == data.order_id)
+        .ok_or_else(|| format!("No trade session found for order {}", data.order_id))?;
+
+    let counterparty_hex = session
+        .counterparty_trade_pubkey
+        .as_deref()
+        .ok_or("No counterparty trade pubkey available — chat not yet possible")?;
+    let counterparty_pubkey = PublicKey::from_hex(counterparty_hex)
+        .map_err(|e| format!("Invalid counterparty pubkey: {e}"))?;
+
+    let trade_keys = derive_trade_keys(&data.mnemonic, session.trade_index)?;
+    let shared_keys = derive_shared_chat_keys(&trade_keys, &counterparty_pubkey)?;
+    let shared_pubkey = shared_keys.public_key();
+
+    // 1. Create a signed kind-1 text note (signed by our trade key)
+    let inner_event = EventBuilder::text_note(&text)
+        .sign_with_keys(&trade_keys)
+        .map_err(|e| format!("Failed to sign inner event: {e}"))?;
+    let inner_json = inner_event.as_json();
+
+    // 2. NIP-44 encrypt with an ephemeral key → shared pubkey
+    let ephemeral_keys = Keys::generate();
+    let encrypted = nostr_sdk::prelude::nip44::encrypt(
+        ephemeral_keys.secret_key(),
+        &shared_pubkey,
+        &inner_json,
+        nostr_sdk::prelude::nip44::Version::V2,
+    )
+    .map_err(|e| format!("Failed to encrypt chat message: {e}"))?;
+
+    // 3. Build kind-1059 gift wrap, p-tag = shared pubkey
+    let gift_wrap = EventBuilder::new(nostr_sdk::Kind::GiftWrap, &encrypted)
+        .tag(Tag::public_key(shared_pubkey))
+        .custom_created_at(Timestamp::tweaked(
+            nostr_sdk::prelude::nip59::RANGE_RANDOM_TIMESTAMP_TWEAK,
+        ))
+        .sign_with_keys(&ephemeral_keys)
+        .map_err(|e| format!("Failed to sign gift wrap: {e}"))?;
+
+    // 4. Send to relays (fire-and-forget)
+    let client = Client::new(trade_keys.clone());
+    for relay_url in &data.relay_urls {
+        client
+            .add_relay(relay_url.as_str())
+            .await
+            .map_err(|e| format!("Failed to add relay {relay_url}: {e}"))?;
+    }
+    client.connect().await;
+    client.wait_for_connection(Duration::from_secs(10)).await;
+
+    client
+        .send_event(&gift_wrap)
+        .await
+        .map_err(|e| format!("Failed to send chat message: {e}"))?;
+
+    let _ = client.disconnect().await;
+
+    // Persist outbound message so get_trade_messages returns it with is_own = true
+    let mut store = load_data(&data.cube_name);
+    if let Some(session) = store
+        .trades
+        .iter_mut()
+        .find(|s| s.order_id == data.order_id)
+    {
+        session.messages.push(TradeMessage {
+            timestamp: chrono::Utc::now().timestamp() as u64,
+            action: "chat".to_string(),
+            payload_json: text,
+            is_own: true,
+        });
+        let _ = save_data(&data.cube_name, &store);
+    }
+
+    tracing::info!("P2P chat message sent for order {}", data.order_id);
+    Ok(())
+}
+
+/// Send a dispute chat message to the admin/solver via P2P NIP-59 gift wrap.
+/// Same encryption as peer chat but uses the admin's shared key.
+pub async fn send_admin_chat_message(data: TradeActionData) -> Result<(), String> {
+    let text = data.invoice.clone().ok_or("Chat text is required")?;
+    if text.trim().is_empty() {
+        return Err("Empty message".to_string());
+    }
+
+    let sessions = load_data(&data.cube_name).trades;
+    let session = sessions
+        .iter()
+        .find(|s| s.order_id == data.order_id)
+        .ok_or_else(|| format!("No trade session found for order {}", data.order_id))?;
+
+    let admin_hex = session
+        .admin_trade_pubkey
+        .as_deref()
+        .ok_or("No admin trade pubkey available — dispute chat not yet possible")?;
+    let admin_pubkey =
+        PublicKey::from_hex(admin_hex).map_err(|e| format!("Invalid admin pubkey: {e}"))?;
+
+    let trade_keys = derive_trade_keys(&data.mnemonic, session.trade_index)?;
+    let shared_keys = derive_shared_chat_keys(&trade_keys, &admin_pubkey)?;
+    let shared_pubkey = shared_keys.public_key();
+
+    let inner_event = EventBuilder::text_note(&text)
+        .sign_with_keys(&trade_keys)
+        .map_err(|e| format!("Failed to sign inner event: {e}"))?;
+    let inner_json = inner_event.as_json();
+
+    let ephemeral_keys = Keys::generate();
+    let encrypted = nostr_sdk::prelude::nip44::encrypt(
+        ephemeral_keys.secret_key(),
+        &shared_pubkey,
+        &inner_json,
+        nostr_sdk::prelude::nip44::Version::V2,
+    )
+    .map_err(|e| format!("Failed to encrypt dispute chat message: {e}"))?;
+
+    let gift_wrap = EventBuilder::new(nostr_sdk::Kind::GiftWrap, &encrypted)
+        .tag(Tag::public_key(shared_pubkey))
+        .custom_created_at(Timestamp::tweaked(
+            nostr_sdk::prelude::nip59::RANGE_RANDOM_TIMESTAMP_TWEAK,
+        ))
+        .sign_with_keys(&ephemeral_keys)
+        .map_err(|e| format!("Failed to sign gift wrap: {e}"))?;
+
+    let client = Client::new(trade_keys.clone());
+    for relay_url in &data.relay_urls {
+        client
+            .add_relay(relay_url.as_str())
+            .await
+            .map_err(|e| format!("Failed to add relay {relay_url}: {e}"))?;
+    }
+    client.connect().await;
+    client.wait_for_connection(Duration::from_secs(10)).await;
+
+    client
+        .send_event(&gift_wrap)
+        .await
+        .map_err(|e| format!("Failed to send dispute chat message: {e}"))?;
+
+    let _ = client.disconnect().await;
+
+    // Persist outbound dispute message so get_trade_messages returns it with is_own = true
+    let mut store = load_data(&data.cube_name);
+    if let Some(session) = store
+        .trades
+        .iter_mut()
+        .find(|s| s.order_id == data.order_id)
+    {
+        session.messages.push(TradeMessage {
+            timestamp: chrono::Utc::now().timestamp() as u64,
+            action: "dispute_chat".to_string(),
+            payload_json: text,
+            is_own: true,
+        });
+        let _ = save_data(&data.cube_name, &store);
+    }
+
+    tracing::info!("Dispute chat message sent for order {}", data.order_id);
+    Ok(())
+}
+
+/// Get all trade messages for a given order from disk.
+pub fn get_trade_messages(cube_name: &str, order_id: &str) -> Vec<TradeMessage> {
+    let data = load_data(cube_name);
+    data.trades
+        .iter()
+        .find(|t| t.order_id == order_id)
+        .map(|t| t.messages.clone())
+        .unwrap_or_default()
+}
+
+/// Chat identity info for the user information panel.
+pub struct ChatIdentityInfo {
+    pub counterparty_pubkey: Option<String>,
+    pub counterparty_nickname: Option<String>,
+    pub our_trade_pubkey: Option<String>,
+    pub our_nickname: Option<String>,
+    pub shared_key: Option<String>,
+}
+
+// ── Deterministic nickname generation ──
+
+const ADJECTIVES: &[&str] = &[
+    "shadowy",
+    "orange",
+    "nonCustodial",
+    "trustless",
+    "unbanked",
+    "atomic",
+    "magic",
+    "hidden",
+    "incognito",
+    "anonymous",
+    "encrypted",
+    "ghostly",
+    "silent",
+    "masked",
+    "stealthy",
+    "free",
+    "nostalgic",
+    "ephemeral",
+    "sovereign",
+    "unstoppable",
+    "private",
+    "censorshipResistant",
+    "hush",
+    "defiant",
+    "subversive",
+    "fiery",
+    "subzero",
+    "burning",
+    "cosmic",
+    "mighty",
+    "whispering",
+    "cyber",
+    "rusty",
+    "nihilistic",
+    "dark",
+    "wicked",
+    "spicy",
+    "noKYC",
+    "discreet",
+    "loose",
+    "boosted",
+    "starving",
+    "hungry",
+    "orwellian",
+    "bullish",
+    "bearish",
+]; // 46 items
+
+const NOUNS: &[&str] = &[
+    "wizard",
+    "pirate",
+    "zap",
+    "node",
+    "invoice",
+    "nipster",
+    "nomad",
+    "sats",
+    "bull",
+    "bear",
+    "whale",
+    "frog",
+    "gorilla",
+    "nostrich",
+    "halFinney",
+    "hodlonaut",
+    "satoshi",
+    "nakamoto",
+    "samurai",
+    "sparrow",
+    "crusader",
+    "tinkerer",
+    "nostr",
+    "pleb",
+    "warrior",
+    "ecdsa",
+    "monkey",
+    "wolf",
+    "renegade",
+    "minotaur",
+    "phoenix",
+    "dragon",
+    "fiatjaf",
+    "roasbeef",
+    "berlin",
+    "tokyo",
+    "buenosAires",
+    "caracas",
+    "havana",
+    "miami",
+    "prague",
+    "amsterdam",
+    "lugano",
+    "seoul",
+    "bitcoinBeach",
+    "carnivore",
+    "ape",
+    "honeyBadger",
+    "lnp2pBot",
+    "lunaticoin",
+    "jorgeValenzuela",
+    "javyBastard",
+    "loreOrtiz",
+    "manuFerrari",
+    "pablof7z",
+    "btcAndres",
+    "laCrypta",
+    "niftynei",
+    "gloriaZhao",
+    "stupidrisks",
+    "dolcheVillarreal",
+    "furszy",
+    "sergi",
+    "jarolRod",
+    "pieterWuille",
+    "edwardSnowden",
+    "libreriaDeSatoshi",
+    "alexGladstein",
+    "bitkoYinowsky",
+    "alfreMancera",
+    "faixaPreta",
+    "laVecinaDeArriba",
+    "mempool",
+    "pana",
+    "chamo",
+    "catire",
+    "arepa",
+    "cachapa",
+    "tequeño",
+    "hallaca",
+    "roraima",
+    "canaima",
+    "turpial",
+    "araguaney",
+    "cunaguaro",
+    "chiguire",
+    "mamarracho",
+    "cambur",
+]; // 90 items
+
+/// Compute `big_hex_number % modulus` without needing a BigInt library.
+/// Processes the hex string digit-by-digit using modular arithmetic.
+fn hex_mod(hex: &str, modulus: usize) -> usize {
+    let mut result: usize = 0;
+    for ch in hex.chars() {
+        let digit = match ch.to_digit(16) {
+            Some(d) => d as usize,
+            None => continue,
+        };
+        result = (result * 16 + digit) % modulus;
+    }
+    result
+}
+
+/// Compute `big_hex_number / divisor % modulus` without needing a BigInt library.
+/// First divides the big number by `divisor`, then takes modulo.
+fn hex_div_mod(hex: &str, divisor: usize, modulus: usize) -> usize {
+    // To compute (N / divisor) % modulus, we process hex digits and track
+    // both the running quotient-mod and the running remainder of the division.
+    let mut remainder: usize = 0;
+    let mut quotient_mod: usize = 0;
+    for ch in hex.chars() {
+        let digit = match ch.to_digit(16) {
+            Some(d) => d as usize,
+            None => continue,
+        };
+        // N_so_far = old_N * 16 + digit
+        // N_so_far / divisor = (old_N * 16 + digit) / divisor
+        let combined = remainder * 16 + digit;
+        let q_digit = combined / divisor;
+        remainder = combined % divisor;
+        quotient_mod = (quotient_mod * 16 + q_digit) % modulus;
+    }
+    quotient_mod
+}
+
+/// Generate a deterministic human-readable nickname from a hex public key.
+/// Matches the Mostro mobile app's `deterministicHandleFromHexKey` exactly:
+/// parses the full hex key as a BigInt, picks adjective and noun via modulo.
+pub fn nickname_from_pubkey(hex_key: &str) -> String {
+    if hex_key.is_empty() {
+        return "unknown".to_string();
+    }
+    let clean: String = hex_key.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if clean.is_empty() {
+        return "unknown".to_string();
+    }
+    let adj_idx = hex_mod(&clean, ADJECTIVES.len());
+    let noun_idx = hex_div_mod(&clean, ADJECTIVES.len(), NOUNS.len());
+    format!("{}-{}", ADJECTIVES[adj_idx], NOUNS[noun_idx])
+}
+
+pub fn get_chat_identity_info(cube_name: &str, mnemonic: &str, order_id: &str) -> ChatIdentityInfo {
+    let data = load_data(cube_name);
+    let session = data.trades.iter().find(|t| t.order_id == order_id);
+    let Some(session) = session else {
+        return ChatIdentityInfo {
+            counterparty_pubkey: None,
+            counterparty_nickname: None,
+            our_trade_pubkey: None,
+            our_nickname: None,
+            shared_key: None,
+        };
+    };
+    let our_trade_pubkey = derive_trade_keys(mnemonic, session.trade_index)
+        .ok()
+        .map(|k| k.public_key().to_hex());
+    let our_nickname = our_trade_pubkey.as_deref().map(nickname_from_pubkey);
+    let counterparty_nickname = session
+        .counterparty_trade_pubkey
+        .as_deref()
+        .map(nickname_from_pubkey);
+    let shared_key = session
+        .counterparty_trade_pubkey
+        .as_deref()
+        .and_then(|cp_hex| PublicKey::from_hex(cp_hex).ok())
+        .and_then(|cp_pk| {
+            derive_trade_keys(mnemonic, session.trade_index)
+                .ok()
+                .and_then(|keys| derive_shared_chat_keys(&keys, &cp_pk).ok())
+        })
+        .map(|sk| sk.public_key().to_hex());
+    ChatIdentityInfo {
+        counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
+        counterparty_nickname,
+        our_trade_pubkey,
+        our_nickname,
+        shared_key,
+    }
+}
+
 // ── Order fetching (existing code) ──────────────────────────────────────
 
 /// Rating data parsed from the event's `rating` tag.
@@ -1305,52 +1954,40 @@ fn format_time_ago(timestamp: u64) -> String {
     }
 }
 
-/// Fetch orders from the Mostro relay. Returns parsed pending orders.
-async fn fetch_mostro_orders(
-    client: &Client,
-    mostro_pubkey: PublicKey,
-    cube_name: &str,
-) -> Vec<P2POrder> {
-    let since = Timestamp::from(chrono::Utc::now().timestamp() as u64 - ORDER_LOOKBACK_SECS);
-    let filter = Filter::new()
-        .author(mostro_pubkey)
-        .kind(Kind::Custom(38383))
-        .since(since);
-
-    let events = match client.fetch_events(filter, Duration::from_secs(15)).await {
-        Ok(events) => events,
-        Err(e) => {
-            tracing::error!("Failed to fetch Mostro events: {}", e);
-            return Vec::new();
-        }
+/// Process a single kind-38383 order event and update the in-memory cache.
+/// Returns true if the cache was modified (caller should emit updated order list).
+fn process_order_event(
+    event: &nostr_sdk::Event,
+    order_cache: &mut BTreeMap<String, (u64, mostro_core::order::SmallOrder, RatingInfo)>,
+) -> bool {
+    let (order, rating) = order_from_tags(&event.tags);
+    let order_id = match &order.id {
+        Some(id) => id.to_string(),
+        None => return false,
     };
 
-    // Deduplicate by order ID, keeping the latest event per UUID.
-    let mut latest_events: BTreeMap<String, (u64, mostro_core::order::SmallOrder, RatingInfo)> =
-        BTreeMap::new();
+    let created_at = event.created_at.as_u64();
 
-    for event in events.iter() {
-        let (order, rating) = order_from_tags(&event.tags);
-
-        // Only keep pending orders
-        if order.status != Some(mostro_core::order::Status::Pending) {
-            continue;
-        }
-
-        let order_id = match &order.id {
-            Some(id) => id.to_string(),
-            None => continue,
-        };
-
-        let created_at = event.created_at.as_u64();
-        match latest_events.get(&order_id) {
-            Some((existing_ts, _, _)) if *existing_ts >= created_at => {}
-            _ => {
-                latest_events.insert(order_id, (created_at, order, rating));
-            }
-        }
+    // Non-pending orders: remove from cache (order was taken/canceled/etc)
+    if order.status != Some(mostro_core::order::Status::Pending) {
+        return order_cache.remove(&order_id).is_some();
     }
 
+    // Only update if this event is newer
+    if let Some((existing_ts, _, _)) = order_cache.get(&order_id) {
+        if *existing_ts >= created_at {
+            return false;
+        }
+    }
+    order_cache.insert(order_id, (created_at, order, rating));
+    true
+}
+
+/// Build a Vec<P2POrder> from the in-memory order cache.
+fn orders_from_cache(
+    order_cache: &BTreeMap<String, (u64, mostro_core::order::SmallOrder, RatingInfo)>,
+    cube_name: &str,
+) -> Vec<P2POrder> {
     let sessions = load_data(cube_name).trades;
     let my_order_ids: HashSet<&str> = sessions
         .iter()
@@ -1358,10 +1995,10 @@ async fn fetch_mostro_orders(
         .map(|s| s.order_id.as_str())
         .collect();
 
-    let mut orders: Vec<P2POrder> = latest_events
-        .into_values()
+    let mut orders: Vec<P2POrder> = order_cache
+        .values()
         .filter_map(|(created_at, order, rating)| {
-            let mut p2p = small_order_to_p2p_order(&order, &rating, created_at)?;
+            let mut p2p = small_order_to_p2p_order(order, rating, *created_at)?;
             p2p.is_mine = my_order_ids.contains(p2p.id.as_str());
             Some(p2p)
         })
@@ -1381,6 +2018,9 @@ async fn fetch_user_trades(
         return Vec::new();
     }
 
+    if !has_connected_relay(client).await {
+        return sessions_to_fallback_trades(&sessions);
+    }
     let order_ids: Vec<String> = sessions.iter().map(|s| s.order_id.clone()).collect();
     let filter = Filter::new()
         .author(mostro_pubkey)
@@ -1455,6 +2095,8 @@ async fn fetch_user_trades(
                 time_ago: format_time_ago(*event_ts),
                 last_dm_action: latest_dm_action(session).map(String::from),
                 countdown_start_ts: countdown_start_timestamp(session),
+                counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
+                admin_pubkey: session.admin_trade_pubkey.clone(),
             });
         } else {
             // Not found on relay — fallback from saved session
@@ -1516,6 +2158,8 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
         time_ago: format_time_ago(session.created_at as u64),
         last_dm_action: latest_dm_action(session).map(String::from),
         countdown_start_ts: countdown_start_timestamp(session),
+        counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
+        admin_pubkey: session.admin_trade_pubkey.clone(),
     }
 }
 
@@ -1538,7 +2182,7 @@ fn mostro_stream(
     let pubkey_hex = params.2.clone();
     let relay_urls = params.3.clone();
     iced::stream::channel(
-        32,
+        256,
         move |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
             let mostro_pk = match PublicKey::from_hex(&pubkey_hex) {
                 Ok(pk) => pk,
@@ -1554,20 +2198,21 @@ fn mostro_stream(
                 let _ = client.add_relay(url.as_str()).await;
             }
             client.connect().await;
+            client.wait_for_connection(Duration::from_secs(10)).await;
 
             // Track seen DM event IDs to avoid reprocessing
             // (gift-wrap timestamps are randomized per NIP-59, so we can't use timestamps)
             let mut seen_dm_event_ids: HashSet<nostr_sdk::EventId> = HashSet::new();
             // Track which trade pubkeys we're already subscribed to for DMs
             let mut subscribed_trade_pubkeys: Vec<PublicKey> = Vec::new();
-            // First iteration: replay historical DMs silently (persist state, no toasts)
-            let mut first_run = true;
 
             // Initial fetch of node info
             let info = fetch_mostro_info(&client, mostro_pk).await;
-            if !info.fiat_currencies.is_empty() {
+            {
                 let msg = Message::View(view::Message::P2P(P2PMessage::MostroNodeInfoReceived {
                     currencies: info.fiat_currencies,
+                    min_order_sats: info.min_order_amount,
+                    max_order_sats: info.max_order_amount,
                 }));
                 let _ = output.send(msg).await;
             }
@@ -1590,8 +2235,134 @@ fn mostro_stream(
                 }
             }
 
+            // Subscribe to order book events (kind 38383) for real-time updates
+            let order_since =
+                Timestamp::from(chrono::Utc::now().timestamp() as u64 - ORDER_LOOKBACK_SECS);
+            let order_filter = Filter::new()
+                .author(mostro_pk)
+                .kind(Kind::Custom(38383))
+                .since(order_since);
+            if let Err(e) = client.subscribe(order_filter, None).await {
+                tracing::warn!("Failed to subscribe to order events: {e}");
+            }
+
+            // In-memory cache of the latest order events, keyed by order UUID
+            let mut order_cache: BTreeMap<
+                String,
+                (u64, mostro_core::order::SmallOrder, RatingInfo),
+            > = BTreeMap::new();
+
+            // Initial subscription + historical DM catch-up (silent)
+            update_dm_subscriptions(
+                &client,
+                &cube_name,
+                &mnemonic,
+                &mut subscribed_trade_pubkeys,
+            )
+            .await;
+
+            process_dm_notifications(
+                &client,
+                &cube_name,
+                &mnemonic,
+                mostro_pk,
+                &mut seen_dm_event_ids,
+                &mut output,
+                true, // silent on first run
+            )
+            .await;
+
+            // Initial order fetch — populates cache + emits to UI
+            {
+                let since =
+                    Timestamp::from(chrono::Utc::now().timestamp() as u64 - ORDER_LOOKBACK_SECS);
+                let filter = Filter::new()
+                    .author(mostro_pk)
+                    .kind(Kind::Custom(38383))
+                    .since(since);
+                if has_connected_relay(&client).await {
+                    if let Ok(events) = client.fetch_events(filter, Duration::from_secs(15)).await {
+                        for event in events.iter() {
+                            process_order_event(event, &mut order_cache);
+                        }
+                    }
+                }
+            }
+            let orders = orders_from_cache(&order_cache, &cube_name);
+            let _ = output
+                .send(Message::View(view::Message::P2P(
+                    P2PMessage::MostroOrdersReceived(orders),
+                )))
+                .await;
+            let trades = fetch_user_trades(&client, &cube_name, mostro_pk).await;
+            let _ = output
+                .send(Message::View(view::Message::P2P(
+                    P2PMessage::MostroTradesReceived(trades),
+                )))
+                .await;
+
+            // Real-time loop: listen for order + DM notifications, periodic trade fetch
+            let mut notifications = client.notifications();
             loop {
-                // Subscribe to gift-wrap DMs for any new trade pubkeys
+                let deadline =
+                    tokio::time::Instant::now() + Duration::from_secs(FETCH_INTERVAL_SECS);
+                // Process real-time notifications until the periodic timer fires
+                loop {
+                    tokio::select! {
+                        result = notifications.recv() => {
+                            if let Ok(RelayPoolNotification::Event { event, .. }) = result {
+                                // Real-time order book updates (kind 38383)
+                                if event.kind == nostr_sdk::Kind::Custom(38383) {
+                                    if process_order_event(&event, &mut order_cache) {
+                                        let orders = orders_from_cache(&order_cache, &cube_name);
+                                        let _ = output
+                                            .send(Message::View(view::Message::P2P(
+                                                P2PMessage::MostroOrdersReceived(orders),
+                                            )))
+                                            .await;
+                                    }
+                                }
+                                // Real-time DM notifications (kind 1059 gift wrap)
+                                else if event.kind == nostr_sdk::Kind::GiftWrap
+                                    && !seen_dm_event_ids.contains(&event.id)
+                                {
+                                    let new_cp = process_dm_event(
+                                        &event,
+                                        &cube_name,
+                                        &mnemonic,
+                                        mostro_pk,
+                                        &mut seen_dm_event_ids,
+                                        &mut output,
+                                    )
+                                    .await;
+                                    // New counterparty discovered — immediately subscribe
+                                    // to the shared chat key for real-time P2P messages.
+                                    if new_cp {
+                                        update_dm_subscriptions(
+                                            &client,
+                                            &cube_name,
+                                            &mnemonic,
+                                            &mut subscribed_trade_pubkeys,
+                                        )
+                                        .await;
+                                    }
+                                }
+                            }
+                        }
+                        _ = tokio::time::sleep_until(deadline) => {
+                            break;
+                        }
+                    }
+                }
+
+                // Reconnect if all relays dropped
+                if !has_connected_relay(&client).await {
+                    tracing::warn!("No connected relays, attempting reconnect");
+                    client.connect().await;
+                    client.wait_for_connection(Duration::from_secs(10)).await;
+                }
+
+                // Periodic: check for new subscriptions + fetch orders/trades
                 update_dm_subscriptions(
                     &client,
                     &cube_name,
@@ -1600,31 +2371,33 @@ fn mostro_stream(
                 )
                 .await;
 
-                // Process DMs: first run is silent (state recovery only), subsequent runs send toasts
-                process_dm_notifications(
-                    &client,
-                    &cube_name,
-                    &mnemonic,
-                    mostro_pk,
-                    &mut seen_dm_event_ids,
-                    &mut output,
-                    first_run,
-                )
-                .await;
-
-                // Fetch orders and trades using the persistent client
-                let orders = fetch_mostro_orders(&client, mostro_pk, &cube_name).await;
-                let msg =
-                    Message::View(view::Message::P2P(P2PMessage::MostroOrdersReceived(orders)));
-                let _ = output.send(msg).await;
-
+                // Fallback: refresh order cache from a full fetch
+                if has_connected_relay(&client).await {
+                    let since = Timestamp::from(
+                        chrono::Utc::now().timestamp() as u64 - ORDER_LOOKBACK_SECS,
+                    );
+                    let filter = Filter::new()
+                        .author(mostro_pk)
+                        .kind(Kind::Custom(38383))
+                        .since(since);
+                    if let Ok(events) = client.fetch_events(filter, Duration::from_secs(15)).await {
+                        for event in events.iter() {
+                            process_order_event(event, &mut order_cache);
+                        }
+                    }
+                }
+                let orders = orders_from_cache(&order_cache, &cube_name);
+                let _ = output
+                    .send(Message::View(view::Message::P2P(
+                        P2PMessage::MostroOrdersReceived(orders),
+                    )))
+                    .await;
                 let trades = fetch_user_trades(&client, &cube_name, mostro_pk).await;
-                let msg =
-                    Message::View(view::Message::P2P(P2PMessage::MostroTradesReceived(trades)));
-                let _ = output.send(msg).await;
-
-                first_run = false;
-                tokio::time::sleep(Duration::from_secs(FETCH_INTERVAL_SECS)).await;
+                let _ = output
+                    .send(Message::View(view::Message::P2P(
+                        P2PMessage::MostroTradesReceived(trades),
+                    )))
+                    .await;
             }
         },
     )
@@ -1649,6 +2422,28 @@ async fn update_dm_subscriptions(
             let pk = keys.public_key();
             if !subscribed_pubkeys.contains(&pk) {
                 new_pubkeys.push(pk);
+            }
+            // Also subscribe to the ECDH shared key pubkey for P2P chat
+            if let Some(ref cp_hex) = session.counterparty_trade_pubkey {
+                if let Ok(cp_pk) = PublicKey::from_hex(cp_hex) {
+                    if let Ok(shared) = derive_shared_chat_keys(&keys, &cp_pk) {
+                        let spk = shared.public_key();
+                        if !subscribed_pubkeys.contains(&spk) {
+                            new_pubkeys.push(spk);
+                        }
+                    }
+                }
+            }
+            // Subscribe to ECDH shared key for dispute chat with admin
+            if let Some(ref admin_hex) = session.admin_trade_pubkey {
+                if let Ok(admin_pk) = PublicKey::from_hex(admin_hex) {
+                    if let Ok(shared) = derive_shared_chat_keys(&keys, &admin_pk) {
+                        let spk = shared.public_key();
+                        if !subscribed_pubkeys.contains(&spk) {
+                            new_pubkeys.push(spk);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1698,11 +2493,32 @@ async fn process_dm_notifications(
         return;
     }
 
-    // Fetch gift-wrap events using the same lookback as orders (48h) so DMs survive restarts
-    let trade_pubkeys: Vec<PublicKey> = session_keys.iter().map(|(_, k)| k.public_key()).collect();
+    // Fetch gift-wrap events for both trade pubkeys AND shared chat pubkeys
+    let mut all_pubkeys: Vec<PublicKey> =
+        session_keys.iter().map(|(_, k)| k.public_key()).collect();
+    for (session, keys) in &session_keys {
+        if let Some(ref cp_hex) = session.counterparty_trade_pubkey {
+            if let Ok(cp_pk) = PublicKey::from_hex(cp_hex) {
+                if let Ok(shared) = derive_shared_chat_keys(keys, &cp_pk) {
+                    all_pubkeys.push(shared.public_key());
+                }
+            }
+        }
+        // Include admin shared key for dispute chat
+        if let Some(ref admin_hex) = session.admin_trade_pubkey {
+            if let Ok(admin_pk) = PublicKey::from_hex(admin_hex) {
+                if let Ok(shared) = derive_shared_chat_keys(keys, &admin_pk) {
+                    all_pubkeys.push(shared.public_key());
+                }
+            }
+        }
+    }
+    if !has_connected_relay(client).await {
+        return;
+    }
     let since = Timestamp::from(chrono::Utc::now().timestamp() as u64 - ORDER_LOOKBACK_SECS);
     let filter = Filter::new()
-        .pubkeys(trade_pubkeys)
+        .pubkeys(all_pubkeys)
         .kind(nostr_sdk::Kind::GiftWrap)
         .since(since);
 
@@ -1722,20 +2538,293 @@ async fn process_dm_notifications(
         }
 
         for (session, keys) in &session_keys {
-            let is_for_us = event.tags.iter().any(|tag| {
+            let our_trade_hex = keys.public_key().to_hex();
+
+            // Compute shared chat pubkey (if counterparty is known)
+            let shared_chat_hex = session
+                .counterparty_trade_pubkey
+                .as_deref()
+                .and_then(|cp_hex| PublicKey::from_hex(cp_hex).ok())
+                .and_then(|cp_pk| derive_shared_chat_keys(keys, &cp_pk).ok())
+                .map(|sk| sk.public_key().to_hex());
+
+            // Compute admin shared chat pubkey (if admin is known)
+            let admin_shared_chat_hex = session
+                .admin_trade_pubkey
+                .as_deref()
+                .and_then(|admin_hex| PublicKey::from_hex(admin_hex).ok())
+                .and_then(|admin_pk| derive_shared_chat_keys(keys, &admin_pk).ok())
+                .map(|sk| sk.public_key().to_hex());
+
+            // Match p-tag against our trade pubkey, shared chat pubkey, or admin shared pubkey
+            let p_tag_value = event.tags.iter().find_map(|tag| {
                 let t = tag.clone().to_vec();
-                t.len() >= 2 && t[0] == "p" && t[1] == keys.public_key().to_hex()
+                if t.len() >= 2 && t[0] == "p" {
+                    Some(t[1].clone())
+                } else {
+                    None
+                }
             });
-            if !is_for_us {
+            let is_mostro_dm = p_tag_value.as_deref() == Some(&our_trade_hex);
+            let is_chat_dm = shared_chat_hex
+                .as_deref()
+                .is_some_and(|sh| p_tag_value.as_deref() == Some(sh));
+            let is_admin_dm = admin_shared_chat_hex
+                .as_deref()
+                .is_some_and(|sh| p_tag_value.as_deref() == Some(sh));
+            if !is_mostro_dm && !is_chat_dm && !is_admin_dm {
                 continue;
             }
 
+            // Try NIP-59 unwrap (3-layer: gift wrap → seal → rumor)
             if let Ok(unwrapped) = nip59::extract_rumor(keys, event).await {
-                // Verify the DM came from the expected Mostro node
-                if unwrapped.rumor.pubkey != mostro_pubkey {
+                if unwrapped.rumor.pubkey == mostro_pubkey {
+                    // ── Mostro protocol message ──
+                    if let Ok((msg, _)) = serde_json::from_str::<(
+                        mostro_core::message::Message,
+                        Option<String>,
+                    )>(&unwrapped.rumor.content)
+                    {
+                        let inner = msg.get_inner_message_kind();
+                        let action = format!("{:?}", inner.action);
+                        let payload_json =
+                            serde_json::to_string(&inner.payload).unwrap_or_default();
+
+                        seen_event_ids.insert(event.id);
+
+                        if inner.action == mostro_core::message::Action::CantDo {
+                            tracing::debug!(
+                                "Skipping CantDo DM for order {} (not a state transition)",
+                                session.order_id
+                            );
+                            continue;
+                        }
+
+                        // Extract counterparty trade pubkey from Order or PaymentRequest payloads
+                        let cp_order = match &inner.payload {
+                            Some(mostro_core::message::Payload::Order(ref order)) => Some(order),
+                            Some(mostro_core::message::Payload::PaymentRequest(
+                                Some(ref order),
+                                _,
+                                _,
+                            )) => Some(order),
+                            _ => None,
+                        };
+                        if let Some(order) = cp_order {
+                            if let Some(cp_pk) = extract_counterparty_pubkey(order, &our_trade_hex)
+                            {
+                                set_counterparty_pubkey(cube_name, &session.order_id, &cp_pk);
+                            }
+                        }
+
+                        // Extract admin pubkey from AdminTookDispute Peer payload
+                        if inner.action == mostro_core::message::Action::AdminTookDispute {
+                            if let Some(mostro_core::message::Payload::Peer(ref peer)) =
+                                inner.payload
+                            {
+                                set_admin_pubkey(cube_name, &session.order_id, &peer.pubkey);
+                            }
+                        }
+
+                        let rumor_ts = unwrapped.rumor.created_at.as_u64();
+
+                        append_trade_message(
+                            cube_name,
+                            &session.order_id,
+                            TradeMessage {
+                                timestamp: rumor_ts,
+                                action: action.clone(),
+                                payload_json: payload_json.clone(),
+                                is_own: false,
+                            },
+                        );
+
+                        if !silent {
+                            let update_msg =
+                                Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
+                                    order_id: session.order_id.clone(),
+                                    action,
+                                    payload_json,
+                                }));
+                            let _ = output.send(update_msg).await;
+                        }
+                    }
                     continue;
                 }
+            }
 
+            // ── P2P chat message (2-layer: gift wrap → signed event) ──
+            // Decrypt using the ECDH shared key (per Mostro chat protocol).
+            let shared_keys = session
+                .counterparty_trade_pubkey
+                .as_deref()
+                .and_then(|cp_hex| PublicKey::from_hex(cp_hex).ok())
+                .and_then(|cp_pk| derive_shared_chat_keys(keys, &cp_pk).ok());
+            if let Some(ref shared) = shared_keys {
+                if let Ok(decrypted) = nostr_sdk::prelude::nip44::decrypt(
+                    shared.secret_key(),
+                    &event.pubkey,
+                    &event.content,
+                ) {
+                    if let Ok(inner_event) = nostr_sdk::Event::from_json(&decrypted) {
+                        // Verify sender is our known counterparty (inner event is signed by trade key)
+                        let sender_hex = inner_event.pubkey.to_hex();
+                        let is_counterparty =
+                            session.counterparty_trade_pubkey.as_deref() == Some(&sender_hex);
+                        if !is_counterparty {
+                            continue;
+                        }
+
+                        seen_event_ids.insert(event.id);
+
+                        let chat_text = inner_event.content.clone();
+                        let payload_json = serde_json::to_string(&Some(
+                            mostro_core::message::Payload::TextMessage(chat_text),
+                        ))
+                        .unwrap_or_default();
+                        let rumor_ts = inner_event.created_at.as_u64();
+
+                        append_trade_message(
+                            cube_name,
+                            &session.order_id,
+                            TradeMessage {
+                                timestamp: rumor_ts,
+                                action: "SendDm".to_string(),
+                                payload_json: payload_json.clone(),
+                                is_own: false,
+                            },
+                        );
+
+                        if !silent {
+                            let update_msg =
+                                Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
+                                    order_id: session.order_id.clone(),
+                                    action: "SendDm".to_string(),
+                                    payload_json,
+                                }));
+                            let _ = output.send(update_msg).await;
+                        }
+                    }
+                } // if let Ok(decrypted)
+            } // if let Some(shared)
+
+            // ── Dispute chat message from admin (2-layer, admin shared key) ──
+            let admin_shared_keys = session
+                .admin_trade_pubkey
+                .as_deref()
+                .and_then(|admin_hex| PublicKey::from_hex(admin_hex).ok())
+                .and_then(|admin_pk| derive_shared_chat_keys(keys, &admin_pk).ok());
+            if let Some(ref admin_shared) = admin_shared_keys {
+                if let Ok(decrypted) = nostr_sdk::prelude::nip44::decrypt(
+                    admin_shared.secret_key(),
+                    &event.pubkey,
+                    &event.content,
+                ) {
+                    if let Ok(inner_event) = nostr_sdk::Event::from_json(&decrypted) {
+                        let sender_hex = inner_event.pubkey.to_hex();
+                        let is_admin = session.admin_trade_pubkey.as_deref() == Some(&sender_hex);
+                        if !is_admin {
+                            continue;
+                        }
+
+                        seen_event_ids.insert(event.id);
+
+                        let chat_text = inner_event.content.clone();
+                        let payload_json = serde_json::to_string(&Some(
+                            mostro_core::message::Payload::TextMessage(chat_text),
+                        ))
+                        .unwrap_or_default();
+                        let rumor_ts = inner_event.created_at.as_u64();
+
+                        append_trade_message(
+                            cube_name,
+                            &session.order_id,
+                            TradeMessage {
+                                timestamp: rumor_ts,
+                                action: "AdminDm".to_string(),
+                                payload_json: payload_json.clone(),
+                                is_own: false,
+                            },
+                        );
+
+                        if !silent {
+                            let update_msg =
+                                Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
+                                    order_id: session.order_id.clone(),
+                                    action: "AdminDm".to_string(),
+                                    payload_json,
+                                }));
+                            let _ = output.send(update_msg).await;
+                        }
+                    }
+                }
+            } // if let Some(admin_shared)
+        }
+    }
+}
+
+/// Process a single incoming DM event in real-time (never silent).
+/// Returns true if a new counterparty pubkey was discovered (caller should
+/// update DM subscriptions to pick up the shared chat key).
+async fn process_dm_event(
+    event: &nostr_sdk::Event,
+    cube_name: &str,
+    mnemonic: &str,
+    mostro_pubkey: PublicKey,
+    seen_event_ids: &mut HashSet<nostr_sdk::EventId>,
+    output: &mut iced::futures::channel::mpsc::Sender<Message>,
+) -> bool {
+    let sessions = load_data(cube_name).trades;
+    let session_keys: Vec<(TradeSession, Keys)> = sessions
+        .iter()
+        .filter_map(|s| {
+            derive_trade_keys(mnemonic, s.trade_index)
+                .ok()
+                .map(|k| (s.clone(), k))
+        })
+        .collect();
+
+    let mut new_counterparty = false;
+
+    for (session, keys) in &session_keys {
+        let our_trade_hex = keys.public_key().to_hex();
+
+        let shared_chat_hex = session
+            .counterparty_trade_pubkey
+            .as_deref()
+            .and_then(|cp_hex| PublicKey::from_hex(cp_hex).ok())
+            .and_then(|cp_pk| derive_shared_chat_keys(keys, &cp_pk).ok())
+            .map(|sk| sk.public_key().to_hex());
+
+        let admin_shared_chat_hex = session
+            .admin_trade_pubkey
+            .as_deref()
+            .and_then(|admin_hex| PublicKey::from_hex(admin_hex).ok())
+            .and_then(|admin_pk| derive_shared_chat_keys(keys, &admin_pk).ok())
+            .map(|sk| sk.public_key().to_hex());
+
+        let p_tag_value = event.tags.iter().find_map(|tag| {
+            let t = tag.clone().to_vec();
+            if t.len() >= 2 && t[0] == "p" {
+                Some(t[1].clone())
+            } else {
+                None
+            }
+        });
+        let is_mostro_dm = p_tag_value.as_deref() == Some(&our_trade_hex);
+        let is_chat_dm = shared_chat_hex
+            .as_deref()
+            .is_some_and(|sh| p_tag_value.as_deref() == Some(sh));
+        let is_admin_dm = admin_shared_chat_hex
+            .as_deref()
+            .is_some_and(|sh| p_tag_value.as_deref() == Some(sh));
+        if !is_mostro_dm && !is_chat_dm && !is_admin_dm {
+            continue;
+        }
+
+        // Try NIP-59 unwrap (3-layer: gift wrap → seal → rumor)
+        if let Ok(unwrapped) = nip59::extract_rumor(keys, event).await {
+            if unwrapped.rumor.pubkey == mostro_pubkey {
                 if let Ok((msg, _)) = serde_json::from_str::<(
                     mostro_core::message::Message,
                     Option<String>,
@@ -1747,20 +2836,40 @@ async fn process_dm_notifications(
 
                     seen_event_ids.insert(event.id);
 
-                    // Skip error responses (CantDo) — they are not state transitions
-                    // and would pollute last_dm_action, hiding action buttons
                     if inner.action == mostro_core::message::Action::CantDo {
-                        tracing::debug!(
-                            "Skipping CantDo DM for order {} (not a state transition)",
-                            session.order_id
-                        );
-                        continue;
+                        return false;
                     }
 
-                    // Use the rumor's timestamp for ordering (not the gift-wrap's randomized ts)
-                    let rumor_ts = unwrapped.rumor.created_at.as_u64();
+                    let cp_order = match &inner.payload {
+                        Some(mostro_core::message::Payload::Order(ref order)) => Some(order),
+                        Some(mostro_core::message::Payload::PaymentRequest(
+                            Some(ref order),
+                            _,
+                            _,
+                        )) => Some(order),
+                        _ => None,
+                    };
+                    if let Some(order) = cp_order {
+                        if let Some(cp_pk) = extract_counterparty_pubkey(order, &our_trade_hex) {
+                            // Check if this is actually new
+                            if session.counterparty_trade_pubkey.as_deref() != Some(&cp_pk) {
+                                new_counterparty = true;
+                            }
+                            set_counterparty_pubkey(cube_name, &session.order_id, &cp_pk);
+                        }
+                    }
 
-                    // Persist the full message to disk
+                    // Extract admin pubkey from AdminTookDispute Peer payload
+                    if inner.action == mostro_core::message::Action::AdminTookDispute {
+                        if let Some(mostro_core::message::Payload::Peer(ref peer)) = inner.payload {
+                            if session.admin_trade_pubkey.as_deref() != Some(&peer.pubkey) {
+                                new_counterparty = true; // triggers subscription update
+                            }
+                            set_admin_pubkey(cube_name, &session.order_id, &peer.pubkey);
+                        }
+                    }
+
+                    let rumor_ts = unwrapped.rumor.created_at.as_u64();
                     append_trade_message(
                         cube_name,
                         &session.order_id,
@@ -1768,21 +2877,121 @@ async fn process_dm_notifications(
                             timestamp: rumor_ts,
                             action: action.clone(),
                             payload_json: payload_json.clone(),
+                            is_own: false,
                         },
                     );
 
-                    // Only send UI updates (toasts) for new DMs, not historical replay
-                    if !silent {
-                        let update_msg =
-                            Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
-                                order_id: session.order_id.clone(),
-                                action,
-                                payload_json,
-                            }));
-                        let _ = output.send(update_msg).await;
+                    let update_msg = Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
+                        order_id: session.order_id.clone(),
+                        action,
+                        payload_json,
+                    }));
+                    let _ = output.send(update_msg).await;
+                }
+                return new_counterparty;
+            }
+        }
+
+        // P2P chat message (2-layer: gift wrap → signed event)
+        let shared_keys = session
+            .counterparty_trade_pubkey
+            .as_deref()
+            .and_then(|cp_hex| PublicKey::from_hex(cp_hex).ok())
+            .and_then(|cp_pk| derive_shared_chat_keys(keys, &cp_pk).ok());
+        if let Some(ref shared) = shared_keys {
+            if let Ok(decrypted) = nostr_sdk::prelude::nip44::decrypt(
+                shared.secret_key(),
+                &event.pubkey,
+                &event.content,
+            ) {
+                if let Ok(inner_event) = nostr_sdk::Event::from_json(&decrypted) {
+                    let sender_hex = inner_event.pubkey.to_hex();
+                    let is_counterparty =
+                        session.counterparty_trade_pubkey.as_deref() == Some(&sender_hex);
+                    if !is_counterparty {
+                        continue;
                     }
+
+                    seen_event_ids.insert(event.id);
+
+                    let chat_text = inner_event.content.clone();
+                    let payload_json = serde_json::to_string(&Some(
+                        mostro_core::message::Payload::TextMessage(chat_text),
+                    ))
+                    .unwrap_or_default();
+                    let rumor_ts = inner_event.created_at.as_u64();
+
+                    append_trade_message(
+                        cube_name,
+                        &session.order_id,
+                        TradeMessage {
+                            timestamp: rumor_ts,
+                            action: "SendDm".to_string(),
+                            payload_json: payload_json.clone(),
+                            is_own: false,
+                        },
+                    );
+
+                    let update_msg = Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
+                        order_id: session.order_id.clone(),
+                        action: "SendDm".to_string(),
+                        payload_json,
+                    }));
+                    let _ = output.send(update_msg).await;
+                    return false;
+                }
+            }
+        }
+
+        // Dispute chat message from admin (same 2-layer structure, different shared key)
+        let admin_shared_keys = session
+            .admin_trade_pubkey
+            .as_deref()
+            .and_then(|admin_hex| PublicKey::from_hex(admin_hex).ok())
+            .and_then(|admin_pk| derive_shared_chat_keys(keys, &admin_pk).ok());
+        if let Some(ref admin_shared) = admin_shared_keys {
+            if let Ok(decrypted) = nostr_sdk::prelude::nip44::decrypt(
+                admin_shared.secret_key(),
+                &event.pubkey,
+                &event.content,
+            ) {
+                if let Ok(inner_event) = nostr_sdk::Event::from_json(&decrypted) {
+                    let sender_hex = inner_event.pubkey.to_hex();
+                    let is_admin = session.admin_trade_pubkey.as_deref() == Some(&sender_hex);
+                    if !is_admin {
+                        continue;
+                    }
+
+                    seen_event_ids.insert(event.id);
+
+                    let chat_text = inner_event.content.clone();
+                    let payload_json = serde_json::to_string(&Some(
+                        mostro_core::message::Payload::TextMessage(chat_text),
+                    ))
+                    .unwrap_or_default();
+                    let rumor_ts = inner_event.created_at.as_u64();
+
+                    append_trade_message(
+                        cube_name,
+                        &session.order_id,
+                        TradeMessage {
+                            timestamp: rumor_ts,
+                            action: "AdminDm".to_string(),
+                            payload_json: payload_json.clone(),
+                            is_own: false,
+                        },
+                    );
+
+                    let update_msg = Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
+                        order_id: session.order_id.clone(),
+                        action: "AdminDm".to_string(),
+                        payload_json,
+                    }));
+                    let _ = output.send(update_msg).await;
+                    return false;
                 }
             }
         }
     }
+    false
 }

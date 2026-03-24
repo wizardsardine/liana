@@ -92,6 +92,10 @@ pub struct P2PTrade {
     pub last_dm_action: Option<String>,
     /// Timestamp when the current countdown phase started (PayInvoice, AddInvoice, etc.)
     pub countdown_start_ts: Option<u64>,
+    /// Counterparty's trade public key (hex)
+    pub counterparty_pubkey: Option<String>,
+    /// Admin/solver's trade public key (hex), set when admin takes dispute
+    pub admin_pubkey: Option<String>,
 }
 
 impl P2PTrade {
