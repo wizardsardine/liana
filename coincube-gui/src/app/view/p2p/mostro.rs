@@ -408,12 +408,17 @@ pub async fn restore_trades(
         let trade_keys = derive_trade_keys(mnemonic, *trade_index).ok();
         let our_pubkey = trade_keys.as_ref().map(|k| k.public_key().to_hex());
         let role = if let (Some(d), Some(ref pk)) = (details, &our_pubkey) {
-            if d.buyer_trade_pubkey.as_deref() == Some(pk)
-                || d.seller_trade_pubkey.as_deref() == Some(pk)
-            {
-                "taker"
-            } else {
+            let is_creator = match d.kind.as_ref() {
+                Some(mostro_core::order::Kind::Buy) => d.buyer_trade_pubkey.as_deref() == Some(pk),
+                Some(mostro_core::order::Kind::Sell) => {
+                    d.seller_trade_pubkey.as_deref() == Some(pk)
+                }
+                None => false,
+            };
+            if is_creator {
                 "creator"
+            } else {
+                "taker"
             }
         } else {
             "unknown"
@@ -1441,6 +1446,22 @@ pub async fn send_chat_message(data: TradeActionData) -> Result<(), String> {
 
     let _ = client.disconnect().await;
 
+    // Persist outbound message so get_trade_messages returns it with is_own = true
+    let mut store = load_data(&data.cube_name);
+    if let Some(session) = store
+        .trades
+        .iter_mut()
+        .find(|s| s.order_id == data.order_id)
+    {
+        session.messages.push(TradeMessage {
+            timestamp: chrono::Utc::now().timestamp() as u64,
+            action: "chat".to_string(),
+            payload_json: text,
+            is_own: true,
+        });
+        let _ = save_data(&data.cube_name, &store);
+    }
+
     tracing::info!("P2P chat message sent for order {}", data.order_id);
     Ok(())
 }
@@ -1508,6 +1529,22 @@ pub async fn send_admin_chat_message(data: TradeActionData) -> Result<(), String
         .map_err(|e| format!("Failed to send dispute chat message: {e}"))?;
 
     let _ = client.disconnect().await;
+
+    // Persist outbound dispute message so get_trade_messages returns it with is_own = true
+    let mut store = load_data(&data.cube_name);
+    if let Some(session) = store
+        .trades
+        .iter_mut()
+        .find(|s| s.order_id == data.order_id)
+    {
+        session.messages.push(TradeMessage {
+            timestamp: chrono::Utc::now().timestamp() as u64,
+            action: "dispute_chat".to_string(),
+            payload_json: text,
+            is_own: true,
+        });
+        let _ = save_data(&data.cube_name, &store);
+    }
 
     tracing::info!("Dispute chat message sent for order {}", data.order_id);
     Ok(())
@@ -1679,10 +1716,9 @@ const NOUNS: &[&str] = &[
 fn hex_mod(hex: &str, modulus: usize) -> usize {
     let mut result: usize = 0;
     for ch in hex.chars() {
-        let digit = match ch.to_ascii_lowercase() {
-            '0'..='9' => ch as usize - '0' as usize,
-            'a'..='f' => ch as usize - 'a' as usize + 10,
-            _ => continue,
+        let digit = match ch.to_digit(16) {
+            Some(d) => d as usize,
+            None => continue,
         };
         result = (result * 16 + digit) % modulus;
     }
@@ -1697,10 +1733,9 @@ fn hex_div_mod(hex: &str, divisor: usize, modulus: usize) -> usize {
     let mut remainder: usize = 0;
     let mut quotient_mod: usize = 0;
     for ch in hex.chars() {
-        let digit = match ch.to_ascii_lowercase() {
-            '0'..='9' => ch as usize - '0' as usize,
-            'a'..='f' => ch as usize - 'a' as usize + 10,
-            _ => continue,
+        let digit = match ch.to_digit(16) {
+            Some(d) => d as usize,
+            None => continue,
         };
         // N_so_far = old_N * 16 + digit
         // N_so_far / divisor = (old_N * 16 + digit) / divisor
@@ -2513,7 +2548,15 @@ async fn process_dm_notifications(
                 .and_then(|cp_pk| derive_shared_chat_keys(keys, &cp_pk).ok())
                 .map(|sk| sk.public_key().to_hex());
 
-            // Match p-tag against either our trade pubkey OR the shared chat pubkey
+            // Compute admin shared chat pubkey (if admin is known)
+            let admin_shared_chat_hex = session
+                .admin_trade_pubkey
+                .as_deref()
+                .and_then(|admin_hex| PublicKey::from_hex(admin_hex).ok())
+                .and_then(|admin_pk| derive_shared_chat_keys(keys, &admin_pk).ok())
+                .map(|sk| sk.public_key().to_hex());
+
+            // Match p-tag against our trade pubkey, shared chat pubkey, or admin shared pubkey
             let p_tag_value = event.tags.iter().find_map(|tag| {
                 let t = tag.clone().to_vec();
                 if t.len() >= 2 && t[0] == "p" {
@@ -2526,7 +2569,10 @@ async fn process_dm_notifications(
             let is_chat_dm = shared_chat_hex
                 .as_deref()
                 .is_some_and(|sh| p_tag_value.as_deref() == Some(sh));
-            if !is_mostro_dm && !is_chat_dm {
+            let is_admin_dm = admin_shared_chat_hex
+                .as_deref()
+                .is_some_and(|sh| p_tag_value.as_deref() == Some(sh));
+            if !is_mostro_dm && !is_chat_dm && !is_admin_dm {
                 continue;
             }
 
@@ -2661,6 +2707,58 @@ async fn process_dm_notifications(
                     }
                 } // if let Ok(decrypted)
             } // if let Some(shared)
+
+            // ── Dispute chat message from admin (2-layer, admin shared key) ──
+            let admin_shared_keys = session
+                .admin_trade_pubkey
+                .as_deref()
+                .and_then(|admin_hex| PublicKey::from_hex(admin_hex).ok())
+                .and_then(|admin_pk| derive_shared_chat_keys(keys, &admin_pk).ok());
+            if let Some(ref admin_shared) = admin_shared_keys {
+                if let Ok(decrypted) = nostr_sdk::prelude::nip44::decrypt(
+                    admin_shared.secret_key(),
+                    &event.pubkey,
+                    &event.content,
+                ) {
+                    if let Ok(inner_event) = nostr_sdk::Event::from_json(&decrypted) {
+                        let sender_hex = inner_event.pubkey.to_hex();
+                        let is_admin = session.admin_trade_pubkey.as_deref() == Some(&sender_hex);
+                        if !is_admin {
+                            continue;
+                        }
+
+                        seen_event_ids.insert(event.id);
+
+                        let chat_text = inner_event.content.clone();
+                        let payload_json = serde_json::to_string(&Some(
+                            mostro_core::message::Payload::TextMessage(chat_text),
+                        ))
+                        .unwrap_or_default();
+                        let rumor_ts = inner_event.created_at.as_u64();
+
+                        append_trade_message(
+                            cube_name,
+                            &session.order_id,
+                            TradeMessage {
+                                timestamp: rumor_ts,
+                                action: "AdminDm".to_string(),
+                                payload_json: payload_json.clone(),
+                                is_own: false,
+                            },
+                        );
+
+                        if !silent {
+                            let update_msg =
+                                Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
+                                    order_id: session.order_id.clone(),
+                                    action: "AdminDm".to_string(),
+                                    payload_json,
+                                }));
+                            let _ = output.send(update_msg).await;
+                        }
+                    }
+                }
+            } // if let Some(admin_shared)
         }
     }
 }
@@ -2698,6 +2796,13 @@ async fn process_dm_event(
             .and_then(|cp_pk| derive_shared_chat_keys(keys, &cp_pk).ok())
             .map(|sk| sk.public_key().to_hex());
 
+        let admin_shared_chat_hex = session
+            .admin_trade_pubkey
+            .as_deref()
+            .and_then(|admin_hex| PublicKey::from_hex(admin_hex).ok())
+            .and_then(|admin_pk| derive_shared_chat_keys(keys, &admin_pk).ok())
+            .map(|sk| sk.public_key().to_hex());
+
         let p_tag_value = event.tags.iter().find_map(|tag| {
             let t = tag.clone().to_vec();
             if t.len() >= 2 && t[0] == "p" {
@@ -2710,7 +2815,10 @@ async fn process_dm_event(
         let is_chat_dm = shared_chat_hex
             .as_deref()
             .is_some_and(|sh| p_tag_value.as_deref() == Some(sh));
-        if !is_mostro_dm && !is_chat_dm {
+        let is_admin_dm = admin_shared_chat_hex
+            .as_deref()
+            .is_some_and(|sh| p_tag_value.as_deref() == Some(sh));
+        if !is_mostro_dm && !is_chat_dm && !is_admin_dm {
             continue;
         }
 

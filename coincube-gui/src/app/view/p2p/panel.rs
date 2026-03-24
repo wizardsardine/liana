@@ -1939,6 +1939,7 @@ impl P2PPanel {
                 | TradeStatus::SettledHoldInvoice
                 | TradeStatus::CooperativelyCanceled
                 | TradeStatus::Dispute
+                | TradeStatus::PaymentFailed
         );
 
         let cube_name = self
@@ -3687,7 +3688,10 @@ impl State for P2PPanel {
                             );
                         }
                         Err(e) => {
-                            self.dispute_chat_input.value = pending.original_text;
+                            // Only restore input if the user is still viewing the same trade
+                            if self.selected_trade.as_deref() == Some(&pending.order_id) {
+                                self.dispute_chat_input.value = pending.original_text;
+                            }
                             return Task::done(Message::View(view::Message::ShowError(format!(
                                 "Dispute chat send failed: {}",
                                 e
@@ -3754,8 +3758,10 @@ impl State for P2PPanel {
                             );
                         }
                         Err(e) => {
-                            // Restore input so the user can retry
-                            self.chat_input.value = pending.original_text;
+                            // Only restore input if the user is still viewing the same trade
+                            if self.selected_trade.as_deref() == Some(&pending.order_id) {
+                                self.chat_input.value = pending.original_text;
+                            }
                             return Task::done(Message::View(view::Message::ShowError(format!(
                                 "Chat send failed: {}",
                                 e
