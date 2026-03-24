@@ -1072,10 +1072,10 @@ impl State for LiquidSend {
                                 }
                             };
 
-                            // Cross-asset swap: send_asset=Btc but from_asset=Usdt
-                            // Use PayAmount::Asset with to_asset=LBTC, from_asset=USDT
+                            // Cross-asset swap: from_asset differs from send_asset
+                            // Use PayAmount::Asset with the appropriate asset IDs
                             if let Some(from) = self.from_asset {
-                                if from != SendAsset::Btc {
+                                if from != self.send_asset {
                                     let network = self.breez_client.network();
                                     let to_asset_id = match lbtc_asset_id(network) {
                                         Some(id) => id.to_string(),
