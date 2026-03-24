@@ -207,6 +207,7 @@ pub enum WalletError {
     WrongWalletLoaded,
     Settings(settings::SettingsError),
     HotSigner(String),
+    BorderWallet(String),
 }
 
 impl std::fmt::Display for WalletError {
@@ -215,6 +216,7 @@ impl std::fmt::Display for WalletError {
             Self::WrongWalletLoaded => write!(f, "Wrong wallet was loaded"),
             Self::Settings(e) => write!(f, "Failed to load settings: {}", e),
             Self::HotSigner(e) => write!(f, "Failed to load hot signer: {}", e),
+            Self::BorderWallet(e) => write!(f, "Border wallet signing failed: {}", e),
         }
     }
 }

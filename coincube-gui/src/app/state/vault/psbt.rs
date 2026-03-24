@@ -771,7 +771,9 @@ impl Modal for SignModal {
                                     Ok((fg, signed_psbt)) => (fg, Ok(signed_psbt)),
                                     Err(e) => (
                                         fingerprint,
-                                        Err(Error::Wallet(WalletError::HotSigner(e.to_string()))),
+                                        Err(Error::Wallet(WalletError::BorderWallet(
+                                            e.to_string(),
+                                        ))),
                                     ),
                                 }
                             },
