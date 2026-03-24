@@ -292,14 +292,13 @@ impl ConnectCubePanel {
     fn update_avatar(&mut self, msg: crate::app::view::AvatarMessage) -> iced::Task<Message> {
         use crate::app::view::AvatarMessage;
 
-        let Some(client) = self.client.clone() else {
-            self.avatar_error = Some("Not signed in".to_string());
-            return iced::Task::none();
-        };
-
         match msg {
             AvatarMessage::Enter => {
                 self.avatar_error = None;
+                let Some(client) = self.client.clone() else {
+                    self.avatar_error = Some("Not signed in".to_string());
+                    return iced::Task::none();
+                };
                 let Some(cid) = self.api_cube_id() else {
                     return iced::Task::none();
                 };
@@ -328,19 +327,21 @@ impl ConnectCubePanel {
                         self.avatar_step = AvatarFlowStep::Settings;
                         if let Some(id) = active_id {
                             if !self.avatar_image_cache.contains_key(&id) {
-                                return iced::Task::perform(
-                                    async move { client.fetch_avatar_image(id).await },
-                                    move |res| {
-                                        Message::View(view::Message::ConnectCube(
-                                            ConnectCubeMessage::Avatar(
-                                                AvatarMessage::ImageLoaded {
-                                                    variant_id: id,
-                                                    result: res.map_err(|e| e.to_string()),
-                                                },
-                                            ),
-                                        ))
-                                    },
-                                );
+                                if let Some(client) = self.client.clone() {
+                                    return iced::Task::perform(
+                                        async move { client.fetch_avatar_image(id).await },
+                                        move |res| {
+                                            Message::View(view::Message::ConnectCube(
+                                                ConnectCubeMessage::Avatar(
+                                                    AvatarMessage::ImageLoaded {
+                                                        variant_id: id,
+                                                        result: res.map_err(|e| e.to_string()),
+                                                    },
+                                                ),
+                                            ))
+                                        },
+                                    );
+                                }
                             }
                         }
                     } else {
@@ -369,15 +370,19 @@ impl ConnectCubePanel {
                 if self.avatar_generating {
                     return iced::Task::none();
                 }
-                self.avatar_generating = true;
-                self.avatar_error = None;
-                self.avatar_step = AvatarFlowStep::Generating;
+                let Some(client) = self.client.clone() else {
+                    self.avatar_error = Some("Not signed in".to_string());
+                    return iced::Task::none();
+                };
                 let req = AvatarGenerateRequest {
                     user_traits: self.avatar_draft.clone(),
                 };
                 let Some(cid) = self.api_cube_id() else {
                     return iced::Task::none();
                 };
+                self.avatar_generating = true;
+                self.avatar_error = None;
+                self.avatar_step = AvatarFlowStep::Generating;
                 return iced::Task::perform(
                     async move { client.post_avatar_generate(&cid, req).await },
                     |res| {
@@ -423,35 +428,39 @@ impl ConnectCubePanel {
                             }
                         }
                         // Fetch image + refresh regeneration count in parallel
-                        let client2 = client.clone();
-                        let Some(cid) = self.api_cube_id() else {
-                            return iced::Task::none();
-                        };
-                        return iced::Task::batch([
-                            iced::Task::perform(
-                                async move { client.fetch_avatar_image(variant_id).await },
-                                move |res| {
-                                    Message::View(view::Message::ConnectCube(
-                                        ConnectCubeMessage::Avatar(AvatarMessage::ImageLoaded {
-                                            variant_id,
-                                            result: res.map_err(|e| e.to_string()),
-                                        }),
-                                    ))
-                                },
-                            ),
-                            iced::Task::perform(
-                                async move { client2.get_avatar_regenerations(&cid).await },
-                                |res| {
-                                    Message::View(view::Message::ConnectCube(
-                                        ConnectCubeMessage::Avatar(
-                                            AvatarMessage::RegenerationsLoaded(
-                                                res.map_err(|e| e.to_string()),
+                        if let Some(client) = self.client.clone() {
+                            let client2 = client.clone();
+                            let Some(cid) = self.api_cube_id() else {
+                                return iced::Task::none();
+                            };
+                            return iced::Task::batch([
+                                iced::Task::perform(
+                                    async move { client.fetch_avatar_image(variant_id).await },
+                                    move |res| {
+                                        Message::View(view::Message::ConnectCube(
+                                            ConnectCubeMessage::Avatar(
+                                                AvatarMessage::ImageLoaded {
+                                                    variant_id,
+                                                    result: res.map_err(|e| e.to_string()),
+                                                },
                                             ),
-                                        ),
-                                    ))
-                                },
-                            ),
-                        ]);
+                                        ))
+                                    },
+                                ),
+                                iced::Task::perform(
+                                    async move { client2.get_avatar_regenerations(&cid).await },
+                                    |res| {
+                                        Message::View(view::Message::ConnectCube(
+                                            ConnectCubeMessage::Avatar(
+                                                AvatarMessage::RegenerationsLoaded(
+                                                    res.map_err(|e| e.to_string()),
+                                                ),
+                                            ),
+                                        ))
+                                    },
+                                ),
+                            ]);
+                        }
                     }
                     Err(e) => {
                         log::error!("[AVATAR] Generate error: {}", e);
@@ -462,6 +471,10 @@ impl ConnectCubePanel {
             }
 
             AvatarMessage::SelectVariant(variant_id) => {
+                let Some(client) = self.client.clone() else {
+                    self.avatar_error = Some("Not signed in".to_string());
+                    return iced::Task::none();
+                };
                 let Some(cid) = self.api_cube_id() else {
                     return iced::Task::none();
                 };
@@ -486,17 +499,19 @@ impl ConnectCubePanel {
                     }
                     let variant_id = data.variant_id;
                     if !self.avatar_image_cache.contains_key(&variant_id) {
-                        return iced::Task::perform(
-                            async move { client.fetch_avatar_image(variant_id).await },
-                            move |res| {
-                                Message::View(view::Message::ConnectCube(
-                                    ConnectCubeMessage::Avatar(AvatarMessage::ImageLoaded {
-                                        variant_id,
-                                        result: res.map_err(|e| e.to_string()),
-                                    }),
-                                ))
-                            },
-                        );
+                        if let Some(client) = self.client.clone() {
+                            return iced::Task::perform(
+                                async move { client.fetch_avatar_image(variant_id).await },
+                                move |res| {
+                                    Message::View(view::Message::ConnectCube(
+                                        ConnectCubeMessage::Avatar(AvatarMessage::ImageLoaded {
+                                            variant_id,
+                                            result: res.map_err(|e| e.to_string()),
+                                        }),
+                                    ))
+                                },
+                            );
+                        }
                     }
                 }
                 Err(e) => {
