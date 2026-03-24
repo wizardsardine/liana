@@ -37,8 +37,8 @@ pub struct LiquidSendFlowConfig<'a> {
     pub input: &'a form::Value<String>,
     pub amount_input: &'a form::Value<String>,
     pub usdt_amount_input: &'a form::Value<String>,
-    pub send_asset: SendAsset,
-    pub from_asset: Option<SendAsset>,
+    pub to_asset: SendAsset,
+    pub from_asset: SendAsset,
     pub uri_asset: Option<AssetKind>,
     pub usdt_asset_id: &'a str,
     pub comment: String,
@@ -63,7 +63,7 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
             let send_view = liquid_send_view(
                 config.btc_balance,
                 config.usdt_balance,
-                config.send_asset,
+                config.to_asset,
                 config.fiat_converter,
                 config.recent_transaction,
                 config.input,
@@ -81,7 +81,7 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
                     let modal_content = amount_input_model(AmountInputConfig {
                         amount: config.amount_input,
                         usdt_amount_input: config.usdt_amount_input,
-                        send_asset: config.send_asset,
+                        to_asset: config.to_asset,
                         from_asset: config.from_asset,
                         uri_asset: config.uri_asset,
                         usdt_balance: config.usdt_balance,
@@ -137,7 +137,7 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
                 config.bitcoin_unit,
                 config.input_type,
                 config.prepare_onchain_response,
-                config.send_asset,
+                config.to_asset,
                 config.usdt_amount_input.value.trim(),
                 config.from_asset,
             )
@@ -148,7 +148,7 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
             let content = sent_page(
                 config.amount,
                 config.bitcoin_unit,
-                config.send_asset,
+                config.to_asset,
                 config.usdt_amount_input.value.trim(),
             )
             .map(Message::LiquidSend);
@@ -163,7 +163,7 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
 pub fn liquid_send_view<'a>(
     btc_balance: Amount,
     usdt_balance: u64,
-    send_asset: SendAsset,
+    to_asset: SendAsset,
     fiat_converter: Option<FiatAmountConverter>,
     recent_transaction: &[RecentTransaction],
     input: &'a form::Value<String>,
@@ -174,7 +174,7 @@ pub fn liquid_send_view<'a>(
     let mut content = Column::new().spacing(20);
 
     // Balance card — matching Liquid Overview style
-    let amount_col = match send_asset {
+    let amount_col = match to_asset {
         SendAsset::Usdt => Column::new()
             .spacing(4)
             .push(
@@ -209,7 +209,7 @@ pub fn liquid_send_view<'a>(
     content = content.push(view::balance_header_card(balance_inner));
 
     // Input hint changes based on asset
-    let hint_text = match send_asset {
+    let hint_text = match to_asset {
         SendAsset::Usdt => "Enter Liquid Address",
         SendAsset::Lbtc => "Enter Invoice, Lightning Address, Liquid BTC Address or BTC Address",
     };
@@ -434,8 +434,8 @@ pub struct RecentTransaction {
 pub struct AmountInputConfig<'a> {
     pub amount: &'a form::Value<String>,
     pub usdt_amount_input: &'a form::Value<String>,
-    pub send_asset: SendAsset,
-    pub from_asset: Option<SendAsset>,
+    pub to_asset: SendAsset,
+    pub from_asset: SendAsset,
     pub uri_asset: Option<AssetKind>,
     pub usdt_balance: u64,
     pub comment: String,
@@ -476,8 +476,8 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
         );
     }
 
-    // Show balance of the asset being paid from (from_asset if cross-asset, else send_asset)
-    let paying_asset = config.from_asset.unwrap_or(config.send_asset);
+    // Show balance of the asset being paid from
+    let paying_asset = config.from_asset;
     let balance_text = match paying_asset {
         SendAsset::Usdt => format!("{} USDt", format_usdt_display(config.usdt_balance)),
         SendAsset::Lbtc => format!(
@@ -501,14 +501,16 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
     content = content.push(header);
 
     // Cross-asset swap indicator and toggle (SideSwap, mainnet only)
-    if config.cross_asset_supported && (config.uri_asset.is_some() || config.from_asset.is_some()) {
-        let is_cross_asset = config.from_asset.is_some();
+    if config.cross_asset_supported
+        && (config.uri_asset.is_some() || config.from_asset != config.to_asset)
+    {
+        let is_cross_asset = config.from_asset != config.to_asset;
         let toggle_label = if is_cross_asset {
-            let paying_with = match config.from_asset.unwrap() {
+            let paying_with = match config.from_asset {
                 SendAsset::Lbtc => "L-BTC",
                 SendAsset::Usdt => "USDt",
             };
-            let receiving = match config.send_asset {
+            let receiving = match config.to_asset {
                 SendAsset::Lbtc => "L-BTC",
                 SendAsset::Usdt => "USDt",
             };
@@ -517,7 +519,7 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
                 paying_with, receiving
             )
         } else {
-            let asset_name = match config.send_asset {
+            let asset_name = match config.to_asset {
                 SendAsset::Lbtc => "L-BTC",
                 SendAsset::Usdt => "USDt",
             };
@@ -582,7 +584,7 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
     }
 
     // Amount section — branched on the pre-selected asset (no toggle)
-    match config.send_asset {
+    match config.to_asset {
         SendAsset::Usdt => {
             let mut usdt_col = Column::new()
                 .spacing(5)
@@ -685,14 +687,14 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
     content = content.push(comment_section);
 
     // Check that the paying asset has sufficient balance
-    let paying_asset = config.from_asset.unwrap_or(config.send_asset);
+    let paying_asset = config.from_asset;
     let has_balance = match paying_asset {
         SendAsset::Usdt => config.usdt_balance > 0,
         SendAsset::Lbtc => config.btc_balance.to_sat() > 0,
     };
 
     let is_next_enabled = has_balance
-        && match config.send_asset {
+        && match config.to_asset {
             SendAsset::Usdt
                 if matches!(config.input_type, Some(InputType::LiquidAddress { .. })) =>
             {
@@ -918,9 +920,9 @@ pub fn final_check_page<'a>(
     bitcoin_unit: BitcoinDisplayUnit,
     input_type: &'a Option<InputType>,
     prepare_onchain_response: Option<&'a breez_sdk_liquid::prelude::PreparePayOnchainResponse>,
-    send_asset: SendAsset,
+    to_asset: SendAsset,
     usdt_send_amount: &'a str,
-    from_asset: Option<SendAsset>,
+    from_asset: SendAsset,
 ) -> Element<'a, LiquidSendMessage> {
     let header = Row::new()
         .push(
@@ -949,35 +951,33 @@ pub fn final_check_page<'a>(
     }
 
     // Cross-asset swap indicator
-    if let Some(fa) = from_asset {
-        if fa != send_asset {
-            let paying_with = match fa {
-                SendAsset::Lbtc => "L-BTC",
-                SendAsset::Usdt => "USDt",
-            };
-            let receiving = match send_asset {
-                SendAsset::Lbtc => "L-BTC",
-                SendAsset::Usdt => "USDt",
-            };
-            content = content.push(
-                Container::new(
-                    text(format!(
-                        "Cross-asset swap: paying with {} → receiver gets {}",
-                        paying_with, receiving
-                    ))
-                    .size(14)
-                    .color(color::ORANGE),
-                )
-                .padding([6, 12])
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-            );
-        }
+    if from_asset != to_asset {
+        let paying_with = match from_asset {
+            SendAsset::Lbtc => "L-BTC",
+            SendAsset::Usdt => "USDt",
+        };
+        let receiving = match to_asset {
+            SendAsset::Lbtc => "L-BTC",
+            SendAsset::Usdt => "USDt",
+        };
+        content = content.push(
+            Container::new(
+                text(format!(
+                    "Cross-asset swap: paying with {} → receiver gets {}",
+                    paying_with, receiving
+                ))
+                .size(14)
+                .color(color::ORANGE),
+            )
+            .padding([6, 12])
+            .width(Length::Fill)
+            .center_x(Length::Fill),
+        );
     }
 
     content = content.push(Space::new().height(Length::Fixed(2.0)));
 
-    let fees_sat = if send_asset == SendAsset::Usdt {
+    let fees_sat = if to_asset == SendAsset::Usdt {
         prepare_response.and_then(|p| p.fees_sat).unwrap_or(0)
     } else if let Some(input_type) = input_type {
         match input_type {
@@ -992,7 +992,7 @@ pub fn final_check_page<'a>(
 
     let fees_amount = Amount::from_sat(fees_sat);
 
-    if send_asset == SendAsset::Usdt {
+    if to_asset == SendAsset::Usdt {
         // USDt send: show USDt amount prominently, L-BTC fees separately
         content = content.push(
             Container::new(
@@ -1291,12 +1291,12 @@ pub fn final_check_page<'a>(
 pub fn sent_page<'a>(
     amount: Amount,
     bitcoin_unit: BitcoinDisplayUnit,
-    send_asset: SendAsset,
+    to_asset: SendAsset,
     usdt_send_amount: &str,
 ) -> Element<'a, LiquidSendMessage> {
     use coincube_ui::widget::{Column, Row};
 
-    let sent_amount_str = if send_asset == SendAsset::Usdt && !usdt_send_amount.is_empty() {
+    let sent_amount_str = if to_asset == SendAsset::Usdt && !usdt_send_amount.is_empty() {
         format!("{} USDt", usdt_send_amount)
     } else if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
         format!("{} {}", amount.to_btc(), bitcoin_unit)
