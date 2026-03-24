@@ -61,6 +61,7 @@ impl State for SettingsState {
                         self.cube_id.clone(),
                         self.current_price_setting.clone(),
                         self.current_unit_setting.clone(),
+                        &cache.datadir_path,
                     )
                     .into(),
                 );
