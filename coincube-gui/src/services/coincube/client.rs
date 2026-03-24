@@ -379,7 +379,7 @@ impl CoincubeClient {
             "{}/api/v1/connect/avatar/image/{}",
             self.base_url, variant_id
         );
-        let res = reqwest::get(&url).await.map_err(CoincubeError::Network)?;
+        let res = self.client.get(&url).send().await?;
         let res = res.check_success().await?;
         Ok(res.bytes().await.map_err(CoincubeError::Network)?.to_vec())
     }

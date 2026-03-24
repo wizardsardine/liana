@@ -95,6 +95,8 @@ impl Panels {
         datadir: &CoincubeDirectory,
         network: bitcoin::Network,
         cube_id: String,
+        cube_name: String,
+        cube_network: String,
     ) -> Panels {
         // NO VAULT - All vault panels are None, but Liquid panels always work
         // The UI layer prevents navigation to vault panels when has_vault=false
@@ -161,8 +163,8 @@ impl Panels {
             connect: ConnectPanel::new(
                 breez_client.clone(),
                 cube_id.clone(),
-                String::new(),
-                String::new(),
+                cube_name,
+                cube_network,
             ),
         }
     }
@@ -178,6 +180,8 @@ impl Panels {
         config: Arc<Config>,
         restored_from_backup: bool,
         cube_id: String,
+        cube_name: String,
+        cube_network: String,
     ) -> Panels {
         let show_rescan_warning = restored_from_backup
             && daemon_backend.is_coincubed()
@@ -289,8 +293,8 @@ impl Panels {
             connect: ConnectPanel::new(
                 breez_client.clone(),
                 cube_id.clone(),
-                String::new(),
-                String::new(),
+                cube_name,
+                cube_network,
             ),
             buy_sell: Some(crate::app::view::buysell::BuySellPanel::new(
                 cache.network,
@@ -599,9 +603,9 @@ impl App {
             config_arc.clone(),
             restored_from_backup,
             cube_settings.id.clone(),
+            cube_settings.name.clone(),
+            network_api_string(cache.network),
         );
-        panels.connect.cube.cube_name = cube_settings.name.clone();
-        panels.connect.cube.cube_network = network_api_string(cache.network);
         let mut tasks = vec![];
         if let Some(vault_overview) = panels.vault_overview.as_mut() {
             tasks.push(vault_overview.reload(Some(daemon.clone()), Some(wallet.clone())));
@@ -671,9 +675,9 @@ impl App {
             &datadir,
             network,
             cube_settings.id.clone(),
+            cube_settings.name.clone(),
+            network_api_string(network),
         );
-        panels.connect.cube.cube_name = cube_settings.name.clone();
-        panels.connect.cube.cube_network = network_api_string(network);
 
         let cmd = panels.global_home.reload(None, None);
 
@@ -1482,7 +1486,7 @@ impl App {
                     && matches!(self.panels.current, Menu::Connect(_));
                 if self.panels.connect_expanded && !already_on_connect {
                     return self.set_current_panel(Menu::Connect(
-                        crate::app::menu::ConnectSubMenu::Overview,
+                        crate::app::menu::ConnectSubMenu::LightningAddress,
                     ));
                 }
             }

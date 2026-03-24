@@ -56,7 +56,7 @@ impl ConnectAccountPanel {
     pub fn new() -> Self {
         ConnectAccountPanel {
             step: ConnectFlowStep::CheckingSession,
-            active_sub: ConnectSubMenu::Overview,
+            active_sub: ConnectSubMenu::LightningAddress,
             client: CoincubeClient::new(),
             user: None,
             plan: None,
