@@ -191,6 +191,10 @@ pub struct P2PPanel {
     pending_chat_message: Option<PendingChatMessage>,
     chat_show_trade_info: bool,
     chat_show_user_info: bool,
+    // Dispute chat
+    show_dispute_chat: bool,
+    dispute_chat_input: form::Value<String>,
+    pending_dispute_chat_message: Option<PendingChatMessage>,
     // Mostro settings
     mostro_config: MostroConfig,
     new_relay_input: form::Value<String>,
@@ -248,6 +252,9 @@ impl P2PPanel {
             pending_chat_message: None,
             chat_show_trade_info: false,
             chat_show_user_info: false,
+            show_dispute_chat: false,
+            dispute_chat_input: Default::default(),
+            pending_dispute_chat_message: None,
             mostro_config: load_mostro_config(),
             new_relay_input: Default::default(),
             new_node_name_input: Default::default(),
@@ -1341,13 +1348,19 @@ impl P2PPanel {
                             p1_bold("Admin reviewing dispute"),
                             p2_regular(
                                 "A dispute resolver has been assigned to your case. \
-                                They will contact you to help resolve the issue.",
+                                Use the chat below to communicate with the admin.",
                             )
                             .style(theme::text::secondary),
                         ]
                         .spacing(4),
                     )
                     .width(Length::Fill),
+                );
+                // Chat with Admin button
+                actions = actions.push(
+                    button::primary(Some(icon::chat_icon()), "Chat with Admin")
+                        .on_press(p2p(P2PMessage::OpenDisputeChat))
+                        .width(Length::Fill),
                 );
             }
 
@@ -1791,6 +1804,11 @@ impl P2PPanel {
             }
 
             // --- Cancel / Dispute footer buttons ---
+            // Dispute only available once the trade is active (hold invoice paid)
+            let can_dispute = matches!(
+                trade.status,
+                TradeStatus::Active | TradeStatus::FiatSent | TradeStatus::CooperativelyCanceled
+            );
             // Hide once the trade is complete or past release
             let trade_complete = matches!(
                 dm_action,
@@ -1811,47 +1829,54 @@ impl P2PPanel {
             );
             if !loading && !trade_complete {
                 if cancel_initiated_by_peer {
-                    actions = actions.push(
-                        row![
-                            button::secondary(None, "Close")
-                                .on_press(p2p(P2PMessage::CloseTradeDetail))
-                                .width(Length::Fill),
-                            button::alert(None, "Accept Cancel")
-                                .on_press(p2p(P2PMessage::CancelTrade))
-                                .width(Length::Fill),
+                    let mut btn_row = row![
+                        button::secondary(None, "Close")
+                            .on_press(p2p(P2PMessage::CloseTradeDetail))
+                            .width(Length::Fill),
+                        button::alert(None, "Accept Cancel")
+                            .on_press(p2p(P2PMessage::CancelTrade))
+                            .width(Length::Fill),
+                    ]
+                    .spacing(8);
+                    if can_dispute {
+                        btn_row = btn_row.push(
                             button::alert(None, "Dispute")
                                 .on_press(p2p(P2PMessage::OpenDispute))
                                 .width(Length::Fill),
-                        ]
-                        .spacing(8),
-                    );
+                        );
+                    }
+                    actions = actions.push(btn_row);
                 } else if cancel_initiated_by_you {
-                    actions = actions.push(
-                        row![
-                            button::secondary(None, "Close")
-                                .on_press(p2p(P2PMessage::CloseTradeDetail))
-                                .width(Length::Fill),
+                    let mut btn_row = row![button::secondary(None, "Close")
+                        .on_press(p2p(P2PMessage::CloseTradeDetail))
+                        .width(Length::Fill),]
+                    .spacing(8);
+                    if can_dispute {
+                        btn_row = btn_row.push(
                             button::alert(None, "Dispute")
                                 .on_press(p2p(P2PMessage::OpenDispute))
                                 .width(Length::Fill),
-                        ]
-                        .spacing(8),
-                    );
+                        );
+                    }
+                    actions = actions.push(btn_row);
                 } else if !dispute_initiated {
-                    actions = actions.push(
-                        row![
-                            button::secondary(None, "Close")
-                                .on_press(p2p(P2PMessage::CloseTradeDetail))
-                                .width(Length::Fill),
-                            button::secondary(None, "Cancel")
-                                .on_press(p2p(P2PMessage::CancelTrade))
-                                .width(Length::Fill),
+                    let mut btn_row = row![
+                        button::secondary(None, "Close")
+                            .on_press(p2p(P2PMessage::CloseTradeDetail))
+                            .width(Length::Fill),
+                        button::secondary(None, "Cancel")
+                            .on_press(p2p(P2PMessage::CancelTrade))
+                            .width(Length::Fill),
+                    ]
+                    .spacing(8);
+                    if can_dispute {
+                        btn_row = btn_row.push(
                             button::alert(None, "Dispute")
                                 .on_press(p2p(P2PMessage::OpenDispute))
                                 .width(Length::Fill),
-                        ]
-                        .spacing(8),
-                    );
+                        );
+                    }
+                    actions = actions.push(btn_row);
                 } else {
                     // In dispute — only Close
                     actions = actions.push(
@@ -1909,7 +1934,11 @@ impl P2PPanel {
 
         let chat_enabled = matches!(
             trade.status,
-            TradeStatus::Active | TradeStatus::FiatSent | TradeStatus::SettledHoldInvoice
+            TradeStatus::Active
+                | TradeStatus::FiatSent
+                | TradeStatus::SettledHoldInvoice
+                | TradeStatus::CooperativelyCanceled
+                | TradeStatus::Dispute
         );
 
         let cube_name = self
@@ -2316,6 +2345,152 @@ impl P2PPanel {
         .into()
     }
 
+    fn dispute_chat_view<'a>(&'a self, trade: &'a P2PTrade) -> Element<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+
+        let chat_enabled =
+            trade.admin_pubkey.is_some() && matches!(trade.status, TradeStatus::Dispute);
+
+        let cube_name = self
+            .wallet
+            .as_ref()
+            .map(|w| w.name.clone())
+            .unwrap_or_else(|| "default".to_string());
+        let all_messages = super::mostro::get_trade_messages(&cube_name, &trade.id);
+        let admin_messages: Vec<&super::mostro::TradeMessage> = all_messages
+            .iter()
+            .filter(|m| m.action == "AdminDm")
+            .collect();
+
+        // Message list
+        let mut msg_col = column![].spacing(10).padding([12, 16]);
+
+        if !chat_enabled && admin_messages.is_empty() {
+            msg_col = msg_col.push(
+                container(
+                    column![
+                        icon::lock_icon().size(40.0).style(theme::text::secondary),
+                        p1_regular("Waiting for admin assignment").style(theme::text::secondary),
+                        p2_regular("An admin will be assigned to review your dispute")
+                            .style(theme::text::secondary),
+                    ]
+                    .spacing(8)
+                    .align_x(iced::alignment::Horizontal::Center),
+                )
+                .padding(60)
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+            );
+        } else if admin_messages.is_empty() {
+            msg_col = msg_col.push(
+                container(
+                    column![
+                        icon::chat_icon().size(40.0).style(theme::text::secondary),
+                        p1_regular("Admin assigned").style(theme::text::secondary),
+                        p2_regular("Send a message to describe your issue")
+                            .style(theme::text::secondary),
+                    ]
+                    .spacing(8)
+                    .align_x(iced::alignment::Horizontal::Center),
+                )
+                .padding(60)
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+            );
+        } else {
+            for msg in &admin_messages {
+                let text = extract_chat_text(&msg.payload_json);
+                let ts = chrono::DateTime::from_timestamp(msg.timestamp as i64, 0)
+                    .unwrap_or_default()
+                    .with_timezone(&chrono::Local);
+                let time_str = ts.format("%H:%M").to_string();
+
+                if msg.is_own {
+                    msg_col = msg_col.push(
+                        column![
+                            container(caption("You").style(theme::text::secondary))
+                                .width(Length::Fill)
+                                .align_right(Length::Fill),
+                            row![
+                                Space::new().width(Length::FillPortion(3)),
+                                container(p1_regular(text))
+                                    .padding([10, 16])
+                                    .style(chat_bubble_own as fn(&_) -> _)
+                                    .max_width(480),
+                            ],
+                            container(caption(time_str).style(theme::text::secondary))
+                                .width(Length::Fill)
+                                .align_right(Length::Fill),
+                        ]
+                        .spacing(2),
+                    );
+                } else {
+                    msg_col = msg_col.push(
+                        column![
+                            caption("Admin").style(theme::text::primary),
+                            row![
+                                container(p1_regular(text))
+                                    .padding([10, 16])
+                                    .style(chat_bubble_peer as fn(&_) -> _)
+                                    .max_width(480),
+                                Space::new().width(Length::FillPortion(3)),
+                            ],
+                            caption(time_str).style(theme::text::secondary),
+                        ]
+                        .spacing(2),
+                    );
+                }
+            }
+        }
+
+        let chat_scroll = iced::widget::scrollable(msg_col)
+            .height(Length::Fill)
+            .anchor_bottom();
+
+        // Input area
+        let input_area: Element<'_, view::Message> = if chat_enabled {
+            let can_send = !self.dispute_chat_input.value.trim().is_empty()
+                && self.pending_dispute_chat_message.is_none();
+            let send_btn = if can_send {
+                button::primary(Some(icon::send_icon()), "Send")
+                    .on_press(p2p(P2PMessage::SendDisputeChatMessage))
+            } else {
+                button::primary(Some(icon::send_icon()), "Send")
+            };
+            container(
+                row![
+                    form::Form::new("Type a message...", &self.dispute_chat_input, |v| {
+                        view::Message::P2P(P2PMessage::DisputeChatInputEdited(v))
+                    })
+                    .padding(10),
+                    send_btn,
+                ]
+                .spacing(8)
+                .align_y(iced::alignment::Vertical::Center),
+            )
+            .padding(12)
+            .width(Length::Fill)
+            .into()
+        } else {
+            container(
+                p2_regular("Chat will be available when an admin is assigned")
+                    .style(theme::text::secondary),
+            )
+            .padding(12)
+            .width(Length::Fill)
+            .center_x(Length::Fill)
+            .into()
+        };
+
+        container(
+            column![chat_scroll, input_area,]
+                .spacing(0)
+                .width(Length::Fill),
+        )
+        .width(Length::Fixed(450.0))
+        .into()
+    }
+
     fn mostro_settings_view<'a>(&'a self) -> Element<'a, view::Message> {
         let p2p = |msg: P2PMessage| view::Message::P2P(msg);
 
@@ -2650,6 +2825,55 @@ impl State for P2PPanel {
                                             .push(header)
                                             .push(
                                                 container(self.chat_view(trade))
+                                                    .padding(20)
+                                                    .width(Length::Fill)
+                                                    .height(Length::Fill)
+                                                    .style(theme::container::background),
+                                            )
+                                            .width(Length::Fill),
+                                    )
+                                    .width(Length::Fill)
+                                    .height(Length::Fill)
+                                    .into();
+                            } else if self.show_dispute_chat {
+                                // Dispute chat view
+                                let has_vault = cache.has_vault;
+                                let order_short = &trade.id[..8.min(trade.id.len())];
+                                let header = container(
+                                    row![
+                                        button::secondary(Some(icon::previous_icon()), "Back",)
+                                            .on_press(view::Message::P2P(
+                                                P2PMessage::CloseDisputeChat,
+                                            )),
+                                        Space::new().width(Length::Fill),
+                                        column![
+                                            p1_bold("Dispute Chat"),
+                                            p2_regular(format!("Order {}", order_short))
+                                                .style(theme::text::secondary),
+                                        ]
+                                        .spacing(2)
+                                        .align_x(iced::alignment::Horizontal::Center),
+                                        Space::new().width(Length::Fill),
+                                        Space::new().width(Length::Fixed(80.0)),
+                                    ]
+                                    .align_y(iced::alignment::Vertical::Center),
+                                )
+                                .padding(12)
+                                .width(Length::Fill)
+                                .style(theme::container::foreground);
+
+                                return row![]
+                                    .push(
+                                        view::sidebar(menu, cache, has_vault)
+                                            .height(Length::Fill)
+                                            .width(Length::Fixed(190.0)),
+                                    )
+                                    .push(
+                                        iced::widget::Column::new()
+                                            .push(view::warn(None))
+                                            .push(header)
+                                            .push(
+                                                container(self.dispute_chat_view(trade))
                                                     .padding(20)
                                                     .width(Length::Fill)
                                                     .height(Length::Fill)
@@ -3398,6 +3622,80 @@ impl State for P2PPanel {
                     self.chat_show_trade_info = false;
                 }
             }
+            // Dispute chat
+            P2PMessage::OpenDisputeChat => {
+                self.show_dispute_chat = true;
+                self.dispute_chat_input = Default::default();
+            }
+            P2PMessage::CloseDisputeChat => {
+                self.show_dispute_chat = false;
+            }
+            P2PMessage::DisputeChatInputEdited(v) => {
+                self.dispute_chat_input.value = v;
+            }
+            P2PMessage::SendDisputeChatMessage => {
+                let text = self.dispute_chat_input.value.trim().to_string();
+                if text.is_empty() || self.pending_dispute_chat_message.is_some() {
+                    return Task::none();
+                }
+                if let Some(ref order_id) = self.selected_trade {
+                    let cube_name = self
+                        .wallet
+                        .as_ref()
+                        .map(|w| w.name.clone())
+                        .unwrap_or_else(|| "default".to_string());
+                    let payload = serde_json::to_string(&Some(
+                        mostro_core::message::Payload::TextMessage(text.clone()),
+                    ))
+                    .unwrap_or_default();
+                    self.pending_dispute_chat_message = Some(PendingChatMessage {
+                        order_id: order_id.clone(),
+                        cube_name: cube_name.clone(),
+                        payload,
+                        timestamp: chrono::Utc::now().timestamp() as u64,
+                        original_text: text.clone(),
+                    });
+                    self.dispute_chat_input = Default::default();
+                    let data = super::mostro::TradeActionData {
+                        order_id: order_id.clone(),
+                        cube_name,
+                        mnemonic: self.mnemonic.clone(),
+                        invoice: Some(text),
+                        mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
+                        relay_urls: self.mostro_config.relays.clone(),
+                    };
+                    return Task::perform(super::mostro::send_admin_chat_message(data), |result| {
+                        Message::View(view::Message::P2P(P2PMessage::DisputeChatMessageSent(
+                            result,
+                        )))
+                    });
+                }
+            }
+            P2PMessage::DisputeChatMessageSent(result) => {
+                if let Some(pending) = self.pending_dispute_chat_message.take() {
+                    match result {
+                        Ok(()) => {
+                            super::mostro::append_trade_message(
+                                &pending.cube_name,
+                                &pending.order_id,
+                                super::mostro::TradeMessage {
+                                    timestamp: pending.timestamp,
+                                    action: "AdminDm".to_string(),
+                                    payload_json: pending.payload,
+                                    is_own: true,
+                                },
+                            );
+                        }
+                        Err(e) => {
+                            self.dispute_chat_input.value = pending.original_text;
+                            return Task::done(Message::View(view::Message::ShowError(format!(
+                                "Dispute chat send failed: {}",
+                                e
+                            ))));
+                        }
+                    }
+                }
+            }
             P2PMessage::SendChatMessage => {
                 let text = self.chat_input.value.trim().to_string();
                 if text.is_empty() || self.pending_chat_message.is_some() {
@@ -3476,7 +3774,7 @@ impl State for P2PPanel {
             } => {
                 tracing::info!("Trade update for {}: {}", order_id, action);
 
-                let is_chat = action == "SendDm";
+                let is_chat = action == "SendDm" || action == "AdminDm";
 
                 // Update last_dm_action and status on the matching in-memory trade
                 // (skip for chat messages — they don't change trade status)

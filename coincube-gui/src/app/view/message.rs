@@ -490,4 +490,10 @@ pub enum P2PMessage {
     ChatMessageSent(Result<(), String>),
     ToggleChatTradeInfo,
     ToggleChatUserInfo,
+    // Dispute chat
+    OpenDisputeChat,
+    CloseDisputeChat,
+    DisputeChatInputEdited(String),
+    SendDisputeChatMessage,
+    DisputeChatMessageSent(Result<(), String>),
 }

@@ -64,6 +64,9 @@ pub struct TradeSession {
     /// Counterparty's trade pubkey (hex) for P2P chat, set when trade becomes active.
     #[serde(default)]
     pub counterparty_trade_pubkey: Option<String>,
+    /// Admin/solver's trade pubkey (hex) for dispute chat, set when AdminTookDispute is received.
+    #[serde(default)]
+    pub admin_trade_pubkey: Option<String>,
 }
 
 fn default_role() -> String {
@@ -158,6 +161,19 @@ pub fn set_counterparty_pubkey(cube_name: &str, order_id: &str, pubkey: &str) {
             session.counterparty_trade_pubkey = Some(pubkey.to_string());
             if let Err(e) = save_data(cube_name, &data) {
                 tracing::warn!("Failed to persist counterparty pubkey: {e}");
+            }
+        }
+    }
+}
+
+/// Update the admin/solver's trade pubkey for a given order (persisted to disk).
+fn set_admin_pubkey(cube_name: &str, order_id: &str, pubkey: &str) {
+    let mut data = load_data(cube_name);
+    if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
+        if session.admin_trade_pubkey.as_deref() != Some(pubkey) {
+            session.admin_trade_pubkey = Some(pubkey.to_string());
+            if let Err(e) = save_data(cube_name, &data) {
+                tracing::warn!("Failed to persist admin pubkey: {e}");
             }
         }
     }
@@ -447,6 +463,7 @@ pub async fn restore_trades(
                     .unwrap_or_default();
                 extract_counterparty_pubkey(d, &our_hex)
             }),
+            admin_trade_pubkey: None, // admin pubkey is only set via DM, not restorable
         });
     }
 
@@ -958,6 +975,7 @@ pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, St
             role: "creator".to_string(),
             messages: Vec::new(),
             counterparty_trade_pubkey: None, // set later when someone takes the order
+            admin_trade_pubkey: None,
         };
         if let Err(e) = append_trade(&form.cube_name, session) {
             tracing::warn!("Failed to persist trade session: {e}");
@@ -1138,6 +1156,7 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
             role: "taker".to_string(),
             messages: Vec::new(),
             counterparty_trade_pubkey,
+            admin_trade_pubkey: None,
         };
         if let Err(e) = append_trade(&data.cube_name, session) {
             tracing::warn!("Failed to persist take-order session: {e}");
@@ -1423,6 +1442,74 @@ pub async fn send_chat_message(data: TradeActionData) -> Result<(), String> {
     let _ = client.disconnect().await;
 
     tracing::info!("P2P chat message sent for order {}", data.order_id);
+    Ok(())
+}
+
+/// Send a dispute chat message to the admin/solver via P2P NIP-59 gift wrap.
+/// Same encryption as peer chat but uses the admin's shared key.
+pub async fn send_admin_chat_message(data: TradeActionData) -> Result<(), String> {
+    let text = data.invoice.clone().ok_or("Chat text is required")?;
+    if text.trim().is_empty() {
+        return Err("Empty message".to_string());
+    }
+
+    let sessions = load_data(&data.cube_name).trades;
+    let session = sessions
+        .iter()
+        .find(|s| s.order_id == data.order_id)
+        .ok_or_else(|| format!("No trade session found for order {}", data.order_id))?;
+
+    let admin_hex = session
+        .admin_trade_pubkey
+        .as_deref()
+        .ok_or("No admin trade pubkey available — dispute chat not yet possible")?;
+    let admin_pubkey =
+        PublicKey::from_hex(admin_hex).map_err(|e| format!("Invalid admin pubkey: {e}"))?;
+
+    let trade_keys = derive_trade_keys(&data.mnemonic, session.trade_index)?;
+    let shared_keys = derive_shared_chat_keys(&trade_keys, &admin_pubkey)?;
+    let shared_pubkey = shared_keys.public_key();
+
+    let inner_event = EventBuilder::text_note(&text)
+        .sign_with_keys(&trade_keys)
+        .map_err(|e| format!("Failed to sign inner event: {e}"))?;
+    let inner_json = inner_event.as_json();
+
+    let ephemeral_keys = Keys::generate();
+    let encrypted = nostr_sdk::prelude::nip44::encrypt(
+        ephemeral_keys.secret_key(),
+        &shared_pubkey,
+        &inner_json,
+        nostr_sdk::prelude::nip44::Version::V2,
+    )
+    .map_err(|e| format!("Failed to encrypt dispute chat message: {e}"))?;
+
+    let gift_wrap = EventBuilder::new(nostr_sdk::Kind::GiftWrap, &encrypted)
+        .tag(Tag::public_key(shared_pubkey))
+        .custom_created_at(Timestamp::tweaked(
+            nostr_sdk::prelude::nip59::RANGE_RANDOM_TIMESTAMP_TWEAK,
+        ))
+        .sign_with_keys(&ephemeral_keys)
+        .map_err(|e| format!("Failed to sign gift wrap: {e}"))?;
+
+    let client = Client::new(trade_keys.clone());
+    for relay_url in &data.relay_urls {
+        client
+            .add_relay(relay_url.as_str())
+            .await
+            .map_err(|e| format!("Failed to add relay {relay_url}: {e}"))?;
+    }
+    client.connect().await;
+    client.wait_for_connection(Duration::from_secs(10)).await;
+
+    client
+        .send_event(&gift_wrap)
+        .await
+        .map_err(|e| format!("Failed to send dispute chat message: {e}"))?;
+
+    let _ = client.disconnect().await;
+
+    tracing::info!("Dispute chat message sent for order {}", data.order_id);
     Ok(())
 }
 
@@ -1974,6 +2061,7 @@ async fn fetch_user_trades(
                 last_dm_action: latest_dm_action(session).map(String::from),
                 countdown_start_ts: countdown_start_timestamp(session),
                 counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
+                admin_pubkey: session.admin_trade_pubkey.clone(),
             });
         } else {
             // Not found on relay — fallback from saved session
@@ -2036,6 +2124,7 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
         last_dm_action: latest_dm_action(session).map(String::from),
         countdown_start_ts: countdown_start_timestamp(session),
         counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
+        admin_pubkey: session.admin_trade_pubkey.clone(),
     }
 }
 
@@ -2310,6 +2399,17 @@ async fn update_dm_subscriptions(
                     }
                 }
             }
+            // Subscribe to ECDH shared key for dispute chat with admin
+            if let Some(ref admin_hex) = session.admin_trade_pubkey {
+                if let Ok(admin_pk) = PublicKey::from_hex(admin_hex) {
+                    if let Ok(shared) = derive_shared_chat_keys(&keys, &admin_pk) {
+                        let spk = shared.public_key();
+                        if !subscribed_pubkeys.contains(&spk) {
+                            new_pubkeys.push(spk);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -2365,6 +2465,14 @@ async fn process_dm_notifications(
         if let Some(ref cp_hex) = session.counterparty_trade_pubkey {
             if let Ok(cp_pk) = PublicKey::from_hex(cp_hex) {
                 if let Ok(shared) = derive_shared_chat_keys(keys, &cp_pk) {
+                    all_pubkeys.push(shared.public_key());
+                }
+            }
+        }
+        // Include admin shared key for dispute chat
+        if let Some(ref admin_hex) = session.admin_trade_pubkey {
+            if let Ok(admin_pk) = PublicKey::from_hex(admin_hex) {
+                if let Ok(shared) = derive_shared_chat_keys(keys, &admin_pk) {
                     all_pubkeys.push(shared.public_key());
                 }
             }
@@ -2460,6 +2568,15 @@ async fn process_dm_notifications(
                             if let Some(cp_pk) = extract_counterparty_pubkey(order, &our_trade_hex)
                             {
                                 set_counterparty_pubkey(cube_name, &session.order_id, &cp_pk);
+                            }
+                        }
+
+                        // Extract admin pubkey from AdminTookDispute Peer payload
+                        if inner.action == mostro_core::message::Action::AdminTookDispute {
+                            if let Some(mostro_core::message::Payload::Peer(ref peer)) =
+                                inner.payload
+                            {
+                                set_admin_pubkey(cube_name, &session.order_id, &peer.pubkey);
                             }
                         }
 
@@ -2634,6 +2751,16 @@ async fn process_dm_event(
                         }
                     }
 
+                    // Extract admin pubkey from AdminTookDispute Peer payload
+                    if inner.action == mostro_core::message::Action::AdminTookDispute {
+                        if let Some(mostro_core::message::Payload::Peer(ref peer)) = inner.payload {
+                            if session.admin_trade_pubkey.as_deref() != Some(&peer.pubkey) {
+                                new_counterparty = true; // triggers subscription update
+                            }
+                            set_admin_pubkey(cube_name, &session.order_id, &peer.pubkey);
+                        }
+                    }
+
                     let rumor_ts = unwrapped.rumor.created_at.as_u64();
                     append_trade_message(
                         cube_name,
@@ -2700,6 +2827,56 @@ async fn process_dm_event(
                     let update_msg = Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
                         order_id: session.order_id.clone(),
                         action: "SendDm".to_string(),
+                        payload_json,
+                    }));
+                    let _ = output.send(update_msg).await;
+                    return false;
+                }
+            }
+        }
+
+        // Dispute chat message from admin (same 2-layer structure, different shared key)
+        let admin_shared_keys = session
+            .admin_trade_pubkey
+            .as_deref()
+            .and_then(|admin_hex| PublicKey::from_hex(admin_hex).ok())
+            .and_then(|admin_pk| derive_shared_chat_keys(keys, &admin_pk).ok());
+        if let Some(ref admin_shared) = admin_shared_keys {
+            if let Ok(decrypted) = nostr_sdk::prelude::nip44::decrypt(
+                admin_shared.secret_key(),
+                &event.pubkey,
+                &event.content,
+            ) {
+                if let Ok(inner_event) = nostr_sdk::Event::from_json(&decrypted) {
+                    let sender_hex = inner_event.pubkey.to_hex();
+                    let is_admin = session.admin_trade_pubkey.as_deref() == Some(&sender_hex);
+                    if !is_admin {
+                        continue;
+                    }
+
+                    seen_event_ids.insert(event.id);
+
+                    let chat_text = inner_event.content.clone();
+                    let payload_json = serde_json::to_string(&Some(
+                        mostro_core::message::Payload::TextMessage(chat_text),
+                    ))
+                    .unwrap_or_default();
+                    let rumor_ts = inner_event.created_at.as_u64();
+
+                    append_trade_message(
+                        cube_name,
+                        &session.order_id,
+                        TradeMessage {
+                            timestamp: rumor_ts,
+                            action: "AdminDm".to_string(),
+                            payload_json: payload_json.clone(),
+                            is_own: false,
+                        },
+                    );
+
+                    let update_msg = Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
+                        order_id: session.order_id.clone(),
+                        action: "AdminDm".to_string(),
                         payload_json,
                     }));
                     let _ = output.send(update_msg).await;
