@@ -1471,36 +1471,61 @@ impl P2PPanel {
                     // ── Buyer must submit invoice ──
                     Some("AddInvoice") | Some("WaitingBuyerInvoice") => {
                         if is_buyer {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Submit your invoice"),
-                                        p2_regular(
-                                            "Please send a Lightning invoice or address \
-                                            where you'll receive the sats. If you don't \
-                                            provide one in time, the trade will be canceled.",
-                                        )
-                                        .style(theme::text::secondary),
-                                        form::Form::new_trimmed(
-                                            "Enter lightning invoice or address",
-                                            &self.trade_invoice_input,
-                                            |v| view::Message::P2P(P2PMessage::TradeInvoiceEdited(
-                                                v
-                                            )),
-                                        )
-                                        .padding(10),
-                                        if !self.trade_invoice_input.value.is_empty() && !loading {
-                                            button::primary(None, "Submit Invoice")
-                                                .on_press(p2p(P2PMessage::SubmitInvoice))
-                                                .width(Length::Fill)
-                                        } else {
-                                            button::primary(None, "Submit Invoice")
-                                                .width(Length::Fill)
-                                        },
-                                    ]
-                                    .spacing(8),
+                            let mut invoice_col = column![
+                                p1_bold("Submit your invoice"),
+                                p2_regular(
+                                    "Please send a Lightning invoice or address \
+                                    where you'll receive the sats. If you don't \
+                                    provide one in time, the trade will be canceled.",
                                 )
-                                .width(Length::Fill),
+                                .style(theme::text::secondary),
+                            ]
+                            .spacing(8);
+
+                            if let Some(sats) = trade.sats_amount {
+                                invoice_col = invoice_col.push(
+                                    caption(format!(
+                                        "Expected amount: {} sats. Use a zero-amount invoice \
+                                        or one matching this amount exactly. Invoice must not \
+                                        expire within 1 hour.",
+                                        super::components::format_with_separators(sats),
+                                    ))
+                                    .style(theme::text::warning),
+                                );
+                            } else {
+                                invoice_col = invoice_col.push(
+                                    caption(
+                                        "Use a zero-amount invoice or a Lightning address. \
+                                        Invoice must not expire within 1 hour.",
+                                    )
+                                    .style(theme::text::warning),
+                                );
+                            }
+
+                            invoice_col = invoice_col.push(
+                                form::Form::new_trimmed(
+                                    "Enter lightning invoice or address",
+                                    &self.trade_invoice_input,
+                                    |v| view::Message::P2P(P2PMessage::TradeInvoiceEdited(
+                                        v
+                                    )),
+                                )
+                                .padding(10),
+                            );
+
+                            invoice_col = invoice_col.push(
+                                if !self.trade_invoice_input.value.is_empty() && !loading {
+                                    button::primary(None, "Submit Invoice")
+                                        .on_press(p2p(P2PMessage::SubmitInvoice))
+                                        .width(Length::Fill)
+                                } else {
+                                    button::primary(None, "Submit Invoice")
+                                        .width(Length::Fill)
+                                },
+                            );
+
+                            actions = actions.push(
+                                card::simple(invoice_col).width(Length::Fill),
                             );
                         } else {
                             actions = actions.push(

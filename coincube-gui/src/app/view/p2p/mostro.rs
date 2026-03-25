@@ -1311,7 +1311,7 @@ async fn trade_action(
         Some(mostro_core::message::Payload::PaymentRequest(
             None,
             invoice,
-            Some(0),
+            None,
         ))
     } else {
         None
