@@ -184,6 +184,11 @@ impl State for BuySellPanel {
                     email: Default::default(),
                     loading: false,
                 };
+
+                // notify Connect module so it clears its in-memory session too
+                return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                    view::ConnectAccountMessage::LogOut,
+                )));
             }
 
             // Forward clipboard action to parent message handler

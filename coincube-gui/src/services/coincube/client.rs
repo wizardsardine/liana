@@ -25,12 +25,10 @@ impl Default for CoincubeClient {
 
 impl CoincubeClient {
     pub fn new() -> Self {
-        let base_url = if cfg!(debug_assertions) {
-            option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io")
-        } else {
-            option_env!("COINCUBE_API_URL")
-                .expect("COINCUBE_API_URL must be set at build time for release builds")
-        };
+        #[cfg(debug_assertions)]
+        let base_url = option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io");
+        #[cfg(not(debug_assertions))]
+        let base_url = env!("COINCUBE_API_URL");
 
         log::info!(
             "Coincube Base URL: {}, Release = {}",

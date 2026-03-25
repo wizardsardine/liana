@@ -307,47 +307,70 @@ impl BreezClient {
     pub async fn receive_bolt12_offer(&self) -> Result<String, BreezError> {
         let sdk = self.get_sdk()?;
 
-        // Try prepare first to get fee info (needed for offer creation).
-        // If prepare fails (Boltz API issue), try receive directly — it may
-        // return a cached offer without needing fresh fee data.
-        let prepare = match sdk
+        let prepare = sdk
             .prepare_receive_payment(&breez::PrepareReceiveRequest {
                 payment_method: breez::PaymentMethod::Bolt12Offer,
                 amount: None,
             })
-            .await
-        {
-            Ok(p) => p,
+            .await;
+
+        match prepare {
+            Ok(p) => {
+                // Normal path: prepare succeeded, create or retrieve offer.
+                let response = sdk
+                    .receive_payment(&breez::ReceivePaymentRequest {
+                        prepare_response: p,
+                        description: Some("coincube".to_string()),
+                        payer_note: None,
+                        description_hash: None,
+                    })
+                    .await
+                    .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+                Ok(response.destination)
+            }
             Err(prepare_err) => {
+                // Prepare failed (e.g. Boltz API down). Try to retrieve a cached
+                // offer using a minimal prepare response. If no cached offer
+                // exists, surface the original prepare error rather than creating
+                // a new offer with fabricated (zero) fee parameters.
                 log::warn!(
                     "[BREEZ] prepare_receive_payment for Bolt12 failed: {}. \
-                     Trying receive_payment with fallback prepare response.",
+                     Attempting to retrieve cached offer.",
                     prepare_err
                 );
-                // Construct a minimal PrepareReceiveResponse so receive_payment
-                // can check the local cache for an existing offer.
-                breez::PrepareReceiveResponse {
+
+                let fallback = breez::PrepareReceiveResponse {
                     payment_method: breez::PaymentMethod::Bolt12Offer,
                     amount: None,
                     fees_sat: 0,
                     min_payer_amount_sat: None,
                     max_payer_amount_sat: None,
                     swapper_feerate: None,
+                };
+
+                match sdk
+                    .receive_payment(&breez::ReceivePaymentRequest {
+                        prepare_response: fallback,
+                        description: Some("coincube".to_string()),
+                        payer_note: None,
+                        description_hash: None,
+                    })
+                    .await
+                {
+                    Ok(response) => Ok(response.destination),
+                    Err(receive_err) => {
+                        // No cached offer available — return the original prepare
+                        // error which is more actionable for the user.
+                        log::error!(
+                            "[BREEZ] Cached offer retrieval also failed: {}",
+                            receive_err
+                        );
+                        Err(BreezError::Sdk(prepare_err.to_string()))
+                    }
                 }
             }
-        };
-
-        let response = sdk
-            .receive_payment(&breez::ReceivePaymentRequest {
-                prepare_response: prepare,
-                description: Some("coincube".to_string()),
-                payer_note: None,
-                description_hash: None,
-            })
-            .await
-            .map_err(|e| BreezError::Sdk(e.to_string()))?;
-
-        Ok(response.destination)
+        }
     }
 
     /// Generate a Liquid address for receiving USDt (or any Liquid asset).
