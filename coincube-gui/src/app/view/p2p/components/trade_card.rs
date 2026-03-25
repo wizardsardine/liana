@@ -127,15 +127,15 @@ pub fn trade_card<'a>(trade: &'a P2PTrade) -> Button<'a, view::Message> {
         TradeStatus::Active | TradeStatus::FiatSent | TradeStatus::SettledHoldInvoice => {
             theme::pill::success as fn(&_) -> _
         }
-        TradeStatus::Success => theme::pill::primary as fn(&_) -> _,
+        TradeStatus::Success => theme::pill::info as fn(&_) -> _,
         TradeStatus::Pending | TradeStatus::WaitingPayment | TradeStatus::WaitingBuyerInvoice => {
             theme::pill::simple as fn(&_) -> _
         }
+        TradeStatus::Dispute => theme::pill::warning as fn(&_) -> _,
         TradeStatus::PaymentFailed
         | TradeStatus::Canceled
         | TradeStatus::CooperativelyCanceled
-        | TradeStatus::Dispute
-        | TradeStatus::Expired => theme::pill::warning as fn(&_) -> _,
+        | TradeStatus::Expired => theme::pill::error as fn(&_) -> _,
     };
 
     let content = card::simple(

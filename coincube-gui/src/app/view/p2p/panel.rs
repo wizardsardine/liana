@@ -699,7 +699,7 @@ impl P2PPanel {
             column![
                 p2_regular(currency_label).style(theme::text::secondary),
                 row![
-                    icon::dollar_icon().style(theme::text::success),
+                    icon::dollar_icon().style(theme::text::warning),
                     currency_combo,
                 ]
                 .spacing(12)
@@ -718,7 +718,7 @@ impl P2PPanel {
         let mut amount_col = column![
             p2_regular(amount_label).style(theme::text::secondary),
             row![
-                icon::coins_icon().style(theme::text::success),
+                icon::coins_icon().style(theme::text::warning),
                 form::Form::new_amount_sats("Amount", &self.create_min_amount, |v| {
                     view::Message::P2P(P2PMessage::MinAmountEdited(v))
                 })
@@ -795,7 +795,7 @@ impl P2PPanel {
 
         let mut payment_col = column![
             p2_regular("Payment methods for").style(theme::text::secondary),
-            row![icon::card_icon().style(theme::text::success), pm_combo,]
+            row![icon::card_icon().style(theme::text::warning), pm_combo,]
                 .spacing(12)
                 .align_y(iced::alignment::Vertical::Center),
             pm_tags,
@@ -843,7 +843,7 @@ impl P2PPanel {
             column![
                 p2_regular("Price type").style(theme::text::secondary),
                 row![
-                    icon::dollar_icon().style(theme::text::success),
+                    icon::dollar_icon().style(theme::text::warning),
                     row![market_btn, fixed_btn].spacing(8).width(Length::Fill),
                 ]
                 .spacing(12)
@@ -860,7 +860,7 @@ impl P2PPanel {
             let mut sats_col = column![
                 p2_regular("Sats Amount").style(theme::text::secondary),
                 row![
-                    icon::bitcoin_icon().style(theme::text::success),
+                    icon::bitcoin_icon().style(theme::text::warning),
                     form::Form::new_amount_sats(
                         "Enter sats amount",
                         &self.create_sats_amount,
@@ -907,7 +907,7 @@ impl P2PPanel {
             let mut premium_col = column![
                 p2_regular("Premium").style(theme::text::secondary),
                 row![
-                    icon::coins_icon().style(theme::text::success),
+                    icon::coins_icon().style(theme::text::warning),
                     form::Form::new_trimmed("e.g. 5 or -3", &self.create_premium, |v| {
                         view::Message::P2P(P2PMessage::PremiumEdited(v))
                     })
@@ -937,7 +937,7 @@ impl P2PPanel {
                     column![
                         p2_regular("Lightning Address (optional)").style(theme::text::secondary),
                         row![
-                            icon::lightning_icon().style(theme::text::success),
+                            icon::lightning_icon().style(theme::text::warning),
                             form::Form::new_trimmed(
                                 "Enter lightning address",
                                 &self.create_lightning_address,
@@ -1128,15 +1128,15 @@ impl P2PPanel {
             TradeStatus::Active | TradeStatus::FiatSent | TradeStatus::SettledHoldInvoice => {
                 theme::pill::success as fn(&_) -> _
             }
-            TradeStatus::Success => theme::pill::primary as fn(&_) -> _,
+            TradeStatus::Success => theme::pill::info as fn(&_) -> _,
             TradeStatus::Pending
             | TradeStatus::WaitingPayment
             | TradeStatus::WaitingBuyerInvoice => theme::pill::simple as fn(&_) -> _,
+            TradeStatus::Dispute => theme::pill::warning as fn(&_) -> _,
             TradeStatus::PaymentFailed
             | TradeStatus::Canceled
             | TradeStatus::CooperativelyCanceled
-            | TradeStatus::Dispute
-            | TradeStatus::Expired => theme::pill::warning as fn(&_) -> _,
+            | TradeStatus::Expired => theme::pill::error as fn(&_) -> _,
         };
 
         // Is user the buyer? order_type always stores OUR perspective (what we're doing).
@@ -1424,9 +1424,7 @@ impl P2PPanel {
                                 }
                                 invoice_col = invoice_col.push(
                                     button::primary(None, "Copy Invoice")
-                                        .on_press(view::Message::Clipboard(
-                                            invoice.clone(),
-                                        ))
+                                        .on_press(view::Message::Clipboard(invoice.clone()))
                                         .width(Length::Fill),
                                 );
                             } else {
@@ -1439,9 +1437,7 @@ impl P2PPanel {
                                 );
                             }
 
-                            actions = actions.push(
-                                card::simple(invoice_col).width(Length::Fill),
-                            );
+                            actions = actions.push(card::simple(invoice_col).width(Length::Fill));
                         }
                     }
 
@@ -1491,10 +1487,7 @@ impl P2PPanel {
                     // BuyerTookOrder: seller is notified a buyer took their order.
                     // If the payload included a hold invoice, show it immediately.
                     Some("BuyerTookOrder") => {
-                        let mut took_col = column![
-                            p1_bold("Buyer took your order"),
-                        ]
-                        .spacing(8);
+                        let mut took_col = column![p1_bold("Buyer took your order"),].spacing(8);
 
                         if let Some(ref invoice) = trade.hold_invoice {
                             took_col = took_col.push(
@@ -1509,8 +1502,10 @@ impl P2PPanel {
                                 took_col = took_col.push(
                                     container(
                                         container(
-                                            iced::widget::QRCode::<coincube_ui::theme::Theme>::new(qr_data)
-                                                .cell_size(2),
+                                            iced::widget::QRCode::<coincube_ui::theme::Theme>::new(
+                                                qr_data,
+                                            )
+                                            .cell_size(2),
                                         )
                                         .padding(10)
                                         .style(|_| {
@@ -1540,9 +1535,7 @@ impl P2PPanel {
                             );
                         }
 
-                        actions = actions.push(
-                            card::simple(took_col).width(Length::Fill),
-                        );
+                        actions = actions.push(card::simple(took_col).width(Length::Fill));
                     }
 
                     // ── Buyer must submit invoice ──
@@ -1583,9 +1576,7 @@ impl P2PPanel {
                                 form::Form::new_trimmed(
                                     "Enter lightning invoice or address",
                                     &self.trade_invoice_input,
-                                    |v| view::Message::P2P(P2PMessage::TradeInvoiceEdited(
-                                        v
-                                    )),
+                                    |v| view::Message::P2P(P2PMessage::TradeInvoiceEdited(v)),
                                 )
                                 .padding(10),
                             );
@@ -1596,14 +1587,11 @@ impl P2PPanel {
                                         .on_press(p2p(P2PMessage::SubmitInvoice))
                                         .width(Length::Fill)
                                 } else {
-                                    button::primary(None, "Submit Invoice")
-                                        .width(Length::Fill)
+                                    button::primary(None, "Submit Invoice").width(Length::Fill)
                                 },
                             );
 
-                            actions = actions.push(
-                                card::simple(invoice_col).width(Length::Fill),
-                            );
+                            actions = actions.push(card::simple(invoice_col).width(Length::Fill));
                         } else {
                             actions = actions.push(
                                 card::simple(
@@ -3926,8 +3914,7 @@ impl State for P2PPanel {
                             ) {
                                 trade.hold_invoice = Some(invoice.clone());
                                 if self.selected_trade.as_deref() == Some(&order_id) {
-                                    self.hold_invoice_qr =
-                                        qr_code::Data::new(invoice).ok();
+                                    self.hold_invoice_qr = qr_code::Data::new(invoice).ok();
                                 }
                             }
                         }

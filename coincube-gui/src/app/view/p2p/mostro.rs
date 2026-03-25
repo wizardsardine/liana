@@ -233,9 +233,7 @@ pub fn extract_hold_invoice(session: &TradeSession) -> Option<String> {
             let payload: Option<mostro_core::message::Payload> =
                 serde_json::from_str(&m.payload_json).ok()?;
             match payload {
-                Some(mostro_core::message::Payload::PaymentRequest(_, invoice, _)) => {
-                    Some(invoice)
-                }
+                Some(mostro_core::message::Payload::PaymentRequest(_, invoice, _)) => Some(invoice),
                 _ => None,
             }
         })
@@ -1202,12 +1200,8 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
                     data.order_id
                 );
                 // Use explicit amount if present, otherwise fall back to order.amount
-                let amount_sats = amount.or_else(|| {
-                    order
-                        .as_ref()
-                        .map(|o| o.amount)
-                        .filter(|&a| a > 0)
-                });
+                let amount_sats =
+                    amount.or_else(|| order.as_ref().map(|o| o.amount).filter(|&a| a > 0));
                 Ok(TakeOrderResponse::PaymentRequired {
                     order_id: data.order_id,
                     trade_index: next_idx,
@@ -1343,9 +1337,7 @@ async fn trade_action(
             .invoice
             .ok_or("Invoice is required for AddInvoice action")?;
         Some(mostro_core::message::Payload::PaymentRequest(
-            None,
-            invoice,
-            None,
+            None, invoice, None,
         ))
     } else {
         None
