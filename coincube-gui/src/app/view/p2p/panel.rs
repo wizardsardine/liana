@@ -180,6 +180,8 @@ pub struct P2PPanel {
     trade_invoice_input: form::Value<String>,
     trade_action_loading: bool,
     trade_rating: u8, // 1-5 star rating for counterparty
+    // Cached QR code for the hold invoice in the selected trade's detail view
+    hold_invoice_qr: Option<qr_code::Data>,
     // Hold invoice to display (seller must pay after taking a buy order)
     pending_payment_invoice: Option<(String, String, Option<i64>, qr_code::Data)>, // (order_id, invoice, amount_sats, qr_data)
     // Chat
@@ -246,6 +248,7 @@ impl P2PPanel {
             trade_invoice_input: Default::default(),
             trade_action_loading: false,
             trade_rating: 0,
+            hold_invoice_qr: None,
             pending_payment_invoice: None,
             show_chat: false,
             chat_input: Default::default(),
@@ -1388,20 +1391,56 @@ impl P2PPanel {
                                 .width(Length::Fill),
                             );
                         } else {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Pay the hold invoice"),
-                                        p2_regular(
-                                            "Please pay the hold invoice to lock your sats \
-                                            and start the trade. If you don't pay in time, \
-                                            the trade will be canceled.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
+                            let mut invoice_col = column![
+                                p1_bold("Pay the hold invoice"),
+                                p2_regular(
+                                    "Please pay the hold invoice to lock your sats \
+                                    and start the trade. If you don't pay in time, \
+                                    the trade will be canceled.",
                                 )
-                                .width(Length::Fill),
+                                .style(theme::text::secondary),
+                            ]
+                            .spacing(8);
+
+                            if let Some(ref invoice) = trade.hold_invoice {
+                                if let Some(ref qr_data) = self.hold_invoice_qr {
+                                    invoice_col = invoice_col.push(
+                                        container(
+                                            container(
+                                                iced::widget::QRCode::<coincube_ui::theme::Theme>::new(qr_data)
+                                                    .cell_size(2),
+                                            )
+                                            .padding(10)
+                                            .style(|_| {
+                                                iced::widget::container::Style::default()
+                                                    .background(iced::Color::WHITE)
+                                            })
+                                            .max_width(280)
+                                            .max_height(280),
+                                        )
+                                        .width(Length::Fill)
+                                        .center_x(Length::Fill),
+                                    );
+                                }
+                                invoice_col = invoice_col.push(
+                                    button::primary(None, "Copy Invoice")
+                                        .on_press(view::Message::Clipboard(
+                                            invoice.clone(),
+                                        ))
+                                        .width(Length::Fill),
+                                );
+                            } else {
+                                invoice_col = invoice_col.push(
+                                    caption(
+                                        "Hold invoice not available. \
+                                        Please check your external wallet for a pending invoice.",
+                                    )
+                                    .style(theme::text::warning),
+                                );
+                            }
+
+                            actions = actions.push(
+                                card::simple(invoice_col).width(Length::Fill),
                             );
                         }
                     }
@@ -3511,6 +3550,13 @@ impl State for P2PPanel {
             }
             // Trade detail
             P2PMessage::SelectTrade(id) => {
+                // Cache QR code for the hold invoice if this trade has one
+                self.hold_invoice_qr = self
+                    .trades
+                    .iter()
+                    .find(|t| t.id == id)
+                    .and_then(|t| t.hold_invoice.as_ref())
+                    .and_then(|inv| qr_code::Data::new(inv).ok());
                 self.selected_trade = Some(id);
                 self.trade_invoice_input = Default::default();
                 self.trade_action_loading = false;
@@ -3826,6 +3872,24 @@ impl State for P2PPanel {
                         }
                         if let Some(new_status) = super::mostro::dm_action_to_status(&action) {
                             trade.status = new_status;
+                        }
+                        // Extract hold invoice from PayInvoice DM payload
+                        if (action == "PayInvoice" || action == "WaitingSellerToPay")
+                            && trade.hold_invoice.is_none()
+                        {
+                            if let Ok(Some(mostro_core::message::Payload::PaymentRequest(
+                                _,
+                                ref invoice,
+                                _,
+                            ))) = serde_json::from_str::<Option<mostro_core::message::Payload>>(
+                                &payload_json,
+                            ) {
+                                trade.hold_invoice = Some(invoice.clone());
+                                if self.selected_trade.as_deref() == Some(&order_id) {
+                                    self.hold_invoice_qr =
+                                        qr_code::Data::new(invoice).ok();
+                                }
+                            }
                         }
                     }
                 }

@@ -214,6 +214,27 @@ pub fn latest_dm_action(session: &TradeSession) -> Option<&str> {
         .map(|m| m.action.as_str())
 }
 
+/// Extract the hold invoice from a trade session's PayInvoice message payload.
+pub fn extract_hold_invoice(session: &TradeSession) -> Option<String> {
+    session
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.action == "PayInvoice" || m.action == "WaitingSellerToPay")
+        .and_then(|m| {
+            // payload_json is the serialized Option<Payload>
+            // For PayInvoice: Some(PaymentRequest(Some(order), invoice_string, Some(amount)))
+            let payload: Option<mostro_core::message::Payload> =
+                serde_json::from_str(&m.payload_json).ok()?;
+            match payload {
+                Some(mostro_core::message::Payload::PaymentRequest(_, invoice, _)) => {
+                    Some(invoice)
+                }
+                _ => None,
+            }
+        })
+}
+
 /// Find the timestamp of the DM that started the current countdown phase.
 /// For WaitingBuyerInvoice status → find the AddInvoice/WaitingBuyerInvoice message
 /// For WaitingPayment status → find the PayInvoice/WaitingSellerToPay message
@@ -2097,6 +2118,7 @@ async fn fetch_user_trades(
                 countdown_start_ts: countdown_start_timestamp(session),
                 counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
                 admin_pubkey: session.admin_trade_pubkey.clone(),
+                hold_invoice: extract_hold_invoice(session),
             });
         } else {
             // Not found on relay — fallback from saved session
@@ -2160,6 +2182,7 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
         countdown_start_ts: countdown_start_timestamp(session),
         counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
         admin_pubkey: session.admin_trade_pubkey.clone(),
+        hold_invoice: extract_hold_invoice(session),
     }
 }
 

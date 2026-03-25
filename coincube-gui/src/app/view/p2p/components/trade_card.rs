@@ -96,6 +96,8 @@ pub struct P2PTrade {
     pub counterparty_pubkey: Option<String>,
     /// Admin/solver's trade public key (hex), set when admin takes dispute
     pub admin_pubkey: Option<String>,
+    /// Hold invoice the seller must pay (extracted from PayInvoice DM payload)
+    pub hold_invoice: Option<String>,
 }
 
 impl P2PTrade {
