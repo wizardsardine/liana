@@ -3597,6 +3597,7 @@ impl State for P2PPanel {
                 self.trade_invoice_input = Default::default();
                 self.trade_rating = 0;
                 self.trade_action_loading = false;
+                self.hold_invoice_qr = None;
                 self.show_chat = false;
                 self.chat_input = Default::default();
             }
