@@ -1095,6 +1095,12 @@ impl App {
                     msg,
                 )));
             }
+            Message::View(view::Message::ShowSuccess(msg)) => {
+                return self.update(Message::View(view::Message::ShowToast(
+                    log::Level::Info,
+                    msg,
+                )));
+            }
             Message::View(view::Message::ShowToast(level, msg)) => {
                 // Show toast with specified level
                 self.errors

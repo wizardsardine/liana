@@ -182,6 +182,7 @@ pub struct P2PPanel {
     trade_rating: u8, // 1-5 star rating for counterparty
     // Hold invoice to display (seller must pay after taking a buy order)
     pending_payment_invoice: Option<(String, String, Option<i64>, qr_code::Data)>, // (order_id, invoice, amount_sats, qr_data)
+    invoice_copied: bool,
     // Chat
     show_chat: bool,
     chat_input: form::Value<String>,
@@ -247,6 +248,7 @@ impl P2PPanel {
             trade_action_loading: false,
             trade_rating: 0,
             pending_payment_invoice: None,
+            invoice_copied: false,
             show_chat: false,
             chat_input: Default::default(),
             pending_chat_message: None,
@@ -2322,25 +2324,22 @@ impl P2PPanel {
                 .width(Length::Fill)
                 .center_x(Length::Fill),
                 row![
-                    button::primary(None, "Copy")
-                        .on_press(view::Message::P2P(P2PMessage::CopyPaymentInvoice(
-                            invoice.to_string(),
-                        )))
-                        .width(Length::Fill),
-                    button::secondary(None, "Close")
-                        .on_press(view::Message::P2P(P2PMessage::DismissPaymentInvoice))
-                        .width(Length::Fill),
-                ]
-                .spacing(8),
-                container(
-                    button::transparent(None, "Cancel Order")
+                    if self.invoice_copied {
+                        button::secondary(None, "Copied!").width(Length::Fill)
+                    } else {
+                        button::primary(None, "Copy Invoice")
+                            .on_press(view::Message::P2P(P2PMessage::CopyPaymentInvoice(
+                                invoice.to_string(),
+                            )))
+                            .width(Length::Fill)
+                    },
+                    button::alert(None, "Cancel Order")
                         .on_press(view::Message::P2P(P2PMessage::CancelPaymentInvoice(
                             order_id.to_string(),
                         )))
                         .width(Length::Fill),
-                )
-                .width(Length::Fill)
-                .center_x(Length::Fill),
+                ]
+                .spacing(8),
             ]
             .spacing(16)
             .align_x(Alignment::Center),
@@ -3461,9 +3460,20 @@ impl State for P2PPanel {
             }
             P2PMessage::DismissPaymentInvoice => {
                 self.pending_payment_invoice = None;
+                self.invoice_copied = false;
             }
             P2PMessage::CopyPaymentInvoice(invoice) => {
-                return Task::done(Message::View(view::Message::Clipboard(invoice)));
+                self.invoice_copied = true;
+                return Task::batch([
+                    Task::done(Message::View(view::Message::Clipboard(invoice))),
+                    Task::perform(
+                        async { tokio::time::sleep(std::time::Duration::from_secs(2)).await },
+                        |_| Message::View(view::Message::P2P(P2PMessage::ResetInvoiceCopied)),
+                    ),
+                ]);
+            }
+            P2PMessage::ResetInvoiceCopied => {
+                self.invoice_copied = false;
             }
             P2PMessage::CancelPaymentInvoice(order_id) => {
                 let data = super::mostro::TradeActionData {
