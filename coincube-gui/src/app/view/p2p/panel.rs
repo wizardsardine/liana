@@ -189,6 +189,8 @@ pub struct P2PPanel {
     trade_invoice_input: form::Value<String>,
     trade_action_loading: bool,
     trade_rating: u8, // 1-5 star rating for counterparty
+    // Cached QR code for the hold invoice in the selected trade's detail view
+    hold_invoice_qr: Option<qr_code::Data>,
     // Hold invoice to display (seller must pay after taking a buy order)
     pending_payment_invoice: Option<(String, String, Option<i64>, qr_code::Data)>, // (order_id, invoice, amount_sats, qr_data)
     invoice_copied: bool,
@@ -255,6 +257,7 @@ impl P2PPanel {
             trade_invoice_input: Default::default(),
             trade_action_loading: false,
             trade_rating: 0,
+            hold_invoice_qr: None,
             pending_payment_invoice: None,
             invoice_copied: false,
             active_chat: ActiveChat::None,
@@ -704,7 +707,7 @@ impl P2PPanel {
             column![
                 p2_regular(currency_label).style(theme::text::secondary),
                 row![
-                    icon::dollar_icon().style(theme::text::success),
+                    icon::dollar_icon().style(theme::text::warning),
                     currency_combo,
                 ]
                 .spacing(12)
@@ -723,7 +726,7 @@ impl P2PPanel {
         let mut amount_col = column![
             p2_regular(amount_label).style(theme::text::secondary),
             row![
-                icon::coins_icon().style(theme::text::success),
+                icon::coins_icon().style(theme::text::warning),
                 form::Form::new_amount_sats("Amount", &self.create_min_amount, |v| {
                     view::Message::P2P(P2PMessage::MinAmountEdited(v))
                 })
@@ -800,7 +803,7 @@ impl P2PPanel {
 
         let mut payment_col = column![
             p2_regular("Payment methods for").style(theme::text::secondary),
-            row![icon::card_icon().style(theme::text::success), pm_combo,]
+            row![icon::card_icon().style(theme::text::warning), pm_combo,]
                 .spacing(12)
                 .align_y(iced::alignment::Vertical::Center),
             pm_tags,
@@ -848,7 +851,7 @@ impl P2PPanel {
             column![
                 p2_regular("Price type").style(theme::text::secondary),
                 row![
-                    icon::dollar_icon().style(theme::text::success),
+                    icon::dollar_icon().style(theme::text::warning),
                     row![market_btn, fixed_btn].spacing(8).width(Length::Fill),
                 ]
                 .spacing(12)
@@ -865,7 +868,7 @@ impl P2PPanel {
             let mut sats_col = column![
                 p2_regular("Sats Amount").style(theme::text::secondary),
                 row![
-                    icon::bitcoin_icon().style(theme::text::success),
+                    icon::bitcoin_icon().style(theme::text::warning),
                     form::Form::new_amount_sats(
                         "Enter sats amount",
                         &self.create_sats_amount,
@@ -912,7 +915,7 @@ impl P2PPanel {
             let mut premium_col = column![
                 p2_regular("Premium").style(theme::text::secondary),
                 row![
-                    icon::coins_icon().style(theme::text::success),
+                    icon::coins_icon().style(theme::text::warning),
                     form::Form::new_trimmed("e.g. 5 or -3", &self.create_premium, |v| {
                         view::Message::P2P(P2PMessage::PremiumEdited(v))
                     })
@@ -942,7 +945,7 @@ impl P2PPanel {
                     column![
                         p2_regular("Lightning Address (optional)").style(theme::text::secondary),
                         row![
-                            icon::lightning_icon().style(theme::text::success),
+                            icon::lightning_icon().style(theme::text::warning),
                             form::Form::new_trimmed(
                                 "Enter lightning address",
                                 &self.create_lightning_address,
@@ -1133,15 +1136,15 @@ impl P2PPanel {
             TradeStatus::Active | TradeStatus::FiatSent | TradeStatus::SettledHoldInvoice => {
                 theme::pill::success as fn(&_) -> _
             }
-            TradeStatus::Success => theme::pill::primary as fn(&_) -> _,
+            TradeStatus::Success => theme::pill::info as fn(&_) -> _,
             TradeStatus::Pending
             | TradeStatus::WaitingPayment
             | TradeStatus::WaitingBuyerInvoice => theme::pill::simple as fn(&_) -> _,
+            TradeStatus::Dispute => theme::pill::warning as fn(&_) -> _,
             TradeStatus::PaymentFailed
             | TradeStatus::Canceled
             | TradeStatus::CooperativelyCanceled
-            | TradeStatus::Dispute
-            | TradeStatus::Expired => theme::pill::warning as fn(&_) -> _,
+            | TradeStatus::Expired => theme::pill::error as fn(&_) -> _,
         };
 
         // Is user the buyer? order_type always stores OUR perspective (what we're doing).
@@ -1396,21 +1399,23 @@ impl P2PPanel {
                                 .width(Length::Fill),
                             );
                         } else {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Pay the hold invoice"),
-                                        p2_regular(
-                                            "Please pay the hold invoice to lock your sats \
-                                            and start the trade. If you don't pay in time, \
-                                            the trade will be canceled.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
+                            let mut invoice_col = column![
+                                p1_bold("Pay the hold invoice"),
+                                p2_regular(
+                                    "Please pay the hold invoice to lock your sats \
+                                    and start the trade. If you don't pay in time, \
+                                    the trade will be canceled.",
                                 )
-                                .width(Length::Fill),
+                                .style(theme::text::secondary),
+                            ]
+                            .spacing(8);
+
+                            invoice_col = self.push_hold_invoice_elements(
+                                invoice_col,
+                                trade.hold_invoice.as_ref(),
                             );
+
+                            actions = actions.push(card::simple(invoice_col).width(Length::Fill));
                         }
                     }
 
@@ -1457,59 +1462,89 @@ impl P2PPanel {
                             );
                         }
                     }
-                    // BuyerTookOrder: seller is notified a buyer took their order
+                    // BuyerTookOrder: seller is notified a buyer took their order.
+                    // If the payload included a hold invoice, show it immediately.
                     Some("BuyerTookOrder") => {
-                        actions = actions.push(
-                            card::simple(
-                                column![
-                                    p1_bold("Buyer took your order"),
-                                    p2_regular(
-                                        "A buyer has taken your order. Please wait while \
-                                        they decide to proceed. If they accept, you'll \
-                                        be notified to complete your part.",
-                                    )
-                                    .style(theme::text::secondary),
-                                ]
-                                .spacing(4),
-                            )
-                            .width(Length::Fill),
-                        );
+                        let mut took_col = column![p1_bold("Buyer took your order"),].spacing(8);
+
+                        if let Some(ref invoice) = trade.hold_invoice {
+                            took_col = took_col.push(
+                                p2_regular(
+                                    "Pay the hold invoice to lock your sats \
+                                    and start the trade. If you don't pay in time, \
+                                    the trade will be canceled.",
+                                )
+                                .style(theme::text::secondary),
+                            );
+                            took_col = self.push_hold_invoice_elements(took_col, Some(invoice));
+                        } else {
+                            took_col = took_col.push(
+                                p2_regular(
+                                    "A buyer has taken your order. Please wait while \
+                                    they decide to proceed. If they accept, you'll \
+                                    be notified to complete your part.",
+                                )
+                                .style(theme::text::secondary),
+                            );
+                        }
+
+                        actions = actions.push(card::simple(took_col).width(Length::Fill));
                     }
 
                     // ── Buyer must submit invoice ──
                     Some("AddInvoice") | Some("WaitingBuyerInvoice") => {
                         if is_buyer {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Submit your invoice"),
-                                        p2_regular(
-                                            "Please send a Lightning invoice or address \
-                                            where you'll receive the sats. If you don't \
-                                            provide one in time, the trade will be canceled.",
-                                        )
-                                        .style(theme::text::secondary),
-                                        form::Form::new_trimmed(
-                                            "Enter lightning invoice or address",
-                                            &self.trade_invoice_input,
-                                            |v| view::Message::P2P(P2PMessage::TradeInvoiceEdited(
-                                                v
-                                            )),
-                                        )
-                                        .padding(10),
-                                        if !self.trade_invoice_input.value.is_empty() && !loading {
-                                            button::primary(None, "Submit Invoice")
-                                                .on_press(p2p(P2PMessage::SubmitInvoice))
-                                                .width(Length::Fill)
-                                        } else {
-                                            button::primary(None, "Submit Invoice")
-                                                .width(Length::Fill)
-                                        },
-                                    ]
-                                    .spacing(8),
+                            let mut invoice_col = column![
+                                p1_bold("Submit your invoice"),
+                                p2_regular(
+                                    "Please send a Lightning invoice or address \
+                                    where you'll receive the sats. If you don't \
+                                    provide one in time, the trade will be canceled.",
                                 )
-                                .width(Length::Fill),
+                                .style(theme::text::secondary),
+                            ]
+                            .spacing(8);
+
+                            if let Some(sats) = trade.sats_amount.filter(|&s| s > 0) {
+                                invoice_col = invoice_col.push(
+                                    caption(format!(
+                                        "Expected amount: {} sats. Use a zero-amount invoice \
+                                        or one matching this amount exactly. Invoice must not \
+                                        expire within 1 hour.",
+                                        super::components::format_with_separators(sats),
+                                    ))
+                                    .style(theme::text::warning),
+                                );
+                            } else {
+                                invoice_col = invoice_col.push(
+                                    caption(
+                                        "Use a zero-amount invoice or a Lightning address. \
+                                        Invoice must not expire within 1 hour.",
+                                    )
+                                    .style(theme::text::warning),
+                                );
+                            }
+
+                            invoice_col = invoice_col.push(
+                                form::Form::new_trimmed(
+                                    "Enter lightning invoice or address",
+                                    &self.trade_invoice_input,
+                                    |v| view::Message::P2P(P2PMessage::TradeInvoiceEdited(v)),
+                                )
+                                .padding(10),
                             );
+
+                            invoice_col = invoice_col.push(
+                                if !self.trade_invoice_input.value.is_empty() && !loading {
+                                    button::primary(None, "Submit Invoice")
+                                        .on_press(p2p(P2PMessage::SubmitInvoice))
+                                        .width(Length::Fill)
+                                } else {
+                                    button::primary(None, "Submit Invoice").width(Length::Fill)
+                                },
+                            );
+
+                            actions = actions.push(card::simple(invoice_col).width(Length::Fill));
                         } else {
                             actions = actions.push(
                                 card::simple(
@@ -2275,6 +2310,50 @@ impl P2PPanel {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+    }
+
+    /// Append hold invoice QR code and copy button to a column, or a fallback
+    /// warning if the invoice is not available.
+    fn push_hold_invoice_elements<'a>(
+        &'a self,
+        col: Column<'a, view::Message>,
+        invoice: Option<&String>,
+    ) -> Column<'a, view::Message> {
+        let mut col = col;
+        if let Some(invoice) = invoice {
+            if let Some(ref qr_data) = self.hold_invoice_qr {
+                col = col.push(
+                    container(
+                        container(
+                            iced::widget::QRCode::<coincube_ui::theme::Theme>::new(qr_data)
+                                .cell_size(2),
+                        )
+                        .padding(10)
+                        .style(|_| {
+                            iced::widget::container::Style::default().background(iced::Color::WHITE)
+                        })
+                        .max_width(280)
+                        .max_height(280),
+                    )
+                    .width(Length::Fill)
+                    .center_x(Length::Fill),
+                );
+            }
+            col = col.push(
+                button::primary(None, "Copy Invoice")
+                    .on_press(view::Message::Clipboard(invoice.clone()))
+                    .width(Length::Fill),
+            );
+        } else {
+            col = col.push(
+                caption(
+                    "Hold invoice not available. \
+                    Please check your external wallet for a pending invoice.",
+                )
+                .style(theme::text::warning),
+            );
+        }
+        col
     }
 
     fn payment_invoice_modal_view<'a>(
@@ -3157,7 +3236,20 @@ impl State for P2PPanel {
                 }
                 self.orders = orders;
             }
-            P2PMessage::MostroTradesReceived(trades) => self.trades = trades,
+            P2PMessage::MostroTradesReceived(trades) => {
+                self.trades = trades;
+                // Recompute QR cache if the selected trade now has a hold invoice
+                if let Some(ref sel_id) = self.selected_trade {
+                    if self.hold_invoice_qr.is_none() {
+                        self.hold_invoice_qr = self
+                            .trades
+                            .iter()
+                            .find(|t| t.id == *sel_id)
+                            .and_then(|t| t.hold_invoice.as_ref())
+                            .and_then(|inv| qr_code::Data::new(inv).ok());
+                    }
+                }
+            }
             P2PMessage::BuySellFilterChanged(filter) => self.buy_sell_filter = filter,
             P2PMessage::TradeFilterChanged(filter) => {
                 if filter == TradeFilter::All {
@@ -3478,6 +3570,13 @@ impl State for P2PPanel {
             }
             // Trade detail
             P2PMessage::SelectTrade(id) => {
+                // Cache QR code for the hold invoice if this trade has one
+                self.hold_invoice_qr = self
+                    .trades
+                    .iter()
+                    .find(|t| t.id == id)
+                    .and_then(|t| t.hold_invoice.as_ref())
+                    .and_then(|inv| qr_code::Data::new(inv).ok());
                 self.selected_trade = Some(id);
                 self.trade_invoice_input = Default::default();
                 self.trade_action_loading = false;
@@ -3490,6 +3589,8 @@ impl State for P2PPanel {
                 self.trade_invoice_input = Default::default();
                 self.trade_rating = 0;
                 self.trade_action_loading = false;
+                self.hold_invoice_qr = None;
+                self.show_chat = false;
                 self.active_chat = ActiveChat::None;
                 self.chat_input = Default::default();
             }
@@ -3777,6 +3878,25 @@ impl State for P2PPanel {
                         }
                         if let Some(new_status) = super::mostro::dm_action_to_status(&action) {
                             trade.status = new_status;
+                        }
+                        // Extract hold invoice from PayInvoice or BuyerTookOrder DM payload
+                        if (action == "PayInvoice"
+                            || action == "WaitingSellerToPay"
+                            || action == "BuyerTookOrder")
+                            && trade.hold_invoice.is_none()
+                        {
+                            if let Ok(Some(mostro_core::message::Payload::PaymentRequest(
+                                _,
+                                ref invoice,
+                                _,
+                            ))) = serde_json::from_str::<Option<mostro_core::message::Payload>>(
+                                &payload_json,
+                            ) {
+                                trade.hold_invoice = Some(invoice.clone());
+                                if self.selected_trade.as_deref() == Some(&order_id) {
+                                    self.hold_invoice_qr = qr_code::Data::new(invoice).ok();
+                                }
+                            }
                         }
                     }
                 }

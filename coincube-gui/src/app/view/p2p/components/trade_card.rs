@@ -96,6 +96,8 @@ pub struct P2PTrade {
     pub counterparty_pubkey: Option<String>,
     /// Admin/solver's trade public key (hex), set when admin takes dispute
     pub admin_pubkey: Option<String>,
+    /// Hold invoice the seller must pay (extracted from PayInvoice DM payload)
+    pub hold_invoice: Option<String>,
 }
 
 impl P2PTrade {
@@ -125,15 +127,15 @@ pub fn trade_card<'a>(trade: &'a P2PTrade) -> Button<'a, view::Message> {
         TradeStatus::Active | TradeStatus::FiatSent | TradeStatus::SettledHoldInvoice => {
             theme::pill::success as fn(&_) -> _
         }
-        TradeStatus::Success => theme::pill::primary as fn(&_) -> _,
+        TradeStatus::Success => theme::pill::info as fn(&_) -> _,
         TradeStatus::Pending | TradeStatus::WaitingPayment | TradeStatus::WaitingBuyerInvoice => {
             theme::pill::simple as fn(&_) -> _
         }
+        TradeStatus::Dispute => theme::pill::warning as fn(&_) -> _,
         TradeStatus::PaymentFailed
         | TradeStatus::Canceled
         | TradeStatus::CooperativelyCanceled
-        | TradeStatus::Dispute
-        | TradeStatus::Expired => theme::pill::warning as fn(&_) -> _,
+        | TradeStatus::Expired => theme::pill::error as fn(&_) -> _,
     };
 
     let content = card::simple(

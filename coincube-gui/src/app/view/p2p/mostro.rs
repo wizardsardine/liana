@@ -234,6 +234,31 @@ pub fn latest_dm_action(session: &TradeSession) -> Option<&str> {
         .map(|m| m.action.as_str())
 }
 
+/// Extract the hold invoice from a trade session's message history.
+/// Checks PayInvoice/WaitingSellerToPay and BuyerTookOrder messages since
+/// either may carry the PaymentRequest payload depending on order flow.
+pub fn extract_hold_invoice(session: &TradeSession) -> Option<String> {
+    session
+        .messages
+        .iter()
+        .rev()
+        .filter(|m| {
+            m.action == "PayInvoice"
+                || m.action == "WaitingSellerToPay"
+                || m.action == "BuyerTookOrder"
+        })
+        .find_map(|m| {
+            // payload_json is the serialized Option<Payload>
+            // For PayInvoice/BuyerTookOrder: Some(PaymentRequest(Some(order), invoice_string, Some(amount)))
+            let payload: Option<mostro_core::message::Payload> =
+                serde_json::from_str(&m.payload_json).ok()?;
+            match payload {
+                Some(mostro_core::message::Payload::PaymentRequest(_, invoice, _)) => Some(invoice),
+                _ => None,
+            }
+        })
+}
+
 /// Find the timestamp of the DM that started the current countdown phase.
 pub fn countdown_start_timestamp(session: &TradeSession) -> Option<u64> {
     let last_action = session
@@ -1179,16 +1204,19 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
 
         // Check response payload: PaymentRequest means seller must pay a hold invoice
         return match &inner.payload {
-            Some(mostro_core::message::Payload::PaymentRequest(_order, invoice, amount)) => {
+            Some(mostro_core::message::Payload::PaymentRequest(order, invoice, amount)) => {
                 tracing::info!(
                     "Received PaymentRequest for order {} — seller must pay invoice",
                     data.order_id
                 );
+                // Use explicit amount if present, otherwise fall back to order.amount
+                let amount_sats =
+                    amount.or_else(|| order.as_ref().map(|o| o.amount).filter(|&a| a > 0));
                 Ok(TakeOrderResponse::PaymentRequired {
                     order_id: data.order_id,
                     trade_index: next_idx,
                     invoice: invoice.clone(),
-                    amount_sats: *amount,
+                    amount_sats,
                 })
             }
             _ => {
@@ -1319,9 +1347,7 @@ async fn trade_action(
             .invoice
             .ok_or("Invoice is required for AddInvoice action")?;
         Some(mostro_core::message::Payload::PaymentRequest(
-            None,
-            invoice,
-            Some(0),
+            None, invoice, None,
         ))
     } else {
         None
@@ -2030,6 +2056,7 @@ async fn fetch_user_trades(
                 countdown_start_ts: countdown_start_timestamp(session),
                 counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
                 admin_pubkey: session.admin_trade_pubkey.clone(),
+                hold_invoice: extract_hold_invoice(session),
             });
         } else {
             // Not found on relay — fallback from saved session
@@ -2093,6 +2120,7 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
         countdown_start_ts: countdown_start_timestamp(session),
         counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
         admin_pubkey: session.admin_trade_pubkey.clone(),
+        hold_invoice: extract_hold_invoice(session),
     }
 }
 
