@@ -1468,10 +1468,7 @@ impl P2PPanel {
                                 )
                                 .style(theme::text::secondary),
                             );
-                            took_col = self.push_hold_invoice_elements(
-                                took_col,
-                                Some(invoice),
-                            );
+                            took_col = self.push_hold_invoice_elements(took_col, Some(invoice));
                         } else {
                             took_col = took_col.push(
                                 p2_regular(
@@ -2329,8 +2326,7 @@ impl P2PPanel {
                         )
                         .padding(10)
                         .style(|_| {
-                            iced::widget::container::Style::default()
-                                .background(iced::Color::WHITE)
+                            iced::widget::container::Style::default().background(iced::Color::WHITE)
                         })
                         .max_width(280)
                         .max_height(280),
