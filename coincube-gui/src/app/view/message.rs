@@ -560,6 +560,7 @@ pub enum P2PMessage {
     TakeOrderResult(Result<super::p2p::mostro::TakeOrderResponse, String>),
     DismissPaymentInvoice,
     CopyPaymentInvoice(String),
+    ResetInvoiceCopied,
     CancelPaymentInvoice(String),
     // Trade detail
     SelectTrade(String),

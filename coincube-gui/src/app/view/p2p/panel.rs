@@ -30,6 +30,15 @@ use super::components::{
 use super::config::{load_mostro_config, save_mostro_config, MostroConfig, MostroNode};
 
 /// Per-field validation warnings for the order creation form.
+/// Which chat view is currently active (mutually exclusive).
+#[derive(Default, PartialEq)]
+enum ActiveChat {
+    #[default]
+    None,
+    Peer,
+    Dispute,
+}
+
 #[derive(Default)]
 struct FormValidation {
     amount: Option<&'static str>,
@@ -184,8 +193,9 @@ pub struct P2PPanel {
     hold_invoice_qr: Option<qr_code::Data>,
     // Hold invoice to display (seller must pay after taking a buy order)
     pending_payment_invoice: Option<(String, String, Option<i64>, qr_code::Data)>, // (order_id, invoice, amount_sats, qr_data)
+    invoice_copied: bool,
     // Chat
-    show_chat: bool,
+    active_chat: ActiveChat,
     chat_input: form::Value<String>,
     /// Holds the data for a chat message that is currently being sent.
     /// On success the message is appended to the transcript; on error the
@@ -194,7 +204,6 @@ pub struct P2PPanel {
     chat_show_trade_info: bool,
     chat_show_user_info: bool,
     // Dispute chat
-    show_dispute_chat: bool,
     dispute_chat_input: form::Value<String>,
     pending_dispute_chat_message: Option<PendingChatMessage>,
     // Mostro settings
@@ -250,12 +259,12 @@ impl P2PPanel {
             trade_rating: 0,
             hold_invoice_qr: None,
             pending_payment_invoice: None,
-            show_chat: false,
+            invoice_copied: false,
+            active_chat: ActiveChat::None,
             chat_input: Default::default(),
             pending_chat_message: None,
             chat_show_trade_info: false,
             chat_show_user_info: false,
-            show_dispute_chat: false,
             dispute_chat_input: Default::default(),
             pending_dispute_chat_message: None,
             mostro_config: load_mostro_config(),
@@ -263,6 +272,13 @@ impl P2PPanel {
             new_node_name_input: Default::default(),
             new_node_pubkey_input: Default::default(),
         }
+    }
+
+    fn cube_name(&self) -> String {
+        self.wallet
+            .as_ref()
+            .map(|w| w.name.clone())
+            .unwrap_or_else(|| "default".to_string())
     }
 
     fn filtered_orders(&self) -> Vec<&P2POrder> {
@@ -382,11 +398,7 @@ impl P2PPanel {
                 0
             },
             payment_method: payment_methods.join(","),
-            cube_name: self
-                .wallet
-                .as_ref()
-                .map(|w| w.name.clone())
-                .unwrap_or_else(|| "default".to_string()),
+            cube_name: self.cube_name(),
             mnemonic: self.mnemonic.clone(),
             buyer_invoice: if self.create_order_type == OrderType::Buy {
                 let addr = self.create_lightning_address.value.trim().to_string();
@@ -526,11 +538,7 @@ impl P2PPanel {
         if let Some(ref order_id) = self.selected_trade {
             let data = super::mostro::TradeActionData {
                 order_id: order_id.clone(),
-                cube_name: self
-                    .wallet
-                    .as_ref()
-                    .map(|w| w.name.clone())
-                    .unwrap_or_else(|| "default".to_string()),
+                cube_name: self.cube_name(),
                 mnemonic: self.mnemonic.clone(),
                 invoice,
                 mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
@@ -1977,11 +1985,7 @@ impl P2PPanel {
                 | TradeStatus::PaymentFailed
         );
 
-        let cube_name = self
-            .wallet
-            .as_ref()
-            .map(|w| w.name.clone())
-            .unwrap_or_else(|| "default".to_string());
+        let cube_name = self.cube_name();
         let all_messages = super::mostro::get_trade_messages(&cube_name, &trade.id);
         let chat_messages: Vec<&super::mostro::TradeMessage> = all_messages
             .iter()
@@ -2401,25 +2405,22 @@ impl P2PPanel {
                 .width(Length::Fill)
                 .center_x(Length::Fill),
                 row![
-                    button::primary(None, "Copy")
-                        .on_press(view::Message::P2P(P2PMessage::CopyPaymentInvoice(
-                            invoice.to_string(),
-                        )))
-                        .width(Length::Fill),
-                    button::secondary(None, "Close")
-                        .on_press(view::Message::P2P(P2PMessage::DismissPaymentInvoice))
-                        .width(Length::Fill),
-                ]
-                .spacing(8),
-                container(
-                    button::transparent(None, "Cancel Order")
+                    if self.invoice_copied {
+                        button::secondary(None, "Copied!").width(Length::Fill)
+                    } else {
+                        button::primary(None, "Copy Invoice")
+                            .on_press(view::Message::P2P(P2PMessage::CopyPaymentInvoice(
+                                invoice.to_string(),
+                            )))
+                            .width(Length::Fill)
+                    },
+                    button::alert(None, "Cancel Order")
                         .on_press(view::Message::P2P(P2PMessage::CancelPaymentInvoice(
                             order_id.to_string(),
                         )))
                         .width(Length::Fill),
-                )
-                .width(Length::Fill)
-                .center_x(Length::Fill),
+                ]
+                .spacing(8),
             ]
             .spacing(16)
             .align_x(Alignment::Center),
@@ -2434,11 +2435,7 @@ impl P2PPanel {
         let chat_enabled =
             trade.admin_pubkey.is_some() && matches!(trade.status, TradeStatus::Dispute);
 
-        let cube_name = self
-            .wallet
-            .as_ref()
-            .map(|w| w.name.clone())
-            .unwrap_or_else(|| "default".to_string());
+        let cube_name = self.cube_name();
         let all_messages = super::mostro::get_trade_messages(&cube_name, &trade.id);
         let admin_messages: Vec<&super::mostro::TradeMessage> = all_messages
             .iter()
@@ -2855,7 +2852,7 @@ impl State for P2PPanel {
                     // If a trade is selected, show its detail or chat view
                     if let Some(ref selected_id) = self.selected_trade {
                         if let Some(trade) = self.trades.iter().find(|t| t.id == *selected_id) {
-                            if self.show_chat {
+                            if self.active_chat == ActiveChat::Peer {
                                 // Separate chat view — built without dashboard()
                                 // to avoid nested scrollables.
                                 let has_vault = cache.has_vault;
@@ -2918,7 +2915,7 @@ impl State for P2PPanel {
                                     .width(Length::Fill)
                                     .height(Length::Fill)
                                     .into();
-                            } else if self.show_dispute_chat {
+                            } else if self.active_chat == ActiveChat::Dispute {
                                 // Dispute chat view
                                 let has_vault = cache.has_vault;
                                 let order_short = &trade.id[..8.min(trade.id.len())];
@@ -3099,11 +3096,7 @@ impl State for P2PPanel {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let cube_name = self
-            .wallet
-            .as_ref()
-            .map(|w| w.name.clone())
-            .unwrap_or_else(|| "default".to_string());
+        let cube_name = self.cube_name();
         let mnemonic = self.mnemonic.clone();
         let active_pubkey = self.mostro_config.active_pubkey_hex().to_string();
         let relays = self.mostro_config.relays.clone();
@@ -3295,11 +3288,7 @@ impl State for P2PPanel {
             P2PMessage::CancelOrder(order_id) => {
                 let data = super::mostro::TradeActionData {
                     order_id,
-                    cube_name: self
-                        .wallet
-                        .as_ref()
-                        .map(|w| w.name.clone())
-                        .unwrap_or_else(|| "default".to_string()),
+                    cube_name: self.cube_name(),
                     mnemonic: self.mnemonic.clone(),
                     invoice: None,
                     mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
@@ -3492,11 +3481,7 @@ impl State for P2PPanel {
                         let data = super::mostro::TakeOrderData {
                             order_id: order.id.clone(),
                             order_type: order.order_type.clone(),
-                            cube_name: self
-                                .wallet
-                                .as_ref()
-                                .map(|w| w.name.clone())
-                                .unwrap_or_else(|| "default".to_string()),
+                            cube_name: self.cube_name(),
                             mnemonic: self.mnemonic.clone(),
                             amount,
                             lightning_invoice: invoice,
@@ -3553,18 +3538,25 @@ impl State for P2PPanel {
             }
             P2PMessage::DismissPaymentInvoice => {
                 self.pending_payment_invoice = None;
+                self.invoice_copied = false;
             }
             P2PMessage::CopyPaymentInvoice(invoice) => {
-                return Task::done(Message::View(view::Message::Clipboard(invoice)));
+                self.invoice_copied = true;
+                return Task::batch([
+                    Task::done(Message::View(view::Message::Clipboard(invoice))),
+                    Task::perform(
+                        async { tokio::time::sleep(std::time::Duration::from_secs(2)).await },
+                        |_| Message::View(view::Message::P2P(P2PMessage::ResetInvoiceCopied)),
+                    ),
+                ]);
+            }
+            P2PMessage::ResetInvoiceCopied => {
+                self.invoice_copied = false;
             }
             P2PMessage::CancelPaymentInvoice(order_id) => {
                 let data = super::mostro::TradeActionData {
                     order_id,
-                    cube_name: self
-                        .wallet
-                        .as_ref()
-                        .map(|w| w.name.clone())
-                        .unwrap_or_else(|| "default".to_string()),
+                    cube_name: self.cube_name(),
                     mnemonic: self.mnemonic.clone(),
                     invoice: None,
                     mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
@@ -3589,7 +3581,7 @@ impl State for P2PPanel {
                 self.trade_invoice_input = Default::default();
                 self.trade_action_loading = false;
                 self.trade_rating = 0;
-                self.show_chat = false;
+                self.active_chat = ActiveChat::None;
                 self.chat_input = Default::default();
             }
             P2PMessage::CloseTradeDetail => {
@@ -3599,6 +3591,7 @@ impl State for P2PPanel {
                 self.trade_action_loading = false;
                 self.hold_invoice_qr = None;
                 self.show_chat = false;
+                self.active_chat = ActiveChat::None;
                 self.chat_input = Default::default();
             }
             // Trade actions
@@ -3629,11 +3622,7 @@ impl State for P2PPanel {
                 self.trade_action_loading = true;
                 let data = super::mostro::TradeActionData {
                     order_id: order_id.clone(),
-                    cube_name: self
-                        .wallet
-                        .as_ref()
-                        .map(|w| w.name.clone())
-                        .unwrap_or_else(|| "default".to_string()),
+                    cube_name: self.cube_name(),
                     mnemonic: self.mnemonic.clone(),
                     invoice: None,
                     mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
@@ -3675,11 +3664,7 @@ impl State for P2PPanel {
                                     trade.status = s;
                                 }
                             }
-                            let cube_name = self
-                                .wallet
-                                .as_ref()
-                                .map(|w| w.name.clone())
-                                .unwrap_or_else(|| "default".to_string());
+                            let cube_name = self.cube_name();
                             super::mostro::append_trade_message(
                                 &cube_name,
                                 order_id,
@@ -3704,11 +3689,11 @@ impl State for P2PPanel {
             }
             // Chat
             P2PMessage::OpenChat => {
-                self.show_chat = true;
+                self.active_chat = ActiveChat::Peer;
                 self.chat_input = Default::default();
             }
             P2PMessage::CloseChat => {
-                self.show_chat = false;
+                self.active_chat = ActiveChat::None;
                 self.chat_input = Default::default();
             }
             P2PMessage::ChatInputEdited(v) => {
@@ -3728,11 +3713,11 @@ impl State for P2PPanel {
             }
             // Dispute chat
             P2PMessage::OpenDisputeChat => {
-                self.show_dispute_chat = true;
+                self.active_chat = ActiveChat::Dispute;
                 self.dispute_chat_input = Default::default();
             }
             P2PMessage::CloseDisputeChat => {
-                self.show_dispute_chat = false;
+                self.active_chat = ActiveChat::None;
             }
             P2PMessage::DisputeChatInputEdited(v) => {
                 self.dispute_chat_input.value = v;
@@ -3743,11 +3728,7 @@ impl State for P2PPanel {
                     return Task::none();
                 }
                 if let Some(ref order_id) = self.selected_trade {
-                    let cube_name = self
-                        .wallet
-                        .as_ref()
-                        .map(|w| w.name.clone())
-                        .unwrap_or_else(|| "default".to_string());
+                    let cube_name = self.cube_name();
                     let payload = serde_json::to_string(&Some(
                         mostro_core::message::Payload::TextMessage(text.clone()),
                     ))
@@ -3809,11 +3790,7 @@ impl State for P2PPanel {
                     return Task::none();
                 }
                 if let Some(ref order_id) = self.selected_trade {
-                    let cube_name = self
-                        .wallet
-                        .as_ref()
-                        .map(|w| w.name.clone())
-                        .unwrap_or_else(|| "default".to_string());
+                    let cube_name = self.cube_name();
 
                     // Build payload but defer persisting until send succeeds
                     let payload = serde_json::to_string(&Some(
@@ -3930,11 +3907,7 @@ impl State for P2PPanel {
                 }
 
                 // Persist non-chat protocol messages to disk
-                let cube_name = self
-                    .wallet
-                    .as_ref()
-                    .map(|w| w.name.clone())
-                    .unwrap_or_else(|| "default".to_string());
+                let cube_name = self.cube_name();
                 super::mostro::append_trade_message(
                     &cube_name,
                     &order_id,
