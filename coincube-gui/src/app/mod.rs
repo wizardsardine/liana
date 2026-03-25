@@ -1486,9 +1486,7 @@ impl App {
                 let already_on_connect = self.cache.connect_authenticated
                     && matches!(self.panels.current, Menu::Connect(_));
                 if self.panels.connect_expanded && !already_on_connect {
-                    let menu = Menu::Connect(
-                        crate::app::menu::ConnectSubMenu::LightningAddress,
-                    );
+                    let menu = Menu::Connect(crate::app::menu::ConnectSubMenu::LightningAddress);
                     if let Some(panel) = self.panels.current_mut() {
                         return Task::batch([panel.close(), self.set_current_panel(menu)]);
                     }
