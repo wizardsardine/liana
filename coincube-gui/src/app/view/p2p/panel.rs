@@ -1488,22 +1488,60 @@ impl P2PPanel {
                             );
                         }
                     }
-                    // BuyerTookOrder: seller is notified a buyer took their order
+                    // BuyerTookOrder: seller is notified a buyer took their order.
+                    // If the payload included a hold invoice, show it immediately.
                     Some("BuyerTookOrder") => {
-                        actions = actions.push(
-                            card::simple(
-                                column![
-                                    p1_bold("Buyer took your order"),
-                                    p2_regular(
-                                        "A buyer has taken your order. Please wait while \
-                                        they decide to proceed. If they accept, you'll \
-                                        be notified to complete your part.",
+                        let mut took_col = column![
+                            p1_bold("Buyer took your order"),
+                        ]
+                        .spacing(8);
+
+                        if let Some(ref invoice) = trade.hold_invoice {
+                            took_col = took_col.push(
+                                p2_regular(
+                                    "Pay the hold invoice to lock your sats \
+                                    and start the trade. If you don't pay in time, \
+                                    the trade will be canceled.",
+                                )
+                                .style(theme::text::secondary),
+                            );
+                            if let Some(ref qr_data) = self.hold_invoice_qr {
+                                took_col = took_col.push(
+                                    container(
+                                        container(
+                                            iced::widget::QRCode::<coincube_ui::theme::Theme>::new(qr_data)
+                                                .cell_size(2),
+                                        )
+                                        .padding(10)
+                                        .style(|_| {
+                                            iced::widget::container::Style::default()
+                                                .background(iced::Color::WHITE)
+                                        })
+                                        .max_width(280)
+                                        .max_height(280),
                                     )
-                                    .style(theme::text::secondary),
-                                ]
-                                .spacing(4),
-                            )
-                            .width(Length::Fill),
+                                    .width(Length::Fill)
+                                    .center_x(Length::Fill),
+                                );
+                            }
+                            took_col = took_col.push(
+                                button::primary(None, "Copy Invoice")
+                                    .on_press(view::Message::Clipboard(invoice.clone()))
+                                    .width(Length::Fill),
+                            );
+                        } else {
+                            took_col = took_col.push(
+                                p2_regular(
+                                    "A buyer has taken your order. Please wait while \
+                                    they decide to proceed. If they accept, you'll \
+                                    be notified to complete your part.",
+                                )
+                                .style(theme::text::secondary),
+                            );
+                        }
+
+                        actions = actions.push(
+                            card::simple(took_col).width(Length::Fill),
                         );
                     }
 
@@ -3873,8 +3911,10 @@ impl State for P2PPanel {
                         if let Some(new_status) = super::mostro::dm_action_to_status(&action) {
                             trade.status = new_status;
                         }
-                        // Extract hold invoice from PayInvoice DM payload
-                        if (action == "PayInvoice" || action == "WaitingSellerToPay")
+                        // Extract hold invoice from PayInvoice or BuyerTookOrder DM payload
+                        if (action == "PayInvoice"
+                            || action == "WaitingSellerToPay"
+                            || action == "BuyerTookOrder")
                             && trade.hold_invoice.is_none()
                         {
                             if let Ok(Some(mostro_core::message::Payload::PaymentRequest(
