@@ -1402,40 +1402,10 @@ impl P2PPanel {
                             ]
                             .spacing(8);
 
-                            if let Some(ref invoice) = trade.hold_invoice {
-                                if let Some(ref qr_data) = self.hold_invoice_qr {
-                                    invoice_col = invoice_col.push(
-                                        container(
-                                            container(
-                                                iced::widget::QRCode::<coincube_ui::theme::Theme>::new(qr_data)
-                                                    .cell_size(2),
-                                            )
-                                            .padding(10)
-                                            .style(|_| {
-                                                iced::widget::container::Style::default()
-                                                    .background(iced::Color::WHITE)
-                                            })
-                                            .max_width(280)
-                                            .max_height(280),
-                                        )
-                                        .width(Length::Fill)
-                                        .center_x(Length::Fill),
-                                    );
-                                }
-                                invoice_col = invoice_col.push(
-                                    button::primary(None, "Copy Invoice")
-                                        .on_press(view::Message::Clipboard(invoice.clone()))
-                                        .width(Length::Fill),
-                                );
-                            } else {
-                                invoice_col = invoice_col.push(
-                                    caption(
-                                        "Hold invoice not available. \
-                                        Please check your external wallet for a pending invoice.",
-                                    )
-                                    .style(theme::text::warning),
-                                );
-                            }
+                            invoice_col = self.push_hold_invoice_elements(
+                                invoice_col,
+                                trade.hold_invoice.as_ref(),
+                            );
 
                             actions = actions.push(card::simple(invoice_col).width(Length::Fill));
                         }
@@ -1498,31 +1468,9 @@ impl P2PPanel {
                                 )
                                 .style(theme::text::secondary),
                             );
-                            if let Some(ref qr_data) = self.hold_invoice_qr {
-                                took_col = took_col.push(
-                                    container(
-                                        container(
-                                            iced::widget::QRCode::<coincube_ui::theme::Theme>::new(
-                                                qr_data,
-                                            )
-                                            .cell_size(2),
-                                        )
-                                        .padding(10)
-                                        .style(|_| {
-                                            iced::widget::container::Style::default()
-                                                .background(iced::Color::WHITE)
-                                        })
-                                        .max_width(280)
-                                        .max_height(280),
-                                    )
-                                    .width(Length::Fill)
-                                    .center_x(Length::Fill),
-                                );
-                            }
-                            took_col = took_col.push(
-                                button::primary(None, "Copy Invoice")
-                                    .on_press(view::Message::Clipboard(invoice.clone()))
-                                    .width(Length::Fill),
+                            took_col = self.push_hold_invoice_elements(
+                                took_col,
+                                Some(invoice),
                             );
                         } else {
                             took_col = took_col.push(
@@ -1552,7 +1500,7 @@ impl P2PPanel {
                             ]
                             .spacing(8);
 
-                            if let Some(sats) = trade.sats_amount {
+                            if let Some(sats) = trade.sats_amount.filter(|&s| s > 0) {
                                 invoice_col = invoice_col.push(
                                     caption(format!(
                                         "Expected amount: {} sats. Use a zero-amount invoice \
@@ -2361,6 +2309,51 @@ impl P2PPanel {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+    }
+
+    /// Append hold invoice QR code and copy button to a column, or a fallback
+    /// warning if the invoice is not available.
+    fn push_hold_invoice_elements<'a>(
+        &'a self,
+        col: Column<'a, view::Message>,
+        invoice: Option<&String>,
+    ) -> Column<'a, view::Message> {
+        let mut col = col;
+        if let Some(invoice) = invoice {
+            if let Some(ref qr_data) = self.hold_invoice_qr {
+                col = col.push(
+                    container(
+                        container(
+                            iced::widget::QRCode::<coincube_ui::theme::Theme>::new(qr_data)
+                                .cell_size(2),
+                        )
+                        .padding(10)
+                        .style(|_| {
+                            iced::widget::container::Style::default()
+                                .background(iced::Color::WHITE)
+                        })
+                        .max_width(280)
+                        .max_height(280),
+                    )
+                    .width(Length::Fill)
+                    .center_x(Length::Fill),
+                );
+            }
+            col = col.push(
+                button::primary(None, "Copy Invoice")
+                    .on_press(view::Message::Clipboard(invoice.clone()))
+                    .width(Length::Fill),
+            );
+        } else {
+            col = col.push(
+                caption(
+                    "Hold invoice not available. \
+                    Please check your external wallet for a pending invoice.",
+                )
+                .style(theme::text::warning),
+            );
+        }
+        col
     }
 
     fn payment_invoice_modal_view<'a>(
@@ -3254,7 +3247,20 @@ impl State for P2PPanel {
                 }
                 self.orders = orders;
             }
-            P2PMessage::MostroTradesReceived(trades) => self.trades = trades,
+            P2PMessage::MostroTradesReceived(trades) => {
+                self.trades = trades;
+                // Recompute QR cache if the selected trade now has a hold invoice
+                if let Some(ref sel_id) = self.selected_trade {
+                    if self.hold_invoice_qr.is_none() {
+                        self.hold_invoice_qr = self
+                            .trades
+                            .iter()
+                            .find(|t| t.id == *sel_id)
+                            .and_then(|t| t.hold_invoice.as_ref())
+                            .and_then(|inv| qr_code::Data::new(inv).ok());
+                    }
+                }
+            }
             P2PMessage::BuySellFilterChanged(filter) => self.buy_sell_filter = filter,
             P2PMessage::TradeFilterChanged(filter) => {
                 if filter == TradeFilter::All {

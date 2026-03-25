@@ -222,12 +222,12 @@ pub fn extract_hold_invoice(session: &TradeSession) -> Option<String> {
         .messages
         .iter()
         .rev()
-        .find(|m| {
+        .filter(|m| {
             m.action == "PayInvoice"
                 || m.action == "WaitingSellerToPay"
                 || m.action == "BuyerTookOrder"
         })
-        .and_then(|m| {
+        .find_map(|m| {
             // payload_json is the serialized Option<Payload>
             // For PayInvoice/BuyerTookOrder: Some(PaymentRequest(Some(order), invoice_string, Some(amount)))
             let payload: Option<mostro_core::message::Payload> =
