@@ -202,27 +202,45 @@ fn extract_counterparty_pubkey(
     }
 }
 
+/// Non-protocol chat actions that should be skipped when detecting trade state.
+const CHAT_ACTIONS: &[&str] = &["SendDm", "AdminDm", "chat", "dispute_chat"];
+
+fn is_chat_action(action: &str) -> bool {
+    CHAT_ACTIONS.contains(&action)
+}
+
+/// Extract the counterparty's trade pubkey from a payload (Order or PaymentRequest).
+fn counterparty_from_payload(
+    payload: &Option<mostro_core::message::Payload>,
+    our_trade_hex: &str,
+) -> Option<String> {
+    let order = match payload {
+        Some(mostro_core::message::Payload::Order(ref o)) => Some(o),
+        Some(mostro_core::message::Payload::PaymentRequest(Some(ref o), _, _)) => Some(o),
+        _ => None,
+    }?;
+    extract_counterparty_pubkey(order, our_trade_hex)
+}
+
 /// Get the latest protocol DM action for a trade from its message history.
-/// Skips non-protocol chat entries (e.g. "SendDm") so that P2P chat
-/// messages do not affect protocol state detection.
+/// Skips non-protocol chat entries so that chat messages do not affect
+/// protocol state detection.
 pub fn latest_dm_action(session: &TradeSession) -> Option<&str> {
     session
         .messages
         .iter()
         .rev()
-        .find(|m| m.action != "SendDm")
+        .find(|m| !is_chat_action(&m.action))
         .map(|m| m.action.as_str())
 }
 
 /// Find the timestamp of the DM that started the current countdown phase.
-/// For WaitingBuyerInvoice status → find the AddInvoice/WaitingBuyerInvoice message
-/// For WaitingPayment status → find the PayInvoice/WaitingSellerToPay message
 pub fn countdown_start_timestamp(session: &TradeSession) -> Option<u64> {
     let last_action = session
         .messages
         .iter()
         .rev()
-        .find(|m| m.action != "SendDm")
+        .find(|m| !is_chat_action(&m.action))
         .map(|m| m.action.as_str())?;
 
     let target_actions: &[&str] = match last_action {
@@ -1136,15 +1154,7 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
         let our_trade_hex = derive_trade_keys(&data.mnemonic, next_idx)
             .map(|k| k.public_key().to_hex())
             .unwrap_or_default();
-        let counterparty_trade_pubkey = match &inner.payload {
-            Some(mostro_core::message::Payload::Order(order)) => {
-                extract_counterparty_pubkey(order, &our_trade_hex)
-            }
-            Some(mostro_core::message::Payload::PaymentRequest(Some(order), _, _)) => {
-                extract_counterparty_pubkey(order, &our_trade_hex)
-            }
-            _ => None,
-        };
+        let counterparty_trade_pubkey = counterparty_from_payload(&inner.payload, &our_trade_hex);
 
         let session = TradeSession {
             order_id: data.order_id.clone(),
@@ -1377,11 +1387,16 @@ fn derive_shared_chat_keys(
     Ok(Keys::new(shared_secret))
 }
 
-/// Send a chat message directly to the counterparty via P2P NIP-59 gift wrap.
-/// Messages are encrypted to the ECDH shared key (not the counterparty's trade
-/// pubkey) per the Mostro chat protocol.
-pub async fn send_chat_message(data: TradeActionData) -> Result<(), String> {
-    let text = data.invoice.clone().ok_or("Chat text is required")?;
+/// Who the encrypted chat message is addressed to.
+enum ChatTarget {
+    Peer,
+    Admin,
+}
+
+/// Send an encrypted P2P chat message via NIP-59 gift wrap.
+/// The target determines which shared key (peer or admin) is used.
+async fn send_encrypted_chat(data: &TradeActionData, target: ChatTarget) -> Result<(), String> {
+    let text = data.invoice.as_deref().ok_or("Chat text is required")?;
     if text.trim().is_empty() {
         return Err("Empty message".to_string());
     }
@@ -1392,24 +1407,34 @@ pub async fn send_chat_message(data: TradeActionData) -> Result<(), String> {
         .find(|s| s.order_id == data.order_id)
         .ok_or_else(|| format!("No trade session found for order {}", data.order_id))?;
 
-    let counterparty_hex = session
-        .counterparty_trade_pubkey
-        .as_deref()
-        .ok_or("No counterparty trade pubkey available — chat not yet possible")?;
-    let counterparty_pubkey = PublicKey::from_hex(counterparty_hex)
-        .map_err(|e| format!("Invalid counterparty pubkey: {e}"))?;
+    let (recipient_hex, label) = match target {
+        ChatTarget::Peer => (
+            session
+                .counterparty_trade_pubkey
+                .as_deref()
+                .ok_or("No counterparty trade pubkey — chat not yet possible")?,
+            "chat",
+        ),
+        ChatTarget::Admin => (
+            session
+                .admin_trade_pubkey
+                .as_deref()
+                .ok_or("No admin trade pubkey — dispute chat not yet possible")?,
+            "dispute chat",
+        ),
+    };
+    let recipient_pubkey =
+        PublicKey::from_hex(recipient_hex).map_err(|e| format!("Invalid {label} pubkey: {e}"))?;
 
     let trade_keys = derive_trade_keys(&data.mnemonic, session.trade_index)?;
-    let shared_keys = derive_shared_chat_keys(&trade_keys, &counterparty_pubkey)?;
+    let shared_keys = derive_shared_chat_keys(&trade_keys, &recipient_pubkey)?;
     let shared_pubkey = shared_keys.public_key();
 
-    // 1. Create a signed kind-1 text note (signed by our trade key)
-    let inner_event = EventBuilder::text_note(&text)
+    let inner_event = EventBuilder::text_note(text)
         .sign_with_keys(&trade_keys)
         .map_err(|e| format!("Failed to sign inner event: {e}"))?;
     let inner_json = inner_event.as_json();
 
-    // 2. NIP-44 encrypt with an ephemeral key → shared pubkey
     let ephemeral_keys = Keys::generate();
     let encrypted = nostr_sdk::prelude::nip44::encrypt(
         ephemeral_keys.secret_key(),
@@ -1417,9 +1442,8 @@ pub async fn send_chat_message(data: TradeActionData) -> Result<(), String> {
         &inner_json,
         nostr_sdk::prelude::nip44::Version::V2,
     )
-    .map_err(|e| format!("Failed to encrypt chat message: {e}"))?;
+    .map_err(|e| format!("Failed to encrypt {label} message: {e}"))?;
 
-    // 3. Build kind-1059 gift wrap, p-tag = shared pubkey
     let gift_wrap = EventBuilder::new(nostr_sdk::Kind::GiftWrap, &encrypted)
         .tag(Tag::public_key(shared_pubkey))
         .custom_created_at(Timestamp::tweaked(
@@ -1428,7 +1452,6 @@ pub async fn send_chat_message(data: TradeActionData) -> Result<(), String> {
         .sign_with_keys(&ephemeral_keys)
         .map_err(|e| format!("Failed to sign gift wrap: {e}"))?;
 
-    // 4. Send to relays (fire-and-forget)
     let client = Client::new(trade_keys.clone());
     for relay_url in &data.relay_urls {
         client
@@ -1442,112 +1465,22 @@ pub async fn send_chat_message(data: TradeActionData) -> Result<(), String> {
     client
         .send_event(&gift_wrap)
         .await
-        .map_err(|e| format!("Failed to send chat message: {e}"))?;
+        .map_err(|e| format!("Failed to send {label} message: {e}"))?;
 
     let _ = client.disconnect().await;
 
-    // Persist outbound message so get_trade_messages returns it with is_own = true
-    let mut store = load_data(&data.cube_name);
-    if let Some(session) = store
-        .trades
-        .iter_mut()
-        .find(|s| s.order_id == data.order_id)
-    {
-        session.messages.push(TradeMessage {
-            timestamp: chrono::Utc::now().timestamp() as u64,
-            action: "chat".to_string(),
-            payload_json: text,
-            is_own: true,
-        });
-        let _ = save_data(&data.cube_name, &store);
-    }
-
-    tracing::info!("P2P chat message sent for order {}", data.order_id);
+    tracing::info!("P2P {} message sent for order {}", label, data.order_id);
     Ok(())
 }
 
-/// Send a dispute chat message to the admin/solver via P2P NIP-59 gift wrap.
-/// Same encryption as peer chat but uses the admin's shared key.
+/// Send a chat message to the counterparty.
+pub async fn send_chat_message(data: TradeActionData) -> Result<(), String> {
+    send_encrypted_chat(&data, ChatTarget::Peer).await
+}
+
+/// Send a dispute chat message to the admin/solver.
 pub async fn send_admin_chat_message(data: TradeActionData) -> Result<(), String> {
-    let text = data.invoice.clone().ok_or("Chat text is required")?;
-    if text.trim().is_empty() {
-        return Err("Empty message".to_string());
-    }
-
-    let sessions = load_data(&data.cube_name).trades;
-    let session = sessions
-        .iter()
-        .find(|s| s.order_id == data.order_id)
-        .ok_or_else(|| format!("No trade session found for order {}", data.order_id))?;
-
-    let admin_hex = session
-        .admin_trade_pubkey
-        .as_deref()
-        .ok_or("No admin trade pubkey available — dispute chat not yet possible")?;
-    let admin_pubkey =
-        PublicKey::from_hex(admin_hex).map_err(|e| format!("Invalid admin pubkey: {e}"))?;
-
-    let trade_keys = derive_trade_keys(&data.mnemonic, session.trade_index)?;
-    let shared_keys = derive_shared_chat_keys(&trade_keys, &admin_pubkey)?;
-    let shared_pubkey = shared_keys.public_key();
-
-    let inner_event = EventBuilder::text_note(&text)
-        .sign_with_keys(&trade_keys)
-        .map_err(|e| format!("Failed to sign inner event: {e}"))?;
-    let inner_json = inner_event.as_json();
-
-    let ephemeral_keys = Keys::generate();
-    let encrypted = nostr_sdk::prelude::nip44::encrypt(
-        ephemeral_keys.secret_key(),
-        &shared_pubkey,
-        &inner_json,
-        nostr_sdk::prelude::nip44::Version::V2,
-    )
-    .map_err(|e| format!("Failed to encrypt dispute chat message: {e}"))?;
-
-    let gift_wrap = EventBuilder::new(nostr_sdk::Kind::GiftWrap, &encrypted)
-        .tag(Tag::public_key(shared_pubkey))
-        .custom_created_at(Timestamp::tweaked(
-            nostr_sdk::prelude::nip59::RANGE_RANDOM_TIMESTAMP_TWEAK,
-        ))
-        .sign_with_keys(&ephemeral_keys)
-        .map_err(|e| format!("Failed to sign gift wrap: {e}"))?;
-
-    let client = Client::new(trade_keys.clone());
-    for relay_url in &data.relay_urls {
-        client
-            .add_relay(relay_url.as_str())
-            .await
-            .map_err(|e| format!("Failed to add relay {relay_url}: {e}"))?;
-    }
-    client.connect().await;
-    client.wait_for_connection(Duration::from_secs(10)).await;
-
-    client
-        .send_event(&gift_wrap)
-        .await
-        .map_err(|e| format!("Failed to send dispute chat message: {e}"))?;
-
-    let _ = client.disconnect().await;
-
-    // Persist outbound dispute message so get_trade_messages returns it with is_own = true
-    let mut store = load_data(&data.cube_name);
-    if let Some(session) = store
-        .trades
-        .iter_mut()
-        .find(|s| s.order_id == data.order_id)
-    {
-        session.messages.push(TradeMessage {
-            timestamp: chrono::Utc::now().timestamp() as u64,
-            action: "dispute_chat".to_string(),
-            payload_json: text,
-            is_own: true,
-        });
-        let _ = save_data(&data.cube_name, &store);
-    }
-
-    tracing::info!("Dispute chat message sent for order {}", data.order_id);
-    Ok(())
+    send_encrypted_chat(&data, ChatTarget::Admin).await
 }
 
 /// Get all trade messages for a given order from disk.
@@ -2601,20 +2534,10 @@ async fn process_dm_notifications(
                         }
 
                         // Extract counterparty trade pubkey from Order or PaymentRequest payloads
-                        let cp_order = match &inner.payload {
-                            Some(mostro_core::message::Payload::Order(ref order)) => Some(order),
-                            Some(mostro_core::message::Payload::PaymentRequest(
-                                Some(ref order),
-                                _,
-                                _,
-                            )) => Some(order),
-                            _ => None,
-                        };
-                        if let Some(order) = cp_order {
-                            if let Some(cp_pk) = extract_counterparty_pubkey(order, &our_trade_hex)
-                            {
-                                set_counterparty_pubkey(cube_name, &session.order_id, &cp_pk);
-                            }
+                        if let Some(cp_pk) =
+                            counterparty_from_payload(&inner.payload, &our_trade_hex)
+                        {
+                            set_counterparty_pubkey(cube_name, &session.order_id, &cp_pk);
                         }
 
                         // Extract admin pubkey from AdminTookDispute Peer payload
@@ -2840,23 +2763,11 @@ async fn process_dm_event(
                         return false;
                     }
 
-                    let cp_order = match &inner.payload {
-                        Some(mostro_core::message::Payload::Order(ref order)) => Some(order),
-                        Some(mostro_core::message::Payload::PaymentRequest(
-                            Some(ref order),
-                            _,
-                            _,
-                        )) => Some(order),
-                        _ => None,
-                    };
-                    if let Some(order) = cp_order {
-                        if let Some(cp_pk) = extract_counterparty_pubkey(order, &our_trade_hex) {
-                            // Check if this is actually new
-                            if session.counterparty_trade_pubkey.as_deref() != Some(&cp_pk) {
-                                new_counterparty = true;
-                            }
-                            set_counterparty_pubkey(cube_name, &session.order_id, &cp_pk);
+                    if let Some(cp_pk) = counterparty_from_payload(&inner.payload, &our_trade_hex) {
+                        if session.counterparty_trade_pubkey.as_deref() != Some(&cp_pk) {
+                            new_counterparty = true;
                         }
+                        set_counterparty_pubkey(cube_name, &session.order_id, &cp_pk);
                     }
 
                     // Extract admin pubkey from AdminTookDispute Peer payload
