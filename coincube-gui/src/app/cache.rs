@@ -45,6 +45,8 @@ pub struct Cache {
     pub usdt_expanded: bool,
     /// Whether this cube has a vault wallet configured
     pub has_vault: bool,
+    /// Whether the P2P panel is available (requires a valid mnemonic)
+    pub has_p2p: bool,
 }
 
 /// only used for tests.
@@ -65,6 +67,7 @@ impl std::default::Default for Cache {
             p2p_expanded: false,
             usdt_expanded: false,
             has_vault: false,
+            has_p2p: false,
         }
     }
 }

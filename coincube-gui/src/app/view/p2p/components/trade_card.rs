@@ -48,10 +48,7 @@ impl TradeStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            TradeStatus::Success
-                | TradeStatus::Canceled
-                | TradeStatus::CooperativelyCanceled
-                | TradeStatus::Expired
+            TradeStatus::Success | TradeStatus::Canceled | TradeStatus::Expired
         )
     }
 }
@@ -132,10 +129,10 @@ pub fn trade_card<'a>(trade: &'a P2PTrade) -> Button<'a, view::Message> {
             theme::pill::simple as fn(&_) -> _
         }
         TradeStatus::Dispute => theme::pill::warning as fn(&_) -> _,
-        TradeStatus::PaymentFailed
-        | TradeStatus::Canceled
-        | TradeStatus::CooperativelyCanceled
-        | TradeStatus::Expired => theme::pill::error as fn(&_) -> _,
+        TradeStatus::CooperativelyCanceled => theme::pill::warning as fn(&_) -> _,
+        TradeStatus::PaymentFailed | TradeStatus::Canceled | TradeStatus::Expired => {
+            theme::pill::error as fn(&_) -> _
+        }
     };
 
     let content = card::simple(

@@ -123,27 +123,37 @@ fn config_file_path() -> Result<PathBuf, String> {
     Ok(super::mostro_dir()?.join("config.json"))
 }
 
-pub fn load_mostro_config() -> MostroConfig {
-    let path = match config_file_path() {
-        Ok(p) => p,
-        Err(_) => return MostroConfig::default(),
-    };
+pub fn load_mostro_config() -> Result<MostroConfig, String> {
+    let path = config_file_path()?;
     if !path.exists() {
-        return MostroConfig::default();
+        return Ok(MostroConfig::default());
     }
-    let data = match std::fs::read(&path) {
-        Ok(d) => d,
-        Err(_) => return MostroConfig::default(),
-    };
-    let mut config: MostroConfig = serde_json::from_slice(&data).unwrap_or_default();
+    let data = std::fs::read(&path)
+        .map_err(|e| format!("Failed to read mostro config at {}: {e}", path.display()))?;
+    let mut config: MostroConfig = serde_json::from_slice(&data)
+        .map_err(|e| format!("Failed to parse mostro config at {}: {e}", path.display()))?;
     config.ensure_defaults();
-    config
+    Ok(config)
 }
 
 pub fn save_mostro_config(config: &MostroConfig) -> Result<(), String> {
     let path = config_file_path()?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| "Config file has no parent directory".to_string())?;
     let bytes = serde_json::to_vec_pretty(config)
         .map_err(|e| format!("Failed to serialize mostro config: {e}"))?;
-    std::fs::write(&path, bytes).map_err(|e| format!("Failed to write mostro config: {e}"))?;
+    let tmp_path = dir.join(".mostro_config.tmp");
+    let mut tmp_file = std::fs::File::create(&tmp_path)
+        .map_err(|e| format!("Failed to create temp config file: {e}"))?;
+    use std::io::Write;
+    tmp_file
+        .write_all(&bytes)
+        .map_err(|e| format!("Failed to write temp config file: {e}"))?;
+    tmp_file
+        .sync_all()
+        .map_err(|e| format!("Failed to sync temp config file: {e}"))?;
+    std::fs::rename(&tmp_path, &path)
+        .map_err(|e| format!("Failed to rename temp config file: {e}"))?;
     Ok(())
 }

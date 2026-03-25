@@ -570,6 +570,7 @@ pub async fn load_application(
         p2p_expanded: false,
         usdt_expanded: false,
         has_vault: true,
+        has_p2p: false, // Set later by App::new based on mnemonic availability
     };
 
     Ok((

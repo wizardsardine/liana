@@ -70,7 +70,12 @@ fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
 }
 
 // TODO: Rework sidebar UI and implementation, use buttons without rounded borders
-pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<'a, Message> {
+pub fn sidebar<'a>(
+    menu: &Menu,
+    cache: &'a Cache,
+    has_vault: bool,
+    has_p2p: bool,
+) -> Container<'a, Message> {
     // Top-level Home button
     let home_button = if *menu == Menu::Home {
         row!(
@@ -669,33 +674,36 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     }
 
     menu_column = menu_column.push(has_vault.then_some(buy_sell_button));
-    menu_column = menu_column.push(p2p_button);
 
-    if is_p2p_expanded {
-        let p2p_settings_button = if matches!(menu, Menu::P2P(P2PSubMenu::Settings)) {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(settings_icon()), "Settings")
-                    .on_press(Message::Reload)
-                    .width(iced::Length::Fill),
-                menu_bar_highlight()
-            )
-            .width(Length::Fill)
-        } else {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu(Some(settings_icon()), "Settings")
-                    .on_press(Message::Menu(Menu::P2P(P2PSubMenu::Settings)))
-                    .width(iced::Length::Fill),
-            )
-            .width(Length::Fill)
-        };
+    if has_p2p {
+        menu_column = menu_column.push(p2p_button);
 
-        menu_column = menu_column
-            .push(p2p_overview_button)
-            .push(p2p_my_trades_button)
-            .push(p2p_create_order_button)
-            .push(p2p_settings_button);
+        if is_p2p_expanded {
+            let p2p_settings_button = if matches!(menu, Menu::P2P(P2PSubMenu::Settings)) {
+                row!(
+                    Space::new().width(Length::Fixed(20.0)),
+                    button::menu_active(Some(settings_icon()), "Settings")
+                        .on_press(Message::Reload)
+                        .width(iced::Length::Fill),
+                    menu_bar_highlight()
+                )
+                .width(Length::Fill)
+            } else {
+                row!(
+                    Space::new().width(Length::Fixed(20.0)),
+                    button::menu(Some(settings_icon()), "Settings")
+                        .on_press(Message::Menu(Menu::P2P(P2PSubMenu::Settings)))
+                        .width(iced::Length::Fill),
+                )
+                .width(Length::Fill)
+            };
+
+            menu_column = menu_column
+                .push(p2p_overview_button)
+                .push(p2p_my_trades_button)
+                .push(p2p_create_order_button)
+                .push(p2p_settings_button);
+        }
     }
 
     // Global Settings button (always visible at bottom of main menu)
@@ -740,9 +748,10 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     content: T,
 ) -> Element<'a, Message> {
     let has_vault = cache.has_vault; // Copy the bool value before moving into closure
+    let has_p2p = cache.has_p2p;
     Row::new()
         .push(
-            sidebar(menu, cache, has_vault)
+            sidebar(menu, cache, has_vault, has_p2p)
                 .height(Length::Fill)
                 .width(Length::Fixed(190.0)),
         )

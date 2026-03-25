@@ -211,6 +211,7 @@ pub struct P2PPanel {
     new_relay_input: form::Value<String>,
     new_node_name_input: form::Value<String>,
     new_node_pubkey_input: form::Value<String>,
+    mostro_config_error: Option<&'static str>,
 }
 
 impl P2PPanel {
@@ -267,10 +268,14 @@ impl P2PPanel {
             chat_show_user_info: false,
             dispute_chat_input: Default::default(),
             pending_dispute_chat_message: None,
-            mostro_config: load_mostro_config(),
+            mostro_config: load_mostro_config().unwrap_or_else(|e| {
+                tracing::error!("Failed to load mostro config, using defaults: {e}");
+                MostroConfig::default()
+            }),
             new_relay_input: Default::default(),
             new_node_name_input: Default::default(),
             new_node_pubkey_input: Default::default(),
+            mostro_config_error: None,
         }
     }
 
@@ -1141,10 +1146,10 @@ impl P2PPanel {
             | TradeStatus::WaitingPayment
             | TradeStatus::WaitingBuyerInvoice => theme::pill::simple as fn(&_) -> _,
             TradeStatus::Dispute => theme::pill::warning as fn(&_) -> _,
-            TradeStatus::PaymentFailed
-            | TradeStatus::Canceled
-            | TradeStatus::CooperativelyCanceled
-            | TradeStatus::Expired => theme::pill::error as fn(&_) -> _,
+            TradeStatus::CooperativelyCanceled => theme::pill::warning as fn(&_) -> _,
+            TradeStatus::PaymentFailed | TradeStatus::Canceled | TradeStatus::Expired => {
+                theme::pill::error as fn(&_) -> _
+            }
         };
 
         // Is user the buyer? order_type always stores OUR perspective (what we're doing).
@@ -1853,23 +1858,21 @@ impl P2PPanel {
                 TradeStatus::Active | TradeStatus::FiatSent | TradeStatus::CooperativelyCanceled
             );
             // Hide once the trade is complete or past release
-            let trade_complete = matches!(
-                dm_action,
-                Some(
-                    "Released"
-                        | "Release"
-                        | "HoldInvoicePaymentSettled"
-                        | "PurchaseCompleted"
-                        | "Rate"
-                        | "RateReceived"
-                        | "AdminSettled"
-                        | "AdminCanceled"
-                        | "CooperativeCancelAccepted"
-                )
-            ) || matches!(
-                trade.status,
-                TradeStatus::Success | TradeStatus::Canceled | TradeStatus::CooperativelyCanceled
-            );
+            let trade_complete =
+                matches!(
+                    dm_action,
+                    Some(
+                        "Released"
+                            | "Release"
+                            | "HoldInvoicePaymentSettled"
+                            | "PurchaseCompleted"
+                            | "Rate"
+                            | "RateReceived"
+                            | "AdminSettled"
+                            | "AdminCanceled"
+                            | "CooperativeCancelAccepted"
+                    )
+                ) || matches!(trade.status, TradeStatus::Success | TradeStatus::Canceled);
             if !loading && !trade_complete {
                 if cancel_initiated_by_peer {
                     let mut btn_row = row![
@@ -2704,10 +2707,13 @@ impl P2PPanel {
         )
         .width(Length::Fill);
 
-        column![nodes_card, relays_card]
+        let mut settings_col = column![nodes_card, relays_card]
             .spacing(16)
-            .width(Length::Fill)
-            .into()
+            .width(Length::Fill);
+        if let Some(err) = self.mostro_config_error {
+            settings_col = settings_col.push(p2_regular(err).style(theme::text::error));
+        }
+        settings_col.into()
     }
 }
 
@@ -2756,7 +2762,7 @@ impl State for P2PPanel {
 
                             return row![]
                                 .push(
-                                    view::sidebar(menu, cache, has_vault)
+                                    view::sidebar(menu, cache, has_vault, cache.has_p2p)
                                         .height(Length::Fill)
                                         .width(Length::Fixed(190.0)),
                                 )
@@ -2895,7 +2901,7 @@ impl State for P2PPanel {
 
                                 return row![]
                                     .push(
-                                        view::sidebar(menu, cache, has_vault)
+                                        view::sidebar(menu, cache, has_vault, cache.has_p2p)
                                             .height(Length::Fill)
                                             .width(Length::Fixed(190.0)),
                                     )
@@ -2944,7 +2950,7 @@ impl State for P2PPanel {
 
                                 return row![]
                                     .push(
-                                        view::sidebar(menu, cache, has_vault)
+                                        view::sidebar(menu, cache, has_vault, cache.has_p2p)
                                             .height(Length::Fill)
                                             .width(Length::Fixed(190.0)),
                                     )
@@ -3353,15 +3359,34 @@ impl State for P2PPanel {
                     self.new_relay_input.valid = false;
                     self.new_relay_input.warning = Some("Relay already exists");
                 } else {
-                    self.mostro_config.relays.push(url);
-                    self.new_relay_input = Default::default();
-                    let _ = save_mostro_config(&self.mostro_config);
+                    let mut trial = self.mostro_config.clone();
+                    trial.relays.push(url);
+                    match save_mostro_config(&trial) {
+                        Ok(()) => {
+                            self.mostro_config = trial;
+                            self.new_relay_input = Default::default();
+                            self.mostro_config_error = None;
+                        }
+                        Err(_) => {
+                            self.new_relay_input.valid = false;
+                            self.new_relay_input.warning = Some("Failed to save config");
+                        }
+                    }
                 }
             }
             P2PMessage::MostroRemoveRelay(url) => {
-                self.mostro_config.relays.retain(|r| r != &url);
-                self.mostro_config.ensure_defaults();
-                let _ = save_mostro_config(&self.mostro_config);
+                let mut trial = self.mostro_config.clone();
+                trial.relays.retain(|r| r != &url);
+                trial.ensure_defaults();
+                match save_mostro_config(&trial) {
+                    Ok(()) => {
+                        self.mostro_config = trial;
+                        self.mostro_config_error = None;
+                    }
+                    Err(_) => {
+                        self.mostro_config_error = Some("Failed to save config");
+                    }
+                }
             }
             P2PMessage::MostroNodeNameInputEdited(v) => {
                 self.new_node_name_input.value = v;
@@ -3392,23 +3417,51 @@ impl State for P2PPanel {
                     self.new_node_pubkey_input.warning =
                         Some("Node with this pubkey already exists");
                 } else {
-                    self.mostro_config.nodes.push(MostroNode {
+                    let mut trial = self.mostro_config.clone();
+                    trial.nodes.push(MostroNode {
                         name,
                         pubkey_hex: pubkey,
                     });
-                    self.new_node_name_input = Default::default();
-                    self.new_node_pubkey_input = Default::default();
-                    let _ = save_mostro_config(&self.mostro_config);
+                    match save_mostro_config(&trial) {
+                        Ok(()) => {
+                            self.mostro_config = trial;
+                            self.new_node_name_input = Default::default();
+                            self.new_node_pubkey_input = Default::default();
+                            self.mostro_config_error = None;
+                        }
+                        Err(_) => {
+                            self.new_node_pubkey_input.valid = false;
+                            self.new_node_pubkey_input.warning = Some("Failed to save config");
+                        }
+                    }
                 }
             }
             P2PMessage::MostroRemoveNode(pubkey) => {
-                self.mostro_config.nodes.retain(|n| n.pubkey_hex != pubkey);
-                self.mostro_config.ensure_defaults();
-                let _ = save_mostro_config(&self.mostro_config);
+                let mut trial = self.mostro_config.clone();
+                trial.nodes.retain(|n| n.pubkey_hex != pubkey);
+                trial.ensure_defaults();
+                match save_mostro_config(&trial) {
+                    Ok(()) => {
+                        self.mostro_config = trial;
+                        self.mostro_config_error = None;
+                    }
+                    Err(_) => {
+                        self.mostro_config_error = Some("Failed to save config");
+                    }
+                }
             }
             P2PMessage::MostroSelectActiveNode(pubkey) => {
-                self.mostro_config.active_node_pubkey = pubkey;
-                let _ = save_mostro_config(&self.mostro_config);
+                let mut trial = self.mostro_config.clone();
+                trial.active_node_pubkey = pubkey;
+                match save_mostro_config(&trial) {
+                    Ok(()) => {
+                        self.mostro_config = trial;
+                        self.mostro_config_error = None;
+                    }
+                    Err(_) => {
+                        self.mostro_config_error = Some("Failed to save config");
+                    }
+                }
             }
             // Take order flow
             P2PMessage::TakeOrder => {
@@ -3590,7 +3643,6 @@ impl State for P2PPanel {
                 self.trade_rating = 0;
                 self.trade_action_loading = false;
                 self.hold_invoice_qr = None;
-                self.show_chat = false;
                 self.active_chat = ActiveChat::None;
                 self.chat_input = Default::default();
             }

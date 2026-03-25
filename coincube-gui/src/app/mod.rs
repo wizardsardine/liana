@@ -159,7 +159,18 @@ impl Panels {
             vault_settings: None,
             // remaining panels
             buy_sell: None,
-            p2p: None,
+            p2p: match breez_client
+                .liquid_signer()
+                .map(|s| s.lock().expect("signer lock").mnemonic_str())
+            {
+                Some(mnemonic) if !mnemonic.is_empty() => {
+                    Some(crate::app::view::p2p::P2PPanel::new(None, mnemonic))
+                }
+                _ => {
+                    log::warn!("P2P panel disabled: no mnemonic available from liquid signer");
+                    None
+                }
+            },
         }
     }
 
@@ -287,13 +298,18 @@ impl Panels {
                 wallet.clone(),
                 breez_client.clone(),
             )),
-            p2p: Some(crate::app::view::p2p::P2PPanel::new(
-                Some(wallet),
-                breez_client
-                    .liquid_signer()
-                    .map(|s| s.lock().expect("signer lock").mnemonic_str())
-                    .unwrap_or_default(),
-            )),
+            p2p: match breez_client
+                .liquid_signer()
+                .map(|s| s.lock().expect("signer lock").mnemonic_str())
+            {
+                Some(mnemonic) if !mnemonic.is_empty() => {
+                    Some(crate::app::view::p2p::P2PPanel::new(Some(wallet), mnemonic))
+                }
+                _ => {
+                    log::warn!("P2P panel disabled: no mnemonic available from liquid signer");
+                    None
+                }
+            },
         }
     }
 
@@ -603,6 +619,7 @@ impl App {
         let cmd = Task::batch(tasks);
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
+        cache_with_vault.has_p2p = panels.p2p.is_some();
         (
             Self {
                 panels,
@@ -658,6 +675,8 @@ impl App {
             network,
             cube_settings.id.clone(),
         );
+        let mut cache = cache;
+        cache.has_p2p = panels.p2p.is_some();
 
         let cmd = panels.global_home.reload(None, None);
 
@@ -958,6 +977,14 @@ impl App {
                 .unwrap_or(&self.panels.global_home)
                 .subscription(),
         );
+
+        // Keep P2P subscription alive even when another panel is active,
+        // so trade updates and DMs are not lost while navigating elsewhere.
+        if !matches!(self.panels.current, Menu::P2P(_)) {
+            if let Some(p2p) = self.panels.p2p.as_ref() {
+                subscriptions.push(p2p.subscription());
+            }
+        }
 
         // Stream the pending internal bitcoind's debug.log for UpdateTip lines.
         if let Some(pending_cfg) = self
@@ -1655,6 +1682,13 @@ impl App {
                 }
             }
 
+            // Route P2P messages directly to the P2P panel regardless of active menu,
+            // so real-time trade updates are processed even when viewing other panels.
+            msg @ Message::View(view::Message::P2P(_)) => {
+                if let Some(p2p) = self.panels.p2p.as_mut() {
+                    return p2p.update(self.daemon.clone(), &self.cache, msg);
+                }
+            }
             msg => {
                 if let (Some(daemon), Some(panel)) =
                     (self.daemon.clone(), self.panels.current_mut())

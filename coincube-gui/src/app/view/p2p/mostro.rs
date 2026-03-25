@@ -99,19 +99,15 @@ fn data_file_path(cube_name: &str) -> Result<PathBuf, String> {
     Ok(super::mostro_dir()?.join(format!("{}_mostro.json", safe_filename(cube_name))))
 }
 
-fn load_data(cube_name: &str) -> MostroData {
-    let path = match data_file_path(cube_name) {
-        Ok(p) => p,
-        Err(_) => return MostroData::default(),
-    };
+fn load_data(cube_name: &str) -> Result<MostroData, String> {
+    let path = data_file_path(cube_name)?;
     if !path.exists() {
-        return MostroData::default();
+        return Ok(MostroData::default());
     }
-    let data = match std::fs::read(&path) {
-        Ok(d) => d,
-        Err(_) => return MostroData::default(),
-    };
-    serde_json::from_slice(&data).unwrap_or_default()
+    let data = std::fs::read(&path)
+        .map_err(|e| format!("Failed to read mostro data at {}: {e}", path.display()))?;
+    serde_json::from_slice(&data)
+        .map_err(|e| format!("Failed to parse mostro data at {}: {e}", path.display()))
 }
 
 fn save_data(cube_name: &str, data: &MostroData) -> Result<(), String> {
@@ -136,7 +132,13 @@ fn save_data(cube_name: &str, data: &MostroData) -> Result<(), String> {
 /// Append a DM message to a trade's message history on disk.
 /// Deduplicates by (timestamp, action) to avoid storing the same message twice.
 pub fn append_trade_message(cube_name: &str, order_id: &str, msg: TradeMessage) {
-    let mut data = load_data(cube_name);
+    let mut data = match load_data(cube_name) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!("Cannot append trade message: {e}");
+            return;
+        }
+    };
     if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
         let is_dup = session.messages.iter().any(|m| {
             m.timestamp == msg.timestamp
@@ -155,7 +157,13 @@ pub fn append_trade_message(cube_name: &str, order_id: &str, msg: TradeMessage) 
 
 /// Update the counterparty's trade pubkey for a given order (persisted to disk).
 pub fn set_counterparty_pubkey(cube_name: &str, order_id: &str, pubkey: &str) {
-    let mut data = load_data(cube_name);
+    let mut data = match load_data(cube_name) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!("Cannot set counterparty pubkey: {e}");
+            return;
+        }
+    };
     if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
         if session.counterparty_trade_pubkey.as_deref() != Some(pubkey) {
             session.counterparty_trade_pubkey = Some(pubkey.to_string());
@@ -168,7 +176,13 @@ pub fn set_counterparty_pubkey(cube_name: &str, order_id: &str, pubkey: &str) {
 
 /// Update the admin/solver's trade pubkey for a given order (persisted to disk).
 fn set_admin_pubkey(cube_name: &str, order_id: &str, pubkey: &str) {
-    let mut data = load_data(cube_name);
+    let mut data = match load_data(cube_name) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!("Cannot set admin pubkey: {e}");
+            return;
+        }
+    };
     if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
         if session.admin_trade_pubkey.as_deref() != Some(pubkey) {
             session.admin_trade_pubkey = Some(pubkey.to_string());
@@ -532,7 +546,7 @@ pub async fn restore_trades(
 }
 
 fn append_trade(cube_name: &str, session: TradeSession) -> Result<(), String> {
-    let mut data = load_data(cube_name);
+    let mut data = load_data(cube_name)?;
     // Replace existing session for the same order (re-take after cancel uses new keys)
     if let Some(existing) = data
         .trades
@@ -848,7 +862,7 @@ async fn sync_last_trade_index(
         return Err("Server returned invalid last_trade_index".to_string());
     }
 
-    let mut data = load_data(cube_name);
+    let mut data = load_data(cube_name)?;
     tracing::info!(
         "Trade index sync: local={}, server={}",
         data.last_trade_index,
@@ -900,7 +914,7 @@ pub enum OrderSubmitResponse {
 /// On InvalidTradeIndex, automatically re-syncs from the server and retries once.
 pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, String> {
     for attempt in 0..2u8 {
-        let mut data = load_data(&form.cube_name);
+        let mut data = load_data(&form.cube_name)?;
         let next_idx = data.last_trade_index + 1;
 
         // Expiration based on user-chosen days (0 = no expiration)
@@ -1080,7 +1094,7 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
     };
 
     for attempt in 0..2u8 {
-        let mut mdata = load_data(&data.cube_name);
+        let mut mdata = load_data(&data.cube_name)?;
         let next_idx = mdata.last_trade_index + 1;
 
         let request_id = uuid::Uuid::new_v4().as_u128() as u64;
@@ -1281,7 +1295,7 @@ pub async fn rate_counterparty(
     data: TradeActionData,
     rating: u8,
 ) -> Result<TradeActionResponse, String> {
-    let sessions = load_data(&data.cube_name).trades;
+    let sessions = load_data(&data.cube_name).unwrap_or_default().trades;
     let session = sessions
         .iter()
         .find(|s| s.order_id == data.order_id)
@@ -1331,7 +1345,7 @@ async fn trade_action(
     data: TradeActionData,
     action: mostro_core::message::Action,
 ) -> Result<TradeActionResponse, String> {
-    let sessions = load_data(&data.cube_name).trades;
+    let sessions = load_data(&data.cube_name).unwrap_or_default().trades;
     let session = sessions
         .iter()
         .find(|s| s.order_id == data.order_id)
@@ -1427,7 +1441,7 @@ async fn send_encrypted_chat(data: &TradeActionData, target: ChatTarget) -> Resu
         return Err("Empty message".to_string());
     }
 
-    let sessions = load_data(&data.cube_name).trades;
+    let sessions = load_data(&data.cube_name).unwrap_or_default().trades;
     let session = sessions
         .iter()
         .find(|s| s.order_id == data.order_id)
@@ -1511,7 +1525,7 @@ pub async fn send_admin_chat_message(data: TradeActionData) -> Result<(), String
 
 /// Get all trade messages for a given order from disk.
 pub fn get_trade_messages(cube_name: &str, order_id: &str) -> Vec<TradeMessage> {
-    let data = load_data(cube_name);
+    let data = load_data(cube_name).unwrap_or_default();
     data.trades
         .iter()
         .find(|t| t.order_id == order_id)
@@ -1723,7 +1737,7 @@ pub fn nickname_from_pubkey(hex_key: &str) -> String {
 }
 
 pub fn get_chat_identity_info(cube_name: &str, mnemonic: &str, order_id: &str) -> ChatIdentityInfo {
-    let data = load_data(cube_name);
+    let data = load_data(cube_name).unwrap_or_default();
     let session = data.trades.iter().find(|t| t.order_id == order_id);
     let Some(session) = session else {
         return ChatIdentityInfo {
@@ -1947,7 +1961,7 @@ fn orders_from_cache(
     order_cache: &BTreeMap<String, (u64, mostro_core::order::SmallOrder, RatingInfo)>,
     cube_name: &str,
 ) -> Vec<P2POrder> {
-    let sessions = load_data(cube_name).trades;
+    let sessions = load_data(cube_name).unwrap_or_default().trades;
     let my_order_ids: HashSet<&str> = sessions
         .iter()
         .filter(|s| s.role == "creator")
@@ -1972,7 +1986,7 @@ async fn fetch_user_trades(
     cube_name: &str,
     mostro_pubkey: PublicKey,
 ) -> Vec<P2PTrade> {
-    let sessions = load_data(cube_name).trades;
+    let sessions = load_data(cube_name).unwrap_or_default().trades;
     if sessions.is_empty() {
         return Vec::new();
     }
@@ -2179,7 +2193,7 @@ fn mostro_stream(
             }
 
             // Auto-restore: if we have a mnemonic but no local trades, scan relay for DMs
-            let data = load_data(&cube_name);
+            let data = load_data(&cube_name).unwrap_or_default();
             if data.trades.is_empty() && !mnemonic.is_empty() {
                 tracing::info!("No local trades found — attempting DM-scan restore");
                 match restore_trades(&cube_name, &mnemonic, &pubkey_hex, &relay_urls).await {
@@ -2372,7 +2386,7 @@ async fn update_dm_subscriptions(
     mnemonic: &str,
     subscribed_pubkeys: &mut Vec<PublicKey>,
 ) {
-    let sessions = load_data(cube_name).trades;
+    let sessions = load_data(cube_name).unwrap_or_default().trades;
     if sessions.is_empty() {
         return;
     }
@@ -2439,7 +2453,7 @@ async fn process_dm_notifications(
     output: &mut iced::futures::channel::mpsc::Sender<Message>,
     silent: bool,
 ) {
-    let sessions = load_data(cube_name).trades;
+    let sessions = load_data(cube_name).unwrap_or_default().trades;
     if sessions.is_empty() {
         return;
     }
@@ -2725,7 +2739,7 @@ async fn process_dm_event(
     seen_event_ids: &mut HashSet<nostr_sdk::EventId>,
     output: &mut iced::futures::channel::mpsc::Sender<Message>,
 ) -> bool {
-    let sessions = load_data(cube_name).trades;
+    let sessions = load_data(cube_name).unwrap_or_default().trades;
     let session_keys: Vec<(TradeSession, Keys)> = sessions
         .iter()
         .filter_map(|s| {
