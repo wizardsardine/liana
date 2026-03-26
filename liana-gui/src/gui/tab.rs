@@ -13,6 +13,7 @@ use crate::{
     app::{
         self,
         cache::{Cache, DaemonCache},
+        menu::MenuWidth,
         settings::{
             self, update_settings_file, LianaSettings, LianaWalletSettings, SettingsError,
             SettingsTrait,
@@ -142,6 +143,12 @@ where
             Some(app.cache())
         } else {
             None
+        }
+    }
+
+    pub fn set_menu_width(&mut self, menu_width: MenuWidth) {
+        if let State::App(ref mut app) = self.state {
+            app.cache_mut().menu_width = menu_width;
         }
     }
 
@@ -651,6 +658,7 @@ pub fn create_app_with_remote_backend(
                 last_tick: Instant::now(),
             },
             fiat_price: None,
+            menu_width: Default::default(),
         },
         Arc::new(
             Wallet::new(wallet.descriptor)

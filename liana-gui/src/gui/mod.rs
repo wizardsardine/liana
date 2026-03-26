@@ -22,6 +22,7 @@ pub mod tab;
 use crate::{
     app::{
         cache::{FiatPrice, FiatPriceRequest},
+        menu::MenuWidth,
         message::{FiatMessage as AppFiatMessage, Message as AppMessage},
         settings::{
             global::{GlobalSettings, WindowConfig},
@@ -192,6 +193,11 @@ where
                 }
             }
             Message::WindowSize(monitor_size) => {
+                let menu_width =
+                    MenuWidth::from_pane_width(monitor_size.width);
+                for (_, pane) in self.panes.iter_mut() {
+                    pane.set_menu_width(menu_width);
+                }
                 let cloned_cfg = self.window_config.clone();
                 match (cloned_cfg, &self.window_init, &self.window_id) {
                     // no previous screen size recorded && window maximized

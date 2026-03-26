@@ -10,6 +10,7 @@ use crate::{
         Currency, PriceSource,
     },
 };
+use crate::app::menu::MenuWidth;
 use liana::miniscript::bitcoin::Network;
 use lianad::commands::CoinStatus;
 use std::sync::Arc;
@@ -24,6 +25,7 @@ pub struct Cache {
     pub last_poll_at_startup: Option<u32>,
     pub daemon_cache: DaemonCache,
     pub fiat_price: Option<FiatPrice>,
+    pub menu_width: MenuWidth,
 }
 
 /// only used for tests.
@@ -36,6 +38,7 @@ impl std::default::Default for Cache {
             last_poll_at_startup: None,
             daemon_cache: DaemonCache::default(),
             fiat_price: None,
+            menu_width: MenuWidth::Normal,
         }
     }
 }

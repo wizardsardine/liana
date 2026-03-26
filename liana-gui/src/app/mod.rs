@@ -236,6 +236,10 @@ impl<S: SettingsTrait> App<S> {
         &self.cache
     }
 
+    pub fn cache_mut(&mut self) -> &mut Cache {
+        &mut self.cache
+    }
+
     pub fn wallet(&self) -> &Wallet {
         &self.wallet
     }

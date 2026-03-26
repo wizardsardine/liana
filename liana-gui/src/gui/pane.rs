@@ -173,6 +173,10 @@ where
         self.tabs.iter_mut().for_each(|t| t.stop());
     }
 
+    pub fn set_menu_width(&mut self, menu_width: app::menu::MenuWidth) {
+        self.tabs.iter_mut().for_each(|t| t.set_menu_width(menu_width));
+    }
+
     pub fn tabs_menu_view(&self) -> Element<Message<M>> {
         let mut menu = Row::new().spacing(3);
         let tabs_len = self.tabs.len();
