@@ -174,6 +174,20 @@ pub fn btn_secondary<'a, T: Clone + 'a>(
     btn
 }
 
+/// Tertiary button with preset width.
+pub fn btn_tertiary<'a, T: Clone + 'a>(
+    icon: Option<Text<'a>>,
+    label: &'static str,
+    width: BtnWidth,
+    msg: Option<T>,
+) -> Button<'a, T> {
+    let mut btn = tertiary(icon, label).width(Length::Fixed(width as u16 as f32));
+    if let Some(m) = msg {
+        btn = btn.on_press(m);
+    }
+    btn
+}
+
 /// Destructive button with preset width.
 pub fn btn_destructive<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
