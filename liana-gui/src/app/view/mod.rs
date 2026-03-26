@@ -98,7 +98,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
         let content = content_cell
             .borrow_mut()
             .take()
-            .unwrap_or_else(|| Space::new(Length::Fill, Length::Fill).into());
+            .unwrap_or_else(|| Space::new(Length::Fill, Length::Shrink).into());
         Row::new()
             .push(
                 sidebar(menu, cache, sidebar_width)
