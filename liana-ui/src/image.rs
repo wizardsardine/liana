@@ -5,6 +5,8 @@ const LIANA_APP_ICON: &[u8] = include_bytes!("../static/logos/liana-app-icon.png
 const LIANA_BUSINESS_APP_ICON: &[u8] =
     include_bytes!("../static/logos/liana-business-app-icon.png");
 const LIANA_LOGO_GREY: &[u8] = include_bytes!("../static/logos/LIANA_SYMBOL_Gray.svg");
+const LIANA_LOGO_GREEN: &[u8] = include_bytes!("../static/logos/LIANA_SYMBOL_Green.svg");
+const LIANA_LOGO_BLUE: &[u8] = include_bytes!("../static/logos/LIANA_SYMBOL_Blue.svg");
 const LIANA_BRAND_GREY: &[u8] = include_bytes!("../static/logos/LIANA_BRAND_Gray.svg");
 const LIANA_WALLET_LOGO: &[u8] = include_bytes!("../static/logos/liana_wallet.svg");
 const LIANA_BUSINESS_LOGO: &[u8] = include_bytes!("../static/logos/liana_business.svg");
@@ -20,6 +22,16 @@ pub fn liana_business_app_icon() -> icon::Icon {
 
 pub fn liana_grey_logo() -> Svg<'static> {
     let h = Handle::from_memory(LIANA_LOGO_GREY.to_vec());
+    Svg::new(h)
+}
+
+pub fn liana_green_logo() -> Svg<'static> {
+    let h = Handle::from_memory(LIANA_LOGO_GREEN.to_vec());
+    Svg::new(h)
+}
+
+pub fn liana_blue_logo() -> Svg<'static> {
+    let h = Handle::from_memory(LIANA_LOGO_BLUE.to_vec());
     Svg::new(h)
 }
 

@@ -52,7 +52,8 @@ pub fn sidebar<'a>(
     let logo = match (menu_width.is_small(), cache.variant) {
         (false, liana_ui::Variant::LianaBusiness) => liana_business_logo(),
         (false, liana_ui::Variant::Liana) => liana_wallet_logo(),
-        _ => liana_grey_logo().style(theme::svg::accent).width(60),
+        (true, liana_ui::Variant::Liana) => liana_green_logo().width(60),
+        (true, liana_ui::Variant::LianaBusiness) => liana_blue_logo().width(60),
     }
     .height(120);
     let upper_buttons = Column::new()
