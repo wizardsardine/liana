@@ -8,7 +8,7 @@ use iced::{
 };
 use liana_ui::{
     component::{
-        button::{btn_secondary, BtnWidth},
+        button::{btn_tertiary, BtnWidth},
         text,
     },
     widget::*,
@@ -89,7 +89,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     list_content = list_content.push(Space::with_height(20));
 
     // "Connect with another email" button
-    let new_email = btn_secondary(
+    let new_email = btn_tertiary(
         None,
         "Connect with another email",
         BtnWidth::XXL,
