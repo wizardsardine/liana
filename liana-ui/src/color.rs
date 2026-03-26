@@ -6,6 +6,11 @@ pub const LIGHT_BLACK: Color = Color::from_rgb(
     0x14 as f32 / 255.0,
     0x14 as f32 / 255.0,
 );
+pub const BUSINESS_BLACK: Color = Color::from_rgb(
+    0x0F as f32 / 255.0,
+    0x17 as f32 / 255.0,
+    0x2A as f32 / 255.0,
+);
 pub const GREY_7: Color = Color::from_rgb(
     0x3F as f32 / 255.0,
     0x3F as f32 / 255.0,
@@ -75,9 +80,9 @@ pub const BLUE: Color = Color::from_rgb(
 // Primary accent: Cyan-Blue from lianawallet.com/business (HSL 196, 100%, 50%)
 pub const BUSINESS_BLUE: Color = Color::from_rgb(
     0x00 as f32 / 255.0,
-    0xBF as f32 / 255.0,
+    0xBD as f32 / 255.0,
     0xFF as f32 / 255.0,
-); // #00BFFF
+);
 
 // Darker variant for hover states (HSL 196, 100%, 40%)
 pub const BUSINESS_BLUE_DARK: Color = Color::from_rgb(

@@ -1,4 +1,6 @@
 use crate::{color, component::text::text, icon, theme, widget::*};
+use iced::{widget::button, Alignment};
+const CARD_PADDING: [u16; 2] = [15, 30];
 
 pub fn modal<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T> {
     Container::new(content)
@@ -47,4 +49,36 @@ pub fn error<'a, T: 'a>(message: &'static str, error: String) -> Container<'a, T
     )
     .padding(15)
     .style(theme::card::error)
+}
+
+pub fn clickable_card<'a, M>(content: Row<'a, M>, msg: Option<M>) -> Element<'a, M>
+where
+    M: Clone + 'a,
+{
+    button(content.align_y(Alignment::Center).padding(CARD_PADDING))
+        .on_press_maybe(msg)
+        .style(theme::button::clickable_card)
+        .into()
+}
+
+pub fn home_warning<'a, T, M>(content: T) -> Element<'a, M>
+where
+    T: Into<Element<'a, M>>,
+    M: Clone + 'a,
+{
+    Container::new(content)
+        .padding(CARD_PADDING)
+        .style(theme::card::home_warning)
+        .into()
+}
+
+pub fn home_hint<'a, T, M>(content: T) -> Element<'a, M>
+where
+    T: Into<Element<'a, M>>,
+    M: Clone + 'a,
+{
+    Container::new(content)
+        .padding(CARD_PADDING)
+        .style(theme::card::border)
+        .into()
 }

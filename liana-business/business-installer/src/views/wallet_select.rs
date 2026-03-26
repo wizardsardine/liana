@@ -120,7 +120,7 @@ pub fn wallet_card<'a>(
     role: &UserRole,
     last_edit_info: Option<String>,
     user_email: &str,
-) -> Element<'a, Msg> {
+) -> Container<'a, Msg> {
     let key_count = wallet.template.as_ref().map(|t| t.keys.len()).unwrap_or(0);
     let keys = match key_count {
         0 => "".to_string(),
@@ -162,8 +162,7 @@ pub fn wallet_card<'a>(
         .push(Space::with_width(Length::Fill))
         .push(right_col)
         .align_y(Alignment::Center)
-        .width(Length::Fill)
-        .into();
+        .height(Length::Fill);
 
     let message = Some(Msg::OrgWalletSelected(wallet.id));
 

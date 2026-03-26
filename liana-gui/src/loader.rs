@@ -439,6 +439,7 @@ pub async fn load_application(
 
     // Both last poll fields start with the same value.
     let cache = Cache {
+        variant: liana_ui::Variant::Liana,
         datadir_path,
         network: info.network,
         last_poll_at_startup: info.last_poll_timestamp,

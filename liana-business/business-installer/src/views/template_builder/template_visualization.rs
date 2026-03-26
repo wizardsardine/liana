@@ -1,72 +1,21 @@
 use crate::{
     backend::Backend,
     state::{message::Msg, State},
-    views::{card_entry, format_last_edit_info},
+    views::{delete_btn, format_last_edit_info, menu_entry},
 };
 use iced::{
-    widget::{
-        button::{Status, Style},
-        Space,
-    },
-    Alignment, Background, Border, Length,
+    widget::{row, Space},
+    Alignment, Length,
 };
 use liana_connect::ws_business::{
     self, UserRole, WalletStatus, BLOCKS_PER_DAY, BLOCKS_PER_HOUR, BLOCKS_PER_MONTH,
 };
-use liana_ui::{color, component::text, icon, theme, theme::Theme, widget::*};
+use liana_ui::{component::text, theme, widget::*};
 use std::collections::BTreeMap;
-
-/// Custom button style for delete button: circular with grey background and shadow
-fn delete_button_style(_theme: &Theme, status: Status) -> Style {
-    use iced::{Color, Shadow, Vector};
-
-    let background = color::LIGHT_BG_SECONDARY;
-    let border_active = color::BUSINESS_BLUE_DARK;
-    let shadow = Shadow {
-        color: Color::from_rgba(0.0, 0.0, 0.0, 0.15),
-        offset: Vector::new(0.0, 2.0),
-        blur_radius: 8.0,
-    };
-
-    match status {
-        Status::Active => Style {
-            background: Some(Background::Color(background)),
-            text_color: color::DARK_TEXT_SECONDARY,
-            border: Border {
-                radius: 50.0.into(),
-                width: 1.0,
-                color: color::TRANSPARENT,
-            },
-            shadow,
-        },
-        Status::Hovered | Status::Pressed => Style {
-            background: Some(Background::Color(background)),
-            text_color: color::BUSINESS_BLUE_DARK,
-            border: Border {
-                radius: 50.0.into(),
-                width: 1.0,
-                color: border_active,
-            },
-            shadow,
-        },
-        Status::Disabled => Style {
-            background: Some(Background::Color(background)),
-            text_color: color::DARK_TEXT_TERTIARY,
-            border: Border {
-                radius: 50.0.into(),
-                width: 1.0,
-                color: color::TRANSPARENT,
-            },
-            shadow,
-        },
-    }
-}
 
 // Colors for paths
 const PRIMARY_COLOR: &str = "#00BFFF"; // Business Blue
 
-// Card width constants
-const PATH_CARD_WIDTH: f32 = 600.0;
 // r_shape icon width that precedes path cards (adds visual offset for "Add recovery" button alignment)
 const R_SHAPE_WIDTH: f32 = 60.0;
 
@@ -220,7 +169,7 @@ fn path_card(
     path_index: Option<usize>,
     is_editable: bool,
     last_edit_info: Option<String>,
-) -> Element<'static, Msg> {
+) -> Container<'static, Msg> {
     // Get key aliases
     let key_aliases: Vec<String> = path
         .key_ids
@@ -254,11 +203,13 @@ fn path_card(
     let last_edit_info =
         last_edit_info.map(|info| text::caption(info).style(liana_ui::theme::text::secondary));
 
-    let content = Column::new()
+    let content = row![Column::new()
         .push(text::h3(keys_text).style(theme::text::primary))
         .push(text::p2_medium(timelock_text).style(theme::text::primary))
         .push_maybe(last_edit_info)
-        .spacing(5);
+        .spacing(5)]
+    .width(Length::Fill)
+    .height(Length::Fill);
 
     // Use card_entry with optional message for editable vs read-only
     let message = if is_editable {
@@ -267,7 +218,7 @@ fn path_card(
         None
     };
 
-    card_entry(content.into(), message, PATH_CARD_WIDTH)
+    menu_entry(content, message)
 }
 
 pub fn template_visualization(state: &State) -> Element<'static, Msg> {
@@ -348,18 +299,8 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
 
         // Only show delete button if editable (WS Admin)
         if is_editable {
-            secondary_row = secondary_row.push(
-                Button::new(
-                    Container::new(icon::trash_icon())
-                        .width(Length::Fixed(20.0))
-                        .height(Length::Fixed(20.0))
-                        .center_x(Length::Fixed(20.0))
-                        .center_y(Length::Fixed(20.0)),
-                )
-                .padding(10)
-                .on_press(Msg::TemplateDeleteSecondaryPath(index))
-                .style(delete_button_style),
-            );
+            let delete_button = delete_btn(Some(Msg::TemplateDeleteSecondaryPath(index)));
+            secondary_row = secondary_row.push(delete_button);
         }
 
         column = column.push(secondary_row);
@@ -368,13 +309,11 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
     // "Add a recovery path" card - only show if editable (WS Admin)
     if is_editable {
         let add_path_content =
-            text::p1_medium("+ Add a recovery path").style(liana_ui::theme::text::secondary);
+            row![text::p1_medium("+ Add a recovery path").style(liana_ui::theme::text::secondary)]
+                .width(Length::Fill)
+                .height(Length::Fill);
 
-        let add_path_card = card_entry(
-            add_path_content.into(),
-            Some(Msg::TemplateNewPathModal),
-            PATH_CARD_WIDTH,
-        );
+        let add_path_card = menu_entry(add_path_content, Some(Msg::TemplateNewPathModal));
 
         // Spacer aligns with r_shape icons above (R_SHAPE_WIDTH) + row spacing (15)
         let add_path_row = Row::new()

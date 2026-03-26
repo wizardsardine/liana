@@ -17,6 +17,7 @@ use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub struct Cache {
+    pub variant: liana_ui::Variant,
     pub datadir_path: LianaDirectory,
     pub network: Network,
     /// The `last_poll_timestamp` when starting the application.
@@ -29,6 +30,7 @@ pub struct Cache {
 impl std::default::Default for Cache {
     fn default() -> Self {
         Self {
+            variant: liana_ui::Variant::Liana,
             datadir_path: LianaDirectory::new(std::path::PathBuf::new()),
             network: Network::Bitcoin,
             last_poll_at_startup: None,

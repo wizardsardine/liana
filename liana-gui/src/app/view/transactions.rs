@@ -42,7 +42,7 @@ pub fn transactions_view<'a>(
         Column::new()
             .push(
                 Row::new()
-                    .push(Container::new(h3("Transactions")))
+                    .push(Container::new(h3(Menu::Transactions.title())))
                     .push(Space::with_width(Length::Fill))
                     .push(
                         button::secondary(Some(icon::backup_icon()), "Export")
@@ -164,7 +164,7 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
         .on_press(Message::Select(i))
         .style(theme::button::transparent_border),
     )
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
     .into()
 }
 

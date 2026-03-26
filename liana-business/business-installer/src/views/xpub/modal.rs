@@ -11,16 +11,17 @@ use iced::{
 use liana_gui::hw::{is_compatible_with_tapminiscript, min_taproot_version, UnsupportedReason};
 use liana_ui::{
     component::{
-        button, card, form, hw, modal,
+        button::{btn_cancel, btn_clear, btn_retry, btn_save},
+        form, hw,
+        modal::{self, modal_view, none_fn, ModalWidth},
         text::{self, p1_bold},
         tooltip,
     },
     icon, theme,
     widget::*,
 };
-use miniscript::bitcoin::bip32::ChildNumber;
 
-type FnMsg = fn() -> Msg;
+use miniscript::bitcoin::bip32::ChildNumber;
 
 /// Capitalize the first letter of a string
 fn capitalize_first(s: &str) -> String {
@@ -42,12 +43,6 @@ pub fn xpub_modal_view(state: &State) -> Option<Element<'_, Msg>> {
 
 /// Render the Select view - shows device list and other options
 fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> Element<'a, Msg> {
-    let header = modal::header(
-        Some(format!("Select key source - {}", modal_state.key_alias)),
-        None::<FnMsg>,
-        Some(|| Msg::XpubCancelModal),
-    );
-
     // Show current xpub status if one exists
     let xpub_status = modal_state.current_xpub.is_some().then_some(
         Container::new(
@@ -98,8 +93,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
             .push(input_value)
     });
 
-    let content = Column::new()
-        .push(header)
+    let body = Column::new()
         .push_maybe(xpub_status)
         .push(hw_section(state))
         .push_maybe(input_display)
@@ -113,20 +107,19 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
         .push_maybe(validation_error)
         .push(footer_buttons(modal_state))
         .spacing(15)
-        .align_x(Alignment::Center)
-        .width(modal::MODAL_WIDTH);
+        .align_x(Alignment::Center);
 
-    card::modal(content).into()
+    modal_view(
+        Some(format!("Select key source - {}", modal_state.key_alias)),
+        none_fn(),
+        Some(|| Msg::XpubCancelModal),
+        ModalWidth::L,
+        body,
+    )
 }
 
 /// Render the Details view - shows account picker and fetch status
 fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
-    let header = modal::header(
-        Some(modal_state.key_alias.clone()),
-        Some(|| Msg::XpubDeviceBack),
-        Some(|| Msg::XpubCancelModal),
-    );
-
     // Account selection picker
     let accounts: Vec<_> = (0..10)
         .map(|i| ChildNumber::from_hardened_idx(i).expect("hardcoded"))
@@ -175,11 +168,7 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
 
         // Retry button (only if there was an error)
         if modal_state.fetch_error.is_some() {
-            btn_row = btn_row.push(
-                button::secondary(None, "Retry")
-                    .on_press(Msg::XpubRetry)
-                    .width(Length::Fixed(100.0)),
-            );
+            btn_row = btn_row.push(btn_retry(Some(Msg::XpubRetry)));
         }
 
         btn_row = btn_row.push(Space::with_width(Length::Fill));
@@ -187,14 +176,7 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         // Save button (enabled only if we have a valid xpub)
         let can_save =
             modal_state.validate().is_ok() && modal_state.has_changes() && !modal_state.processing;
-        let save_button = if can_save {
-            button::primary(None, "Save")
-                .on_press(Msg::XpubSave)
-                .width(Length::Fixed(100.0))
-        } else {
-            button::secondary(None, "Save").width(Length::Fixed(100.0))
-        };
-        btn_row = btn_row.push(save_button);
+        btn_row = btn_row.push(btn_save(can_save.then_some(Msg::XpubSave)));
         btn_row
     };
 
@@ -221,8 +203,7 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
             .width(Length::Fill)
     });
 
-    let content = Column::new()
-        .push(header)
+    let body = Column::new()
         .push_maybe(fetching_label)
         .push_maybe(error)
         .push_maybe(xpub)
@@ -230,11 +211,15 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         .push(account_label)
         .push(account)
         .push(btn_row)
-        .spacing(15)
-        .padding(20.0)
-        .width(Length::Fixed(450.0));
+        .spacing(15);
 
-    card::modal(content).into()
+    modal_view(
+        Some(modal_state.key_alias.clone()),
+        Some(|| Msg::XpubDeviceBack),
+        Some(|| Msg::XpubCancelModal),
+        ModalWidth::M,
+        body,
+    )
 }
 
 /// Format account for display (e.g., "Account #0")
@@ -361,7 +346,7 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
                 None,
                 None,
                 Some(message),
-                None::<fn() -> Msg>,
+                none_fn(),
             )
         }
     }
@@ -487,28 +472,14 @@ fn other_options(modal_state: &XpubEntryModalState, is_wallet_manager: bool) -> 
 /// Render the footer action buttons (Select step only)
 fn footer_buttons(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
     // Cancel button (always enabled)
-    let cancel_button = button::secondary(None, "Cancel")
-        .on_press(Msg::XpubCancelModal)
-        .width(Length::Fixed(120.0));
+    let cancel_button = btn_cancel(Some(Msg::XpubCancelModal));
 
     // Clear button (enabled only if there's a current xpub)
-    let clear_button = if modal_state.current_xpub.is_some() {
-        button::secondary(None, "Clear")
-            .on_press(Msg::XpubClear)
-            .width(Length::Fixed(120.0))
-    } else {
-        button::secondary(None, "Clear").width(Length::Fixed(120.0))
-    };
+    let clear_button = btn_clear(modal_state.current_xpub.is_some().then_some(Msg::XpubClear));
 
     // Save button (enabled only if validation passes and there are changes)
     let can_save = modal_state.validate().is_ok() && modal_state.has_changes();
-    let save_button = if can_save {
-        button::primary(None, "Save")
-            .on_press(Msg::XpubSave)
-            .width(Length::Fixed(120.0))
-    } else {
-        button::secondary(None, "Save").width(Length::Fixed(120.0))
-    };
+    let save_button = btn_save(can_save.then_some(Msg::XpubSave));
 
     let buttons = Row::new()
         .spacing(10)

@@ -636,6 +636,7 @@ pub fn create_app_with_remote_backend(
 
     Ok(app::App::new(
         Cache {
+            variant: liana_ui::Variant::Liana,
             network,
             datadir_path: liana_dir.clone(),
             // We ignore last poll fields for remote backend.

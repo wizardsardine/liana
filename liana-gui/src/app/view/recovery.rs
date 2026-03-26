@@ -31,7 +31,7 @@ pub fn recovery<'a>(
     cache: &'a Cache,
     recovery_paths: Vec<Element<'a, Message>>,
     selected_path: Option<usize>,
-    warning: Option<&Error>,
+    warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     let no_recovery_paths = recovery_paths.is_empty();
     const INFO_TEXT: &str = "Recover your funds by sending them to another wallet if you have lost access to your primary spending path.";
@@ -40,7 +40,7 @@ pub fn recovery<'a>(
         cache,
         warning,
         Column::new()
-            .push(Container::new(h3("Recovery")).width(Length::Fill))
+            .push(Container::new(h3(Menu::Recovery.title())).width(Length::Fill))
             .push(Container::new(text(INFO_TEXT)))
             .push(Space::with_height(Length::Fixed(20.0)))
             .push(

@@ -26,7 +26,7 @@ pub fn coins_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
     Column::new()
-        .push(Container::new(h3("Coins")).width(Length::Fill))
+        .push(Container::new(h3(Menu::Coins.title())).width(Length::Fill))
         .push(
             Column::new()
                 .spacing(10)
@@ -317,7 +317,7 @@ fn coin_list_view<'a>(
                 None
             }),
     )
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
 }
 
 pub fn coin_sequence_label<'a, T: 'a>(seq: u32, timelock: u32) -> Container<'a, T> {

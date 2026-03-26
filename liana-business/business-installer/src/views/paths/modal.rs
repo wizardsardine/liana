@@ -10,8 +10,13 @@ use iced::{
     Alignment, Length,
 };
 use liana_ui::{
-    component::{button, card, form, text},
-    icon, theme,
+    component::{
+        button::{btn_cancel, btn_save},
+        form,
+        modal::{modal_view, none_fn, ModalWidth},
+        text,
+    },
+    theme,
     widget::*,
 };
 
@@ -38,15 +43,6 @@ pub fn edit_path_modal_view<'a>(
     } else {
         "Create New Path"
     };
-    let header = Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(text::h3(title))
-        .push(Space::with_width(Length::Fill))
-        .push(
-            button::transparent(Some(icon::cross_icon().size(32)), "")
-                .on_press(Msg::TemplateCancelPathModal),
-        );
 
     // Get last edit info for the path being edited
     let current_user_email_lower = state.views.login.email.form.value.to_lowercase();
@@ -262,26 +258,15 @@ pub fn edit_path_modal_view<'a>(
     let has_keys = !modal_state.selected_key_ids.is_empty();
     let can_save = has_keys && threshold_valid && (modal_state.is_primary || timelock_valid);
 
-    let save_button = if can_save {
-        button::primary(None, "Save")
-            .on_press(Msg::TemplateSavePath)
-            .width(Length::Fixed(120.0))
-    } else {
-        button::secondary(None, "Save").width(Length::Fixed(120.0))
-    };
+    let save_button = btn_save(can_save.then_some(Msg::TemplateSavePath));
 
     let footer = Row::new()
         .spacing(10)
         .push(Space::with_width(Length::Fill))
-        .push(
-            button::secondary(None, "Cancel")
-                .on_press(Msg::TemplateCancelPathModal)
-                .width(Length::Fixed(120.0)),
-        )
+        .push(btn_cancel(Some(Msg::TemplateCancelPathModal)))
         .push(save_button);
 
-    let content = Column::new()
-        .push(header)
+    let body = Column::new()
         .push_maybe(last_edit_info)
         .push(keys_label)
         .push(keys_column)
@@ -289,9 +274,13 @@ pub fn edit_path_modal_view<'a>(
         .push_maybe(threshold_warning_row)
         .push_maybe(timelock_section)
         .push(footer)
-        .spacing(15)
-        .padding(20.0)
-        .width(Length::Fixed(500.0));
+        .spacing(15);
 
-    card::modal(content).into()
+    modal_view(
+        Some(title.to_string()),
+        none_fn(),
+        Some(|| Msg::TemplateCancelPathModal),
+        ModalWidth::M,
+        body,
+    )
 }

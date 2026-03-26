@@ -12,7 +12,10 @@ use iced::{
 };
 use liana_connect::ws_business::Wallet;
 use liana_ui::{
-    component::{button, text},
+    component::{
+        button::{btn_secondary, BtnWidth},
+        text,
+    },
     icon, theme,
     widget::*,
 };
@@ -71,11 +74,8 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
     let footer_content = if reg_state.user_devices.is_empty() {
         None
     } else {
-        let btn_width = 200;
-        let spacer = MENU_ENTRY_WIDTH - btn_width;
-        let skip_btn = button::secondary(None, "Skip")
-            .on_press(Msg::RegistrationSkipAll)
-            .width(btn_width);
+        let spacer = MENU_ENTRY_WIDTH - BtnWidth::XL as u16;
+        let skip_btn = btn_secondary(None, "Skip", BtnWidth::XL, Some(Msg::RegistrationSkipAll));
         let footer = row![
             Space::with_width(Length::Fill),
             Space::with_width(spacer),
@@ -189,7 +189,7 @@ fn key_card(
     kind: Option<async_hwi::DeviceKind>,
     device_connected: bool,
     alias: String,
-) -> Element<'static, Msg> {
+) -> Container<'static, Msg> {
     let fg = text::p1_medium(format!("#{fingerprint}"));
     let fg_row = if let Some(device) = kind {
         row![text::p1_bold(device_kind(device)), fg].spacing(5)
@@ -211,14 +211,12 @@ fn key_card(
         .is_some()
         .then_some(Msg::RegistrationSelectDevice(fingerprint));
 
-    let content = Container::new(
-        Row::new()
-            .push(left)
-            .push(Space::with_width(Length::Fill))
-            .push(right)
-            .push(Space::with_width(Length::Fill))
-            .align_y(Alignment::Center),
-    )
-    .into();
+    let content = Row::new()
+        .push(left)
+        .push(Space::with_width(Length::Fill))
+        .push(right)
+        .push(Space::with_width(Length::Fill))
+        .align_y(Alignment::Center)
+        .height(Length::Fill);
     menu_entry(content, message)
 }

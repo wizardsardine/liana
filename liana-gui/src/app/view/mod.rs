@@ -26,355 +26,114 @@ use iced::{
 
 use liana_ui::{
     component::{button, text::*},
-    icon::{
-        coins_icon, cross_icon, history_icon, home_icon, receive_icon, recovery_icon, send_icon,
-        settings_icon,
-    },
+    icon::cross_icon,
     image::*,
     theme,
     widget::*,
 };
 
-use crate::app::{cache::Cache, error::Error, menu::Menu};
+use crate::app::{
+    cache::Cache,
+    error::Error,
+    menu::{Menu, MenuWidth},
+};
 
-fn menu_green_bar<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(Space::with_width(Length::Fixed(2.0)))
-        .height(Length::Fixed(50.0))
-        .style(theme::container::menu_bar)
-}
+use std::cell::RefCell;
 
-pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
-    let home_button = if *menu == Menu::Home {
-        row!(
-            button::menu_active(Some(home_icon()), "Home")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar(),
-        )
-    } else {
-        row!(button::menu(Some(home_icon()), "Home")
-            .on_press(Message::Menu(Menu::Home))
-            .width(iced::Length::Fill),)
+pub fn sidebar<'a>(
+    active: &Menu,
+    cache: &'a Cache,
+    menu_width: MenuWidth,
+) -> Container<'a, Message> {
+    let padding = match menu_width {
+        MenuWidth::Normal => [0.0, 30.0],
+        MenuWidth::Compact | MenuWidth::Small => [0.0, 5.0],
     };
+    let logo = match (menu_width.is_small(), cache.variant) {
+        (false, liana_ui::Variant::LianaBusiness) => liana_business_logo(),
+        (false, liana_ui::Variant::Liana) => liana_wallet_logo(),
+        (true, liana_ui::Variant::Liana) => liana_green_logo().width(60),
+        (true, liana_ui::Variant::LianaBusiness) => liana_blue_logo().width(60),
+    }
+    .height(120);
+    let upper_buttons = Column::new()
+        .push(Space::with_height(10))
+        .push(Container::new(logo))
+        .push(Menu::Home.entry(active, menu_width))
+        .push(Menu::CreateSpendTx.entry(active, menu_width))
+        .push(Menu::Receive.entry(active, menu_width))
+        .push(Menu::PSBTs.entry(active, menu_width))
+        .height(Length::Fill)
+        .spacing(10);
 
-    let transactions_button = if *menu == Menu::Transactions {
-        row!(
-            button::menu_active(Some(history_icon()), "Transactions")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
-    } else {
-        row!(button::menu(Some(history_icon()), "Transactions")
-            .on_press(Message::Menu(Menu::Transactions))
-            .width(iced::Length::Fill))
-    };
-
-    let coins_button = if *menu == Menu::Coins {
-        row!(
-            button::menu_active(Some(coins_icon()), "Coins")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
-    } else {
-        row!(button::menu(Some(coins_icon()), "Coins")
-            .style(theme::button::menu)
-            .on_press(Message::Menu(Menu::Coins))
-            .width(iced::Length::Fill))
-    };
-
-    let psbt_button = if *menu == Menu::PSBTs {
-        row!(
-            button::menu_active(Some(history_icon()), "PSBTs")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
-    } else {
-        row!(button::menu(Some(history_icon()), "PSBTs")
-            .on_press(Message::Menu(Menu::PSBTs))
-            .width(iced::Length::Fill))
-    };
-
-    let spend_button = if *menu == Menu::CreateSpendTx {
-        row!(
-            button::menu_active(Some(send_icon()), "Send")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
-    } else {
-        row!(button::menu(Some(send_icon()), "Send")
-            .on_press(Message::Menu(Menu::CreateSpendTx))
-            .width(iced::Length::Fill))
-    };
-
-    let receive_button = if *menu == Menu::Receive {
-        row!(
-            button::menu_active(Some(receive_icon()), "Receive")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
-    } else {
-        row!(button::menu(Some(receive_icon()), "Receive")
-            .on_press(Message::Menu(Menu::Receive))
-            .width(iced::Length::Fill))
-    };
-
-    let recovery_button = if *menu == Menu::Recovery {
-        row!(
-            button::menu_active(Some(recovery_icon()), "Recovery")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
-    } else {
-        row!(button::menu(Some(recovery_icon()), "Recovery")
-            .on_press(Message::Menu(Menu::Recovery))
-            .width(iced::Length::Fill))
-    };
-
-    let settings_button = if *menu == Menu::Settings {
-        row!(
-            button::menu_active(Some(settings_icon()), "Settings")
-                .on_press(Message::Menu(Menu::Settings))
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
-    } else {
-        row!(button::menu(Some(settings_icon()), "Settings")
-            .on_press(Message::Menu(Menu::Settings))
-            .width(iced::Length::Fill))
-    };
-
-    Container::new(
+    let bottom_buttons = Container::new(
         Column::new()
-            .push(
-                Column::new()
-                    .push(
-                        Container::new(
-                            liana_grey_logo()
-                                .height(Length::Fixed(120.0))
-                                .width(Length::Fixed(60.0))
-                                .style(theme::svg::accent),
-                        )
-                        .padding(10),
-                    )
-                    .push(home_button)
-                    .push(spend_button)
-                    .push(receive_button)
-                    .push(coins_button)
-                    .push(transactions_button)
-                    .push(psbt_button)
-                    .height(Length::Fill),
-            )
-            .push(
-                Container::new(
-                    Column::new()
-                        .spacing(10)
-                        .push_maybe(cache.rescan_progress().map(|p| {
-                            Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
-                                .padding(5)
-                                .style(theme::pill::simple)
-                        }))
-                        .push(recovery_button)
-                        .push(settings_button),
-                )
-                .height(Length::Shrink),
-            ),
+            .spacing(10)
+            .push_maybe(cache.rescan_progress().map(|p| {
+                Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
+                    .padding(5)
+                    .style(theme::pill::simple)
+            }))
+            .push(Menu::Recovery.entry(active, menu_width))
+            .push(Menu::Transactions.entry(active, menu_width))
+            .push(Menu::Coins.entry(active, menu_width))
+            .push(Menu::Settings.entry(active, menu_width)),
     )
-    .style(theme::container::foreground)
-}
+    .height(Length::Shrink);
 
-pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
-    let home_button = if *menu == Menu::Home {
-        row!(
-            button::menu_active_small(home_icon())
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar(),
-        )
-    } else {
-        row!(button::menu_small(home_icon())
-            .on_press(Message::Menu(Menu::Home))
-            .width(iced::Length::Fill),)
-    };
-
-    let transactions_button = if *menu == Menu::Transactions {
-        row!(
-            button::menu_active_small(history_icon())
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
-    } else {
-        row!(button::menu_small(history_icon())
-            .on_press(Message::Menu(Menu::Transactions))
-            .width(iced::Length::Fill))
-    };
-
-    let coins_button = if *menu == Menu::Coins {
-        row!(
-            button::menu_active_small(coins_icon())
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
-    } else {
-        row!(button::menu_small(coins_icon())
-            .style(theme::button::menu)
-            .on_press(Message::Menu(Menu::Coins))
-            .width(iced::Length::Fill))
-    };
-
-    let psbt_button = if *menu == Menu::PSBTs {
-        row!(
-            button::menu_active_small(history_icon())
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
-    } else {
-        row!(button::menu_small(history_icon())
-            .on_press(Message::Menu(Menu::PSBTs))
-            .width(iced::Length::Fill))
-    };
-
-    let spend_button = if *menu == Menu::CreateSpendTx {
-        row!(
-            button::menu_active_small(send_icon())
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
-    } else {
-        row!(button::menu_small(send_icon())
-            .on_press(Message::Menu(Menu::CreateSpendTx))
-            .width(iced::Length::Fill))
-    };
-
-    let receive_button = if *menu == Menu::Receive {
-        row!(
-            button::menu_active_small(receive_icon())
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
-    } else {
-        row!(button::menu_small(receive_icon())
-            .on_press(Message::Menu(Menu::Receive))
-            .width(iced::Length::Fill))
-    };
-
-    let recovery_button = if *menu == Menu::Recovery {
-        row!(
-            button::menu_active_small(recovery_icon())
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
-    } else {
-        row!(button::menu_small(recovery_icon())
-            .on_press(Message::Menu(Menu::Recovery))
-            .width(iced::Length::Fill))
-    };
-
-    let settings_button = if *menu == Menu::Settings {
-        row!(
-            button::menu_active_small(settings_icon())
-                .on_press(Message::Menu(Menu::Settings))
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
-    } else {
-        row!(button::menu_small(settings_icon())
-            .on_press(Message::Menu(Menu::Settings))
-            .width(iced::Length::Fill))
-    };
-
-    Container::new(
-        Column::new()
-            .push(
-                Column::new()
-                    .push(
-                        Container::new(
-                            liana_grey_logo()
-                                .height(Length::Fixed(120.0))
-                                .width(Length::Fixed(60.0))
-                                .style(theme::svg::accent),
-                        )
-                        .padding(10),
-                    )
-                    .push(home_button)
-                    .push(spend_button)
-                    .push(receive_button)
-                    .push(coins_button)
-                    .push(transactions_button)
-                    .push(psbt_button)
-                    .align_x(iced::Alignment::Center)
-                    .height(Length::Fill),
-            )
-            .push(
-                Container::new(
-                    Column::new()
-                        .spacing(10)
-                        .push_maybe(cache.rescan_progress().map(|p| {
-                            Container::new(text(format!("{:.2}%  ", p * 100.0)))
-                                .padding(5)
-                                .style(theme::pill::simple)
-                        }))
-                        .push(recovery_button)
-                        .push(settings_button),
-                )
-                .height(Length::Shrink),
-            )
-            .align_x(iced::Alignment::Center),
-    )
-    .style(theme::container::foreground)
+    Container::new(Column::new().push(upper_buttons).push(bottom_buttons))
+        .style(theme::container::sidebar)
+        .padding(padding)
 }
 
 pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     menu: &'a Menu,
     cache: &'a Cache,
-    warning: Option<&Error>,
+    warning: Option<&'a Error>,
     content: T,
 ) -> Element<'a, Message> {
-    Row::new()
-        .push(
-            Container::new(responsive(move |size| {
-                if size.width > 150.0 {
-                    sidebar(menu, cache).height(Length::Fill).into()
-                } else {
-                    small_sidebar(menu, cache).height(Length::Fill).into()
-                }
-            }))
-            .width(Length::FillPortion(2)),
-        )
-        .push(
-            Column::new()
-                .push(warn(warning))
-                .push(
-                    Container::new(
-                        scrollable(row!(
-                            Space::with_width(Length::FillPortion(1)),
-                            column!(Space::with_height(Length::Fixed(150.0)), content.into())
-                                .width(Length::FillPortion(8))
-                                .max_width(1500),
-                            Space::with_width(Length::FillPortion(1)),
-                        ))
-                        .on_scroll(|w| Message::Scroll(w.absolute_offset().y)),
+    let content_cell = RefCell::new(Some(content.into()));
+    responsive(move |size| {
+        let sidebar_width = MenuWidth::from_pane_width(size.width);
+        let content = content_cell
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| Space::new(Length::Fill, Length::Shrink).into());
+        Row::new()
+            .push(
+                sidebar(menu, cache, sidebar_width)
+                    .height(Length::Fill)
+                    .width(Length::Fixed(sidebar_width.into())),
+            )
+            .push(
+                Column::new()
+                    .push(warn(warning))
+                    .push(
+                        Container::new(column![
+                            Space::with_height(25),
+                            Container::new(
+                                scrollable(row!(
+                                    Space::with_width(Length::FillPortion(1)),
+                                    column!(Space::with_height(Length::Fixed(150.0)), content)
+                                        .width(Length::FillPortion(8))
+                                        .max_width(1500),
+                                    Space::with_width(Length::FillPortion(1)),
+                                ))
+                                .on_scroll(|w| Message::Scroll(w.absolute_offset().y)),
+                            )
+                            .center_x(Length::Fill)
+                            .style(theme::container::panel_background)
+                            .height(Length::Fill)
+                        ])
+                        .style(theme::container::sidebar),
                     )
-                    .center_x(Length::Fill)
-                    .style(theme::container::background)
-                    .height(Length::Fill),
-                )
-                .width(Length::FillPortion(10)),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+                    .width(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    })
+    .into()
 }
 
 pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(

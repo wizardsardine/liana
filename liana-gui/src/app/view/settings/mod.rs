@@ -82,7 +82,7 @@ fn settings_section(
         .on_press(msg),
     )
     .width(Length::Fill)
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
 }
 
 fn export_section(
@@ -110,7 +110,7 @@ fn export_section(
         .on_press(msg),
     )
     .width(Length::Fill)
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
 }
 
 pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
@@ -190,7 +190,7 @@ pub fn link<'a>(url: &str, link_text: &'static str) -> Element<'a, Message> {
 
 pub fn bitcoind_settings<'a>(
     cache: &'a Cache,
-    warning: Option<&Error>,
+    warning: Option<&'a Error>,
     settings: Vec<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let header = header("Node", SettingsMessage::EditBitcoindSettings);
@@ -206,7 +206,7 @@ pub fn bitcoind_settings<'a>(
     )
 }
 
-pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'a, Message> {
+pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Element<'a, Message> {
     let header = header("Import/Export", SettingsMessage::ImportExportSection);
 
     let description = Row::new()
@@ -287,7 +287,7 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
 
 pub fn about_section<'a>(
     cache: &'a Cache,
-    warning: Option<&Error>,
+    warning: Option<&'a Error>,
     lianad_version: Option<&String>,
 ) -> Element<'a, Message> {
     let header = header("About", SettingsMessage::AboutSection);
@@ -333,7 +333,7 @@ pub fn remote_backend_section<'a>(
     email_form: &form::Value<String>,
     processing: bool,
     success: bool,
-    warning: Option<&Error>,
+    warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     let header = header("Backend", SettingsMessage::EditRemoteBackendSettings);
 
@@ -1008,7 +1008,7 @@ fn is_ok_and<T, E>(res: &Result<T, E>, f: impl FnOnce(&T) -> bool) -> bool {
 #[allow(clippy::too_many_arguments)]
 pub fn wallet_settings<'a>(
     cache: &'a Cache,
-    warning: Option<&Error>,
+    warning: Option<&'a Error>,
     descriptor: &'a LianaDescriptor,
     wallet_alias: &'a form::Value<String>,
     keys_aliases: &'a [(Fingerprint, form::Value<String>)],

@@ -22,9 +22,19 @@ pub mod text;
 pub mod text_input;
 pub mod toggler;
 
-#[derive(Debug, Copy, Clone, PartialEq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Theme {
     pub colors: palette::Palette,
+    pub button_border_width: f32,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            colors: palette::Palette::liana(),
+            button_border_width: 1.0,
+        }
+    }
 }
 
 impl Theme {
@@ -32,6 +42,7 @@ impl Theme {
     pub fn business() -> Self {
         Self {
             colors: palette::Palette::business(),
+            button_border_width: 3.0,
         }
     }
 }

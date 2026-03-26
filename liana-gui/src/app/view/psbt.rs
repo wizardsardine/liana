@@ -47,7 +47,7 @@ pub fn psbt_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
     network: Network,
     currently_signing: bool,
-    warning: Option<&Error>,
+    warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     dashboard(
         &Menu::PSBTs,
@@ -406,7 +406,8 @@ pub fn spend_overview_view<'a>(
                                     .align_y(Alignment::Center),
                             ),
                     )
-                    .push(signatures(tx, desc_info, key_aliases)),
+                    .push(signatures(tx, desc_info, key_aliases))
+                    .push(Space::with_height(5))
             )
             .style(theme::card::simple),
         )
@@ -695,7 +696,7 @@ pub fn inputs_view<'a>(
                 .into()
         },
     ))
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
     .into()
 }
 
@@ -778,15 +779,14 @@ pub fn outputs_view<'a>(
                             .into()
                     },
                 ))
-                .style(theme::card::simple)
             } else {
                 Container::new(h4_bold("0 payment").style(|t| {
                     theme::text::custom(t.colors.buttons.transparent_border.active.text)
                 }))
                 .padding(20)
                 .width(Length::Fill)
-                .style(theme::card::simple)
             }
+            .style(theme::card::button_simple)
         })
         .push_maybe(if !is_external && !change_indexes.is_empty() {
             Some(
@@ -827,7 +827,7 @@ pub fn outputs_view<'a>(
                             .into()
                     },
                 ))
-                .style(theme::card::simple),
+                .style(theme::card::button_simple),
             )
         } else {
             None

@@ -184,7 +184,7 @@ fn menu_entry(
         .on_press(msg),
     )
     .width(Length::Fill)
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
     .into()
 }
 

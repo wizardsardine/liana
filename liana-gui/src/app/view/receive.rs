@@ -27,6 +27,7 @@ use liana_ui::{
 use crate::{
     app::{
         error::Error,
+        menu::Menu,
         view::{hw, label, warning::warn},
     },
     hw::HardwareWallet,
@@ -109,7 +110,7 @@ pub fn receive<'a>(
         .push(
             Row::new()
                 .align_y(Alignment::Center)
-                .push(Container::new(h3("Receive")).width(Length::Fill))
+                .push(Container::new(h3(Menu::Receive.title())).width(Length::Fill))
                 .push({
                     let (icon, label) = (Some(icon::plus_icon()), "Generate address");
                     if addresses.is_empty() {
@@ -154,7 +155,7 @@ pub fn receive<'a>(
                     .width(Length::Fill)
                     .style(theme::button::transparent_border),
                 )
-                .style(theme::card::simple),
+                .style(theme::card::button_simple),
             ),
         )
         .push_maybe(show_prev_addresses.then_some(Row::new().spacing(10).push(

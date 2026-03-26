@@ -11,8 +11,14 @@ use iced::{
 use liana::miniscript::bitcoin;
 use liana_ui::{
     color,
-    component::{amount::*, button, card, event, form, spinner, text::*},
-    icon::{self, cross_icon},
+    component::{
+        amount::*,
+        button,
+        card::{self, home_hint, home_warning},
+        event, form, spinner,
+        text::*,
+    },
+    icon::{self, cross_icon, ICON_SIZE_M},
     theme,
     widget::*,
 };
@@ -76,173 +82,169 @@ pub fn home_view<'a>(
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
     let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
-    Column::new()
-        .push(h3("Balance"))
+    let balance = Column::new()
         .push(
-            Column::new()
-                .push(
-                    if sync_status.is_synced() {
+            if sync_status.is_synced() {
+                Row::new()
+                    .align_y(Alignment::Center)
+                    .push(amount_with_size(balance, H1_SIZE))
+                    .push_maybe(fiat_balance.map(|fiat| {
                         Row::new()
                             .align_y(Alignment::Center)
-                            .push(amount_with_size(balance, H1_SIZE))
-                            .push_maybe(fiat_balance.map(|fiat| {
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .push(Space::with_width(20))
-                                    .push(fiat.to_text().size(H2_SIZE).color(color::GREY_2))
-                            }))
-                    } else {
-                        Row::new().push(spinner::Carousel::new(
-                            Duration::from_millis(1000),
-                            vec![
-                                amount_with_size(balance, H1_SIZE),
-                                amount_with_size_and_colors(
-                                    balance,
-                                    H1_SIZE,
-                                    color::GREY_4,
-                                    Some(color::GREY_2),
-                                ),
-                            ],
-                        ))
-                    }
-                    .wrap(),
-                )
-                .push_maybe(if !sync_status.is_synced() {
-                    Some(
-                        Row::new()
-                            .push(
-                                match sync_status {
-                                    SyncStatus::BlockchainSync(progress) => text(format!(
-                                        "Syncing blockchain ({:.2}%)",
-                                        100.0 * *progress
-                                    )),
-                                    SyncStatus::WalletFullScan => text("Syncing"),
-                                    _ => text("Checking for new transactions"),
-                                }
-                                .style(theme::text::secondary),
-                            )
-                            .push(spinner::typing_text_carousel(
-                                "...",
-                                true,
-                                Duration::from_millis(2000),
-                                |content| text(content).style(theme::text::secondary),
-                            )),
-                    )
-                } else {
-                    None
-                })
-                .push_maybe(
-                    if unconfirmed_balance.to_sat() != 0 && sync_status.is_synced() {
-                        Some(
-                            Row::new()
-                                .spacing(10)
-                                .align_y(Alignment::Center)
-                                .push(text("+").size(H3_SIZE).style(theme::text::secondary))
-                                .push(unconfirmed_amount_with_size(unconfirmed_balance, H3_SIZE))
-                                .push(
-                                    text("unconfirmed")
-                                        .size(H3_SIZE)
-                                        .style(theme::text::secondary),
-                                )
-                                .push_maybe(fiat_unconfirmed.map(|fiat| {
-                                    Row::new()
-                                        .align_y(Alignment::Center)
-                                        .push(Space::with_width(10)) // total spacing = 20 including row spacing
-                                        .push(fiat.to_text().size(H4_SIZE).color(color::GREY_3))
-                                }))
-                                .wrap(),
-                        )
-                    } else {
-                        None
-                    },
-                ),
-        )
-        .push_maybe(show_rescan_warning.then_some(rescan_warning()))
-        .push_maybe(if expiring_coins.is_empty() {
-            remaining_sequence.map(|sequence| {
-                Container::new(
-                    Row::new()
-                        .spacing(15)
-                        .align_y(Alignment::Center)
-                        .push(
-                            h4_regular(format!(
-                                "≈ {} left before first recovery path becomes available.",
-                                coins::expire_message_units(sequence).join(", ")
-                            ))
-                            .width(Length::Fill),
-                        )
-                        .push(
-                            icon::tooltip_icon()
-                                .size(20)
-                                .style(theme::text::secondary)
-                                .width(Length::Fixed(20.0)),
-                        )
-                        .width(Length::Fill),
-                )
-                .padding(25)
-                .style(theme::card::border)
-            })
-        } else {
-            Some(
-                Container::new(
-                    Row::new()
-                        .spacing(15)
-                        .align_y(Alignment::Center)
-                        .push(
-                            h4_regular(format!(
-                                "Recovery path is or will soon be available for {} coin(s).",
-                                expiring_coins.len(),
-                            ))
-                            .width(Length::Fill),
-                        )
-                        .push(
-                            button::primary(Some(icon::arrow_repeat()), "Refresh coins").on_press(
-                                Message::Menu(Menu::RefreshCoins(expiring_coins.to_owned())),
-                            ),
+                            .push(Space::with_width(20))
+                            .push(fiat.to_text().size(H2_SIZE).color(color::GREY_2))
+                    }))
+            } else {
+                Row::new().push(spinner::Carousel::new(
+                    Duration::from_millis(1000),
+                    vec![
+                        amount_with_size(balance, H1_SIZE),
+                        amount_with_size_and_colors(
+                            balance,
+                            H1_SIZE,
+                            color::GREY_4,
+                            Some(color::GREY_2),
                         ),
-                )
-                .padding(25)
-                .style(theme::card::invalid),
-            )
-        })
-        .push(
-            Column::new()
-                .spacing(10)
-                .push(h4_bold("Last payments"))
-                .push(events.iter().fold(Column::new().spacing(10), |col, event| {
-                    if event.kind != PaymentKind::SendToSelf {
-                        col.push(event_list_view(event))
-                    } else {
-                        col
-                    }
-                }))
-                .push_maybe(if !is_last_page && !events.is_empty() {
-                    Some(
-                        Container::new(
-                            Button::new(
-                                text(if processing {
-                                    "Fetching ..."
-                                } else {
-                                    "See more"
-                                })
-                                .width(Length::Fill)
-                                .align_x(alignment::Horizontal::Center),
-                            )
-                            .width(Length::Fill)
-                            .padding(15)
-                            .style(theme::button::transparent_border)
-                            .on_press_maybe(if !processing {
-                                Some(Message::Next)
-                            } else {
-                                None
-                            }),
-                        )
-                        .width(Length::Fill)
-                        .style(theme::card::simple),
+                    ],
+                ))
+            }
+            .wrap(),
+        )
+        .push_maybe(if !sync_status.is_synced() {
+            Some(
+                Row::new()
+                    .push(
+                        match sync_status {
+                            SyncStatus::BlockchainSync(progress) => {
+                                text(format!("Syncing blockchain ({:.2}%)", 100.0 * *progress))
+                            }
+                            SyncStatus::WalletFullScan => text("Syncing"),
+                            _ => text("Checking for new transactions"),
+                        }
+                        .style(theme::text::secondary),
                     )
+                    .push(spinner::typing_text_carousel(
+                        "...",
+                        true,
+                        Duration::from_millis(2000),
+                        |content| text(content).style(theme::text::secondary),
+                    )),
+            )
+        } else {
+            None
+        })
+        .push_maybe(
+            if unconfirmed_balance.to_sat() != 0 && sync_status.is_synced() {
+                Some(
+                    Row::new()
+                        .spacing(10)
+                        .align_y(Alignment::Center)
+                        .push(text("+").size(H3_SIZE).style(theme::text::secondary))
+                        .push(unconfirmed_amount_with_size(unconfirmed_balance, H3_SIZE))
+                        .push(
+                            text("unconfirmed")
+                                .size(H3_SIZE)
+                                .style(theme::text::secondary),
+                        )
+                        .push_maybe(fiat_unconfirmed.map(|fiat| {
+                            Row::new()
+                                .align_y(Alignment::Center)
+                                .push(Space::with_width(10)) // total spacing = 20 including row spacing
+                                .push(fiat.to_text().size(H4_SIZE).color(color::GREY_3))
+                        }))
+                        .wrap(),
+                )
+            } else {
+                None
+            },
+        );
+
+    let expire_warning = if expiring_coins.is_empty() {
+        remaining_sequence.map(|sequence| {
+            let content = Row::new()
+                .spacing(15)
+                .align_y(Alignment::Center)
+                .push(
+                    h4_regular(format!(
+                        "≈ {} left before first recovery path becomes available.",
+                        coins::expire_message_units(sequence).join(", ")
+                    ))
+                    .width(Length::Fill),
+                )
+                .push(
+                    icon::tooltip_icon()
+                        .size(20)
+                        .style(theme::text::secondary)
+                        .width(Length::Fixed(20.0)),
+                )
+                .width(Length::Fill);
+            home_hint(content)
+        })
+    } else {
+        let content = Row::new()
+            .push(icon::warning_fill_icon().size(ICON_SIZE_M))
+            .push(
+                h4_regular(format!(
+                    "Recovery path is or will soon be available for {} coin(s).",
+                    expiring_coins.len(),
+                ))
+                .width(Length::Fill),
+            )
+            .push(
+                button::tertiary(Some(icon::arrow_repeat()), "Reset timelock")
+                    .on_press(Message::Menu(Menu::RefreshCoins(expiring_coins.to_owned()))),
+            )
+            .spacing(15)
+            .align_y(Alignment::Center);
+        Some(home_warning(content))
+    };
+
+    let history = events.iter().fold(Column::new().spacing(10), |col, event| {
+        if event.kind != PaymentKind::SendToSelf {
+            col.push(event_list_view(event))
+        } else {
+            col
+        }
+    });
+
+    let see_more = if !is_last_page && !events.is_empty() {
+        Some(
+            Container::new(
+                Button::new(
+                    text(if processing {
+                        "Fetching ..."
+                    } else {
+                        "See more"
+                    })
+                    .width(Length::Fill)
+                    .align_x(alignment::Horizontal::Center),
+                )
+                .width(Length::Fill)
+                .padding(15)
+                .style(theme::button::transparent_border)
+                .on_press_maybe(if !processing {
+                    Some(Message::Next)
                 } else {
                     None
                 }),
+            )
+            .width(Length::Fill)
+            .style(theme::card::simple),
+        )
+    } else {
+        None
+    };
+    Column::new()
+        .push(h3("Balance"))
+        .push(balance)
+        .push_maybe(show_rescan_warning.then_some(rescan_warning()))
+        .push_maybe(expire_warning)
+        .push(
+            Column::new()
+                .spacing(10)
+                .push(h4_bold("Payments History"))
+                .push(history)
+                .push_maybe(see_more),
         )
         .spacing(20)
         .into()
@@ -264,14 +266,12 @@ fn event_list_view(event: &Payment) -> Element<'_, Message> {
                 &event.amount,
                 Message::SelectPayment(event.outpoint),
             )
-            .into()
         } else {
             event::unconfirmed_incoming_event(
                 label,
                 &event.amount,
                 Message::SelectPayment(event.outpoint),
             )
-            .into()
         }
     } else if let Some(t) = event.time {
         event::confirmed_outgoing_event(
@@ -280,14 +280,12 @@ fn event_list_view(event: &Payment) -> Element<'_, Message> {
             &event.amount,
             Message::SelectPayment(event.outpoint),
         )
-        .into()
     } else {
         event::unconfirmed_outgoing_event(
             label,
             &event.amount,
             Message::SelectPayment(event.outpoint),
         )
-        .into()
     }
 }
 
