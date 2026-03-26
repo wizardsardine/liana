@@ -202,8 +202,8 @@ impl MavapayUnitCurrency {
     }
 }
 
-impl From<MavapayUnitCurrency> for MavapayCurrency {
-    fn from(value: MavapayUnitCurrency) -> Self {
+impl From<&'_ MavapayUnitCurrency> for MavapayCurrency {
+    fn from(value: &MavapayUnitCurrency) -> Self {
         match value {
             MavapayUnitCurrency::KenyanShillingCent => MavapayCurrency::KenyanShilling,
             MavapayUnitCurrency::SouthAfricanRandCent => MavapayCurrency::SouthAfricanRand,
@@ -219,7 +219,7 @@ impl std::fmt::Display for MavapayUnitCurrency {
             MavapayUnitCurrency::KenyanShillingCent => write!(f, "Kenyan Cents"),
             MavapayUnitCurrency::SouthAfricanRandCent => write!(f, "South African Cents"),
             MavapayUnitCurrency::NigerianNairaKobo => write!(f, "Nigerian Kobos"),
-            MavapayUnitCurrency::BitcoinSatoshi => write!(f, "Bitcoin Satoshis"),
+            MavapayUnitCurrency::BitcoinSatoshi => write!(f, "Bitcoin (Sats)"),
         }
     }
 }

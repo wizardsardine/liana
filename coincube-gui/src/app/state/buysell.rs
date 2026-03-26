@@ -682,11 +682,8 @@ impl State for BuySellPanel {
             BuySellFlowState::Mavapay(m)
                 if matches!(m.steps.last(), Some(MavapayFlowStep::BuyInputFrom { .. })) =>
             {
-                iced::time::every(std::time::Duration::from_secs(30)).map(|_| {
-                    Message::View(view::Message::BuySell(view::BuySellMessage::Mavapay(
-                        MavapayMessage::GetPrice,
-                    )))
-                })
+                iced::time::every(std::time::Duration::from_secs(30))
+                    .map(|_| Message::View(MavapayMessage::GetPrice.into()))
             }
             // SSE stream for transaction status updates during checkout
             BuySellFlowState::Mavapay(m) => {
