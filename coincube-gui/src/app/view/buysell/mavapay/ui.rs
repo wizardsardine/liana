@@ -607,6 +607,7 @@ fn note_item<'a>(content: &'a str) -> widget::Row<'a, BuySellMessage, theme::The
     .align_y(Alignment::Center)
 }
 
+// TODO: This widget needs a general touch-up
 fn order_success_view<'a>(
     order: &'a GetOrderResponse,
     sats: u64,
@@ -1110,7 +1111,7 @@ fn checkout_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMessa
                     }
                     BuyOrSell::Sell => {
                         let can_fulfil_sell_order = liquid_balance
-                            .map(|s| s > quote.amount_in_source_currency)
+                            .map(|s| s > quote.total_amount_in_source_currency)
                             .unwrap_or(false);
 
                         widget::column![

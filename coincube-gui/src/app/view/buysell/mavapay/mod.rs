@@ -24,10 +24,11 @@ pub enum MavapayFlowStep {
         sending_quote: bool,
     },
     Checkout {
-        liquid_balance: Option<u64>,
         quote: GetQuoteResponse,
         fulfilled_order: Option<GetOrderResponse>,
         invoice_qr_code_data: Option<iced::widget::qr_code::Data>,
+        liquid_balance: Option<u64>,
+        fulfilling_ln_invoice: bool,
         /// Order ID for SSE transaction status updates
         stream_order_id: Option<String>,
     },
@@ -270,6 +271,7 @@ impl MavapayState {
                                 fulfilled_order: None,
                                 stream_order_id: Some(order_id),
                                 liquid_balance: None,
+                                fulfilling_ln_invoice: false,
                             });
                         } else {
                             return Some(iced::Task::done(view::Message::BuySell(
@@ -501,6 +503,7 @@ impl MavapayState {
                             fulfilled_order: None,
                             stream_order_id: Some(order_id),
                             liquid_balance,
+                            fulfilling_ln_invoice: false,
                         });
                     } else {
                         return Some(iced::Task::done(view::Message::BuySell(
@@ -519,6 +522,7 @@ impl MavapayState {
                     quote,
                     fulfilled_order,
                     stream_order_id,
+                    fulfilling_ln_invoice,
                     ..
                 },
                 msg,
@@ -528,6 +532,8 @@ impl MavapayState {
                         let client = self.breez_client.clone();
                         let invoice = quote.invoice.clone();
                         let amount = quote.total_amount_in_source_currency;
+
+                        *fulfilling_ln_invoice = true;
 
                         return Some(iced::Task::perform(
                             async move { client.pay_invoice(invoice, Some(amount)).await },
@@ -542,6 +548,16 @@ impl MavapayState {
                             },
                         ));
                     }
+                }
+                MavapayMessage::SellInvoiceFulfilled(payment) => {
+                    *fulfilling_ln_invoice = false;
+
+                    let msg = format!(
+                        "[LIQUID] Successfully satisfied invoice for {} SATS, TXID = {:?}",
+                        payment.amount_sat, payment.tx_id
+                    );
+
+                    return Some(iced::Task::done(view::Message::ShowSuccess(msg)));
                 }
 
                 MavapayMessage::WriteInvoiceToClipboard => {

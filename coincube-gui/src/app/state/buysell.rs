@@ -349,6 +349,12 @@ impl State for BuySellPanel {
                         Some(MavapayFlowStep::OrderDetail { loading, .. }) => {
                             *loading = false;
                         }
+                        Some(MavapayFlowStep::Checkout {
+                            fulfilling_ln_invoice,
+                            ..
+                        }) => {
+                            *fulfilling_ln_invoice = false;
+                        }
                         _ => {}
                     }
                 }
