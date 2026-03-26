@@ -1003,8 +1003,10 @@ pub fn create_app_with_remote_backend(
             node_bitcoind_last_log: None,
             vault_expanded: false,
             liquid_expanded: false,
+            p2p_expanded: false,
             usdt_expanded: false,
             has_vault: true,
+            has_p2p: false, // Set later by App::new based on mnemonic availability
         },
         Arc::new(
             Wallet::new(wallet.descriptor)

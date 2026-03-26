@@ -32,3 +32,11 @@ pub fn success(theme: &Theme) -> Style {
 pub fn warning(theme: &Theme) -> Style {
     pill(&theme.colors.pills.warning)
 }
+
+pub fn error(theme: &Theme) -> Style {
+    pill(&theme.colors.pills.error)
+}
+
+pub fn info(theme: &Theme) -> Style {
+    pill(&theme.colors.pills.info)
+}

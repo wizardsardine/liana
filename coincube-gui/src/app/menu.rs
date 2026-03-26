@@ -7,7 +7,16 @@ pub enum Menu {
     Usdt(UsdtSubMenu),
     Vault(VaultSubMenu),
     BuySell,
+    P2P(P2PSubMenu),
     Settings(SettingsSubMenu),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum P2PSubMenu {
+    Overview,
+    MyTrades,
+    CreateOrder,
+    Settings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -38,6 +38,17 @@ pub fn foreground(theme: &Theme) -> Style {
     }
 }
 
+pub fn foreground_rounded(theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(theme.colors.general.foreground)),
+        border: iced::Border {
+            radius: 25.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
 pub fn border(theme: &Theme) -> Style {
     Style {
         background: Some(Background::Color(theme.colors.general.background)),

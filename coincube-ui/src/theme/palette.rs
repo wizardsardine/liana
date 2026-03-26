@@ -105,6 +105,8 @@ pub struct Pills {
     pub primary: ContainerPalette,
     pub success: ContainerPalette,
     pub warning: ContainerPalette,
+    pub error: ContainerPalette,
+    pub info: ContainerPalette,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -497,14 +499,24 @@ impl std::default::Default for Palette {
                     border: color::GREY_3.into(),
                 },
                 warning: ContainerPalette {
-                    background: color::RED,
-                    text: color::BLACK.into(),
-                    border: color::RED.into(),
+                    background: color::WARN_ORANGE,
+                    text: color::WHITE.into(),
+                    border: Some(color::WARN_ORANGE),
                 },
                 success: ContainerPalette {
-                    background: color::GREEN,
-                    text: color::BLACK.into(),
-                    border: color::GREEN.into(),
+                    background: color::SUCCESS_GREEN,
+                    text: color::WHITE.into(),
+                    border: Some(color::SUCCESS_GREEN),
+                },
+                error: ContainerPalette {
+                    background: color::ERROR_RED,
+                    text: color::WHITE.into(),
+                    border: Some(color::ERROR_RED),
+                },
+                info: ContainerPalette {
+                    background: color::INFO_BLUE,
+                    text: color::WHITE.into(),
+                    border: Some(color::INFO_BLUE),
                 },
             },
             notifications: Notifications {

@@ -65,6 +65,9 @@ toml = "0.9"
 rand = "0.8"
 
 chrono = "0.4.38"
+mostro-core = "0.7"
+nostr-sdk = { version = "0.43.0", features = ["nip06", "nip59"] }
+bip39 = { version = "2.1.0", features = ["rand"] }
 uuid = { version = "1.10", features = ["v4", "serde"] }
 argon2 = { version = "0.5", features = ["std"] }
 

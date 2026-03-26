@@ -311,6 +311,18 @@ pub fn invoice_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F86F}')
 }
 
+pub fn star_fill_icon() -> Text<'static> {
+    bootstrap_icon('\u{F586}')
+}
+
+pub fn calendar_icon() -> Text<'static> {
+    bootstrap_icon('\u{F1F4}')
+}
+
+pub fn chat_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F268}')
+}
+
 pub fn usd_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F636}')
 }

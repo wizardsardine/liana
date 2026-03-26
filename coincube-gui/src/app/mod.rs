@@ -60,6 +60,7 @@ struct Panels {
     current: Menu,
     vault_expanded: bool,
     liquid_expanded: bool,
+    p2p_expanded: bool,
     usdt_expanded: bool,
     // Always available panels
     global_home: GlobalHome,
@@ -84,6 +85,7 @@ struct Panels {
     vault_settings: Option<VaultSettingsState>,
     // remaining panels
     buy_sell: Option<crate::app::view::buysell::BuySellPanel>,
+    p2p: Option<crate::app::view::p2p::P2PPanel>,
 }
 
 impl Panels {
@@ -101,6 +103,7 @@ impl Panels {
             current: Menu::Home,
             vault_expanded: false,
             liquid_expanded: false,
+            p2p_expanded: false,
             usdt_expanded: false,
             // Liquid panels always available (use BreezClient, not Vault wallet)
             global_home: if let Some(w) = &wallet {
@@ -154,7 +157,20 @@ impl Panels {
             receive: None,
             create_spend: None,
             vault_settings: None,
+            // remaining panels
             buy_sell: None,
+            p2p: match breez_client
+                .liquid_signer()
+                .map(|s| s.lock().expect("signer lock").mnemonic_str())
+            {
+                Some(mnemonic) if !mnemonic.is_empty() => {
+                    Some(crate::app::view::p2p::P2PPanel::new(None, mnemonic))
+                }
+                _ => {
+                    log::warn!("P2P panel disabled: no mnemonic available from liquid signer");
+                    None
+                }
+            },
         }
     }
 
@@ -181,6 +197,7 @@ impl Panels {
             current: Menu::Home,
             vault_expanded: false,
             liquid_expanded: false,
+            p2p_expanded: false,
             usdt_expanded: false,
             global_home: GlobalHome::new(
                 wallet.clone(),
@@ -278,9 +295,21 @@ impl Panels {
             )),
             buy_sell: Some(crate::app::view::buysell::BuySellPanel::new(
                 cache.network,
-                wallet,
-                breez_client,
+                wallet.clone(),
+                breez_client.clone(),
             )),
+            p2p: match breez_client
+                .liquid_signer()
+                .map(|s| s.lock().expect("signer lock").mnemonic_str())
+            {
+                Some(mnemonic) if !mnemonic.is_empty() => {
+                    Some(crate::app::view::p2p::P2PPanel::new(Some(wallet), mnemonic))
+                }
+                _ => {
+                    log::warn!("P2P panel disabled: no mnemonic available from liquid signer");
+                    None
+                }
+            },
         }
     }
 
@@ -409,6 +438,7 @@ impl Panels {
                 }
             },
             Menu::BuySell => self.buy_sell.as_ref().map(|v| v as &dyn State),
+            Menu::P2P(_) => self.p2p.as_ref().map(|v| v as &dyn State),
             Menu::Settings(_) => Some(&self.global_settings as &dyn State),
         }
     }
@@ -458,6 +488,7 @@ impl Panels {
                 }
             },
             Menu::BuySell => self.buy_sell.as_mut().map(|v| v as &mut dyn State),
+            Menu::P2P(_) => self.p2p.as_mut().map(|v| v as &mut dyn State),
             Menu::Settings(_) => Some(&mut self.global_settings as &mut dyn State),
         }
     }
@@ -588,6 +619,7 @@ impl App {
         let cmd = Task::batch(tasks);
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
+        cache_with_vault.has_p2p = panels.p2p.is_some();
         (
             Self {
                 panels,
@@ -643,6 +675,8 @@ impl App {
             network,
             cube_settings.id.clone(),
         );
+        let mut cache = cache;
+        cache.has_p2p = panels.p2p.is_some();
 
         let cmd = panels.global_home.reload(None, None);
 
@@ -944,6 +978,14 @@ impl App {
                 .subscription(),
         );
 
+        // Keep P2P subscription alive even when another panel is active,
+        // so trade updates and DMs are not lost while navigating elsewhere.
+        if !matches!(self.panels.current, Menu::P2P(_)) {
+            if let Some(p2p) = self.panels.p2p.as_ref() {
+                subscriptions.push(p2p.subscription());
+            }
+        }
+
         // Stream the pending internal bitcoind's debug.log for UpdateTip lines.
         if let Some(pending_cfg) = self
             .daemon
@@ -1077,6 +1119,12 @@ impl App {
                 // Redirect ShowError to ShowToast with Error level
                 return self.update(Message::View(view::Message::ShowToast(
                     log::Level::Error,
+                    msg,
+                )));
+            }
+            Message::View(view::Message::ShowSuccess(msg)) => {
+                return self.update(Message::View(view::Message::ShowToast(
+                    log::Level::Info,
                     msg,
                 )));
             }
@@ -1387,21 +1435,41 @@ impl App {
             Message::View(view::Message::ToggleVault) => {
                 self.panels.vault_expanded = !self.panels.vault_expanded;
                 self.cache.vault_expanded = self.panels.vault_expanded;
-                // If we're expanding Vault, collapse Liquid and USDt
+
+                // If we're expanding Vault, collapse Liquid, USDt and P2P
                 if self.panels.vault_expanded {
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
                     self.panels.usdt_expanded = false;
                     self.cache.usdt_expanded = false;
+                    self.panels.p2p_expanded = false;
+                    self.cache.p2p_expanded = false;
                 }
             }
             Message::View(view::Message::ToggleLiquid) => {
                 self.panels.liquid_expanded = !self.panels.liquid_expanded;
                 self.cache.liquid_expanded = self.panels.liquid_expanded;
-                // If we're expanding Liquid, collapse Vault and USDt
+
+                // If we're expanding Liquid, collapse Vault, USDt and P2P
                 if self.panels.liquid_expanded {
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
+                    self.panels.usdt_expanded = false;
+                    self.cache.usdt_expanded = false;
+                    self.panels.p2p_expanded = false;
+                    self.cache.p2p_expanded = false;
+                }
+            }
+            Message::View(view::Message::ToggleP2P) => {
+                self.panels.p2p_expanded = !self.panels.p2p_expanded;
+                self.cache.p2p_expanded = self.panels.p2p_expanded;
+
+                // If we're expanding P2P, collapse Vault, Liquid and USDt
+                if self.panels.p2p_expanded {
+                    self.panels.vault_expanded = false;
+                    self.cache.vault_expanded = false;
+                    self.panels.liquid_expanded = false;
+                    self.cache.liquid_expanded = false;
                     self.panels.usdt_expanded = false;
                     self.cache.usdt_expanded = false;
                 }
@@ -1409,12 +1477,15 @@ impl App {
             Message::View(view::Message::ToggleUsdt) => {
                 self.panels.usdt_expanded = !self.panels.usdt_expanded;
                 self.cache.usdt_expanded = self.panels.usdt_expanded;
+
                 // If we're expanding USDt, collapse Liquid and Vault
                 if self.panels.usdt_expanded {
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
+                    self.panels.p2p_expanded = false;
+                    self.cache.p2p_expanded = false;
                 }
             }
             Message::View(view::Message::OpenUrl(url)) => {
@@ -1611,6 +1682,13 @@ impl App {
                 }
             }
 
+            // Route P2P messages directly to the P2P panel regardless of active menu,
+            // so real-time trade updates are processed even when viewing other panels.
+            msg @ Message::View(view::Message::P2P(_)) => {
+                if let Some(p2p) = self.panels.p2p.as_mut() {
+                    return p2p.update(self.daemon.clone(), &self.cache, msg);
+                }
+            }
             msg => {
                 if let (Some(daemon), Some(panel)) =
                     (self.daemon.clone(), self.panels.current_mut())
