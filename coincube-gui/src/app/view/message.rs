@@ -503,7 +503,6 @@ pub enum ConnectAccountMessage {
 #[derive(Debug, Clone)]
 pub enum ConnectCubeMessage {
     LnUsernameChanged(String),
-    CheckLnUsername,
     LnUsernameChecked {
         available: bool,
         error_message: Option<String>,

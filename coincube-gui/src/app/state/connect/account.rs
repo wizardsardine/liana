@@ -205,6 +205,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::LogOut => {
+                let was_logged_in = self.user.is_some();
                 self.session_generation += 1;
                 self.user = None;
                 self.plan = None;
@@ -216,9 +217,13 @@ impl ConnectAccountPanel {
                     email: String::new(),
                     loading: false,
                 };
-                return iced::Task::done(Message::View(view::Message::BuySell(
-                    view::BuySellMessage::LogOut,
-                )));
+                // Only notify BuySell if this logout originated here (not
+                // forwarded back from BuySell) to avoid a redundant cycle.
+                if was_logged_in {
+                    return iced::Task::done(Message::View(view::Message::BuySell(
+                        view::BuySellMessage::LogOut,
+                    )));
+                }
             }
 
             ConnectAccountMessage::EmailChanged(email) => match &mut self.step {

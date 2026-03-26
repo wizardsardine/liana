@@ -233,8 +233,6 @@ impl ConnectCubePanel {
                 return task;
             }
 
-            ConnectCubeMessage::CheckLnUsername => {}
-
             ConnectCubeMessage::LnUsernameChecked {
                 available,
                 error_message,
