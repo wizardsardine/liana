@@ -163,6 +163,7 @@ impl State for BuySellPanel {
                 self.step = BuySellFlowState::ModeSelect { buy_or_sell: None };
             }
             view::BuySellMessage::LogOut => {
+                let was_logged_in = self.login.is_some();
                 self.login = None;
 
                 // clear shared Connect global keyring
@@ -185,10 +186,13 @@ impl State for BuySellPanel {
                     loading: false,
                 };
 
-                // notify Connect module so it clears its in-memory session too
-                return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                    view::ConnectAccountMessage::LogOut,
-                )));
+                // notify Connect module so it clears its in-memory session too,
+                // but only if this logout originated here (not forwarded from Connect)
+                if was_logged_in {
+                    return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                        view::ConnectAccountMessage::LogOut,
+                    )));
+                }
             }
 
             // Forward clipboard action to parent message handler

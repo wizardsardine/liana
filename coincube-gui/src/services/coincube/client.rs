@@ -255,10 +255,10 @@ impl CoincubeClient {
         username: &str,
     ) -> Result<super::CheckUsernameResponse, CoincubeError> {
         let url = format!(
-            "{}/api/v1/connect/cubes/{}/lightning-address/check?username={}",
-            self.base_url, cube_id, username
+            "{}/api/v1/connect/cubes/{}/lightning-address/check",
+            self.base_url, cube_id
         );
-        let res = self.client.get(&url).send().await?;
+        let res = self.client.get(&url).query(&[("username", username)]).send().await?;
         let status = res.status();
         let body = res.text().await.map_err(CoincubeError::Network)?;
 

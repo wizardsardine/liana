@@ -216,6 +216,9 @@ impl ConnectAccountPanel {
                     email: String::new(),
                     loading: false,
                 };
+                return iced::Task::done(Message::View(view::Message::BuySell(
+                    view::BuySellMessage::LogOut,
+                )));
             }
 
             ConnectAccountMessage::EmailChanged(email) => match &mut self.step {
