@@ -629,7 +629,7 @@ fn order_success_view<'a>(
         widget::Space::new().height(10),
         widget::container(widget::column![
             card::simple(
-                widget::column![widget::row![
+                widget::row![
                     success_icon_badge(),
                     widget::Space::new().width(15),
                     widget::column![
@@ -637,9 +637,7 @@ fn order_success_view<'a>(
                         text::p2_medium(subtitle).color(color::GREY_2)
                     ]
                 ]
-                .align_y(Alignment::Center)]
-                .width(Length::Fill)
-                .padding(20)
+                .align_y(Alignment::Center)
             )
             .width(Length::Fill),
             widget::Space::new().height(10),
