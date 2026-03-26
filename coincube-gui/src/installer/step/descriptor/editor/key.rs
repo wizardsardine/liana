@@ -119,6 +119,7 @@ pub enum SelectKeySourceMessage {
     FetchFromHotSigner(ChildNumber),
     SelectEnterSafetyNetToken,
     SelectEnterCosignerToken,
+    SelectBorderWalletSafetyNet,
     PasteToken,
     Token(String),
     Previous,
@@ -1040,6 +1041,8 @@ impl SelectKeySource {
             .safety_net_enabled()
             .then_some(self.widget_paste_safety_net_token());
 
+        let border_wallet = Some(self.widget_border_wallet_safety_net());
+
         let cosigner_token = self
             .cosigner_enabled()
             .then_some(self.widget_paste_cosigner_token());
@@ -1073,6 +1076,7 @@ impl SelectKeySource {
                 .push(paste_xpub)
                 .push(hot_signer)
                 .push(cosigner_token)
+                .push(border_wallet)
                 .push(safety_net_token);
         }
         col.into()
@@ -1151,6 +1155,7 @@ impl SelectKeySource {
             KeySource::HotSigner => icon::round_key_icon().color(color::RED),
             KeySource::Manual => icon::round_key_icon(),
             KeySource::Token(..) => icon::hdd_icon(),
+            KeySource::BorderWallet => icon::round_key_icon(),
         };
         let message = if let KeySource::Token(kind, _) = source {
             if !self.actual_path.token_kind.contains(&kind) {
@@ -1203,6 +1208,15 @@ impl SelectKeySource {
             Some(|xpub| Self::route(SelectKeySourceMessage::Xpub(xpub))),
             Some(|| Self::route(SelectKeySourceMessage::PasteXpub)),
             || Self::route(SelectKeySourceMessage::SelectEnterXpub),
+        )
+    }
+    fn widget_border_wallet_safety_net(&self) -> Element<Message> {
+        modal::button_entry(
+            Some(icon::round_key_icon()),
+            "Border Wallet",
+            Some("Derive a key from a visual grid pattern"),
+            None,
+            Some(|| Self::route(SelectKeySourceMessage::SelectBorderWalletSafetyNet)),
         )
     }
     fn widget_paste_safety_net_token(&self) -> Element<Message> {
@@ -1287,6 +1301,14 @@ impl super::DescriptorEditModal for SelectKeySource {
                 }
                 SelectKeySourceMessage::SelectEnterSafetyNetToken => {
                     self.on_select_enter_safety_net_token()
+                }
+                SelectKeySourceMessage::SelectBorderWalletSafetyNet => {
+                    // Emit message to DefineDescriptor to swap modal to BorderWalletWizard
+                    Task::done(Message::DefineDescriptor(
+                        message::DefineDescriptor::OpenBorderWalletWizard(
+                            self.actual_path.coordinates.clone(),
+                        ),
+                    ))
                 }
                 SelectKeySourceMessage::PasteToken => self.on_paste_token(),
                 SelectKeySourceMessage::Token(token) => self.on_update_token(token),

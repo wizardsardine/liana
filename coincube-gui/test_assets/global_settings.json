@@ -76,5 +76,6 @@
   "window_config": {
     "width": 1248.0,
     "height": 688.0
-  }
+  },
+  "developer_mode": false
 }

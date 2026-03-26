@@ -258,7 +258,12 @@ impl CoincubeClient {
             "{}/api/v1/connect/cubes/{}/lightning-address/check",
             self.base_url, cube_id
         );
-        let res = self.client.get(&url).query(&[("username", username)]).send().await?;
+        let res = self
+            .client
+            .get(&url)
+            .query(&[("username", username)])
+            .send()
+            .await?;
         let status = res.status();
         let body = res.text().await.map_err(CoincubeError::Network)?;
 

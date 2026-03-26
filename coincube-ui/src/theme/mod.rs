@@ -52,6 +52,16 @@ impl iced::theme::Base for Theme {
     }
 }
 
+impl iced::widget::combo_box::Catalog for Theme {
+    fn default_input<'a>() -> <Self as iced::widget::text_input::Catalog>::Class<'a> {
+        <Self as iced::widget::text_input::Catalog>::default()
+    }
+
+    fn default_menu<'a>() -> <Self as iced::widget::overlay::menu::Catalog>::Class<'a> {
+        <Self as iced::widget::overlay::menu::Catalog>::default()
+    }
+}
+
 impl iced_aw::style::number_input::Catalog for Theme {
     type Class<'a> = ();
 

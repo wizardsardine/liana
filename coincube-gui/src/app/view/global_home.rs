@@ -1313,7 +1313,7 @@ pub fn transfer_successful_view<'a>(
                 .push(
                     Row::new().spacing(5).push(
                         text(
-                            if matches!(direction, TransferDirection::LiquidToVault)
+                            (if matches!(direction, TransferDirection::LiquidToVault)
                                 && pending_vault_incoming
                                     .map(|p| p.stage != IncomingTransferStage::Completed)
                                     .unwrap_or(false)
@@ -1335,7 +1335,8 @@ pub fn transfer_successful_view<'a>(
                                         "Liquid"
                                     }
                                 )
-                            },
+                            })
+                            .to_string(),
                         )
                         .size(20),
                     ),

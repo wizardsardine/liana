@@ -39,6 +39,8 @@ pub struct Cache {
     pub vault_expanded: bool,
     /// UI state: whether the Liquid submenu is expanded
     pub liquid_expanded: bool,
+    /// UI state: whether the P2P submenu is expanded
+    pub p2p_expanded: bool,
     /// UI state: whether the USDt submenu is expanded
     pub usdt_expanded: bool,
     /// UI state: whether the Connect submenu is expanded
@@ -49,6 +51,8 @@ pub struct Cache {
     pub has_vault: bool,
     /// Display name of the current Cube
     pub cube_name: String,
+    /// Whether the P2P panel is available (requires a valid mnemonic)
+    pub has_p2p: bool,
 }
 
 /// only used for tests.
@@ -66,11 +70,13 @@ impl std::default::Default for Cache {
             bitcoin_unit: BitcoinDisplayUnit::default(),
             vault_expanded: true,
             liquid_expanded: false,
+            p2p_expanded: false,
             usdt_expanded: false,
             connect_expanded: false,
             connect_authenticated: false,
             has_vault: false,
             cube_name: String::new(),
+            has_p2p: false,
         }
     }
 }

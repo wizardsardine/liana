@@ -19,7 +19,7 @@ use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
 pub use coincube_core::miniscript::bitcoin;
-use coincube_ui::{component::network_banner, widget::Element};
+use coincube_ui::{component::network_banner, theme as ui_theme, widget::Element};
 pub use coincubed::{
     commands::CoinStatus,
     config::{BitcoindRpcAuth, Config as DaemonConfig},
@@ -60,6 +60,7 @@ struct Panels {
     current: Menu,
     vault_expanded: bool,
     liquid_expanded: bool,
+    p2p_expanded: bool,
     usdt_expanded: bool,
     connect_expanded: bool,
     // Always available panels
@@ -86,6 +87,7 @@ struct Panels {
     // remaining panels
     buy_sell: Option<crate::app::view::buysell::BuySellPanel>,
     connect: ConnectPanel,
+    p2p: Option<crate::app::view::p2p::P2PPanel>,
 }
 
 impl Panels {
@@ -105,6 +107,7 @@ impl Panels {
             current: Menu::Home,
             vault_expanded: false,
             liquid_expanded: false,
+            p2p_expanded: false,
             usdt_expanded: false,
             connect_expanded: false,
             // Liquid panels always available (use BreezClient, not Vault wallet)
@@ -159,6 +162,7 @@ impl Panels {
             receive: None,
             create_spend: None,
             vault_settings: None,
+            // remaining panels
             buy_sell: None,
             connect: ConnectPanel::new(
                 breez_client.clone(),
@@ -166,6 +170,18 @@ impl Panels {
                 cube_name,
                 cube_network,
             ),
+            p2p: match breez_client
+                .liquid_signer()
+                .map(|s| s.lock().expect("signer lock").mnemonic_str())
+            {
+                Some(mnemonic) if !mnemonic.is_empty() => {
+                    Some(crate::app::view::p2p::P2PPanel::new(None, mnemonic))
+                }
+                _ => {
+                    log::warn!("P2P panel disabled: no mnemonic available from liquid signer");
+                    None
+                }
+            },
         }
     }
 
@@ -194,6 +210,7 @@ impl Panels {
             current: Menu::Home,
             vault_expanded: false,
             liquid_expanded: false,
+            p2p_expanded: false,
             usdt_expanded: false,
             connect_expanded: false,
             global_home: GlobalHome::new(
@@ -298,9 +315,21 @@ impl Panels {
             ),
             buy_sell: Some(crate::app::view::buysell::BuySellPanel::new(
                 cache.network,
-                wallet,
-                breez_client,
+                wallet.clone(),
+                breez_client.clone(),
             )),
+            p2p: match breez_client
+                .liquid_signer()
+                .map(|s| s.lock().expect("signer lock").mnemonic_str())
+            {
+                Some(mnemonic) if !mnemonic.is_empty() => {
+                    Some(crate::app::view::p2p::P2PPanel::new(Some(wallet), mnemonic))
+                }
+                _ => {
+                    log::warn!("P2P panel disabled: no mnemonic available from liquid signer");
+                    None
+                }
+            },
         }
     }
 
@@ -430,6 +459,7 @@ impl Panels {
             },
             Menu::BuySell => self.buy_sell.as_ref().map(|v| v as &dyn State),
             Menu::Connect(_) => Some(&self.connect as &dyn State),
+            Menu::P2P(_) => self.p2p.as_ref().map(|v| v as &dyn State),
             Menu::Settings(_) => Some(&self.global_settings as &dyn State),
         }
     }
@@ -480,6 +510,7 @@ impl Panels {
             },
             Menu::BuySell => self.buy_sell.as_mut().map(|v| v as &mut dyn State),
             Menu::Connect(_) => Some(&mut self.connect as &mut dyn State),
+            Menu::P2P(_) => self.p2p.as_mut().map(|v| v as &mut dyn State),
             Menu::Settings(_) => Some(&mut self.global_settings as &mut dyn State),
         }
     }
@@ -506,7 +537,7 @@ pub struct App {
     config: Arc<Config>,
     datadir: CoincubeDirectory,
     panels: Panels,
-    errors: std::collections::BinaryHeap<(usize, std::time::Instant, String)>,
+    errors: Vec<(usize, std::time::Instant, log::Level, String)>,
     current_error_id: usize,
     /// True while a check_bitcoind_sync_progress probe is in flight; prevents
     /// multiple concurrent RPC calls from piling up across subscription ticks.
@@ -620,6 +651,7 @@ impl App {
         let cmd = Task::batch(tasks);
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
+        cache_with_vault.has_p2p = panels.p2p.is_some();
         (
             Self {
                 panels,
@@ -631,7 +663,7 @@ impl App {
                 cube_settings,
                 config: config_arc,
                 datadir: data_dir,
-                errors: std::collections::BinaryHeap::with_capacity(8),
+                errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
             },
@@ -678,6 +710,8 @@ impl App {
             cube_settings.name.clone(),
             network_api_string(network),
         );
+        let mut cache = cache;
+        cache.has_p2p = panels.p2p.is_some();
 
         let cmd = panels.global_home.reload(None, None);
 
@@ -692,7 +726,7 @@ impl App {
                 cube_settings,
                 config: config_arc,
                 datadir,
-                errors: std::collections::BinaryHeap::with_capacity(8),
+                errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
             },
@@ -1002,6 +1036,14 @@ impl App {
                 .subscription(),
         );
 
+        // Keep P2P subscription alive even when another panel is active,
+        // so trade updates and DMs are not lost while navigating elsewhere.
+        if !matches!(self.panels.current, Menu::P2P(_)) {
+            if let Some(p2p) = self.panels.p2p.as_ref() {
+                subscriptions.push(p2p.subscription());
+            }
+        }
+
         // Stream the pending internal bitcoind's debug.log for UpdateTip lines.
         if let Some(pending_cfg) = self
             .daemon
@@ -1132,8 +1174,22 @@ impl App {
                 self.errors.retain(|(i, ..)| *i != id);
             }
             Message::View(view::Message::ShowError(msg)) => {
+                // Redirect ShowError to ShowToast with Error level
+                return self.update(Message::View(view::Message::ShowToast(
+                    log::Level::Error,
+                    msg,
+                )));
+            }
+            Message::View(view::Message::ShowSuccess(msg)) => {
+                return self.update(Message::View(view::Message::ShowToast(
+                    log::Level::Info,
+                    msg,
+                )));
+            }
+            Message::View(view::Message::ShowToast(level, msg)) => {
+                // Show toast with specified level
                 self.errors
-                    .push((self.current_error_id, std::time::Instant::now(), msg));
+                    .push((self.current_error_id, std::time::Instant::now(), level, msg));
                 self.current_error_id += 1;
 
                 let id = self.current_error_id - 1;
@@ -1437,6 +1493,8 @@ impl App {
             Message::View(view::Message::ToggleVault) => {
                 self.panels.vault_expanded = !self.panels.vault_expanded;
                 self.cache.vault_expanded = self.panels.vault_expanded;
+
+                // If we're expanding Vault, collapse Liquid, USDt and P2P
                 if self.panels.vault_expanded {
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
@@ -1444,11 +1502,15 @@ impl App {
                     self.cache.usdt_expanded = false;
                     self.panels.connect_expanded = false;
                     self.cache.connect_expanded = false;
+                    self.panels.p2p_expanded = false;
+                    self.cache.p2p_expanded = false;
                 }
             }
             Message::View(view::Message::ToggleLiquid) => {
                 self.panels.liquid_expanded = !self.panels.liquid_expanded;
                 self.cache.liquid_expanded = self.panels.liquid_expanded;
+
+                // If we're expanding Liquid, collapse Vault, USDt and P2P
                 if self.panels.liquid_expanded {
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
@@ -1456,11 +1518,29 @@ impl App {
                     self.cache.usdt_expanded = false;
                     self.panels.connect_expanded = false;
                     self.cache.connect_expanded = false;
+                    self.panels.p2p_expanded = false;
+                    self.cache.p2p_expanded = false;
+                }
+            }
+            Message::View(view::Message::ToggleP2P) => {
+                self.panels.p2p_expanded = !self.panels.p2p_expanded;
+                self.cache.p2p_expanded = self.panels.p2p_expanded;
+
+                // If we're expanding P2P, collapse Vault, Liquid and USDt
+                if self.panels.p2p_expanded {
+                    self.panels.vault_expanded = false;
+                    self.cache.vault_expanded = false;
+                    self.panels.liquid_expanded = false;
+                    self.cache.liquid_expanded = false;
+                    self.panels.usdt_expanded = false;
+                    self.cache.usdt_expanded = false;
                 }
             }
             Message::View(view::Message::ToggleUsdt) => {
                 self.panels.usdt_expanded = !self.panels.usdt_expanded;
                 self.cache.usdt_expanded = self.panels.usdt_expanded;
+
+                // If we're expanding USDt, collapse Liquid and Vault
                 if self.panels.usdt_expanded {
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
@@ -1468,6 +1548,8 @@ impl App {
                     self.cache.vault_expanded = false;
                     self.panels.connect_expanded = false;
                     self.cache.connect_expanded = false;
+                    self.panels.p2p_expanded = false;
+                    self.cache.p2p_expanded = false;
                 }
             }
             Message::View(view::Message::ToggleConnect) => {
@@ -1696,6 +1778,13 @@ impl App {
                 }
             }
 
+            // Route P2P messages directly to the P2P panel regardless of active menu,
+            // so real-time trade updates are processed even when viewing other panels.
+            msg @ Message::View(view::Message::P2P(_)) => {
+                if let Some(p2p) = self.panels.p2p.as_mut() {
+                    return p2p.update(self.daemon.clone(), &self.cache, msg);
+                }
+            }
             msg => {
                 if let (Some(daemon), Some(panel)) =
                     (self.daemon.clone(), self.panels.current_mut())
@@ -1788,18 +1877,27 @@ impl App {
             view.map(Message::View)
         };
 
-        // Overlay error toast at bottom if present
+        // Overlay toast at bottom if present
         match self.errors.is_empty() {
             true => content,
-            false => iced::widget::Stack::new()
-                .push(content)
-                .push(
-                    view::error_toast_overlay(
-                        self.errors.iter().map(|(id, _, msg)| (*id, msg.as_str())),
+            false => {
+                // Errors are already in chronological order (Vec is append-only)
+                let error_snapshot: Vec<_> = self.errors.iter().collect();
+
+                let theme = ui_theme::Theme::default();
+                iced::widget::Stack::new()
+                    .push(content)
+                    .push(
+                        view::toast_overlay(
+                            error_snapshot
+                                .iter()
+                                .map(|(id, _, level, msg)| (*id, *level, msg.as_str())),
+                            &theme,
+                        )
+                        .map(Message::View),
                     )
-                    .map(Message::View),
-                )
-                .into(),
+                    .into()
+            }
         }
     }
 

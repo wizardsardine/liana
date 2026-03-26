@@ -8,6 +8,7 @@ pub enum Menu {
     Vault(VaultSubMenu),
     BuySell,
     Connect(ConnectSubMenu),
+    P2P(P2PSubMenu),
     Settings(SettingsSubMenu),
 }
 
@@ -20,6 +21,14 @@ pub enum ConnectSubMenu {
     Security,
     Duress,
     Invites,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum P2PSubMenu {
+    Overview,
+    MyTrades,
+    CreateOrder,
+    Settings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

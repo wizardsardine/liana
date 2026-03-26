@@ -47,7 +47,6 @@ pub trait Close {
 #[derive(Debug, Clone)]
 pub enum VaultReceiveMessage {
     Copy(String),
-    ClearToast,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +57,7 @@ pub enum Message {
     Menu(Menu),
     ToggleVault,
     ToggleLiquid,
+    ToggleP2P,
     SetupVault,
     Close,
     Select(usize),
@@ -95,12 +95,15 @@ pub enum Message {
     LiquidSettings(LiquidSettingsMessage),
     PreselectPayment(Payment),
     ShowError(String),
+    ShowSuccess(String),
+    ShowToast(log::Level, String),
     DismissToast(usize),
     UsdtOverview(UsdtOverviewMessage),
     ToggleUsdt,
     ConnectAccount(ConnectAccountMessage),
     ConnectCube(ConnectCubeMessage),
     ToggleConnect,
+    P2P(P2PMessage),
 }
 
 impl Close for Message {
@@ -149,9 +152,42 @@ pub enum SpendTxMessage {
     Confirm,
     Cancel,
     SelectHotSigner,
+    SelectBorderWallet(Fingerprint),
+    BorderWalletRecon(BorderWalletReconMessage),
     EditPsbt,
     PsbtEdited(String),
     Next,
+}
+
+/// Messages for the Border Wallet reconstruction wizard within the signing flow.
+#[derive(Clone)]
+pub enum BorderWalletReconMessage {
+    PhraseWordEdited(usize, String),
+    Next,
+    Previous,
+    ToggleCell(u16, u8),
+    UndoLastCell,
+    ClearPattern,
+    Cancel,
+}
+
+// Manual Debug impl to redact recovery phrase words from logs.
+impl std::fmt::Debug for BorderWalletReconMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PhraseWordEdited(idx, _) => f
+                .debug_tuple("PhraseWordEdited")
+                .field(idx)
+                .field(&"<redacted>")
+                .finish(),
+            Self::Next => write!(f, "Next"),
+            Self::Previous => write!(f, "Previous"),
+            Self::ToggleCell(r, c) => f.debug_tuple("ToggleCell").field(r).field(c).finish(),
+            Self::UndoLastCell => write!(f, "UndoLastCell"),
+            Self::ClearPattern => write!(f, "ClearPattern"),
+            Self::Cancel => write!(f, "Cancel"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -182,6 +218,7 @@ pub enum SettingsMessage {
     NodeSettings(NodeSettingsMessage),
     InstallStatsSection,
     InstallStats(InstallStatsViewMessage),
+    TestToast(log::Level),
 }
 
 #[derive(Debug, Clone)]
@@ -329,7 +366,8 @@ pub enum UsdtOverviewMessage {
 pub enum LiquidSendMessage {
     PresetAsset(crate::app::state::liquid::send::SendAsset),
     InputEdited(String),
-    InputValidated(Option<InputType>),
+    /// Carries (original_input, validation_result) so stale async results are discarded.
+    InputValidated(String, Option<InputType>),
     Send,
     History,
     SelectTransaction(usize),
@@ -378,7 +416,6 @@ pub enum SendPopupMessage {
 pub enum LiquidReceiveMessage {
     ToggleMethod(ReceiveMethod),
     Copy,
-    ClearToast,
     GenerateAddress,
     AddressGenerated(ReceiveMethod, Result<String, String>),
     AmountInput(String),
@@ -569,4 +606,95 @@ pub enum HomeMessage {
         liquid_receive_sats: u64,
         usdt_receive_sats: u64,
     },
+}
+
+#[derive(Debug, Clone)]
+pub enum P2PMessage {
+    OrderTypeSelected(super::p2p::components::OrderType),
+    PricingModeSelected(super::p2p::components::PricingMode),
+    FiatCurrencyEdited(String),
+    SatsAmountEdited(String),
+    PremiumEdited(String),
+    PaymentMethodSelected(String),
+    PaymentMethodRemoved(String),
+    CustomPaymentMethodEdited(String),
+    AddCustomPaymentMethod,
+    MinAmountEdited(String),
+    MaxAmountEdited(String),
+    LightningAddressEdited(String),
+    ExpiryDaysEdited(String),
+    SubmitOrder,
+    ClearForm,
+    MostroOrdersReceived(Vec<super::p2p::components::P2POrder>),
+    BuySellFilterChanged(super::p2p::components::BuySellFilter),
+    SelectOrder(String),
+    CloseOrderDetail,
+    CopyOrderId(String),
+    CancelOrder(String),
+    CancelOrderResult(Result<(), String>),
+    OrderSubmitResult(Result<super::p2p::mostro::OrderSubmitResponse, String>),
+    TradeFilterChanged(super::p2p::components::TradeFilter),
+    MostroTradesReceived(Vec<super::p2p::components::P2PTrade>),
+    // Mostro settings
+    MostroRelayInputEdited(String),
+    MostroAddRelay,
+    MostroRemoveRelay(String),
+    MostroNodeNameInputEdited(String),
+    MostroNodePubkeyInputEdited(String),
+    MostroAddNode,
+    MostroRemoveNode(String),
+    MostroSelectActiveNode(String),
+    MostroNodeInfoReceived {
+        currencies: Vec<String>,
+        min_order_sats: Option<i64>,
+        max_order_sats: Option<i64>,
+    },
+    ConfirmOrder,
+    CancelConfirmation,
+    // Take order flow
+    TakeOrder,
+    TakeOrderAmountEdited(String),
+    TakeOrderInvoiceEdited(String),
+    ConfirmTakeOrder,
+    CancelTakeOrder,
+    TakeOrderResult(Result<super::p2p::mostro::TakeOrderResponse, String>),
+    DismissPaymentInvoice,
+    CopyPaymentInvoice(String),
+    ResetInvoiceCopied,
+    CancelPaymentInvoice(String),
+    // Trade detail
+    SelectTrade(String),
+    CloseTradeDetail,
+    // Trade actions
+    SubmitInvoice,
+    TradeInvoiceEdited(String),
+    ConfirmFiatSent,
+    ConfirmFiatReceived,
+    RatingSelected(u8),
+    SubmitRating,
+    CancelTrade,
+    OpenDispute,
+    TradeActionResult(Result<super::p2p::mostro::TradeActionResponse, String>),
+    // Real-time DM updates
+    TradeUpdate {
+        order_id: String,
+        action: String,
+        payload_json: String,
+    },
+    // Timer tick for trade detail countdown
+    TradeTimerTick,
+    // Chat
+    OpenChat,
+    CloseChat,
+    ChatInputEdited(String),
+    SendChatMessage,
+    ChatMessageSent(Result<(), String>),
+    ToggleChatTradeInfo,
+    ToggleChatUserInfo,
+    // Dispute chat
+    OpenDisputeChat,
+    CloseDisputeChat,
+    DisputeChatInputEdited(String),
+    SendDisputeChatMessage,
+    DisputeChatMessageSent(Result<(), String>),
 }
