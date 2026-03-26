@@ -651,7 +651,7 @@ fn order_success_view<'a>(
                     widget::row![
                         widget::column![
                             text::p2_medium("Amount Paid").color(color::GREY_2),
-                            text::p1_bold(format!("{}{}", country.currency.symbol, order.amount))
+                            text::p1_bold(format_amount(order.amount, &order.currency))
                         ]
                         .width(Length::Fill),
                         widget::column![
@@ -1111,7 +1111,7 @@ fn checkout_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMessa
                     }
                     BuyOrSell::Sell => {
                         let can_fulfil_sell_order = liquid_balance
-                            .map(|s| s > quote.total_amount_in_source_currency)
+                            .map(|s| s >= quote.total_amount_in_source_currency)
                             .unwrap_or(false);
 
                         widget::column![
