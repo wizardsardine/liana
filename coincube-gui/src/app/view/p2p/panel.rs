@@ -13,8 +13,8 @@ use iced::{
 
 use crate::app::{
     cache::Cache,
-    menu::Menu,
     menu::P2PSubMenu,
+    menu::{MarketplaceSubMenu, Menu},
     message::Message,
     view::{self, message::P2PMessage},
     wallet::Wallet,
@@ -2719,7 +2719,7 @@ impl P2PPanel {
 
 impl State for P2PPanel {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        if let Menu::P2P(submenu) = menu {
+        if let Menu::Marketplace(MarketplaceSubMenu::P2P(submenu)) = menu {
             match submenu {
                 P2PSubMenu::Overview => {
                     // If an order is selected, show its detail view

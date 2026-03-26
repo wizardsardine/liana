@@ -40,7 +40,7 @@ use crate::{
         breez::BreezClient,
         cache::{Cache, DaemonCache},
         error::Error,
-        menu::Menu,
+        menu::{MarketplaceSubMenu, Menu},
         message::FiatMessage,
         settings::WalletId,
         wallet::Wallet,
@@ -60,7 +60,8 @@ struct Panels {
     current: Menu,
     vault_expanded: bool,
     liquid_expanded: bool,
-    p2p_expanded: bool,
+    marketplace_expanded: bool,
+    marketplace_p2p_expanded: bool,
     usdt_expanded: bool,
     connect_expanded: bool,
     // Always available panels
@@ -107,7 +108,8 @@ impl Panels {
             current: Menu::Home,
             vault_expanded: false,
             liquid_expanded: false,
-            p2p_expanded: false,
+            marketplace_expanded: false,
+            marketplace_p2p_expanded: false,
             usdt_expanded: false,
             connect_expanded: false,
             // Liquid panels always available (use BreezClient, not Vault wallet)
@@ -210,7 +212,8 @@ impl Panels {
             current: Menu::Home,
             vault_expanded: false,
             liquid_expanded: false,
-            p2p_expanded: false,
+            marketplace_expanded: false,
+            marketplace_p2p_expanded: false,
             usdt_expanded: false,
             connect_expanded: false,
             global_home: GlobalHome::new(
@@ -457,9 +460,13 @@ impl Panels {
                     self.vault_settings.as_ref().map(|v| v as &dyn State)
                 }
             },
-            Menu::BuySell => self.buy_sell.as_ref().map(|v| v as &dyn State),
+            Menu::Marketplace(MarketplaceSubMenu::BuySell) => {
+                self.buy_sell.as_ref().map(|v| v as &dyn State)
+            }
+            Menu::Marketplace(MarketplaceSubMenu::P2P(_)) => {
+                self.p2p.as_ref().map(|v| v as &dyn State)
+            }
             Menu::Connect(_) => Some(&self.connect as &dyn State),
-            Menu::P2P(_) => self.p2p.as_ref().map(|v| v as &dyn State),
             Menu::Settings(_) => Some(&self.global_settings as &dyn State),
         }
     }
@@ -508,9 +515,13 @@ impl Panels {
                     self.vault_settings.as_mut().map(|v| v as &mut dyn State)
                 }
             },
-            Menu::BuySell => self.buy_sell.as_mut().map(|v| v as &mut dyn State),
+            Menu::Marketplace(MarketplaceSubMenu::BuySell) => {
+                self.buy_sell.as_mut().map(|v| v as &mut dyn State)
+            }
+            Menu::Marketplace(MarketplaceSubMenu::P2P(_)) => {
+                self.p2p.as_mut().map(|v| v as &mut dyn State)
+            }
             Menu::Connect(_) => Some(&mut self.connect as &mut dyn State),
-            Menu::P2P(_) => self.p2p.as_mut().map(|v| v as &mut dyn State),
             Menu::Settings(_) => Some(&mut self.global_settings as &mut dyn State),
         }
     }
@@ -1038,7 +1049,10 @@ impl App {
 
         // Keep P2P subscription alive even when another panel is active,
         // so trade updates and DMs are not lost while navigating elsewhere.
-        if !matches!(self.panels.current, Menu::P2P(_)) {
+        if !matches!(
+            self.panels.current,
+            Menu::Marketplace(MarketplaceSubMenu::P2P(_))
+        ) {
             if let Some(p2p) = self.panels.p2p.as_ref() {
                 subscriptions.push(p2p.subscription());
             }
@@ -1494,7 +1508,6 @@ impl App {
                 self.panels.vault_expanded = !self.panels.vault_expanded;
                 self.cache.vault_expanded = self.panels.vault_expanded;
 
-                // If we're expanding Vault, collapse Liquid, USDt and P2P
                 if self.panels.vault_expanded {
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
@@ -1502,15 +1515,16 @@ impl App {
                     self.cache.usdt_expanded = false;
                     self.panels.connect_expanded = false;
                     self.cache.connect_expanded = false;
-                    self.panels.p2p_expanded = false;
-                    self.cache.p2p_expanded = false;
+                    self.panels.marketplace_expanded = false;
+                    self.cache.marketplace_expanded = false;
+                    self.panels.marketplace_p2p_expanded = false;
+                    self.cache.marketplace_p2p_expanded = false;
                 }
             }
             Message::View(view::Message::ToggleLiquid) => {
                 self.panels.liquid_expanded = !self.panels.liquid_expanded;
                 self.cache.liquid_expanded = self.panels.liquid_expanded;
 
-                // If we're expanding Liquid, collapse Vault, USDt and P2P
                 if self.panels.liquid_expanded {
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
@@ -1518,29 +1532,39 @@ impl App {
                     self.cache.usdt_expanded = false;
                     self.panels.connect_expanded = false;
                     self.cache.connect_expanded = false;
-                    self.panels.p2p_expanded = false;
-                    self.cache.p2p_expanded = false;
+                    self.panels.marketplace_expanded = false;
+                    self.cache.marketplace_expanded = false;
+                    self.panels.marketplace_p2p_expanded = false;
+                    self.cache.marketplace_p2p_expanded = false;
                 }
             }
-            Message::View(view::Message::ToggleP2P) => {
-                self.panels.p2p_expanded = !self.panels.p2p_expanded;
-                self.cache.p2p_expanded = self.panels.p2p_expanded;
+            Message::View(view::Message::ToggleMarketplace) => {
+                self.panels.marketplace_expanded = !self.panels.marketplace_expanded;
+                self.cache.marketplace_expanded = self.panels.marketplace_expanded;
 
-                // If we're expanding P2P, collapse Vault, Liquid and USDt
-                if self.panels.p2p_expanded {
+                if self.panels.marketplace_expanded {
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
                     self.panels.usdt_expanded = false;
                     self.cache.usdt_expanded = false;
+                    self.panels.connect_expanded = false;
+                    self.cache.connect_expanded = false;
+                } else {
+                    // Collapsing Marketplace also collapses nested P2P
+                    self.panels.marketplace_p2p_expanded = false;
+                    self.cache.marketplace_p2p_expanded = false;
                 }
+            }
+            Message::View(view::Message::ToggleMarketplaceP2P) => {
+                self.panels.marketplace_p2p_expanded = !self.panels.marketplace_p2p_expanded;
+                self.cache.marketplace_p2p_expanded = self.panels.marketplace_p2p_expanded;
             }
             Message::View(view::Message::ToggleUsdt) => {
                 self.panels.usdt_expanded = !self.panels.usdt_expanded;
                 self.cache.usdt_expanded = self.panels.usdt_expanded;
 
-                // If we're expanding USDt, collapse Liquid and Vault
                 if self.panels.usdt_expanded {
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
@@ -1548,8 +1572,10 @@ impl App {
                     self.cache.vault_expanded = false;
                     self.panels.connect_expanded = false;
                     self.cache.connect_expanded = false;
-                    self.panels.p2p_expanded = false;
-                    self.cache.p2p_expanded = false;
+                    self.panels.marketplace_expanded = false;
+                    self.cache.marketplace_expanded = false;
+                    self.panels.marketplace_p2p_expanded = false;
+                    self.cache.marketplace_p2p_expanded = false;
                 }
             }
             Message::View(view::Message::ToggleConnect) => {
@@ -1562,6 +1588,10 @@ impl App {
                     self.cache.liquid_expanded = false;
                     self.panels.usdt_expanded = false;
                     self.cache.usdt_expanded = false;
+                    self.panels.marketplace_expanded = false;
+                    self.cache.marketplace_expanded = false;
+                    self.panels.marketplace_p2p_expanded = false;
+                    self.cache.marketplace_p2p_expanded = false;
                 }
                 // When expanding, navigate to the Connect panel unless already
                 // on a Connect sub-page while authenticated.

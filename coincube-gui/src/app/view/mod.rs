@@ -27,9 +27,9 @@ use coincube_ui::{
     color,
     component::{button, text, text::*},
     icon::{
-        bitcoin_icon, coins_icon, cross_icon, cube_icon, down_icon, home_icon, lightning_icon,
-        person_icon, plus_icon, receipt_icon, receive_icon, recovery_icon, send_icon,
-        settings_icon, up_icon, usd_icon, vault_icon,
+        bitcoin_icon, coins_icon, connect_icon, cross_icon, cube_icon, down_icon, home_icon,
+        lightning_icon, person_icon, plus_icon, receipt_icon, receive_icon, recovery_icon,
+        send_icon, settings_icon, shop_icon, up_icon, usd_icon, vault_icon,
     },
     image::*,
     theme,
@@ -94,101 +94,8 @@ pub fn sidebar<'a>(
             .width(iced::Length::Fill),)
     };
 
-    let buy_sell_button = {
-        if *menu == Menu::BuySell {
-            row!(
-                button::menu_active(Some(bitcoin_icon()), "Buy/Sell")
-                    .on_press(Message::Reload)
-                    .width(iced::Length::Fill),
-                menu_bar_highlight()
-            )
-        } else {
-            row!(button::menu(Some(bitcoin_icon()), "Buy/Sell")
-                .on_press(Message::Menu(Menu::BuySell))
-                .width(iced::Length::Fill))
-        }
-    };
-
-    // P2P submenu
-    use crate::app::menu::P2PSubMenu;
-
-    let is_p2p_expanded = cache.p2p_expanded;
-
-    let p2p_chevron = if is_p2p_expanded {
-        up_icon()
-    } else {
-        down_icon()
-    };
-    let p2p_button = Button::new(
-        Row::new()
-            .spacing(10)
-            .align_y(iced::alignment::Vertical::Center)
-            .push(person_icon().style(theme::text::secondary))
-            .push(text("P2P").size(15))
-            .push(Space::new().width(Length::Fill))
-            .push(p2p_chevron.style(theme::text::secondary))
-            .padding(10),
-    )
-    .width(iced::Length::Fill)
-    .style(theme::button::menu)
-    .on_press(Message::ToggleP2P);
-
-    let p2p_overview_button = if matches!(menu, Menu::P2P(P2PSubMenu::Overview)) {
-        row!(
-            Space::new().width(Length::Fixed(20.0)),
-            button::menu_active(Some(home_icon()), "Order Book")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_bar_highlight()
-        )
-        .width(Length::Fill)
-    } else {
-        row!(
-            Space::new().width(Length::Fixed(20.0)),
-            button::menu(Some(home_icon()), "Order Book")
-                .on_press(Message::Menu(Menu::P2P(P2PSubMenu::Overview)))
-                .width(iced::Length::Fill),
-        )
-        .width(Length::Fill)
-    };
-
-    let p2p_my_trades_button = if matches!(menu, Menu::P2P(P2PSubMenu::MyTrades)) {
-        row!(
-            Space::new().width(Length::Fixed(20.0)),
-            button::menu_active(Some(receipt_icon()), "My Trades")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_bar_highlight()
-        )
-        .width(Length::Fill)
-    } else {
-        row!(
-            Space::new().width(Length::Fixed(20.0)),
-            button::menu(Some(receipt_icon()), "My Trades")
-                .on_press(Message::Menu(Menu::P2P(P2PSubMenu::MyTrades)))
-                .width(iced::Length::Fill),
-        )
-        .width(Length::Fill)
-    };
-
-    let p2p_create_order_button = if matches!(menu, Menu::P2P(P2PSubMenu::CreateOrder)) {
-        row!(
-            Space::new().width(Length::Fixed(20.0)),
-            button::menu_active(Some(plus_icon()), "Create Order")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_bar_highlight()
-        )
-        .width(Length::Fill)
-    } else {
-        row!(
-            Space::new().width(Length::Fixed(20.0)),
-            button::menu(Some(plus_icon()), "Create Order")
-                .on_press(Message::Menu(Menu::P2P(P2PSubMenu::CreateOrder)))
-                .width(iced::Length::Fill),
-        )
-        .width(Length::Fill)
-    };
+    // ── Marketplace nav group (Buy/Sell + P2P) ──────────────────────────────
+    use crate::app::menu::{MarketplaceSubMenu, P2PSubMenu};
 
     // Build the main menu column
     let mut menu_column = Column::new().spacing(0).width(Length::Fill).push(
@@ -726,7 +633,190 @@ pub fn sidebar<'a>(
             .push(vault_settings_button);
     }
 
-    menu_column = menu_column.push(has_vault.then_some(buy_sell_button));
+    // ── Marketplace accordion ──────────────────────────────────────────────
+    if has_vault || has_p2p {
+        let is_marketplace_expanded = cache.marketplace_expanded;
+        let marketplace_chevron = if is_marketplace_expanded {
+            up_icon()
+        } else {
+            down_icon()
+        };
+        let marketplace_button = Button::new(
+            Row::new()
+                .spacing(10)
+                .align_y(iced::alignment::Vertical::Center)
+                .push(shop_icon().style(theme::text::secondary))
+                .push(text("Marketplace").size(15))
+                .push(Space::new().width(Length::Fill))
+                .push(marketplace_chevron.style(theme::text::secondary))
+                .padding(10),
+        )
+        .width(iced::Length::Fill)
+        .style(theme::button::menu)
+        .on_press(Message::ToggleMarketplace);
+
+        menu_column = menu_column.push(marketplace_button);
+
+        if is_marketplace_expanded {
+            // Buy/Sell (KYC) child — flat button at 20px indent
+            if has_vault {
+                let buy_sell_button =
+                    if matches!(menu, Menu::Marketplace(MarketplaceSubMenu::BuySell)) {
+                        row!(
+                            Space::new().width(Length::Fixed(20.0)),
+                            button::menu_active(Some(bitcoin_icon()), "Buy/Sell (KYC)")
+                                .on_press(Message::Reload)
+                                .width(iced::Length::Fill),
+                            menu_bar_highlight()
+                        )
+                        .width(Length::Fill)
+                    } else {
+                        row!(
+                            Space::new().width(Length::Fixed(20.0)),
+                            button::menu(Some(bitcoin_icon()), "Buy/Sell (KYC)")
+                                .on_press(Message::Menu(Menu::Marketplace(
+                                    MarketplaceSubMenu::BuySell,
+                                )))
+                                .width(iced::Length::Fill),
+                        )
+                        .width(Length::Fill)
+                    };
+                menu_column = menu_column.push(buy_sell_button);
+            }
+
+            // P2P Exchange child — nested accordion at 20px indent
+            if has_p2p {
+                let is_p2p_expanded = cache.marketplace_p2p_expanded;
+                let p2p_chevron = if is_p2p_expanded {
+                    up_icon()
+                } else {
+                    down_icon()
+                };
+                let p2p_button: Element<Message> = row!(
+                    Space::new().width(Length::Fixed(20.0)),
+                    Button::new(
+                        Row::new()
+                            .spacing(10)
+                            .align_y(iced::alignment::Vertical::Center)
+                            .push(person_icon().style(theme::text::secondary))
+                            .push(text("P2P Exchange").size(15))
+                            .push(Space::new().width(Length::Fill))
+                            .push(p2p_chevron.style(theme::text::secondary))
+                            .padding(10),
+                    )
+                    .width(iced::Length::Fill)
+                    .style(theme::button::menu)
+                    .on_press(Message::ToggleMarketplaceP2P),
+                )
+                .width(Length::Fill)
+                .into();
+                menu_column = menu_column.push(p2p_button);
+
+                if is_p2p_expanded {
+                    let p2p_overview_button = if matches!(
+                        menu,
+                        Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Overview))
+                    ) {
+                        row!(
+                            Space::new().width(Length::Fixed(40.0)),
+                            button::menu_active(Some(home_icon()), "Order Book")
+                                .on_press(Message::Reload)
+                                .width(iced::Length::Fill),
+                            menu_bar_highlight()
+                        )
+                        .width(Length::Fill)
+                    } else {
+                        row!(
+                            Space::new().width(Length::Fixed(40.0)),
+                            button::menu(Some(home_icon()), "Order Book")
+                                .on_press(Message::Menu(Menu::Marketplace(
+                                    MarketplaceSubMenu::P2P(P2PSubMenu::Overview),
+                                )))
+                                .width(iced::Length::Fill),
+                        )
+                        .width(Length::Fill)
+                    };
+
+                    let p2p_my_trades_button = if matches!(
+                        menu,
+                        Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::MyTrades))
+                    ) {
+                        row!(
+                            Space::new().width(Length::Fixed(40.0)),
+                            button::menu_active(Some(receipt_icon()), "My Trades")
+                                .on_press(Message::Reload)
+                                .width(iced::Length::Fill),
+                            menu_bar_highlight()
+                        )
+                        .width(Length::Fill)
+                    } else {
+                        row!(
+                            Space::new().width(Length::Fixed(40.0)),
+                            button::menu(Some(receipt_icon()), "My Trades")
+                                .on_press(Message::Menu(Menu::Marketplace(
+                                    MarketplaceSubMenu::P2P(P2PSubMenu::MyTrades),
+                                )))
+                                .width(iced::Length::Fill),
+                        )
+                        .width(Length::Fill)
+                    };
+
+                    let p2p_create_order_button = if matches!(
+                        menu,
+                        Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::CreateOrder))
+                    ) {
+                        row!(
+                            Space::new().width(Length::Fixed(40.0)),
+                            button::menu_active(Some(plus_icon()), "Create Order")
+                                .on_press(Message::Reload)
+                                .width(iced::Length::Fill),
+                            menu_bar_highlight()
+                        )
+                        .width(Length::Fill)
+                    } else {
+                        row!(
+                            Space::new().width(Length::Fixed(40.0)),
+                            button::menu(Some(plus_icon()), "Create Order")
+                                .on_press(Message::Menu(Menu::Marketplace(
+                                    MarketplaceSubMenu::P2P(P2PSubMenu::CreateOrder),
+                                )))
+                                .width(iced::Length::Fill),
+                        )
+                        .width(Length::Fill)
+                    };
+
+                    let p2p_settings_button = if matches!(
+                        menu,
+                        Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Settings))
+                    ) {
+                        row!(
+                            Space::new().width(Length::Fixed(40.0)),
+                            button::menu_active(Some(settings_icon()), "Settings")
+                                .width(iced::Length::Fill),
+                            menu_bar_highlight()
+                        )
+                        .width(Length::Fill)
+                    } else {
+                        row!(
+                            Space::new().width(Length::Fixed(40.0)),
+                            button::menu(Some(settings_icon()), "Settings")
+                                .on_press(Message::Menu(Menu::Marketplace(
+                                    MarketplaceSubMenu::P2P(P2PSubMenu::Settings),
+                                )))
+                                .width(iced::Length::Fill),
+                        )
+                        .width(Length::Fill)
+                    };
+
+                    menu_column = menu_column
+                        .push(p2p_overview_button)
+                        .push(p2p_my_trades_button)
+                        .push(p2p_create_order_button)
+                        .push(p2p_settings_button);
+                }
+            }
+        }
+    }
 
     // ── Connect nav group ────────────────────────────────────────────────────
     let is_connect_expanded = cache.connect_expanded;
@@ -742,7 +832,7 @@ pub fn sidebar<'a>(
             Row::new()
                 .spacing(10)
                 .align_y(iced::alignment::Vertical::Center)
-                .push(coins_icon().style(theme::text::secondary))
+                .push(connect_icon().style(theme::text::secondary))
                 .push(text("Connect").size(15))
                 .push(Space::new().width(Length::Fill))
                 .push(connect_chevron.style(theme::text::secondary))
@@ -754,7 +844,7 @@ pub fn sidebar<'a>(
         .into()
     } else if matches!(menu, Menu::Connect(_)) {
         row!(
-            button::menu_active(Some(coins_icon()), "Connect")
+            button::menu_active(Some(connect_icon()), "Connect")
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_bar_highlight(),
@@ -762,7 +852,7 @@ pub fn sidebar<'a>(
         .width(Length::Fill)
         .into()
     } else {
-        row!(button::menu(Some(coins_icon()), "Connect")
+        row!(button::menu(Some(connect_icon()), "Connect")
             .on_press(Message::ToggleConnect)
             .width(iced::Length::Fill),)
         .into()
@@ -837,36 +927,6 @@ pub fn sidebar<'a>(
             .push(connect_ln_address_button)
             .push(connect_avatar_button)
             .push(connect_invites_button);
-    }
-
-    if has_p2p {
-        menu_column = menu_column.push(p2p_button);
-
-        if is_p2p_expanded {
-            let p2p_settings_button = if matches!(menu, Menu::P2P(P2PSubMenu::Settings)) {
-                row!(
-                    Space::new().width(Length::Fixed(20.0)),
-                    button::menu_active(Some(settings_icon()), "Settings")
-                        .width(iced::Length::Fill),
-                    menu_bar_highlight()
-                )
-                .width(Length::Fill)
-            } else {
-                row!(
-                    Space::new().width(Length::Fixed(20.0)),
-                    button::menu(Some(settings_icon()), "Settings")
-                        .on_press(Message::Menu(Menu::P2P(P2PSubMenu::Settings)))
-                        .width(iced::Length::Fill),
-                )
-                .width(Length::Fill)
-            };
-
-            menu_column = menu_column
-                .push(p2p_overview_button)
-                .push(p2p_my_trades_button)
-                .push(p2p_create_order_button)
-                .push(p2p_settings_button);
-        }
     }
 
     // Global Settings button (always visible at bottom of main menu)

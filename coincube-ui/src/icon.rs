@@ -334,3 +334,11 @@ pub fn pen_icon<'a>() -> Text<'a> {
 pub fn graph_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F3F2}')
 }
+
+pub fn connect_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F2ED}')
+}
+
+pub fn shop_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F638}')
+}

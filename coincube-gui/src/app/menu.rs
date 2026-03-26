@@ -6,10 +6,15 @@ pub enum Menu {
     Liquid(LiquidSubMenu),
     Usdt(UsdtSubMenu),
     Vault(VaultSubMenu),
-    BuySell,
+    Marketplace(MarketplaceSubMenu),
     Connect(ConnectSubMenu),
-    P2P(P2PSubMenu),
     Settings(SettingsSubMenu),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MarketplaceSubMenu {
+    BuySell,
+    P2P(P2PSubMenu),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
