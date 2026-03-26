@@ -531,7 +531,7 @@ fn instructions_card<'a>(
                 detail_row("Bank Name", bn, None)
             ),
             widget::Space::new().height(20),
-            account_number.clone().map(|an|
+            account_number.map(|an|
                 detail_row("Account Number", an, None)
             ),
             widget::Space::new().height(20),
@@ -1103,7 +1103,7 @@ fn checkout_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMessa
                 widget::container(match state.buy_or_sell {
                     BuyOrSell::Buy => {
                         widget::column![
-                            summary_card(&quote),
+                            summary_card(quote),
                             instructions_card(quote, state.country),
                             notes_card()
                         ]
@@ -1114,7 +1114,7 @@ fn checkout_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMessa
                             .unwrap_or(false);
 
                         widget::column![
-                            summary_card(&quote),
+                            summary_card(quote),
                             invoice_qr_code_data
                                 .as_ref()
                                 .map(|data| invoice_qr_code_display(

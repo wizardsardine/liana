@@ -490,7 +490,7 @@ impl MavapayState {
                     if let Some(order_id) = quote.order_id.clone() {
                         *sending_quote = false;
 
-                        let liquid_balance = liquid_balance.clone();
+                        let liquid_balance = *liquid_balance;
                         let invoice_qr_code_data =
                             iced::widget::qr_code::Data::new(quote.invoice.as_bytes()).ok();
 
