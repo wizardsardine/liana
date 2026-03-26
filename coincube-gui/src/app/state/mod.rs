@@ -1,4 +1,5 @@
 pub mod buysell;
+pub mod connect;
 mod global_home;
 pub mod liquid;
 pub mod settings;
@@ -20,6 +21,7 @@ use crate::daemon::{
     model::{remaining_sequence, Coin},
     Daemon,
 };
+pub use connect::{ConnectAccountPanel, ConnectCubePanel, ConnectPanel};
 pub use global_home::GlobalHome;
 pub use liquid::overview::LiquidOverview;
 pub use liquid::receive::LiquidReceive;

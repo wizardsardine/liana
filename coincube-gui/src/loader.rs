@@ -567,9 +567,13 @@ pub async fn load_application(
         node_bitcoind_last_log: None,
         vault_expanded: false,
         liquid_expanded: false,
-        p2p_expanded: false,
+        marketplace_expanded: false,
+        marketplace_p2p_expanded: false,
         usdt_expanded: false,
+        connect_expanded: false,
+        connect_authenticated: false,
         has_vault: true,
+        cube_name: config.cube_settings.name.clone(),
         has_p2p: false, // Set later by App::new based on mnemonic availability
     };
 

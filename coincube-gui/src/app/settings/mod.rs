@@ -155,9 +155,13 @@ pub struct PendingLiquidToVaultTransfer {
 }
 
 impl CubeSettings {
-    pub fn new(name: String, network: Network) -> Self {
+    /// Create a new `CubeSettings` with a caller-supplied UUID.
+    ///
+    /// The frontend should generate this UUID before initiating the creation
+    /// request so that retries reuse the same identifier (idempotent creation).
+    pub fn new_with_id(id: uuid::Uuid, name: String, network: Network) -> Self {
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: id.to_string(),
             name,
             network,
             created_at: chrono::Utc::now().timestamp(),
@@ -170,6 +174,10 @@ impl CubeSettings {
             fiat_price: Some(fiat::PriceSetting::default()), // Initialize with default (enabled: true)
             pending_liquid_to_vault_transfer: None,
         }
+    }
+
+    pub fn new(name: String, network: Network) -> Self {
+        Self::new_with_id(uuid::Uuid::new_v4(), name, network)
     }
 
     pub fn with_vault(mut self, wallet_id: WalletId) -> Self {
@@ -572,12 +580,48 @@ pub mod global {
         pub height: f32,
     }
 
+    /// Subscription tier for the user's Connect account.
+    ///
+    /// Determines how many Cubes can be created per network.
+    #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+    #[serde(rename_all = "lowercase")]
+    pub enum AccountTier {
+        /// No Connect account or free tier — 2 Cubes per network.
+        #[default]
+        Free,
+        /// Pro Connect account — 4 Cubes per network (with Lightning address & avatar).
+        Pro,
+        /// Legacy Connect account — 7 Cubes per network (with Lightning address & avatar).
+        Legacy,
+    }
+
+    impl AccountTier {
+        /// Maximum number of Cubes allowed per network for this tier.
+        pub fn cube_limit(self) -> usize {
+            match self {
+                Self::Free => 2,
+                Self::Pro => 4,
+                Self::Legacy => 7,
+            }
+        }
+
+        pub fn display_name(self) -> &'static str {
+            match self {
+                Self::Free => "Free",
+                Self::Pro => "Pro",
+                Self::Legacy => "Legacy",
+            }
+        }
+    }
+
     #[derive(Debug, Deserialize, Serialize, Default)]
     pub struct GlobalSettings {
         pub bitbox: Option<BitboxSettings>,
         pub window_config: Option<WindowConfig>,
         #[serde(default)]
         pub developer_mode: bool,
+        #[serde(default)]
+        pub account_tier: AccountTier,
     }
 
     impl GlobalSettings {
@@ -618,6 +662,21 @@ pub mod global {
                 tracing::error!("Failed to load developer mode setting: {e}");
             }
             ret
+        }
+
+        pub fn load_account_tier(path: &PathBuf) -> AccountTier {
+            let mut ret = AccountTier::default();
+            if let Err(e) = Self::update(path, |s| ret = s.account_tier, false) {
+                tracing::error!("Failed to load account tier setting: {e}");
+            }
+            ret
+        }
+
+        pub fn update_account_tier(
+            path: &PathBuf,
+            tier: AccountTier,
+        ) -> Result<(), super::SettingsError> {
+            Self::update(path, |s| s.account_tier = tier, true)
         }
 
         pub fn update_developer_mode(
@@ -681,6 +740,7 @@ pub mod global {
                 && global_settings.bitbox.is_none()
                 && global_settings.window_config.is_none()
                 && !global_settings.developer_mode
+                && global_settings.account_tier == AccountTier::Free
             {
                 write = false;
             }

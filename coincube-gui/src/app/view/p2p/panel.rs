@@ -13,8 +13,8 @@ use iced::{
 
 use crate::app::{
     cache::Cache,
-    menu::Menu,
     menu::P2PSubMenu,
+    menu::{MarketplaceSubMenu, Menu},
     message::Message,
     view::{self, message::P2PMessage},
     wallet::Wallet,
@@ -2719,7 +2719,7 @@ impl P2PPanel {
 
 impl State for P2PPanel {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        if let Menu::P2P(submenu) = menu {
+        if let Menu::Marketplace(MarketplaceSubMenu::P2P(submenu)) = menu {
             match submenu {
                 P2PSubMenu::Overview => {
                     // If an order is selected, show its detail view
@@ -2762,9 +2762,17 @@ impl State for P2PPanel {
 
                             return row![]
                                 .push(
-                                    view::sidebar(menu, cache, has_vault, cache.has_p2p)
-                                        .height(Length::Fill)
-                                        .width(Length::Fixed(190.0)),
+                                    view::sidebar(
+                                        menu,
+                                        cache,
+                                        has_vault,
+                                        &cache.cube_name,
+                                        None,
+                                        None,
+                                        cache.has_p2p,
+                                    )
+                                    .height(Length::Fill)
+                                    .width(Length::Fixed(190.0)),
                                 )
                                 .push(
                                     iced::widget::Column::new()
@@ -2901,9 +2909,17 @@ impl State for P2PPanel {
 
                                 return row![]
                                     .push(
-                                        view::sidebar(menu, cache, has_vault, cache.has_p2p)
-                                            .height(Length::Fill)
-                                            .width(Length::Fixed(190.0)),
+                                        view::sidebar(
+                                            menu,
+                                            cache,
+                                            has_vault,
+                                            &cache.cube_name,
+                                            None,
+                                            None,
+                                            cache.has_p2p,
+                                        )
+                                        .height(Length::Fill)
+                                        .width(Length::Fixed(190.0)),
                                     )
                                     .push(
                                         iced::widget::Column::new()
@@ -2950,9 +2966,17 @@ impl State for P2PPanel {
 
                                 return row![]
                                     .push(
-                                        view::sidebar(menu, cache, has_vault, cache.has_p2p)
-                                            .height(Length::Fill)
-                                            .width(Length::Fixed(190.0)),
+                                        view::sidebar(
+                                            menu,
+                                            cache,
+                                            has_vault,
+                                            &cache.cube_name,
+                                            None,
+                                            None,
+                                            cache.has_p2p,
+                                        )
+                                        .height(Length::Fill)
+                                        .width(Length::Fixed(190.0)),
                                     )
                                     .push(
                                         iced::widget::Column::new()

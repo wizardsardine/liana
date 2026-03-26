@@ -57,7 +57,8 @@ pub enum Message {
     Menu(Menu),
     ToggleVault,
     ToggleLiquid,
-    ToggleP2P,
+    ToggleMarketplace,
+    ToggleMarketplaceP2P,
     SetupVault,
     Close,
     Select(usize),
@@ -100,6 +101,9 @@ pub enum Message {
     DismissToast(usize),
     UsdtOverview(UsdtOverviewMessage),
     ToggleUsdt,
+    ConnectAccount(ConnectAccountMessage),
+    ConnectCube(ConnectCubeMessage),
+    ToggleConnect,
     P2P(P2PMessage),
 }
 
@@ -460,6 +464,102 @@ impl From<SettingsMessage> for Message {
     fn from(value: SettingsMessage) -> Self {
         Message::Settings(value)
     }
+}
+
+/// Account-level Connect messages (login/session, plan, security, etc.).
+#[derive(Debug, Clone)]
+pub enum ConnectAccountMessage {
+    Init,
+    RefreshSession {
+        refresh_token: String,
+    },
+    SetSession(crate::services::coincube::LoginResponse),
+    SessionLoaded {
+        user: crate::services::coincube::User,
+        plan: Option<crate::services::coincube::ConnectPlan>,
+    },
+    PlanLoaded(Option<crate::services::coincube::ConnectPlan>, u64),
+    RefreshFailed(String),
+    LogOut,
+    EmailChanged(String),
+    SubmitLogin,
+    SubmitRegistration,
+    CreateAccount,
+    OtpRequested {
+        email: String,
+        is_signup: bool,
+    },
+    OtpChanged(String),
+    OtpCooldownTick,
+    ResendOtp,
+    OtpResent,
+    VerifyOtp,
+    VerifiedDevicesLoaded(Vec<crate::services::coincube::VerifiedDevice>, u64),
+    LoginActivityLoaded(Vec<crate::services::coincube::LoginActivity>, u64),
+    CopyToClipboard(String),
+    Error(String),
+}
+
+/// Per-Cube Connect messages (Lightning Address, Avatar).
+#[derive(Debug, Clone)]
+pub enum ConnectCubeMessage {
+    LnUsernameChanged(String),
+    LnUsernameChecked {
+        available: bool,
+        error_message: Option<String>,
+        version: u32,
+    },
+    ClaimLightningAddress,
+    LightningAddressClaimed(crate::services::coincube::LightningAddress),
+    LightningAddressLoaded(Option<crate::services::coincube::LightningAddress>),
+    /// Result of registering the cube with the backend (POST /connect/cubes).
+    CubeRegistered(Result<crate::services::coincube::CubeResponse, String>),
+    /// Retry a previously failed cube registration.
+    RetryRegistration,
+    CopyToClipboard(String),
+    Error(String),
+    Avatar(AvatarMessage),
+}
+
+#[derive(Debug, Clone)]
+pub enum AvatarMessage {
+    /// Enter the Avatar sub-menu — triggers GET /avatar load.
+    Enter,
+    /// Result of GET /api/v1/connect/avatar.
+    Loaded(Result<crate::services::coincube::GetAvatarData, String>),
+    /// Navigate to a specific avatar flow step.
+    SetStep(crate::app::state::connect::AvatarFlowStep),
+    // Questionnaire field changes
+    GenderChanged(crate::services::coincube::AvatarGender),
+    ArchetypeChanged(crate::services::coincube::AvatarArchetype),
+    AgeFeelChanged(crate::services::coincube::AvatarAgeFeel),
+    DemeanorChanged(crate::services::coincube::AvatarDemeanor),
+    ArmorStyleChanged(crate::services::coincube::AvatarArmorStyle),
+    AccentMotifChanged(crate::services::coincube::AvatarAccentMotif),
+    LaserEyesToggled(bool),
+    /// Submit the questionnaire — triggers POST /avatar/generate.
+    Generate,
+    /// Result of POST /api/v1/connect/avatar/generate.
+    GenerateComplete(Result<crate::services::coincube::AvatarGenerateData, String>),
+    /// User picks a variant from the gallery.
+    SelectVariant(u64),
+    /// Result of POST /api/v1/connect/avatar/select.
+    VariantSelected(Result<crate::services::coincube::AvatarSelectData, String>),
+    /// Result of GET /api/v1/connect/avatar/regenerations.
+    RegenerationsLoaded(Result<crate::services::coincube::RegenerationData, String>),
+    /// PNG bytes fetched for a variant.
+    ImageLoaded {
+        variant_id: u64,
+        result: Result<Vec<u8>, String>,
+    },
+    /// Retry after a generation error.
+    Retry,
+    /// User pressed Download — save active variant PNG to disk.
+    DownloadAvatar,
+    /// File-save failed after the user picked a destination.
+    SaveError(String),
+    /// No-op — used as a return message for tasks that don't need state changes.
+    Noop,
 }
 
 #[derive(Debug, Clone)]

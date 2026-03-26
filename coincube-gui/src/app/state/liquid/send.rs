@@ -405,10 +405,73 @@ impl State for LiquidSend {
                                 }
                             }
 
-                            InputType::LiquidAddress { address } => format!(
-                                "Sending money to {}",
-                                display_abbreviated(address.address.clone())
-                            ),
+                            InputType::LiquidAddress { address } => {
+                                if self.to_asset == SendAsset::Usdt {
+                                    if let Some(amount) = address.amount {
+                                        let amount_str = format!("{}", amount);
+                                        let base_units_opt = parse_asset_to_minor_units(
+                                            amount_str.trim(),
+                                            USDT_PRECISION,
+                                        );
+                                        match base_units_opt {
+                                            Some(base_units) => {
+                                                self.usdt_amount_input.value = amount_str;
+                                                if base_units == 0 {
+                                                    self.usdt_amount_input.valid = false;
+                                                    self.usdt_amount_input.warning =
+                                                        Some("Amount must be greater than zero");
+                                                } else if base_units > self.usdt_balance {
+                                                    self.usdt_amount_input.valid = false;
+                                                    self.usdt_amount_input.warning =
+                                                        Some("Insufficient USDt balance");
+                                                } else {
+                                                    self.usdt_amount_input.valid = true;
+                                                    self.usdt_amount_input.warning = None;
+                                                }
+                                            }
+                                            None => {
+                                                self.usdt_amount_input.value = String::new();
+                                                self.usdt_amount_input.valid = false;
+                                                self.usdt_amount_input.warning =
+                                                    Some("Invalid amount");
+                                            }
+                                        }
+                                    }
+                                } else if let Some(amount_sat) = address.amount_sat {
+                                    let amount_str =
+                                        if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                            Amount::from_sat(amount_sat).to_btc().to_string()
+                                        } else {
+                                            amount_sat.to_string()
+                                        };
+                                    let amount = Amount::from_sat(amount_sat);
+                                    self.amount = amount;
+                                    self.amount_input.value = amount_str;
+                                    if amount > self.btc_balance {
+                                        self.amount_input.valid = false;
+                                        self.amount_input.warning = Some("Insufficient balance");
+                                    } else if let Some((min_sat, max_sat)) = self.lightning_limits {
+                                        if amount_sat < min_sat {
+                                            self.amount_input.valid = false;
+                                            self.amount_input.warning = Some("Below minimum limit");
+                                        } else if amount_sat > max_sat {
+                                            self.amount_input.valid = false;
+                                            self.amount_input.warning =
+                                                Some("Exceeds maximum limit");
+                                        } else {
+                                            self.amount_input.valid = true;
+                                            self.amount_input.warning = None;
+                                        }
+                                    } else {
+                                        self.amount_input.valid = true;
+                                        self.amount_input.warning = None;
+                                    }
+                                }
+                                format!(
+                                    "Sending money to {}",
+                                    display_abbreviated(address.address.clone())
+                                )
+                            }
                             _ => String::from("Send Payment"),
                         }
                     } else {

@@ -6,9 +6,26 @@ pub enum Menu {
     Liquid(LiquidSubMenu),
     Usdt(UsdtSubMenu),
     Vault(VaultSubMenu),
+    Marketplace(MarketplaceSubMenu),
+    Connect(ConnectSubMenu),
+    Settings(SettingsSubMenu),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MarketplaceSubMenu {
     BuySell,
     P2P(P2PSubMenu),
-    Settings(SettingsSubMenu),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectSubMenu {
+    Overview,
+    LightningAddress,
+    Avatar,
+    PlanBilling,
+    Security,
+    Duress,
+    Invites,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
