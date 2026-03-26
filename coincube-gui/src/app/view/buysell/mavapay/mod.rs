@@ -25,8 +25,10 @@ pub enum MavapayFlowStep {
     },
     Checkout {
         quote: GetQuoteResponse,
-        invoice_qr_code_data: Option<iced::widget::qr_code::Data>,
         fulfilled_order: Option<GetOrderResponse>,
+        invoice_qr_code_data: Option<iced::widget::qr_code::Data>,
+        liquid_balance: Option<u64>,
+        fulfilling_ln_invoice: bool,
         /// Order ID for SSE transaction status updates
         stream_order_id: Option<String>,
     },
@@ -100,15 +102,16 @@ impl MavapayState {
                     async move { MavapayClient(&client).get_price(currency).await },
                     |result| match result {
                         MavapayApiResult::Success(price) => {
-                            view::BuySellMessage::Mavapay(MavapayMessage::PriceReceived(price))
+                            MavapayMessage::PriceReceived(price).into()
                         }
-                        MavapayApiResult::Error(e) => view::BuySellMessage::SessionError(
-                            "Unable to get latest Bitcoin price",
-                            e,
-                        ),
+                        MavapayApiResult::Error(e) => {
+                            view::Message::BuySell(view::BuySellMessage::SessionError(
+                                "Unable to get latest Bitcoin price",
+                                e,
+                            ))
+                        }
                     },
-                )
-                .map(view::Message::BuySell);
+                );
 
                 return Some(task);
             }
@@ -152,13 +155,13 @@ impl MavapayState {
                         Ok(quote)
                     },
                     move |result| match result {
-                        Ok(quote) => {
-                            view::BuySellMessage::Mavapay(MavapayMessage::QuoteCreated(quote))
-                        }
-                        Err(e) => view::BuySellMessage::SessionError("Unable to create quote", e),
+                        Ok(quote) => MavapayMessage::QuoteCreated(quote).into(),
+                        Err(e) => view::Message::BuySell(view::BuySellMessage::SessionError(
+                            "Unable to create quote",
+                            e,
+                        )),
                     },
-                )
-                .map(view::Message::BuySell);
+                );
 
                 return Some(task);
             }
@@ -196,9 +199,7 @@ impl MavapayState {
                             },
                             |res| match res {
                                 Ok(ln_invoice) => {
-                                    view::Message::BuySell(view::BuySellMessage::Mavapay(
-                                        MavapayMessage::LightningInvoiceReceived(ln_invoice),
-                                    ))
+                                    MavapayMessage::LightningInvoiceReceived(ln_invoice).into()
                                 }
                                 Err(e) => {
                                     view::Message::BuySell(view::BuySellMessage::SessionError(
@@ -208,9 +209,7 @@ impl MavapayState {
                                 }
                             },
                         )
-                        .chain(iced::Task::done(view::Message::BuySell(
-                            view::BuySellMessage::Mavapay(MavapayMessage::CreateQuote),
-                        )));
+                        .chain(iced::Task::done(MavapayMessage::CreateQuote.into()));
 
                         return Some(task);
                     }
@@ -258,9 +257,7 @@ impl MavapayState {
                         };
 
                         *sending_quote = true;
-                        return Some(iced::Task::done(view::Message::BuySell(
-                            view::BuySellMessage::Mavapay(MavapayMessage::SendQuote(request)),
-                        )));
+                        return Some(iced::Task::done(MavapayMessage::SendQuote(request).into()));
                     }
                     MavapayMessage::QuoteCreated(quote) => {
                         // Set up SSE stream for transaction status updates
@@ -273,6 +270,8 @@ impl MavapayState {
                                 invoice_qr_code_data: None,
                                 fulfilled_order: None,
                                 stream_order_id: Some(order_id),
+                                liquid_balance: None,
+                                fulfilling_ln_invoice: false,
                             });
                         } else {
                             return Some(iced::Task::done(view::Message::BuySell(
@@ -310,15 +309,16 @@ impl MavapayState {
                         async move { MavapayClient(&client).get_banks(code).await },
                         |result| match result {
                             MavapayApiResult::Success(banks) => {
-                                view::BuySellMessage::Mavapay(MavapayMessage::BanksReceived(banks))
+                                MavapayMessage::BanksReceived(banks).into()
                             }
-                            MavapayApiResult::Error(e) => view::BuySellMessage::SessionError(
-                                "Unable to fetch supported banks for your country",
-                                e,
-                            ),
+                            MavapayApiResult::Error(e) => {
+                                view::Message::BuySell(view::BuySellMessage::SessionError(
+                                    "Unable to fetch supported banks for your country",
+                                    e,
+                                ))
+                            }
                         },
-                    )
-                    .map(view::Message::BuySell);
+                    );
 
                     return Some(task);
                 }
@@ -351,16 +351,15 @@ impl MavapayState {
                     let task = iced::Task::perform(
                         async move { client.info().await.map(|res| res.wallet_info.balance_sat) },
                         |result| match result {
-                            Ok(balance) => view::BuySellMessage::Mavapay(
-                                MavapayMessage::ReceivedLiquidWalletBalance(balance),
-                            ),
-                            Err(e) => view::BuySellMessage::SessionError(
+                            Ok(balance) => {
+                                MavapayMessage::ReceivedLiquidWalletBalance(balance).into()
+                            }
+                            Err(e) => view::Message::BuySell(view::BuySellMessage::SessionError(
                                 "Unable to fetch Liquid Wallet balance",
                                 e.to_string(),
-                            ),
+                            )),
                         },
-                    )
-                    .map(view::Message::BuySell);
+                    );
 
                     return Some(task);
                 }
@@ -440,9 +439,7 @@ impl MavapayState {
                             },
                             |res| match res {
                                 MavapayApiResult::Success(details) => {
-                                    view::Message::BuySell(view::BuySellMessage::Mavapay(
-                                        MavapayMessage::VerifiedNgnBankDetails(details),
-                                    ))
+                                    MavapayMessage::VerifiedNgnBankDetails(details).into()
                                 }
                                 MavapayApiResult::Error(err) => {
                                     view::Message::BuySell(view::BuySellMessage::SessionError(
@@ -489,14 +486,13 @@ impl MavapayState {
                         beneficiary: beneficiary.clone(),
                     };
 
-                    return Some(iced::Task::done(view::Message::BuySell(
-                        view::BuySellMessage::Mavapay(MavapayMessage::SendQuote(request)),
-                    )));
+                    return Some(iced::Task::done(MavapayMessage::SendQuote(request).into()));
                 }
                 MavapayMessage::QuoteCreated(quote) => {
                     if let Some(order_id) = quote.order_id.clone() {
                         *sending_quote = false;
 
+                        let liquid_balance = *liquid_balance;
                         let invoice_qr_code_data =
                             iced::widget::qr_code::Data::new(quote.invoice.as_bytes()).ok();
 
@@ -506,6 +502,8 @@ impl MavapayState {
                             invoice_qr_code_data,
                             fulfilled_order: None,
                             stream_order_id: Some(order_id),
+                            liquid_balance,
+                            fulfilling_ln_invoice: false,
                         });
                     } else {
                         return Some(iced::Task::done(view::Message::BuySell(
@@ -524,10 +522,44 @@ impl MavapayState {
                     quote,
                     fulfilled_order,
                     stream_order_id,
+                    fulfilling_ln_invoice,
                     ..
                 },
                 msg,
             ) => match msg {
+                MavapayMessage::FulfillSellInvoice => {
+                    if let panel::BuyOrSell::Sell = self.buy_or_sell {
+                        let client = self.breez_client.clone();
+                        let invoice = quote.invoice.clone();
+                        let amount = quote.total_amount_in_source_currency;
+
+                        *fulfilling_ln_invoice = true;
+
+                        return Some(iced::Task::perform(
+                            async move { client.pay_invoice(invoice, Some(amount)).await },
+                            |res| match res {
+                                Ok(res) => MavapayMessage::SellInvoiceFulfilled(res.payment).into(),
+                                Err(err) => {
+                                    view::Message::BuySell(view::BuySellMessage::SessionError(
+                                        "Unable to fulfil invoice",
+                                        err.to_string(),
+                                    ))
+                                }
+                            },
+                        ));
+                    }
+                }
+                MavapayMessage::SellInvoiceFulfilled(payment) => {
+                    *fulfilling_ln_invoice = false;
+
+                    let msg = format!(
+                        "[LIQUID] Successfully satisfied invoice for {} SATS, TXID = {:?}",
+                        payment.amount_sat, payment.tx_id
+                    );
+
+                    return Some(iced::Task::done(view::Message::ShowSuccess(msg)));
+                }
+
                 MavapayMessage::WriteInvoiceToClipboard => {
                     return Some(iced::Task::batch([
                         iced::Task::done(view::Message::Clipboard(quote.invoice.clone())),
@@ -577,15 +609,9 @@ impl MavapayState {
                             },
                             |result| match result {
                                 MavapayApiResult::Success(order) => {
-                                    view::Message::BuySell(view::BuySellMessage::Mavapay(
-                                        MavapayMessage::QuoteFulfilled(order),
-                                    ))
+                                    MavapayMessage::QuoteFulfilled(order).into()
                                 }
                                 MavapayApiResult::Error(e) => {
-                                    log::error!(
-                                        "[MAVAPAY] Failed to fetch order after SSE success: {}",
-                                        e
-                                    );
                                     view::Message::BuySell(view::BuySellMessage::SessionError(
                                         "Failed to fetch order details",
                                         e,
@@ -596,6 +622,7 @@ impl MavapayState {
                         return Some(task);
                     }
                 }
+
                 MavapayMessage::StreamConnected => {
                     log::info!("[MAVAPAY SSE] Connected to transaction stream");
                 }
@@ -634,7 +661,7 @@ impl MavapayState {
                         order_id,
                         amount: matches!(self.buy_or_sell, panel::BuyOrSell::Buy)
                             .then_some(quote.amount_in_source_currency),
-                        currency: quote.source_currency.clone().into(),
+                        currency: (&quote.source_currency).into(),
                     };
 
                     let task = iced::Task::perform(
@@ -677,16 +704,17 @@ impl MavapayState {
                     let task = iced::Task::perform(
                         async move { MavapayClient(&client).get_transactions().await },
                         |result| match result {
-                            MavapayApiResult::Success(response) => view::BuySellMessage::Mavapay(
-                                MavapayMessage::TransactionsReceived(response.transactions),
-                            ),
-                            MavapayApiResult::Error(e) => view::BuySellMessage::SessionError(
-                                "Failed to fetch transactions",
-                                e,
-                            ),
+                            MavapayApiResult::Success(response) => {
+                                MavapayMessage::TransactionsReceived(response.transactions).into()
+                            }
+                            MavapayApiResult::Error(e) => {
+                                view::Message::BuySell(view::BuySellMessage::SessionError(
+                                    "Failed to fetch transactions",
+                                    e,
+                                ))
+                            }
                         },
-                    )
-                    .map(view::Message::BuySell);
+                    );
 
                     return Some(task);
                 }
@@ -711,15 +739,16 @@ impl MavapayState {
                         async move { MavapayClient(&client).get_order(&order_id).await },
                         |result| match result {
                             MavapayApiResult::Success(order) => {
-                                view::BuySellMessage::Mavapay(MavapayMessage::OrderReceived(order))
+                                MavapayMessage::OrderReceived(order).into()
                             }
-                            MavapayApiResult::Error(e) => view::BuySellMessage::SessionError(
-                                "Failed to fetch order details",
-                                e,
-                            ),
+                            MavapayApiResult::Error(e) => {
+                                view::Message::BuySell(view::BuySellMessage::SessionError(
+                                    "Failed to fetch order details",
+                                    e,
+                                ))
+                            }
                         },
-                    )
-                    .map(view::Message::BuySell);
+                    );
 
                     let transaction = transaction.clone();
                     self.steps.push(MavapayFlowStep::OrderDetail {

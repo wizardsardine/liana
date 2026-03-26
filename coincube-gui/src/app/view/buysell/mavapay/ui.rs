@@ -85,9 +85,9 @@ fn buy_input_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMess
                 .spacing(20)
                 .padding(0),
                 match getting_invoice {
-                    true => button::secondary(Some(clock_icon()), "Getting Invoice..."),
+                    true => button::secondary(Some(clock_icon()), "[1] Getting Invoice..."),
                     false => match sending_quote {
-                        true => button::secondary(Some(clock_icon()), "Getting Quote..."),
+                        true => button::secondary(Some(clock_icon()), "[2] Getting Quote..."),
                         false => button::primary(Some(card_icon()), "Generate Invoice").on_press(
                             BuySellMessage::Mavapay(MavapayMessage::GenerateLightningInvoice)
                         ),
@@ -371,17 +371,23 @@ fn sell_input_form<'a>(
             widget::space().width(iced::Length::Fill),
             match validation_message {
                 None => match sending_quote {
-                    true => button::secondary(Some(clock_icon()), "Fetching Quote.."),
-                    false => button::primary(Some(enter_box_icon()), "Get Quote").on_press_maybe(
-                        (banks.is_some() || state.country.code == "KE")
-                            .then_some(BuySellMessage::Mavapay(MavapayMessage::CreateQuote))
-                    ),
-                }
-                .style(|th, st| {
-                    let mut base = theme::button::secondary(th, st);
-                    base.border = iced::Border::default().rounded(3);
-                    base
-                }),
+                    true =>
+                        button::secondary(Some(clock_icon()), "Fetching Quote..").style(|th, st| {
+                            let mut base = theme::button::secondary(th, st);
+                            base.border = iced::Border::default().rounded(3);
+                            base
+                        }),
+                    false => button::primary(Some(enter_box_icon()), "Get Quote")
+                        .on_press_maybe(
+                            (banks.is_some() || state.country.code == "KE")
+                                .then_some(BuySellMessage::Mavapay(MavapayMessage::CreateQuote))
+                        )
+                        .style(|th, st| {
+                            let mut base = theme::button::primary(th, st);
+                            base.border = iced::Border::default().rounded(3);
+                            base
+                        }),
+                },
                 Some(m) => {
                     widget::button(widget::text(m).size(14))
                         .padding(12)
@@ -403,9 +409,11 @@ fn sell_input_form<'a>(
 
 fn detail_row<'a>(
     label: &'a str,
-    value: String,
+    value: impl Into<std::borrow::Cow<'a, str>>,
     text_color: Option<iced::Color>,
 ) -> widget::Row<'a, BuySellMessage, theme::Theme> {
+    let value = value.into().into_owned();
+
     widget::row![
         widget::column![
             text::p2_medium(label).color(color::GREY_2),
@@ -421,18 +429,33 @@ fn detail_row<'a>(
 }
 
 fn summary_card<'a>(
-    details: &CheckoutDetails,
-) -> widget::Container<'a, BuySellMessage, theme::Theme> {
-    let CheckoutDetails {
-        reference,
-        reference_label,
-        total_fiat,
-        btc_amount,
-        currency_symbol,
-    } = details;
+    quote: &'a GetQuoteResponse,
+) -> widget::Column<'a, BuySellMessage, theme::Theme> {
+    let (reference, reference_label) = match &quote.order_id {
+        Some(order_id) => (order_id.as_str(), "Order Ref"),
+        None => (quote.id.as_str(), "Quote Ref"),
+    };
 
-    card::simple(
-        widget::column![
+    let source_currency: MavapayCurrency = (&quote.source_currency).into();
+    let source_amount = quote.total_amount_in_source_currency as f64
+        / match source_currency {
+            MavapayCurrency::KenyanShilling
+            | MavapayCurrency::SouthAfricanRand
+            | MavapayCurrency::NigerianNaira => 100.0,
+            MavapayCurrency::Bitcoin => 100_000_000.0,
+        };
+
+    let target_currency: MavapayCurrency = (&quote.target_currency).into();
+    let target_amount = quote.amount_in_target_currency as f64
+        / match target_currency {
+            MavapayCurrency::KenyanShilling
+            | MavapayCurrency::SouthAfricanRand
+            | MavapayCurrency::NigerianNaira => 100.0,
+            MavapayCurrency::Bitcoin => 100_000_000.0,
+        };
+
+    widget::column![
+        widget::container(
             widget::row![
                 success_icon_badge(),
                 widget::Space::new().width(10),
@@ -442,43 +465,43 @@ fn summary_card<'a>(
                         .color(color::GREY_2)
                 ]
             ]
-            .align_y(Alignment::Center),
-            widget::Space::new().height(15),
-            widget::row![
-                widget::column![
-                    text::p2_medium("Order Amount").color(color::GREY_2),
-                    text::p1_bold(format!("{}{}", currency_symbol, total_fiat))
-                ]
-                .width(Length::Fill),
-                widget::column![
-                    text::p2_medium("Bitcoin Expected").color(color::GREY_2),
-                    text::p1_bold(format!("{:.8} BTC", btc_amount))
-                ]
-                .width(Length::Fill),
-            ],
-            widget::Space::new().height(10),
-            widget::row![widget::column![
-                text::p2_medium("Order Status").color(color::GREY_2),
-                widget::row![clock_icon(), text::p1_bold("PENDING")]
-            ]]
+            .align_y(Alignment::Center)
+        )
+        .width(iced::Length::Fill)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center),
+        widget::container(widget::Space::default().width(iced::Length::Fill).height(2))
+            .style(theme::card::border),
+        widget::row![
+            widget::space().width(iced::Length::Fill),
+            widget::column![
+                text::caption("You Send").color(color::GREEN),
+                text::p1_bold(format!("{} {}", source_amount, source_currency))
+            ]
+            .spacing(1),
+            widget::column![
+                text::caption("You Receive").color(color::ORANGE),
+                text::p1_bold(format!("{} {}", target_amount, target_currency))
+            ]
+            .spacing(1),
+            widget::space().width(iced::Length::Fill)
         ]
-        .width(Length::Fill)
-        .padding(15),
-    )
+        .spacing(10),
+    ]
+    .spacing(15)
     .width(Length::Fill)
+    .padding(7)
 }
 
 fn instructions_card<'a>(
-    quote: &GetQuoteResponse,
-    details: &CheckoutDetails,
+    quote: &'a GetQuoteResponse,
+    country: &'static Country,
 ) -> widget::Container<'a, BuySellMessage, theme::Theme> {
-    let CheckoutDetails {
-        reference,
-        total_fiat,
-        currency_symbol,
-        ..
-    } = details;
-    let account_number = quote.ngn_bank_account_number.clone();
+    let account_number = quote.ngn_bank_account_number.as_deref();
+    let reference = match &quote.order_id {
+        Some(order_id) => order_id.as_str(),
+        None => quote.id.as_str(),
+    };
 
     card::simple(
         widget::column![
@@ -504,21 +527,21 @@ fn instructions_card<'a>(
             text::p2_medium("STEP 1: TRANSFER FUNDS TO OUR ACCOUNT")
             .color(color::GREY_2),
             widget::Space::new().height(10),
-            quote.bank_name.clone().map(|bank_name|
-                detail_row("Bank Name", bank_name, None)
+            quote.bank_name.as_deref().map(|bn|
+                detail_row("Bank Name", bn, None)
             ),
             widget::Space::new().height(20),
-            account_number.clone().map(|account_number|
-                detail_row("Account Number", account_number, None)
+            account_number.map(|an|
+                detail_row("Account Number", an, None)
             ),
             widget::Space::new().height(20),
-            quote.ngn_account_name.clone().map(|account_name|
-                detail_row("Account Name", account_name, None)
+            quote.ngn_account_name.as_deref().map(|an|
+                detail_row("Account Name", an, None)
             ),
             widget::Space::new().height(20),
             detail_row(
                 "Amount to Send",
-                format!("{}{}", currency_symbol, total_fiat),
+                format!("{}{}", country.currency.symbol, quote.total_amount_in_source_currency as f64 / 100.0),
                 Some(color::GREEN),
             ),
             widget::Space::new().height(20),
@@ -534,9 +557,9 @@ fn instructions_card<'a>(
                 ].align_y(Alignment::Center),
                 widget::Space::new().height(20),
                 widget::row![
-                    text::h4_bold(reference.clone()),
+                    text::h4_bold(reference),
                     widget::Button::new(clipboard_icon().style(theme::text::secondary))
-                        .on_press(BuySellMessage::Clipboard(reference.clone()))
+                        .on_press(BuySellMessage::Clipboard(reference.to_string()))
                         .style(theme::button::transparent),
                 ].align_y(Alignment::Center),
                 widget::Space::new().height(20),
@@ -571,8 +594,7 @@ fn notes_card<'a>() -> widget::Container<'a, BuySellMessage, theme::Theme> {
             note_item("Final Bitcoin price may vary based on actual execution prices"),
             note_item("Our commission (1-2%) will be deducted from the final Bitcoin amount"),
         ]
-        .width(Length::Fill)
-        .padding(15),
+        .width(Length::Fill),
     )
 }
 
@@ -585,10 +607,12 @@ fn note_item<'a>(content: &'a str) -> widget::Row<'a, BuySellMessage, theme::The
     .align_y(Alignment::Center)
 }
 
+// TODO: This widget needs a general touch-up
 fn order_success_view<'a>(
-    buy_or_sell: &BuyOrSell,
-    order: &GetOrderResponse,
-    details: &CheckoutDetails,
+    order: &'a GetOrderResponse,
+    sats: u64,
+    buy_or_sell: &'a BuyOrSell,
+    country: &'static Country,
 ) -> widget::Column<'a, BuySellMessage, theme::Theme> {
     let (title, subtitle) = match buy_or_sell {
         BuyOrSell::Sell => (
@@ -606,7 +630,7 @@ fn order_success_view<'a>(
         widget::Space::new().height(10),
         widget::container(widget::column![
             card::simple(
-                widget::column![widget::row![
+                widget::row![
                     success_icon_badge(),
                     widget::Space::new().width(15),
                     widget::column![
@@ -614,9 +638,7 @@ fn order_success_view<'a>(
                         text::p2_medium(subtitle).color(color::GREY_2)
                     ]
                 ]
-                .align_y(Alignment::Center)]
-                .width(Length::Fill)
-                .padding(20)
+                .align_y(Alignment::Center)
             )
             .width(Length::Fill),
             widget::Space::new().height(10),
@@ -624,20 +646,17 @@ fn order_success_view<'a>(
                 widget::column![
                     text::p1_bold("Order Details"),
                     widget::Space::new().height(15),
-                    detail_row(details.reference_label, order.order_id.clone(), None),
+                    detail_row("Order Id", &order.order_id, None),
                     widget::Space::new().height(15),
                     widget::row![
                         widget::column![
                             text::p2_medium("Amount Paid").color(color::GREY_2),
-                            text::p1_bold(format!(
-                                "{}{}",
-                                details.currency_symbol, details.total_fiat
-                            ))
+                            text::p1_bold(format_amount(order.amount, &order.currency))
                         ]
                         .width(Length::Fill),
                         widget::column![
                             text::p2_medium("Bitcoin Received").color(color::GREY_2),
-                            text::p1_bold(format!("{:.8} BTC", details.btc_amount))
+                            text::p1_bold(format!("{:.8} BTC", sats as f64 / 100_000_000.0))
                         ]
                         .width(Length::Fill)
                     ],
@@ -1072,62 +1091,67 @@ fn checkout_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMessa
         fulfilled_order,
         quote,
         invoice_qr_code_data,
+        liquid_balance,
         ..
     }) = state.steps.last()
     else {
         unreachable!()
     };
 
-    let details = CheckoutDetails::from_quote(quote, state.sat_amount, state.country);
-
     match fulfilled_order {
         None => {
             widget::column![
-                match state.buy_or_sell {
+                widget::container(match state.buy_or_sell {
                     BuyOrSell::Buy => {
-                        Some(widget::container(
-                                widget::column![
-                                text::p1_bold("Complete Your Order"),
-                                text::p1_medium("Review your order details carefully before confirming your purchase. Once confirmed, your Bitcoin will be delivered to your wallet.")
-                                    .color(color::GREY_2),
-                                widget::Space::new().height(15),
-                                widget::container(
-                                    widget::column![
-                                        summary_card(&details),
-                                        instructions_card(quote, &details),
-                                        notes_card()
-                                    ].spacing(10)
-                                        )
-                                .padding(10)
-                                .style(|t| widget::container::Style {
-                                    border: iced::Border {
-                                        radius: 25.0.into(),
-                                        ..Default::default()
-                                    },
-                                    ..theme::container::background(t)
-                                })
-                            ])
-                            .padding(20)
-                            .style(theme::card::simple))
+                        widget::column![
+                            summary_card(quote),
+                            instructions_card(quote, state.country),
+                            notes_card()
+                        ]
                     }
-                    BuyOrSell::Sell =>
-                        invoice_qr_code_data
-                            .as_ref()
-                            .map(|data| invoice_qr_code_display(
-                                "Deposit into the following address to proceed",
-                                quote.invoice.as_str(),
-                                data
-                            )),
-                },
-                widget::Space::new().height(10),
+                    BuyOrSell::Sell => {
+                        let can_fulfil_sell_order = liquid_balance
+                            .map(|s| s >= quote.total_amount_in_source_currency)
+                            .unwrap_or(false);
+
+                        widget::column![
+                            summary_card(quote),
+                            invoice_qr_code_data
+                                .as_ref()
+                                .map(|data| invoice_qr_code_display(
+                                    "Deposit into the following address to proceed",
+                                    quote.invoice.as_str(),
+                                    data
+                                )),
+                            match can_fulfil_sell_order {
+                                true => button::primary(
+                                    Some(bitcoin_icon()),
+                                    "Fulfil Order from Liquid Wallet"
+                                )
+                                .on_press(BuySellMessage::Mavapay(
+                                    MavapayMessage::FulfillSellInvoice
+                                )),
+                                false => button::secondary(
+                                    Some(restore_icon()),
+                                    "Liquid Balance insufficient. Manually fulfill invoice"
+                                ),
+                            }
+                        ]
+                        .spacing(10)
+                    }
+                })
+                .padding(10)
+                .style(theme::card::simple),
+                widget::Space::new().height(15),
                 (fulfilled_order.is_none() && cfg!(debug_assertions)).then(|| {
                     button::primary(Some(wrench_icon()), "Simulate Pay-In (Developer Option)")
                         .on_press(BuySellMessage::Mavapay(MavapayMessage::SimulatePayIn))
                 }),
-                widget::Space::new().height(10)
             ]
         }
-        Some(order) => order_success_view(&state.buy_or_sell, order, &details),
+        Some(order) => {
+            order_success_view(order, state.sat_amount, &state.buy_or_sell, state.country)
+        }
     }
     .align_x(Alignment::Center)
     .width(600)
@@ -1205,31 +1229,6 @@ fn invoice_qr_code_display<'a>(
                     .rounded(5),
             )
     })
-}
-
-struct CheckoutDetails {
-    reference: String,
-    reference_label: &'static str,
-    total_fiat: f64,
-    btc_amount: f64,
-    currency_symbol: &'static str,
-}
-
-impl CheckoutDetails {
-    fn from_quote(quote: &GetQuoteResponse, sats: u64, country: &Country) -> Self {
-        let (reference, reference_label) = match &quote.order_id {
-            Some(order_id) => (order_id.clone(), "Order Ref"),
-            None => (quote.id.clone(), "Quote Ref"),
-        };
-
-        Self {
-            reference,
-            reference_label,
-            total_fiat: quote.total_amount_in_source_currency as f64 / 100.0,
-            btc_amount: sats as f64 / 100_000_000.0,
-            currency_symbol: country.currency.symbol,
-        }
-    }
 }
 
 fn status_color(status: &TransactionStatus) -> iced::Color {

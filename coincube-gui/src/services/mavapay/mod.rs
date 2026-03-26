@@ -46,6 +46,8 @@ pub enum MavapayMessage {
 
     // checkout
     SimulatePayIn,
+    FulfillSellInvoice,
+    SellInvoiceFulfilled(breez_sdk_liquid::model::Payment),
     QuoteFulfilled(GetOrderResponse),
 
     // SSE stream events
@@ -53,6 +55,12 @@ pub enum MavapayMessage {
     StreamConnected,
     EventSourceDisconnected(String),
     StreamError(String),
+}
+
+impl From<MavapayMessage> for crate::app::view::Message {
+    fn from(msg: MavapayMessage) -> Self {
+        crate::app::view::Message::BuySell(crate::app::view::BuySellMessage::Mavapay(msg))
+    }
 }
 
 /// Checks if a country ISO code is in the African region (Mavapay supported)
