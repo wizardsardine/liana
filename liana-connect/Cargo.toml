@@ -17,7 +17,7 @@ async-trait = { workspace = true }
 bip39 = { workspace = true }
 getrandom = { workspace = true }
 miniscript = { workspace = true, features = ["serde"]}
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }
