@@ -21,27 +21,8 @@ pub fn coincube_window_icon() -> icon::Icon {
     icon::from_rgba(buffer, width, height).unwrap()
 }
 
-/// Text-based COINCUBE wordmark using Space Grotesk Bold.
+/// COINCUBE wordmark using Space Grotesk Bold at a given size.
 /// "COIN" is always orange; "CUBE" is white on dark, dark gray on light.
-pub fn coincube_logotype<'a, M: 'a>(mode: ThemeMode) -> Row<'a, M> {
-    let cube_color = match mode {
-        ThemeMode::Dark => color::WHITE,
-        ThemeMode::Light => color::DARK_GRAY,
-    };
-    iced::widget::row![
-        iced::widget::text("COIN")
-            .font(font::SPACE_GROTESK_BOLD)
-            .size(28)
-            .color(color::ORANGE),
-        iced::widget::text("CUBE")
-            .font(font::SPACE_GROTESK_BOLD)
-            .size(28)
-            .color(cube_color),
-    ]
-}
-
-/// COINCUBE wordmark at a custom size, using Space Grotesk Bold.
-/// Used for page headers like "COINCUBE | CONNECT".
 pub fn coincube_wordmark<'a, M: 'a>(mode: ThemeMode, size: f32) -> Row<'a, M> {
     let cube_color = match mode {
         ThemeMode::Dark => color::WHITE,

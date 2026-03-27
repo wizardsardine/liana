@@ -608,7 +608,7 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                     .padding(16)
                     .spacing(2),
             )
-            .style(|t| card_style(t))
+            .style(card_style)
             .width(Length::Fill),
         )
         .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
@@ -621,7 +621,7 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                     .padding(16)
                     .spacing(2),
             )
-            .style(|t| card_style(t))
+            .style(card_style)
             .width(Length::Fill),
         )
         .spacing(0)
@@ -682,7 +682,7 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
                 .padding(20)
                 .spacing(2),
         )
-        .style(|t| card_style(t))
+        .style(card_style)
         .width(Length::Fill)
         .into()
     } else {
@@ -776,7 +776,7 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
                 .padding(20)
                 .spacing(2),
         )
-        .style(|t| card_style(t))
+        .style(card_style)
         .width(Length::Fill)
         .into()
     };
@@ -813,7 +813,7 @@ fn duress_ux<'a>() -> Element<'a, ConnectAccountMessage> {
                     .padding(20)
                     .spacing(2),
             )
-            .style(|t| card_style(t))
+            .style(card_style)
             .width(Length::Fill),
         )
         .spacing(0)
@@ -842,7 +842,7 @@ fn avatar_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage>
                 .padding(24)
                 .spacing(4),
         )
-        .style(|t| card_style(t))
+        .style(card_style)
         .width(Length::Fill)
         .into(),
 
@@ -873,7 +873,7 @@ fn avatar_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage>
                         .padding(16)
                         .spacing(4),
                 )
-                .style(|t| card_style(t))
+                .style(card_style)
                 .width(Length::Fill),
             )
             .spacing(0)
@@ -1183,7 +1183,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, Conne
             .padding(16)
             .spacing(0),
     )
-    .style(|t| card_style(t))
+    .style(card_style)
     .width(Length::Fill)
     .into()
 }
@@ -1192,7 +1192,7 @@ fn avatar_settings_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCub
     let Some(ref data) = state.avatar_data else {
         return container(text::p2_regular("Loading avatar data…").color(color::GREY_3))
             .padding(16)
-            .style(|t| card_style(t))
+            .style(card_style)
             .width(Length::Fill)
             .into();
     };
@@ -1273,7 +1273,7 @@ fn avatar_settings_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCub
                             .height(Length::Fixed(60.0))
                             .align_x(Alignment::Center)
                             .align_y(Alignment::Center)
-                            .style(|t| card_style(t)),
+                            .style(card_style),
                     )
                     .on_press(ConnectCubeMessage::Avatar(AvatarMessage::SelectVariant(
                         vid,
@@ -1323,7 +1323,7 @@ fn avatar_settings_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCub
             .padding(16)
             .spacing(0),
     )
-    .style(|t| card_style(t))
+    .style(card_style)
     .width(Length::Fill)
     .into()
 }
@@ -1350,7 +1350,7 @@ fn invites_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountM
                 .padding(16)
                 .spacing(2),
         )
-        .style(|t| card_style(t))
+        .style(card_style)
         .width(Length::Fill)
         .into()
     } else {
@@ -1363,7 +1363,7 @@ fn invites_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountM
                 .padding(16)
                 .spacing(2),
         )
-        .style(|t| card_style(t))
+        .style(card_style)
         .width(Length::Fill)
         .into()
     };

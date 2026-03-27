@@ -1005,7 +1005,7 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
         .spacing(0)
         .width(Length::Fill)
         .push(
-            Container::new(image::coincube_logotype(launcher.theme_mode))
+            Container::new(image::coincube_wordmark(launcher.theme_mode, 28.0))
                 .padding(10)
                 .center_x(Length::Fill),
         )
