@@ -452,8 +452,9 @@ fn wallet_card<'a>(
                             .push(if balance_masked {
                                 Some(text("********").size(P1_SIZE))
                             } else {
-                                fiat_balance
-                                    .map(|fiat| fiat.to_text().size(P1_SIZE).style(theme::text::secondary))
+                                fiat_balance.map(|fiat| {
+                                    fiat.to_text().size(P1_SIZE).style(theme::text::secondary)
+                                })
                             })
                             .push_maybe((!balance_masked && pending_send_sats > 0).then(|| {
                                 Row::new()
@@ -497,7 +498,9 @@ fn wallet_card<'a>(
                                     width: 1.0,
                                     radius: 35.0.into(),
                                 },
-                                background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+                                background: Some(iced::Background::Color(
+                                    t.colors.cards.simple.background,
+                                )),
                                 ..Default::default()
                             })
                             .width(Length::Fixed(140.0))
@@ -719,7 +722,8 @@ fn balance_summary_card<'a>(
                     .spacing(4)
                     .push(amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit))
                     .push_maybe(
-                        fiat_balance.map(|fiat| fiat.to_text().size(P1_SIZE).style(theme::text::secondary)),
+                        fiat_balance
+                            .map(|fiat| fiat.to_text().size(P1_SIZE).style(theme::text::secondary)),
                     ),
             ),
         );

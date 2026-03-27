@@ -88,24 +88,6 @@ pub fn balance_header(theme: &Theme) -> Style {
     }
 }
 
-/// Rounded card container with themed background (used for wallet cards, etc.)
-pub fn card_rounded(theme: &Theme) -> Style {
-    Style {
-        background: Some(Background::Color(theme.colors.cards.simple.background)),
-        border: iced::Border {
-            color: theme
-                .colors
-                .cards
-                .simple
-                .border
-                .unwrap_or(iced::Color::TRANSPARENT),
-            width: 0.2,
-            radius: 25.0.into(),
-        },
-        ..Default::default()
-    }
-}
-
 pub fn border_grey(theme: &Theme) -> Style {
     Style {
         background: Some(Background::Color(theme.colors.general.background)),

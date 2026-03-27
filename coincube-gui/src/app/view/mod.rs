@@ -976,7 +976,12 @@ pub fn sidebar<'a>(
             )
             .push(
                 Container::new(theme_toggle_btn)
-                    .padding(iced::Padding { top: 4.0, right: 8.0, bottom: 16.0, left: 8.0 })
+                    .padding(iced::Padding {
+                        top: 4.0,
+                        right: 8.0,
+                        bottom: 16.0,
+                        left: 8.0,
+                    })
                     .center_x(Length::Fill),
             ),
     )

@@ -688,9 +688,7 @@ pub mod global {
             Self::update(path, |s| s.developer_mode = developer_mode, true)
         }
 
-        pub fn load_theme_mode(
-            path: &PathBuf,
-        ) -> coincube_ui::theme::palette::ThemeMode {
+        pub fn load_theme_mode(path: &PathBuf) -> coincube_ui::theme::palette::ThemeMode {
             let mut ret = coincube_ui::theme::palette::ThemeMode::default();
             if let Err(e) = Self::update(path, |s| ret = s.theme_mode, false) {
                 tracing::error!("Failed to load theme mode setting: {e}");
@@ -760,8 +758,7 @@ pub mod global {
                 && global_settings.window_config.is_none()
                 && !global_settings.developer_mode
                 && global_settings.account_tier == AccountTier::Free
-                && global_settings.theme_mode
-                    == coincube_ui::theme::palette::ThemeMode::Dark
+                && global_settings.theme_mode == coincube_ui::theme::palette::ThemeMode::Dark
             {
                 write = false;
             }

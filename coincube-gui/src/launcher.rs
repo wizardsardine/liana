@@ -921,7 +921,10 @@ impl Launcher {
             if let LauncherSection::Connect(_) = &self.active_section {
                 // Render Connect account panel view
                 let connect_view: Element<ConnectAccountMessage> =
-                    crate::app::view::connect::connect_account_panel(&self.connect_account, self.theme_mode);
+                    crate::app::view::connect::connect_account_panel(
+                        &self.connect_account,
+                        self.theme_mode,
+                    );
                 connect_view.map(|msg| Message::View(ViewMessage::ConnectAccount(msg)))
             } else {
                 content
@@ -1121,16 +1124,18 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
 
     bottom_col = bottom_col.push(
         Container::new(theme_toggle_btn)
-            .padding(iced::Padding { top: 4.0, right: 8.0, bottom: 16.0, left: 8.0 })
+            .padding(iced::Padding {
+                top: 4.0,
+                right: 8.0,
+                bottom: 16.0,
+                left: 8.0,
+            })
             .center_x(Length::Fill),
     );
 
     // Outer layout: scrollable menu fills, bottom section pinned
     Column::new()
-        .push(
-            scrollable(col)
-                .height(Length::Fill),
-        )
+        .push(scrollable(col).height(Length::Fill))
         .push(bottom_col)
         .height(Length::Fill)
         .into()

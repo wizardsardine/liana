@@ -38,8 +38,7 @@ pub const BOLD_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexSans-Bold.t
 pub const MEDIUM_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexSans-Medium.ttf");
 pub const REGULAR_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexSans-Regular.ttf");
 
-pub const SPACE_GROTESK_BOLD_BYTES: &[u8] =
-    include_bytes!("../static/fonts/SpaceGrotesk-Bold.ttf");
+pub const SPACE_GROTESK_BOLD_BYTES: &[u8] = include_bytes!("../static/fonts/SpaceGrotesk-Bold.ttf");
 
 pub const BOOTSTRAP_ICONS_BYTE: &[u8] = include_bytes!("../static/icons/bootstrap-icons.ttf");
 

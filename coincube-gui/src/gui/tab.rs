@@ -83,11 +83,18 @@ pub enum Message {
 pub struct Tab {
     pub id: usize,
     pub state: State,
+    /// Persisted theme mode — carried across state transitions so new App
+    /// caches inherit the correct mode immediately.
+    pub theme_mode: coincube_ui::theme::palette::ThemeMode,
 }
 
 impl Tab {
     pub fn new(id: usize, state: State) -> Self {
-        Tab { id, state }
+        Tab {
+            id,
+            state,
+            theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
+        }
     }
 
     pub fn cache(&self) -> Option<&Cache> {
@@ -99,6 +106,18 @@ impl Tab {
     }
 
     pub fn set_theme_mode(&mut self, mode: coincube_ui::theme::palette::ThemeMode) {
+        self.theme_mode = mode;
+        match &mut self.state {
+            State::App(app) => app.cache_mut().theme_mode = mode,
+            State::Launcher(launcher) => launcher.theme_mode = mode,
+            _ => {}
+        }
+    }
+
+    /// Apply the tab's stored theme_mode to the current state.
+    /// Call after any state transition to State::App or State::Launcher.
+    fn sync_theme_mode(&mut self) {
+        let mode = self.theme_mode;
         match &mut self.state {
             State::App(app) => app.cache_mut().theme_mode = mode,
             State::Launcher(launcher) => launcher.theme_mode = mode,
@@ -143,7 +162,7 @@ impl Tab {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
-        match (&mut self.state, message) {
+        let result = match (&mut self.state, message) {
             (State::Launcher(l), Message::Launch(msg)) => match msg {
                 launcher::Message::Install(datadir, network, init) => {
                     if !datadir.exists() {
@@ -763,7 +782,9 @@ impl Tab {
                 }
             }
             _ => Task::none(),
-        }
+        };
+        self.sync_theme_mode();
+        result
     }
 
     pub fn subscription(&self) -> Subscription<Message> {

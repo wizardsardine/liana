@@ -366,7 +366,8 @@ impl BuySellPanel {
             .align_y(Alignment::Center);
 
         // Widget title
-        let title = text::p2_regular("Enter the OTP sent to your email").style(theme::text::primary);
+        let title =
+            text::p2_regular("Enter the OTP sent to your email").style(theme::text::primary);
 
         // Email display
         let email_display = Column::new()
@@ -565,7 +566,11 @@ impl BuySellPanel {
                 .push(Space::new().height(Length::Fixed(30.0)))
                 .push(text::p1_bold("Detecting your location...").style(theme::text::primary))
                 .push(Space::new().height(Length::Fixed(20.0)))
-                .push(text::text("Please wait...").size(14).style(theme::text::secondary))
+                .push(
+                    text::text("Please wait...")
+                        .size(14)
+                        .style(theme::text::secondary),
+                )
                 .align_x(Alignment::Center)
                 .spacing(10)
                 .max_width(500)
