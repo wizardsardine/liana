@@ -47,20 +47,12 @@ pub fn simple_toast(message: &str) -> Container<Message> {
 }
 
 /// Wraps `content` in the shared balance card style used across wallet overview and send screens
-/// (GREY_6 background, orange border, rounded corners — matching the Liquid Overview header).
+/// (themed card background, orange border, rounded corners).
 pub fn balance_header_card<'a, Msg: 'a>(content: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
     container(content)
         .padding(20)
         .width(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(color::GREY_6)),
-            border: iced::Border {
-                color: color::ORANGE,
-                width: 0.2,
-                radius: 25.0.into(),
-            },
-            ..Default::default()
-        })
+        .style(theme::container::balance_header)
         .into()
 }
 
@@ -99,10 +91,9 @@ pub fn sidebar<'a>(
 
     // Build the main menu column
     let mut menu_column = Column::new().spacing(0).width(Length::Fill).push(
-        Container::new(coincube_logotype().width(Length::Fill))
+        Container::new(coincube_logotype(cache.theme_mode))
             .padding(10)
-            .align_x(iced::Alignment::Center)
-            .width(Length::Fill),
+            .center_x(Length::Fill),
     );
 
     // Avatar + Cube name + Lightning Address below logo (skip if no identity set)
@@ -118,8 +109,8 @@ pub fn sidebar<'a>(
                 .height(Length::Fixed(60.0))
                 .center_x(Length::Fixed(60.0))
                 .center_y(Length::Fixed(60.0))
-                .style(|_| container::Style {
-                    background: Some(iced::Background::Color(color::GREY_6)),
+                .style(|t| container::Style {
+                    background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                     border: iced::Border {
                         radius: 30.0.into(),
                         ..Default::default()
@@ -134,7 +125,7 @@ pub fn sidebar<'a>(
             .push(Space::new().height(Length::Fixed(6.0)))
             .push(
                 text::p2_bold(cube_name)
-                    .color(color::WHITE)
+                    .style(theme::text::primary)
                     .align_x(iced::Alignment::Center),
             )
             .align_x(iced::Alignment::Center)
@@ -947,20 +938,47 @@ pub fn sidebar<'a>(
 
     menu_column = menu_column.push(global_settings_button);
 
+    let theme_icon = match cache.theme_mode {
+        coincube_ui::theme::palette::ThemeMode::Dark => coincube_ui::icon::sun_icon(),
+        coincube_ui::theme::palette::ThemeMode::Light => coincube_ui::icon::moon_icon(),
+    };
+    let theme_label = match cache.theme_mode {
+        coincube_ui::theme::palette::ThemeMode::Dark => "Light Mode",
+        coincube_ui::theme::palette::ThemeMode::Light => "Dark Mode",
+    };
+    let theme_toggle_btn = iced::widget::Button::new(
+        row![
+            theme_icon.style(theme::text::secondary),
+            text::p2_regular(theme_label),
+        ]
+        .spacing(8)
+        .align_y(iced::alignment::Vertical::Center),
+    )
+    .on_press(Message::ToggleTheme)
+    .style(theme::button::transparent)
+    .padding([8, 12]);
+
     Container::new(
-        Column::new().push(menu_column.height(Length::Fill)).push(
-            Container::new(
-                Column::new()
-                    .spacing(10)
-                    .push(cache.rescan_progress().map(|p| {
-                        Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
-                            .padding(5)
-                            .style(theme::pill::simple)
-                    })),
+        Column::new()
+            .push(menu_column.height(Length::Fill))
+            .push(
+                Container::new(
+                    Column::new()
+                        .spacing(10)
+                        .push(cache.rescan_progress().map(|p| {
+                            Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
+                                .padding(5)
+                                .style(theme::pill::simple)
+                        })),
+                )
+                .width(Length::Fill)
+                .height(Length::Shrink),
             )
-            .width(Length::Fill)
-            .height(Length::Shrink),
-        ),
+            .push(
+                Container::new(theme_toggle_btn)
+                    .padding(iced::Padding { top: 4.0, right: 8.0, bottom: 16.0, left: 8.0 })
+                    .center_x(Length::Fill),
+            ),
     )
     .style(theme::container::foreground)
 }
@@ -1082,8 +1100,8 @@ pub fn placeholder<'a, T: Into<Element<'a, Message>>>(
         .width(Length::Fill)
         .padding(60)
         .center_x(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(color::GREY_6)),
+        .style(|t| container::Style {
+            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
             border: iced::Border {
                 radius: 20.0.into(),
                 ..Default::default()

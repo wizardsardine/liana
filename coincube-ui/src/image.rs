@@ -3,10 +3,13 @@ use iced::{
     window::icon,
 };
 
+use crate::theme::palette::ThemeMode;
 use crate::theme::Theme;
+use crate::widget::Row;
+use crate::{color, font};
 
 const COINCUBE_LOGOTYPE_GREY: &[u8] = include_bytes!("../static/logos/coincube-logo-gray.svg");
-const COINCUBE_LOGOTYPE: &[u8] = include_bytes!("../static/logos/coincube-logo.svg");
+const _COINCUBE_LOGOTYPE: &[u8] = include_bytes!("../static/logos/coincube-logo.svg");
 
 pub fn coincube_window_icon() -> icon::Icon {
     let bytes = include_bytes!("../static/logos/coincube-cc.ico");
@@ -19,11 +22,45 @@ pub fn coincube_window_icon() -> icon::Icon {
     icon::from_rgba(buffer, width, height).unwrap()
 }
 
-pub fn coincube_logotype<'a>() -> Svg<'a, Theme> {
-    let h = svg::Handle::from_memory(COINCUBE_LOGOTYPE);
-    Svg::new(h)
+/// Text-based COINCUBE wordmark using Space Grotesk Bold.
+/// "COIN" is always orange; "CUBE" is white on dark, dark gray on light.
+pub fn coincube_logotype<'a, M: 'a>(mode: ThemeMode) -> Row<'a, M> {
+    let cube_color = match mode {
+        ThemeMode::Dark => color::WHITE,
+        ThemeMode::Light => color::DARK_GRAY,
+    };
+    iced::widget::row![
+        iced::widget::text("COIN")
+            .font(font::SPACE_GROTESK_BOLD)
+            .size(28)
+            .color(color::ORANGE),
+        iced::widget::text("CUBE")
+            .font(font::SPACE_GROTESK_BOLD)
+            .size(28)
+            .color(cube_color),
+    ]
 }
 
+/// COINCUBE wordmark at a custom size, using Space Grotesk Bold.
+/// Used for page headers like "COINCUBE | CONNECT".
+pub fn coincube_wordmark<'a, M: 'a>(mode: ThemeMode, size: f32) -> Row<'a, M> {
+    let cube_color = match mode {
+        ThemeMode::Dark => color::WHITE,
+        ThemeMode::Light => color::DARK_GRAY,
+    };
+    iced::widget::row![
+        iced::widget::text("COIN")
+            .font(font::SPACE_GROTESK_BOLD)
+            .size(size)
+            .color(color::ORANGE),
+        iced::widget::text("CUBE")
+            .font(font::SPACE_GROTESK_BOLD)
+            .size(size)
+            .color(cube_color),
+    ]
+}
+
+/// Grey SVG logotype — used for small badge icons where text rendering is impractical.
 pub fn coincube_logotype_grey<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(COINCUBE_LOGOTYPE_GREY);
     Svg::new(h)

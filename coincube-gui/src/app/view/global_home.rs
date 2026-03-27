@@ -151,8 +151,10 @@ fn vault_incoming_transfer_card<'a>(
                 .width(Length::Fixed(28.0))
                 .height(Length::Fixed(1.0)),
         )
-        .style(|_| iced::widget::container::Style {
-            background: Some(iced::Background::Color(color::GREY_5)),
+        .style(|t| iced::widget::container::Style {
+            background: Some(iced::Background::Color(
+                t.colors.cards.simple.border.unwrap_or(color::GREY_5),
+            )),
             ..Default::default()
         })
         .into()
@@ -167,10 +169,10 @@ fn vault_incoming_transfer_card<'a>(
                 .push(text(label).size(10).color(color::GREY_2)),
         )
         .padding([4, 8])
-        .style(|_| iced::widget::container::Style {
-            background: Some(iced::Background::Color(color::GREY_6)),
+        .style(|t| iced::widget::container::Style {
+            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
             border: iced::Border {
-                color: color::GREY_5,
+                color: t.colors.cards.simple.border.unwrap_or(color::GREY_5),
                 width: 0.5,
                 radius: 12.0.into(),
             },
@@ -233,13 +235,13 @@ fn vault_incoming_transfer_card<'a>(
             .push(completed_steps_view),
     )
     .padding([14, 16])
-    .style(|_| iced::widget::container::Style {
+    .style(|t| iced::widget::container::Style {
         border: iced::Border {
-            color: color::GREY_4,
+            color: t.colors.cards.simple.border.unwrap_or(color::GREY_4),
             width: 0.5,
             radius: 20.0.into(),
         },
-        background: Some(iced::Background::Color(color::GREY_6)),
+        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
         ..Default::default()
     })
     .into()
@@ -393,13 +395,13 @@ fn wallet_card<'a>(
             );
         return Container::new(content)
             .padding(20)
-            .style(|_| iced::widget::container::Style {
+            .style(|t| iced::widget::container::Style {
                 border: iced::Border {
                     color: color::ORANGE,
                     width: 0.2,
                     radius: 25.0.into(),
                 },
-                background: Some(iced::Background::Color(color::GREY_6)),
+                background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                 ..Default::default()
             })
             .into();
@@ -451,7 +453,7 @@ fn wallet_card<'a>(
                                 Some(text("********").size(P1_SIZE))
                             } else {
                                 fiat_balance
-                                    .map(|fiat| fiat.to_text().size(P1_SIZE).color(color::GREY_2))
+                                    .map(|fiat| fiat.to_text().size(P1_SIZE).style(theme::text::secondary))
                             })
                             .push_maybe((!balance_masked && pending_send_sats > 0).then(|| {
                                 Row::new()
@@ -488,14 +490,14 @@ fn wallet_card<'a>(
                     .push(Space::new().width(Length::Fill))
                     .push_maybe(matches!(wallet_type, WalletType::Liquid).then(|| {
                         button::secondary(Some(arrow_down_up_icon()), "Transfer")
-                            .style(|_t, _s| iced::widget::button::Style {
+                            .style(|t, _s| iced::widget::button::Style {
                                 text_color: color::ORANGE,
                                 border: iced::Border {
                                     color: color::ORANGE,
                                     width: 1.0,
                                     radius: 35.0.into(),
                                 },
-                                background: Some(iced::Background::Color(color::GREY_6)),
+                                background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                                 ..Default::default()
                             })
                             .width(Length::Fixed(140.0))
@@ -555,7 +557,7 @@ fn wallet_card<'a>(
                     width: 0.2,
                     radius: 25.0.into(),
                 },
-                background: Some(iced::Background::Color(color::GREY_6)),
+                background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                 ..Default::default()
             },
             WalletType::Usdt { .. } => iced::widget::container::Style {
@@ -564,7 +566,7 @@ fn wallet_card<'a>(
                     width: 0.2,
                     radius: 25.0.into(),
                 },
-                background: Some(iced::Background::Color(color::GREY_6)),
+                background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                 ..Default::default()
             },
             WalletType::Vault => theme::card::simple(t),
@@ -717,7 +719,7 @@ fn balance_summary_card<'a>(
                     .spacing(4)
                     .push(amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit))
                     .push_maybe(
-                        fiat_balance.map(|fiat| fiat.to_text().size(P1_SIZE).color(color::GREY_2)),
+                        fiat_balance.map(|fiat| fiat.to_text().size(P1_SIZE).style(theme::text::secondary)),
                     ),
             ),
         );
@@ -733,7 +735,7 @@ fn balance_summary_card<'a>(
                         width: 0.2,
                         radius: 25.0.into(),
                     },
-                    background: Some(iced::Background::Color(color::GREY_6)),
+                    background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                     ..Default::default()
                 }
             } else {
@@ -906,13 +908,13 @@ fn enter_amount_view<'a>(
                             .align_x(Alignment::Center)
                             .align_y(Alignment::Center),
                     )
-                    .style(|_| iced::widget::container::Style {
+                    .style(|t| iced::widget::container::Style {
                         border: iced::Border {
                             color: color::ORANGE,
                             radius: 30.0.into(),
                             width: 0.5,
                         },
-                        background: Some(iced::Background::Color(color::GREY_6)),
+                        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                         text_color: Some(color::ORANGE),
                         ..Default::default()
                     })

@@ -750,20 +750,15 @@ impl App {
     }
 
     pub fn title(&self) -> &str {
-        if let Some(wallet) = &self.wallet {
-            if let Some(alias) = &wallet.alias {
-                if !alias.is_empty() {
-                    return alias;
-                }
-            }
-            "Coincube Vault Wallet"
-        } else {
-            &self.cube_settings.name
-        }
+        &self.cube_settings.name
     }
 
     pub fn cache(&self) -> &Cache {
         &self.cache
+    }
+
+    pub fn cache_mut(&mut self) -> &mut Cache {
+        &mut self.cache
     }
 
     pub fn breez_client(&self) -> Arc<BreezClient> {

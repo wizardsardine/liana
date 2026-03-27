@@ -622,6 +622,8 @@ pub mod global {
         pub developer_mode: bool,
         #[serde(default)]
         pub account_tier: AccountTier,
+        #[serde(default)]
+        pub theme_mode: coincube_ui::theme::palette::ThemeMode,
     }
 
     impl GlobalSettings {
@@ -686,6 +688,23 @@ pub mod global {
             Self::update(path, |s| s.developer_mode = developer_mode, true)
         }
 
+        pub fn load_theme_mode(
+            path: &PathBuf,
+        ) -> coincube_ui::theme::palette::ThemeMode {
+            let mut ret = coincube_ui::theme::palette::ThemeMode::default();
+            if let Err(e) = Self::update(path, |s| ret = s.theme_mode, false) {
+                tracing::error!("Failed to load theme mode setting: {e}");
+            }
+            ret
+        }
+
+        pub fn update_theme_mode(
+            path: &PathBuf,
+            mode: coincube_ui::theme::palette::ThemeMode,
+        ) -> Result<(), super::SettingsError> {
+            Self::update(path, |s| s.theme_mode = mode, true)
+        }
+
         pub fn update_bitbox_settings(
             path: &PathBuf,
             bitbox: &BitboxSettings,
@@ -741,6 +760,8 @@ pub mod global {
                 && global_settings.window_config.is_none()
                 && !global_settings.developer_mode
                 && global_settings.account_tier == AccountTier::Free
+                && global_settings.theme_mode
+                    == coincube_ui::theme::palette::ThemeMode::Dark
             {
                 write = false;
             }

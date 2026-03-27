@@ -48,6 +48,7 @@ pub struct GUI {
     window_init: Option<bool>,
     window_config: Option<WindowConfig>,
     global_cache: GlobalCache,
+    theme_mode: coincube_ui::theme::palette::ThemeMode,
 }
 
 #[derive(Debug)]
@@ -71,6 +72,7 @@ pub enum Message {
     WindowSize(Size),
 
     Fiat(FiatMessage),
+    ToggleTheme,
 }
 
 #[derive(Debug)]
@@ -126,11 +128,16 @@ impl GUI {
             Task::perform(ctrl_c(), |_| Message::CtrlC),
         ];
         let (pane, cmd) = pane::Pane::new(&config);
-        let (panes, focused_pane) = pane_grid::State::new(pane);
+        let (mut panes, focused_pane) = pane_grid::State::new(pane);
         cmds.push(cmd.map(move |msg| Message::Pane(focused_pane, msg)));
-        let window_config =
-            GlobalSettings::load_window_config(&GlobalSettings::path(&config.coincube_directory));
+        let global_settings_path = GlobalSettings::path(&config.coincube_directory);
+        let window_config = GlobalSettings::load_window_config(&global_settings_path);
         let window_init = window_config.is_some().then_some(true);
+        let theme_mode = GlobalSettings::load_theme_mode(&global_settings_path);
+        // Propagate persisted theme mode to all pane tabs
+        for (_, pane) in panes.iter_mut() {
+            pane.set_theme_mode(theme_mode);
+        }
         (
             Self {
                 panes,
@@ -140,6 +147,7 @@ impl GUI {
                 window_init,
                 window_config,
                 global_cache: GlobalCache::default(),
+                theme_mode,
             },
             Task::batch(cmds),
         )
@@ -291,6 +299,9 @@ impl GUI {
                 } else {
                     Task::none()
                 }
+            }
+            Message::Pane(_, pane::Message::View(pane::ViewMessage::ToggleTheme)) => {
+                self.update(Message::ToggleTheme)
             }
             Message::Pane(pane_id, pane::Message::View(pane::ViewMessage::SplitTab(i))) => {
                 if let Some(p) = self.panes.get_mut(pane_id) {
@@ -467,6 +478,23 @@ impl GUI {
                 }
                 Task::none()
             }
+            Message::ToggleTheme => {
+                use coincube_ui::theme::palette::ThemeMode;
+                self.theme_mode = match self.theme_mode {
+                    ThemeMode::Dark => ThemeMode::Light,
+                    ThemeMode::Light => ThemeMode::Dark,
+                };
+                // Propagate to all pane tabs' caches
+                for (_, pane) in self.panes.iter_mut() {
+                    pane.set_theme_mode(self.theme_mode);
+                }
+                // Persist preference
+                let path = GlobalSettings::path(&self.config.coincube_directory);
+                if let Err(e) = GlobalSettings::update_theme_mode(&path, self.theme_mode) {
+                    tracing::error!("Failed to persist theme mode: {e}");
+                }
+                Task::none()
+            }
             Message::Tick => {
                 let mut tasks = vec![];
 
@@ -610,7 +638,7 @@ impl GUI {
     }
 
     pub fn theme(&self) -> coincube_ui::theme::Theme {
-        coincube_ui::theme::Theme::default()
+        coincube_ui::theme::Theme::from_mode(self.theme_mode)
     }
 }
 

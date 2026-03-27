@@ -128,11 +128,11 @@ impl BuySellPanel {
                         .push(
                             Row::new()
                                 .push(text::h4_bold("COIN").color(color::ORANGE))
-                                .push(text::h4_bold("CUBE").color(color::WHITE))
+                                .push(text::h4_bold("CUBE").style(theme::text::primary))
                                 .spacing(0),
                         )
                         .push(Space::new().width(Length::Fixed(8.0)))
-                        .push(text::h5_regular("BUY/SELL").color(color::GREY_3))
+                        .push(text::h5_regular("| BUY/SELL").color(color::GREY_3))
                         .align_y(Alignment::Center),
                 )
                 .push(show_start_over.then(|| {
@@ -213,7 +213,7 @@ impl BuySellPanel {
 
         let col = iced::widget::column![
             // header
-            text::h3("Sign in to your account").color(color::WHITE),
+            text::h3("Sign in to your account").style(theme::text::primary),
             Space::new().height(Length::Fixed(35.0)),
             // input field
             text_input("Email", email)
@@ -227,11 +227,11 @@ impl BuySellPanel {
             Space::new().height(Length::Fixed(10.0)),
             // separator
             container(Space::new().height(Length::Fixed(3.0)).width(Length::Fill))
-                .style(|_| { color::GREY_6.into() }),
+                .style(theme::container::border),
             Space::new().height(Length::Fixed(5.0)),
             // sign-up redirect
             iced::widget::button(
-                text::p2_regular("Don't have an account? Sign up").color(color::BLUE),
+                text::p2_regular("Don't have an account? Sign up").color(color::ORANGE),
             )
             .style(theme::button::link)
             .on_press(BuySellMessage::CreateNewAccount)
@@ -293,28 +293,22 @@ impl BuySellPanel {
             // Top bar with previous
             Button::new(
                 Row::new()
-                    .push(previous_icon().color(color::GREY_2))
+                    .push(previous_icon().style(theme::text::secondary))
                     .push(Space::new().width(Length::Fixed(5.0)))
-                    .push(text::p1_medium("Previous").color(color::GREY_2))
+                    .push(text::p1_medium("Previous").style(theme::text::secondary))
                     .spacing(5)
                     .align_y(Alignment::Center),
             )
-            .style(|_, _| iced::widget::button::Style {
-                background: None,
-                text_color: color::GREY_2,
-                border: iced::Border::default(),
-                shadow: iced::Shadow::default(),
-                snap: true
-            })
+            .style(theme::button::transparent)
             .on_press_maybe(
                 (!*loading).then_some(ViewMessage::BuySell(BuySellMessage::ResetWidget))
             ),
             Space::new().height(Length::Fixed(10.0)),
             // Title and subtitle
             iced::widget::column![
-                text::h3("Create an Account").color(color::WHITE),
+                text::h3("Create an Account").style(theme::text::primary),
                 text::p2_regular("Create a COINCUBE account to access Buy/Sell and other features")
-                    .color(color::GREY_3)
+                    .style(theme::text::secondary)
             ]
             .spacing(10)
             .align_x(Alignment::Center),
@@ -360,29 +354,23 @@ impl BuySellPanel {
             .push(
                 Button::new(
                     Row::new()
-                        .push(previous_icon().color(color::GREY_2))
+                        .push(previous_icon().style(theme::text::secondary))
                         .push(Space::new().width(Length::Fixed(5.0)))
-                        .push(text::text("Previous").color(color::GREY_2))
+                        .push(text::text("Previous").style(theme::text::secondary))
                         .spacing(5)
                         .align_y(Alignment::Center),
                 )
-                .style(|_, _| iced::widget::button::Style {
-                    background: None,
-                    text_color: color::GREY_2,
-                    border: iced::Border::default(),
-                    shadow: iced::Shadow::default(),
-                    snap: true,
-                })
+                .style(theme::button::transparent)
                 .on_press_maybe((!*sending).then_some(BuySellMessage::ResetWidget)),
             )
             .align_y(Alignment::Center);
 
         // Widget title
-        let title = text::p2_regular("Enter the OTP sent to your email").color(color::WHITE);
+        let title = text::p2_regular("Enter the OTP sent to your email").style(theme::text::primary);
 
         // Email display
         let email_display = Column::new()
-            .push(text::p2_regular(email).color(color::WHITE))
+            .push(text::p2_regular(email).style(theme::text::primary))
             .spacing(10)
             .align_x(Alignment::Center);
 
@@ -575,9 +563,9 @@ impl BuySellPanel {
                 .width(Length::Fill),
             false => Column::new()
                 .push(Space::new().height(Length::Fixed(30.0)))
-                .push(text::p1_bold("Detecting your location...").color(color::WHITE))
+                .push(text::p1_bold("Detecting your location...").style(theme::text::primary))
                 .push(Space::new().height(Length::Fixed(20.0)))
-                .push(text::text("Please wait...").size(14).color(color::GREY_3))
+                .push(text::text("Please wait...").size(14).style(theme::text::secondary))
                 .align_x(Alignment::Center)
                 .spacing(10)
                 .max_width(500)

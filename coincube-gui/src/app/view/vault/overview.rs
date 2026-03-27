@@ -102,7 +102,7 @@ pub fn vault_overview_view<'a>(
                             .push(amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit))
                             .push_maybe(
                                 fiat_balance
-                                    .map(|fiat| fiat.to_text().size(P2_SIZE).color(color::GREY_2)),
+                                    .map(|fiat| fiat.to_text().size(P2_SIZE).style(theme::text::secondary)),
                             )
                     } else {
                         Column::new().push(Row::new().push(spinner::Carousel::new(
@@ -112,8 +112,8 @@ pub fn vault_overview_view<'a>(
                                 amount_with_size_colors_and_unit(
                                     balance,
                                     H2_SIZE,
-                                    color::GREY_4,
-                                    Some(color::GREY_2),
+                                    color::GREY_3,
+                                    Some(color::GREY_3),
                                     bitcoin_unit,
                                 ),
                             ],

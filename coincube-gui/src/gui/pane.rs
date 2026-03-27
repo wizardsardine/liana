@@ -18,6 +18,7 @@ pub enum ViewMessage {
     CloseTab(usize),
     SplitTab(usize),
     AddTab,
+    ToggleTheme,
 }
 
 pub struct Pane {
@@ -90,6 +91,12 @@ impl Pane {
         }
     }
 
+    pub fn set_theme_mode(&mut self, mode: coincube_ui::theme::palette::ThemeMode) {
+        for tab in &mut self.tabs {
+            tab.set_theme_mode(mode);
+        }
+    }
+
     pub fn on_tick(&mut self) -> Task<Message> {
         Task::batch(self.tabs.iter_mut().map(|t| {
             let id = t.id;
@@ -114,7 +121,15 @@ impl Pane {
                     .tabs
                     .iter_mut()
                     .find(|t| t.id == id)
-                    .map(|t| t.update(msg).map(move |msg| Message::Tab(id, msg)))
+                    .map(|t| {
+                        t.update(msg).then(move |msg| match msg {
+                            // Bubble ToggleTheme up to pane level as a ViewMessage
+                            tab::Message::ToggleTheme => {
+                                Task::done(Message::View(ViewMessage::ToggleTheme))
+                            }
+                            other => Task::done(Message::Tab(id, other)),
+                        })
+                    })
                     .unwrap_or(Task::none());
             }
             Message::View(ViewMessage::FocusTab(i)) => {
@@ -128,6 +143,8 @@ impl Pane {
             }
             // handle by the pane grid update.
             Message::View(ViewMessage::SplitTab(_)) => {}
+            // handled at the GUI level
+            Message::View(ViewMessage::ToggleTheme) => {}
         };
 
         Task::none()

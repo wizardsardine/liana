@@ -342,3 +342,11 @@ pub fn connect_icon<'a>() -> Text<'a> {
 pub fn shop_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F638}')
 }
+
+pub fn sun_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F5A2}')
+}
+
+pub fn moon_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F497}')
+}

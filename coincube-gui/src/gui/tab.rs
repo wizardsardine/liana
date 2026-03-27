@@ -76,6 +76,8 @@ pub enum Message {
         internal_bitcoind: Option<crate::node::bitcoind::Bitcoind>,
         backup: Option<crate::backup::Backup>,
     },
+    /// Bubbles up to GUI level to toggle the theme
+    ToggleTheme,
 }
 
 pub struct Tab {
@@ -93,6 +95,14 @@ impl Tab {
             Some(app.cache())
         } else {
             None
+        }
+    }
+
+    pub fn set_theme_mode(&mut self, mode: coincube_ui::theme::palette::ThemeMode) {
+        match &mut self.state {
+            State::App(app) => app.cache_mut().theme_mode = mode,
+            State::Launcher(launcher) => launcher.theme_mode = mode,
+            _ => {}
         }
     }
 
@@ -179,6 +189,9 @@ impl Tab {
 
                     self.state = State::PinEntry(crate::pin_entry::PinEntry::new(cube, on_success));
                     Task::none()
+                }
+                launcher::Message::View(launcher::ViewMessage::ToggleTheme) => {
+                    Task::done(Message::ToggleTheme)
                 }
                 _ => l.update(msg).map(Message::Launch),
             },
@@ -508,6 +521,9 @@ impl Tab {
                         );
                         self.state = State::Installer(install);
                         command.map(Message::Install)
+                    }
+                    app::Message::View(app::view::Message::ToggleTheme) => {
+                        Task::done(Message::ToggleTheme)
                     }
                     m => app.update(m).map(Message::Run),
                 }
@@ -1011,6 +1027,7 @@ pub fn create_app_with_remote_backend(
             has_vault: true,
             cube_name: cube_settings.name.clone(),
             has_p2p: false, // Set later by App::new based on mnemonic availability
+            theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
         },
         Arc::new(
             Wallet::new(wallet.descriptor)
