@@ -127,8 +127,18 @@ impl BuySellPanel {
                     Row::new()
                         .push(
                             Row::new()
-                                .push(text::h4_bold("COIN").color(color::ORANGE))
-                                .push(text::h4_bold("CUBE").style(theme::text::primary))
+                                .push(
+                                    iced::widget::text("COIN")
+                                        .font(coincube_ui::font::SPACE_GROTESK_BOLD)
+                                        .size(20)
+                                        .color(color::ORANGE),
+                                )
+                                .push(
+                                    iced::widget::text("CUBE")
+                                        .font(coincube_ui::font::SPACE_GROTESK_BOLD)
+                                        .size(20)
+                                        .style(theme::text::primary),
+                                )
                                 .spacing(0),
                         )
                         .push(Space::new().width(Length::Fixed(8.0)))

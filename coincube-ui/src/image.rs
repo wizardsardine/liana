@@ -9,7 +9,6 @@ use crate::widget::Row;
 use crate::{color, font};
 
 const COINCUBE_LOGOTYPE_GREY: &[u8] = include_bytes!("../static/logos/coincube-logo-gray.svg");
-const _COINCUBE_LOGOTYPE: &[u8] = include_bytes!("../static/logos/coincube-logo.svg");
 
 pub fn coincube_window_icon() -> icon::Icon {
     let bytes = include_bytes!("../static/logos/coincube-cc.ico");
