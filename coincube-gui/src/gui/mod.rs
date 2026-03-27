@@ -306,11 +306,11 @@ impl GUI {
             Message::Pane(pane_id, pane::Message::View(pane::ViewMessage::SplitTab(i))) => {
                 if let Some(p) = self.panes.get_mut(pane_id) {
                     if let Some(tab) = p.remove_tab(i) {
-                        let result = self.panes.split(
-                            pane_grid::Axis::Vertical,
-                            pane_id,
-                            pane::Pane::new_with_tab(tab.state),
-                        );
+                        let mut new_pane = pane::Pane::new_with_tab(tab.state);
+                        new_pane.set_theme_mode(self.theme_mode);
+                        let result = self
+                            .panes
+                            .split(pane_grid::Axis::Vertical, pane_id, new_pane);
 
                         if let Some((pane, _)) = result {
                             self.focus = Some(pane);
