@@ -758,7 +758,8 @@ pub mod global {
                 && global_settings.window_config.is_none()
                 && !global_settings.developer_mode
                 && global_settings.account_tier == AccountTier::Free
-                && global_settings.theme_mode == coincube_ui::theme::palette::ThemeMode::Dark
+                && global_settings.theme_mode
+                    == coincube_ui::theme::palette::ThemeMode::default()
             {
                 write = false;
             }
