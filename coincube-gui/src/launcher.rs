@@ -921,10 +921,7 @@ impl Launcher {
             if let LauncherSection::Connect(_) = &self.active_section {
                 // Render Connect account panel view
                 let connect_view: Element<ConnectAccountMessage> =
-                    crate::app::view::connect::connect_account_panel(
-                        &self.connect_account,
-                        self.theme_mode,
-                    );
+                    crate::app::view::connect::connect_account_panel(&self.connect_account);
                 connect_view.map(|msg| Message::View(ViewMessage::ConnectAccount(msg)))
             } else {
                 content
@@ -1005,7 +1002,7 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
         .spacing(0)
         .width(Length::Fill)
         .push(
-            Container::new(image::coincube_wordmark(launcher.theme_mode, 28.0))
+            Container::new(image::coincube_wordmark(28.0))
                 .padding(10)
                 .center_x(Length::Fill),
         )

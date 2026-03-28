@@ -4,7 +4,6 @@ use coincube_ui::{
     icon::*,
     image::coincube_wordmark,
     theme,
-    theme::palette::ThemeMode,
     widget::*,
 };
 use iced::{widget::container, Alignment, Length};
@@ -29,15 +28,12 @@ const LN_ADDRESS_DOMAIN: &str = "@coincube.io";
 
 use crate::app::view::Message as ViewMessage;
 
-pub fn connect_panel<'a>(
-    state: &'a ConnectPanel,
-    theme_mode: ThemeMode,
-) -> Element<'a, ViewMessage> {
+pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
     let acct = &state.account;
     let cube = &state.cube;
 
     let header = Row::new()
-        .push(coincube_wordmark::<ViewMessage>(theme_mode, 20.0))
+        .push(coincube_wordmark::<ViewMessage>(20.0))
         .push(text::h5_regular(" | CONNECT").color(color::GREY_3))
         .align_y(Alignment::Center);
 
@@ -113,10 +109,9 @@ pub fn connect_panel<'a>(
 /// Returns Element<ConnectAccountMessage> (not ViewMessage) so the caller can map it.
 pub fn connect_account_panel<'a>(
     acct: &'a ConnectAccountPanel,
-    theme_mode: ThemeMode,
 ) -> Element<'a, ConnectAccountMessage> {
     let header = Row::new()
-        .push(coincube_wordmark::<ConnectAccountMessage>(theme_mode, 20.0))
+        .push(coincube_wordmark::<ConnectAccountMessage>(20.0))
         .push(text::h5_regular(" | CONNECT").color(color::GREY_3))
         .align_y(Alignment::Center);
 

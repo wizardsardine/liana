@@ -125,22 +125,7 @@ impl BuySellPanel {
                 // COINCUBE branding
                 .push(
                     Row::new()
-                        .push(
-                            Row::new()
-                                .push(
-                                    iced::widget::text("COIN")
-                                        .font(coincube_ui::font::SPACE_GROTESK_BOLD)
-                                        .size(20)
-                                        .color(color::ORANGE),
-                                )
-                                .push(
-                                    iced::widget::text("CUBE")
-                                        .font(coincube_ui::font::SPACE_GROTESK_BOLD)
-                                        .size(20)
-                                        .style(theme::text::primary),
-                                )
-                                .spacing(0),
-                        )
+                        .push(coincube_ui::image::coincube_wordmark::<ViewMessage>(20.0))
                         .push(Space::new().width(Length::Fixed(8.0)))
                         .push(text::h5_regular("| BUY/SELL").color(color::GREY_3))
                         .align_y(Alignment::Center),

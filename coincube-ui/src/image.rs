@@ -3,7 +3,6 @@ use iced::{
     window::icon,
 };
 
-use crate::theme::palette::ThemeMode;
 use crate::theme::Theme;
 use crate::widget::Row;
 use crate::{color, font};
@@ -22,12 +21,9 @@ pub fn coincube_window_icon() -> icon::Icon {
 }
 
 /// COINCUBE wordmark using Space Grotesk Bold at a given size.
-/// "COIN" is always orange; "CUBE" is white on dark, dark gray on light.
-pub fn coincube_wordmark<'a, M: 'a>(mode: ThemeMode, size: f32) -> Row<'a, M> {
-    let cube_color = match mode {
-        ThemeMode::Dark => color::WHITE,
-        ThemeMode::Light => color::DARK_GRAY,
-    };
+/// "COIN" is always orange; "CUBE" uses the theme's primary text color.
+pub fn coincube_wordmark<'a, M: 'a>(size: f32) -> Row<'a, M> {
+    use crate::theme;
     iced::widget::row![
         iced::widget::text("COIN")
             .font(font::SPACE_GROTESK_BOLD)
@@ -36,7 +32,7 @@ pub fn coincube_wordmark<'a, M: 'a>(mode: ThemeMode, size: f32) -> Row<'a, M> {
         iced::widget::text("CUBE")
             .font(font::SPACE_GROTESK_BOLD)
             .size(size)
-            .color(cube_color),
+            .style(theme::text::primary),
     ]
 }
 

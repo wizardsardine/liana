@@ -97,7 +97,7 @@ impl State for ConnectPanel {
         view::dashboard_with_info(
             menu,
             cache,
-            view::connect::connect_panel(self, cache.theme_mode),
+            view::connect::connect_panel(self),
             &cache.cube_name,
             avatar_handle,
             ln_addr,

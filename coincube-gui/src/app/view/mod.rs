@@ -91,7 +91,7 @@ pub fn sidebar<'a>(
 
     // Build the main menu column
     let mut menu_column = Column::new().spacing(0).width(Length::Fill).push(
-        Container::new(coincube_wordmark(cache.theme_mode, 28.0))
+        Container::new(coincube_wordmark(28.0))
             .padding(10)
             .center_x(Length::Fill),
     );
