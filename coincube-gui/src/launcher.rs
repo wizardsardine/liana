@@ -1097,27 +1097,8 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
         );
     }
 
-    let theme_icon = match launcher.theme_mode {
-        coincube_ui::theme::palette::ThemeMode::Dark => ic::sun_icon(),
-        coincube_ui::theme::palette::ThemeMode::Light => ic::moon_icon(),
-    };
-    let theme_label = match launcher.theme_mode {
-        coincube_ui::theme::palette::ThemeMode::Dark => "Light Mode",
-        coincube_ui::theme::palette::ThemeMode::Light => "Dark Mode",
-    };
-    let theme_toggle_btn = Button::new(
-        Row::new()
-            .spacing(8)
-            .align_y(iced::alignment::Vertical::Center)
-            .push(theme_icon.style(coincube_ui::theme::text::secondary))
-            .push(
-                coincube_ui::component::text::p2_regular(theme_label)
-                    .style(coincube_ui::theme::text::secondary),
-            ),
-    )
-    .on_press(msg(ViewMessage::ToggleTheme))
-    .style(coincube_ui::theme::button::transparent)
-    .padding([8, 12]);
+    let theme_toggle_btn =
+        coincube_ui::image::theme_toggle_button(launcher.theme_mode, msg(ViewMessage::ToggleTheme));
 
     bottom_col = bottom_col.push(
         Container::new(theme_toggle_btn)

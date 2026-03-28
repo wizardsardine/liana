@@ -36,6 +36,29 @@ pub fn coincube_wordmark<'a, M: 'a>(size: f32) -> Row<'a, M> {
     ]
 }
 
+/// Theme toggle button for sidebars. Shows sun/moon icon with "Light Mode"/"Dark Mode" label.
+pub fn theme_toggle_button<'a, M: Clone + 'a>(
+    mode: crate::theme::palette::ThemeMode,
+    on_press: M,
+) -> iced::widget::Button<'a, M, Theme, iced::Renderer> {
+    use crate::theme::palette::ThemeMode;
+    let (icon, label) = match mode {
+        ThemeMode::Dark => (crate::icon::sun_icon(), "Light Mode"),
+        ThemeMode::Light => (crate::icon::moon_icon(), "Dark Mode"),
+    };
+    iced::widget::Button::new(
+        iced::widget::row![
+            icon.style(crate::theme::text::secondary),
+            crate::component::text::p2_regular(label),
+        ]
+        .spacing(8)
+        .align_y(iced::alignment::Vertical::Center),
+    )
+    .on_press(on_press)
+    .style(crate::theme::button::transparent)
+    .padding([8, 12])
+}
+
 /// Grey SVG logotype — used for small badge icons where text rendering is impractical.
 pub fn coincube_logotype_grey<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(COINCUBE_LOGOTYPE_GREY);

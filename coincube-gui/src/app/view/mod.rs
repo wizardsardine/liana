@@ -938,25 +938,8 @@ pub fn sidebar<'a>(
 
     menu_column = menu_column.push(global_settings_button);
 
-    let theme_icon = match cache.theme_mode {
-        coincube_ui::theme::palette::ThemeMode::Dark => coincube_ui::icon::sun_icon(),
-        coincube_ui::theme::palette::ThemeMode::Light => coincube_ui::icon::moon_icon(),
-    };
-    let theme_label = match cache.theme_mode {
-        coincube_ui::theme::palette::ThemeMode::Dark => "Light Mode",
-        coincube_ui::theme::palette::ThemeMode::Light => "Dark Mode",
-    };
-    let theme_toggle_btn = iced::widget::Button::new(
-        row![
-            theme_icon.style(theme::text::secondary),
-            text::p2_regular(theme_label),
-        ]
-        .spacing(8)
-        .align_y(iced::alignment::Vertical::Center),
-    )
-    .on_press(Message::ToggleTheme)
-    .style(theme::button::transparent)
-    .padding([8, 12]);
+    let theme_toggle_btn =
+        coincube_ui::image::theme_toggle_button(cache.theme_mode, Message::ToggleTheme);
 
     Container::new(
         Column::new()
