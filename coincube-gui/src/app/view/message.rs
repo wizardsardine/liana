@@ -105,6 +105,7 @@ pub enum Message {
     ConnectCube(ConnectCubeMessage),
     ToggleConnect,
     P2P(P2PMessage),
+    ToggleTheme,
 }
 
 impl Close for Message {

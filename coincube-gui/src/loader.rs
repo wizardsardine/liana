@@ -575,6 +575,7 @@ pub async fn load_application(
         has_vault: true,
         cube_name: config.cube_settings.name.clone(),
         has_p2p: false, // Set later by App::new based on mnemonic availability
+        theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
     };
 
     Ok((

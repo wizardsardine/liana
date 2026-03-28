@@ -208,11 +208,9 @@ pub fn create_spend_tx<'a>(
                             Column::new()
                                 .spacing(5)
                                 .push(amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit))
-                                .push_maybe(
-                                    fiat_balance.map(|fiat| {
-                                        fiat.to_text().size(P2_SIZE).color(color::GREY_2)
-                                    }),
-                                )
+                                .push_maybe(fiat_balance.map(|fiat| {
+                                    fiat.to_text().size(P2_SIZE).style(theme::text::secondary)
+                                }))
                         } else {
                             Column::new().push(Row::new().push(spinner::Carousel::new(
                                 Duration::from_millis(1000),
@@ -221,8 +219,8 @@ pub fn create_spend_tx<'a>(
                                     amount_with_size_colors_and_unit(
                                         balance,
                                         H2_SIZE,
-                                        color::GREY_4,
-                                        Some(color::GREY_2),
+                                        color::GREY_3,
+                                        Some(color::GREY_3),
                                         bitcoin_unit,
                                     ),
                                 ],

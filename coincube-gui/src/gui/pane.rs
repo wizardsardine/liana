@@ -18,6 +18,7 @@ pub enum ViewMessage {
     CloseTab(usize),
     SplitTab(usize),
     AddTab,
+    ToggleTheme,
 }
 
 pub struct Pane {
@@ -28,6 +29,9 @@ pub struct Pane {
 
     // used to generate tabs ids.
     tabs_created: usize,
+
+    // current theme mode — applied to new tabs on creation
+    theme_mode: coincube_ui::theme::palette::ThemeMode,
 }
 
 impl Pane {
@@ -38,6 +42,7 @@ impl Pane {
                 tabs: vec![tab::Tab::new(1, state)],
                 focused_tab: 0,
                 tabs_created: 1,
+                theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
             },
             task.map(|msg| Message::Tab(1, msg)),
         )
@@ -48,6 +53,7 @@ impl Pane {
             tabs: vec![tab::Tab::new(1, s)],
             focused_tab: 0,
             tabs_created: 1,
+            theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
         }
     }
 
@@ -55,7 +61,9 @@ impl Pane {
         let (state, task) = tab::State::new(cfg.coincube_directory.clone(), cfg.network);
         self.tabs_created += 1;
         let id = self.tabs_created;
-        self.tabs.push(tab::Tab::new(id, state));
+        let mut tab = tab::Tab::new(id, state);
+        tab.set_theme_mode(self.theme_mode);
+        self.tabs.push(tab);
         self.focused_tab = self.tabs.len() - 1;
         task.map(move |msg| Message::Tab(id, msg))
     }
@@ -83,10 +91,19 @@ impl Pane {
         for tab in tabs {
             self.tabs_created += 1;
             let id = self.tabs_created;
-            self.tabs.push(tab::Tab::new(id, tab.state));
+            let mut new_tab = tab::Tab::new(id, tab.state);
+            new_tab.set_theme_mode(self.theme_mode);
+            self.tabs.push(new_tab);
         }
         if self.focused_tab + focused_tab + 1 < self.tabs.len() {
             self.focused_tab += focused_tab + 1;
+        }
+    }
+
+    pub fn set_theme_mode(&mut self, mode: coincube_ui::theme::palette::ThemeMode) {
+        self.theme_mode = mode;
+        for tab in &mut self.tabs {
+            tab.set_theme_mode(mode);
         }
     }
 
@@ -114,7 +131,15 @@ impl Pane {
                     .tabs
                     .iter_mut()
                     .find(|t| t.id == id)
-                    .map(|t| t.update(msg).map(move |msg| Message::Tab(id, msg)))
+                    .map(|t| {
+                        t.update(msg).then(move |msg| match msg {
+                            // Bubble ToggleTheme up to pane level as a ViewMessage
+                            tab::Message::ToggleTheme => {
+                                Task::done(Message::View(ViewMessage::ToggleTheme))
+                            }
+                            other => Task::done(Message::Tab(id, other)),
+                        })
+                    })
                     .unwrap_or(Task::none());
             }
             Message::View(ViewMessage::FocusTab(i)) => {
@@ -128,6 +153,8 @@ impl Pane {
             }
             // handle by the pane grid update.
             Message::View(ViewMessage::SplitTab(_)) => {}
+            // handled at the GUI level
+            Message::View(ViewMessage::ToggleTheme) => {}
         };
 
         Task::none()

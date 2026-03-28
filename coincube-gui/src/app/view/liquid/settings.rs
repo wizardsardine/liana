@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use coincube_core::signer::HotSigner;
-use coincube_ui::{component::text::*, widget::*};
+use coincube_ui::{color, component::text::*, widget::*};
 use coincube_ui::{
     icon,
     theme::{self},
@@ -69,7 +69,7 @@ fn main_menu_view(backed_up: bool) -> Element<'static, Message> {
         icon::lock_icon(),
         icon::arrow_right(),
         if !backed_up {
-            CapsuleState::Danger
+            CapsuleState::Warning
         } else {
             CapsuleState::Success
         },
@@ -548,7 +548,7 @@ fn completed_view() -> Element<'static, Message> {
 
 #[derive(Clone, Copy)]
 pub enum CapsuleState {
-    Danger,
+    Warning,
     Success,
 }
 
@@ -573,39 +573,29 @@ fn settings_section<'a>(
                             Row::new()
                                 .push(text(title).bold())
                                 .push({
-                                    let (bg, fg) = match capsule_state {
-                                        CapsuleState::Danger => (
-                                            iced::Color::from_rgb8(0x4c, 0x01, 0x01),
-                                            iced::Color::from_rgb8(0xDD, 0x02, 0x02),
-                                        ),
-                                        CapsuleState::Success => (
-                                            iced::Color::from_rgb8(0x01, 0x4c, 0x14),
-                                            iced::Color::from_rgb8(0x00, 0xC3, 0x32),
-                                        ),
+                                    let pill_style = match capsule_state {
+                                        CapsuleState::Warning => {
+                                            theme::pill::warning
+                                                as fn(&coincube_ui::theme::Theme) -> _
+                                        }
+                                        CapsuleState::Success => {
+                                            theme::pill::success
+                                                as fn(&coincube_ui::theme::Theme) -> _
+                                        }
                                     };
                                     Container::new(
                                         Row::new()
-                                            .push(capsule_icon.size(14).style(move |_| {
-                                                iced::widget::text::Style { color: Some(fg) }
-                                            }))
-                                            .push(text(capsule_text).bold().size(14).style(
-                                                move |_| iced::widget::text::Style {
-                                                    color: Some(fg),
-                                                },
-                                            ))
+                                            .push(capsule_icon.size(14).color(color::WHITE))
+                                            .push(
+                                                text(capsule_text)
+                                                    .bold()
+                                                    .size(14)
+                                                    .color(color::WHITE),
+                                            )
                                             .spacing(4),
                                     )
                                     .padding([2, 8])
-                                    .style(move |_| {
-                                        iced::widget::container::Style {
-                                            background: Some(iced::Background::Color(bg)),
-                                            border: iced::Border {
-                                                radius: 12.0.into(),
-                                                ..Default::default()
-                                            },
-                                            ..Default::default()
-                                        }
-                                    })
+                                    .style(pill_style)
                                 })
                                 .spacing(8),
                         )

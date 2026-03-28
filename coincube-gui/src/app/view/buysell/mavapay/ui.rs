@@ -612,7 +612,7 @@ fn order_success_view<'a>(
     order: &'a GetOrderResponse,
     sats: u64,
     buy_or_sell: &'a BuyOrSell,
-    country: &'static Country,
+    _country: &'static Country,
 ) -> widget::Column<'a, BuySellMessage, theme::Theme> {
     let (title, subtitle) = match buy_or_sell {
         BuyOrSell::Sell => (

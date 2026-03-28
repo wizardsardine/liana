@@ -4,9 +4,10 @@ use iced::{
 };
 
 use crate::theme::Theme;
+use crate::widget::Row;
+use crate::{color, font};
 
 const COINCUBE_LOGOTYPE_GREY: &[u8] = include_bytes!("../static/logos/coincube-logo-gray.svg");
-const COINCUBE_LOGOTYPE: &[u8] = include_bytes!("../static/logos/coincube-logo.svg");
 
 pub fn coincube_window_icon() -> icon::Icon {
     let bytes = include_bytes!("../static/logos/coincube-cc.ico");
@@ -19,11 +20,46 @@ pub fn coincube_window_icon() -> icon::Icon {
     icon::from_rgba(buffer, width, height).unwrap()
 }
 
-pub fn coincube_logotype<'a>() -> Svg<'a, Theme> {
-    let h = svg::Handle::from_memory(COINCUBE_LOGOTYPE);
-    Svg::new(h)
+/// COINCUBE wordmark using Space Grotesk Bold at a given size.
+/// "COIN" is always orange; "CUBE" uses the theme's primary text color.
+pub fn coincube_wordmark<'a, M: 'a>(size: f32) -> Row<'a, M> {
+    use crate::theme;
+    iced::widget::row![
+        iced::widget::text("COIN")
+            .font(font::SPACE_GROTESK_BOLD)
+            .size(size)
+            .color(color::ORANGE),
+        iced::widget::text("CUBE")
+            .font(font::SPACE_GROTESK_BOLD)
+            .size(size)
+            .style(theme::text::primary),
+    ]
 }
 
+/// Theme toggle button for sidebars. Shows sun/moon icon with "Light Mode"/"Dark Mode" label.
+pub fn theme_toggle_button<'a, M: Clone + 'a>(
+    mode: crate::theme::palette::ThemeMode,
+    on_press: M,
+) -> iced::widget::Button<'a, M, Theme, iced::Renderer> {
+    use crate::theme::palette::ThemeMode;
+    let (icon, label) = match mode {
+        ThemeMode::Dark => (crate::icon::sun_icon(), "Light Mode"),
+        ThemeMode::Light => (crate::icon::moon_icon(), "Dark Mode"),
+    };
+    iced::widget::Button::new(
+        iced::widget::row![
+            icon.style(crate::theme::text::secondary),
+            crate::component::text::p2_regular(label),
+        ]
+        .spacing(8)
+        .align_y(iced::alignment::Vertical::Center),
+    )
+    .on_press(on_press)
+    .style(crate::theme::button::transparent)
+    .padding([8, 12])
+}
+
+/// Grey SVG logotype — used for small badge icons where text rendering is impractical.
 pub fn coincube_logotype_grey<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(COINCUBE_LOGOTYPE_GREY);
     Svg::new(h)

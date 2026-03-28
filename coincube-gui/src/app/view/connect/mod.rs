@@ -2,6 +2,7 @@ use coincube_ui::{
     color,
     component::{button, text},
     icon::*,
+    image::coincube_wordmark,
     theme,
     widget::*,
 };
@@ -32,8 +33,7 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
     let cube = &state.cube;
 
     let header = Row::new()
-        .push(text::h4_bold("COIN").color(color::ORANGE))
-        .push(text::h4_bold("CUBE").color(color::WHITE))
+        .push(coincube_wordmark::<ViewMessage>(20.0))
         .push(text::h5_regular(" | CONNECT").color(color::GREY_3))
         .align_y(Alignment::Center);
 
@@ -90,8 +90,8 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
         col = col.push(
             container(text::p2_regular(e).color(color::RED))
                 .padding(8)
-                .style(|_| container::Style {
-                    background: Some(iced::Background::Color(color::GREY_6)),
+                .style(|t| container::Style {
+                    background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                     border: iced::Border {
                         color: color::RED,
                         width: 0.5,
@@ -111,8 +111,7 @@ pub fn connect_account_panel<'a>(
     acct: &'a ConnectAccountPanel,
 ) -> Element<'a, ConnectAccountMessage> {
     let header = Row::new()
-        .push(text::h4_bold("COIN").color(color::ORANGE))
-        .push(text::h4_bold("CUBE").color(color::WHITE))
+        .push(coincube_wordmark::<ConnectAccountMessage>(20.0))
         .push(text::h5_regular(" | CONNECT").color(color::GREY_3))
         .align_y(Alignment::Center);
 
@@ -163,8 +162,8 @@ pub fn connect_account_panel<'a>(
         col = col.push(
             container(text::p2_regular(e).color(color::RED))
                 .padding(8)
-                .style(|_| container::Style {
-                    background: Some(iced::Background::Color(color::GREY_6)),
+                .style(|t| container::Style {
+                    background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                     border: iced::Border {
                         color: color::RED,
                         width: 0.5,
@@ -178,11 +177,11 @@ pub fn connect_account_panel<'a>(
     col.push(body).into()
 }
 
-fn card_style() -> container::Style {
+fn card_style(t: &theme::Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(color::GREY_6)),
+        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
         border: iced::Border {
-            color: color::GREY_5,
+            color: t.colors.cards.simple.border.unwrap_or(color::GREY_5),
             width: 0.2,
             radius: 16.0.into(),
         },
@@ -211,7 +210,7 @@ fn login_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectAccountMess
     };
 
     Column::new()
-        .push(text::h3("Sign in to COINCUBE").color(color::WHITE))
+        .push(text::h3("Sign in to COINCUBE").style(theme::text::primary))
         .push(iced::widget::Space::new().height(Length::Fixed(30.0)))
         .push(
             TextInput::new("Email", email)
@@ -225,7 +224,7 @@ fn login_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectAccountMess
         .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
         .push(
             iced::widget::button(
-                container(text::p2_regular("Don't have an account? Sign up").color(color::BLUE))
+                container(text::p2_regular("Don't have an account? Sign up").color(color::ORANGE))
                     .padding(5),
             )
             .style(theme::button::link)
@@ -264,7 +263,7 @@ fn register_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectAccountM
                 Row::new()
                     .push(previous_icon().color(color::GREY_2))
                     .push(iced::widget::Space::new().width(Length::Fixed(5.0)))
-                    .push(text::p1_medium("Previous").color(color::GREY_2))
+                    .push(text::p1_medium("Previous").style(theme::text::secondary))
                     .spacing(5)
                     .align_y(Alignment::Center),
             )
@@ -272,7 +271,7 @@ fn register_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectAccountM
             .on_press_maybe((!loading).then_some(ConnectAccountMessage::LogOut)),
         )
         .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(text::h3("Create an Account").color(color::WHITE))
+        .push(text::h3("Create an Account").style(theme::text::primary))
         .push(
             text::p2_regular("Create a COINCUBE account to access Connect and Buy/Sell")
                 .color(color::GREY_3),
@@ -330,7 +329,7 @@ fn otp_ux<'a>(
     let can_resend = cooldown == 0 && !sending;
 
     Column::new()
-        .push(text::h3("Enter your OTP").color(color::WHITE))
+        .push(text::h3("Enter your OTP").style(theme::text::primary))
         .push(text::p2_regular(sent_to).color(color::GREY_3))
         .push(iced::widget::Space::new().height(Length::Fixed(25.0)))
         .push(
@@ -382,7 +381,7 @@ fn overview_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
     };
 
     Column::new()
-        .push(text::h4_bold("Account Overview").color(color::WHITE))
+        .push(text::h4_bold("Account Overview").style(theme::text::primary))
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
         .push(
             container(
@@ -391,7 +390,7 @@ fn overview_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                         Row::new()
                             .push(text::p1_medium("Email").color(color::GREY_3))
                             .push(iced::widget::Space::new().width(Length::Fill))
-                            .push(text::p1_regular(email).color(color::WHITE))
+                            .push(text::p1_regular(email).style(theme::text::primary))
                             .align_y(Alignment::Center),
                     )
                     .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
@@ -417,8 +416,8 @@ fn overview_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                     .padding(20)
                     .spacing(2),
             )
-            .style(|_| container::Style {
-                background: Some(iced::Background::Color(color::GREY_6)),
+            .style(|t| container::Style {
+                background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                 border: iced::Border {
                     color: color::ORANGE,
                     width: 0.2,
@@ -475,13 +474,13 @@ fn plan_billing_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcc
                 .padding(16)
                 .spacing(2),
         )
-        .style(move |_| container::Style {
-            background: Some(iced::Background::Color(color::GREY_6)),
+        .style(move |t| container::Style {
+            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
             border: iced::Border {
                 color: if is_current {
                     badge_color
                 } else {
-                    color::GREY_5
+                    t.colors.cards.simple.border.unwrap_or(color::GREY_5)
                 },
                 width: if is_current { 1.0 } else { 0.2 },
                 radius: 16.0.into(),
@@ -493,7 +492,7 @@ fn plan_billing_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcc
     };
 
     Column::new()
-        .push(text::h4_bold("Plan & Billing").color(color::WHITE))
+        .push(text::h4_bold("Plan & Billing").style(theme::text::primary))
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
         .push(plan_card(
             "Free",
@@ -525,8 +524,8 @@ fn plan_billing_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcc
                 .color(color::GREY_3),
             )
             .padding(12)
-            .style(|_| container::Style {
-                background: Some(iced::Background::Color(color::GREY_6)),
+            .style(|t| container::Style {
+                background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                 border: iced::Border {
                     radius: 10.0.into(),
                     ..Default::default()
@@ -556,7 +555,7 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                 let label = format!("{name}{suffix}");
                 col = col.push(
                     Row::new()
-                        .push(text::p2_regular(label).color(color::WHITE))
+                        .push(text::p2_regular(label).style(theme::text::primary))
                         .push(iced::widget::Space::new().width(Length::Fill))
                         .push(text::p2_regular(d.created_at.as_str()).color(color::GREY_3)),
                 );
@@ -583,7 +582,7 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                     Row::new()
                         .push(text::p2_regular(status).color(status_color))
                         .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
-                        .push(text::p2_regular(ip).color(color::WHITE))
+                        .push(text::p2_regular(ip).style(theme::text::primary))
                         .push(iced::widget::Space::new().width(Length::Fill))
                         .push(text::p2_regular(a.created_at.as_str()).color(color::GREY_3)),
                 );
@@ -593,31 +592,31 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
     };
 
     Column::new()
-        .push(text::h4_bold("Security").color(color::WHITE))
+        .push(text::h4_bold("Security").style(theme::text::primary))
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
         .push(
             container(
                 Column::new()
-                    .push(text::p1_bold("Verified Devices").color(color::WHITE))
+                    .push(text::p1_bold("Verified Devices").style(theme::text::primary))
                     .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
                     .push(devices_section)
                     .padding(16)
                     .spacing(2),
             )
-            .style(|_| card_style())
+            .style(card_style)
             .width(Length::Fill),
         )
         .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
         .push(
             container(
                 Column::new()
-                    .push(text::p1_bold("Login Activity").color(color::WHITE))
+                    .push(text::p1_bold("Login Activity").style(theme::text::primary))
                     .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
                     .push(activity_section)
                     .padding(16)
                     .spacing(2),
             )
-            .style(|_| card_style())
+            .style(card_style)
             .width(Length::Fill),
         )
         .spacing(0)
@@ -642,7 +641,7 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
 
         container(
             Column::new()
-                .push(text::p1_bold("Your Lightning Address").color(color::WHITE))
+                .push(text::p1_bold("Your Lightning Address").style(theme::text::primary))
                 .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
                 .push(
                     container(
@@ -656,8 +655,8 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
                             .align_y(Alignment::Center),
                     )
                     .padding(16)
-                    .style(|_| container::Style {
-                        background: Some(iced::Background::Color(color::GREY_7)),
+                    .style(|t| container::Style {
+                        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                         border: iced::Border {
                             color: color::ORANGE,
                             width: 0.5,
@@ -678,7 +677,7 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
                 .padding(20)
                 .spacing(2),
         )
-        .style(|_| card_style())
+        .style(card_style)
         .width(Length::Fill)
         .into()
     } else {
@@ -723,7 +722,7 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
 
         container(
             Column::new()
-                .push(text::p1_bold("Claim Your Lightning Address").color(color::WHITE))
+                .push(text::p1_bold("Claim Your Lightning Address").color(color::ORANGE))
                 .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
                 .push(
                     text::p2_regular(
@@ -772,13 +771,13 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
                 .padding(20)
                 .spacing(2),
         )
-        .style(|_| card_style())
+        .style(card_style)
         .width(Length::Fill)
         .into()
     };
 
     Column::new()
-        .push(text::h4_bold("Lightning Address").color(color::WHITE))
+        .push(text::h4_bold("Lightning Address").style(theme::text::primary))
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
         .push(card_content)
         .spacing(0)
@@ -788,7 +787,7 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
 
 fn duress_ux<'a>() -> Element<'a, ConnectAccountMessage> {
     Column::new()
-        .push(text::h4_bold("Duress Settings").color(color::WHITE))
+        .push(text::h4_bold("Duress Settings").style(theme::text::primary))
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
         .push(
             container(
@@ -809,7 +808,7 @@ fn duress_ux<'a>() -> Element<'a, ConnectAccountMessage> {
                     .padding(20)
                     .spacing(2),
             )
-            .style(|_| card_style())
+            .style(card_style)
             .width(Length::Fill),
         )
         .spacing(0)
@@ -819,7 +818,7 @@ fn duress_ux<'a>() -> Element<'a, ConnectAccountMessage> {
 
 fn avatar_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage> {
     let title = Row::new()
-        .push(text::h4_bold("Avatar").color(color::WHITE))
+        .push(text::h4_bold("Avatar").style(theme::text::primary))
         .push(iced::widget::Space::new().width(Length::Fill))
         .align_y(Alignment::Center);
 
@@ -838,7 +837,7 @@ fn avatar_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage>
                 .padding(24)
                 .spacing(4),
         )
-        .style(|_| card_style())
+        .style(card_style)
         .width(Length::Fill)
         .into(),
 
@@ -869,7 +868,7 @@ fn avatar_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage>
                         .padding(16)
                         .spacing(4),
                 )
-                .style(|_| card_style())
+                .style(card_style)
                 .width(Length::Fill),
             )
             .spacing(0)
@@ -1157,7 +1156,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, Conne
 
     container(
         Column::new()
-            .push(text::p1_bold("Choose Your Traits").color(color::WHITE))
+            .push(text::p1_bold("Choose Your Traits").style(theme::text::primary))
             .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
             .push(text::p2_regular("Your selections, combined with a hash of your Lightning address, create your unique avatar.").color(color::GREY_3))
             .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
@@ -1179,7 +1178,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, Conne
             .padding(16)
             .spacing(0),
     )
-    .style(|_| card_style())
+    .style(card_style)
     .width(Length::Fill)
     .into()
 }
@@ -1188,7 +1187,7 @@ fn avatar_settings_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCub
     let Some(ref data) = state.avatar_data else {
         return container(text::p2_regular("Loading avatar data…").color(color::GREY_3))
             .padding(16)
-            .style(|_| card_style())
+            .style(card_style)
             .width(Length::Fill)
             .into();
     };
@@ -1269,7 +1268,7 @@ fn avatar_settings_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCub
                             .height(Length::Fixed(60.0))
                             .align_x(Alignment::Center)
                             .align_y(Alignment::Center)
-                            .style(|_| card_style()),
+                            .style(card_style),
                     )
                     .on_press(ConnectCubeMessage::Avatar(AvatarMessage::SelectVariant(
                         vid,
@@ -1319,7 +1318,7 @@ fn avatar_settings_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCub
             .padding(16)
             .spacing(0),
     )
-    .style(|_| card_style())
+    .style(card_style)
     .width(Length::Fill)
     .into()
 }
@@ -1334,7 +1333,7 @@ fn invites_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountM
     let card_content: Element<ConnectAccountMessage> = if !is_legacy {
         container(
             Column::new()
-                .push(text::p1_bold("Legacy Plan Required").color(color::WHITE))
+                .push(text::p1_bold("Legacy Plan Required").style(theme::text::primary))
                 .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
                 .push(
                     text::p2_regular(
@@ -1346,7 +1345,7 @@ fn invites_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountM
                 .padding(16)
                 .spacing(2),
         )
-        .style(|_| card_style())
+        .style(card_style)
         .width(Length::Fill)
         .into()
     } else {
@@ -1359,13 +1358,13 @@ fn invites_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountM
                 .padding(16)
                 .spacing(2),
         )
-        .style(|_| card_style())
+        .style(card_style)
         .width(Length::Fill)
         .into()
     };
 
     Column::new()
-        .push(text::h4_bold("Invites").color(color::WHITE))
+        .push(text::h4_bold("Invites").style(theme::text::primary))
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
         .push(card_content)
         .spacing(0)

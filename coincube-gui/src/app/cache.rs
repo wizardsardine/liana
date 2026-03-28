@@ -55,6 +55,8 @@ pub struct Cache {
     pub cube_name: String,
     /// Whether the P2P panel is available (requires a valid mnemonic)
     pub has_p2p: bool,
+    /// Current theme mode (dark/light) — used for theme-aware widget rendering
+    pub theme_mode: coincube_ui::theme::palette::ThemeMode,
 }
 
 /// only used for tests.
@@ -80,6 +82,7 @@ impl std::default::Default for Cache {
             has_vault: false,
             cube_name: String::new(),
             has_p2p: false,
+            theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
         }
     }
 }

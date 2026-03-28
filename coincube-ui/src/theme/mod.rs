@@ -22,9 +22,39 @@ pub mod text;
 pub mod text_input;
 pub mod toggler;
 
-#[derive(Debug, Copy, Clone, PartialEq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Theme {
     pub colors: palette::Palette,
+    pub mode: palette::ThemeMode,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self::dark()
+    }
+}
+
+impl Theme {
+    pub fn dark() -> Self {
+        Self {
+            colors: palette::Palette::dark(),
+            mode: palette::ThemeMode::Dark,
+        }
+    }
+
+    pub fn light() -> Self {
+        Self {
+            colors: palette::Palette::light(),
+            mode: palette::ThemeMode::Light,
+        }
+    }
+
+    pub fn from_mode(mode: palette::ThemeMode) -> Self {
+        Self {
+            colors: palette::Palette::from_mode(mode),
+            mode,
+        }
+    }
 }
 
 impl iced::theme::Base for Theme {
@@ -33,7 +63,10 @@ impl iced::theme::Base for Theme {
     }
 
     fn mode(&self) -> iced::theme::Mode {
-        iced::theme::Mode::Dark
+        match self.mode {
+            palette::ThemeMode::Dark => iced::theme::Mode::Dark,
+            palette::ThemeMode::Light => iced::theme::Mode::Light,
+        }
     }
 
     fn base(&self) -> iced::theme::Style {

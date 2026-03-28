@@ -27,9 +27,18 @@ pub const ITALIC: Font = Font {
 
 pub const REGULAR: Font = Font::with_name("IBM Plex Sans");
 
+pub const SPACE_GROTESK_BOLD: Font = Font {
+    family: Family::Name("Space Grotesk"),
+    weight: Weight::Bold,
+    style: iced::font::Style::Normal,
+    stretch: Stretch::Normal,
+};
+
 pub const BOLD_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexSans-Bold.ttf");
 pub const MEDIUM_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexSans-Medium.ttf");
 pub const REGULAR_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexSans-Regular.ttf");
+
+pub const SPACE_GROTESK_BOLD_BYTES: &[u8] = include_bytes!("../static/fonts/SpaceGrotesk-Bold.ttf");
 
 pub const BOOTSTRAP_ICONS_BYTE: &[u8] = include_bytes!("../static/icons/bootstrap-icons.ttf");
 
@@ -38,6 +47,7 @@ pub fn load() -> Vec<Cow<'static, [u8]>> {
         BOLD_BYTES.into(),
         MEDIUM_BYTES.into(),
         REGULAR_BYTES.into(),
+        SPACE_GROTESK_BOLD_BYTES.into(),
         BOOTSTRAP_ICONS_BYTE.into(),
     ]
 }

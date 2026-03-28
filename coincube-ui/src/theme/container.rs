@@ -75,6 +75,19 @@ pub fn border_orange(theme: &Theme) -> Style {
     }
 }
 
+/// Balance header card: card background with orange border and rounded corners.
+pub fn balance_header(theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(theme.colors.cards.simple.background)),
+        border: iced::Border {
+            color: crate::color::ORANGE,
+            width: 0.2,
+            radius: 25.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
 pub fn border_grey(theme: &Theme) -> Style {
     Style {
         background: Some(Background::Color(theme.colors.general.background)),

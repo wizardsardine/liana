@@ -1,5 +1,13 @@
 use crate::color;
 
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    #[default]
+    Dark,
+    Light,
+}
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Palette {
     pub general: General,
@@ -633,6 +641,460 @@ impl std::default::Default for Palette {
                     foreground_border: color::WHITE,
                 },
             },
+        }
+    }
+}
+
+impl Palette {
+    pub fn dark() -> Self {
+        Self::default()
+    }
+
+    pub fn light() -> Self {
+        Self {
+            general: General {
+                background: color::LIGHT_BG,
+                foreground: color::WARM_PAPER,
+                scrollable: color::LIGHT_BORDER,
+            },
+            text: Text {
+                primary: color::DARK_GRAY,
+                secondary: color::GREY_3,
+                warning: color::ORANGE,
+                success: color::GREEN,
+                error: color::RED,
+            },
+            buttons: Buttons {
+                primary: Button {
+                    active: ButtonPalette {
+                        background: color::ORANGE,
+                        text: color::WHITE,
+                        border: Some(color::ORANGE),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::DARK_ORANGE,
+                        text: color::WHITE,
+                        border: Some(color::DARK_ORANGE),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::DARK_ORANGE,
+                        text: color::WHITE,
+                        border: Some(color::DARK_ORANGE),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::LIGHT_CARD_BG,
+                        text: color::GREY_3,
+                        border: Some(color::LIGHT_BORDER),
+                    }),
+                },
+                secondary: Button {
+                    active: ButtonPalette {
+                        background: color::LIGHT_CARD_BG,
+                        text: color::GREY_3,
+                        border: Some(color::LIGHT_BORDER),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::LIGHT_CARD_BG,
+                        text: color::ORANGE,
+                        border: Some(color::TRANSPARENT_ORANGE),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::LIGHT_CARD_BG,
+                        text: color::ORANGE,
+                        border: Some(color::ORANGE),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::LIGHT_CARD_BG,
+                        text: color::GREY_3,
+                        border: Some(color::LIGHT_BORDER),
+                    }),
+                },
+                destructive: Button {
+                    active: ButtonPalette {
+                        background: color::LIGHT_CARD_BG,
+                        text: color::RED,
+                        border: Some(color::RED),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::RED,
+                        text: color::WHITE,
+                        border: Some(color::RED),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::RED,
+                        text: color::WHITE,
+                        border: Some(color::RED),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::LIGHT_CARD_BG,
+                        text: color::RED,
+                        border: Some(color::RED),
+                    }),
+                },
+                transparent: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: None,
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: None,
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: None,
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: None,
+                    }),
+                },
+                transparent_border: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: color::TRANSPARENT.into(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: color::ORANGE.into(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: color::ORANGE.into(),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: color::TRANSPARENT.into(),
+                    }),
+                },
+                container: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: None,
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: None,
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: None,
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: None,
+                    }),
+                },
+                container_border: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: color::TRANSPARENT.into(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: color::ORANGE.into(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: color::ORANGE.into(),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: color::TRANSPARENT.into(),
+                    }),
+                },
+                menu: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::DARK_GRAY,
+                        border: color::TRANSPARENT.into(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::LIGHT_HOVER,
+                        text: color::DARK_GRAY,
+                        border: color::TRANSPARENT.into(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::LIGHT_HOVER,
+                        text: color::DARK_GRAY,
+                        border: color::TRANSPARENT.into(),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::DARK_GRAY,
+                        border: color::TRANSPARENT.into(),
+                    }),
+                },
+                tab: Button {
+                    active: ButtonPalette {
+                        background: color::LIGHT_CARD_BG,
+                        text: color::GREY_3,
+                        border: Some(color::LIGHT_BORDER),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::LIGHT_CARD_BG,
+                        text: color::ORANGE,
+                        border: Some(color::ORANGE),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::LIGHT_BG,
+                        text: color::ORANGE,
+                        border: Some(color::ORANGE),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::LIGHT_CARD_BG,
+                        text: color::GREY_3,
+                        border: Some(color::LIGHT_BORDER),
+                    }),
+                },
+                link: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: Some(color::TRANSPARENT),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::ORANGE,
+                        border: Some(color::TRANSPARENT_ORANGE),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::ORANGE,
+                        border: color::TRANSPARENT.into(),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: color::TRANSPARENT.into(),
+                    }),
+                },
+            },
+            cards: Cards {
+                simple: ContainerPalette {
+                    background: color::LIGHT_CARD_BG,
+                    text: None,
+                    border: Some(color::LIGHT_BORDER),
+                },
+                modal: ContainerPalette {
+                    background: color::LIGHT_SURFACE,
+                    text: None,
+                    border: color::LIGHT_BORDER.into(),
+                },
+                border: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: None,
+                    border: color::LIGHT_BORDER.into(),
+                },
+                invalid: ContainerPalette {
+                    background: color::LIGHT_SURFACE,
+                    text: color::RED.into(),
+                    border: color::RED.into(),
+                },
+                warning: ContainerPalette {
+                    background: color::LIGHT_SURFACE,
+                    text: color::ORANGE.into(),
+                    border: color::ORANGE.into(),
+                },
+                error: ContainerPalette {
+                    background: color::LIGHT_SURFACE,
+                    text: color::RED.into(),
+                    border: color::RED.into(),
+                },
+            },
+            banners: Banners {
+                network: ContainerPalette {
+                    background: color::BLUE,
+                    text: color::DARK_GRAY.into(),
+                    border: None,
+                },
+                warning: ContainerPalette {
+                    background: color::ORANGE,
+                    text: color::DARK_GRAY.into(),
+                    border: None,
+                },
+            },
+            badges: Badges {
+                simple: ContainerPalette {
+                    background: color::LIGHT_BORDER,
+                    text: None,
+                    border: color::TRANSPARENT.into(),
+                },
+                bitcoin: ContainerPalette {
+                    background: color::ORANGE,
+                    text: color::WHITE.into(),
+                    border: color::TRANSPARENT.into(),
+                },
+            },
+            pills: Pills {
+                primary: ContainerPalette {
+                    background: color::ORANGE,
+                    text: color::WHITE.into(),
+                    border: color::TRANSPARENT.into(),
+                },
+                simple: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: color::GREY_3.into(),
+                    border: color::GREY_3.into(),
+                },
+                warning: ContainerPalette {
+                    background: color::WARN_ORANGE,
+                    text: color::WHITE.into(),
+                    border: Some(color::WARN_ORANGE),
+                },
+                success: ContainerPalette {
+                    background: color::SUCCESS_GREEN,
+                    text: color::WHITE.into(),
+                    border: Some(color::SUCCESS_GREEN),
+                },
+                error: ContainerPalette {
+                    background: color::ERROR_RED,
+                    text: color::WHITE.into(),
+                    border: Some(color::ERROR_RED),
+                },
+                info: ContainerPalette {
+                    background: color::INFO_BLUE,
+                    text: color::WHITE.into(),
+                    border: Some(color::INFO_BLUE),
+                },
+            },
+            notifications: Notifications {
+                pending: ContainerPalette {
+                    background: color::GREEN,
+                    text: color::BLACK.into(),
+                    border: Some(color::GREEN),
+                },
+                error: ContainerPalette {
+                    background: color::ERROR_RED,
+                    text: color::WHITE.into(),
+                    border: Some(color::ERROR_RED),
+                },
+                success: ContainerPalette {
+                    background: color::SUCCESS_GREEN,
+                    text: color::WHITE.into(),
+                    border: Some(color::SUCCESS_GREEN),
+                },
+                warning: ContainerPalette {
+                    background: color::WARN_ORANGE,
+                    text: color::WHITE.into(),
+                    border: Some(color::WARN_ORANGE),
+                },
+                info: ContainerPalette {
+                    background: color::INFO_BLUE,
+                    text: color::WHITE.into(),
+                    border: Some(color::INFO_BLUE),
+                },
+                debug: ContainerPalette {
+                    background: color::LIGHT_BORDER,
+                    text: color::DARK_GRAY.into(),
+                    border: Some(color::LIGHT_BORDER),
+                },
+            },
+            text_inputs: TextInputs {
+                primary: TextInput {
+                    active: TextInputPalette {
+                        background: color::LIGHT_SURFACE,
+                        icon: color::GREY_3,
+                        placeholder: color::LIGHT_BORDER,
+                        value: color::DARK_GRAY,
+                        selection: color::ORANGE,
+                        border: Some(color::LIGHT_BORDER),
+                    },
+                    disabled: TextInputPalette {
+                        background: color::LIGHT_CARD_BG,
+                        icon: color::LIGHT_BORDER,
+                        placeholder: color::LIGHT_BORDER,
+                        value: color::GREY_3,
+                        selection: color::ORANGE,
+                        border: Some(color::LIGHT_BORDER),
+                    },
+                },
+                invalid: TextInput {
+                    active: TextInputPalette {
+                        background: color::LIGHT_SURFACE,
+                        icon: color::GREY_3,
+                        placeholder: color::LIGHT_BORDER,
+                        value: color::DARK_GRAY,
+                        selection: color::ORANGE,
+                        border: Some(color::RED),
+                    },
+                    disabled: TextInputPalette {
+                        background: color::LIGHT_CARD_BG,
+                        icon: color::LIGHT_BORDER,
+                        placeholder: color::LIGHT_BORDER,
+                        value: color::TRANSPARENT,
+                        selection: color::ORANGE,
+                        border: Some(color::RED),
+                    },
+                },
+            },
+            checkboxes: Checkboxes {
+                icon: color::ORANGE,
+                text: color::GREY_3,
+                background: color::LIGHT_BORDER,
+                border: Some(color::LIGHT_BORDER),
+            },
+            radio_buttons: RadioButtons {
+                dot: color::ORANGE,
+                text: color::GREY_3,
+                border: color::LIGHT_BORDER,
+            },
+            sliders: Sliders {
+                background: color::ORANGE,
+                border: color::ORANGE,
+                rail_border: None,
+                rail_backgrounds: (color::ORANGE, color::LIGHT_BORDER),
+            },
+            progress_bars: ProgressBars {
+                bar: color::ORANGE,
+                border: color::TRANSPARENT.into(),
+                background: color::LIGHT_CARD_BG,
+            },
+            rule: color::LIGHT_BORDER,
+            pane_grid: PaneGrid {
+                background: color::LIGHT_BG,
+                highlight_border: color::ORANGE,
+                highlight_background: color::TRANSPARENT_ORANGE,
+                picked_split: color::ORANGE,
+                hovered_split: color::ORANGE,
+            },
+            togglers: Togglers {
+                on: Toggler {
+                    background: color::GREEN,
+                    background_border: color::GREEN,
+                    foreground: color::WHITE,
+                    foreground_border: color::WHITE,
+                },
+                off: Toggler {
+                    background: color::LIGHT_BORDER,
+                    background_border: color::LIGHT_BORDER,
+                    foreground: color::WHITE,
+                    foreground_border: color::WHITE,
+                },
+            },
+        }
+    }
+
+    pub fn from_mode(mode: ThemeMode) -> Self {
+        match mode {
+            ThemeMode::Dark => Self::dark(),
+            ThemeMode::Light => Self::light(),
         }
     }
 }

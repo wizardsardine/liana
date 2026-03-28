@@ -132,8 +132,8 @@ pub fn usdt_overview_view<'a>(
     )
     .padding(20)
     .width(Length::Fill)
-    .style(|_| container::Style {
-        background: Some(Background::Color(color::GREY_6)),
+    .style(|t| container::Style {
+        background: Some(Background::Color(t.colors.cards.simple.background)),
         border: iced::Border {
             color: color::ORANGE,
             width: 0.2,
@@ -295,8 +295,8 @@ fn placeholder<'a, T: Into<Element<'a, UsdtOverviewMessage>>>(
         .width(Length::Fill)
         .padding(60)
         .center_x(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(color::GREY_6)),
+        .style(|t| container::Style {
+            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
             border: iced::Border {
                 radius: 20.0.into(),
                 ..Default::default()

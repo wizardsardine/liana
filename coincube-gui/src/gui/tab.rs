@@ -76,16 +76,25 @@ pub enum Message {
         internal_bitcoind: Option<crate::node::bitcoind::Bitcoind>,
         backup: Option<crate::backup::Backup>,
     },
+    /// Bubbles up to GUI level to toggle the theme
+    ToggleTheme,
 }
 
 pub struct Tab {
     pub id: usize,
     pub state: State,
+    /// Persisted theme mode — carried across state transitions so new App
+    /// caches inherit the correct mode immediately.
+    pub theme_mode: coincube_ui::theme::palette::ThemeMode,
 }
 
 impl Tab {
     pub fn new(id: usize, state: State) -> Self {
-        Tab { id, state }
+        Tab {
+            id,
+            state,
+            theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
+        }
     }
 
     pub fn cache(&self) -> Option<&Cache> {
@@ -93,6 +102,26 @@ impl Tab {
             Some(app.cache())
         } else {
             None
+        }
+    }
+
+    pub fn set_theme_mode(&mut self, mode: coincube_ui::theme::palette::ThemeMode) {
+        self.theme_mode = mode;
+        match &mut self.state {
+            State::App(app) => app.cache_mut().theme_mode = mode,
+            State::Launcher(launcher) => launcher.theme_mode = mode,
+            _ => {}
+        }
+    }
+
+    /// Apply the tab's stored theme_mode to the current state.
+    /// Call after any state transition to State::App or State::Launcher.
+    fn sync_theme_mode(&mut self) {
+        let mode = self.theme_mode;
+        match &mut self.state {
+            State::App(app) => app.cache_mut().theme_mode = mode,
+            State::Launcher(launcher) => launcher.theme_mode = mode,
+            _ => {}
         }
     }
 
@@ -133,7 +162,7 @@ impl Tab {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
-        match (&mut self.state, message) {
+        let result = match (&mut self.state, message) {
             (State::Launcher(l), Message::Launch(msg)) => match msg {
                 launcher::Message::Install(datadir, network, init) => {
                     if !datadir.exists() {
@@ -179,6 +208,9 @@ impl Tab {
 
                     self.state = State::PinEntry(crate::pin_entry::PinEntry::new(cube, on_success));
                     Task::none()
+                }
+                launcher::Message::View(launcher::ViewMessage::ToggleTheme) => {
+                    Task::done(Message::ToggleTheme)
                 }
                 _ => l.update(msg).map(Message::Launch),
             },
@@ -509,6 +541,9 @@ impl Tab {
                         self.state = State::Installer(install);
                         command.map(Message::Install)
                     }
+                    app::Message::View(app::view::Message::ToggleTheme) => {
+                        Task::done(Message::ToggleTheme)
+                    }
                     m => app.update(m).map(Message::Run),
                 }
             }
@@ -747,7 +782,9 @@ impl Tab {
                 }
             }
             _ => Task::none(),
-        }
+        };
+        self.sync_theme_mode();
+        result
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -1011,6 +1048,7 @@ pub fn create_app_with_remote_backend(
             has_vault: true,
             cube_name: cube_settings.name.clone(),
             has_p2p: false, // Set later by App::new based on mnemonic availability
+            theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
         },
         Arc::new(
             Wallet::new(wallet.descriptor)

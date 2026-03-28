@@ -30,6 +30,13 @@ pub const RED: Color = iced::color!(0xE24E1B);
 
 pub const BLUE: Color = iced::color!(0x7DD3FC);
 
+// === Light-mode surface colors ===
+pub const LIGHT_BG: Color = iced::color!(0xFAF9F6); // Main background (warm off-white)
+pub const LIGHT_SURFACE: Color = iced::color!(0xFFFFFF); // Card/input surfaces
+pub const LIGHT_CARD_BG: Color = iced::color!(0xEDE8E0); // Card backgrounds (warm)
+pub const LIGHT_BORDER: Color = iced::color!(0xD5D0C8); // Subtle borders
+pub const LIGHT_HOVER: Color = iced::color!(0xE5E0D8); // Hover state backgrounds
+
 // === Toast / notification severity colors (WCAG AA with white text) ===
 pub const SUCCESS_GREEN: Color = iced::color!(0x2D6A4F); // 6.39:1
 pub const ERROR_RED: Color = iced::color!(0xC0392B); // 5.44:1

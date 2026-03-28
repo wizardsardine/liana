@@ -102,6 +102,8 @@ pub struct Launcher {
     pub connect_expanded: bool,
     /// Which section is currently displayed in the main content area
     pub active_section: LauncherSection,
+    /// Current theme mode (dark/light) — used for theme-aware rendering
+    pub theme_mode: coincube_ui::theme::palette::ThemeMode,
 }
 
 impl Launcher {
@@ -144,6 +146,7 @@ impl Launcher {
                 connect_account: ConnectAccountPanel::new(),
                 connect_expanded: false,
                 active_section: LauncherSection::Cubes,
+                theme_mode: GlobalSettings::load_theme_mode(&GlobalSettings::path(&datadir_path)),
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
@@ -999,10 +1002,9 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
         .spacing(0)
         .width(Length::Fill)
         .push(
-            Container::new(image::coincube_logotype().width(Length::Fill))
+            Container::new(image::coincube_wordmark(28.0))
                 .padding(10)
-                .align_x(Alignment::Center)
-                .width(Length::Fill),
+                .center_x(Length::Fill),
         )
         .push(cubes_button);
 
@@ -1067,9 +1069,11 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
         }
     }
 
-    col = col.push(Space::new().height(Length::Fill));
+    // Bottom-pinned section: Sign In / email + theme toggle
+    let mut bottom_col = Column::new().spacing(0).width(Length::Fill);
+
     if !is_authenticated {
-        col = col.push(
+        bottom_col = bottom_col.push(
             Container::new(
                 btn::primary(None, "Sign In")
                     .on_press(msg(ViewMessage::GoToSection(LauncherSection::Connect(
@@ -1081,7 +1085,7 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
             .width(Length::Fill),
         );
     } else if let Some(user) = &launcher.connect_account.user {
-        col = col.push(
+        bottom_col = bottom_col.push(
             Container::new(
                 txt::caption(&user.email)
                     .color(color::GREY_3)
@@ -1093,7 +1097,24 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
         );
     }
 
-    scrollable(col.height(Length::Fill))
+    let theme_toggle_btn =
+        coincube_ui::image::theme_toggle_button(launcher.theme_mode, msg(ViewMessage::ToggleTheme));
+
+    bottom_col = bottom_col.push(
+        Container::new(theme_toggle_btn)
+            .padding(iced::Padding {
+                top: 4.0,
+                right: 8.0,
+                bottom: 16.0,
+                left: 8.0,
+            })
+            .center_x(Length::Fill),
+    );
+
+    // Outer layout: scrollable menu fills, bottom section pinned
+    Column::new()
+        .push(scrollable(col).height(Length::Fill))
+        .push(bottom_col)
         .height(Length::Fill)
         .into()
 }
@@ -1494,6 +1515,8 @@ pub enum ViewMessage {
     ToggleConnect,
     /// Account-level Connect messages (login, plan, security, etc.)
     ConnectAccount(ConnectAccountMessage),
+    /// Toggle light/dark theme
+    ToggleTheme,
 }
 
 #[derive(Debug, Clone)]
