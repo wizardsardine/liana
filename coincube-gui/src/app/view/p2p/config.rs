@@ -89,11 +89,17 @@ impl Default for MostroConfig {
 
 impl MostroConfig {
     pub fn active_node(&self) -> &MostroNode {
+        static FALLBACK: std::sync::LazyLock<MostroNode> =
+            std::sync::LazyLock::new(|| MostroNode {
+                name: "Mostro (Default)".to_string(),
+                pubkey_hex: "82fa8cb978b43c79b2156585bac2c011176a21d2aead6d9f7c575c005be88390"
+                    .to_string(),
+            });
         self.nodes
             .iter()
             .find(|n| n.pubkey_hex == self.active_node_pubkey)
             .or_else(|| self.nodes.first())
-            .expect("MostroConfig must always have at least one node")
+            .unwrap_or(&FALLBACK)
     }
 
     pub fn active_pubkey_hex(&self) -> &str {

@@ -623,7 +623,6 @@ pub enum P2PMessage {
     MinAmountEdited(String),
     MaxAmountEdited(String),
     LightningAddressEdited(String),
-    ExpiryDaysEdited(String),
     SubmitOrder,
     ClearForm,
     MostroOrdersReceived(Vec<super::p2p::components::P2POrder>),
@@ -647,8 +646,8 @@ pub enum P2PMessage {
     MostroSelectActiveNode(String),
     MostroNodeInfoReceived {
         currencies: Vec<String>,
-        min_order_sats: Option<i64>,
-        max_order_sats: Option<i64>,
+        min_order_sats: Option<u64>,
+        max_order_sats: Option<u64>,
     },
     ConfirmOrder,
     CancelConfirmation,

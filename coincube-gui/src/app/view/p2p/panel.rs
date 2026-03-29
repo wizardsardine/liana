@@ -150,8 +150,8 @@ pub struct P2PPanel {
     mnemonic: String,
     // Node info (fetched from info event)
     node_currencies: Vec<String>,
-    node_min_order_sats: Option<i64>,
-    node_max_order_sats: Option<i64>,
+    node_min_order_sats: Option<u64>,
+    node_max_order_sats: Option<u64>,
     // Order book state
     orders: Vec<P2POrder>,
     /// Order IDs we created locally — used to ensure is_mine stays true even
@@ -499,8 +499,8 @@ impl P2PPanel {
 
             if self.create_sats_amount.value.is_empty() {
                 v.sats = Some("Sats amount is required for fixed price");
-            } else if let Ok(sats) = self.create_sats_amount.value.parse::<i64>() {
-                if sats <= 0 {
+            } else if let Ok(sats) = self.create_sats_amount.value.parse::<u64>() {
+                if sats == 0 {
                     v.sats = Some("Sats must be greater than 0");
                 } else if node_min.is_none() || node_max.is_none() {
                     // Node limits not loaded — block until we know the range
@@ -510,7 +510,7 @@ impl P2PPanel {
                         if sats < min {
                             v.sats_range = Some(format!(
                                 "Below minimum ({} sats)",
-                                super::components::format_with_separators(min as u64),
+                                super::components::format_with_separators(min),
                             ));
                         }
                     }
@@ -519,7 +519,7 @@ impl P2PPanel {
                             if sats > max {
                                 v.sats_range = Some(format!(
                                     "Above maximum ({} sats)",
-                                    super::components::format_with_separators(max as u64),
+                                    super::components::format_with_separators(max),
                                 ));
                             }
                         }
@@ -581,6 +581,8 @@ impl P2PPanel {
             return Task::perform(action(data), |result| {
                 Message::View(view::Message::P2P(P2PMessage::TradeActionResult(result)))
             });
+        } else {
+            tracing::warn!("perform_trade_action called with no selected trade");
         }
         self.trade_action_loading = false;
         Task::none()
@@ -788,8 +790,8 @@ impl P2PPanel {
             amount_col = amount_col.push(
                 caption(format!(
                     "Node accepts orders between {} and {} sats",
-                    super::components::format_with_separators(min as u64),
-                    super::components::format_with_separators(max as u64),
+                    super::components::format_with_separators(min),
+                    super::components::format_with_separators(max),
                 ))
                 .style(theme::text::secondary),
             );
@@ -927,8 +929,8 @@ impl P2PPanel {
                 sats_col = sats_col.push(
                     caption(format!(
                         "Allowed: {} - {} sats",
-                        super::components::format_with_separators(min as u64),
-                        super::components::format_with_separators(max as u64),
+                        super::components::format_with_separators(min),
+                        super::components::format_with_separators(max),
                     ))
                     .style(theme::text::secondary),
                 );
@@ -1081,12 +1083,27 @@ impl P2PPanel {
                     .padding([4, 12])
                     .style(badge_style),
                     p2_regular(heading).style(theme::text::secondary),
-                    row!(
-                        h2(format!("{:.2}", trade.fiat_amount)),
-                        p1_bold(format!(" {}", trade.fiat_currency)).style(theme::text::secondary)
-                    )
-                    .spacing(8)
-                    .align_y(iced::alignment::Vertical::Center),
+                    if trade.is_range_order() {
+                        row!(
+                            h2(format!(
+                                "{:.0} - {:.0}",
+                                trade.min_amount.unwrap_or(0.0),
+                                trade.max_amount.unwrap_or(0.0)
+                            )),
+                            p1_bold(format!(" {}", trade.fiat_currency))
+                                .style(theme::text::secondary)
+                        )
+                        .spacing(8)
+                        .align_y(iced::alignment::Vertical::Center)
+                    } else {
+                        row!(
+                            h2(format!("{:.2}", trade.fiat_amount)),
+                            p1_bold(format!(" {}", trade.fiat_currency))
+                                .style(theme::text::secondary)
+                        )
+                        .spacing(8)
+                        .align_y(iced::alignment::Vertical::Center)
+                    },
                     if trade.is_fixed_price() {
                         row![
                             p2_regular("for").style(theme::text::secondary),
@@ -3175,7 +3192,12 @@ impl State for P2PPanel {
             super::mostro::mostro_subscription(cube_name, mnemonic, active_pubkey, relays);
 
         // Tick every second when viewing a trade detail (for action countdown timer)
-        if self.selected_trade.is_some() {
+        let selected_is_active = self.selected_trade.as_ref().is_some_and(|id| {
+            self.trades
+                .iter()
+                .any(|t| t.id == *id && !t.status.is_terminal())
+        });
+        if selected_is_active {
             let timer = iced::time::every(std::time::Duration::from_secs(1))
                 .map(|_| Message::View(view::Message::P2P(P2PMessage::TradeTimerTick)));
             Subscription::batch([mostro_sub, timer])
@@ -3246,7 +3268,6 @@ impl State for P2PPanel {
             P2PMessage::LightningAddressEdited(v) => {
                 self.create_lightning_address.value = v;
             }
-            P2PMessage::ExpiryDaysEdited(_) => {}
             P2PMessage::SubmitOrder => {
                 // Double-check validation before showing confirmation
                 if self.validate_order_form().has_errors() {
@@ -3419,9 +3440,16 @@ impl State for P2PPanel {
             }
             P2PMessage::MostroAddRelay => {
                 let url = self.new_relay_input.value.trim().to_string();
-                if !url.starts_with("wss://") {
+                let relay_host = url
+                    .split_once("://")
+                    .map(|(_, rest)| rest.split(&['/', ':'][..]).next().unwrap_or(""))
+                    .unwrap_or("");
+                if !url.starts_with("wss://") && !url.starts_with("ws://") {
                     self.new_relay_input.valid = false;
-                    self.new_relay_input.warning = Some("URL must start with wss://");
+                    self.new_relay_input.warning = Some("URL must start with wss:// or ws://");
+                } else if relay_host.is_empty() {
+                    self.new_relay_input.valid = false;
+                    self.new_relay_input.warning = Some("Invalid relay URL — missing host");
                 } else if self.mostro_config.relays.contains(&url) {
                     self.new_relay_input.valid = false;
                     self.new_relay_input.warning = Some("Relay already exists");
@@ -3568,6 +3596,9 @@ impl State for P2PPanel {
             }
             P2PMessage::CancelTakeOrder => {
                 self.taking_order = false;
+                self.take_order_amount = Default::default();
+                self.take_order_invoice = Default::default();
+                self.take_order_submitting = false;
             }
             P2PMessage::ConfirmTakeOrder => {
                 if let Some(ref selected_id) = self.selected_order {
@@ -3607,6 +3638,13 @@ impl State for P2PPanel {
                             lightning_invoice: invoice,
                             mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
                             relay_urls: self.mostro_config.relays.clone(),
+                            fiat_code: Some(order.fiat_currency.clone()),
+                            fiat_amount: Some(order.fiat_amount as i64),
+                            payment_method: Some(order.payment_methods.join(", ")),
+                            premium: order.premium_percent.map(|p| p as i64),
+                            sats_amount: order.sats_amount.map(|s| s as i64),
+                            min_amount: order.min_amount.map(|m| m as i64),
+                            max_amount: order.max_amount.map(|m| m as i64),
                         };
 
                         return Task::perform(super::mostro::take_order(data), |result| {

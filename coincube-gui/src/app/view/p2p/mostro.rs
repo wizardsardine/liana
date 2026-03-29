@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::convert::TryFrom;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -283,7 +284,13 @@ pub fn extract_hold_invoice(session: &TradeSession) -> Option<String> {
             // payload_json is the serialized Option<Payload>
             // For PayInvoice/BuyerTookOrder: Some(PaymentRequest(Some(order), invoice_string, Some(amount)))
             let payload: Option<mostro_core::message::Payload> =
-                serde_json::from_str(&m.payload_json).ok()?;
+                match serde_json::from_str(&m.payload_json) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::debug!("Failed to deserialize hold-invoice payload: {e}");
+                        return None;
+                    }
+                };
             match payload {
                 Some(mostro_core::message::Payload::PaymentRequest(_, invoice, _)) => Some(invoice),
                 _ => None,
@@ -393,7 +400,7 @@ pub async fn restore_trades(
         order_uuids.len()
     );
 
-    let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+    let request_id = rand::random::<u64>();
     let orders_msg = mostro_core::message::Message::new_order(
         None,
         Some(request_id),
@@ -632,7 +639,12 @@ pub fn dm_action_to_status(action: &str) -> Option<TradeStatus> {
         }
         "AdminSettled" => Some(TradeStatus::Success),
         "PaymentFailed" => Some(TradeStatus::PaymentFailed),
-        _ => None,
+        // Known actions that don't represent status transitions
+        "NewOrder" | "CantDo" | "Peer" | "RateUser" | "Orders" | "LastTradeIndex" => None,
+        _ => {
+            tracing::warn!("Unknown DM action: {action}");
+            None
+        }
     }
 }
 
@@ -643,7 +655,10 @@ fn derive_trade_keys(mnemonic: &str, trade_index: i64) -> Result<Keys, String> {
         mnemonic,
         None,
         Some(account),
-        Some(trade_index as u32),
+        Some(
+            u32::try_from(trade_index)
+                .map_err(|_| format!("trade_index {trade_index} exceeds u32::MAX"))?,
+        ),
         Some(0),
     )
     .map_err(|e| format!("Failed to derive trade keys: {e}"))
@@ -652,8 +667,8 @@ fn derive_trade_keys(mnemonic: &str, trade_index: i64) -> Result<Keys, String> {
 /// Info fetched from the Mostro info event (kind 38385): order limits and accepted currencies.
 #[derive(Default, Clone)]
 struct MostroNodeInfo {
-    min_order_amount: Option<i64>,
-    max_order_amount: Option<i64>,
+    min_order_amount: Option<u64>,
+    max_order_amount: Option<u64>,
     fiat_currencies: Vec<String>,
 }
 
@@ -677,10 +692,10 @@ async fn fetch_mostro_info(client: &Client, mostro_pubkey: PublicKey) -> MostroN
                 }
                 match t[0].as_str() {
                     "max_order_amount" => {
-                        info.max_order_amount = t[1].parse::<i64>().ok();
+                        info.max_order_amount = t[1].parse::<u64>().ok();
                     }
                     "min_order_amount" => {
-                        info.min_order_amount = t[1].parse::<i64>().ok();
+                        info.min_order_amount = t[1].parse::<u64>().ok();
                     }
                     "fiat_currencies_accepted" => {
                         info.fiat_currencies = t[1]
@@ -711,8 +726,8 @@ fn cant_do_description(
             match (&limits.min_order_amount, &limits.max_order_amount) {
                 (Some(min), Some(max)) => format!(
                     "Fiat amount is out of range — Mostro allows {} to {} sats equivalent",
-                    format_with_separators(*min as u64),
-                    format_with_separators(*max as u64),
+                    format_with_separators(*min),
+                    format_with_separators(*max),
                 ),
                 _ => "Fiat amount is out of the acceptable range".into(),
             }
@@ -721,8 +736,8 @@ fn cant_do_description(
             match (&limits.min_order_amount, &limits.max_order_amount) {
                 (Some(min), Some(max)) => format!(
                     "Amount out of range — Mostro allows {} to {} sats",
-                    format_with_separators(*min as u64),
-                    format_with_separators(*max as u64),
+                    format_with_separators(*min),
+                    format_with_separators(*max),
                 ),
                 _ => "Amount is too large — try a smaller fiat amount".into(),
             }
@@ -885,7 +900,7 @@ async fn sync_last_trade_index(
 
     let inner = resp.get_inner_message_kind();
     let idx = inner.trade_index();
-    if idx <= 0 {
+    if idx <= 0 || idx > i64::from(u32::MAX) {
         return Err("Server returned invalid last_trade_index".to_string());
     }
 
@@ -973,7 +988,7 @@ pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, St
         );
 
         // Create Mostro message
-        let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+        let request_id = rand::random::<u64>();
         let order_content = mostro_core::message::Payload::Order(small_order);
         let message = mostro_core::message::Message::new_order(
             None,
@@ -1093,6 +1108,13 @@ pub struct TakeOrderData {
     pub lightning_invoice: Option<String>,
     pub mostro_pubkey_hex: String,
     pub relay_urls: Vec<String>,
+    pub fiat_code: Option<String>,
+    pub fiat_amount: Option<i64>,
+    pub payment_method: Option<String>,
+    pub premium: Option<i64>,
+    pub sats_amount: Option<i64>,
+    pub min_amount: Option<i64>,
+    pub max_amount: Option<i64>,
 }
 
 /// Result returned to the UI after taking an order.
@@ -1130,7 +1152,7 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
         // The lock is released before any .await so we never hold it across a yield point.
         let next_idx = with_locked_data(&data.cube_name, |mdata| Ok(mdata.last_trade_index + 1))?;
 
-        let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+        let request_id = rand::random::<u64>();
 
         // Build payload per mostro protocol:
         // TakeSell (buyer): PaymentRequest(None, invoice, amount) or Amount(amount)
@@ -1237,13 +1259,13 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
             order_id: data.order_id.clone(),
             trade_index: next_idx,
             kind: our_kind.to_string(),
-            fiat_code: String::new(),
-            fiat_amount: data.amount.unwrap_or(0),
-            min_amount: None,
-            max_amount: None,
-            amount: 0,
-            premium: 0,
-            payment_method: String::new(),
+            fiat_code: data.fiat_code.clone().unwrap_or_default(),
+            fiat_amount: data.fiat_amount.unwrap_or_else(|| data.amount.unwrap_or(0)),
+            min_amount: data.min_amount,
+            max_amount: data.max_amount,
+            amount: data.sats_amount.unwrap_or(0),
+            premium: data.premium.unwrap_or(0),
+            payment_method: data.payment_method.clone().unwrap_or_default(),
             created_at: chrono::Utc::now().timestamp(),
             role: "taker".to_string(),
             messages: Vec::new(),
@@ -1342,7 +1364,7 @@ pub async fn rate_counterparty(
     let order_uuid =
         uuid::Uuid::parse_str(&data.order_id).map_err(|e| format!("Invalid order ID: {e}"))?;
 
-    let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+    let request_id = rand::random::<u64>();
     let payload = Some(mostro_core::message::Payload::RatingUser(rating));
 
     let message = mostro_core::message::Message::new_order(
@@ -1392,7 +1414,7 @@ async fn trade_action(
     let order_uuid =
         uuid::Uuid::parse_str(&data.order_id).map_err(|e| format!("Invalid order ID: {e}"))?;
 
-    let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+    let request_id = rand::random::<u64>();
 
     let payload = if action == mostro_core::message::Action::AddInvoice {
         let invoice = data
@@ -2092,6 +2114,8 @@ async fn fetch_user_trades(
                 status,
                 role: role_from_session(session),
                 fiat_amount,
+                min_amount: order.min_amount.map(|v| v as f64),
+                max_amount: order.max_amount.map(|v| v as f64),
                 fiat_currency: order.fiat_code.clone(),
                 sats_amount: if order.amount > 0 {
                     Some(order.amount as u64)
@@ -2156,6 +2180,8 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
         status,
         role: role_from_session(session),
         fiat_amount,
+        min_amount: session.min_amount.map(|v| v as f64),
+        max_amount: session.max_amount.map(|v| v as f64),
         fiat_currency: session.fiat_code.clone(),
         sats_amount: if session.amount > 0 {
             Some(session.amount as u64)
@@ -2656,8 +2682,13 @@ async fn process_dm_notifications(
                     {
                         let inner = msg.get_inner_message_kind();
                         let action = format!("{:?}", inner.action);
-                        let payload_json =
-                            serde_json::to_string(&inner.payload).unwrap_or_default();
+                        let payload_json = match serde_json::to_string(&inner.payload) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                tracing::warn!("Failed to serialize DM payload: {e}");
+                                String::new()
+                            }
+                        };
 
                         seen_event_ids.insert(event.id);
 
@@ -2737,10 +2768,15 @@ async fn process_dm_notifications(
                         seen_event_ids.insert(event.id);
 
                         let chat_text = inner_event.content.clone();
-                        let payload_json = serde_json::to_string(&Some(
+                        let payload_json = match serde_json::to_string(&Some(
                             mostro_core::message::Payload::TextMessage(chat_text),
-                        ))
-                        .unwrap_or_default();
+                        )) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                tracing::warn!("Failed to serialize chat payload: {e}");
+                                String::new()
+                            }
+                        };
                         let rumor_ts = inner_event.created_at.as_u64();
 
                         append_trade_message(
@@ -2789,10 +2825,15 @@ async fn process_dm_notifications(
                         seen_event_ids.insert(event.id);
 
                         let chat_text = inner_event.content.clone();
-                        let payload_json = serde_json::to_string(&Some(
+                        let payload_json = match serde_json::to_string(&Some(
                             mostro_core::message::Payload::TextMessage(chat_text),
-                        ))
-                        .unwrap_or_default();
+                        )) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                tracing::warn!("Failed to serialize chat payload: {e}");
+                                String::new()
+                            }
+                        };
                         let rumor_ts = inner_event.created_at.as_u64();
 
                         append_trade_message(
@@ -2891,7 +2932,13 @@ async fn process_dm_event(
                 {
                     let inner = msg.get_inner_message_kind();
                     let action = format!("{:?}", inner.action);
-                    let payload_json = serde_json::to_string(&inner.payload).unwrap_or_default();
+                    let payload_json = match serde_json::to_string(&inner.payload) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("Failed to serialize DM payload: {e}");
+                            String::new()
+                        }
+                    };
 
                     seen_event_ids.insert(event.id);
 
@@ -2962,10 +3009,15 @@ async fn process_dm_event(
                     seen_event_ids.insert(event.id);
 
                     let chat_text = inner_event.content.clone();
-                    let payload_json = serde_json::to_string(&Some(
+                    let payload_json = match serde_json::to_string(&Some(
                         mostro_core::message::Payload::TextMessage(chat_text),
-                    ))
-                    .unwrap_or_default();
+                    )) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("Failed to serialize chat payload: {e}");
+                            String::new()
+                        }
+                    };
                     let rumor_ts = inner_event.created_at.as_u64();
 
                     append_trade_message(
@@ -3012,10 +3064,15 @@ async fn process_dm_event(
                     seen_event_ids.insert(event.id);
 
                     let chat_text = inner_event.content.clone();
-                    let payload_json = serde_json::to_string(&Some(
+                    let payload_json = match serde_json::to_string(&Some(
                         mostro_core::message::Payload::TextMessage(chat_text),
-                    ))
-                    .unwrap_or_default();
+                    )) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("Failed to serialize chat payload: {e}");
+                            String::new()
+                        }
+                    };
                     let rumor_ts = inner_event.created_at.as_u64();
 
                     append_trade_message(
