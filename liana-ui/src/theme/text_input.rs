@@ -5,6 +5,8 @@ use iced::{
 
 use super::{palette::TextInput, Theme};
 
+const INPUT_RADIUS: f32 = 4.0;
+
 impl Catalog for Theme {
     type Class<'a> = StyleFn<'a, Self>;
 
@@ -30,7 +32,7 @@ fn text_input(c: &TextInput, status: Status) -> Style {
         background: Background::Color(c.active.background),
         border: if let Some(color) = c.active.border {
             Border {
-                radius: 25.0.into(),
+                radius: INPUT_RADIUS.into(),
                 width: 1.0,
                 color,
             }
@@ -49,7 +51,7 @@ fn text_input(c: &TextInput, status: Status) -> Style {
             background: Background::Color(c.disabled.background),
             border: if let Some(color) = c.disabled.border {
                 Border {
-                    radius: 25.0.into(),
+                    radius: INPUT_RADIUS.into(),
                     width: 1.0,
                     color,
                 }

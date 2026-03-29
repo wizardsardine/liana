@@ -60,6 +60,18 @@ const CARD_SHADOW_HOVER: Shadow = Shadow {
     blur_radius: 4.0,
 };
 
+pub const INPUT_BG: Color = Color::from_rgb(
+    0xF3 as f32 / 255.0,
+    0xF4 as f32 / 255.0,
+    0xF5 as f32 / 255.0,
+);
+
+pub const INPUT_BORDER: Color = Color::from_rgb(
+    0xCE as f32 / 255.0,
+    0xD4 as f32 / 255.0,
+    0xDA as f32 / 255.0,
+);
+
 impl Palette {
     pub fn business() -> Self {
         Self {
@@ -436,12 +448,12 @@ impl Palette {
             text_inputs: TextInputs {
                 primary: TextInput {
                     active: TextInputPalette {
-                        background: color::LIGHT_BG,
+                        background: INPUT_BG,
                         icon: color::DARK_TEXT_TERTIARY,
                         placeholder: color::DARK_TEXT_TERTIARY,
                         value: color::DARK_TEXT_PRIMARY,
                         selection: color::BUSINESS_BLUE,
-                        border: Some(color::LIGHT_BORDER),
+                        border: Some(INPUT_BORDER),
                     },
                     disabled: TextInputPalette {
                         background: color::LIGHT_BG_TERTIARY,
@@ -449,7 +461,7 @@ impl Palette {
                         placeholder: color::DARK_TEXT_TERTIARY,
                         value: color::DARK_TEXT_SECONDARY,
                         selection: color::BUSINESS_BLUE,
-                        border: Some(color::LIGHT_BORDER),
+                        border: Some(INPUT_BORDER),
                     },
                 },
                 invalid: TextInput {
