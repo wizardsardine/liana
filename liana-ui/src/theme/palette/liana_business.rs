@@ -330,7 +330,7 @@ impl Palette {
             },
             cards: Cards {
                 simple: ContainerPalette {
-                    background: color::LIGHT_BG_SECONDARY,
+                    background: BTN_TERTIARY_BG,
                     text: None,
                     border: Some(color::TRANSPARENT),
                 },
