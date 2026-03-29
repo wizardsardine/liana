@@ -212,6 +212,12 @@ pub struct P2PPanel {
     new_node_name_input: form::Value<String>,
     new_node_pubkey_input: form::Value<String>,
     mostro_config_error: Option<&'static str>,
+    /// Error surfaced from the subscription stream (relay failures, restore errors, etc.)
+    pub stream_error: Option<String>,
+    /// Cached trade messages for the selected trade (avoids disk I/O per frame).
+    cached_trade_messages: Vec<super::mostro::TradeMessage>,
+    /// Cached chat identity info for the selected trade (avoids key-derivation per frame).
+    cached_chat_identity: Option<super::mostro::ChatIdentityInfo>,
 }
 
 impl P2PPanel {
@@ -276,6 +282,9 @@ impl P2PPanel {
             new_node_name_input: Default::default(),
             new_node_pubkey_input: Default::default(),
             mostro_config_error: None,
+            stream_error: None,
+            cached_trade_messages: Vec::new(),
+            cached_chat_identity: None,
         }
     }
 
@@ -284,6 +293,26 @@ impl P2PPanel {
             .as_ref()
             .map(|w| w.name.clone())
             .unwrap_or_else(|| "default".to_string())
+    }
+
+    /// Refresh the in-memory trade message and identity caches for the
+    /// currently selected trade.  Call this whenever the selected trade
+    /// changes or new messages arrive so that view methods can read from
+    /// `self.cached_trade_messages` / `self.cached_chat_identity` instead
+    /// of hitting the disk on every frame.
+    fn refresh_trade_cache(&mut self) {
+        if let Some(ref order_id) = self.selected_trade.clone() {
+            let cube_name = self.cube_name();
+            self.cached_trade_messages = super::mostro::get_trade_messages(&cube_name, order_id);
+            self.cached_chat_identity = Some(super::mostro::get_chat_identity_info(
+                &cube_name,
+                &self.mnemonic,
+                order_id,
+            ));
+        } else {
+            self.cached_trade_messages = Vec::new();
+            self.cached_chat_identity = None;
+        }
     }
 
     fn filtered_orders(&self) -> Vec<&P2POrder> {
@@ -1988,9 +2017,8 @@ impl P2PPanel {
                 | TradeStatus::PaymentFailed
         );
 
-        let cube_name = self.cube_name();
-        let all_messages = super::mostro::get_trade_messages(&cube_name, &trade.id);
-        let chat_messages: Vec<&super::mostro::TradeMessage> = all_messages
+        let chat_messages: Vec<&super::mostro::TradeMessage> = self
+            .cached_trade_messages
             .iter()
             .filter(|m| m.action == "SendDm")
             .collect();
@@ -2109,8 +2137,17 @@ impl P2PPanel {
 
         // ── User Information panel (expandable) ──
         let user_info_panel: Element<'_, view::Message> = if self.chat_show_user_info {
-            let identity =
-                super::mostro::get_chat_identity_info(&cube_name, &self.mnemonic, &trade.id);
+            let default_identity = super::mostro::ChatIdentityInfo {
+                counterparty_pubkey: None,
+                counterparty_nickname: None,
+                our_trade_pubkey: None,
+                our_nickname: None,
+                shared_key: None,
+            };
+            let identity = self
+                .cached_chat_identity
+                .as_ref()
+                .unwrap_or(&default_identity);
             let cp_nickname = identity
                 .counterparty_nickname
                 .clone()
@@ -2438,9 +2475,8 @@ impl P2PPanel {
         let chat_enabled =
             trade.admin_pubkey.is_some() && matches!(trade.status, TradeStatus::Dispute);
 
-        let cube_name = self.cube_name();
-        let all_messages = super::mostro::get_trade_messages(&cube_name, &trade.id);
-        let admin_messages: Vec<&super::mostro::TradeMessage> = all_messages
+        let admin_messages: Vec<&super::mostro::TradeMessage> = self
+            .cached_trade_messages
             .iter()
             .filter(|m| m.action == "AdminDm")
             .collect();
@@ -2805,49 +2841,54 @@ impl State for P2PPanel {
                         .filter(|o| o.order_type == OrderType::Buy)
                         .count();
 
-                    let overview_content: Element<'_, view::Message> = view::dashboard(
-                        menu,
-                        cache,
+                    let mut overview_col = column![
+                        // Title and filters
                         column![
-                            // Title and filters
-                            column![
-                                h1("P2P Order Book"),
-                                p2_regular(
-                                    "Browse and take P2P trading orders from the Mostro network"
-                                )
-                                .style(theme::text::secondary),
-                            ]
-                            .spacing(8)
-                            .width(Length::Fill)
-                            .padding(20),
-                            // Buy / Sell tabs with counts
-                            container(buy_sell_tabs(&self.buy_sell_filter, buy_count, sell_count,))
-                                .padding([0, 20])
-                                .width(Length::Fill),
-                            // Orders list
-                            if filtered_orders.is_empty() {
-                                Element::from(
-                                    container(p1_bold("No orders found"))
-                                        .padding(40)
-                                        .align_x(Alignment::Center)
-                                        .width(Length::Fill),
-                                )
-                            } else {
-                                Element::from(
-                                    column(
-                                        filtered_orders
-                                            .iter()
-                                            .map(|order| order_card(order).into()),
-                                    )
-                                    .spacing(16)
-                                    .width(Length::Fill)
-                                    .padding([0, 20]),
-                                )
-                            },
-                            Space::new().height(Length::Fixed(40.0)),
+                            h1("P2P Order Book"),
+                            p2_regular(
+                                "Browse and take P2P trading orders from the Mostro network"
+                            )
+                            .style(theme::text::secondary),
                         ]
-                        .spacing(16),
+                        .spacing(8)
+                        .width(Length::Fill)
+                        .padding(20),
+                    ]
+                    .spacing(16);
+                    // Stream error banner (relay connection / restore failures)
+                    if let Some(ref err) = self.stream_error {
+                        overview_col = overview_col.push(
+                            container(p2_regular(err.as_str()).style(theme::text::warning))
+                                .padding([8, 20])
+                                .width(Length::Fill),
+                        );
+                    }
+                    // Buy / Sell tabs with counts
+                    overview_col = overview_col.push(
+                        container(buy_sell_tabs(&self.buy_sell_filter, buy_count, sell_count))
+                            .padding([0, 20])
+                            .width(Length::Fill),
                     );
+                    // Orders list
+                    overview_col = overview_col.push(if filtered_orders.is_empty() {
+                        Element::from(
+                            container(p1_bold("No orders found"))
+                                .padding(40)
+                                .align_x(Alignment::Center)
+                                .width(Length::Fill),
+                        )
+                    } else {
+                        Element::from(
+                            column(filtered_orders.iter().map(|order| order_card(order).into()))
+                                .spacing(16)
+                                .width(Length::Fill)
+                                .padding([0, 20]),
+                        )
+                    });
+                    overview_col = overview_col.push(Space::new().height(Length::Fixed(40.0)));
+
+                    let overview_content: Element<'_, view::Message> =
+                        view::dashboard(menu, cache, overview_col);
 
                     // Show payment invoice modal if seller took a buy order
                     if let Some((ref oid, ref inv, amt, ref qr_data)) = self.pending_payment_invoice
@@ -3265,6 +3306,8 @@ impl State for P2PPanel {
                     }
                 }
                 self.orders = orders;
+                // Clear any stream error — data is flowing successfully
+                self.stream_error = None;
             }
             P2PMessage::MostroTradesReceived(trades) => {
                 self.trades = trades;
@@ -3660,6 +3703,7 @@ impl State for P2PPanel {
                 self.trade_rating = 0;
                 self.active_chat = ActiveChat::None;
                 self.chat_input = Default::default();
+                self.refresh_trade_cache();
             }
             P2PMessage::CloseTradeDetail => {
                 self.selected_trade = None;
@@ -3669,6 +3713,7 @@ impl State for P2PPanel {
                 self.hold_invoice_qr = None;
                 self.active_chat = ActiveChat::None;
                 self.chat_input = Default::default();
+                self.refresh_trade_cache();
             }
             // Trade actions
             P2PMessage::TradeInvoiceEdited(v) => {
@@ -3751,6 +3796,7 @@ impl State for P2PPanel {
                                     is_own: false,
                                 },
                             );
+                            self.refresh_trade_cache();
                         }
 
                         return Task::done(Message::View(view::Message::ShowSuccess(format!(
@@ -3846,6 +3892,7 @@ impl State for P2PPanel {
                                     is_own: true,
                                 },
                             );
+                            self.refresh_trade_cache();
                         }
                         Err(e) => {
                             // Only restore input if the user is still viewing the same trade
@@ -3912,6 +3959,7 @@ impl State for P2PPanel {
                                     is_own: true,
                                 },
                             );
+                            self.refresh_trade_cache();
                         }
                         Err(e) => {
                             // Only restore input if the user is still viewing the same trade
@@ -3977,8 +4025,12 @@ impl State for P2PPanel {
                     }
                 }
 
-                // Chat messages are already persisted by process_dm_notifications
+                // Chat messages are already persisted by process_dm_notifications.
+                // Still refresh the cache so the view picks up the new message.
                 if is_chat {
+                    if self.selected_trade.as_deref() == Some(&order_id) {
+                        self.refresh_trade_cache();
+                    }
                     return Task::none();
                 }
 
@@ -3995,11 +4047,19 @@ impl State for P2PPanel {
                     },
                 );
 
+                // Refresh cache when this update belongs to the selected trade
+                if self.selected_trade.as_deref() == Some(&order_id) {
+                    self.refresh_trade_cache();
+                }
+
                 return Task::done(Message::View(view::Message::ShowSuccess(format!(
                     "Trade update: {} ({})",
                     action,
                     &order_id[..8.min(order_id.len())]
                 ))));
+            }
+            P2PMessage::StreamError(msg) => {
+                self.stream_error = Some(msg);
             }
         }
         Task::none()

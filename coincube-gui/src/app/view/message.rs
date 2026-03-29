@@ -698,4 +698,6 @@ pub enum P2PMessage {
     DisputeChatInputEdited(String),
     SendDisputeChatMessage,
     DisputeChatMessageSent(Result<(), String>),
+    // Stream-level errors (relay connection, subscription, restore failures)
+    StreamError(String),
 }

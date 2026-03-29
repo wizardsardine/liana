@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use fs4::fs_std::FileExt;
+
 use iced::futures::SinkExt;
 use iced::Subscription;
 use nip06::FromMnemonic;
@@ -129,67 +131,83 @@ fn save_data(cube_name: &str, data: &MostroData) -> Result<(), String> {
     Ok(())
 }
 
+/// Acquire an exclusive file lock, load data, run `f`, save if `f` succeeds, then release.
+///
+/// The lock file lives at `{data_file}.lock` and is held for the entire load-modify-save
+/// cycle so that concurrent callers (subscription stream vs UI thread) cannot interleave
+/// their reads and writes.  The lock is released automatically when the `File` handle drops.
+fn with_locked_data<F, T>(cube_name: &str, f: F) -> Result<T, String>
+where
+    F: FnOnce(&mut MostroData) -> Result<T, String>,
+{
+    let path = data_file_path(cube_name)?;
+    let lock_path = path.with_extension("lock");
+    let lock_file = std::fs::File::create(&lock_path)
+        .map_err(|e| format!("Failed to create lock file: {e}"))?;
+    lock_file
+        .lock_exclusive()
+        .map_err(|e| format!("Failed to acquire lock: {e}"))?;
+
+    let mut data = load_data(cube_name).unwrap_or_default();
+    let result = f(&mut data);
+
+    if result.is_ok() {
+        save_data(cube_name, &data)?;
+    }
+
+    // Lock released on drop of `lock_file`.
+    Ok(result?)
+}
+
 /// Append a DM message to a trade's message history on disk.
 /// Deduplicates by (timestamp, action) to avoid storing the same message twice.
 pub fn append_trade_message(cube_name: &str, order_id: &str, msg: TradeMessage) {
-    let mut data = match load_data(cube_name) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("Cannot append trade message: {e}");
-            return;
-        }
-    };
-    if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
-        let is_dup = session.messages.iter().any(|m| {
-            m.timestamp == msg.timestamp
-                && m.action == msg.action
-                && m.payload_json == msg.payload_json
-        });
-        if !is_dup {
-            session.messages.push(msg);
-            session.messages.sort_by_key(|m| m.timestamp);
-            if let Err(e) = save_data(cube_name, &data) {
-                tracing::warn!("Failed to persist trade message: {e}");
+    let result = with_locked_data(cube_name, |data| {
+        if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
+            let is_dup = session.messages.iter().any(|m| {
+                m.timestamp == msg.timestamp
+                    && m.action == msg.action
+                    && m.payload_json == msg.payload_json
+            });
+            if !is_dup {
+                session.messages.push(msg.clone());
+                session.messages.sort_by_key(|m| m.timestamp);
             }
         }
+        Ok(())
+    });
+    if let Err(e) = result {
+        tracing::warn!("Failed to persist trade message: {e}");
     }
 }
 
 /// Update the counterparty's trade pubkey for a given order (persisted to disk).
 pub fn set_counterparty_pubkey(cube_name: &str, order_id: &str, pubkey: &str) {
-    let mut data = match load_data(cube_name) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("Cannot set counterparty pubkey: {e}");
-            return;
-        }
-    };
-    if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
-        if session.counterparty_trade_pubkey.as_deref() != Some(pubkey) {
-            session.counterparty_trade_pubkey = Some(pubkey.to_string());
-            if let Err(e) = save_data(cube_name, &data) {
-                tracing::warn!("Failed to persist counterparty pubkey: {e}");
+    let result = with_locked_data(cube_name, |data| {
+        if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
+            if session.counterparty_trade_pubkey.as_deref() != Some(pubkey) {
+                session.counterparty_trade_pubkey = Some(pubkey.to_string());
             }
         }
+        Ok(())
+    });
+    if let Err(e) = result {
+        tracing::warn!("Failed to persist counterparty pubkey: {e}");
     }
 }
 
 /// Update the admin/solver's trade pubkey for a given order (persisted to disk).
 fn set_admin_pubkey(cube_name: &str, order_id: &str, pubkey: &str) {
-    let mut data = match load_data(cube_name) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("Cannot set admin pubkey: {e}");
-            return;
-        }
-    };
-    if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
-        if session.admin_trade_pubkey.as_deref() != Some(pubkey) {
-            session.admin_trade_pubkey = Some(pubkey.to_string());
-            if let Err(e) = save_data(cube_name, &data) {
-                tracing::warn!("Failed to persist admin pubkey: {e}");
+    let result = with_locked_data(cube_name, |data| {
+        if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
+            if session.admin_trade_pubkey.as_deref() != Some(pubkey) {
+                session.admin_trade_pubkey = Some(pubkey.to_string());
             }
         }
+        Ok(())
+    });
+    if let Err(e) = result {
+        tracing::warn!("Failed to persist admin pubkey: {e}");
     }
 }
 
@@ -530,11 +548,20 @@ pub async fn restore_trades(
     }
 
     let count = sessions.len();
+    // Acquire the data lock before writing the restored state so that any in-flight
+    // subscription stream events cannot interleave with this full overwrite.
+    let lock_path = data_file_path(cube_name)?.with_extension("lock");
+    let lock_file = std::fs::File::create(&lock_path)
+        .map_err(|e| format!("Failed to create lock file: {e}"))?;
+    lock_file
+        .lock_exclusive()
+        .map_err(|e| format!("Failed to acquire lock: {e}"))?;
     let data = MostroData {
         last_trade_index,
         trades: sessions,
     };
     save_data(cube_name, &data)?;
+    // Lock released on drop of lock_file.
 
     tracing::info!(
         "Restore: recovered {} trades, last_trade_index={}",
@@ -546,19 +573,19 @@ pub async fn restore_trades(
 }
 
 fn append_trade(cube_name: &str, session: TradeSession) -> Result<(), String> {
-    let mut data = load_data(cube_name)?;
-    // Replace existing session for the same order (re-take after cancel uses new keys)
-    if let Some(existing) = data
-        .trades
-        .iter_mut()
-        .find(|t| t.order_id == session.order_id)
-    {
-        *existing = session;
-    } else {
-        data.trades.push(session);
-    }
-    save_data(cube_name, &data)?;
-    Ok(())
+    with_locked_data(cube_name, |data| {
+        // Replace existing session for the same order (re-take after cancel uses new keys)
+        if let Some(existing) = data
+            .trades
+            .iter_mut()
+            .find(|t| t.order_id == session.order_id)
+        {
+            *existing = session.clone();
+        } else {
+            data.trades.push(session.clone());
+        }
+        Ok(())
+    })
 }
 
 /// Map `mostro_core::order::Status` to UI `TradeStatus`.
@@ -862,16 +889,15 @@ async fn sync_last_trade_index(
         return Err("Server returned invalid last_trade_index".to_string());
     }
 
-    let mut data = load_data(cube_name)?;
-    tracing::info!(
-        "Trade index sync: local={}, server={}",
-        data.last_trade_index,
-        idx
-    );
-    data.last_trade_index = idx;
-    save_data(cube_name, &data)?;
-
-    Ok(idx)
+    with_locked_data(cube_name, |data| {
+        tracing::info!(
+            "Trade index sync: local={}, server={}",
+            data.last_trade_index,
+            idx
+        );
+        data.last_trade_index = idx;
+        Ok(idx)
+    })
 }
 
 /// Check if a CantDo payload is an InvalidTradeIndex error.
@@ -914,8 +940,9 @@ pub enum OrderSubmitResponse {
 /// On InvalidTradeIndex, automatically re-syncs from the server and retries once.
 pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, String> {
     for attempt in 0..2u8 {
-        let mut data = load_data(&form.cube_name)?;
-        let next_idx = data.last_trade_index + 1;
+        // Critical section 1: atomically read the next trade index.
+        // The lock is released before any .await so we never hold it across a yield point.
+        let next_idx = with_locked_data(&form.cube_name, |data| Ok(data.last_trade_index + 1))?;
 
         // Expiration based on user-chosen days (0 = no expiration)
         let expires_at = if form.expiry_days > 0 {
@@ -980,7 +1007,7 @@ pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, St
             if is_invalid_trade_index(inner) && attempt == 0 {
                 tracing::warn!(
                     "InvalidTradeIndex (local={}), syncing from server and retrying",
-                    data.last_trade_index
+                    next_idx - 1
                 );
                 sync_last_trade_index(
                     &form.cube_name,
@@ -1014,9 +1041,14 @@ pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, St
 
         tracing::info!("Order created successfully, order_id={}", order_id);
 
-        // Update trade index
-        data.last_trade_index = next_idx;
-        save_data(&form.cube_name, &data)?;
+        // Critical section 2: atomically commit the incremented trade index.
+        with_locked_data(&form.cube_name, |data| {
+            // Only advance if our reserved index is still the logical next step.
+            if next_idx > data.last_trade_index {
+                data.last_trade_index = next_idx;
+            }
+            Ok(())
+        })?;
 
         // Persist trade session to disk (best-effort — order already succeeded)
         let session = TradeSession {
@@ -1094,8 +1126,9 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
     };
 
     for attempt in 0..2u8 {
-        let mut mdata = load_data(&data.cube_name)?;
-        let next_idx = mdata.last_trade_index + 1;
+        // Critical section 1: atomically read the next trade index.
+        // The lock is released before any .await so we never hold it across a yield point.
+        let next_idx = with_locked_data(&data.cube_name, |mdata| Ok(mdata.last_trade_index + 1))?;
 
         let request_id = uuid::Uuid::new_v4().as_u128() as u64;
 
@@ -1159,7 +1192,7 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
             if is_invalid_trade_index(inner) && attempt == 0 {
                 tracing::warn!(
                     "InvalidTradeIndex on take_order (local={}), syncing from server and retrying",
-                    mdata.last_trade_index
+                    next_idx - 1
                 );
                 sync_last_trade_index(
                     &data.cube_name,
@@ -1179,9 +1212,14 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
             return Err(reason);
         }
 
-        // Update trade index
-        mdata.last_trade_index = next_idx;
-        save_data(&data.cube_name, &mdata)?;
+        // Critical section 2: atomically commit the incremented trade index.
+        with_locked_data(&data.cube_name, |mdata| {
+            // Only advance if our reserved index is still the logical next step.
+            if next_idx > mdata.last_trade_index {
+                mdata.last_trade_index = next_idx;
+            }
+            Ok(())
+        })?;
 
         // Determine our role's order kind: if we take a sell, we're buying
         let our_kind = match data.order_type {
@@ -2169,8 +2207,19 @@ fn mostro_stream(
 
             // Create a single persistent client for the stream lifetime
             let client = Client::new(Keys::generate());
+            let mut relay_failures = 0usize;
             for url in &relay_urls {
-                let _ = client.add_relay(url.as_str()).await;
+                if let Err(e) = client.add_relay(url.as_str()).await {
+                    tracing::warn!("Failed to add relay {url}: {e}");
+                    relay_failures += 1;
+                }
+            }
+            if relay_failures == relay_urls.len() {
+                let _ = output
+                    .send(Message::View(view::Message::P2P(P2PMessage::StreamError(
+                        "Failed to connect to any Mostro relay".to_string(),
+                    ))))
+                    .await;
             }
             client.connect().await;
             client.wait_for_connection(Duration::from_secs(10)).await;
@@ -2189,11 +2238,21 @@ fn mostro_stream(
                     min_order_sats: info.min_order_amount,
                     max_order_sats: info.max_order_amount,
                 }));
-                let _ = output.send(msg).await;
+                if output.send(msg).await.is_err() {
+                    tracing::warn!(
+                        "Failed to send P2P update to UI — channel may be full or closed"
+                    );
+                }
             }
 
             // Auto-restore: if we have a mnemonic but no local trades, scan relay for DMs
-            let data = load_data(&cube_name).unwrap_or_default();
+            let data = match load_data(&cube_name) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::error!("Failed to load P2P data: {e}");
+                    MostroData::default()
+                }
+            };
             if data.trades.is_empty() && !mnemonic.is_empty() {
                 tracing::info!("No local trades found — attempting DM-scan restore");
                 match restore_trades(&cube_name, &mnemonic, &pubkey_hex, &relay_urls).await {
@@ -2204,9 +2263,20 @@ fn mostro_stream(
                             "Recovered {} trade(s) from relay",
                             n
                         )));
-                        let _ = output.send(msg).await;
+                        if output.send(msg).await.is_err() {
+                            tracing::warn!(
+                                "Failed to send P2P update to UI — channel may be full or closed"
+                            );
+                        }
                     }
-                    Err(e) => tracing::warn!("Restore failed: {e}"),
+                    Err(e) => {
+                        tracing::warn!("Restore failed: {e}");
+                        let _ = output
+                            .send(Message::View(view::Message::P2P(P2PMessage::StreamError(
+                                format!("Failed to restore trades: {e}"),
+                            ))))
+                            .await;
+                    }
                 }
             }
 
@@ -2264,17 +2334,25 @@ fn mostro_stream(
                 }
             }
             let orders = orders_from_cache(&order_cache, &cube_name);
-            let _ = output
+            if output
                 .send(Message::View(view::Message::P2P(
                     P2PMessage::MostroOrdersReceived(orders),
                 )))
-                .await;
+                .await
+                .is_err()
+            {
+                tracing::warn!("Failed to send P2P update to UI — channel may be full or closed");
+            }
             let trades = fetch_user_trades(&client, &cube_name, mostro_pk).await;
-            let _ = output
+            if output
                 .send(Message::View(view::Message::P2P(
                     P2PMessage::MostroTradesReceived(trades),
                 )))
-                .await;
+                .await
+                .is_err()
+            {
+                tracing::warn!("Failed to send P2P update to UI — channel may be full or closed");
+            }
 
             // Real-time loop: listen for order + DM notifications, periodic trade fetch
             let mut notifications = client.notifications();
@@ -2290,11 +2368,15 @@ fn mostro_stream(
                                 if event.kind == nostr_sdk::Kind::Custom(38383) {
                                     if process_order_event(&event, &mut order_cache) {
                                         let orders = orders_from_cache(&order_cache, &cube_name);
-                                        let _ = output
+                                        if output
                                             .send(Message::View(view::Message::P2P(
                                                 P2PMessage::MostroOrdersReceived(orders),
                                             )))
-                                            .await;
+                                            .await
+                                            .is_err()
+                                        {
+                                            tracing::warn!("Failed to send P2P update to UI — channel may be full or closed");
+                                        }
                                     }
                                 }
                                 // Real-time DM notifications (kind 1059 gift wrap)
@@ -2362,17 +2444,29 @@ fn mostro_stream(
                     }
                 }
                 let orders = orders_from_cache(&order_cache, &cube_name);
-                let _ = output
+                if output
                     .send(Message::View(view::Message::P2P(
                         P2PMessage::MostroOrdersReceived(orders),
                     )))
-                    .await;
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "Failed to send P2P update to UI — channel may be full or closed"
+                    );
+                }
                 let trades = fetch_user_trades(&client, &cube_name, mostro_pk).await;
-                let _ = output
+                if output
                     .send(Message::View(view::Message::P2P(
                         P2PMessage::MostroTradesReceived(trades),
                     )))
-                    .await;
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "Failed to send P2P update to UI — channel may be full or closed"
+                    );
+                }
             }
         },
     )
@@ -2434,7 +2528,7 @@ async fn update_dm_subscriptions(
         .since(since);
 
     if let Err(e) = client.subscribe(filter, None).await {
-        tracing::debug!("Failed to subscribe for trade DMs: {e}");
+        tracing::warn!("Failed to subscribe for trade DMs: {e}");
         return;
     }
 
