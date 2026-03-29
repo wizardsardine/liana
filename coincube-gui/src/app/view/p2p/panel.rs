@@ -3327,8 +3327,15 @@ impl State for P2PPanel {
                     }
                 }
                 self.orders = orders;
-                // Clear any stream error — data is flowing successfully
-                self.stream_error = None;
+                // Clear transient stream/relay errors — data is flowing successfully.
+                // Preserve restore failure messages (they require user attention).
+                if self
+                    .stream_error
+                    .as_ref()
+                    .is_none_or(|e| !e.contains("restore"))
+                {
+                    self.stream_error = None;
+                }
             }
             P2PMessage::MostroTradesReceived(trades) => {
                 self.trades = trades;
@@ -3440,14 +3447,13 @@ impl State for P2PPanel {
             }
             P2PMessage::MostroAddRelay => {
                 let url = self.new_relay_input.value.trim().to_string();
-                let relay_host = url
-                    .split_once("://")
-                    .map(|(_, rest)| rest.split(&['/', ':'][..]).next().unwrap_or(""))
-                    .unwrap_or("");
-                if !url.starts_with("wss://") && !url.starts_with("ws://") {
+                let parsed = nostr_sdk::Url::parse(&url);
+                let scheme_ok = url.starts_with("wss://") || url.starts_with("ws://");
+                let has_host = parsed.as_ref().ok().and_then(|u| u.host()).is_some();
+                if !scheme_ok {
                     self.new_relay_input.valid = false;
                     self.new_relay_input.warning = Some("URL must start with wss:// or ws://");
-                } else if relay_host.is_empty() {
+                } else if !has_host {
                     self.new_relay_input.valid = false;
                     self.new_relay_input.warning = Some("Invalid relay URL — missing host");
                 } else if self.mostro_config.relays.contains(&url) {
@@ -3639,8 +3645,8 @@ impl State for P2PPanel {
                             mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
                             relay_urls: self.mostro_config.relays.clone(),
                             fiat_code: Some(order.fiat_currency.clone()),
-                            fiat_amount: Some(order.fiat_amount as i64),
-                            payment_method: Some(order.payment_methods.join(", ")),
+                            fiat_amount: Some(amount.unwrap_or(order.fiat_amount as i64)),
+                            payment_method: Some(order.payment_methods.join(",")),
                             premium: order.premium_percent.map(|p| p as i64),
                             sats_amount: order.sats_amount.map(|s| s as i64),
                             min_amount: order.min_amount.map(|m| m as i64),
