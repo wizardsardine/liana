@@ -28,7 +28,7 @@ These components are largely unchanged from the Liana v13.0 codebase:
 | Hardware wallet support | Ledger, BitBox02, Coldcard, Jade, Specter DIY via `async-hwi` | `coincube-gui/src/hw.rs` |
 | Installer wizard | Multi-step wallet creation with descriptor editor, key import, device registration | `coincube-gui/src/installer/` |
 | Transaction management | Spend creation, RBF, coin control, PSBT signing workflow | `coincube-gui/src/app/state/vault/` |
-| Multi-wallet / pane / tab | Multiple wallets with panes and tabs in a single window | `coincube-gui/src/gui/` |
+| Multi-wallet / pane / tab | Multiple wallets with panes and tabs in a single window. Now operates inside Coincube's **Cube** abstraction (see below). | `coincube-gui/src/gui/` |
 | Functional test framework | Python-based RPC integration tests | `tests/test_rpc.py` |
 | Documentation | API reference, usage guide, signing devices, getting started | `docs/API.md`, `docs/USAGE.md`, `docs/TRY.md`, `docs/SIGNING_DEVICES.md` |
 
@@ -38,7 +38,7 @@ These are entirely new subsystems built on top of the Liana base:
 
 | Feature | Description | Sources |
 |---------|-------------|---------|
-| **Cube Architecture** | Multi-cube launcher with per-cube settings, PIN entry, named cubes | `coincube-gui/src/launcher.rs`, `coincube-gui/src/app/settings/` |
+| **Cube Architecture** | New base abstraction replacing Liana's top-level wallet concept. Each Cube is a named container holding one Vault plus Liquid wallet, Buy/Sell, P2P, USDt, and Connect. Multi-cube launcher with per-cube settings and PIN entry. | `coincube-gui/src/launcher.rs`, `coincube-gui/src/app/settings/` |
 | **Liquid Wallet** | Lightning-enabled spending wallet via Breez SDK Liquid (send, receive, on-chain swap) | `coincube-gui/src/app/state/liquid/` |
 | **Vault ↔ Liquid Transfers** | Bidirectional fund transfers between vault (on-chain) and liquid (Lightning) with HW signing | `coincube-gui/src/app/state/liquid/send.rs` |
 | **Buy/Sell** | Integrated fiat on/off-ramp via Mavapay (Africa) and Meld (international) with CEF webview | `coincube-gui/src/app/state/buysell.rs`, `coincube-gui/src/app/view/buysell/` |
