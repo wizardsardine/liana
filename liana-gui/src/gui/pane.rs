@@ -200,14 +200,14 @@ where
                     Column::new()
                         .push(
                             Button::new(p1_regular("Close"))
-                                .style(theme::button::secondary)
+                                .style(theme::button::tab_menu)
                                 .on_press(ViewMessage::CloseTab(i))
                                 .width(100),
                         )
                         .push_maybe(if tabs_len > 1 {
                             Some(
                                 Button::new(p1_regular("Split"))
-                                    .style(theme::button::secondary)
+                                    .style(theme::button::tab_menu)
                                     .on_press(ViewMessage::SplitTab(i))
                                     .width(100),
                             )

@@ -224,7 +224,7 @@ pub fn receive<'a>(
                                 .align_y(Alignment::Center),
                         )
                         .on_press(Message::SelectAddress(address.clone()))
-                        .style(theme::button::secondary)
+                        .style(theme::button::clickable_card)
                     } else {
                         // Continue the row index from those of generated addresses above.
                         Button::new(address_card(
@@ -235,7 +235,7 @@ pub fn receive<'a>(
                         ))
                         .padding(0) // so that button & card borders match
                         .on_press(Message::SelectAddress(address.clone()))
-                        .style(theme::button::transparent_border)
+                        .style(theme::button::clickable_card)
                     })
                 },
             ),

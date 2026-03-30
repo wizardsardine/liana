@@ -280,6 +280,32 @@ impl Palette {
                         shadow: Default::default(),
                     }),
                 },
+                tab_menu: Button {
+                    active: ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREY_2,
+                        border: color::GREY_7.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREEN,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREEN,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREY_2,
+                        border: color::GREY_7.into(),
+                        shadow: Default::default(),
+                    }),
+                },
                 tab: Button {
                     active: ButtonPalette {
                         background: color::GREY_6,

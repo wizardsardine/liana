@@ -60,6 +60,18 @@ const CARD_SHADOW_HOVER: Shadow = Shadow {
     blur_radius: 4.0,
 };
 
+pub const INPUT_BG: Color = Color::from_rgb(
+    0xF3 as f32 / 255.0,
+    0xF4 as f32 / 255.0,
+    0xF5 as f32 / 255.0,
+);
+
+pub const INPUT_BORDER: Color = Color::from_rgb(
+    0xCE as f32 / 255.0,
+    0xD4 as f32 / 255.0,
+    0xDA as f32 / 255.0,
+);
+
 impl Palette {
     pub fn business() -> Self {
         Self {
@@ -285,6 +297,27 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                tab_menu: Button {
+                    active: ButtonPalette {
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_PRIMARY_BG,
+                        border: BTN_PRIMARY_BG.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_PRIMARY_BG,
+                        border: BTN_PRIMARY_BG.into(),
+                        shadow: BTN_SHADOW,
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_PRIMARY_PRESSED,
+                        border: BTN_PRIMARY_PRESSED.into(),
+                        shadow: BTN_SHADOW,
+                    }),
+                    disabled: btn_disabled(),
+                },
                 tab: Button {
                     active: ButtonPalette {
                         background: color::LIGHT_BG_SECONDARY,
@@ -330,7 +363,7 @@ impl Palette {
             },
             cards: Cards {
                 simple: ContainerPalette {
-                    background: color::LIGHT_BG_SECONDARY,
+                    background: BTN_TERTIARY_BG,
                     text: None,
                     border: Some(color::TRANSPARENT),
                 },
@@ -436,12 +469,12 @@ impl Palette {
             text_inputs: TextInputs {
                 primary: TextInput {
                     active: TextInputPalette {
-                        background: color::LIGHT_BG,
+                        background: INPUT_BG,
                         icon: color::DARK_TEXT_TERTIARY,
                         placeholder: color::DARK_TEXT_TERTIARY,
                         value: color::DARK_TEXT_PRIMARY,
                         selection: color::BUSINESS_BLUE,
-                        border: Some(color::LIGHT_BORDER),
+                        border: Some(INPUT_BORDER),
                     },
                     disabled: TextInputPalette {
                         background: color::LIGHT_BG_TERTIARY,
@@ -449,7 +482,7 @@ impl Palette {
                         placeholder: color::DARK_TEXT_TERTIARY,
                         value: color::DARK_TEXT_SECONDARY,
                         selection: color::BUSINESS_BLUE,
-                        border: Some(color::LIGHT_BORDER),
+                        border: Some(INPUT_BORDER),
                     },
                 },
                 invalid: TextInput {

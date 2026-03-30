@@ -77,7 +77,8 @@ pub fn sidebar<'a>(
             .push(Menu::Recovery.entry(active, menu_width))
             .push(Menu::Transactions.entry(active, menu_width))
             .push(Menu::Coins.entry(active, menu_width))
-            .push(Menu::Settings.entry(active, menu_width)),
+            .push(Menu::Settings.entry(active, menu_width))
+            .push(Space::with_height(10)),
     )
     .height(Length::Shrink);
 

@@ -56,6 +56,7 @@ pub struct Buttons {
     pub container: Button,
     pub container_border: Button,
     pub menu: Button,
+    pub tab_menu: Button,
     pub tab: Button,
     pub link: Button,
     pub border_width: f32,
