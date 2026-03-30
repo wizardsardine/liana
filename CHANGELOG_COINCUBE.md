@@ -30,6 +30,7 @@ These components are largely unchanged from the Liana v13.0 codebase:
 | Transaction management | Spend creation, RBF, coin control, PSBT signing workflow | `coincube-gui/src/app/state/vault/` |
 | Multi-wallet / pane / tab | Multiple wallets with panes and tabs in a single window | `coincube-gui/src/gui/` |
 | Functional test framework | Python-based RPC integration tests | `tests/test_rpc.py` |
+| Documentation | API reference, usage guide, signing devices, getting started | `docs/API.md`, `docs/USAGE.md`, `docs/TRY.md`, `docs/SIGNING_DEVICES.md` |
 
 ### Added by Coincube
 
@@ -51,6 +52,7 @@ These are entirely new subsystems built on top of the Liana base:
 | **Coincube API Client** | Go backend integration for buy/sell, geolocation, registration, user management | `coincube-gui/src/services/coincube/` |
 | **Fiat Price** | Real-time fiat price display, configurable source, fiat editing on send page | `coincube-gui/src/app/state/settings/general.rs` |
 | **Release Infrastructure** | GitHub Actions CI/CD, Windows MSI, macOS DMG with GPG signing, Linux packages | `.github/workflows/` |
+| **Documentation** | Build guide, recovery docs, Breez SDK regtest setup, Apple cert rotation, release process, GPG verification | `docs/BUILD.md`, `docs/RECOVER.md`, `docs/RELEASE.md`, `docs/BREEZ_SDK_REGTEST.md`, `docs/APPLE_CERT_ROTATION.md`, `docs/security/` |
 
 ### Modified from Liana
 
@@ -67,6 +69,8 @@ These Liana components were significantly adapted for Coincube:
 ---
 
 ## Release Timeline
+
+### Unreleased (v1.1.0 — target: May 2026)
 
 ### March 2026
 
@@ -186,7 +190,7 @@ Sources: `coincube-gui/src/app/state/settings/general.rs`
 
 ---
 
-### January 2026
+### v1.0.0 — January 31, 2026
 
 #### Features
 
