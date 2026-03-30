@@ -44,7 +44,7 @@ These are entirely new subsystems built on top of the Liana base:
 | **Buy/Sell** | Integrated fiat on/off-ramp via Mavapay (Africa) and Meld (international) with CEF webview | `coincube-gui/src/app/state/buysell.rs`, `coincube-gui/src/app/view/buysell/` |
 | **Mostro P2P Trading** | Decentralized peer-to-peer BTC trading over Nostr with chat, disputes, hold invoices | `coincube-gui/src/app/view/p2p/` (branch: `mostro-p2p`) |
 | **USDt Wallet** | Liquid-based USDt support via SideSwap with cross-asset payments | `coincube-gui/src/app/state/usdt/` (branch: `mostro-p2p`) |
-| **Border Wallet Signer** | Recovery phrase generation from grid patterns with PSBT signing | `coincube-core/src/border_wallet/` (branch: `mostro-p2p`) |
+| **Border Wallet Signer** | Mnemonic seed phrase generation from grid patterns with PSBT signing | `coincube-core/src/border_wallet/` (branch: `mostro-p2p`) |
 | **Coincube Connect** | Coincube's own remote backend (Esplora-based) with email/OTP auth via Coincube API, distinct from inherited Liana Connect | `coincube-gui/src/installer/step/coincube_connect.rs`, `coincube-gui/src/services/coincube/` |
 | **Light/Dark Mode** | User-selectable themes with persistence, theme-aware rendering | `coincube-ui/src/theme/`, `coincube-gui/src/gui/mod.rs` |
 | **Global Home Dashboard** | Unified home showing combined Vault + Liquid balances with accordion sidebar | `coincube-gui/src/app/view/mod.rs` |
