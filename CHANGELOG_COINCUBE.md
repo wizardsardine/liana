@@ -47,7 +47,7 @@ These are entirely new subsystems built on top of the Liana base:
 | **Coincube Connect** | Coincube's own remote backend (Esplora-based) with email/OTP auth via Coincube API, distinct from inherited Liana Connect | `coincube-gui/src/installer/step/coincube_connect.rs`, `coincube-gui/src/services/coincube/` |
 | **Light/Dark Mode** | User-selectable themes with persistence, theme-aware rendering | `coincube-ui/src/theme/`, `coincube-gui/src/gui/mod.rs` |
 | **Global Home Dashboard** | Unified home showing combined Vault + Liquid balances with accordion sidebar | `coincube-gui/src/app/view/mod.rs` |
-| **Toast System** | Global overlay notifications with WCAG AA severity colors, log level propagation | `coincube-gui/src/app/view/mod.rs`, `coincube-gui/src/app/view/vault/warning.rs` |
+| **Toast System** | Global overlay notifications designed to meet WCAG AA contrast guidelines, log level propagation | `coincube-gui/src/app/view/mod.rs`, `coincube-gui/src/app/view/vault/warning.rs` |
 | **Coincube API Client** | Go backend integration for buy/sell, geolocation, registration, user management | `coincube-gui/src/services/coincube/` |
 | **Fiat Price** | Real-time fiat price display, configurable source, fiat editing on send page | `coincube-gui/src/app/state/settings/general.rs` |
 | **Release Infrastructure** | GitHub Actions CI/CD, Windows MSI, macOS DMG with GPG signing, Linux packages | `.github/workflows/` |
@@ -124,7 +124,7 @@ Sources: `coincube-gui/src/app/state/buysell.rs`, `coincube-gui/src/app/view/buy
 **Toast Notification System**
 
 Sources: `coincube-gui/src/app/view/mod.rs`, `coincube-gui/src/app/view/vault/warning.rs`
-- Migrated to global toast overlay with WCAG AA compliant severity colors (min 4.5:1 contrast).
+- Migrated to global toast overlay with severity colors designed to meet WCAG AA contrast guidelines (targeting 4.5:1 ratio).
 - Chronological sorting, log level propagation, and extracted notification theme helper.
 
 **Wallet Recovery**
