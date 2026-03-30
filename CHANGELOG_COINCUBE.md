@@ -4,7 +4,7 @@
 
 This document tracks all changes made to Coincube since its inception as a hard fork of [Liana](https://github.com/wizardsardine/liana) (v13.0) by Wizardsardine. Coincube is a comprehensive Bitcoin wallet solution featuring vault custody, Lightning-enabled liquid spending, integrated buy/sell, and peer-to-peer trading — built by Coincube Technology LLC.
 
-For architecture details, see the [Devin Wiki](https://app.devin.ai/wiki/coincubetech/coincube). For the original Liana changelog, see `CHANGELOG_LIANA.md`.
+For architecture details, see the [Devin Wiki](https://app.devin.ai/wiki/coincubetech/coincube) (internal — requires Devin access) or the project `README.md` and `doc/` directory. For the original Liana changelog, see `CHANGELOG_LIANA.md`.
 
 Sources: `README.md`, `Cargo.toml` (workspace root)
 
