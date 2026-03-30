@@ -24,7 +24,7 @@ These components are largely unchanged from the Liana v13.0 codebase:
 | Output descriptors | BIP 380 descriptor parsing, Miniscript, multi-path policies | `coincube-core/src/descriptors/` |
 | Time-locked recovery | CSV-based recovery paths, coin refresh, inheritance timelocks | `coincube-core/src/spend.rs` |
 | Database layer | SQLite schema for addresses, coins, transactions, labels, spend PSBTs | `coincubed/src/database/` |
-| Bitcoin backends | Bitcoin Core (managed/external), Electrum, Liana Connect | `coincubed/src/bitcoin/` |
+| Bitcoin backends | Bitcoin Core (managed/external), Electrum, Liana Connect | `coincubed/src/bitcoin/`, `coincube-gui/src/services/connect/` |
 | Hardware wallet support | Ledger, BitBox02, Coldcard, Jade, Specter DIY via `async-hwi` | `coincube-gui/src/hw.rs` |
 | Installer wizard | Multi-step wallet creation with descriptor editor, key import, device registration | `coincube-gui/src/installer/` |
 | Transaction management | Spend creation, RBF, coin control, PSBT signing workflow | `coincube-gui/src/app/state/vault/` |
@@ -39,15 +39,15 @@ These are entirely new subsystems built on top of the Liana base:
 |---------|-------------|---------|
 | **Cube Architecture** | Multi-cube launcher with per-cube settings, PIN entry, named cubes | `coincube-gui/src/launcher.rs`, `coincube-gui/src/app/settings/` |
 | **Liquid Wallet** | Lightning-enabled spending wallet via Breez SDK Liquid (send, receive, on-chain swap) | `coincube-gui/src/app/state/liquid/` |
-| **Vault ↔ Liquid Transfers** | Bidirectional fund transfers between vault (on-chain) and liquid (Lightning) with HW signing | `coincube-gui/src/app/state/liquid/transfer.rs` |
+| **Vault ↔ Liquid Transfers** | Bidirectional fund transfers between vault (on-chain) and liquid (Lightning) with HW signing | `coincube-gui/src/app/state/liquid/send.rs` |
 | **Buy/Sell** | Integrated fiat on/off-ramp via Mavapay (Africa) and Meld (international) with CEF webview | `coincube-gui/src/app/state/buysell.rs`, `coincube-gui/src/app/view/buysell/` |
 | **Mostro P2P Trading** | Decentralized peer-to-peer BTC trading over Nostr with chat, disputes, hold invoices | `coincube-gui/src/app/view/p2p/` (branch: `mostro-p2p`) |
 | **USDt Wallet** | Liquid-based USDt support via SideSwap with cross-asset payments | `coincube-gui/src/app/state/usdt/` (branch: `mostro-p2p`) |
 | **Border Wallet Signer** | Recovery phrase generation from grid patterns with PSBT signing | `coincube-core/src/border_wallet/` (branch: `mostro-p2p`) |
-| **Connect Module** | Remote backend connectivity, lightning addresses, avatar system | `coincube-gui/src/services/connect/`, `coincube-gui/src/installer/step/coincube_connect.rs` |
+| **Coincube Connect** | Coincube's own remote backend (Esplora-based) with email/OTP auth via Coincube API, distinct from inherited Liana Connect | `coincube-gui/src/installer/step/coincube_connect.rs`, `coincube-gui/src/services/coincube/` |
 | **Light/Dark Mode** | User-selectable themes with persistence, theme-aware rendering | `coincube-ui/src/theme/`, `coincube-gui/src/gui/mod.rs` |
 | **Global Home Dashboard** | Unified home showing combined Vault + Liquid balances with accordion sidebar | `coincube-gui/src/app/view/mod.rs` |
-| **Toast System** | Global overlay notifications with WCAG AA severity colors, log level propagation | `coincube-gui/src/app/view/warning.rs` |
+| **Toast System** | Global overlay notifications with WCAG AA severity colors, log level propagation | `coincube-gui/src/app/view/mod.rs`, `coincube-gui/src/app/view/vault/warning.rs` |
 | **Coincube API Client** | Go backend integration for buy/sell, geolocation, registration, user management | `coincube-gui/src/services/coincube/` |
 | **Fiat Price** | Real-time fiat price display, configurable source, fiat editing on send page | `coincube-gui/src/app/state/settings/general.rs` |
 | **Release Infrastructure** | GitHub Actions CI/CD, Windows MSI, macOS DMG with GPG signing, Linux packages | `.github/workflows/` |
@@ -89,10 +89,11 @@ Sources: `coincube-gui/src/app/state/usdt/` (branch: `mostro-p2p`)
 - Cross-asset payments: send USDt and pay fees with USDt.
 - Asset selector logic for switching between L-BTC and USDt in the send flow.
 
-**Connect Module**
+**Coincube Connect**
 
-Sources: `coincube-gui/src/services/connect/`
-- New Connect module for remote backend connectivity.
+Sources: `coincube-gui/src/installer/step/coincube_connect.rs`, `coincube-gui/src/services/coincube/`
+- Coincube's own remote backend using Esplora, with email/OTP authentication via Coincube API.
+- Distinct from inherited Liana Connect (`services/connect/` which uses Wizardsardine's lianalite.com).
 - Lightning address support.
 - Avatar system with deterministic generation.
 
@@ -122,7 +123,7 @@ Sources: `coincube-gui/src/app/state/buysell.rs`, `coincube-gui/src/app/view/buy
 
 **Toast Notification System**
 
-Sources: `coincube-gui/src/app/view/warning.rs`
+Sources: `coincube-gui/src/app/view/mod.rs`, `coincube-gui/src/app/view/vault/warning.rs`
 - Migrated to global toast overlay with WCAG AA compliant severity colors (min 4.5:1 contrast).
 - Chronological sorting, log level propagation, and extracted notification theme helper.
 
