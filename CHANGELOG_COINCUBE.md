@@ -40,7 +40,7 @@ These are entirely new subsystems built on top of the Liana base:
 |---------|-------------|---------|
 | **Cube Architecture** | New base abstraction replacing Liana's top-level wallet concept. Each Cube is a named container holding one Vault plus Liquid wallet, Buy/Sell, P2P, USDt, and Connect. Multi-cube launcher with per-cube settings and PIN entry. | `coincube-gui/src/launcher.rs`, `coincube-gui/src/app/settings/` |
 | **Liquid Wallet** | Lightning-enabled spending wallet via Breez SDK Liquid (send, receive, on-chain swap) | `coincube-gui/src/app/state/liquid/` |
-| **Vault ↔ Liquid Transfers** | Bidirectional fund transfers between vault (on-chain) and liquid (Lightning) with HW signing | `coincube-gui/src/app/state/liquid/send.rs` |
+| **Vault ↔ Liquid Transfers** | Bidirectional fund transfers between vault (on-chain) and liquid (Lightning) via Breez SDK, with HW signing | `coincube-gui/src/app/state/liquid/send.rs` |
 | **Buy/Sell** | Integrated fiat on/off-ramp via Mavapay (Africa) and Meld (international) with CEF webview | `coincube-gui/src/app/state/buysell.rs`, `coincube-gui/src/app/view/buysell/` |
 | **Mostro P2P Trading** | Decentralized peer-to-peer BTC trading over Nostr with chat, disputes, hold invoices | `coincube-gui/src/app/view/p2p/` (branch: `mostro-p2p`) |
 | **USDt Wallet** | Liquid-based USDt support via SideSwap with cross-asset payments | `coincube-gui/src/app/state/usdt/` (branch: `mostro-p2p`) |
