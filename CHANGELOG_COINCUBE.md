@@ -40,11 +40,11 @@ These are entirely new subsystems built on top of the Liana base:
 | **Cube Architecture** | Multi-cube launcher with per-cube settings, PIN entry, named cubes | `coincube-gui/src/launcher.rs`, `coincube-gui/src/app/settings/` |
 | **Liquid Wallet** | Lightning-enabled spending wallet via Breez SDK Liquid (send, receive, on-chain swap) | `coincube-gui/src/app/state/liquid/` |
 | **Vault ↔ Liquid Transfers** | Bidirectional fund transfers between vault (on-chain) and liquid (Lightning) with HW signing | `coincube-gui/src/app/state/liquid/transfer.rs` |
-| **Buy/Sell** | Integrated fiat on/off-ramp via Mavapay (Africa) and Meld (international) with CEF webview | `coincube-gui/src/app/state/buysell/` |
-| **Mostro P2P Trading** | Decentralized peer-to-peer BTC trading over Nostr with chat, disputes, hold invoices | `coincube-gui/src/app/state/p2p/` |
-| **USDt Wallet** | Liquid-based USDt support via SideSwap with cross-asset payments | `coincube-gui/src/app/state/liquid/send.rs` |
-| **Border Wallet Signer** | Recovery phrase generation from grid patterns with PSBT signing | `coincube-core/src/border_wallet/` |
-| **Connect Module** | Remote backend connectivity, lightning addresses, avatar system | `coincube-gui/src/app/state/connect/` |
+| **Buy/Sell** | Integrated fiat on/off-ramp via Mavapay (Africa) and Meld (international) with CEF webview | `coincube-gui/src/app/state/buysell.rs`, `coincube-gui/src/app/view/buysell/` |
+| **Mostro P2P Trading** | Decentralized peer-to-peer BTC trading over Nostr with chat, disputes, hold invoices | `coincube-gui/src/app/view/p2p/` (branch: `mostro-p2p`) |
+| **USDt Wallet** | Liquid-based USDt support via SideSwap with cross-asset payments | `coincube-gui/src/app/state/usdt/` (branch: `mostro-p2p`) |
+| **Border Wallet Signer** | Recovery phrase generation from grid patterns with PSBT signing | `coincube-core/src/border_wallet/` (branch: `mostro-p2p`) |
+| **Connect Module** | Remote backend connectivity, lightning addresses, avatar system | `coincube-gui/src/services/connect/`, `coincube-gui/src/installer/step/coincube_connect.rs` |
 | **Light/Dark Mode** | User-selectable themes with persistence, theme-aware rendering | `coincube-ui/src/theme/`, `coincube-gui/src/gui/mod.rs` |
 | **Global Home Dashboard** | Unified home showing combined Vault + Liquid balances with accordion sidebar | `coincube-gui/src/app/view/mod.rs` |
 | **Toast System** | Global overlay notifications with WCAG AA severity colors, log level propagation | `coincube-gui/src/app/view/warning.rs` |
@@ -74,7 +74,7 @@ These Liana components were significantly adapted for Coincube:
 
 **Mostro P2P Trading**
 
-Sources: `coincube-gui/src/app/state/p2p/`
+Sources: `coincube-gui/src/app/view/p2p/` (branch: `mostro-p2p`)
 - Integrated Mostro protocol for decentralized peer-to-peer Bitcoin trading over Nostr.
 - Order book with real-time subscription and order form validation (node limits, premium slider, fiat bounds).
 - P2P chat system with deterministic nicknames derived from pubkeys.
@@ -84,14 +84,14 @@ Sources: `coincube-gui/src/app/state/p2p/`
 
 **USDt Wallet (SideSwap)**
 
-Sources: `coincube-gui/src/app/state/liquid/send.rs`
+Sources: `coincube-gui/src/app/state/usdt/` (branch: `mostro-p2p`)
 - Added USDt wallet powered by SideSwap for Liquid-based stablecoin support.
 - Cross-asset payments: send USDt and pay fees with USDt.
 - Asset selector logic for switching between L-BTC and USDt in the send flow.
 
 **Connect Module**
 
-Sources: `coincube-gui/src/app/state/connect/`
+Sources: `coincube-gui/src/services/connect/`
 - New Connect module for remote backend connectivity.
 - Lightning address support.
 - Avatar system with deterministic generation.
@@ -105,14 +105,14 @@ Sources: `coincube-ui/src/theme/palette.rs`, `coincube-gui/src/gui/mod.rs`
 
 **Border Wallet Signer**
 
-Sources: `coincube-core/src/border_wallet/mod.rs`
+Sources: `coincube-core/src/border_wallet/` (branch: `mostro-p2p`)
 - New `coincube-core` module for Border Wallet recovery phrase generation.
 - Grid creation, pattern building, and enrollment derivation.
 - PSBT signing integration with zeroization of secrets on drop.
 
 **Buy/Sell Improvements**
 
-Sources: `coincube-gui/src/app/state/buysell/`
+Sources: `coincube-gui/src/app/state/buysell.rs`, `coincube-gui/src/app/view/buysell/`
 - Improved sell UI and buy mode flow.
 - Prevent double-spend for lightning fulfillment.
 - Skip invoice display screen for Mavapay buy widget.
@@ -166,7 +166,7 @@ Sources: `coincube-gui/src/app/state/liquid/`
 
 **Buy/Sell**
 
-Sources: `coincube-gui/src/app/state/buysell/`
+Sources: `coincube-gui/src/app/state/buysell.rs`, `coincube-gui/src/app/view/buysell/`
 - Region selector for Meld buy/sell.
 - Copy recipient address button in Meld webview.
 - Allow selecting existing address in buy/sell flow.
@@ -203,7 +203,7 @@ Sources: `coincube-gui/src/app/state/liquid/`
 
 **Buy/Sell**
 
-Sources: `coincube-gui/src/app/state/buysell/`
+Sources: `coincube-gui/src/app/state/buysell.rs`, `coincube-gui/src/app/view/buysell/`
 - Switched Mavapay implementation to use Coincube API backend.
 - Enhanced Mavapay checkout and order confirmation UI.
 - Order history view.
@@ -261,7 +261,7 @@ Sources: `coincube-gui/src/app/state/liquid/`
 
 **Buy/Sell**
 
-Sources: `coincube-gui/src/app/state/buysell/`
+Sources: `coincube-gui/src/app/state/buysell.rs`, `coincube-gui/src/app/view/buysell/`
 - Mavapay integration moved to main buy/sell panel.
 - Inline Mavapay client functions.
 - User logout from buy/sell panel.
@@ -292,7 +292,7 @@ This period laid the groundwork for the full rebrand in December.
 
 **Buy/Sell Platform**
 
-Sources: `coincube-gui/src/app/state/buysell/`
+Sources: `coincube-gui/src/app/state/buysell.rs`, `coincube-gui/src/app/view/buysell/`
 - Meld buy/sell integration via embedded CEF-based webview.
 - Mavapay payment flow with webview checkout.
 - Onramper integration for international users.
