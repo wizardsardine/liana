@@ -74,6 +74,14 @@ pub fn menu(theme: &Theme, status: Status) -> Style {
     )
 }
 
+pub fn tab_menu(theme: &Theme, status: Status) -> Style {
+    button(
+        &theme.colors.buttons.tab_menu,
+        status,
+        theme.button_border_width,
+    )
+}
+
 pub fn menu_pressed(theme: &Theme, _status: Status) -> Style {
     button(
         &theme.colors.buttons.menu,

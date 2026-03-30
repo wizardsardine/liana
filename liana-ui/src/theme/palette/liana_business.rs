@@ -297,6 +297,27 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                tab_menu: Button {
+                    active: ButtonPalette {
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_PRIMARY_BG,
+                        border: BTN_PRIMARY_BG.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_PRIMARY_BG,
+                        border: BTN_PRIMARY_BG.into(),
+                        shadow: BTN_SHADOW,
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_PRIMARY_PRESSED,
+                        border: BTN_PRIMARY_PRESSED.into(),
+                        shadow: BTN_SHADOW,
+                    }),
+                    disabled: btn_disabled(),
+                },
                 tab: Button {
                     active: ButtonPalette {
                         background: color::LIGHT_BG_SECONDARY,
