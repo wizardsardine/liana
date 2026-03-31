@@ -436,7 +436,7 @@ impl Palette {
                 },
                 warning: ContainerPalette {
                     background: color::AMBER,
-                    text: color::WHITE.into(),
+                    text: color::DARK_TEXT_SECONDARY.into(),
                     border: color::AMBER.into(),
                 },
                 success: ContainerPalette {
