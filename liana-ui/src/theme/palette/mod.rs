@@ -1,6 +1,5 @@
-use iced::Shadow;
-
 use crate::color;
+use iced::Shadow;
 
 pub mod liana;
 pub mod liana_business;
@@ -23,6 +22,7 @@ pub struct Palette {
     pub rule: iced::Color,
     pub pane_grid: PaneGrid,
     pub togglers: Togglers,
+    pub menus: Menus,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -59,6 +59,7 @@ pub struct Buttons {
     pub tab_menu: Button,
     pub tab: Button,
     pub link: Button,
+    pub pick_list: Button,
     pub border_width: f32,
 }
 
@@ -202,4 +203,18 @@ pub struct Toggler {
     pub background_border: iced::Color,
     pub foreground: iced::Color,
     pub foreground_border: iced::Color,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Menus {
+    pub pick_list: Menu,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Menu {
+    pub border: iced::Color,
+    pub text: iced::Color,
+    pub selected_text: iced::Color,
+    pub background: iced::Color,
+    pub selected_background: iced::Color,
 }

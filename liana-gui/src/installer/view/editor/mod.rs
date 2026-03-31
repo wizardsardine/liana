@@ -2,7 +2,7 @@
 
 pub mod template;
 
-use iced::widget::{container, pick_list, slider, Button, Space};
+use iced::widget::{container, slider, Button, Space};
 use iced::{alignment, Alignment, Length};
 
 use liana_ui::component::text::{p1_bold, p2_regular, H3_SIZE};
@@ -12,7 +12,7 @@ use std::str::FromStr;
 
 use liana_ui::{
     component::{
-        button, card, form, separation,
+        button, card, form, pick_list, separation,
         text::{p1_regular, text, Text},
     },
     icon, theme,
@@ -50,7 +50,7 @@ pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a,
         .spacing(10)
         .push(text("Descriptor type").bold())
         .push(container(
-            pick_list(
+            pick_list::pick_list(
                 &DESCRIPTOR_KINDS[..],
                 Some(if use_taproot {
                     DescriptorKind::Taproot
@@ -59,7 +59,6 @@ pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a,
                 }),
                 |kind| Message::CreateTaprootDescriptor(kind == DescriptorKind::Taproot),
             )
-            .style(theme::pick_list::primary)
             .padding(10),
         ));
 

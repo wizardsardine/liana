@@ -9,7 +9,7 @@ use async_hwi::{DeviceKind, Version};
 use iced::{
     alignment::{Horizontal, Vertical},
     clipboard,
-    widget::{column, container, pick_list, row, Column, Row, Space},
+    widget::{column, container, row, Column, Row, Space},
     Length, Subscription, Task,
 };
 use liana::miniscript::{
@@ -26,6 +26,7 @@ use liana_ui::{
         button, card, form,
         hw::Account,
         modal::{self, collapsible_input_button},
+        pick_list,
         text::{p1_bold, p1_regular},
         tooltip,
     },
@@ -967,9 +968,11 @@ impl SelectKeySource {
         let pick_enabled = !self.processing && matches!(self.focus, Focus::Device(_));
 
         let pick_account: Container<_> = if pick_enabled {
-            container(pick_list(accounts, Some(account.clone()), move |a| {
-                Self::route(SelectKeySourceMessage::Account(a.index))
-            }))
+            container(pick_list::pick_list(
+                accounts,
+                Some(account.clone()),
+                move |a| Self::route(SelectKeySourceMessage::Account(a.index)),
+            ))
         } else {
             container(p1_regular(account.to_string()))
         };

@@ -358,6 +358,32 @@ impl Palette {
                         shadow: Default::default(),
                     }),
                 },
+                pick_list: Button {
+                    active: ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREY_2,
+                        border: color::GREY_7.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREEN,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREEN,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREY_2,
+                        border: color::GREY_7.into(),
+                        shadow: Default::default(),
+                    }),
+                },
             },
             cards: Cards {
                 simple: ContainerPalette {
@@ -544,6 +570,15 @@ impl Palette {
                     background_border: color::GREY_2,
                     foreground: color::WHITE,
                     foreground_border: color::WHITE,
+                },
+            },
+            menus: Menus {
+                pick_list: Menu {
+                    border: color::GREY_7,
+                    text: color::GREY_2,
+                    selected_text: color::BLACK,
+                    background: color::GREY_6,
+                    selected_background: color::GREEN,
                 },
             },
         }

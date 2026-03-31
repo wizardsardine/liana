@@ -2,7 +2,7 @@ use crate::{color, component::text, icon, image, theme, widget::*};
 use bitcoin::bip32::{ChildNumber, Fingerprint};
 use iced::{
     alignment::Vertical,
-    widget::{column, container, pick_list, row, tooltip, Space},
+    widget::{column, container, row, tooltip, Space},
     Alignment, Length,
 };
 use std::borrow::Cow;
@@ -103,7 +103,7 @@ pub fn supported_hardware_wallet_with_account<
         .collect();
     let account = Some(account.unwrap_or(ChildNumber::Hardened { index: 0 }));
     let account = account.map(|i| Account::new(i, fingerprint));
-    let pick_account = pick_list(accounts, account.clone(), |a| {
+    let pick_account = super::pick_list::pick_list(accounts, account.clone(), |a| {
         (a.fingerprint, a.index).into()
     });
     let pick_account = if edit_account {

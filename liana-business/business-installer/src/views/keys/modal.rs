@@ -2,17 +2,14 @@ use crate::{
     state::{views::keys::EditKeyModalState, Message, State},
     views::format_last_edit_info,
 };
-use iced::{
-    widget::{pick_list, Space},
-    Alignment, Length,
-};
+use iced::{widget::Space, Alignment, Length};
 use liana_connect::ws_business;
 use liana_ui::{
     component::{
         button::{btn_cancel, btn_save},
         form,
         modal::{modal_view, none_fn, ModalWidth},
-        text, tooltip,
+        pick_list, text, tooltip,
     },
     theme,
     widget::*,
@@ -105,7 +102,7 @@ pub fn edit_key_modal_view<'a>(
                 SafetyNet: Professional third party recovery key.",
         ));
     let key_type_picker = Column::new().spacing(5).push(key_type_label).push(
-        pick_list(
+        pick_list::pick_list(
             key_types,
             Some(modal_state.key_type),
             Message::KeyUpdateType,

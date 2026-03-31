@@ -39,6 +39,9 @@ const CARD_SHADOW_HOVER: Shadow = Shadow {
 color!(INPUT_BG, 0xF3F4F5);
 color!(INPUT_BORDER, 0xCED4DA);
 
+pub const MENU_BG: Color = color::WHITE;
+color!(MENU_BG_HOVER, 0xE9ECEF);
+
 impl Palette {
     pub fn business() -> Self {
         Self {
@@ -327,6 +330,27 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                pick_list: Button {
+                    active: ButtonPalette {
+                        background: INPUT_BG,
+                        text: color::DARK_TEXT_PRIMARY,
+                        border: Some(INPUT_BORDER),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::DARK_TEXT_PRIMARY,
+                        border: Some(BTN_PRIMARY_BG),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::DARK_TEXT_PRIMARY,
+                        border: Some(BTN_PRIMARY_BG),
+                        shadow: Default::default(),
+                    }),
+                    disabled: btn_disabled(),
+                },
             },
             cards: Cards {
                 simple: ContainerPalette {
@@ -513,6 +537,15 @@ impl Palette {
                     background_border: color::LIGHT_BORDER,
                     foreground: color::WHITE,
                     foreground_border: color::WHITE,
+                },
+            },
+            menus: Menus {
+                pick_list: Menu {
+                    border: INPUT_BORDER,
+                    text: color::BLACK,
+                    selected_text: color::BLACK,
+                    background: color::WHITE,
+                    selected_background: MENU_BG_HOVER,
                 },
             },
         }
