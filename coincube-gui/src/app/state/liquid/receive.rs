@@ -401,6 +401,26 @@ impl LiquidReceive {
         content
     }
 
+    pub fn current_usdt_address(&self) -> Option<&String> {
+        self.usdt_address.as_ref()
+    }
+
+    pub fn current_usdt_qr(&self) -> Option<&qr_code::Data> {
+        self.usdt_qr_data.as_ref()
+    }
+
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    pub fn usdt_amount_input(&self) -> &form::Value<String> {
+        &self.usdt_amount_input
+    }
+
+    pub fn current_error(&self) -> Option<&String> {
+        self.error.as_ref()
+    }
+
     fn current_address(&self) -> Option<&String> {
         match self.receive_method {
             ReceiveMethod::Lightning => self.lightning_address.as_ref(),

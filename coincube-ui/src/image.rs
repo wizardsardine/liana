@@ -184,7 +184,10 @@ pub fn network_logo<'a>(network: &str) -> Svg<'a, Theme> {
 ///  │      │NW││
 ///  └──────┴──┘┘
 /// ```
-pub fn usdt_network_logo<'a, M: 'a>(network: &str, primary_size: f32) -> iced::Element<'a, M, Theme, iced::Renderer> {
+pub fn usdt_network_logo<'a, M: 'a>(
+    network: &str,
+    primary_size: f32,
+) -> iced::Element<'a, M, Theme, iced::Renderer> {
     use iced::{widget::Container, Length};
 
     let badge_size = (primary_size * 0.45).round();

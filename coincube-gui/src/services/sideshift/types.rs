@@ -77,7 +77,8 @@ impl SideshiftNetwork {
             || addr.starts_with("VTq")
             || addr.starts_with("lq1")
             || addr.starts_with("ex1")
-            || (addr.len() >= 34 && (addr.starts_with('Q') || addr.starts_with('G') || addr.starts_with('H')))
+            || (addr.len() >= 34
+                && (addr.starts_with('Q') || addr.starts_with('G') || addr.starts_with('H')))
         {
             return vec![Self::Liquid];
         }
@@ -88,12 +89,25 @@ impl SideshiftNetwork {
         }
 
         // EVM-compatible: 0x + 40 hex chars → ambiguous (Ethereum, Binance)
-        if addr.starts_with("0x") && addr.len() == 42 && addr[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+        if addr.starts_with("0x")
+            && addr.len() == 42
+            && addr[2..].chars().all(|c| c.is_ascii_hexdigit())
+        {
             return vec![Self::Ethereum, Self::Binance];
         }
 
-        // Solana: base58, 32–44 chars, no Tron T-prefix
-        if (32..=44).contains(&addr.len()) && addr.chars().all(|c| c.is_alphanumeric()) {
+        // Solana: base58-encoded 32-byte public key (typically 43–44 chars).
+        // Reject prefixes that belong to other networks (Bitcoin, Liquid).
+        let solana_excluded_prefix = addr.starts_with('1')
+            || addr.starts_with('3')
+            || addr.starts_with("bc1")
+            || addr.starts_with('Q')
+            || addr.starts_with('G')
+            || addr.starts_with('H');
+        if !solana_excluded_prefix
+            && (32..=44).contains(&addr.len())
+            && addr.chars().all(|c| c.is_alphanumeric())
+        {
             return vec![Self::Solana];
         }
 
@@ -102,12 +116,7 @@ impl SideshiftNetwork {
 
     /// Returns the external (non-Liquid) networks only.
     pub fn external() -> &'static [SideshiftNetwork] {
-        &[
-            Self::Ethereum,
-            Self::Tron,
-            Self::Binance,
-            Self::Solana,
-        ]
+        &[Self::Ethereum, Self::Tron, Self::Binance, Self::Solana]
     }
 
     /// Returns all networks in display order.

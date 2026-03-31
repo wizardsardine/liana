@@ -28,7 +28,7 @@ impl SideshiftClient {
                 .timeout(std::time::Duration::from_secs(30))
                 .https_only(true)
                 .build()
-                .unwrap_or_default(),
+                .expect("failed to build SideShift HTTP client"),
         }
     }
 

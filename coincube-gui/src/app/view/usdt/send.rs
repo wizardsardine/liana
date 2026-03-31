@@ -11,12 +11,12 @@ use iced::{
     Alignment, Length,
 };
 
-use breez_sdk_liquid::model::PaymentDetails;
 use crate::app::breez::assets::format_usdt_display;
 use crate::app::state::usdt::send::SendPhase;
 use crate::app::view::liquid::RecentTransaction;
 use crate::app::view::{SideshiftSendMessage, SideshiftShiftType};
 use crate::services::sideshift::{ShiftResponse, ShiftStatusKind, SideshiftNetwork};
+use breez_sdk_liquid::model::PaymentDetails;
 
 // ---------------------------------------------------------------------------
 // Top-level entry point
@@ -36,20 +36,36 @@ pub fn usdt_send_view<'a>(
     shift_status: Option<&'a ShiftStatusKind>,
     loading: bool,
     error: Option<&'a str>,
+    usdt_asset_id: &str,
 ) -> Element<'a, SideshiftSendMessage> {
     match phase {
-        SendPhase::AddressInput => {
-            address_input_view(recipient_address, selected_network, detected_networks, usdt_balance, recent_transactions, error)
-        }
-        SendPhase::NetworkDisambiguation => {
-            disambiguation_view(recipient_address, selected_network, detected_networks, error)
-        }
-        SendPhase::AmountInput => {
-            amount_input_view(selected_network, shift_type, amount_input, usdt_balance, loading, error)
-        }
-        SendPhase::FetchingAffiliate | SendPhase::FetchingQuote | SendPhase::CreatingShift | SendPhase::Sending => {
-            loading_view(phase)
-        }
+        SendPhase::AddressInput => address_input_view(
+            recipient_address,
+            selected_network,
+            detected_networks,
+            usdt_balance,
+            recent_transactions,
+            error,
+            usdt_asset_id,
+        ),
+        SendPhase::NetworkDisambiguation => disambiguation_view(
+            recipient_address,
+            selected_network,
+            detected_networks,
+            error,
+        ),
+        SendPhase::AmountInput => amount_input_view(
+            selected_network,
+            shift_type,
+            amount_input,
+            usdt_balance,
+            loading,
+            error,
+        ),
+        SendPhase::FetchingAffiliate
+        | SendPhase::FetchingQuote
+        | SendPhase::CreatingShift
+        | SendPhase::Sending => loading_view(phase),
         SendPhase::Review => review_view(selected_network, shift, amount_input, error),
         SendPhase::Sent => sent_view(selected_network, shift, shift_status),
         SendPhase::Failed => error_view(error),
@@ -68,6 +84,7 @@ fn address_input_view<'a>(
     usdt_balance: u64,
     recent_transactions: &'a [RecentTransaction],
     error: Option<&'a str>,
+    usdt_asset_id: &str,
 ) -> Element<'a, SideshiftSendMessage> {
     let mut content = Column::new().spacing(20).align_x(Alignment::Center);
 
@@ -90,9 +107,7 @@ fn address_input_view<'a>(
         .spacing(8)
         .push(h4_bold("Balance"))
         .push(balance_col);
-    content = content.push(
-        crate::app::view::balance_header_card(balance_inner),
-    );
+    content = content.push(crate::app::view::balance_header_card(balance_inner));
 
     // Address input with inline detection chip and arrow button
     let can_proceed = !recipient_address.trim().is_empty()
@@ -105,12 +120,10 @@ fn address_input_view<'a>(
             None
         } else if detected_networks.is_empty() {
             Some(
-                Container::new(
-                    text("Unknown").size(P2_SIZE).color(color::RED),
-                )
-                .padding([4, 8])
-                .style(theme::pill::error)
-                .into(),
+                Container::new(text("Unknown").size(P2_SIZE).color(color::RED))
+                    .padding([4, 8])
+                    .style(theme::pill::error)
+                    .into(),
             )
         } else if detected_networks.len() == 1 {
             let net = &detected_networks[0];
@@ -133,25 +146,28 @@ fn address_input_view<'a>(
             let mut row = Row::new().spacing(4).align_y(Alignment::Center);
             for network in detected_networks {
                 let is_selected = selected_network == Some(network);
-                let pill = Container::new(
-                    Row::new()
-                        .spacing(4)
-                        .align_y(Alignment::Center)
-                        .push(usdt_network_logo(network.network_slug(), 22.0))
-                        .push(text(network.network_name()).size(P2_SIZE).color(if is_selected {
-                            color::ORANGE
-                        } else {
-                            color::GREY_3
-                        })),
-                )
-                .padding([0, 8])
-                .height(Length::Fixed(50.0))
-                .center_y(Length::Fixed(50.0))
-                .style(if is_selected {
-                    theme::container::border_orange
-                } else {
-                    theme::pill::simple
-                });
+                let pill =
+                    Container::new(
+                        Row::new()
+                            .spacing(4)
+                            .align_y(Alignment::Center)
+                            .push(usdt_network_logo(network.network_slug(), 22.0))
+                            .push(text(network.network_name()).size(P2_SIZE).color(
+                                if is_selected {
+                                    color::ORANGE
+                                } else {
+                                    color::GREY_3
+                                },
+                            )),
+                    )
+                    .padding([0, 8])
+                    .height(Length::Fixed(50.0))
+                    .center_y(Length::Fixed(50.0))
+                    .style(if is_selected {
+                        theme::container::border_orange
+                    } else {
+                        theme::pill::simple
+                    });
 
                 let btn = iced::widget::button(pill)
                     .on_press(SideshiftSendMessage::DisambiguateNetwork(*network))
@@ -161,15 +177,12 @@ fn address_input_view<'a>(
             Some(row.into())
         };
 
-    let mut input_row = Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(
-            TextInput::new("Paste USDt address (any network)…", recipient_address)
-                .on_input(SideshiftSendMessage::RecipientAddressEdited)
-                .padding(15)
-                .size(16),
-        );
+    let mut input_row = Row::new().spacing(10).align_y(Alignment::Center).push(
+        TextInput::new("Paste USDt address (any network)…", recipient_address)
+            .on_input(SideshiftSendMessage::RecipientAddressEdited)
+            .padding(15)
+            .size(16),
+    );
 
     if let Some(chip) = detection_chip {
         input_row = input_row.push(chip);
@@ -227,7 +240,7 @@ fn address_input_view<'a>(
 
         for tx in recent_transactions.iter().take(5) {
             let usdt_amount = if let PaymentDetails::Liquid { asset_id, .. } = &tx.details {
-                if !asset_id.is_empty() {
+                if !usdt_asset_id.is_empty() && asset_id == usdt_asset_id {
                     Some(format_usdt_display(tx.amount.to_sat()))
                 } else {
                     None
@@ -237,11 +250,7 @@ fn address_input_view<'a>(
             };
 
             let amount_text = if let Some(ref usdt) = usdt_amount {
-                format!(
-                    "{}{} USDt",
-                    if tx.is_incoming { "+ " } else { "- " },
-                    usdt
-                )
+                format!("{}{} USDt", if tx.is_incoming { "+ " } else { "- " }, usdt)
             } else {
                 continue;
             };
@@ -302,14 +311,11 @@ fn disambiguation_view<'a>(
     .on_press(SideshiftSendMessage::Reset)
     .style(theme::button::transparent);
 
-    let title = Column::new()
-        .spacing(4)
-        .push(h3("Select Network"))
-        .push(
-            text("This address is compatible with multiple networks. Please select one.")
-                .size(P1_SIZE)
-                .style(theme::text::secondary),
-        );
+    let title = Column::new().spacing(4).push(h3("Select Network")).push(
+        text("This address is compatible with multiple networks. Please select one.")
+            .size(P1_SIZE)
+            .style(theme::text::secondary),
+    );
 
     let addr_preview = Container::new(
         text(recipient_address)
@@ -408,7 +414,9 @@ fn amount_input_view<'a>(
     loading: bool,
     error: Option<&'a str>,
 ) -> Element<'a, SideshiftSendMessage> {
-    let network = selected_network.copied().unwrap_or(SideshiftNetwork::Ethereum);
+    let network = selected_network
+        .copied()
+        .unwrap_or(SideshiftNetwork::Ethereum);
 
     let back_btn = iced::widget::button(
         Row::new()
@@ -448,7 +456,11 @@ fn amount_input_view<'a>(
     let balance_row = Row::new()
         .spacing(6)
         .align_y(Alignment::Center)
-        .push(text("Available:").size(P2_SIZE).style(theme::text::secondary))
+        .push(
+            text("Available:")
+                .size(P2_SIZE)
+                .style(theme::text::secondary),
+        )
         .push(
             text(format!("{} USDt", format_usdt_display(usdt_balance)))
                 .size(P2_SIZE)
@@ -459,7 +471,7 @@ fn amount_input_view<'a>(
         .spacing(6)
         .push(text("Amount to send (USDt)").size(P2_SIZE).bold())
         .push(
-            text("Enter an amount for a fixed rate, or leave blank for variable rate.")
+            text("Enter the amount of USDt to send. A fixed rate is locked at confirmation.")
                 .size(P2_SIZE)
                 .style(theme::text::secondary),
         )
@@ -569,19 +581,18 @@ fn review_view<'a>(
         return error_view(Some("Swap data missing."));
     };
 
-    let network = selected_network.copied().unwrap_or(SideshiftNetwork::Ethereum);
+    let network = selected_network
+        .copied()
+        .unwrap_or(SideshiftNetwork::Ethereum);
 
-    let title = Column::new()
-        .spacing(4)
-        .push(h3("Review Swap"))
-        .push(
-            text(format!(
-                "You will send Liquid USDt. SideShift delivers {} USDt to the recipient.",
-                network.standard_label()
-            ))
-            .size(P1_SIZE)
-            .style(theme::text::secondary),
-        );
+    let title = Column::new().spacing(4).push(h3("Review Swap")).push(
+        text(format!(
+            "You will send Liquid USDt. SideShift delivers {} USDt to the recipient.",
+            network.standard_label()
+        ))
+        .size(P1_SIZE)
+        .style(theme::text::secondary),
+    );
 
     let info = info_card(shift, amount_input);
 
@@ -647,11 +658,11 @@ fn sent_view<'a>(
     shift: Option<&'a ShiftResponse>,
     shift_status: Option<&'a ShiftStatusKind>,
 ) -> Element<'a, SideshiftSendMessage> {
-    let network = selected_network.copied().unwrap_or(SideshiftNetwork::Ethereum);
+    let network = selected_network
+        .copied()
+        .unwrap_or(SideshiftNetwork::Ethereum);
 
-    let status_label = shift_status
-        .map(|s| s.display())
-        .unwrap_or("Processing…");
+    let status_label = shift_status.map(|s| s.display()).unwrap_or("Processing…");
 
     let (status_color, status_icon) = match shift_status {
         Some(ShiftStatusKind::Settled) => (color::GREEN, "✓"),
@@ -659,17 +670,14 @@ fn sent_view<'a>(
         _ => (color::ORANGE, "⟳"),
     };
 
-    let title = Column::new()
-        .spacing(4)
-        .push(h3("Swap Submitted"))
-        .push(
-            text(format!(
-                "Your Liquid USDt is being swapped to {} USDt.",
-                network.standard_label()
-            ))
-            .size(P1_SIZE)
-            .style(theme::text::secondary),
-        );
+    let title = Column::new().spacing(4).push(h3("Swap Submitted")).push(
+        text(format!(
+            "Your Liquid USDt is being swapped to {} USDt.",
+            network.standard_label()
+        ))
+        .size(P1_SIZE)
+        .style(theme::text::secondary),
+    );
 
     let status_badge = Container::new(
         Row::new()
@@ -681,10 +689,7 @@ fn sent_view<'a>(
     .padding([8, 16])
     .style(theme::card::simple);
 
-    let mut col = Column::new()
-        .spacing(20)
-        .push(title)
-        .push(status_badge);
+    let mut col = Column::new().spacing(20).push(title).push(status_badge);
 
     if let Some(shift) = shift {
         col = col.push(
@@ -700,11 +705,7 @@ fn sent_view<'a>(
                                 .style(theme::text::secondary)
                                 .width(Length::Fixed(80.0)),
                         )
-                        .push(
-                            text(&shift.id)
-                                .size(P2_SIZE)
-                                .font(iced::Font::MONOSPACE),
-                        )
+                        .push(text(&shift.id).size(P2_SIZE).font(iced::Font::MONOSPACE))
                         .push(
                             iced::widget::button(clipboard_icon().size(16))
                                 .on_press(SideshiftSendMessage::Copy)
@@ -721,11 +722,7 @@ fn sent_view<'a>(
                                 .style(theme::text::secondary)
                                 .width(Length::Fixed(80.0)),
                         )
-                        .push(
-                            text(addr)
-                                .size(P2_SIZE)
-                                .font(iced::Font::MONOSPACE),
-                        )
+                        .push(text(addr).size(P2_SIZE).font(iced::Font::MONOSPACE))
                 })),
         );
     }
@@ -749,7 +746,10 @@ fn info_card(shift: &ShiftResponse, amount_input: &str) -> Element<'static, Side
     if let Some(dep) = &shift.deposit_amount {
         rows = rows.push(info_row("You send", &format!("{} Liquid USDt", dep)));
     } else if !amount_input.is_empty() {
-        rows = rows.push(info_row("You send", &format!("{} Liquid USDt", amount_input)));
+        rows = rows.push(info_row(
+            "You send",
+            &format!("{} Liquid USDt", amount_input),
+        ));
     }
     if let Some(settle) = &shift.settle_amount {
         rows = rows.push(info_row("Recipient receives", settle));

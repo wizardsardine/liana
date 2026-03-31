@@ -4,10 +4,10 @@ use std::time::Duration;
 use coincube_ui::widget::*;
 use iced::{clipboard, Subscription, Task};
 
+use crate::app::breez::assets::{parse_asset_to_minor_units, usdt_asset_id, USDT_PRECISION};
 use crate::app::cache::Cache;
 use crate::app::menu::Menu;
 use crate::app::message::Message;
-use crate::app::breez::assets::{usdt_asset_id, parse_asset_to_minor_units, USDT_PRECISION};
 use crate::app::state::liquid::send::{LiquidSend, SendAsset};
 use crate::app::state::State;
 use crate::app::view;
@@ -220,6 +220,7 @@ impl State for UsdtSend {
             return self.inner.view(menu, cache);
         }
 
+        let asset_id = usdt_asset_id(self.inner.breez_client().network()).unwrap_or("");
         let sideshift_view = view::usdt::usdt_send_view(
             &self.phase,
             self.selected_network.as_ref(),
@@ -233,9 +234,14 @@ impl State for UsdtSend {
             self.shift_status.as_ref(),
             self.loading,
             self.error.as_deref(),
+            asset_id,
         );
 
-        view::dashboard(menu, cache, sideshift_view.map(view::Message::SideshiftSend))
+        view::dashboard(
+            menu,
+            cache,
+            sideshift_view.map(view::Message::SideshiftSend),
+        )
     }
 
     fn update(
@@ -327,17 +333,20 @@ impl State for UsdtSend {
                 }
 
                 SideshiftSendMessage::Generate => {
-                    // Validate minimum amount for fixed-rate shifts
-                    if !self.amount_input.trim().is_empty() {
-                        if let Ok(amount) = self.amount_input.trim().parse::<f64>() {
-                            if amount < 5.0 {
-                                self.error = Some("Minimum amount is 5 USDt".to_string());
-                                return Task::none();
-                            }
-                        } else {
-                            self.error = Some("Please enter a valid amount".to_string());
+                    // Amount is always required for sends — we need to know
+                    // how much USDt to pay into SideShift's deposit address.
+                    if self.amount_input.trim().is_empty() {
+                        self.error = Some("Please enter an amount to send".to_string());
+                        return Task::none();
+                    }
+                    if let Ok(amount) = self.amount_input.trim().parse::<f64>() {
+                        if amount < 5.0 {
+                            self.error = Some("Minimum amount is 5 USDt".to_string());
                             return Task::none();
                         }
+                    } else {
+                        self.error = Some("Please enter a valid amount".to_string());
+                        return Task::none();
                     }
                     self.loading = true;
                     self.error = None;
@@ -362,8 +371,7 @@ impl State for UsdtSend {
                         Err(e) => {
                             self.loading = false;
                             self.phase = SendPhase::Failed;
-                            self.error =
-                                Some(format!("Failed to fetch SideShift config: {}", e));
+                            self.error = Some(format!("Failed to fetch SideShift config: {}", e));
                         }
                     }
                     return Task::none();
@@ -372,8 +380,7 @@ impl State for UsdtSend {
                 SideshiftSendMessage::QuoteFetched(result) => {
                     match result {
                         Ok(quote) => {
-                            let affiliate_id =
-                                self.affiliate_id.clone().unwrap_or_default();
+                            let affiliate_id = self.affiliate_id.clone().unwrap_or_default();
                             self.quote = Some(quote.clone());
                             self.phase = SendPhase::CreatingShift;
                             return self.create_shift(&affiliate_id, Some(quote));
@@ -454,13 +461,11 @@ impl State for UsdtSend {
                     return Task::perform(
                         async move {
                             breez
-                                .send_payment(
-                                    &breez_sdk_liquid::prelude::SendPaymentRequest {
-                                        prepare_response: prepare,
-                                        payer_note: None,
-                                        use_asset_fees: Some(true),
-                                    },
-                                )
+                                .send_payment(&breez_sdk_liquid::prelude::SendPaymentRequest {
+                                    prepare_response: prepare,
+                                    payer_note: None,
+                                    use_asset_fees: Some(true),
+                                })
                                 .await
                                 .map_err(|e| e.to_string())
                         },
@@ -522,7 +527,7 @@ impl State for UsdtSend {
 
                 SideshiftSendMessage::Copy => {
                     if let Some(shift) = &self.shift {
-                        return clipboard::write(shift.deposit_address.clone());
+                        return clipboard::write(shift.id.clone());
                     }
                     return Task::none();
                 }
@@ -536,9 +541,15 @@ impl State for UsdtSend {
         if self.phase == SendPhase::LiquidNative {
             return self.inner.subscription();
         }
-        if self.phase == SendPhase::Sent {
+        let is_terminal = self
+            .shift_status
+            .as_ref()
+            .map_or(false, ShiftStatusKind::is_terminal);
+        if self.phase == SendPhase::Sent && !is_terminal {
             iced::time::every(Duration::from_secs(10)).map(|_| {
-                Message::View(view::Message::SideshiftSend(SideshiftSendMessage::PollStatus))
+                Message::View(view::Message::SideshiftSend(
+                    SideshiftSendMessage::PollStatus,
+                ))
             })
         } else {
             Subscription::none()

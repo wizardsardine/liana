@@ -38,13 +38,9 @@ pub fn usdt_receive_view<'a>(
         ReceivePhase::FetchingAffiliate
         | ReceivePhase::FetchingQuote
         | ReceivePhase::CreatingShift => loading_view(phase),
-        ReceivePhase::Active => active_shift_view(
-            selected_network,
-            shift,
-            qr_data,
-            shift_status,
-            amount_input,
-        ),
+        ReceivePhase::Active => {
+            active_shift_view(selected_network, shift, qr_data, shift_status, amount_input)
+        }
         ReceivePhase::Failed => error_view(error),
         ReceivePhase::LiquidNative => {
             // Handled by LiquidReceive in the state — should not reach here.
@@ -58,14 +54,11 @@ pub fn usdt_receive_view<'a>(
 // ---------------------------------------------------------------------------
 
 fn network_picker_view() -> Element<'static, SideshiftReceiveMessage> {
-    let title = Column::new()
-        .spacing(4)
-        .push(h3("Receive USDt"))
-        .push(
-            text("Choose the network you are receiving from.")
-                .size(P1_SIZE)
-                .style(theme::text::secondary),
-        );
+    let title = Column::new().spacing(4).push(h3("Receive USDt")).push(
+        text("Choose the network you are receiving from.")
+            .size(P1_SIZE)
+            .style(theme::text::secondary),
+    );
 
     let mut network_list = Column::new().spacing(8);
 
@@ -78,11 +71,12 @@ fn network_picker_view() -> Element<'static, SideshiftReceiveMessage> {
                 Column::new()
                     .spacing(2)
                     .push(text(network.display_name()).size(P1_SIZE).bold())
-                    .push_maybe(network.swap_subtitle().map(|s| {
-                        text(s).size(P2_SIZE).style(theme::text::secondary)
-                    })),
-            )
-;
+                    .push_maybe(
+                        network
+                            .swap_subtitle()
+                            .map(|s| text(s).size(P2_SIZE).style(theme::text::secondary)),
+                    ),
+            );
 
         let card = Container::new(row_content)
             .padding([12, 16])
@@ -194,23 +188,28 @@ fn external_setup_view<'a>(
             .width(Length::Fill)
     };
 
-    let mut col = Column::new()
+    let mut inner = Column::new()
         .spacing(20)
-        .push(back_btn)
         .push(title)
         .push(amount_section)
         .push(rate_indicator);
 
     if let Some(err) = error {
-        col = col.push(
+        inner = inner.push(
             Container::new(text(err).size(P2_SIZE).color(color::RED))
                 .padding([8, 12])
                 .style(theme::card::error),
         );
     }
 
-    Container::new(col.push(generate_btn).max_width(520).width(Length::Fill))
-        .center_x(Length::Fill)
+    Column::new()
+        .spacing(16)
+        .push(back_btn)
+        .push(
+            Container::new(inner.push(generate_btn).max_width(520).width(Length::Fill))
+                .center_x(Length::Fill),
+        )
+        .width(Length::Fill)
         .into()
 }
 
@@ -276,10 +275,15 @@ fn active_shift_view<'a>(
     .padding([6, 12])
     .style(theme::pill::warning);
 
+    // Use a cell_size that produces ~300px for short addresses (29 modules × 10 = 290px)
     let qr_section: Element<SideshiftReceiveMessage> = if let Some(data) = qr_data {
-        Container::new(qr_code(data).cell_size(6))
-            .center_x(Length::Fill)
-            .into()
+        Container::new(
+            Container::new(qr_code(data).cell_size(10))
+                .padding(20)
+                .style(theme::card::simple),
+        )
+        .center_x(Length::Fill)
+        .into()
     } else {
         Space::new().height(Length::Fixed(0.0)).into()
     };
@@ -305,33 +309,28 @@ fn active_shift_view<'a>(
 
     let info_rows = info_card(shift, amount_input);
 
-    let status_badge: Element<SideshiftReceiveMessage> =
-        if let Some(status) = shift_status {
-            let (label, style_color) = match status {
-                ShiftStatusKind::Waiting => ("Waiting for deposit", color::GREY_3),
-                ShiftStatusKind::Pending | ShiftStatusKind::Processing => {
-                    ("Deposit detected", color::ORANGE)
-                }
-                ShiftStatusKind::Settling => ("Settling…", color::ORANGE),
-                ShiftStatusKind::Settled => ("Settled ✓", color::GREEN),
-                ShiftStatusKind::Expired => ("Expired", color::RED),
-                ShiftStatusKind::Refunded => ("Refunded", color::GREY_3),
-                ShiftStatusKind::Error => ("Error", color::RED),
-                ShiftStatusKind::Unknown(_) => ("Unknown", color::GREY_3),
-            };
-            Container::new(text(label).size(P2_SIZE).color(style_color))
-                .padding([4, 10])
-                .style(theme::pill::simple)
-                .into()
-        } else {
-            Space::new().height(Length::Fixed(0.0)).into()
+    let status_badge: Element<SideshiftReceiveMessage> = if let Some(status) = shift_status {
+        let (label, style_color) = match status {
+            ShiftStatusKind::Waiting => ("Waiting for deposit", color::GREY_3),
+            ShiftStatusKind::Pending | ShiftStatusKind::Processing => {
+                ("Deposit detected", color::ORANGE)
+            }
+            ShiftStatusKind::Settling => ("Settling…", color::ORANGE),
+            ShiftStatusKind::Settled => ("Settled ✓", color::GREEN),
+            ShiftStatusKind::Expired => ("Expired", color::RED),
+            ShiftStatusKind::Refunded => ("Refunded", color::GREY_3),
+            ShiftStatusKind::Error => ("Error", color::RED),
+            ShiftStatusKind::Unknown(_) => ("Unknown", color::GREY_3),
         };
+        Container::new(text(label).size(P2_SIZE).color(style_color))
+            .padding([4, 10])
+            .style(theme::pill::simple)
+            .into()
+    } else {
+        Space::new().height(Length::Fixed(0.0)).into()
+    };
 
-    let copy_btn = button::primary(None, "Copy Address")
-        .on_press(SideshiftReceiveMessage::Copy)
-        .width(Length::FillPortion(1));
-
-    let reset_btn = iced::widget::button(
+    let back_btn = iced::widget::button(
         Row::new()
             .spacing(5)
             .align_y(Alignment::Center)
@@ -339,31 +338,29 @@ fn active_shift_view<'a>(
             .push(text("Previous").size(P1_SIZE).style(theme::text::secondary)),
     )
     .on_press(SideshiftReceiveMessage::Reset)
-    .style(theme::button::transparent)
-    .width(Length::FillPortion(1));
+    .style(theme::button::transparent);
 
-    let action_row = Row::new()
-        .spacing(10)
-        .push(reset_btn)
-        .push(copy_btn)
-        .width(Length::Fill);
-
-    Container::new(
-        Column::new()
-            .spacing(16)
-            .align_x(Alignment::Center)
-            .push(title)
-            .push(warning_badge)
-            .push(qr_section)
-            .push(address_row)
-            .push(info_rows)
-            .push(status_badge)
-            .push(action_row)
-            .max_width(520)
-            .width(Length::Fill),
-    )
-    .center_x(Length::Fill)
-    .into()
+    Column::new()
+        .spacing(16)
+        .push(back_btn)
+        .push(
+            Container::new(
+                Column::new()
+                    .spacing(16)
+                    .align_x(Alignment::Center)
+                    .push(title)
+                    .push(warning_badge)
+                    .push(qr_section)
+                    .push(address_row)
+                    .push(info_rows)
+                    .push(status_badge)
+                    .max_width(520)
+                    .width(Length::Fill),
+            )
+            .center_x(Length::Fill),
+        )
+        .width(Length::Fill)
+        .into()
 }
 
 // ---------------------------------------------------------------------------
@@ -391,7 +388,7 @@ fn error_view(error: Option<&str>) -> Element<SideshiftReceiveMessage> {
             .width(Length::Fill),
     )
     .center_x(Length::Fill)
-        .into()
+    .into()
 }
 
 fn info_card(

@@ -190,7 +190,11 @@ impl UsdtReceive {
                         .await
                 } else {
                     client
-                        .create_variable_receive_shift(&deposit_network, &liquid_address, &affiliate_id)
+                        .create_variable_receive_shift(
+                            &deposit_network,
+                            &liquid_address,
+                            &affiliate_id,
+                        )
                         .await
                 }
             },
@@ -231,7 +235,45 @@ impl UsdtReceive {
 impl State for UsdtReceive {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         if self.phase == ReceivePhase::LiquidNative {
-            return self.liquid_inner.view(menu, cache);
+            use coincube_ui::{component::text::*, icon::previous_icon, theme};
+            use iced::{
+                widget::{Column, Row},
+                Alignment, Length,
+            };
+
+            let back_btn: Element<'a, view::Message> = iced::widget::button(
+                Row::new()
+                    .spacing(5)
+                    .align_y(Alignment::Center)
+                    .push(previous_icon().style(theme::text::secondary))
+                    .push(
+                        iced::widget::text("Previous")
+                            .size(P1_SIZE)
+                            .style(theme::text::secondary),
+                    ),
+            )
+            .on_press(view::Message::SideshiftReceive(
+                view::SideshiftReceiveMessage::Reset,
+            ))
+            .style(theme::button::transparent)
+            .into();
+
+            let liquid_view = view::liquid::usdt_only_receive_view(
+                self.liquid_inner.current_usdt_address(),
+                self.liquid_inner.current_usdt_qr(),
+                self.liquid_inner.is_loading(),
+                self.liquid_inner.usdt_amount_input(),
+                self.liquid_inner.current_error(),
+            )
+            .map(view::Message::LiquidReceive);
+
+            let content = Column::new()
+                .spacing(20)
+                .push(back_btn)
+                .push(liquid_view)
+                .width(Length::Fill);
+
+            return view::dashboard(menu, cache, content);
         }
 
         let sideshift_view = view::usdt::usdt_receive_view(
@@ -246,7 +288,11 @@ impl State for UsdtReceive {
             self.error.as_deref(),
         );
 
-        view::dashboard(menu, cache, sideshift_view.map(view::Message::SideshiftReceive))
+        view::dashboard(
+            menu,
+            cache,
+            sideshift_view.map(view::Message::SideshiftReceive),
+        )
     }
 
     fn update(
@@ -255,6 +301,15 @@ impl State for UsdtReceive {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        // Intercept Reset even when in LiquidNative to go back to network picker.
+        if let Message::View(view::Message::SideshiftReceive(
+            view::SideshiftReceiveMessage::Reset,
+        )) = &message
+        {
+            self.reset_shift();
+            return Task::none();
+        }
+
         // Delegate to LiquidReceive when in native Liquid path.
         if self.phase == ReceivePhase::LiquidNative {
             return self.liquid_inner.update(daemon, cache, message);
@@ -268,10 +323,9 @@ impl State for UsdtReceive {
                     if *network == SideshiftNetwork::Liquid {
                         self.phase = ReceivePhase::LiquidNative;
                         let reload_task = self.liquid_inner.reload(daemon, None);
-                        let preset_task =
-                            Task::done(Message::View(view::Message::LiquidReceive(
-                                view::LiquidReceiveMessage::ToggleMethod(ReceiveMethod::Usdt),
-                            )));
+                        let preset_task = Task::done(Message::View(view::Message::LiquidReceive(
+                            view::LiquidReceiveMessage::ToggleMethod(ReceiveMethod::Usdt),
+                        )));
                         return Task::batch(vec![reload_task, preset_task]);
                     }
                     // Determine initial shift type: default variable, but if amount
@@ -333,8 +387,7 @@ impl State for UsdtReceive {
                         Err(e) => {
                             self.loading = false;
                             self.phase = ReceivePhase::Failed;
-                            self.error =
-                                Some(format!("Failed to fetch SideShift config: {}", e));
+                            self.error = Some(format!("Failed to fetch SideShift config: {}", e));
                         }
                     }
                     return Task::none();
@@ -343,10 +396,7 @@ impl State for UsdtReceive {
                 SideshiftReceiveMessage::QuoteFetched(result) => {
                     match result {
                         Ok(quote) => {
-                            let affiliate_id = self
-                                .affiliate_id
-                                .clone()
-                                .unwrap_or_default();
+                            let affiliate_id = self.affiliate_id.clone().unwrap_or_default();
                             self.quote = Some(quote.clone());
                             self.phase = ReceivePhase::CreatingShift;
                             return self.create_shift(&affiliate_id, Some(quote));
@@ -391,7 +441,14 @@ impl State for UsdtReceive {
 
                 SideshiftReceiveMessage::Copy => {
                     if let Some(shift) = &self.shift {
-                        return clipboard::write(shift.deposit_address.clone());
+                        let toast_task = Task::done(Message::View(view::Message::ShowToast(
+                            log::Level::Info,
+                            "Copied deposit address to clipboard".to_string(),
+                        )));
+                        return Task::batch([
+                            clipboard::write(shift.deposit_address.clone()),
+                            toast_task,
+                        ]);
                     }
                     return Task::none();
                 }
@@ -419,7 +476,11 @@ impl State for UsdtReceive {
         if self.phase == ReceivePhase::LiquidNative {
             return self.liquid_inner.subscription();
         }
-        if self.phase == ReceivePhase::Active {
+        let is_terminal = self
+            .shift_status
+            .as_ref()
+            .map_or(false, ShiftStatusKind::is_terminal);
+        if self.phase == ReceivePhase::Active && !is_terminal {
             // Poll shift status every 10 seconds.
             iced::time::every(Duration::from_secs(10)).map(|_| {
                 Message::View(view::Message::SideshiftReceive(
