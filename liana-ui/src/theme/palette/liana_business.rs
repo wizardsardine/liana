@@ -1,76 +1,46 @@
 use iced::Color;
 
+use crate::color;
 use crate::theme::card::CARD_SHADOW;
 
 use super::*;
 
 const BTN_PRIMARY_BG: Color = color::BUSINESS_BLUE;
 const BTN_PRIMARY_FG: Color = color::WHITE;
-const BTN_PRIMARY_PRESSED: Color = Color::from_rgb(
-    0x00 as f32 / 255.0,
-    0x77 as f32 / 255.0,
-    0xA0 as f32 / 255.0,
-);
+color!(BTN_PRIMARY_PRESSED, 0x0077A0);
 
 const BTN_TERTIARY_BG: Color = color::WHITE;
 const BTN_TERTIARY_FG: Color = color::BUSINESS_BLACK;
-const BTN_TERTIARY_PRESSED: Color = Color::from_rgb(
-    0xB4 as f32 / 255.0,
-    0xB4 as f32 / 255.0,
-    0xB4 as f32 / 255.0,
-);
+color!(BTN_TERTIARY_PRESSED, 0xB4B4B4);
 
-const BTN_DISABLED: Color = Color::from_rgb(
-    0xCB as f32 / 255.0,
-    0xCB as f32 / 255.0,
-    0xCB as f32 / 255.0,
-);
+color!(BTN_DISABLED, 0xCBCBCB);
+color!(BTN_DISABLED_TEXT, 0xEDEDED);
 fn btn_disabled() -> Option<ButtonPalette> {
     Some(ButtonPalette {
         background: BTN_DISABLED,
-        text: Color::from_rgb(
-            0xED as f32 / 255.0,
-            0xED as f32 / 255.0,
-            0xED as f32 / 255.0,
-        ),
+        text: BTN_DISABLED_TEXT,
         border: BTN_DISABLED.into(),
         shadow: Default::default(),
     })
 }
 
 const BTN_SHADOW: Shadow = Shadow {
-    color: Color {
-        r: 0.0,
-        g: 0.0,
-        b: 0.0,
-        a: 0.25,
-    },
+    color: color::BLACK_25,
     offset: iced::Vector { x: 0.0, y: 4.0 },
     blur_radius: 4.0,
 };
 
 const CARD_SHADOW_HOVER: Shadow = Shadow {
-    color: Color {
-        r: 0.0,
-        g: 0.0,
-        b: 0.0,
-        a: 0.3,
-    },
+    color: color::BLACK_30,
     offset: iced::Vector { x: 0.0, y: 4.0 },
     blur_radius: 4.0,
 };
 
-pub const INPUT_BG: Color = Color::from_rgb(
-    0xF3 as f32 / 255.0,
-    0xF4 as f32 / 255.0,
-    0xF5 as f32 / 255.0,
-);
+color!(INPUT_BG, 0xF3F4F5);
+color!(INPUT_BORDER, 0xCED4DA);
 
-pub const INPUT_BORDER: Color = Color::from_rgb(
-    0xCE as f32 / 255.0,
-    0xD4 as f32 / 255.0,
-    0xDA as f32 / 255.0,
-);
+pub const MENU_BG: Color = color::WHITE;
+color!(MENU_BG_HOVER, 0xE9ECEF);
 
 impl Palette {
     pub fn business() -> Self {
@@ -158,7 +128,7 @@ impl Palette {
                 destructive: Button {
                     active: ButtonPalette {
                         background: color::LIGHT_BG_SECONDARY,
-                        text: color::RED,
+                        text: color::DARK_TEXT_SECONDARY,
                         border: color::RED.into(),
                         shadow: Default::default(),
                     },
@@ -360,6 +330,27 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                pick_list: Button {
+                    active: ButtonPalette {
+                        background: INPUT_BG,
+                        text: color::DARK_TEXT_PRIMARY,
+                        border: Some(INPUT_BORDER),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::DARK_TEXT_PRIMARY,
+                        border: Some(BTN_PRIMARY_BG),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::DARK_TEXT_PRIMARY,
+                        border: Some(BTN_PRIMARY_BG),
+                        shadow: Default::default(),
+                    }),
+                    disabled: btn_disabled(),
+                },
             },
             cards: Cards {
                 simple: ContainerPalette {
@@ -445,7 +436,7 @@ impl Palette {
                 },
                 warning: ContainerPalette {
                     background: color::AMBER,
-                    text: color::WHITE.into(),
+                    text: color::DARK_TEXT_SECONDARY.into(),
                     border: color::AMBER.into(),
                 },
                 success: ContainerPalette {
@@ -546,6 +537,15 @@ impl Palette {
                     background_border: color::LIGHT_BORDER,
                     foreground: color::WHITE,
                     foreground_border: color::WHITE,
+                },
+            },
+            menus: Menus {
+                pick_list: Menu {
+                    border: INPUT_BORDER,
+                    text: color::BLACK,
+                    selected_text: color::BLACK,
+                    background: color::WHITE,
+                    selected_background: MENU_BG_HOVER,
                 },
             },
         }

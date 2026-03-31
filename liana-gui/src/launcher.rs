@@ -1,12 +1,12 @@
 use iced::{
     alignment::Horizontal,
-    widget::{checkbox, pick_list, scrollable, Button, Space},
+    widget::{checkbox, scrollable, Button, Space},
     Alignment, Length, Subscription, Task,
 };
 
 use liana::miniscript::bitcoin::Network;
 use liana_ui::{
-    component::{button, card, network_banner, notification, text::*},
+    component::{button, card, network_banner, notification, pick_list, text::*},
     icon, image, theme,
     widget::{modal::Modal, Column, Container, Element, Row},
 };
@@ -241,12 +241,11 @@ impl Launcher {
                                 .on_press(ViewMessage::ShareXpubs),
                         )
                         .push(
-                            pick_list(
+                            pick_list::pick_list(
                                 self.displayed_networks.as_slice(),
                                 Some(self.network),
                                 ViewMessage::SelectNetwork,
                             )
-                            .style(theme::pick_list::primary)
                             .padding(10),
                         )
                         .align_y(Alignment::Center)

@@ -5,7 +5,7 @@ use crate::state::{
 use async_hwi::service::SigningDevice;
 use iced::{
     alignment::Vertical,
-    widget::{container, pick_list, row, Space},
+    widget::{container, row, Space},
     Alignment, Length,
 };
 use liana_gui::hw::{is_compatible_with_tapminiscript, min_taproot_version, UnsupportedReason};
@@ -14,6 +14,7 @@ use liana_ui::{
         button::{btn_cancel, btn_clear, btn_retry, btn_save},
         form, hw,
         modal::{self, modal_view, none_fn, ModalWidth},
+        pick_list,
         text::{self, p1_bold},
         tooltip,
     },
@@ -132,7 +133,7 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
 
     let account = if pick_enabled {
         container(
-            pick_list(
+            pick_list::pick_list(
                 accounts,
                 Some(modal_state.selected_account),
                 Msg::XpubUpdateAccount,

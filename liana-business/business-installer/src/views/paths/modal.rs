@@ -6,7 +6,7 @@ use crate::{
     views::format_last_edit_info,
 };
 use iced::{
-    widget::{checkbox, pick_list, Space},
+    widget::{checkbox, Space},
     Alignment, Length,
 };
 use liana_ui::{
@@ -14,7 +14,7 @@ use liana_ui::{
         button::{btn_cancel, btn_save},
         form,
         modal::{modal_view, none_fn, ModalWidth},
-        text,
+        pick_list, text,
     },
     theme,
     widget::*,
@@ -218,7 +218,7 @@ pub fn edit_path_modal_view<'a>(
                 .width(Length::Fixed(INPUT_WIDTH)),
             )
             .push(
-                pick_list(
+                pick_list::pick_list(
                     TimelockUnit::ALL.as_slice(),
                     Some(modal_state.timelock_unit),
                     Msg::TemplateUpdateTimelockUnit,

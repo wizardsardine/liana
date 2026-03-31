@@ -1,178 +1,56 @@
 use iced::Color;
+
+#[macro_export]
+macro_rules! color {
+    ($name:ident, $hex:expr) => {
+        color!($name, $hex, 1.0);
+    };
+    ($name:ident, $hex:expr, $a:expr) => {
+        pub const $name: iced::Color = iced::Color {
+            r: (($hex >> 16) & 0xFF) as f32 / 255.0,
+            g: (($hex >> 8) & 0xFF) as f32 / 255.0,
+            b: ($hex & 0xFF) as f32 / 255.0,
+            a: $a,
+        };
+    };
+}
+
 pub const BLACK: Color = iced::Color::BLACK;
 pub const TRANSPARENT: Color = iced::Color::TRANSPARENT;
-pub const LIGHT_BLACK: Color = Color::from_rgb(
-    0x14 as f32 / 255.0,
-    0x14 as f32 / 255.0,
-    0x14 as f32 / 255.0,
-);
-pub const BUSINESS_BLACK: Color = Color::from_rgb(
-    0x0F as f32 / 255.0,
-    0x17 as f32 / 255.0,
-    0x2A as f32 / 255.0,
-);
-pub const GREY_7: Color = Color::from_rgb(
-    0x3F as f32 / 255.0,
-    0x3F as f32 / 255.0,
-    0x3F as f32 / 255.0,
-);
-pub const GREY_6: Color = Color::from_rgb(
-    0x20 as f32 / 255.0,
-    0x20 as f32 / 255.0,
-    0x20 as f32 / 255.0,
-);
-pub const GREY_5: Color = Color::from_rgb(
-    0x27 as f32 / 255.0,
-    0x27 as f32 / 255.0,
-    0x27 as f32 / 255.0,
-);
-pub const GREY_4: Color = Color::from_rgb(
-    0x42 as f32 / 255.0,
-    0x42 as f32 / 255.0,
-    0x42 as f32 / 255.0,
-);
-pub const GREY_3: Color = Color::from_rgb(
-    0x71 as f32 / 255.0,
-    0x71 as f32 / 255.0,
-    0x71 as f32 / 255.0,
-);
-pub const GREY_2: Color = Color::from_rgb(
-    0xCC as f32 / 255.0,
-    0xCC as f32 / 255.0,
-    0xCC as f32 / 255.0,
-);
-pub const GREY_1: Color = Color::from_rgb(
-    0xE6 as f32 / 255.0,
-    0xE6 as f32 / 255.0,
-    0xE6 as f32 / 255.0,
-);
 pub const WHITE: Color = iced::Color::WHITE;
-pub const GREEN: Color = Color::from_rgb(
-    0x00 as f32 / 255.0,
-    0xFF as f32 / 255.0,
-    0x66 as f32 / 255.0,
-);
-pub const TRANSPARENT_GREEN: Color = Color::from_rgba(
-    0x00 as f32 / 255.0,
-    0xFF as f32 / 255.0,
-    0x66 as f32 / 255.0,
-    0.3,
-);
-pub const RED: Color = Color::from_rgb(
-    0xE2 as f32 / 255.0,
-    0x4E as f32 / 255.0,
-    0x1B as f32 / 255.0,
-);
 
-pub const ORANGE: Color =
-    Color::from_rgb(0xFF as f32 / 255.0, 0xa7 as f32 / 255.0, 0x0 as f32 / 255.0);
+color!(LIGHT_BLACK, 0x141414);
+color!(BUSINESS_BLACK, 0x0F172A);
+color!(GREY_7, 0x3F3F3F);
+color!(GREY_6, 0x202020);
+color!(GREY_5, 0x272727);
+color!(GREY_4, 0x424242);
+color!(GREY_3, 0x717171);
+color!(GREY_2, 0xCCCCCC);
+color!(GREY_1, 0xE6E6E6);
+color!(GREEN, 0x00FF66);
+color!(TRANSPARENT_GREEN, 0x00FF66, 0.3);
+color!(RED, 0xE24E1B);
+color!(ORANGE, 0xFFA700);
+color!(BLUE, 0x7DD3FC);
 
-pub const BLUE: Color = Color::from_rgb(
-    0x7D as f32 / 255.0,
-    0xD3 as f32 / 255.0,
-    0xFC as f32 / 255.0,
-);
-
-// =============================================================================
-// BUSINESS THEME COLORS (Light Mode with Cyan-Blue accent)
-// =============================================================================
-
-// Primary accent: Cyan-Blue from lianawallet.com/business (HSL 196, 100%, 50%)
-pub const BUSINESS_BLUE: Color = Color::from_rgb(
-    0x00 as f32 / 255.0,
-    0xBD as f32 / 255.0,
-    0xFF as f32 / 255.0,
-);
-
-// Darker variant for hover states (HSL 196, 100%, 40%)
-pub const BUSINESS_BLUE_DARK: Color = Color::from_rgb(
-    0x00 as f32 / 255.0,
-    0x99 as f32 / 255.0,
-    0xCC as f32 / 255.0,
-); // #0099CC
-
-// Transparent variant for highlights
-pub const TRANSPARENT_BUSINESS_BLUE: Color = Color::from_rgba(
-    0x00 as f32 / 255.0,
-    0xBF as f32 / 255.0,
-    0xFF as f32 / 255.0,
-    0.15,
-);
-
-// Light blue tint for secondary button backgrounds
-pub const LIGHT_BLUE_TINT: Color = Color::from_rgb(
-    0xE5 as f32 / 255.0,
-    0xF5 as f32 / 255.0,
-    0xFF as f32 / 255.0,
-); // #E5F5FF
-
-// Soft blue for secondary button borders
-pub const SOFT_BLUE: Color = Color::from_rgb(
-    0x66 as f32 / 255.0,
-    0xD4 as f32 / 255.0,
-    0xFF as f32 / 255.0,
-); // #66D4FF
-
-// Dark green for success text on light backgrounds
-pub const DARK_GREEN: Color = Color::from_rgb(
-    0x00 as f32 / 255.0,
-    0x7A as f32 / 255.0,
-    0x33 as f32 / 255.0,
-); // #007A33 - darker forest green
-
-// Light theme backgrounds
-pub const LIGHT_BG: Color = Color::from_rgb(
-    0xF8 as f32 / 255.0,
-    0xF8 as f32 / 255.0,
-    0xF8 as f32 / 255.0,
-); // #F8F8F8 - soft off-white for reduced glare
-
-pub const LIGHT_BG_SECONDARY: Color = Color::from_rgb(
-    0xE5 as f32 / 255.0,
-    0xE5 as f32 / 255.0,
-    0xE5 as f32 / 255.0,
-); // #E5E5E5
-
-pub const LIGHT_BG_TERTIARY: Color = Color::from_rgb(
-    0xD5 as f32 / 255.0,
-    0xD5 as f32 / 255.0,
-    0xD5 as f32 / 255.0,
-); // #D5D5D5
-
-// Light theme text colors
-pub const DARK_TEXT_PRIMARY: Color = Color::from_rgb(
-    0x00 as f32 / 255.0,
-    0x00 as f32 / 255.0,
-    0x00 as f32 / 255.0,
-); // #000000 - true black
-
-pub const DARK_TEXT_SECONDARY: Color = Color::from_rgb(
-    0x1A as f32 / 255.0,
-    0x1A as f32 / 255.0,
-    0x1A as f32 / 255.0,
-); // #1A1A1A - very dark grey
-
-pub const DARK_TEXT_TERTIARY: Color = Color::from_rgb(
-    0x6B as f32 / 255.0,
-    0x6B as f32 / 255.0,
-    0x6B as f32 / 255.0,
-); // #6B6B6B
-
-// Light theme borders
-pub const LIGHT_BORDER: Color = Color::from_rgb(
-    0xA5 as f32 / 255.0,
-    0xA5 as f32 / 255.0,
-    0xA5 as f32 / 255.0,
-); // #A5A5A5
-
-pub const LIGHT_BORDER_STRONG: Color = Color::from_rgb(
-    0x7A as f32 / 255.0,
-    0x7A as f32 / 255.0,
-    0x7A as f32 / 255.0,
-); // #7A7A7A
-
-pub const AMBER: Color = Color::from_rgb(
-    0xFC as f32 / 255.0,
-    0xC1 as f32 / 255.0,
-    0x07 as f32 / 255.0,
-); // #FCC107
+// BUSINESS
+color!(BUSINESS_BLUE, 0x00BDFF);
+color!(BUSINESS_BLUE_DARK, 0x0099CC);
+color!(TRANSPARENT_BUSINESS_BLUE, 0x00BFFF, 0.15);
+color!(LIGHT_BLUE_TINT, 0xE5F5FF);
+color!(SOFT_BLUE, 0x66D4FF);
+color!(DARK_GREEN, 0x007A33);
+color!(LIGHT_BG, 0xF8F8F8);
+color!(LIGHT_BG_SECONDARY, 0xE5E5E5);
+color!(LIGHT_BG_TERTIARY, 0xD5D5D5);
+color!(DARK_TEXT_PRIMARY, 0x000000);
+color!(DARK_TEXT_SECONDARY, 0x101213);
+color!(DARK_TEXT_TERTIARY, 0x6B6B6B);
+color!(LIGHT_BORDER, 0xA5A5A5);
+color!(LIGHT_BORDER_STRONG, 0x7A7A7A);
+color!(AMBER, 0xF59F00);
+color!(BLACK_15, 0x000000, 0.15);
+color!(BLACK_25, 0x000000, 0.25);
+color!(BLACK_30, 0x000000, 0.3);
+color!(BLACK_80, 0x000000, 0.80);
