@@ -1850,6 +1850,495 @@ pub fn get_chat_identity_info(cube_name: &str, mnemonic: &str, order_id: &str) -
     }
 }
 
+// ── Encrypted image attachments ─────────────────────────────────────────
+
+const BLOSSOM_SERVERS: &[&str] = &[
+    "https://blossom.primal.net",
+    "https://blossom.band",
+    "https://nostr.media",
+];
+
+/// Metadata for an encrypted image attachment, compatible with the Mostro mobile client.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ImageMetadata {
+    #[serde(rename = "type")]
+    pub msg_type: String,
+    pub blossom_url: String,
+    pub nonce: String,
+    pub mime_type: String,
+    pub original_size: u64,
+    pub width: u32,
+    pub height: u32,
+    #[serde(default)]
+    pub filename: Option<String>,
+    pub encrypted_size: u64,
+}
+
+/// Metadata for an encrypted file attachment, compatible with the Mostro mobile client.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FileMetadata {
+    #[serde(rename = "type")]
+    pub msg_type: String,
+    pub file_type: String,
+    pub blossom_url: String,
+    pub nonce: String,
+    pub mime_type: String,
+    pub original_size: u64,
+    pub filename: String,
+    pub encrypted_size: u64,
+}
+
+/// Parsed attachment metadata from a chat message.
+#[derive(Debug, Clone)]
+pub enum AttachmentMeta {
+    Image(ImageMetadata),
+    File(FileMetadata),
+}
+
+impl AttachmentMeta {
+    pub fn blossom_url(&self) -> &str {
+        match self {
+            Self::Image(m) => &m.blossom_url,
+            Self::File(m) => &m.blossom_url,
+        }
+    }
+
+    pub fn filename(&self) -> &str {
+        match self {
+            Self::Image(m) => m.filename.as_deref().unwrap_or("image"),
+            Self::File(m) => &m.filename,
+        }
+    }
+}
+
+/// Extract the inner text content from a chat payload JSON.
+fn extract_payload_text(payload_json: &str) -> Option<String> {
+    if let Ok(Some(mostro_core::message::Payload::TextMessage(t))) =
+        serde_json::from_str::<Option<mostro_core::message::Payload>>(payload_json)
+    {
+        Some(t)
+    } else if let Ok(t) = serde_json::from_str::<String>(payload_json) {
+        Some(t)
+    } else {
+        None
+    }
+}
+
+/// Try to parse a chat message payload as an encrypted attachment (image or file).
+pub fn parse_attachment_metadata(payload_json: &str) -> Option<AttachmentMeta> {
+    let text = extract_payload_text(payload_json)?;
+    // Try image first
+    if let Ok(meta) = serde_json::from_str::<ImageMetadata>(&text) {
+        if meta.msg_type == "image_encrypted" {
+            return Some(AttachmentMeta::Image(meta));
+        }
+    }
+    // Try file
+    if let Ok(meta) = serde_json::from_str::<FileMetadata>(&text) {
+        if meta.msg_type == "file_encrypted" {
+            return Some(AttachmentMeta::File(meta));
+        }
+    }
+    None
+}
+
+/// Backwards-compatible alias — returns Some only for images.
+pub fn parse_image_metadata(payload_json: &str) -> Option<ImageMetadata> {
+    match parse_attachment_metadata(payload_json)? {
+        AttachmentMeta::Image(m) => Some(m),
+        AttachmentMeta::File(_) => None,
+    }
+}
+
+/// Derive the raw 32-byte ECDH shared key for ChaCha20-Poly1305 encryption.
+fn derive_encryption_key(
+    our_keys: &Keys,
+    counterparty_pubkey: &PublicKey,
+) -> Result<[u8; 32], String> {
+    nostr_sdk::util::generate_shared_key(our_keys.secret_key(), counterparty_pubkey)
+        .map_err(|e| format!("Failed to compute shared key: {e}"))
+}
+
+/// Encrypt image bytes with ChaCha20-Poly1305.
+/// Returns blob in wire format: [nonce 12B][ciphertext][auth_tag 16B].
+fn encrypt_image_blob(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, [u8; 12]), String> {
+    use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit, Nonce};
+
+    let cipher = ChaCha20Poly1305::new(key.into());
+    let nonce_bytes: [u8; 12] = rand::random();
+    let nonce = Nonce::from(nonce_bytes);
+
+    let ciphertext = cipher
+        .encrypt(&nonce, plaintext)
+        .map_err(|e| format!("Encryption failed: {e}"))?;
+
+    // Wire format: [nonce][ciphertext+tag] (chacha20poly1305 appends the 16B tag to ciphertext)
+    let mut blob = Vec::with_capacity(12 + ciphertext.len());
+    blob.extend_from_slice(&nonce_bytes);
+    blob.extend_from_slice(&ciphertext);
+
+    Ok((blob, nonce_bytes))
+}
+
+/// Decrypt an image blob (wire format: [nonce 12B][ciphertext+tag]).
+pub fn decrypt_image_blob(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>, String> {
+    use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit, Nonce};
+
+    if blob.len() < 28 {
+        return Err("Blob too small for ChaCha20-Poly1305".to_string());
+    }
+
+    let nonce = Nonce::from_slice(&blob[..12]);
+    let ciphertext_and_tag = &blob[12..];
+
+    let cipher = ChaCha20Poly1305::new(key.into());
+    cipher
+        .decrypt(nonce, ciphertext_and_tag)
+        .map_err(|e| format!("Decryption failed: {e}"))
+}
+
+/// Upload an encrypted blob to a Blossom server with Nostr auth.
+async fn upload_to_blossom(encrypted_blob: &[u8], trade_keys: &Keys) -> Result<String, String> {
+    use base64::Engine as _;
+    use sha2::{Digest, Sha256};
+
+    let hash_hex = {
+        let mut hasher = Sha256::new();
+        hasher.update(encrypted_blob);
+        hex::encode(hasher.finalize())
+    };
+
+    let timestamp = chrono::Utc::now().timestamp();
+    let expiration = (timestamp + 3600).to_string();
+
+    // Create kind-24242 Blossom auth event
+    let auth_event = EventBuilder::new(nostr_sdk::Kind::Custom(24242), "Upload image")
+        .tag(Tag::custom(
+            nostr_sdk::TagKind::SingleLetter(nostr_sdk::SingleLetterTag::lowercase(
+                nostr_sdk::Alphabet::T,
+            )),
+            ["upload"],
+        ))
+        .tag(Tag::custom(
+            nostr_sdk::TagKind::SingleLetter(nostr_sdk::SingleLetterTag::lowercase(
+                nostr_sdk::Alphabet::X,
+            )),
+            [hash_hex.as_str()],
+        ))
+        .tag(Tag::custom(
+            nostr_sdk::TagKind::Custom("expiration".into()),
+            [expiration.as_str()],
+        ))
+        .sign_with_keys(trade_keys)
+        .map_err(|e| format!("Failed to sign Blossom auth: {e}"))?;
+
+    let auth_json = auth_event.as_json();
+    let auth_base64 = base64::engine::general_purpose::STANDARD.encode(auth_json.as_bytes());
+
+    let http_client = reqwest::Client::new();
+
+    for server in BLOSSOM_SERVERS {
+        let url = format!("{}/upload", server);
+        tracing::debug!("Uploading to Blossom: {url}");
+
+        match http_client
+            .put(&url)
+            .header("Content-Type", "application/octet-stream")
+            .header("Authorization", format!("Nostr {auth_base64}"))
+            .body(encrypted_blob.to_vec())
+            .timeout(Duration::from_secs(120))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                let blob_url = format!("{}/{}", server, hash_hex);
+                tracing::info!("Blossom upload successful: {blob_url}");
+                return Ok(blob_url);
+            }
+            Ok(resp) => {
+                tracing::warn!("Blossom upload to {server} failed: {}", resp.status());
+            }
+            Err(e) => {
+                tracing::warn!("Blossom upload to {server} error: {e}");
+            }
+        }
+    }
+
+    Err("All Blossom servers failed".to_string())
+}
+
+/// Download an encrypted blob from a Blossom URL.
+pub async fn download_from_blossom(url: &str) -> Result<Vec<u8>, String> {
+    let resp = reqwest::get(url)
+        .await
+        .map_err(|e| format!("Download failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Download failed: HTTP {}", resp.status()));
+    }
+
+    resp.bytes()
+        .await
+        .map(|b| b.to_vec())
+        .map_err(|e| format!("Failed to read response: {e}"))
+}
+
+/// Data for sending an image attachment.
+pub struct AttachmentData {
+    pub file_path: std::path::PathBuf,
+    pub order_id: String,
+    pub cube_name: String,
+    pub mnemonic: String,
+    pub mostro_pubkey_hex: String,
+    pub relay_urls: Vec<String>,
+}
+
+/// Send an encrypted image attachment via P2P chat.
+/// Returns the JSON metadata string on success (for persisting as a TradeMessage).
+pub async fn send_image_attachment(data: AttachmentData) -> Result<String, String> {
+    // 1. Read and decode image
+    let img_bytes =
+        std::fs::read(&data.file_path).map_err(|e| format!("Failed to read image: {e}"))?;
+
+    let img = ::image::load_from_memory(&img_bytes)
+        .map_err(|e| format!("Failed to decode image: {e}"))?;
+
+    // 2. Resize if too large (cap at 1920px longest side)
+    let img = if img.width().max(img.height()) > 1920 {
+        img.resize(1920, 1920, ::image::imageops::FilterType::Lanczos3)
+    } else {
+        img
+    };
+
+    let width = img.width();
+    let height = img.height();
+
+    // 3. Re-encode as JPEG
+    let mut jpeg_buf = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut jpeg_buf, ::image::ImageFormat::Jpeg)
+        .map_err(|e| format!("Failed to encode JPEG: {e}"))?;
+    let jpeg_bytes = jpeg_buf.into_inner();
+    let original_size = jpeg_bytes.len() as u64;
+
+    // 4. Get encryption key
+    let sessions = load_data(&data.cube_name).unwrap_or_default().trades;
+    let session = sessions
+        .iter()
+        .find(|s| s.order_id == data.order_id)
+        .ok_or_else(|| format!("No trade session for order {}", data.order_id))?;
+
+    let cp_hex = session
+        .counterparty_trade_pubkey
+        .as_deref()
+        .ok_or("No counterparty pubkey — cannot send attachment")?;
+    let cp_pk =
+        PublicKey::from_hex(cp_hex).map_err(|e| format!("Invalid counterparty pubkey: {e}"))?;
+    let trade_keys = derive_trade_keys(&data.mnemonic, session.trade_index)?;
+    let encryption_key = derive_encryption_key(&trade_keys, &cp_pk)?;
+
+    // 5. Encrypt
+    let (encrypted_blob, nonce_bytes) = encrypt_image_blob(&encryption_key, &jpeg_bytes)?;
+    let encrypted_size = encrypted_blob.len() as u64;
+
+    // 6. Upload to Blossom
+    let blossom_url = upload_to_blossom(&encrypted_blob, &trade_keys).await?;
+
+    // 7. Build metadata JSON
+    let filename = data
+        .file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("image_{}.jpg", chrono::Utc::now().timestamp()));
+
+    let metadata = ImageMetadata {
+        msg_type: "image_encrypted".to_string(),
+        blossom_url,
+        nonce: hex::encode(nonce_bytes),
+        mime_type: "image/jpeg".to_string(),
+        original_size,
+        width,
+        height,
+        filename: Some(filename),
+        encrypted_size,
+    };
+    let metadata_json = serde_json::to_string(&metadata)
+        .map_err(|e| format!("Failed to serialize metadata: {e}"))?;
+
+    // 8. Send metadata as chat message (reuse existing chat send infrastructure)
+    let chat_data = TradeActionData {
+        order_id: data.order_id,
+        cube_name: data.cube_name,
+        mnemonic: data.mnemonic,
+        invoice: Some(metadata_json.clone()),
+        mostro_pubkey_hex: data.mostro_pubkey_hex,
+        relay_urls: data.relay_urls,
+    };
+    send_encrypted_chat(&chat_data, ChatTarget::Peer).await?;
+
+    Ok(metadata_json)
+}
+
+/// Maximum file size for attachments (25 MB, matching mobile).
+const MAX_ATTACHMENT_SIZE: u64 = 25 * 1024 * 1024;
+
+/// Image extensions that get the image pipeline (resize + re-encode).
+const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp"];
+
+/// Determine the file_type category from a MIME type (matching mobile's categories).
+fn file_type_from_mime(mime: &str) -> &'static str {
+    if mime.starts_with("image/") {
+        "image"
+    } else if mime.starts_with("video/") {
+        "video"
+    } else {
+        "document"
+    }
+}
+
+/// Guess MIME type from file extension.
+fn mime_from_extension(ext: &str) -> &'static str {
+    match ext.to_ascii_lowercase().as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        "avi" => "video/x-msvideo",
+        "pdf" => "application/pdf",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Send an encrypted file attachment (non-image) via P2P chat.
+pub async fn send_file_attachment(data: AttachmentData) -> Result<String, String> {
+    let file_bytes =
+        std::fs::read(&data.file_path).map_err(|e| format!("Failed to read file: {e}"))?;
+
+    if file_bytes.len() as u64 > MAX_ATTACHMENT_SIZE {
+        return Err(format!(
+            "File too large ({:.1} MB). Maximum is 25 MB.",
+            file_bytes.len() as f64 / (1024.0 * 1024.0)
+        ));
+    }
+
+    let original_size = file_bytes.len() as u64;
+    let filename = data
+        .file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file")
+        .to_string();
+    let ext = data
+        .file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let mime_type = mime_from_extension(ext).to_string();
+    let file_type = file_type_from_mime(&mime_type).to_string();
+
+    // Get encryption key
+    let sessions = load_data(&data.cube_name).unwrap_or_default().trades;
+    let session = sessions
+        .iter()
+        .find(|s| s.order_id == data.order_id)
+        .ok_or_else(|| format!("No trade session for order {}", data.order_id))?;
+
+    let cp_hex = session
+        .counterparty_trade_pubkey
+        .as_deref()
+        .ok_or("No counterparty pubkey — cannot send attachment")?;
+    let cp_pk =
+        PublicKey::from_hex(cp_hex).map_err(|e| format!("Invalid counterparty pubkey: {e}"))?;
+    let trade_keys = derive_trade_keys(&data.mnemonic, session.trade_index)?;
+    let encryption_key = derive_encryption_key(&trade_keys, &cp_pk)?;
+
+    // Encrypt
+    let (encrypted_blob, nonce_bytes) = encrypt_image_blob(&encryption_key, &file_bytes)?;
+    let encrypted_size = encrypted_blob.len() as u64;
+
+    // Upload
+    let blossom_url = upload_to_blossom(&encrypted_blob, &trade_keys).await?;
+
+    // Build metadata
+    let metadata = FileMetadata {
+        msg_type: "file_encrypted".to_string(),
+        file_type,
+        blossom_url,
+        nonce: hex::encode(nonce_bytes),
+        mime_type,
+        original_size,
+        filename,
+        encrypted_size,
+    };
+    let metadata_json = serde_json::to_string(&metadata)
+        .map_err(|e| format!("Failed to serialize metadata: {e}"))?;
+
+    // Send as chat message
+    let chat_data = TradeActionData {
+        order_id: data.order_id,
+        cube_name: data.cube_name,
+        mnemonic: data.mnemonic,
+        invoice: Some(metadata_json.clone()),
+        mostro_pubkey_hex: data.mostro_pubkey_hex,
+        relay_urls: data.relay_urls,
+    };
+    send_encrypted_chat(&chat_data, ChatTarget::Peer).await?;
+
+    Ok(metadata_json)
+}
+
+/// Send an attachment — routes to image or file pipeline based on extension.
+pub async fn send_attachment(data: AttachmentData) -> Result<String, String> {
+    let is_image = data
+        .file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| IMAGE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+        .unwrap_or(false);
+
+    if is_image {
+        send_image_attachment(data).await
+    } else {
+        send_file_attachment(data).await
+    }
+}
+
+/// Download and decrypt an image from a Blossom URL.
+pub async fn download_and_decrypt_image(
+    blossom_url: String,
+    order_id: String,
+    cube_name: String,
+    mnemonic: String,
+) -> Result<(String, String, Vec<u8>), String> {
+    // Get encryption key from session
+    let sessions = load_data(&cube_name).unwrap_or_default().trades;
+    let session = sessions
+        .iter()
+        .find(|s| s.order_id == order_id)
+        .ok_or_else(|| format!("No trade session for order {}", order_id))?;
+
+    let cp_hex = session
+        .counterparty_trade_pubkey
+        .as_deref()
+        .ok_or("No counterparty pubkey")?;
+    let cp_pk =
+        PublicKey::from_hex(cp_hex).map_err(|e| format!("Invalid counterparty pubkey: {e}"))?;
+    let trade_keys = derive_trade_keys(&mnemonic, session.trade_index)?;
+    let encryption_key = derive_encryption_key(&trade_keys, &cp_pk)?;
+
+    // Download
+    let blob = download_from_blossom(&blossom_url).await?;
+
+    // Decrypt
+    let decrypted = decrypt_image_blob(&encryption_key, &blob)?;
+
+    Ok((order_id, blossom_url, decrypted))
+}
+
 // ── Order fetching (existing code) ──────────────────────────────────────
 
 /// Rating data parsed from the event's `rating` tag.

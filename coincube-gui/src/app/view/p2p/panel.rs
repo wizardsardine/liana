@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use coincube_ui::{
@@ -135,6 +135,21 @@ fn extract_chat_text(payload_json: &str) -> String {
     payload_json.to_string()
 }
 
+/// Which tab is active in the Chat list view.
+#[derive(Default, PartialEq)]
+enum ChatListTab {
+    #[default]
+    Messages,
+    Disputes,
+}
+
+/// Cached state for a downloaded chat image.
+enum ImageCacheEntry {
+    Loading,
+    Ready(iced::widget::image::Handle),
+    Failed(String),
+}
+
 /// Data for a chat message whose send is in-flight.
 struct PendingChatMessage {
     order_id: String,
@@ -195,6 +210,10 @@ pub struct P2PPanel {
     pending_payment_invoice: Option<(String, String, Option<i64>, qr_code::Data)>, // (order_id, invoice, amount_sats, qr_data)
     invoice_copied: bool,
     // Chat
+    /// Trade selected from the Chat tab's conversation list.
+    chat_selected_trade: Option<String>,
+    /// Active tab in the Chat list (Messages vs Disputes).
+    chat_list_tab: ChatListTab,
     active_chat: ActiveChat,
     chat_input: form::Value<String>,
     /// Holds the data for a chat message that is currently being sent.
@@ -218,6 +237,12 @@ pub struct P2PPanel {
     cached_trade_messages: Vec<super::mostro::TradeMessage>,
     /// Cached chat identity info for the selected trade (avoids key-derivation per frame).
     cached_chat_identity: Option<super::mostro::ChatIdentityInfo>,
+    /// Decrypted image cache, keyed by blossom URL.
+    image_cache: HashMap<String, ImageCacheEntry>,
+    /// Blossom URLs currently being downloaded (prevents duplicate fetches).
+    image_downloads_in_flight: HashSet<String>,
+    /// Whether an image attachment is currently being sent.
+    attachment_sending: bool,
 }
 
 impl P2PPanel {
@@ -267,6 +292,8 @@ impl P2PPanel {
             hold_invoice_qr: None,
             pending_payment_invoice: None,
             invoice_copied: false,
+            chat_selected_trade: None,
+            chat_list_tab: ChatListTab::Messages,
             active_chat: ActiveChat::None,
             chat_input: Default::default(),
             pending_chat_message: None,
@@ -285,6 +312,9 @@ impl P2PPanel {
             stream_error: None,
             cached_trade_messages: Vec::new(),
             cached_chat_identity: None,
+            image_cache: HashMap::new(),
+            image_downloads_in_flight: HashSet::new(),
+            attachment_sending: false,
         }
     }
 
@@ -301,7 +331,24 @@ impl P2PPanel {
     /// `self.cached_trade_messages` / `self.cached_chat_identity` instead
     /// of hitting the disk on every frame.
     fn refresh_trade_cache(&mut self) {
-        if let Some(ref order_id) = self.selected_trade.clone() {
+        let order_id = self.active_order_id();
+        if let Some(order_id) = order_id {
+            let cube_name = self.cube_name();
+            self.cached_trade_messages = super::mostro::get_trade_messages(&cube_name, &order_id);
+            self.cached_chat_identity = Some(super::mostro::get_chat_identity_info(
+                &cube_name,
+                &self.mnemonic,
+                &order_id,
+            ));
+        } else {
+            self.cached_trade_messages = Vec::new();
+            self.cached_chat_identity = None;
+        }
+    }
+
+    /// Separate cache refresh for the Chat tab's selected trade.
+    fn refresh_chat_trade_cache(&mut self) {
+        if let Some(ref order_id) = self.chat_selected_trade.clone() {
             let cube_name = self.cube_name();
             self.cached_trade_messages = super::mostro::get_trade_messages(&cube_name, order_id);
             self.cached_chat_identity = Some(super::mostro::get_chat_identity_info(
@@ -312,6 +359,74 @@ impl P2PPanel {
         } else {
             self.cached_trade_messages = Vec::new();
             self.cached_chat_identity = None;
+        }
+    }
+
+    /// The currently active order ID — prefers `chat_selected_trade` if set,
+    /// otherwise falls back to `selected_trade` (MyTrades).
+    fn active_order_id(&self) -> Option<String> {
+        self.chat_selected_trade
+            .clone()
+            .or_else(|| self.selected_trade.clone())
+    }
+
+    /// Scan cached messages for image attachments and trigger downloads for any
+    /// that aren't already cached or in-flight.
+    fn trigger_image_downloads(&mut self) -> Task<Message> {
+        let Some(order_id) = self.active_order_id() else {
+            return Task::none();
+        };
+        let mut tasks: Vec<Task<Message>> = Vec::new();
+        let chat_msgs: Vec<_> = self
+            .cached_trade_messages
+            .iter()
+            .filter(|m| m.action == "SendDm" || m.action == "AdminDm")
+            .collect();
+
+        for msg in chat_msgs {
+            // Only auto-download images; files just show metadata
+            if let Some(super::mostro::AttachmentMeta::Image(meta)) =
+                super::mostro::parse_attachment_metadata(&msg.payload_json)
+            {
+                let url = meta.blossom_url.clone();
+                if self.image_cache.contains_key(&url)
+                    || self.image_downloads_in_flight.contains(&url)
+                {
+                    continue;
+                }
+                self.image_cache
+                    .insert(url.clone(), ImageCacheEntry::Loading);
+                self.image_downloads_in_flight.insert(url.clone());
+
+                let oid = order_id.clone();
+                let cname = self.cube_name();
+                let mnemonic = self.mnemonic.clone();
+                tasks.push(Task::perform(
+                    super::mostro::download_and_decrypt_image(url, oid, cname, mnemonic),
+                    |result| match result {
+                        Ok((order_id, blossom_url, bytes)) => {
+                            Message::View(view::Message::P2P(P2PMessage::AttachmentDownloaded {
+                                order_id,
+                                blossom_url,
+                                data: Ok(bytes),
+                            }))
+                        }
+                        Err(e) => {
+                            // We don't know the blossom_url from here, so encode in error
+                            Message::View(view::Message::P2P(P2PMessage::AttachmentDownloaded {
+                                order_id: String::new(),
+                                blossom_url: String::new(),
+                                data: Err(e),
+                            }))
+                        }
+                    },
+                ));
+            }
+        }
+        if tasks.is_empty() {
+            Task::none()
+        } else {
+            Task::batch(tasks)
         }
     }
 
@@ -2024,15 +2139,7 @@ impl P2PPanel {
     fn chat_view<'a>(&'a self, trade: &'a P2PTrade) -> Element<'a, view::Message> {
         let p2p = |msg: P2PMessage| view::Message::P2P(msg);
 
-        let chat_enabled = matches!(
-            trade.status,
-            TradeStatus::Active
-                | TradeStatus::FiatSent
-                | TradeStatus::SettledHoldInvoice
-                | TradeStatus::CooperativelyCanceled
-                | TradeStatus::Dispute
-                | TradeStatus::PaymentFailed
-        );
+        let chat_enabled = trade.counterparty_pubkey.is_some();
 
         let chat_messages: Vec<&super::mostro::TradeMessage> = self
             .cached_trade_messages
@@ -2273,11 +2380,85 @@ impl P2PPanel {
             );
         } else {
             for msg in &chat_messages {
-                let text = extract_chat_text(&msg.payload_json);
                 let ts = chrono::DateTime::from_timestamp(msg.timestamp as i64, 0)
                     .unwrap_or_default()
                     .with_timezone(&chrono::Local);
                 let time_str = ts.format("%H:%M").to_string();
+
+                // Check if this is an attachment (image or file)
+                let content: Element<'_, view::Message> = if let Some(meta) =
+                    super::mostro::parse_attachment_metadata(&msg.payload_json)
+                {
+                    let filename_label = meta.filename().to_string();
+                    let blossom_url = meta.blossom_url().to_string();
+                    match &meta {
+                        super::mostro::AttachmentMeta::Image(img_meta) => {
+                            match self.image_cache.get(&blossom_url) {
+                                Some(ImageCacheEntry::Ready(handle)) => {
+                                    let display_width = (img_meta.width).min(300);
+                                    column![
+                                        iced::widget::image(handle.clone())
+                                            .width(display_width as f32),
+                                        caption(filename_label).style(theme::text::secondary),
+                                    ]
+                                    .spacing(4)
+                                    .into()
+                                }
+                                Some(ImageCacheEntry::Loading) => column![
+                                    p2_regular("Loading image...").style(theme::text::secondary),
+                                    caption(filename_label).style(theme::text::secondary),
+                                ]
+                                .spacing(4)
+                                .into(),
+                                Some(ImageCacheEntry::Failed(e)) => column![
+                                    p2_regular(format!("Failed: {e}")).style(theme::text::warning),
+                                    caption(filename_label).style(theme::text::secondary),
+                                ]
+                                .spacing(4)
+                                .into(),
+                                None => column![
+                                    p2_regular("Loading image...").style(theme::text::secondary),
+                                    caption(filename_label).style(theme::text::secondary),
+                                ]
+                                .spacing(4)
+                                .into(),
+                            }
+                        }
+                        super::mostro::AttachmentMeta::File(file_meta) => {
+                            let file_icon = match file_meta.file_type.as_str() {
+                                "video" => icon::import_icon(),
+                                "image" => icon::import_icon(),
+                                _ => icon::import_icon(),
+                            };
+                            let size_label = if file_meta.original_size < 1024 {
+                                format!("{} B", file_meta.original_size)
+                            } else if file_meta.original_size < 1024 * 1024 {
+                                format!("{:.1} KB", file_meta.original_size as f64 / 1024.0)
+                            } else {
+                                format!(
+                                    "{:.1} MB",
+                                    file_meta.original_size as f64 / (1024.0 * 1024.0)
+                                )
+                            };
+                            column![row![
+                                file_icon.size(24).style(theme::text::secondary),
+                                column![
+                                    p2_regular(filename_label),
+                                    caption(format!("{} · {}", file_meta.file_type, size_label))
+                                        .style(theme::text::secondary),
+                                ]
+                                .spacing(2),
+                            ]
+                            .spacing(8)
+                            .align_y(iced::alignment::Vertical::Center),]
+                            .spacing(4)
+                            .into()
+                        }
+                    }
+                } else {
+                    let text = extract_chat_text(&msg.payload_json);
+                    p1_regular(text).into()
+                };
 
                 if msg.is_own {
                     msg_col = msg_col.push(
@@ -2287,7 +2468,7 @@ impl P2PPanel {
                                 .align_right(Length::Fill),
                             row![
                                 Space::new().width(Length::FillPortion(3)),
-                                container(p1_regular(text))
+                                container(content)
                                     .padding([10, 16])
                                     .style(chat_bubble_own as fn(&_) -> _)
                                     .max_width(480),
@@ -2303,7 +2484,7 @@ impl P2PPanel {
                         column![
                             caption(peer_nick.clone()).style(theme::text::primary),
                             row![
-                                container(p1_regular(text))
+                                container(content)
                                     .padding([10, 16])
                                     .style(chat_bubble_peer as fn(&_) -> _)
                                     .max_width(480),
@@ -2317,6 +2498,27 @@ impl P2PPanel {
             }
         }
 
+        // Show "Sending image..." indicator while upload is in progress
+        if self.attachment_sending {
+            msg_col = msg_col.push(
+                column![
+                    container(caption("You").style(theme::text::secondary))
+                        .width(Length::Fill)
+                        .align_right(Length::Fill),
+                    row![
+                        Space::new().width(Length::FillPortion(3)),
+                        container(
+                            p2_regular("Sending attachment...").style(theme::text::secondary),
+                        )
+                        .padding([10, 16])
+                        .style(chat_bubble_own as fn(&_) -> _)
+                        .max_width(480),
+                    ],
+                ]
+                .spacing(2),
+            );
+        }
+
         let chat_scroll = iced::widget::scrollable(msg_col)
             .height(Length::Fill)
             .anchor_bottom();
@@ -2325,14 +2527,22 @@ impl P2PPanel {
         let input_area: Element<'_, view::Message> = if chat_enabled {
             let can_send =
                 !self.chat_input.value.trim().is_empty() && self.pending_chat_message.is_none();
-            let send_btn = if can_send {
-                button::primary(Some(icon::send_icon()), "Send")
-                    .on_press(p2p(P2PMessage::SendChatMessage))
-            } else {
-                button::primary(Some(icon::send_icon()), "Send")
-            };
+            let mut send_btn = iced::widget::button(icon::send_icon().size(18))
+                .padding([8, 10])
+                .style(theme::button::primary);
+            if can_send {
+                send_btn = send_btn.on_press(p2p(P2PMessage::SendChatMessage));
+            }
+            let can_attach = self.pending_chat_message.is_none() && !self.attachment_sending;
+            let mut attach_btn = iced::widget::button(icon::plus_icon().size(18))
+                .padding([8, 10])
+                .style(theme::button::secondary);
+            if can_attach {
+                attach_btn = attach_btn.on_press(p2p(P2PMessage::AttachFile));
+            }
             container(
                 row![
+                    attach_btn,
                     form::Form::new("Type a message...", &self.chat_input, |v| {
                         view::Message::P2P(P2PMessage::ChatInputEdited(v))
                     })
@@ -2768,6 +2978,196 @@ impl P2PPanel {
         }
         settings_col.into()
     }
+
+    /// Build the chat list view showing all trades with active conversations.
+    fn chat_list_view(&self) -> Element<'_, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        let is_disputes = self.chat_list_tab == ChatListTab::Disputes;
+
+        // Tab buttons (same style as buy/sell tabs)
+        let messages_tab = iced::widget::button(
+            container(p1_bold("Messages"))
+                .padding([12, 0])
+                .align_x(iced::alignment::Horizontal::Center)
+                .width(Length::Fill),
+        )
+        .style(if !is_disputes {
+            theme::button::primary as fn(&_, _) -> _
+        } else {
+            theme::button::transparent as fn(&_, _) -> _
+        })
+        .on_press(p2p(P2PMessage::ChatListTabMessages))
+        .width(Length::Fill);
+
+        let disputes_tab = iced::widget::button(
+            container(p1_bold("Disputes"))
+                .padding([12, 0])
+                .align_x(iced::alignment::Horizontal::Center)
+                .width(Length::Fill),
+        )
+        .style(if is_disputes {
+            theme::button::primary as fn(&_, _) -> _
+        } else {
+            theme::button::transparent as fn(&_, _) -> _
+        })
+        .on_press(p2p(P2PMessage::ChatListTabDisputes))
+        .width(Length::Fill);
+
+        let tabs = container(
+            row![messages_tab, disputes_tab]
+                .spacing(4)
+                .width(Length::Fill),
+        )
+        .padding(4)
+        .width(Length::Fill)
+        .style(theme::container::foreground_rounded);
+
+        // Filter action based on active tab
+        let action_filter: &[&str] = if is_disputes {
+            &["AdminDm"]
+        } else {
+            &["SendDm"]
+        };
+
+        // Collect trades that have matching chat messages
+        let cube_name = self.cube_name();
+        let mut chat_entries: Vec<(&P2PTrade, String, u64)> = Vec::new();
+        for trade in &self.trades {
+            let messages = super::mostro::get_trade_messages(&cube_name, &trade.id);
+            let chat_msgs: Vec<_> = messages
+                .iter()
+                .filter(|m| action_filter.contains(&m.action.as_str()))
+                .collect();
+            if !chat_msgs.is_empty() {
+                let last_msg = chat_msgs.last().unwrap();
+                let preview = if let Some(meta) =
+                    super::mostro::parse_attachment_metadata(&last_msg.payload_json)
+                {
+                    match meta {
+                        super::mostro::AttachmentMeta::Image(_) => "Image".to_string(),
+                        super::mostro::AttachmentMeta::File(f) => f.filename.clone(),
+                    }
+                } else {
+                    let text = extract_chat_text(&last_msg.payload_json);
+                    if text.len() > 50 {
+                        format!("{}...", &text[..50])
+                    } else {
+                        text
+                    }
+                };
+                let prefix = if last_msg.is_own {
+                    format!("You: {preview}")
+                } else {
+                    preview
+                };
+                chat_entries.push((trade, prefix, last_msg.timestamp));
+            }
+        }
+
+        // Sort by last message timestamp, newest first
+        chat_entries.sort_by(|a, b| b.2.cmp(&a.2));
+
+        let list_content: Element<'_, view::Message> = if chat_entries.is_empty() {
+            let (empty_label, empty_hint) = if is_disputes {
+                (
+                    "No dispute conversations",
+                    "Dispute chats will appear here if a trade is disputed",
+                )
+            } else {
+                (
+                    "No conversations yet",
+                    "Chat messages will appear here when you trade",
+                )
+            };
+            let empty_icon = if is_disputes {
+                icon::warning_icon().size(48).style(theme::text::secondary)
+            } else {
+                icon::chat_icon().size(48).style(theme::text::secondary)
+            };
+            container(
+                column![
+                    empty_icon,
+                    p1_bold(empty_label),
+                    p2_regular(empty_hint).style(theme::text::secondary),
+                ]
+                .spacing(12)
+                .align_x(iced::alignment::Horizontal::Center),
+            )
+            .padding(60)
+            .width(Length::Fill)
+            .center_x(Length::Fill)
+            .into()
+        } else {
+            // Pre-build owned data for each entry to avoid lifetime issues
+            let entries: Vec<_> = chat_entries
+                .iter()
+                .map(|(trade, preview, last_ts)| {
+                    let nick = if is_disputes {
+                        "Admin / Solver".to_string()
+                    } else {
+                        trade
+                            .counterparty_pubkey
+                            .as_deref()
+                            .map(super::mostro::nickname_from_pubkey)
+                            .unwrap_or_else(|| "Peer".to_string())
+                    };
+                    let order_short = trade.id[..8.min(trade.id.len())].to_string();
+                    let action_label = match trade.order_type {
+                        OrderType::Buy => format!("You are buying from {}", nick),
+                        OrderType::Sell => format!("You are selling to {}", nick),
+                    };
+                    let time_str = {
+                        let dt = chrono::DateTime::from_timestamp(*last_ts as i64, 0)
+                            .unwrap_or_default()
+                            .with_timezone(&chrono::Local);
+                        let today = chrono::Local::now().date_naive();
+                        if dt.date_naive() == today {
+                            dt.format("%H:%M").to_string()
+                        } else {
+                            dt.format("%b %d, %H:%M").to_string()
+                        }
+                    };
+                    let subtitle = format!("{} · {}", action_label, order_short);
+                    (trade.id.clone(), nick, subtitle, preview.clone(), time_str)
+                })
+                .collect();
+
+            let mut list_col = column![].spacing(8).width(Length::Fill);
+            for (trade_id, nick, subtitle, preview, time_str) in entries {
+                let entry_content = card::simple(
+                    row![
+                        column![
+                            p1_bold(nick),
+                            p2_regular(subtitle).style(theme::text::secondary),
+                            p2_regular(preview).style(theme::text::secondary),
+                        ]
+                        .spacing(4)
+                        .width(Length::Fill),
+                        caption(time_str).style(theme::text::secondary),
+                    ]
+                    .spacing(12)
+                    .align_y(iced::alignment::Vertical::Center),
+                )
+                .width(Length::Fill);
+
+                let on_press = if is_disputes {
+                    p2p(P2PMessage::OpenDisputeChatForTrade(trade_id))
+                } else {
+                    p2p(P2PMessage::OpenChatForTrade(trade_id))
+                };
+
+                let entry = iced::widget::button(entry_content)
+                    .on_press(on_press)
+                    .width(Length::Fill)
+                    .style(theme::button::transparent);
+
+                list_col = list_col.push(entry);
+            }
+            list_col.into()
+        };
+
+        column![tabs, list_content].spacing(16).into()
+    }
 }
 
 impl State for P2PPanel {
@@ -3111,6 +3511,156 @@ impl State for P2PPanel {
                                         .padding([0, 20]),
                                 )
                             },
+                            Space::new().height(Length::Fixed(40.0)),
+                        ]
+                        .spacing(16),
+                    )
+                }
+                P2PSubMenu::Chat => {
+                    // If a trade is selected from the chat list, show the chat view
+                    if let Some(ref selected_id) = self.chat_selected_trade {
+                        if let Some(trade) = self.trades.iter().find(|t| t.id == *selected_id) {
+                            if self.active_chat == ActiveChat::Peer {
+                                let has_vault = cache.has_vault;
+                                let order_short = &trade.id[..8.min(trade.id.len())];
+                                let trade_type_label = match trade.order_type {
+                                    OrderType::Buy => "BUY",
+                                    OrderType::Sell => "SELL",
+                                };
+                                let peer_nick = trade
+                                    .counterparty_pubkey
+                                    .as_deref()
+                                    .map(super::mostro::nickname_from_pubkey)
+                                    .unwrap_or_else(|| "Peer".to_string());
+
+                                let header = container(
+                                    row![
+                                        button::secondary(Some(icon::previous_icon()), "Back")
+                                            .on_press(view::Message::P2P(P2PMessage::CloseChat)),
+                                        Space::new().width(Length::Fill),
+                                        column![
+                                            p1_bold(peer_nick),
+                                            p2_regular(format!(
+                                                "{} Order {}",
+                                                trade_type_label, order_short
+                                            ))
+                                            .style(theme::text::secondary),
+                                        ]
+                                        .spacing(2)
+                                        .align_x(iced::alignment::Horizontal::Center),
+                                        Space::new().width(Length::Fill),
+                                        Space::new().width(Length::Fixed(80.0)),
+                                    ]
+                                    .align_y(iced::alignment::Vertical::Center),
+                                )
+                                .padding([16, 20])
+                                .width(Length::Fill)
+                                .style(theme::container::foreground);
+
+                                return row![]
+                                    .push(
+                                        view::sidebar(
+                                            menu,
+                                            cache,
+                                            has_vault,
+                                            &cache.cube_name,
+                                            None,
+                                            None,
+                                            cache.has_p2p,
+                                        )
+                                        .height(Length::Fill)
+                                        .width(Length::Fixed(190.0)),
+                                    )
+                                    .push(
+                                        iced::widget::Column::new()
+                                            .push(view::warn(None))
+                                            .push(header)
+                                            .push(
+                                                container(self.chat_view(trade))
+                                                    .padding(20)
+                                                    .width(Length::Fill)
+                                                    .height(Length::Fill)
+                                                    .style(theme::container::background),
+                                            )
+                                            .width(Length::Fill),
+                                    )
+                                    .width(Length::Fill)
+                                    .height(Length::Fill)
+                                    .into();
+                            } else if self.active_chat == ActiveChat::Dispute {
+                                let has_vault = cache.has_vault;
+                                let order_short = &trade.id[..8.min(trade.id.len())];
+                                let header = container(
+                                    row![
+                                        button::secondary(Some(icon::previous_icon()), "Back")
+                                            .on_press(view::Message::P2P(P2PMessage::CloseChat)),
+                                        Space::new().width(Length::Fill),
+                                        column![
+                                            p1_bold("Dispute Chat"),
+                                            p2_regular(format!("Order {}", order_short))
+                                                .style(theme::text::secondary),
+                                        ]
+                                        .spacing(2)
+                                        .align_x(iced::alignment::Horizontal::Center),
+                                        Space::new().width(Length::Fill),
+                                        Space::new().width(Length::Fixed(80.0)),
+                                    ]
+                                    .align_y(iced::alignment::Vertical::Center),
+                                )
+                                .padding([16, 20])
+                                .width(Length::Fill)
+                                .style(theme::container::foreground);
+
+                                return row![]
+                                    .push(
+                                        view::sidebar(
+                                            menu,
+                                            cache,
+                                            has_vault,
+                                            &cache.cube_name,
+                                            None,
+                                            None,
+                                            cache.has_p2p,
+                                        )
+                                        .height(Length::Fill)
+                                        .width(Length::Fixed(190.0)),
+                                    )
+                                    .push(
+                                        iced::widget::Column::new()
+                                            .push(view::warn(None))
+                                            .push(header)
+                                            .push(
+                                                container(self.dispute_chat_view(trade))
+                                                    .padding(20)
+                                                    .width(Length::Fill)
+                                                    .height(Length::Fill)
+                                                    .style(theme::container::background),
+                                            )
+                                            .width(Length::Fill),
+                                    )
+                                    .width(Length::Fill)
+                                    .height(Length::Fill)
+                                    .into();
+                            }
+                        }
+                    }
+
+                    // Default: show chat list
+                    view::dashboard(
+                        menu,
+                        cache,
+                        column![
+                            column![
+                                h1("Chat"),
+                                p2_regular("Your P2P trade conversations")
+                                    .style(theme::text::secondary),
+                            ]
+                            .spacing(8)
+                            .width(Length::Fill)
+                            .padding(20),
+                            container(self.chat_list_view())
+                                .padding([0, 20])
+                                .width(Length::Fill),
                             Space::new().height(Length::Fixed(40.0)),
                         ]
                         .spacing(16),
@@ -3748,6 +4298,10 @@ impl State for P2PPanel {
                 self.active_chat = ActiveChat::None;
                 self.chat_input = Default::default();
                 self.refresh_trade_cache();
+                // Clear image cache from previous trade and trigger downloads for new one
+                self.image_cache.clear();
+                self.image_downloads_in_flight.clear();
+                return self.trigger_image_downloads();
             }
             P2PMessage::CloseTradeDetail => {
                 self.selected_trade = None;
@@ -3758,6 +4312,8 @@ impl State for P2PPanel {
                 self.active_chat = ActiveChat::None;
                 self.chat_input = Default::default();
                 self.refresh_trade_cache();
+                self.image_cache.clear();
+                self.image_downloads_in_flight.clear();
             }
             // Trade actions
             P2PMessage::TradeInvoiceEdited(v) => {
@@ -3858,9 +4414,33 @@ impl State for P2PPanel {
                 self.active_chat = ActiveChat::Peer;
                 self.chat_input = Default::default();
             }
+            P2PMessage::OpenChatForTrade(trade_id) => {
+                self.chat_selected_trade = Some(trade_id);
+                self.active_chat = ActiveChat::Peer;
+                self.chat_input = Default::default();
+                self.refresh_chat_trade_cache();
+                self.image_cache.clear();
+                self.image_downloads_in_flight.clear();
+                return self.trigger_image_downloads();
+            }
             P2PMessage::CloseChat => {
                 self.active_chat = ActiveChat::None;
                 self.chat_input = Default::default();
+                self.chat_selected_trade = None;
+            }
+            P2PMessage::ChatListTabMessages => {
+                self.chat_list_tab = ChatListTab::Messages;
+            }
+            P2PMessage::ChatListTabDisputes => {
+                self.chat_list_tab = ChatListTab::Disputes;
+            }
+            P2PMessage::OpenDisputeChatForTrade(trade_id) => {
+                self.chat_selected_trade = Some(trade_id);
+                self.active_chat = ActiveChat::Dispute;
+                self.dispute_chat_input = Default::default();
+                self.refresh_chat_trade_cache();
+                self.image_cache.clear();
+                self.image_downloads_in_flight.clear();
             }
             P2PMessage::ChatInputEdited(v) => {
                 self.chat_input.value = v;
@@ -3893,7 +4473,7 @@ impl State for P2PPanel {
                 if text.is_empty() || self.pending_dispute_chat_message.is_some() {
                     return Task::none();
                 }
-                if let Some(ref order_id) = self.selected_trade {
+                if let Some(ref order_id) = self.active_order_id() {
                     let cube_name = self.cube_name();
                     let payload = serde_json::to_string(&Some(
                         mostro_core::message::Payload::TextMessage(text.clone()),
@@ -3956,7 +4536,7 @@ impl State for P2PPanel {
                 if text.is_empty() || self.pending_chat_message.is_some() {
                     return Task::none();
                 }
-                if let Some(ref order_id) = self.selected_trade {
+                if let Some(ref order_id) = self.active_order_id() {
                     let cube_name = self.cube_name();
 
                     // Build payload but defer persisting until send succeeds
@@ -4074,6 +4654,7 @@ impl State for P2PPanel {
                 if is_chat {
                     if self.selected_trade.as_deref() == Some(&order_id) {
                         self.refresh_trade_cache();
+                        return self.trigger_image_downloads();
                     }
                     return Task::none();
                 }
@@ -4104,6 +4685,122 @@ impl State for P2PPanel {
             }
             P2PMessage::StreamError(msg) => {
                 self.stream_error = Some(msg);
+            }
+            // ── Image attachment messages ──
+            P2PMessage::AttachFile => {
+                if self.attachment_sending || self.pending_chat_message.is_some() {
+                    return Task::none();
+                }
+                // Open file picker — attachment_sending is NOT set yet
+                return Task::perform(
+                    async move {
+                        let dialog = rfd::AsyncFileDialog::new()
+                            .set_title("Send File")
+                            .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
+                            .add_filter("Videos", &["mp4", "mov", "avi"])
+                            .add_filter("Documents", &["pdf", "doc", "docx"])
+                            .add_filter(
+                                "All supported",
+                                &[
+                                    "png", "jpg", "jpeg", "gif", "webp", "mp4", "mov", "avi",
+                                    "pdf", "doc", "docx",
+                                ],
+                            );
+                        dialog.pick_file().await
+                    },
+                    |file| {
+                        if let Some(file) = file {
+                            Message::View(view::Message::P2P(P2PMessage::FileSelected(
+                                file.path().to_path_buf(),
+                            )))
+                        } else {
+                            // User cancelled — no-op
+                            Message::View(view::Message::P2P(P2PMessage::AttachmentSent(Err(
+                                "cancelled".to_string(),
+                            ))))
+                        }
+                    },
+                );
+            }
+            P2PMessage::FileSelected(path) => {
+                if let Some(ref order_id) = self.active_order_id() {
+                    let order_id = order_id.clone();
+                    let cube_name = self.cube_name();
+                    let mnemonic = self.mnemonic.clone();
+                    let mostro_pubkey_hex = self.mostro_config.active_pubkey_hex().to_string();
+                    let relay_urls = self.mostro_config.relays.clone();
+
+                    self.attachment_sending = true;
+                    return Task::perform(
+                        super::mostro::send_attachment(super::mostro::AttachmentData {
+                            file_path: path,
+                            order_id,
+                            cube_name,
+                            mnemonic,
+                            mostro_pubkey_hex,
+                            relay_urls,
+                        }),
+                        |result| {
+                            Message::View(view::Message::P2P(P2PMessage::AttachmentSent(result)))
+                        },
+                    );
+                }
+            }
+            P2PMessage::AttachmentSent(result) => {
+                self.attachment_sending = false;
+                match result {
+                    Ok(metadata_json) => {
+                        if let Some(ref order_id) = self.active_order_id() {
+                            let payload = serde_json::to_string(&Some(
+                                mostro_core::message::Payload::TextMessage(metadata_json),
+                            ))
+                            .unwrap_or_default();
+                            super::mostro::append_trade_message(
+                                &self.cube_name(),
+                                order_id,
+                                super::mostro::TradeMessage {
+                                    timestamp: chrono::Utc::now().timestamp() as u64,
+                                    action: "SendDm".to_string(),
+                                    payload_json: payload,
+                                    is_own: true,
+                                },
+                            );
+                            self.refresh_trade_cache();
+                            let dl = self.trigger_image_downloads();
+                            return dl;
+                        }
+                    }
+                    Err(e) => {
+                        if e != "cancelled" {
+                            return Task::done(Message::View(view::Message::ShowError(format!(
+                                "Image send failed: {e}"
+                            ))));
+                        }
+                    }
+                }
+            }
+            P2PMessage::AttachmentDownloaded {
+                order_id,
+                blossom_url,
+                data,
+            } => {
+                self.image_downloads_in_flight.remove(&blossom_url);
+                match data {
+                    Ok(bytes) => {
+                        let handle = iced::widget::image::Handle::from_bytes(bytes);
+                        self.image_cache
+                            .insert(blossom_url, ImageCacheEntry::Ready(handle));
+                    }
+                    Err(e) => {
+                        if !blossom_url.is_empty() {
+                            self.image_cache
+                                .insert(blossom_url, ImageCacheEntry::Failed(e));
+                        } else {
+                            tracing::warn!("Image download failed: {e}");
+                        }
+                    }
+                }
+                let _ = order_id; // used for future scoping if needed
             }
         }
         Task::none()

@@ -21,6 +21,8 @@ pub struct MostroConfig {
     pub nodes: Vec<MostroNode>,
     pub active_node_pubkey: String,
     pub relays: Vec<String>,
+    #[serde(default)]
+    pub blossom_url: Option<String>,
 }
 
 /// Build default nodes from `MOSTRO_NODES` env var or compile-time fallbacks.
@@ -83,6 +85,7 @@ impl Default for MostroConfig {
             nodes,
             active_node_pubkey: active,
             relays: default_relays(),
+            blossom_url: None,
         }
     }
 }
@@ -104,6 +107,12 @@ impl MostroConfig {
 
     pub fn active_pubkey_hex(&self) -> &str {
         &self.active_node().pubkey_hex
+    }
+
+    pub fn blossom_url(&self) -> &str {
+        self.blossom_url
+            .as_deref()
+            .unwrap_or("https://blossom.primal.net")
     }
 
     /// Ensure there is always at least one node and one relay.

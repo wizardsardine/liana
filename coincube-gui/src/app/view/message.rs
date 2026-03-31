@@ -697,6 +697,20 @@ pub enum P2PMessage {
     DisputeChatInputEdited(String),
     SendDisputeChatMessage,
     DisputeChatMessageSent(Result<(), String>),
+    // Chat list
+    ChatListTabMessages,
+    ChatListTabDisputes,
+    OpenChatForTrade(String),
+    OpenDisputeChatForTrade(String),
+    // File attachments
+    AttachFile,
+    FileSelected(std::path::PathBuf),
+    AttachmentSent(Result<String, String>),
+    AttachmentDownloaded {
+        order_id: String,
+        blossom_url: String,
+        data: Result<Vec<u8>, String>,
+    },
     // Stream-level errors (relay connection, subscription, restore failures)
     StreamError(String),
 }

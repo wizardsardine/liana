@@ -40,7 +40,7 @@ iced = { version = "0.14.0", default-features = false, features = [
 	"crisp",
 ] }
 iced_anim = "0.3"
-image = { version = "*", default-features = false, features = ["png"] }
+image = { version = "*", default-features = false, features = ["png", "jpeg"] }
 iced_aw = { version = "0.13.0", features = ["context_menu"] }
 iced_runtime = "0.14.0"
 
@@ -63,7 +63,6 @@ log = "0.4"
 dirs = "6"
 toml = "0.9"
 rand = "0.8"
-
 chrono = "0.4.38"
 mostro-core = "0.7"
 nostr-sdk = { version = "0.43.0", features = ["nip06", "nip59"] }
@@ -101,6 +100,8 @@ encrypted_backup = { version = "0.0.1", default-features = false, features = [
 ], package = "bitcoin-encrypted-backup" }
 
 zeroize = "1"
+chacha20poly1305 = "0.10.1"
+sha2 = "0.11.0"
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features = false, features = [
