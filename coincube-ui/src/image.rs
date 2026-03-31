@@ -123,3 +123,100 @@ pub fn multisig_security_template_description<'a>() -> Svg<'a, Theme> {
     let h = svg::Handle::from_memory(MULTISIG_SECURITY_TEMPLATE_DESC);
     Svg::new(h)
 }
+
+// ---------------------------------------------------------------------------
+// USDt + network logos
+// ---------------------------------------------------------------------------
+
+const USDT_LOGO: &[u8] = include_bytes!("../static/logos/usdt.svg");
+const ETH_LOGO: &[u8] = include_bytes!("../static/logos/eth.svg");
+const TRX_LOGO: &[u8] = include_bytes!("../static/logos/trx.svg");
+const BNB_LOGO: &[u8] = include_bytes!("../static/logos/bnb.svg");
+const SOL_LOGO: &[u8] = include_bytes!("../static/logos/sol.svg");
+const LIQUID_LOGO: &[u8] = include_bytes!("../static/logos/liquid.svg");
+
+pub fn usdt_logo<'a>() -> Svg<'a, Theme> {
+    Svg::new(svg::Handle::from_memory(USDT_LOGO))
+}
+
+pub fn eth_logo<'a>() -> Svg<'a, Theme> {
+    Svg::new(svg::Handle::from_memory(ETH_LOGO))
+}
+
+pub fn trx_logo<'a>() -> Svg<'a, Theme> {
+    Svg::new(svg::Handle::from_memory(TRX_LOGO))
+}
+
+pub fn bnb_logo<'a>() -> Svg<'a, Theme> {
+    Svg::new(svg::Handle::from_memory(BNB_LOGO))
+}
+
+pub fn sol_logo<'a>() -> Svg<'a, Theme> {
+    Svg::new(svg::Handle::from_memory(SOL_LOGO))
+}
+
+pub fn liquid_logo<'a>() -> Svg<'a, Theme> {
+    Svg::new(svg::Handle::from_memory(LIQUID_LOGO))
+}
+
+/// Returns the network logo SVG for a given network slug.
+pub fn network_logo<'a>(network: &str) -> Svg<'a, Theme> {
+    match network {
+        "ethereum" => eth_logo(),
+        "tron" => trx_logo(),
+        "bsc" => bnb_logo(),
+        "solana" => sol_logo(),
+        "liquid" => liquid_logo(),
+        "polygon" => eth_logo(),
+        _ => usdt_logo(),
+    }
+}
+
+/// Composite USDt logo with a smaller network badge at the bottom-right.
+///
+/// Layout: USDt logo at `primary_size`, with the network logo overlaid at
+/// ~40% size, anchored to the bottom-right corner.
+///
+/// ```text
+///  ┌──────────┐
+///  │  USDt    │
+///  │      ┌──┐│
+///  │      │NW││
+///  └──────┴──┘┘
+/// ```
+pub fn usdt_network_logo<'a, M: 'a>(network: &str, primary_size: f32) -> iced::Element<'a, M, Theme, iced::Renderer> {
+    use iced::{widget::Container, Length};
+
+    let badge_size = (primary_size * 0.45).round();
+    let total = primary_size;
+
+    let primary = usdt_logo()
+        .width(Length::Fixed(primary_size))
+        .height(Length::Fixed(primary_size));
+
+    let badge = network_logo(network)
+        .width(Length::Fixed(badge_size))
+        .height(Length::Fixed(badge_size));
+
+    // Stack: primary logo fills the area; badge is placed at bottom-right
+    // using iced's overlay / stack isn't available, so we use a layered approach
+    // with negative margin via padding on an outer container.
+    let badge_container = Container::new(badge)
+        .width(Length::Fixed(badge_size))
+        .height(Length::Fixed(badge_size));
+
+    // Use iced::widget::stack to overlay the badge on the primary logo
+    iced::widget::stack![
+        Container::new(primary)
+            .width(Length::Fixed(total))
+            .height(Length::Fixed(total)),
+        Container::new(badge_container)
+            .width(Length::Fixed(total))
+            .height(Length::Fixed(total))
+            .align_right(Length::Fixed(total))
+            .align_bottom(Length::Fixed(total)),
+    ]
+    .width(Length::Fixed(total))
+    .height(Length::Fixed(total))
+    .into()
+}

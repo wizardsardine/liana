@@ -111,7 +111,18 @@ fn buy_input_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMess
     .style(theme::card::simple)
     .width(Length::Fixed(600.0));
 
+    let previous_btn = widget::button(
+        widget::Row::new()
+            .spacing(5)
+            .align_y(Alignment::Center)
+            .push(previous_icon().style(theme::text::secondary))
+            .push(text::p1_medium("Previous").style(theme::text::secondary)),
+    )
+    .on_press(BuySellMessage::Mavapay(MavapayMessage::NavigateBack))
+    .style(theme::button::transparent);
+
     widget::column![
+        widget::container(previous_btn).width(Length::Fill),
         // header text
         text::h4_bold("Buy Bitcoin using Fiat Money")
             .color(color::WHITE)
@@ -349,7 +360,18 @@ fn sell_input_form<'a>(
     .spacing(10)
     .width(iced::Length::Fill);
 
+    let previous_btn = widget::button(
+        widget::Row::new()
+            .spacing(5)
+            .align_y(Alignment::Center)
+            .push(previous_icon().style(theme::text::secondary))
+            .push(text::p1_medium("Previous").style(theme::text::secondary)),
+    )
+    .on_press(BuySellMessage::Mavapay(MavapayMessage::NavigateBack))
+    .style(theme::button::transparent);
+
     widget::column![
+        widget::container(previous_btn).width(Length::Fill),
         widget::Space::new().height(6),
         widget::container(form).padding(20).style(|th| {
             theme::card::simple(th).border(iced::Border {

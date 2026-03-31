@@ -9,7 +9,10 @@ use crate::{
     },
     export::ImportExportMessage,
     node::bitcoind::{Bitcoind, RpcAuthType},
-    services::fiat::{Currency, PriceSource},
+    services::{
+        fiat::{Currency, PriceSource},
+        sideshift::{ShiftQuote, ShiftResponse, ShiftStatus, SideshiftNetwork},
+    },
 };
 use coincubed::config::BitcoindConfig;
 
@@ -101,6 +104,8 @@ pub enum Message {
     DismissToast(usize),
     UsdtOverview(UsdtOverviewMessage),
     ToggleUsdt,
+    SideshiftReceive(SideshiftReceiveMessage),
+    SideshiftSend(SideshiftSendMessage),
     ConnectAccount(ConnectAccountMessage),
     ConnectCube(ConnectCubeMessage),
     ToggleConnect,
@@ -334,6 +339,60 @@ pub enum FiatMessage {
     Enable(bool),
     SourceEdited(PriceSource),
     CurrencyEdited(Currency),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SideshiftShiftType {
+    Fixed,
+    Variable,
+}
+
+#[derive(Debug, Clone)]
+pub enum SideshiftReceiveMessage {
+    SelectNetwork(SideshiftNetwork),
+    ToggleShiftType(SideshiftShiftType),
+    AmountInput(String),
+    Generate,
+    AffiliateFetched(Result<String, String>),
+    QuoteFetched(Result<ShiftQuote, String>),
+    ShiftCreated(Result<ShiftResponse, String>),
+    PollStatus,
+    StatusUpdated(Result<ShiftStatus, String>),
+    Copy,
+    Reset,
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum SideshiftSendMessage {
+    /// Address input changed — triggers network auto-detection.
+    RecipientAddressEdited(String),
+    /// User picks a network when address is ambiguous (0x → ETH/BSC).
+    DisambiguateNetwork(SideshiftNetwork),
+    /// Proceed from address screen to amount screen.
+    Next,
+    /// Amount input changed.
+    AmountInput(String),
+    /// Fixed/variable toggle (driven automatically by amount, but can be overridden).
+    ToggleShiftType(SideshiftShiftType),
+    /// Start the shift creation pipeline.
+    Generate,
+    AffiliateFetched(Result<String, String>),
+    QuoteFetched(Result<ShiftQuote, String>),
+    ShiftCreated(Result<ShiftResponse, String>),
+    ConfirmSend,
+    /// Breez prepare_send_asset succeeded — ready to execute payment.
+    PaymentPrepared(breez_sdk_liquid::prelude::PrepareSendResponse),
+    /// Breez send_payment completed.
+    PaymentSent,
+    /// Breez payment failed.
+    PaymentFailed(String),
+    SendComplete,
+    PollStatus,
+    StatusUpdated(Result<ShiftStatus, String>),
+    Reset,
+    Error(String),
+    Copy,
 }
 
 #[derive(Debug, Clone)]

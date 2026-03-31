@@ -68,8 +68,8 @@ pub fn border_orange(theme: &Theme) -> Style {
         background: Some(Background::Color(theme.colors.general.background)),
         border: iced::Border {
             color: crate::color::ORANGE,
-            width: 2.0,
-            radius: 8.0.into(),
+            width: 1.0,
+            radius: 25.0.into(),
         },
         ..Default::default()
     }

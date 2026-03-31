@@ -34,6 +34,11 @@ pub struct LiquidReceive {
 }
 
 impl LiquidReceive {
+    /// Returns a clone of the inner `Arc<BreezClient>`.
+    pub fn breez_client_arc(&self) -> Arc<BreezClient> {
+        self.breez_client.clone()
+    }
+
     pub fn new(breez_client: Arc<BreezClient>) -> Self {
         Self {
             breez_client,
