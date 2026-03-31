@@ -128,7 +128,7 @@ impl Palette {
                 destructive: Button {
                     active: ButtonPalette {
                         background: color::LIGHT_BG_SECONDARY,
-                        text: color::RED,
+                        text: color::DARK_TEXT_SECONDARY,
                         border: color::RED.into(),
                         shadow: Default::default(),
                     },
