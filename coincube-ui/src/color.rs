@@ -28,7 +28,8 @@ pub const TRANSPARENT_GREEN: Color = iced::color!(0x00FF66, 0.3);
 
 pub const RED: Color = iced::color!(0xE24E1B);
 
-pub const BLUE: Color = iced::color!(0x7DD3FC);
+pub const LIGHT_BLUE: Color = iced::color!(0x7DD3FC);
+pub const DARK_BLUE: Color = iced::color!(0x00496b);
 
 // === Light-mode surface colors ===
 pub const LIGHT_BG: Color = iced::color!(0xFAF9F6); // Main background (warm off-white)

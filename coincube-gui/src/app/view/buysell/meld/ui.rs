@@ -425,7 +425,7 @@ pub(crate) fn address_selection_ux<'a>(
                         true => "YOUR SELECTED ADDRESS: ",
                         false => "GENERATED ADDRESS: ",
                     })
-                    .color(color::BLUE)
+                    .color(color::LIGHT_BLUE)
                     .width(iced::Length::Fill)
                     .align_y(iced::Alignment::Center),
                     widget::row![

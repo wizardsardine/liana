@@ -146,6 +146,12 @@ pub fn caption<'a>(
         .shaping(Shaping::Advanced)
         .font(font::REGULAR)
         .size(CAPTION_SIZE)
+        .style(|th: &Theme| iced::widget::text::Style {
+            color: Some(match th.mode {
+                crate::theme::palette::ThemeMode::Dark => crate::color::LIGHT_BLUE,
+                crate::theme::palette::ThemeMode::Light => crate::color::DARK_BLUE,
+            }),
+        })
 }
 
 pub fn text<'a>(

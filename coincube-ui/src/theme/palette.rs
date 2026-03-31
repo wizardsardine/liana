@@ -473,7 +473,7 @@ impl std::default::Default for Palette {
             },
             banners: Banners {
                 network: ContainerPalette {
-                    background: color::BLUE,
+                    background: color::LIGHT_BLUE,
                     text: color::LIGHT_BLACK.into(),
                     border: None,
                 },
@@ -920,7 +920,7 @@ impl Palette {
             },
             banners: Banners {
                 network: ContainerPalette {
-                    background: color::BLUE,
+                    background: color::LIGHT_BLUE,
                     text: color::DARK_GRAY.into(),
                     border: None,
                 },
