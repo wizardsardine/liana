@@ -7,7 +7,7 @@ use iced::advanced::{self, Clipboard, Shell};
 use iced::alignment::Alignment;
 use iced::event;
 use iced::mouse;
-use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Vector};
+use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
 
 /// A widget that centers a modal element over some base element
 pub struct Modal<'a, Message, Theme, Renderer> {
@@ -228,10 +228,7 @@ where
                 bounds: layout.bounds(),
                 ..renderer::Quad::default()
             },
-            Color {
-                a: 0.80,
-                ..Color::BLACK
-            },
+            crate::color::BLACK_80,
         );
 
         self.content.as_widget().draw(
