@@ -1,0 +1,240 @@
+syntax = "proto3";
+
+package connect.v1;
+
+option go_package = "coincube/grpc/gen/connectv1;connectv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+enum SessionStatus {
+  SESSION_STATUS_UNSPECIFIED = 0;
+  SESSION_STATUS_PENDING = 1;
+  SESSION_STATUS_DELIVERED = 2;
+  SESSION_STATUS_VIEWED = 3;
+  SESSION_STATUS_APPROVED = 4;
+  SESSION_STATUS_PARTIALLY_SIGNED = 5;
+  SESSION_STATUS_COMPLETED = 6;
+  SESSION_STATUS_REJECTED = 7;
+  SESSION_STATUS_CANCELLED = 8;
+  SESSION_STATUS_EXPIRED = 9;
+  SESSION_STATUS_FAILED = 10;
+}
+
+enum DevicePlatform {
+  DEVICE_PLATFORM_UNSPECIFIED = 0;
+  DEVICE_PLATFORM_IOS = 1;
+  DEVICE_PLATFORM_ANDROID = 2;
+  DEVICE_PLATFORM_DESKTOP = 3;
+}
+
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EVENT_TYPE_SESSION_CREATED = 1;
+  EVENT_TYPE_SESSION_DELIVERED = 2;
+  EVENT_TYPE_SESSION_VIEWED = 3;
+  EVENT_TYPE_SESSION_APPROVED = 4;
+  EVENT_TYPE_SESSION_REJECTED = 5;
+  EVENT_TYPE_SIGNATURE_SUBMITTED = 6;
+  EVENT_TYPE_SESSION_COMPLETED = 7;
+  EVENT_TYPE_SESSION_CANCELLED = 8;
+  EVENT_TYPE_SESSION_EXPIRED = 9;
+  EVENT_TYPE_ERROR = 10;
+  EVENT_TYPE_DEVICE_ONLINE = 11;
+  EVENT_TYPE_DEVICE_OFFLINE = 12;
+}
+
+message SignerTarget {
+  string device_id = 1;
+  string key_fingerprint = 2;
+  string key_id = 3;
+}
+
+message SigningPolicySummary {
+  uint32 required_signatures = 1;
+  repeated string allowed_key_ids = 2;
+  bool requires_biometric = 3;
+  bool requires_local_pin = 4;
+  bool timelock_path = 5;
+  string policy_label = 6;
+}
+
+message TxOutputSummary {
+  string address = 1;
+  uint64 amount_sats = 2;
+  bool is_change = 3;
+  string label = 4;
+}
+
+message TxSummary {
+  uint64 total_input_sats = 1;
+  uint64 total_output_sats = 2;
+  uint64 fee_sats = 3;
+  repeated TxOutputSummary outputs = 4;
+  string network = 5;
+}
+
+message SigningSession {
+  string session_id = 1;
+  string request_id = 2;
+  string user_id = 3;
+  string vault_id = 4;
+  string descriptor_id = 5;
+  bytes psbt = 6;
+  TxSummary tx_summary = 7;
+  SigningPolicySummary policy_summary = 8;
+  repeated SignerTarget targets = 9;
+  SessionStatus status = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp expires_at = 12;
+  string created_by_device_id = 13;
+  string note = 14;
+}
+
+message CreateSigningSessionRequest {
+  string request_id = 1;
+  string vault_id = 2;
+  string descriptor_id = 3;
+  bytes psbt = 4;
+  repeated SignerTarget targets = 5;
+  string note = 6;
+  google.protobuf.Duration ttl = 7;
+  bool require_user_presence = 8;
+}
+
+message CreateSigningSessionResponse {
+  SigningSession session = 1;
+}
+
+message GetSigningSessionRequest {
+  string session_id = 1;
+}
+
+message GetSigningSessionResponse {
+  SigningSession session = 1;
+}
+
+message CancelSigningSessionRequest {
+  string session_id = 1;
+  string reason = 2;
+}
+
+message CancelSigningSessionResponse {}
+
+message ApproveSessionRequest {
+  string session_id = 1;
+  string approval_token = 2;
+}
+
+message ApproveSessionResponse {}
+
+message RejectSessionRequest {
+  string session_id = 1;
+  string reason = 2;
+}
+
+message RejectSessionResponse {}
+
+message SubmitPartialSignatureRequest {
+  string session_id = 1;
+  bytes signed_psbt = 2;
+  repeated string signed_key_ids = 3;
+}
+
+message SubmitPartialSignatureResponse {
+  SessionStatus status = 1;
+}
+
+message RegisterDeviceRequest {
+  string device_name = 1;
+  DevicePlatform platform = 2;
+  string push_token = 3;
+  string app_version = 4;
+  string os_version = 5;
+  string device_pubkey = 6;
+  repeated string capabilities = 7;
+}
+
+message RegisterDeviceResponse {
+  string device_id = 1;
+}
+
+message UpdatePushTokenRequest {
+  string device_id = 1;
+  string push_token = 2;
+}
+
+message UpdatePushTokenResponse {}
+
+message StreamEnvelope {
+  oneof body {
+    ClientHello client_hello = 1;
+    ClientAck client_ack = 2;
+    SessionEvent session_event = 3;
+    ErrorEvent error = 4;
+    Ping ping = 5;
+    Pong pong = 6;
+  }
+}
+
+message ClientHello {
+  string device_id = 1;
+  DevicePlatform platform = 2;
+  string user_agent = 3;
+  repeated string subscribe_vault_ids = 4;
+  int64 last_seen_event_seq = 5;
+}
+
+message ClientAck {
+  int64 event_seq = 1;
+}
+
+message SessionEvent {
+  int64 event_seq = 1;
+  EventType event_type = 2;
+  string session_id = 3;
+  SessionStatus status = 4;
+  SigningSession session = 5;
+  string message = 6;
+  google.protobuf.Timestamp created_at = 7;
+  string device_id = 8;
+}
+
+message ListPendingSessionsRequest {}
+
+message ListPendingSessionsResponse {
+  repeated SigningSession sessions = 1;
+}
+
+message ErrorEvent {
+  string code = 1;
+  string message = 2;
+  string session_id = 3;
+}
+
+message Ping {
+  int64 ts_unix_ms = 1;
+}
+
+message Pong {
+  int64 ts_unix_ms = 1;
+}
+
+service SessionService {
+  rpc CreateSigningSession(CreateSigningSessionRequest) returns (CreateSigningSessionResponse);
+  rpc GetSigningSession(GetSigningSessionRequest) returns (GetSigningSessionResponse);
+  rpc ListPendingSessions(ListPendingSessionsRequest) returns (ListPendingSessionsResponse);
+  rpc CancelSigningSession(CancelSigningSessionRequest) returns (CancelSigningSessionResponse);
+  rpc ApproveSession(ApproveSessionRequest) returns (ApproveSessionResponse);
+  rpc RejectSession(RejectSessionRequest) returns (RejectSessionResponse);
+  rpc SubmitPartialSignature(SubmitPartialSignatureRequest) returns (SubmitPartialSignatureResponse);
+}
+
+service DeviceService {
+  rpc RegisterDevice(RegisterDeviceRequest) returns (RegisterDeviceResponse);
+  rpc UpdatePushToken(UpdatePushTokenRequest) returns (UpdatePushTokenResponse);
+}
+
+service RealtimeService {
+  rpc Connect(stream StreamEnvelope) returns (stream StreamEnvelope);
+}
