@@ -308,7 +308,7 @@ fn disambiguation_view<'a>(
             .push(previous_icon().style(theme::text::secondary))
             .push(text("Previous").size(P1_SIZE).style(theme::text::secondary)),
     )
-    .on_press(SideshiftSendMessage::Reset)
+    .on_press(SideshiftSendMessage::Back)
     .style(theme::button::transparent);
 
     let title = Column::new().spacing(4).push(h3("Select Network")).push(
@@ -425,7 +425,7 @@ fn amount_input_view<'a>(
             .push(previous_icon().style(theme::text::secondary))
             .push(text("Previous").size(P1_SIZE).style(theme::text::secondary)),
     )
-    .on_press(SideshiftSendMessage::Reset)
+    .on_press(SideshiftSendMessage::Back)
     .style(theme::button::transparent);
 
     let title = Column::new()
@@ -616,7 +616,7 @@ fn review_view<'a>(
             .push(previous_icon().style(theme::text::secondary))
             .push(text("Previous").size(P1_SIZE).style(theme::text::secondary)),
     )
-    .on_press(SideshiftSendMessage::Reset)
+    .on_press(SideshiftSendMessage::Back)
     .style(theme::button::transparent)
     .width(Length::FillPortion(1));
 

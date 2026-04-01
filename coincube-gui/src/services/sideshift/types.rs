@@ -63,6 +63,21 @@ impl SideshiftNetwork {
         }
     }
 
+    /// Returns `true` if every character in `s` is a valid base58 character
+    /// (alphanumeric excluding `0`, `O`, `I`, `l`).
+    fn is_base58(s: &str) -> bool {
+        s.bytes().all(|b| {
+            matches!(b,
+                b'1'..=b'9'
+                | b'A'..=b'H'
+                | b'J'..=b'N'
+                | b'P'..=b'Z'
+                | b'a'..=b'k'
+                | b'm'..=b'z'
+            )
+        })
+    }
+
     /// Detect possible networks from a recipient address.
     /// Returns empty vec for unrecognised formats.
     pub fn detect_from_address(addr: &str) -> Vec<SideshiftNetwork> {
@@ -71,20 +86,20 @@ impl SideshiftNetwork {
             return vec![];
         }
 
-        // Liquid: confidential (VJL/VTp/VTq), blech32 (lq1/ex1), or unconfidential (Q/G/H)
+        // Liquid: confidential (VJL/VTp/VTq), blech32 (lq1/ex1), or unconfidential (Q/G/H, exactly 34 chars)
         if addr.starts_with("VJL")
             || addr.starts_with("VTp")
             || addr.starts_with("VTq")
             || addr.starts_with("lq1")
             || addr.starts_with("ex1")
-            || (addr.len() >= 34
+            || (addr.len() == 34
                 && (addr.starts_with('Q') || addr.starts_with('G') || addr.starts_with('H')))
         {
             return vec![Self::Liquid];
         }
 
         // Tron: starts with T, base58, 34 chars
-        if addr.starts_with('T') && addr.len() == 34 && addr.chars().all(|c| c.is_alphanumeric()) {
+        if addr.starts_with('T') && addr.len() == 34 && Self::is_base58(addr) {
             return vec![Self::Tron];
         }
 
@@ -97,17 +112,9 @@ impl SideshiftNetwork {
         }
 
         // Solana: base58-encoded 32-byte public key (typically 43–44 chars).
-        // Reject prefixes that belong to other networks (Bitcoin, Liquid).
-        let solana_excluded_prefix = addr.starts_with('1')
-            || addr.starts_with('3')
-            || addr.starts_with("bc1")
-            || addr.starts_with('Q')
-            || addr.starts_with('G')
-            || addr.starts_with('H');
-        if !solana_excluded_prefix
-            && (32..=44).contains(&addr.len())
-            && addr.chars().all(|c| c.is_alphanumeric())
-        {
+        // Earlier branches already catch Liquid (34-char Q/G/H), Tron (34-char T),
+        // and EVM (0x) at their specific lengths, so no prefix exclusions needed.
+        if (32..=44).contains(&addr.len()) && Self::is_base58(addr) {
             return vec![Self::Solana];
         }
 

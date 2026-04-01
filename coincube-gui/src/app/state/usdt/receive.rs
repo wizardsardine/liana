@@ -176,7 +176,7 @@ impl UsdtReceive {
                 // SideShift needs just the raw address.
                 let liquid_address = destination
                     .split(':')
-                    .last()
+                    .next_back()
                     .unwrap_or(&destination)
                     .split('?')
                     .next()
@@ -453,6 +453,22 @@ impl State for UsdtReceive {
                     return Task::none();
                 }
 
+                SideshiftReceiveMessage::Back => {
+                    self.error = None;
+                    self.loading = false;
+                    match self.phase {
+                        ReceivePhase::ExternalSetup => {
+                            // Back to network picker, keep amount/shift_type
+                            self.phase = ReceivePhase::NetworkSelection;
+                        }
+                        _ => {
+                            // From Active or Failed, full reset is safest
+                            self.reset_shift();
+                        }
+                    }
+                    return Task::none();
+                }
+
                 SideshiftReceiveMessage::Reset => {
                     self.reset_shift();
                     return Task::none();
@@ -479,7 +495,7 @@ impl State for UsdtReceive {
         let is_terminal = self
             .shift_status
             .as_ref()
-            .map_or(false, ShiftStatusKind::is_terminal);
+            .is_some_and(ShiftStatusKind::is_terminal);
         if self.phase == ReceivePhase::Active && !is_terminal {
             // Poll shift status every 10 seconds.
             iced::time::every(Duration::from_secs(10)).map(|_| {

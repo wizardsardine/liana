@@ -19,6 +19,7 @@ use crate::services::sideshift::{ShiftResponse, ShiftStatusKind, SideshiftNetwor
 // Top-level entry point
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 pub fn usdt_receive_view<'a>(
     phase: &ReceivePhase,
     selected_network: &SideshiftNetwork,
@@ -121,7 +122,7 @@ fn external_setup_view<'a>(
             .push(previous_icon().style(theme::text::secondary))
             .push(text("Previous").size(P1_SIZE).style(theme::text::secondary)),
     )
-    .on_press(SideshiftReceiveMessage::Reset)
+    .on_press(SideshiftReceiveMessage::Back)
     .style(theme::button::transparent);
 
     let title = Column::new()
@@ -330,15 +331,24 @@ fn active_shift_view<'a>(
         Space::new().height(Length::Fixed(0.0)).into()
     };
 
-    let back_btn = iced::widget::button(
-        Row::new()
-            .spacing(5)
-            .align_y(Alignment::Center)
-            .push(previous_icon().style(theme::text::secondary))
-            .push(text("Previous").size(P1_SIZE).style(theme::text::secondary)),
-    )
-    .on_press(SideshiftReceiveMessage::Reset)
-    .style(theme::button::transparent);
+    let is_terminal = shift_status.map(|s| s.is_terminal()).unwrap_or(false);
+
+    // Only show the "Done" / reset button once the shift has reached a terminal
+    // state; while in-progress, the deposit address must stay visible.
+    let back_btn: Element<SideshiftReceiveMessage> = if is_terminal {
+        iced::widget::button(
+            Row::new()
+                .spacing(5)
+                .align_y(Alignment::Center)
+                .push(previous_icon().style(theme::text::secondary))
+                .push(text("Done").size(P1_SIZE).style(theme::text::secondary)),
+        )
+        .on_press(SideshiftReceiveMessage::Reset)
+        .style(theme::button::transparent)
+        .into()
+    } else {
+        Space::new().height(Length::Fixed(0.0)).into()
+    };
 
     Column::new()
         .spacing(16)

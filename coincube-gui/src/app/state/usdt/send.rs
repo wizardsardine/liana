@@ -335,17 +335,28 @@ impl State for UsdtSend {
                 SideshiftSendMessage::Generate => {
                     // Amount is always required for sends — we need to know
                     // how much USDt to pay into SideShift's deposit address.
-                    if self.amount_input.trim().is_empty() {
+                    let trimmed = self.amount_input.trim();
+                    if trimmed.is_empty() {
                         self.error = Some("Please enter an amount to send".to_string());
                         return Task::none();
                     }
-                    if let Ok(amount) = self.amount_input.trim().parse::<f64>() {
-                        if amount < 5.0 {
-                            self.error = Some("Minimum amount is 5 USDt".to_string());
+                    // Use parse_asset_to_minor_units as the single validator —
+                    // this is the same parser used at payment time.
+                    let base_units = match parse_asset_to_minor_units(trimmed, USDT_PRECISION) {
+                        Some(v) => v,
+                        None => {
+                            self.error = Some("Please enter a valid amount".to_string());
                             return Task::none();
                         }
-                    } else {
-                        self.error = Some("Please enter a valid amount".to_string());
+                    };
+                    // 5 USDt minimum in base units (10^8 per USDt).
+                    let min_base = 5 * 10_u64.pow(USDT_PRECISION as u32);
+                    if base_units < min_base {
+                        self.error = Some("Minimum amount is 5 USDt".to_string());
+                        return Task::none();
+                    }
+                    if base_units > self.inner.usdt_balance() {
+                        self.error = Some("Insufficient USDt balance".to_string());
                         return Task::none();
                     }
                     self.loading = true;
@@ -510,6 +521,38 @@ impl State for UsdtSend {
                     return Task::none();
                 }
 
+                SideshiftSendMessage::Back => {
+                    self.error = None;
+                    self.loading = false;
+                    match self.phase {
+                        SendPhase::NetworkDisambiguation => {
+                            self.phase = SendPhase::AddressInput;
+                        }
+                        SendPhase::AmountInput => {
+                            // Back to address input, keep address + network
+                            self.phase = SendPhase::AddressInput;
+                        }
+                        SendPhase::Review => {
+                            // Back to amount input, keep address/network/amount;
+                            // clear shift data since it was a pending quote
+                            self.shift = None;
+                            self.quote = None;
+                            self.affiliate_id = None;
+                            self.phase = SendPhase::AmountInput;
+                        }
+                        _ => {
+                            // From Sent/Failed, full reset
+                            self.reset();
+                            let reload_task = self.inner.reload(daemon, None);
+                            let preset_task = Task::done(Message::View(view::Message::LiquidSend(
+                                view::LiquidSendMessage::PresetAsset(SendAsset::Usdt),
+                            )));
+                            return Task::batch(vec![reload_task, preset_task]);
+                        }
+                    }
+                    return Task::none();
+                }
+
                 SideshiftSendMessage::Reset => {
                     self.reset();
                     let reload_task = self.inner.reload(daemon, None);
@@ -544,7 +587,7 @@ impl State for UsdtSend {
         let is_terminal = self
             .shift_status
             .as_ref()
-            .map_or(false, ShiftStatusKind::is_terminal);
+            .is_some_and(ShiftStatusKind::is_terminal);
         if self.phase == SendPhase::Sent && !is_terminal {
             iced::time::every(Duration::from_secs(10)).map(|_| {
                 Message::View(view::Message::SideshiftSend(

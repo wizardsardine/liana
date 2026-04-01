@@ -359,6 +359,8 @@ pub enum SideshiftReceiveMessage {
     PollStatus,
     StatusUpdated(Result<ShiftStatus, String>),
     Copy,
+    /// Go back one step, preserving entered data.
+    Back,
     Reset,
     Error(String),
 }
@@ -390,6 +392,8 @@ pub enum SideshiftSendMessage {
     SendComplete,
     PollStatus,
     StatusUpdated(Result<ShiftStatus, String>),
+    /// Go back one step, preserving entered data.
+    Back,
     Reset,
     Error(String),
     Copy,
