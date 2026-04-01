@@ -250,7 +250,15 @@ impl State for UsdtSend {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        // Intercept Reset/Back even when in LiquidNative to return to network picker.
         if self.phase == SendPhase::LiquidNative {
+            if let Message::View(view::Message::SideshiftSend(
+                SideshiftSendMessage::Reset | SideshiftSendMessage::Back,
+            )) = &message
+            {
+                self.reset();
+                return self.inner.reload(daemon, None);
+            }
             return self.inner.update(daemon, cache, message);
         }
 
