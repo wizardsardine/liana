@@ -354,14 +354,22 @@ impl State for UsdtReceive {
                 SideshiftReceiveMessage::Generate => {
                     // Validate minimum amount for fixed-rate shifts
                     if !self.amount_input.trim().is_empty() {
-                        if let Ok(amount) = self.amount_input.trim().parse::<f64>() {
-                            if amount < 5.0 {
+                        let amount = self
+                            .amount_input
+                            .trim()
+                            .parse::<f64>()
+                            .ok()
+                            .filter(|a| a.is_finite());
+                        match amount {
+                            Some(a) if a >= 5.0 => {}
+                            Some(_) => {
                                 self.error = Some("Minimum amount is 5 USDt".to_string());
                                 return Task::none();
                             }
-                        } else {
-                            self.error = Some("Please enter a valid amount".to_string());
-                            return Task::none();
+                            None => {
+                                self.error = Some("Please enter a valid amount".to_string());
+                                return Task::none();
+                            }
                         }
                     }
                     self.loading = true;

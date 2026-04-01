@@ -389,7 +389,6 @@ pub enum SideshiftSendMessage {
     PaymentSent,
     /// Breez payment failed.
     PaymentFailed(String),
-    SendComplete,
     PollStatus,
     StatusUpdated(Result<ShiftStatus, String>),
     /// Go back one step, preserving entered data.

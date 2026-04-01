@@ -518,27 +518,17 @@ impl State for UsdtSend {
                     return Task::none();
                 }
 
-                SideshiftSendMessage::SendComplete => {
-                    self.phase = SendPhase::Sent;
-                    self.shift_status = Some(ShiftStatusKind::Pending);
-                    return Task::none();
-                }
-
                 SideshiftSendMessage::PollStatus => {
                     return self.poll_shift_status();
                 }
 
                 SideshiftSendMessage::StatusUpdated(result) => {
-                    match result {
-                        Ok(status) => {
-                            let kind = ShiftStatusKind::from(status.status.as_str());
-                            self.shift_status = Some(kind);
-                        }
-                        Err(e) => {
-                            self.error = Some(format!("Status check failed: {}", e));
-                            self.shift_status = Some(ShiftStatusKind::Error);
-                        }
+                    if let Ok(status) = result {
+                        let kind = ShiftStatusKind::from(status.status.as_str());
+                        self.shift_status = Some(kind);
                     }
+                    // Transient errors (network blips) are silently ignored;
+                    // the subscription will retry on the next poll interval.
                     return Task::none();
                 }
 
