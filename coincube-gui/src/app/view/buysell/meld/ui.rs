@@ -809,15 +809,36 @@ pub(super) fn webview_ux<'a>(
         active.view(iced::Length::Fixed(640.0), iced::Length::Fixed(600.0)),
         wallet_address.map(|addr| {
             widget::column![
-                widget::text_input("", addr)
-                    .size(14)
-                    .padding([6, 10])
-                    .align_x(iced::Alignment::Center)
-                    .style(theme::text_input::primary)
-                    .font(iced::font::Font::MONOSPACE),
+                widget::row![
+                    widget::column![
+                        text::caption("Your Recipient Address (Copy+Paste)"),
+                        widget::text_input("", addr)
+                            .size(14)
+                            .padding([6, 10])
+                            .align_x(iced::Alignment::Center)
+                            .style(|th, st| widget::text_input::Style {
+                                border: iced::Border::default()
+                                    .width(2)
+                                    .rounded(0)
+                                    .color(color::GREY_3),
+                                ..theme::text_input::primary(th, st)
+                            })
+                            .font(iced::font::Font::MONOSPACE)
+                    ],
+                    button::primary_compact(Some(icon::arrow_back()), "Start Over")
+                        .on_press(view::Message::BuySell(view::BuySellMessage::ResetWidget))
+                        .style(|th, st| {
+                            let mut base = theme::button::primary(th, st);
+                            base.border = iced::Border::default()
+                                .rounded(0)
+                                .width(0)
+                                .color(color::ORANGE);
+                            base
+                        }),
+                ].spacing(5).align_y(iced::Alignment::Center),
                 cfg!(target_os = "macos").then(|| {
                     widget::container(
-                        text::caption("Keyboard shortcuts are problematic in the webview. Right-click the input field to paste.")
+                        text::caption("Keyboard shortcuts are problematic in the webview for macOS. Right-click the input field to paste.")
                             .style(theme::text::secondary)
                     )
                     .width(iced::Length::Fixed(640.0))
@@ -827,6 +848,5 @@ pub(super) fn webview_ux<'a>(
         }),
     ].spacing(15).align_x(iced::Alignment::Center);
 
-    let elem: iced::Element<view::BuySellMessage, theme::Theme> = col.into();
-    elem.map(view::Message::BuySell)
+    col.into()
 }
