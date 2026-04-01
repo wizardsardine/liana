@@ -255,6 +255,16 @@ fn counterparty_from_payload(
     extract_counterparty_pubkey(order, our_trade_hex)
 }
 
+/// Non-status-bearing protocol actions (acknowledged by dm_action_to_status as None).
+const NON_STATUS_ACTIONS: &[&str] = &[
+    "NewOrder",
+    "CantDo",
+    "Peer",
+    "RateUser",
+    "Orders",
+    "LastTradeIndex",
+];
+
 /// Get the latest protocol DM action for a trade from its message history.
 /// Skips non-protocol chat entries so that chat messages do not affect
 /// protocol state detection.
@@ -264,6 +274,17 @@ pub fn latest_dm_action(session: &TradeSession) -> Option<&str> {
         .iter()
         .rev()
         .find(|m| !is_chat_action(&m.action))
+        .map(|m| m.action.as_str())
+}
+
+/// Get the latest status-bearing DM action (one that maps to a TradeStatus).
+/// Skips chat entries AND no-op protocol actions like NewOrder, CantDo, etc.
+fn latest_status_action(session: &TradeSession) -> Option<&str> {
+    session
+        .messages
+        .iter()
+        .rev()
+        .find(|m| !is_chat_action(&m.action) && !NON_STATUS_ACTIONS.contains(&m.action.as_str()))
         .map(|m| m.action.as_str())
 }
 
@@ -2079,10 +2100,29 @@ pub async fn download_from_blossom(url: &str) -> Result<Vec<u8>, String> {
         return Err(format!("Download failed: HTTP {}", resp.status()));
     }
 
-    resp.bytes()
+    // Reject responses that exceed the attachment size limit
+    if let Some(len) = resp.content_length() {
+        if len > MAX_ATTACHMENT_SIZE {
+            return Err(format!(
+                "File too large: {:.1} MB (max 25 MB)",
+                len as f64 / (1024.0 * 1024.0)
+            ));
+        }
+    }
+
+    let bytes = resp
+        .bytes()
         .await
-        .map(|b| b.to_vec())
-        .map_err(|e| format!("Failed to read response: {e}"))
+        .map_err(|e| format!("Failed to read response: {e}"))?;
+
+    if bytes.len() as u64 > MAX_ATTACHMENT_SIZE {
+        return Err(format!(
+            "File too large: {:.1} MB (max 25 MB)",
+            bytes.len() as f64 / (1024.0 * 1024.0)
+        ));
+    }
+
+    Ok(bytes.to_vec())
 }
 
 /// Download, decrypt, and save a file attachment to disk via save dialog.
@@ -2144,6 +2184,17 @@ pub struct AttachmentData {
 /// Send an encrypted image attachment via P2P chat.
 /// Returns the JSON metadata string on success (for persisting as a TradeMessage).
 pub async fn send_image_attachment(data: AttachmentData) -> Result<String, String> {
+    // 0. Check file size before reading
+    let file_size = std::fs::metadata(&data.file_path)
+        .map_err(|e| format!("Failed to read image: {e}"))?
+        .len();
+    if file_size > MAX_ATTACHMENT_SIZE {
+        return Err(format!(
+            "Image too large ({:.1} MB). Maximum is 25 MB.",
+            file_size as f64 / (1024.0 * 1024.0)
+        ));
+    }
+
     // 1. Read and decode image
     let img_bytes =
         std::fs::read(&data.file_path).map_err(|e| format!("Failed to read image: {e}"))?;
@@ -2167,6 +2218,13 @@ pub async fn send_image_attachment(data: AttachmentData) -> Result<String, Strin
         .map_err(|e| format!("Failed to encode JPEG: {e}"))?;
     let jpeg_bytes = jpeg_buf.into_inner();
     let original_size = jpeg_bytes.len() as u64;
+
+    if original_size > MAX_ATTACHMENT_SIZE {
+        return Err(format!(
+            "Encoded image too large ({:.1} MB). Maximum is 25 MB.",
+            original_size as f64 / (1024.0 * 1024.0)
+        ));
+    }
 
     // 4. Get encryption key
     let sessions = load_data(&data.cube_name).unwrap_or_default().trades;
@@ -2648,7 +2706,7 @@ async fn fetch_user_trades(
                 .as_ref()
                 .map(map_trade_status)
                 .unwrap_or(TradeStatus::Pending);
-            let status = latest_dm_action(session)
+            let status = latest_status_action(session)
                 .and_then(dm_action_to_status)
                 .unwrap_or(relay_status);
             let order_type = match session.kind.as_str() {
@@ -2723,7 +2781,7 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
         // Range order — show min as the display amount
         session.min_amount.unwrap_or(0) as f64
     };
-    let status = latest_dm_action(session)
+    let status = latest_status_action(session)
         .and_then(dm_action_to_status)
         .unwrap_or(TradeStatus::Pending);
     P2PTrade {
