@@ -9,7 +9,11 @@ use iced::{
     Alignment, Length,
 };
 use liana_connect::ws_business::{self, UserRole};
-use liana_ui::{component::text, icon, theme, widget::*};
+use liana_ui::{
+    component::text::{self},
+    icon, theme,
+    widget::*,
+};
 
 use super::{delete_btn, format_last_edit_info, layout_with_scrollable_list, menu_entry};
 
@@ -118,6 +122,14 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
 fn keys_visualization(state: &State) -> Element<'static, Msg> {
     let current_user_email_lower = state.views.login.email.form.value.to_lowercase();
 
+    let instruction = text::p1_medium(
+                            "Add the keys that will be part of this wallet and link each one to its owner's email address.",
+                        ).style(theme::text::primary);
+    let instruction: Element<'_, Msg> =
+        Container::new(Row::new().align_y(Alignment::Center).push(instruction))
+            .align_x(Alignment::Center)
+            .into();
+
     // Build key rows with delete buttons
     let key_rows: Vec<Element<'static, Msg>> = state
         .app
@@ -152,9 +164,11 @@ fn keys_visualization(state: &State) -> Element<'static, Msg> {
 
     // Build the column with all elements
     let mut column = Column::new()
+        .push(Space::with_height(50))
+        .push(instruction)
+        .push(Space::with_height(20))
         .spacing(10)
-        .padding(20.0)
-        .push(Space::with_height(50));
+        .padding(20.0);
 
     for row in key_rows {
         column = column.push(row);
