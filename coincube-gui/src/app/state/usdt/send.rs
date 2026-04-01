@@ -307,7 +307,10 @@ impl State for UsdtSend {
                         let preset_task = Task::done(Message::View(view::Message::LiquidSend(
                             view::LiquidSendMessage::PresetAsset(SendAsset::Usdt),
                         )));
-                        return Task::batch(vec![reload_task, preset_task]);
+                        let recipient_task = Task::done(Message::View(view::Message::LiquidSend(
+                            view::LiquidSendMessage::InputEdited(self.recipient_address.clone()),
+                        )));
+                        return Task::batch(vec![reload_task, preset_task, recipient_task]);
                     }
 
                     // Ambiguous? Need disambiguation first
@@ -526,9 +529,15 @@ impl State for UsdtSend {
                 }
 
                 SideshiftSendMessage::StatusUpdated(result) => {
-                    if let Ok(status) = result {
-                        let kind = ShiftStatusKind::from(status.status.as_str());
-                        self.shift_status = Some(kind);
+                    match result {
+                        Ok(status) => {
+                            let kind = ShiftStatusKind::from(status.status.as_str());
+                            self.shift_status = Some(kind);
+                        }
+                        Err(e) => {
+                            self.error = Some(format!("Status check failed: {}", e));
+                            self.shift_status = Some(ShiftStatusKind::Error);
+                        }
                     }
                     return Task::none();
                 }

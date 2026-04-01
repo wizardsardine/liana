@@ -482,9 +482,11 @@ impl State for UsdtReceive {
             }
         }
 
-        // Also handle LiquidReceive messages when in LiquidNative phase
-        // (the inner state is updated via its own update, but that branch
-        //  is handled above with the early return).
+        // Always forward LiquidReceive messages to inner state (e.g. DataLoaded for balance).
+        if matches!(message, Message::View(view::Message::LiquidReceive(_))) {
+            return self.liquid_inner.update(daemon, cache, message);
+        }
+
         Task::none()
     }
 

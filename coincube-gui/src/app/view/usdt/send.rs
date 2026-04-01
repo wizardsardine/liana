@@ -666,7 +666,9 @@ fn sent_view<'a>(
 
     let (status_color, status_icon) = match shift_status {
         Some(ShiftStatusKind::Settled) => (color::GREEN, "✓"),
-        Some(ShiftStatusKind::Expired | ShiftStatusKind::Error) => (color::RED, "✗"),
+        Some(ShiftStatusKind::Expired | ShiftStatusKind::Error | ShiftStatusKind::Refunded) => {
+            (color::RED, "✗")
+        }
         _ => (color::ORANGE, "⟳"),
     };
 
