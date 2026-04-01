@@ -668,22 +668,22 @@ impl Palette {
                 primary: Button {
                     active: ButtonPalette {
                         background: color::ORANGE,
-                        text: color::WHITE,
+                        text: color::BLACK,
                         border: Some(color::ORANGE),
                     },
                     hovered: ButtonPalette {
                         background: color::DARK_ORANGE,
-                        text: color::WHITE,
+                        text: color::BLACK,
                         border: Some(color::DARK_ORANGE),
                     },
                     pressed: Some(ButtonPalette {
                         background: color::DARK_ORANGE,
-                        text: color::WHITE,
+                        text: color::BLACK,
                         border: Some(color::DARK_ORANGE),
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::LIGHT_CARD_BG,
-                        text: color::GREY_3,
+                        text: color::GREY_5,
                         border: Some(color::LIGHT_BORDER),
                     }),
                 },
