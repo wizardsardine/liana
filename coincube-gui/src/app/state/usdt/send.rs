@@ -377,6 +377,9 @@ impl State for UsdtSend {
                 }
 
                 SideshiftSendMessage::AffiliateFetched(result) => {
+                    if self.phase != SendPhase::FetchingAffiliate {
+                        return Task::none();
+                    }
                     match result {
                         Ok(id) => {
                             self.affiliate_id = Some(id.clone());
@@ -400,6 +403,9 @@ impl State for UsdtSend {
                 }
 
                 SideshiftSendMessage::QuoteFetched(result) => {
+                    if self.phase != SendPhase::FetchingQuote {
+                        return Task::none();
+                    }
                     match result {
                         Ok(quote) => {
                             let affiliate_id = self.affiliate_id.clone().unwrap_or_default();
@@ -417,6 +423,9 @@ impl State for UsdtSend {
                 }
 
                 SideshiftSendMessage::ShiftCreated(result) => {
+                    if self.phase != SendPhase::CreatingShift {
+                        return Task::none();
+                    }
                     self.loading = false;
                     match result {
                         Ok(shift) => {
@@ -482,6 +491,9 @@ impl State for UsdtSend {
                 }
 
                 SideshiftSendMessage::PaymentPrepared(prepare_response) => {
+                    if self.phase != SendPhase::Sending {
+                        return Task::none();
+                    }
                     let breez = self.inner.breez_client().clone();
                     let prepare = prepare_response.clone();
                     return Task::perform(
