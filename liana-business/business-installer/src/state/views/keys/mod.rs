@@ -49,7 +49,8 @@ impl KeysViewState {
             // Check for duplicate tokens in existing keys
             let editing_key_id = modal.key_id;
             let is_duplicate = keys.iter().any(|(&id, k)| {
-                id != editing_key_id && matches!(&k.identity, KeyIdentity::Token(t) if t == &value)
+                id != editing_key_id
+                    && matches!(&k.identity, KeyIdentity::Token{ token: t, .. } if t == &value)
             });
             if is_duplicate {
                 modal.token_warning = Some("Duplicate token");

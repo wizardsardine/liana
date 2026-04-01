@@ -3,6 +3,7 @@
 //! This module contains the core domain types used by Liana Connect
 //! for representing organizations, wallets, users, and policy templates.
 
+use crate::keys::api::Provider;
 use miniscript::{
     bitcoin::bip32::Fingerprint,
     descriptor::{DescriptorMultiXKey, DescriptorXKey, SinglePub},
@@ -198,7 +199,10 @@ pub enum KeyIdentity {
     // The key is related to an user account in WS account system
     Email(String),
     // The key is related to a provider in WS keys system
-    Token(String),
+    Token {
+        token: String,
+        provider: Option<Provider>,
+    },
     // The key holder is not registered in any WS account systems
     Other(String),
 }
@@ -206,7 +210,8 @@ pub enum KeyIdentity {
 impl Display for KeyIdentity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let str = match self {
-            KeyIdentity::Email(s) | KeyIdentity::Token(s) | KeyIdentity::Other(s) => s,
+            KeyIdentity::Token { token, .. } => token,
+            KeyIdentity::Email(s) | KeyIdentity::Other(s) => s,
         };
         write!(f, "{str}")
     }
@@ -1187,17 +1192,18 @@ mod wire_format_tests {
             "id": 1,
             "alias": "Provider Key",
             "description": "Cosigner service key",
-            "token": "provider-token-123",
+            "token": { "token" : "provider-token-123", "provider": null},
             "key_type": "Cosigner"
         }"#;
-
-        let parsed: Key = serde_json::from_str(json).expect("wire format must parse");
 
         let expected = Key {
             id: 1,
             alias: "Provider Key".to_string(),
             description: "Cosigner service key".to_string(),
-            identity: KeyIdentity::Token("provider-token-123".to_string()),
+            identity: KeyIdentity::Token {
+                token: "provider-token-123".to_string(),
+                provider: None,
+            },
             key_type: KeyType::Cosigner,
             xpub: None,
             xpub_source: None,
@@ -1207,6 +1213,8 @@ mod wire_format_tests {
             last_edited: None,
             last_editor: None,
         };
+
+        let parsed: Key = serde_json::from_str(json).expect("wire format must parse");
 
         assert_eq!(parsed, expected);
         roundtrip(&parsed);

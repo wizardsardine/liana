@@ -110,7 +110,7 @@ pub fn receive<'a>(
         .push(
             Row::new()
                 .align_y(Alignment::Center)
-                .push(Container::new(h3(Menu::Receive.title())).width(Length::Fill))
+                .push(Container::new(panel_title(Menu::Receive.title())).width(Length::Fill))
                 .push({
                     let (icon, label) = (Some(icon::plus_icon()), "Generate address");
                     if addresses.is_empty() {

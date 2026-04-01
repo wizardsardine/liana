@@ -398,7 +398,7 @@ impl State {
         if let Some(key) = self.app.keys.get(&key_id) {
             let (email, token) = match &key.identity {
                 KeyIdentity::Email(e) => (e.clone(), String::new()),
-                KeyIdentity::Token(t) => (String::new(), t.clone()),
+                KeyIdentity::Token { token: t, .. } => (String::new(), t.clone()),
                 KeyIdentity::Other(o) => (o.clone(), String::new()),
             };
             self.views.keys.edit_key_modal = Some(views::EditKeyModalState {
@@ -446,7 +446,10 @@ impl State {
                 modal_state.key_type,
                 ws_business::KeyType::Cosigner | ws_business::KeyType::SafetyNet
             ) {
-                KeyIdentity::Token(modal_state.token.clone())
+                KeyIdentity::Token {
+                    token: modal_state.token.clone(),
+                    provider: None,
+                }
             } else {
                 KeyIdentity::Email(modal_state.email.clone())
             };
@@ -1541,7 +1544,9 @@ impl State {
                                 // Extract identity fields
                                 let (email, token) = match &key.identity {
                                     KeyIdentity::Email(e) => (e.clone(), String::new()),
-                                    KeyIdentity::Token(t) => (String::new(), t.clone()),
+                                    KeyIdentity::Token { token: t, .. } => {
+                                        (String::new(), t.clone())
+                                    }
                                     KeyIdentity::Other(o) => (o.clone(), String::new()),
                                 };
                                 // Update the modal with server data

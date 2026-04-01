@@ -42,7 +42,7 @@ pub fn transactions_view<'a>(
         Column::new()
             .push(
                 Row::new()
-                    .push(Container::new(h3(Menu::Transactions.title())))
+                    .push(Container::new(panel_title(Menu::Transactions.title())))
                     .push(Space::with_width(Length::Fill))
                     .push(
                         button::secondary(Some(icon::backup_icon()), "Export")

@@ -13,7 +13,7 @@ use crate::ui::BusinessSettingsUI;
 
 /// Settings section list view.
 pub fn list_view() -> Element<'static, Msg> {
-    let header = text("Settings").size(30).bold();
+    let header = panel_title("Settings");
 
     let wallet = menu_entry(
         "Wallet",
@@ -192,7 +192,7 @@ fn section_header(title: &'static str) -> Element<'static, Msg> {
         .spacing(10)
         .align_y(Alignment::Center)
         .push(
-            iced::widget::Button::new(text("Settings").size(30).bold())
+            iced::widget::Button::new(panel_title("Settings"))
                 .style(theme::button::transparent)
                 .on_press(Msg::Home),
         )

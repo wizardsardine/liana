@@ -1,4 +1,4 @@
-use serde::{de, Deserialize};
+use serde::{de, Deserialize, Serialize};
 
 use miniscript::descriptor::DescriptorPublicKey;
 
@@ -59,7 +59,7 @@ impl<'de> Deserialize<'de> for KeyStatus {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Provider {
     pub uuid: String,
     pub name: String,

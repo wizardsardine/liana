@@ -40,7 +40,7 @@ pub fn recovery<'a>(
         cache,
         warning,
         Column::new()
-            .push(Container::new(h3(Menu::Recovery.title())).width(Length::Fill))
+            .push(Container::new(panel_title(Menu::Recovery.title())).width(Length::Fill))
             .push(Container::new(text(INFO_TEXT)))
             .push(Space::with_height(Length::Fixed(20.0)))
             .push(

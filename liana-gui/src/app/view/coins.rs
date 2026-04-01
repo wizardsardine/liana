@@ -26,7 +26,7 @@ pub fn coins_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
     Column::new()
-        .push(Container::new(h3(Menu::Coins.title())).width(Length::Fill))
+        .push(Container::new(panel_title(Menu::Coins.title())).width(Length::Fill))
         .push(
             Column::new()
                 .spacing(10)
