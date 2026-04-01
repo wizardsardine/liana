@@ -111,6 +111,7 @@ pub struct Badges {
 pub struct Pills {
     pub simple: ContainerPalette,
     pub primary: ContainerPalette,
+    pub selected: ContainerPalette,
     pub success: ContainerPalette,
     pub warning: ContainerPalette,
     pub error: ContainerPalette,
@@ -505,6 +506,11 @@ impl std::default::Default for Palette {
                     background: color::TRANSPARENT,
                     text: color::GREY_3.into(),
                     border: color::GREY_3.into(),
+                },
+                selected: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: color::ORANGE.into(),
+                    border: Some(color::ORANGE),
                 },
                 warning: ContainerPalette {
                     background: color::WARN_ORANGE,
@@ -952,6 +958,11 @@ impl Palette {
                     background: color::TRANSPARENT,
                     text: color::GREY_3.into(),
                     border: color::GREY_3.into(),
+                },
+                selected: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: color::ORANGE.into(),
+                    border: Some(color::ORANGE),
                 },
                 warning: ContainerPalette {
                     background: color::WARN_ORANGE,

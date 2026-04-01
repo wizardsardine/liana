@@ -69,10 +69,12 @@ pub fn liquid_receive_view<'a>(
         )));
     } else if let (Some(addr), Some(qr)) = (address, qr_data) {
         // Lightning invoices contain more data, so use smaller cell size
+        // Lightning invoices encode more data → more QR modules → use smaller cell_size.
+        // Target roughly ~300px rendered QR for all methods.
         let cell_size = if *receive_method == ReceiveMethod::Lightning {
-            4
+            3
         } else {
-            8
+            5
         };
 
         // Clean on-chain addresses for display (but keep original for QR code)
@@ -89,7 +91,7 @@ pub fn liquid_receive_view<'a>(
                 .align_x(Alignment::Center)
                 .push(
                     Container::new(QRCode::<theme::Theme>::new(qr).cell_size(cell_size))
-                        .padding(30)
+                        .padding(20)
                         .style(theme::card::simple),
                 )
                 .push(
@@ -639,42 +641,43 @@ pub fn usdt_only_receive_view<'a>(
             "Generating Address",
         )));
     } else if let (Some(addr), Some(qr)) = (address, qr_data) {
+        let address_row = Row::new()
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .push(
+                Container::new(
+                    text(addr)
+                        .size(12)
+                        .font(iced::Font::MONOSPACE)
+                        .style(theme::text::secondary)
+                        .wrapping(iced::widget::text::Wrapping::Glyph),
+                )
+                .padding([8, 12])
+                .style(theme::card::simple)
+                .width(Length::Fill),
+            )
+            .push(
+                iced::widget::button(icon::clipboard_icon().size(16))
+                    .on_press(LiquidReceiveMessage::Copy)
+                    .style(theme::button::transparent_border),
+            );
+
         content = content.push(
             Column::new()
-                .spacing(30)
+                .spacing(20)
                 .align_x(Alignment::Center)
                 .push(
-                    Container::new(QRCode::<theme::Theme>::new(qr).cell_size(8))
-                        .padding(30)
+                    Container::new(QRCode::<theme::Theme>::new(qr).cell_size(6))
+                        .padding(20)
                         .style(theme::card::simple),
                 )
+                .push(address_row)
                 .push(
-                    Container::new(
-                        text(addr)
-                            .size(12)
-                            .style(theme::text::secondary)
-                            .wrapping(iced::widget::text::Wrapping::Glyph),
+                    text(
+                        "Share this address to receive USDt (Liquid Tether) from any Liquid wallet",
                     )
-                    .width(Length::Fill)
-                    .max_width(600)
-                    .padding(10)
-                    .center_x(Length::Fill),
-                )
-                .push(
-                    Column::new()
-                        .spacing(15)
-                        .align_x(Alignment::Center)
-                        .push(Row::new().spacing(15).push(
-                            button::primary(Some(icon::clipboard_icon()), "Copy")
-                                .on_press(LiquidReceiveMessage::Copy)
-                                .width(Length::Fixed(150.0))
-                                .padding(15),
-                        ))
-                        .push(
-                            text("Share this address to receive USDt (Liquid Tether) from any Liquid wallet")
-                                .size(13)
-                                .style(theme::text::secondary),
-                        ),
+                    .size(13)
+                    .style(theme::text::secondary),
                 )
                 .push(
                     Container::new(
@@ -684,8 +687,7 @@ pub fn usdt_only_receive_view<'a>(
                             .padding(10),
                     )
                     .width(Length::Fill)
-                    .center_x(Length::Fill)
-                    .padding(10),
+                    .center_x(Length::Fill),
                 ),
         );
     }

@@ -8,3 +8,4 @@ pub mod keys;
 pub mod coincube;
 pub mod mavapay;
 pub mod meld;
+pub mod sideshift;

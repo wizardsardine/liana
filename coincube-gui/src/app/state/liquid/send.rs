@@ -110,6 +110,18 @@ impl LiquidSend {
         }
     }
 
+    pub fn usdt_balance(&self) -> u64 {
+        self.usdt_balance
+    }
+
+    pub fn breez_client(&self) -> &Arc<BreezClient> {
+        &self.breez_client
+    }
+
+    pub fn recent_transactions(&self) -> &[view::liquid::RecentTransaction] {
+        &self.recent_transaction
+    }
+
     pub fn new_usdt_only(breez_client: Arc<BreezClient>) -> Self {
         Self {
             usdt_only: true,
