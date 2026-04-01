@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 use coincube_ui::{
@@ -399,11 +400,13 @@ impl P2PPanel {
                 self.image_downloads_in_flight.insert(url.clone());
 
                 let oid = order_id.clone();
+                let err_oid = order_id.clone();
+                let err_url = url.clone();
                 let cname = self.cube_name();
                 let mnemonic = self.mnemonic.clone();
                 tasks.push(Task::perform(
                     super::mostro::download_and_decrypt_image(url, oid, cname, mnemonic),
-                    |result| match result {
+                    move |result| match result {
                         Ok((order_id, blossom_url, bytes)) => {
                             Message::View(view::Message::P2P(P2PMessage::AttachmentDownloaded {
                                 order_id,
@@ -412,10 +415,9 @@ impl P2PPanel {
                             }))
                         }
                         Err(e) => {
-                            // We don't know the blossom_url from here, so encode in error
                             Message::View(view::Message::P2P(P2PMessage::AttachmentDownloaded {
-                                order_id: String::new(),
-                                blossom_url: String::new(),
+                                order_id: err_oid,
+                                blossom_url: err_url,
                                 data: Err(e),
                             }))
                         }
@@ -3049,8 +3051,9 @@ impl P2PPanel {
                     }
                 } else {
                     let text = extract_chat_text(&last_msg.payload_json);
-                    if text.len() > 50 {
-                        format!("{}...", &text[..50])
+                    if text.chars().count() > 50 {
+                        let truncated: String = text.chars().take(50).collect();
+                        format!("{truncated}...")
                     } else {
                         text
                     }
@@ -4197,10 +4200,10 @@ impl State for P2PPanel {
                             fiat_code: Some(order.fiat_currency.clone()),
                             fiat_amount: Some(amount.unwrap_or(order.fiat_amount as i64)),
                             payment_method: Some(order.payment_methods.join(",")),
-                            premium: order.premium_percent.map(|p| p as i64),
-                            sats_amount: order.sats_amount.map(|s| s as i64),
-                            min_amount: order.min_amount.map(|m| m as i64),
-                            max_amount: order.max_amount.map(|m| m as i64),
+                            premium: order.premium_percent.map(|p| p.trunc() as i64),
+                            sats_amount: order.sats_amount.and_then(|s| i64::try_from(s).ok()),
+                            min_amount: order.min_amount.map(|m| m.trunc() as i64),
+                            max_amount: order.max_amount.map(|m| m.trunc() as i64),
                         };
 
                         return Task::perform(super::mostro::take_order(data), |result| {
@@ -4520,7 +4523,7 @@ impl State for P2PPanel {
                         }
                         Err(e) => {
                             // Only restore input if the user is still viewing the same trade
-                            if self.selected_trade.as_deref() == Some(&pending.order_id) {
+                            if self.active_order_id().as_deref() == Some(&pending.order_id) {
                                 self.dispute_chat_input.value = pending.original_text;
                             }
                             return Task::done(Message::View(view::Message::ShowError(format!(
@@ -4587,7 +4590,7 @@ impl State for P2PPanel {
                         }
                         Err(e) => {
                             // Only restore input if the user is still viewing the same trade
-                            if self.selected_trade.as_deref() == Some(&pending.order_id) {
+                            if self.active_order_id().as_deref() == Some(&pending.order_id) {
                                 self.chat_input.value = pending.original_text;
                             }
                             return Task::done(Message::View(view::Message::ShowError(format!(
@@ -4641,7 +4644,9 @@ impl State for P2PPanel {
                                 &payload_json,
                             ) {
                                 trade.hold_invoice = Some(invoice.clone());
-                                if self.selected_trade.as_deref() == Some(&order_id) {
+                                let is_active =
+                                    self.active_order_id().as_deref() == Some(&order_id);
+                                if is_active {
                                     self.hold_invoice_qr = qr_code::Data::new(invoice).ok();
                                 }
                             }
@@ -4652,7 +4657,7 @@ impl State for P2PPanel {
                 // Chat messages are already persisted by process_dm_notifications.
                 // Still refresh the cache so the view picks up the new message.
                 if is_chat {
-                    if self.selected_trade.as_deref() == Some(&order_id) {
+                    if self.active_order_id().as_deref() == Some(&order_id) {
                         self.refresh_trade_cache();
                         return self.trigger_image_downloads();
                     }
@@ -4672,8 +4677,8 @@ impl State for P2PPanel {
                     },
                 );
 
-                // Refresh cache when this update belongs to the selected trade
-                if self.selected_trade.as_deref() == Some(&order_id) {
+                // Refresh cache when this update belongs to the active trade
+                if self.active_order_id().as_deref() == Some(&order_id) {
                     self.refresh_trade_cache();
                 }
 

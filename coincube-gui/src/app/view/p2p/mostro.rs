@@ -568,9 +568,15 @@ pub async fn restore_trades(
     // while the restore was in-flight must not be silently overwritten.
     let mut data = load_data(cube_name)?;
 
-    // Never move last_trade_index backwards.
-    if last_trade_index > data.last_trade_index {
+    // Never move last_trade_index backwards, and reject out-of-range values
+    // (must fit in u32 for derive_trade_keys).
+    if last_trade_index > data.last_trade_index && last_trade_index <= i64::from(u32::MAX) {
         data.last_trade_index = last_trade_index;
+    } else if last_trade_index > i64::from(u32::MAX) {
+        tracing::warn!(
+            "Restore: ignoring out-of-range last_trade_index {}",
+            last_trade_index
+        );
     }
 
     // Merge restored sessions: only add sessions for orders not already tracked
@@ -925,8 +931,8 @@ async fn sync_last_trade_index(
             data.last_trade_index,
             idx
         );
-        data.last_trade_index = idx;
-        Ok(idx)
+        data.last_trade_index = data.last_trade_index.max(idx);
+        Ok(data.last_trade_index)
     })
 }
 
@@ -1071,16 +1077,7 @@ pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, St
 
         tracing::info!("Order created successfully, order_id={}", order_id);
 
-        // Critical section 2: atomically commit the incremented trade index.
-        with_locked_data(&form.cube_name, |data| {
-            // Only advance if our reserved index is still the logical next step.
-            if next_idx > data.last_trade_index {
-                data.last_trade_index = next_idx;
-            }
-            Ok(())
-        })?;
-
-        // Persist trade session to disk (best-effort — order already succeeded)
+        // Critical section 2: atomically advance trade index AND persist session.
         let session = TradeSession {
             order_id: order_id.clone(),
             trade_index: next_idx,
@@ -1098,12 +1095,24 @@ pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, St
             created_at: chrono::Utc::now().timestamp(),
             role: "creator".to_string(),
             messages: Vec::new(),
-            counterparty_trade_pubkey: None, // set later when someone takes the order
+            counterparty_trade_pubkey: None,
             admin_trade_pubkey: None,
         };
-        if let Err(e) = append_trade(&form.cube_name, session) {
-            tracing::warn!("Failed to persist trade session: {e}");
-        }
+        with_locked_data(&form.cube_name, |data| {
+            if next_idx > data.last_trade_index {
+                data.last_trade_index = next_idx;
+            }
+            if let Some(existing) = data
+                .trades
+                .iter_mut()
+                .find(|t| t.order_id == session.order_id)
+            {
+                *existing = session.clone();
+            } else {
+                data.trades.push(session.clone());
+            }
+            Ok(())
+        })?;
 
         return Ok(OrderSubmitResponse::Success { order_id });
     }
@@ -1250,14 +1259,6 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
         }
 
         // Critical section 2: atomically commit the incremented trade index.
-        with_locked_data(&data.cube_name, |mdata| {
-            // Only advance if our reserved index is still the logical next step.
-            if next_idx > mdata.last_trade_index {
-                mdata.last_trade_index = next_idx;
-            }
-            Ok(())
-        })?;
-
         // Determine our role's order kind: if we take a sell, we're buying
         let our_kind = match data.order_type {
             OrderType::Sell => "buy",
@@ -1270,6 +1271,7 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
             .unwrap_or_default();
         let counterparty_trade_pubkey = counterparty_from_payload(&inner.payload, &our_trade_hex);
 
+        // Critical section 2: atomically advance trade index AND persist session.
         let session = TradeSession {
             order_id: data.order_id.clone(),
             trade_index: next_idx,
@@ -1287,9 +1289,21 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
             counterparty_trade_pubkey,
             admin_trade_pubkey: None,
         };
-        if let Err(e) = append_trade(&data.cube_name, session) {
-            tracing::warn!("Failed to persist take-order session: {e}");
-        }
+        with_locked_data(&data.cube_name, |mdata| {
+            if next_idx > mdata.last_trade_index {
+                mdata.last_trade_index = next_idx;
+            }
+            if let Some(existing) = mdata
+                .trades
+                .iter_mut()
+                .find(|t| t.order_id == session.order_id)
+            {
+                *existing = session.clone();
+            } else {
+                mdata.trades.push(session.clone());
+            }
+            Ok(())
+        })?;
 
         // Check response payload: PaymentRequest means seller must pay a hold invoice
         return match &inner.payload {
@@ -1917,10 +1931,8 @@ fn extract_payload_text(payload_json: &str) -> Option<String> {
         serde_json::from_str::<Option<mostro_core::message::Payload>>(payload_json)
     {
         Some(t)
-    } else if let Ok(t) = serde_json::from_str::<String>(payload_json) {
-        Some(t)
     } else {
-        None
+        serde_json::from_str::<String>(payload_json).ok()
     }
 }
 
@@ -2753,6 +2765,14 @@ fn mostro_stream(
             }
             client.connect().await;
             client.wait_for_connection(Duration::from_secs(10)).await;
+
+            if !has_connected_relay(&client).await {
+                let _ = output
+                    .send(Message::View(view::Message::P2P(P2PMessage::StreamError(
+                        "Failed to connect to any Mostro relay".to_string(),
+                    ))))
+                    .await;
+            }
 
             // Track seen DM event IDs to avoid reprocessing
             // (gift-wrap timestamps are randomized per NIP-59, so we can't use timestamps)
