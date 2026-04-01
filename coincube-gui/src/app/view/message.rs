@@ -712,6 +712,11 @@ pub enum P2PMessage {
         blossom_url: String,
         data: Result<Vec<u8>, String>,
     },
+    SaveFile {
+        blossom_url: String,
+        filename: String,
+    },
+    FileSaved(Result<(), String>),
     // Stream-level errors (relay connection, subscription, restore failures)
     StreamError(String),
 }

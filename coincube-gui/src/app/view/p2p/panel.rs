@@ -2403,41 +2403,51 @@ impl P2PPanel {
                         super::mostro::AttachmentMeta::Image(img_meta) => {
                             match self.image_cache.get(&blossom_url) {
                                 Some(ImageCacheEntry::Ready(handle)) => {
-                                    let display_width = (img_meta.width).min(300);
+                                    let display_width = (img_meta.width).min(360);
+                                    // Image with filename overlaid at bottom
+                                    let img_widget = iced::widget::image(handle.clone())
+                                        .width(display_width as f32);
+                                    let overlay_label = container(
+                                        caption(filename_label).style(theme::text::secondary),
+                                    )
+                                    .padding([4, 8]);
+                                    column![img_widget, overlay_label].spacing(0).into()
+                                }
+                                Some(ImageCacheEntry::Loading) => container(
                                     column![
-                                        iced::widget::image(handle.clone())
-                                            .width(display_width as f32),
+                                        p2_regular("Loading image...")
+                                            .style(theme::text::secondary),
                                         caption(filename_label).style(theme::text::secondary),
                                     ]
-                                    .spacing(4)
-                                    .into()
-                                }
-                                Some(ImageCacheEntry::Loading) => column![
-                                    p2_regular("Loading image...").style(theme::text::secondary),
-                                    caption(filename_label).style(theme::text::secondary),
-                                ]
-                                .spacing(4)
+                                    .spacing(4),
+                                )
+                                .padding([16, 20])
+                                .width(Length::Fixed(200.0))
                                 .into(),
-                                Some(ImageCacheEntry::Failed(e)) => column![
-                                    p2_regular(format!("Failed: {e}")).style(theme::text::warning),
-                                    caption(filename_label).style(theme::text::secondary),
-                                ]
-                                .spacing(4)
+                                Some(ImageCacheEntry::Failed(e)) => container(
+                                    column![
+                                        p2_regular(format!("Failed: {e}"))
+                                            .style(theme::text::warning),
+                                        caption(filename_label).style(theme::text::secondary),
+                                    ]
+                                    .spacing(4),
+                                )
+                                .padding([16, 20])
                                 .into(),
-                                None => column![
-                                    p2_regular("Loading image...").style(theme::text::secondary),
-                                    caption(filename_label).style(theme::text::secondary),
-                                ]
-                                .spacing(4)
+                                None => container(
+                                    column![
+                                        p2_regular("Loading image...")
+                                            .style(theme::text::secondary),
+                                        caption(filename_label).style(theme::text::secondary),
+                                    ]
+                                    .spacing(4),
+                                )
+                                .padding([16, 20])
+                                .width(Length::Fixed(200.0))
                                 .into(),
                             }
                         }
                         super::mostro::AttachmentMeta::File(file_meta) => {
-                            let file_icon = match file_meta.file_type.as_str() {
-                                "video" => icon::import_icon(),
-                                "image" => icon::import_icon(),
-                                _ => icon::import_icon(),
-                            };
                             let size_label = if file_meta.original_size < 1024 {
                                 format!("{} B", file_meta.original_size)
                             } else if file_meta.original_size < 1024 * 1024 {
@@ -2448,19 +2458,32 @@ impl P2PPanel {
                                     file_meta.original_size as f64 / (1024.0 * 1024.0)
                                 )
                             };
-                            column![row![
-                                file_icon.size(24).style(theme::text::secondary),
+                            let save_url = file_meta.blossom_url.clone();
+                            let save_name = file_meta.filename.clone();
+                            // File card with info + download button (like mobile)
+                            let info_row = row![
+                                icon::tooltip_icon().size(32).style(theme::text::secondary),
                                 column![
-                                    p2_regular(filename_label),
-                                    caption(format!("{} · {}", file_meta.file_type, size_label))
+                                    p1_bold(filename_label),
+                                    caption(format!("{} · Encrypted", size_label))
                                         .style(theme::text::secondary),
                                 ]
                                 .spacing(2),
                             ]
-                            .spacing(8)
-                            .align_y(iced::alignment::Vertical::Center),]
-                            .spacing(4)
-                            .into()
+                            .spacing(10)
+                            .align_y(iced::alignment::Vertical::Center);
+
+                            let download_btn = button::secondary(None, "Download")
+                                .on_press(p2p(P2PMessage::SaveFile {
+                                    blossom_url: save_url,
+                                    filename: save_name,
+                                }))
+                                .width(Length::Fill);
+
+                            column![info_row, download_btn]
+                                .spacing(8)
+                                .width(Length::Fixed(260.0))
+                                .into()
                         }
                     }
                 } else {
@@ -4710,16 +4733,16 @@ impl State for P2PPanel {
                     async move {
                         let dialog = rfd::AsyncFileDialog::new()
                             .set_title("Send File")
-                            .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
-                            .add_filter("Videos", &["mp4", "mov", "avi"])
-                            .add_filter("Documents", &["pdf", "doc", "docx"])
                             .add_filter(
                                 "All supported",
                                 &[
                                     "png", "jpg", "jpeg", "gif", "webp", "mp4", "mov", "avi",
                                     "pdf", "doc", "docx",
                                 ],
-                            );
+                            )
+                            .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
+                            .add_filter("Videos", &["mp4", "mov", "avi"])
+                            .add_filter("Documents", &["pdf", "doc", "docx"]);
                         dialog.pick_file().await
                     },
                     |file| {
@@ -4817,6 +4840,39 @@ impl State for P2PPanel {
                 }
                 let _ = order_id; // used for future scoping if needed
             }
+            P2PMessage::SaveFile {
+                blossom_url,
+                filename,
+            } => {
+                if let Some(order_id) = self.active_order_id() {
+                    let cube_name = self.cube_name();
+                    let mnemonic = self.mnemonic.clone();
+                    return Task::perform(
+                        super::mostro::download_and_save_file(
+                            blossom_url,
+                            filename,
+                            order_id,
+                            cube_name,
+                            mnemonic,
+                        ),
+                        |result| Message::View(view::Message::P2P(P2PMessage::FileSaved(result))),
+                    );
+                }
+            }
+            P2PMessage::FileSaved(result) => match result {
+                Ok(()) => {
+                    return Task::done(Message::View(view::Message::ShowSuccess(
+                        "File saved".to_string(),
+                    )));
+                }
+                Err(e) => {
+                    if e != "cancelled" {
+                        return Task::done(Message::View(view::Message::ShowError(format!(
+                            "File save failed: {e}",
+                        ))));
+                    }
+                }
+            },
         }
         Task::none()
     }

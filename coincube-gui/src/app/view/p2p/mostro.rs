@@ -600,22 +600,6 @@ pub async fn restore_trades(
     Ok(count)
 }
 
-fn append_trade(cube_name: &str, session: TradeSession) -> Result<(), String> {
-    with_locked_data(cube_name, |data| {
-        // Replace existing session for the same order (re-take after cancel uses new keys)
-        if let Some(existing) = data
-            .trades
-            .iter_mut()
-            .find(|t| t.order_id == session.order_id)
-        {
-            *existing = session.clone();
-        } else {
-            data.trades.push(session.clone());
-        }
-        Ok(())
-    })
-}
-
 /// Map `mostro_core::order::Status` to UI `TradeStatus`.
 fn map_trade_status(status: &mostro_core::order::Status) -> TradeStatus {
     use mostro_core::order::Status;
@@ -2099,6 +2083,52 @@ pub async fn download_from_blossom(url: &str) -> Result<Vec<u8>, String> {
         .await
         .map(|b| b.to_vec())
         .map_err(|e| format!("Failed to read response: {e}"))
+}
+
+/// Download, decrypt, and save a file attachment to disk via save dialog.
+pub async fn download_and_save_file(
+    blossom_url: String,
+    filename: String,
+    order_id: String,
+    cube_name: String,
+    mnemonic: String,
+) -> Result<(), String> {
+    // Get encryption key
+    let sessions = load_data(&cube_name).unwrap_or_default().trades;
+    let session = sessions
+        .iter()
+        .find(|s| s.order_id == order_id)
+        .ok_or_else(|| format!("No trade session for order {}", order_id))?;
+
+    let cp_hex = session
+        .counterparty_trade_pubkey
+        .as_deref()
+        .ok_or("No counterparty pubkey")?;
+    let cp_pk =
+        PublicKey::from_hex(cp_hex).map_err(|e| format!("Invalid counterparty pubkey: {e}"))?;
+    let trade_keys = derive_trade_keys(&mnemonic, session.trade_index)?;
+    let encryption_key = derive_encryption_key(&trade_keys, &cp_pk)?;
+
+    // Download and decrypt
+    let blob = download_from_blossom(&blossom_url).await?;
+    let decrypted = decrypt_image_blob(&encryption_key, &blob)?;
+
+    // Save dialog
+    let ext = std::path::Path::new(&filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_string();
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title("Save File")
+        .set_file_name(&filename)
+        .add_filter("File", &[&ext]);
+    let handle = dialog
+        .save_file()
+        .await
+        .ok_or_else(|| "cancelled".to_string())?;
+
+    std::fs::write(handle.path(), &decrypted).map_err(|e| format!("Failed to save file: {e}"))
 }
 
 /// Data for sending an image attachment.
