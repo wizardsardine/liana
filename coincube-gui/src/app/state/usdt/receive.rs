@@ -379,6 +379,9 @@ impl State for UsdtReceive {
                 }
 
                 SideshiftReceiveMessage::AffiliateFetched(result) => {
+                    if self.phase != ReceivePhase::FetchingAffiliate {
+                        return Task::none();
+                    }
                     match result {
                         Ok(id) => {
                             self.affiliate_id = Some(id.clone());
@@ -402,6 +405,9 @@ impl State for UsdtReceive {
                 }
 
                 SideshiftReceiveMessage::QuoteFetched(result) => {
+                    if self.phase != ReceivePhase::FetchingQuote {
+                        return Task::none();
+                    }
                     match result {
                         Ok(quote) => {
                             let affiliate_id = self.affiliate_id.clone().unwrap_or_default();
@@ -419,6 +425,9 @@ impl State for UsdtReceive {
                 }
 
                 SideshiftReceiveMessage::ShiftCreated(result) => {
+                    if self.phase != ReceivePhase::CreatingShift {
+                        return Task::none();
+                    }
                     self.loading = false;
                     match result {
                         Ok(shift) => {
