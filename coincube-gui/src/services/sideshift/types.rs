@@ -111,10 +111,8 @@ impl SideshiftNetwork {
             return vec![Self::Ethereum, Self::Binance];
         }
 
-        // Solana: base58-encoded 32-byte public key (typically 43–44 chars).
-        // Earlier branches already catch Liquid (34-char Q/G/H), Tron (34-char T),
-        // and EVM (0x) at their specific lengths, so no prefix exclusions needed.
-        if (32..=44).contains(&addr.len()) && Self::is_base58(addr) {
+        // Solana: base58-encoded 32-byte Ed25519 public key (always 43–44 chars).
+        if (43..=44).contains(&addr.len()) && Self::is_base58(addr) {
             return vec![Self::Solana];
         }
 
