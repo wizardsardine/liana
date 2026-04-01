@@ -705,7 +705,8 @@ pub enum P2PMessage {
     // File attachments
     AttachFile,
     FileSelected(std::path::PathBuf),
-    AttachmentSent(Result<String, String>),
+    /// (order_id, metadata_json) on success, error string on failure.
+    AttachmentSent(Result<(String, String), String>),
     AttachmentDownloaded {
         order_id: String,
         blossom_url: String,

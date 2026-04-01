@@ -4301,6 +4301,7 @@ impl State for P2PPanel {
                     .and_then(|t| t.hold_invoice.as_ref())
                     .and_then(|inv| qr_code::Data::new(inv).ok());
                 self.selected_trade = Some(id);
+                self.chat_selected_trade = None; // clear Chat tab context
                 self.trade_invoice_input = Default::default();
                 self.trade_action_loading = false;
                 self.trade_rating = 0;
@@ -4425,6 +4426,7 @@ impl State for P2PPanel {
             }
             P2PMessage::OpenChatForTrade(trade_id) => {
                 self.chat_selected_trade = Some(trade_id);
+                self.selected_trade = None; // clear MyTrades context
                 self.active_chat = ActiveChat::Peer;
                 self.chat_input = Default::default();
                 self.refresh_chat_trade_cache();
@@ -4445,6 +4447,7 @@ impl State for P2PPanel {
             }
             P2PMessage::OpenDisputeChatForTrade(trade_id) => {
                 self.chat_selected_trade = Some(trade_id);
+                self.selected_trade = None; // clear MyTrades context
                 self.active_chat = ActiveChat::Dispute;
                 self.dispute_chat_input = Default::default();
                 self.refresh_chat_trade_cache();
@@ -4736,6 +4739,7 @@ impl State for P2PPanel {
             P2PMessage::FileSelected(path) => {
                 if let Some(ref order_id) = self.active_order_id() {
                     let order_id = order_id.clone();
+                    let oid_for_result = order_id.clone();
                     let cube_name = self.cube_name();
                     let mnemonic = self.mnemonic.clone();
                     let mostro_pubkey_hex = self.mostro_config.active_pubkey_hex().to_string();
@@ -4751,8 +4755,10 @@ impl State for P2PPanel {
                             mostro_pubkey_hex,
                             relay_urls,
                         }),
-                        |result| {
-                            Message::View(view::Message::P2P(P2PMessage::AttachmentSent(result)))
+                        move |result| {
+                            Message::View(view::Message::P2P(P2PMessage::AttachmentSent(
+                                result.map(|meta| (oid_for_result, meta)),
+                            )))
                         },
                     );
                 }
@@ -4760,26 +4766,24 @@ impl State for P2PPanel {
             P2PMessage::AttachmentSent(result) => {
                 self.attachment_sending = false;
                 match result {
-                    Ok(metadata_json) => {
-                        if let Some(ref order_id) = self.active_order_id() {
-                            let payload = serde_json::to_string(&Some(
-                                mostro_core::message::Payload::TextMessage(metadata_json),
-                            ))
-                            .unwrap_or_default();
-                            super::mostro::append_trade_message(
-                                &self.cube_name(),
-                                order_id,
-                                super::mostro::TradeMessage {
-                                    timestamp: chrono::Utc::now().timestamp() as u64,
-                                    action: "SendDm".to_string(),
-                                    payload_json: payload,
-                                    is_own: true,
-                                },
-                            );
-                            self.refresh_trade_cache();
-                            let dl = self.trigger_image_downloads();
-                            return dl;
-                        }
+                    Ok((order_id, metadata_json)) => {
+                        let payload = serde_json::to_string(&Some(
+                            mostro_core::message::Payload::TextMessage(metadata_json),
+                        ))
+                        .unwrap_or_default();
+                        super::mostro::append_trade_message(
+                            &self.cube_name(),
+                            &order_id,
+                            super::mostro::TradeMessage {
+                                timestamp: chrono::Utc::now().timestamp() as u64,
+                                action: "SendDm".to_string(),
+                                payload_json: payload,
+                                is_own: true,
+                            },
+                        );
+                        self.refresh_trade_cache();
+                        let dl = self.trigger_image_downloads();
+                        return dl;
                     }
                     Err(e) => {
                         if e != "cancelled" {

@@ -2081,7 +2081,13 @@ async fn upload_to_blossom(encrypted_blob: &[u8], trade_keys: &Keys) -> Result<S
 
 /// Download an encrypted blob from a Blossom URL.
 pub async fn download_from_blossom(url: &str) -> Result<Vec<u8>, String> {
-    let resp = reqwest::get(url)
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("Download failed: {e}"))?;
+    let resp = client
+        .get(url)
+        .send()
         .await
         .map_err(|e| format!("Download failed: {e}"))?;
 
