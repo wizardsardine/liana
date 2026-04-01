@@ -448,6 +448,12 @@ impl P2PPanel {
         self.trades
             .iter()
             .filter(|trade| {
+                // Hide own orders that were canceled/expired before anyone took them
+                if trade.role == TradeRole::Creator
+                    && matches!(trade.status, TradeStatus::Canceled | TradeStatus::Expired)
+                {
+                    return false;
+                }
                 self.trade_filters.iter().any(|f| match f {
                     TradeFilter::All => true,
                     TradeFilter::Pending => trade.status == TradeStatus::Pending,
