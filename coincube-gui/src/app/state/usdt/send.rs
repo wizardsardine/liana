@@ -328,11 +328,6 @@ impl State for UsdtSend {
                     return Task::none();
                 }
 
-                SideshiftSendMessage::ToggleShiftType(st) => {
-                    self.shift_type = st.clone();
-                    return Task::none();
-                }
-
                 SideshiftSendMessage::AmountInput(v) => {
                     self.amount_input = v.clone();
                     self.shift_type = if v.trim().is_empty() {

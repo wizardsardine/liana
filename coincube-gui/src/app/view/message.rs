@@ -350,7 +350,6 @@ pub enum SideshiftShiftType {
 #[derive(Debug, Clone)]
 pub enum SideshiftReceiveMessage {
     SelectNetwork(SideshiftNetwork),
-    ToggleShiftType(SideshiftShiftType),
     AmountInput(String),
     Generate,
     AffiliateFetched(Result<String, String>),
@@ -375,8 +374,6 @@ pub enum SideshiftSendMessage {
     Next,
     /// Amount input changed.
     AmountInput(String),
-    /// Fixed/variable toggle (driven automatically by amount, but can be overridden).
-    ToggleShiftType(SideshiftShiftType),
     /// Start the shift creation pipeline.
     Generate,
     AffiliateFetched(Result<String, String>),

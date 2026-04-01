@@ -335,11 +335,6 @@ impl State for UsdtReceive {
                     return Task::none();
                 }
 
-                SideshiftReceiveMessage::ToggleShiftType(st) => {
-                    self.shift_type = st.clone();
-                    return Task::none();
-                }
-
                 SideshiftReceiveMessage::AmountInput(v) => {
                     self.amount_input = v.clone();
                     // Auto-switch shift type based on whether an amount is provided.
