@@ -1,7 +1,7 @@
 pub use bitcoin::Amount;
 use iced::Color;
 
-use crate::{color, component::text::*, widget::*};
+use crate::{color, component::text::*, font::MANROPE_BOLD, widget::*};
 
 pub trait DisplayAmount {
     fn to_formatted_string(&self) -> String;
@@ -127,17 +127,26 @@ fn render_amount<'a, T: 'a>(
         None => (String::from("0.00 000 000"), String::from("")),
     };
 
-    let mut child_after = text(after).size(size).bold();
+    let mut child_after = text(after).size(size).font(MANROPE_BOLD);
     if let Some(color_after) = color_after {
         child_after = child_after.color(color_after);
     }
     let row = Row::new()
-        .push(text(before).size(size).color(color_before))
+        .push(
+            text(before)
+                .font(MANROPE_BOLD)
+                .size(size)
+                .color(color_before),
+        )
         .push(child_after);
 
     Row::with_children(vec![
         row.into(),
-        text("BTC").size(size).color(color_before).into(),
+        text("BTC")
+            .font(MANROPE_BOLD)
+            .size(size)
+            .color(color_before)
+            .into(),
     ])
     .spacing(spacing)
     .align_y(iced::Alignment::Center)

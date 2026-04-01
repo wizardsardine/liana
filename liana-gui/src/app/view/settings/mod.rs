@@ -47,13 +47,13 @@ fn header(title: &str, msg: SettingsMessage) -> Row<'static, Message> {
         .spacing(10)
         .align_y(Alignment::Center)
         .push(
-            Button::new(text("Settings").size(30).bold())
+            Button::new(panel_title("Settings"))
                 .style(theme::button::transparent)
                 .on_press(Message::Menu(Menu::Settings)),
         )
         .push(icon::chevron_right().size(30))
         .push(
-            Button::new(text(title).size(30).bold())
+            Button::new(panel_title(title))
                 .style(theme::button::transparent)
                 .on_press(Message::Settings(msg)),
         )
@@ -114,7 +114,7 @@ fn export_section(
 }
 
 pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
-    let header = Button::new(text("Settings").size(30).bold())
+    let header = Button::new(panel_title("Settings"))
         .style(theme::button::transparent)
         .on_press(Message::Menu(Menu::Settings));
 

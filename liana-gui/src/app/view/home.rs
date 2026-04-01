@@ -18,6 +18,7 @@ use liana_ui::{
         event, form, spinner,
         text::*,
     },
+    font::MANROPE_MEDIUM,
     icon::{self, cross_icon, ICON_SIZE_M},
     theme,
     widget::*,
@@ -92,7 +93,12 @@ pub fn home_view<'a>(
                         Row::new()
                             .align_y(Alignment::Center)
                             .push(Space::with_width(20))
-                            .push(fiat.to_text().size(H2_SIZE).color(color::GREY_2))
+                            .push(
+                                fiat.to_text()
+                                    .font(MANROPE_MEDIUM)
+                                    .size(H2_SIZE)
+                                    .color(color::GREY_2),
+                            )
                     }))
             } else {
                 Row::new().push(spinner::Carousel::new(
@@ -235,14 +241,14 @@ pub fn home_view<'a>(
         None
     };
     Column::new()
-        .push(h3("Balance"))
+        .push(panel_title("Balance"))
         .push(balance)
         .push_maybe(show_rescan_warning.then_some(rescan_warning()))
         .push_maybe(expire_warning)
         .push(
             Column::new()
                 .spacing(10)
-                .push(h4_bold("Payments History"))
+                .push(panel_title("Payments History"))
                 .push(history)
                 .push_maybe(see_more),
         )

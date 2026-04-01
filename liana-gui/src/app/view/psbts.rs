@@ -66,7 +66,7 @@ pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
             Row::new()
                 .align_y(Alignment::Center)
                 .spacing(10)
-                .push(Container::new(h3(Menu::PSBTs.title())).width(Length::Fill))
+                .push(Container::new(panel_title(Menu::PSBTs.title())).width(Length::Fill))
                 .push(
                     button::secondary(Some(icon::restore_icon()), "Import")
                         .on_press(Message::ImportPsbt),

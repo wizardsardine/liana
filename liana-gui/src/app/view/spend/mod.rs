@@ -48,7 +48,7 @@ pub fn spend_view<'a>(
         .iter()
         .any(|txin| txin.sequence.is_relative_lock_time());
 
-    let title = Container::new(h3(if is_recovery {
+    let title = Container::new(panel_title(if is_recovery {
         Menu::Recovery.title()
     } else {
         Menu::CreateSpendTx.title()
@@ -155,12 +155,12 @@ pub fn create_spend_tx<'a>(
     let is_self_send = recipients.is_empty();
 
     // Title
-    let title = h3(if recovery_timelock.is_some() {
-        "Recovery"
+    let title = panel_title(if recovery_timelock.is_some() {
+        Menu::Recovery.title()
     } else if is_self_send {
         "Self-transfer"
     } else {
-        "Send"
+        Menu::CreateSpendTx.title()
     });
 
     // Optional batch label

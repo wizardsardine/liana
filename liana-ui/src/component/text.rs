@@ -11,6 +11,13 @@ pub const P1_SIZE: u16 = 16;
 pub const P2_SIZE: u16 = 14;
 pub const CAPTION_SIZE: u16 = 12;
 
+pub fn panel_title<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text!("{}", content)
+        .shaping(Shaping::Advanced)
+        .font(font::MANROPE_BOLD)
+        .size(H2_SIZE)
+}
+
 pub fn h1<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
     iced::widget::text!("{}", content)
         .shaping(Shaping::Advanced)
