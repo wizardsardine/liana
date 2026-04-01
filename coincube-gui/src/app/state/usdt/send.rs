@@ -427,7 +427,11 @@ impl State for UsdtSend {
                     let deposit_address = shift.deposit_address.clone();
                     let breez = self.inner.breez_client().clone();
                     let network = breez.network();
-                    let amount_input = self.amount_input.clone();
+                    // Prefer API-confirmed deposit amount over raw user input
+                    let amount_input = shift
+                        .deposit_amount
+                        .clone()
+                        .unwrap_or_else(|| self.amount_input.clone());
 
                     self.phase = SendPhase::Sending;
                     self.error = None;

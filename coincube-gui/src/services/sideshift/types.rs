@@ -119,11 +119,6 @@ impl SideshiftNetwork {
         vec![]
     }
 
-    /// Returns the external (non-Liquid) networks only.
-    pub fn external() -> &'static [SideshiftNetwork] {
-        &[Self::Ethereum, Self::Tron, Self::Binance, Self::Solana]
-    }
-
     /// Returns all networks in display order.
     pub fn all() -> &'static [SideshiftNetwork] {
         &[

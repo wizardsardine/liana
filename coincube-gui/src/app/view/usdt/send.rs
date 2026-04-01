@@ -164,7 +164,7 @@ fn address_input_view<'a>(
                     .height(Length::Fixed(50.0))
                     .center_y(Length::Fixed(50.0))
                     .style(if is_selected {
-                        theme::container::border_orange
+                        theme::pill::selected
                     } else {
                         theme::pill::simple
                     });
@@ -359,7 +359,7 @@ fn disambiguation_view<'a>(
             .padding([12, 16])
             .width(Length::Fill)
             .style(if is_selected {
-                theme::container::border_orange
+                theme::pill::selected
             } else {
                 theme::card::simple
             });
