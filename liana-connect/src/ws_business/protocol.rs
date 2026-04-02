@@ -240,7 +240,7 @@ fn parse_edit_xpub_request(payload: Option<Value>) -> Result<Request, WssConvers
         .as_u64()
         .ok_or_else(|| WssConversionError::DeserializationFailed("Missing key_id".to_string()))?
         as u8;
-    let xpub = if let Some(xpub_value) = payload.get("xpub") {
+    let xpub = if let Some(xpub_value) = payload.get("xpub").filter(|v| !v.is_null()) {
         Some(
             serde_json::from_value(xpub_value.clone())
                 .map_err(|e| WssConversionError::DeserializationFailed(e.to_string()))?,
@@ -2501,6 +2501,27 @@ mod protocol_tests {
                 assert!(msg.contains("Missing wallet_id"));
             }
             _ => panic!("Expected DeserializationFailed with missing wallet_id"),
+        }
+    }
+
+    #[test]
+    fn test_request_from_ws_message_edit_xpub_null_xpub() {
+        // When the backend sends "xpub": null, it should be parsed as None
+        let json = r#"{"type": "edit_xpub", "token": "t", "request_id": "r", "payload": {"wallet_id": "12345678-1234-1234-1234-123456789001", "key_id": 0, "xpub": null}}"#;
+        let ws_msg = WsMessage::Text(json.to_string());
+        let (parsed, _, _) = Request::from_ws_message(ws_msg).unwrap();
+
+        match parsed {
+            Request::EditXpub {
+                wallet_id,
+                key_id,
+                xpub,
+            } => {
+                assert_eq!(wallet_id, test_uuid(1));
+                assert_eq!(key_id, 0);
+                assert!(xpub.is_none());
+            }
+            _ => panic!("Expected EditXpub"),
         }
     }
 
