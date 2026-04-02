@@ -262,25 +262,22 @@ fn wallet_card<'a>(
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
 
-    let (icon, title, title_color, send_action, receive_action) = match wallet_type {
+    let (icon, title, send_action, receive_action) = match wallet_type {
         WalletType::Liquid => (
             lightning_icon().color(color::ORANGE),
             "Liquid",
-            Some(color::ORANGE),
             Message::Menu(Menu::Liquid(LiquidSubMenu::Send)),
             Message::Menu(Menu::Liquid(LiquidSubMenu::Receive)),
         ),
         WalletType::Usdt { .. } => (
             usd_icon().color(color::ORANGE),
             "USDt",
-            Some(color::ORANGE),
             Message::Menu(Menu::Usdt(UsdtSubMenu::Send)),
             Message::Menu(Menu::Usdt(UsdtSubMenu::Receive)),
         ),
         WalletType::Vault => (
-            vault_icon(),
+            vault_icon().style(theme::text::primary),
             "Vault",
-            None,
             Message::Menu(Menu::Vault(VaultSubMenu::Send)),
             Message::Menu(Menu::Vault(VaultSubMenu::Receive)),
         ),
@@ -432,11 +429,7 @@ fn wallet_card<'a>(
                     .spacing(8)
                     .align_y(Alignment::Center)
                     .push(icon.size(16))
-                    .push(
-                        text(title)
-                            .color(title_color.unwrap_or(color::GREY_2))
-                            .size(14),
-                    ),
+                    .push(text(title).size(14)),
             )
             .push(
                 Row::new()

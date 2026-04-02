@@ -25,13 +25,14 @@ getrandom = "0.3.1"
 
 # Used for the hot signer
 bip39 = "2.0"
-rand = "0.9.2"
 argon2 = "0.5.3"
 aes-gcm = "0.10.3"
-hex = "0.4.3"
 zeroize = "1.8.2"
 
 [lints.clippy]
 uninlined_format_args = "allow"
 large_enum_variant = "allow"
 result_large_err = "allow"
+
+[lib]
+doctest = false

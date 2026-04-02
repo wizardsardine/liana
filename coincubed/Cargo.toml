@@ -79,3 +79,6 @@ bip329 = { version = "0.4", default-features = false }
 uninlined_format_args = "allow"
 large_enum_variant = "allow"
 result_large_err = "allow"
+
+[lib]
+doctest = false
