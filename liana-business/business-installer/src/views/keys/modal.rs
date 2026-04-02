@@ -69,21 +69,6 @@ pub fn edit_key_modal_view<'a>(
             Message::KeyUpdateAlias,
         ));
 
-    // Description input
-    let desc_value = form::Value {
-        value: modal_state.description.clone(),
-        warning: None,
-        valid: true,
-    };
-    let description_input = Column::new()
-        .spacing(5)
-        .push(text::p1_medium("Key Description").style(theme::text::primary))
-        .push(form::Form::new(
-            "Enter description",
-            &desc_value,
-            Message::KeyUpdateDescr,
-        ));
-
     // Key type picker (placed before identity input)
     let key_types: &[ws_business::KeyType] = &[
         ws_business::KeyType::Internal,
@@ -186,7 +171,6 @@ pub fn edit_key_modal_view<'a>(
     let body = Column::new()
         .push_maybe(last_edit_info)
         .push(alias_input)
-        .push(description_input)
         .push(key_type_picker)
         .push_maybe(email_input)
         .push_maybe(token_input)
