@@ -7,7 +7,7 @@ use crate::ws_business::models::{Org, User, Wallet, Xpub};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Display;
-use tungstenite::Message as WsMessage;
+pub use tungstenite::Message as WsMessage;
 use uuid::Uuid;
 
 use super::RegistrationInfos;

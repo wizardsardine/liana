@@ -1,5 +1,3 @@
-pub mod api;
-
 use std::{
     collections::{HashMap, HashSet},
     sync::{
@@ -31,7 +29,8 @@ use crate::{
     services::connect::client::cache::ConnectCacheError,
 };
 
-use self::api::{UTXOKind, DEFAULT_OUTPOINTS_LIMIT};
+pub use liana_connect::wallets::api::{self, UserRole, DEFAULT_LIMIT, WALLET_ALIAS_MAXIMUM_LENGTH};
+use liana_connect::wallets::api::{UTXOKind, DEFAULT_OUTPOINTS_LIMIT};
 
 use super::{
     auth::{self, AccessTokenResponse, AuthError},

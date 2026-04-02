@@ -104,9 +104,9 @@ pub struct BusinessConnectResult {
     pub result: Result<
         (
             crate::services::connect::client::backend::BackendWalletClient,
-            crate::services::connect::client::backend::api::Wallet,
+            liana_connect::wallets::api::Wallet,
             lianad::commands::ListCoinsResult,
-            crate::services::connect::client::backend::api::UserSettings,
+            liana_connect::wallets::api::UserSettings,
         ),
         login::Error,
     >,

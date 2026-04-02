@@ -28,7 +28,7 @@ use crate::{
     daemon::{model::HistoryTransaction, Daemon, DaemonBackend, DaemonError},
     dir::LianaDirectory,
     export::Progress,
-    services::connect::client::backend::api::DEFAULT_LIMIT,
+    services::connect::client::backend::DEFAULT_LIMIT,
     utils::now,
     VERSION,
 };

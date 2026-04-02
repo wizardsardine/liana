@@ -47,7 +47,7 @@ use crate::{
     },
     dir::{LianaDirectory, NetworkDirectory},
     node::bitcoind::Bitcoind,
-    services::connect::client::backend::api::DEFAULT_LIMIT,
+    services::connect::client::backend::DEFAULT_LIMIT,
 };
 
 const DUMP_LABELS_LIMIT: u32 = 100;

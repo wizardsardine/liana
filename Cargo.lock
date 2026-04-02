@@ -3150,8 +3150,10 @@ name = "liana-connect"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bip329",
  "bip39",
  "getrandom 0.3.1",
+ "liana",
  "miniscript",
  "reqwest",
  "serde",

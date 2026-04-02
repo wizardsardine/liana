@@ -29,7 +29,7 @@ use crate::{
         bitcoind::{Bitcoind, ConfigField, RpcAuthType},
         electrum, NodeType,
     },
-    services::connect::client::{auth::AuthClient, backend::api},
+    services::connect::client::auth::AuthClient,
 };
 
 #[derive(Debug, Clone)]
@@ -115,14 +115,14 @@ pub enum SelectBackend {
 
 #[derive(Debug, Clone)]
 pub enum ImportRemoteWallet {
-    RemoteWallets(Result<Vec<api::Wallet>, Error>),
+    RemoteWallets(Result<Vec<liana_connect::wallets::api::Wallet>, Error>),
     ImportDescriptor(String),
     ConfirmDescriptor,
     ImportInvitationToken(String),
     FetchInvitation,
-    InvitationFetched(Result<api::WalletInvitation, Error>),
+    InvitationFetched(Result<liana_connect::wallets::api::WalletInvitation, Error>),
     AcceptInvitation,
-    InvitationAccepted(Result<api::Wallet, Error>),
+    InvitationAccepted(Result<liana_connect::wallets::api::Wallet, Error>),
     ImportDescriptorFromFile,
     ImportExport(ImportExportMessage),
 }

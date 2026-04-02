@@ -29,7 +29,7 @@ use crate::{
     dir::LianaDirectory,
     export::{ImportExportMessage, ImportExportType},
     hw::{HardwareWallet, HardwareWalletConfig, HardwareWallets},
-    services::connect::client::backend::api::WALLET_ALIAS_MAXIMUM_LENGTH,
+    services::connect::client::backend::WALLET_ALIAS_MAXIMUM_LENGTH,
 };
 
 enum Modal {

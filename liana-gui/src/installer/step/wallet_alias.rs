@@ -6,7 +6,7 @@ use liana_ui::{component::form, widget::*};
 use crate::{
     hw::HardwareWallets,
     installer::{context::Context, message::Message, step::Step, view},
-    services::connect::client::backend::api::WALLET_ALIAS_MAXIMUM_LENGTH,
+    services::connect::client::backend::WALLET_ALIAS_MAXIMUM_LENGTH,
 };
 
 #[derive(Default)]

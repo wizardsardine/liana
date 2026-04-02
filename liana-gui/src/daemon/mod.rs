@@ -182,7 +182,7 @@ pub trait Daemon: Debug {
     /// Updates the user's wallet settings on the backend.
     async fn update_wallet_settings(
         &self,
-        _fiat_currency: crate::services::connect::client::backend::api::FiatCurrency,
+        _fiat_currency: liana_connect::wallets::api::FiatCurrency,
     ) -> Result<(), DaemonError> {
         Err(DaemonError::NotImplemented)
     }
