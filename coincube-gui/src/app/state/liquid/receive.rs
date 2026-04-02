@@ -586,18 +586,15 @@ impl State for LiquidReceive {
                             );
 
                             let (desc, usdt_display) = if is_usdt {
-                                let display = if let PaymentDetails::Liquid { asset_info, .. } =
-                                    &payment.details
+                                let display = if let PaymentDetails::Liquid {
+                                    asset_info: Some(info),
+                                    ..
+                                } = &payment.details
                                 {
-                                    if let Some(info) = asset_info {
-                                        format_usdt_display(
-                                            (info.amount * 10_f64.powi(USDT_PRECISION as i32))
-                                                .round()
-                                                as u64,
-                                        )
-                                    } else {
-                                        format_usdt_display(payment.amount_sat)
-                                    }
+                                    format_usdt_display(
+                                        (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round()
+                                            as u64,
+                                    )
                                 } else {
                                     format_usdt_display(payment.amount_sat)
                                 };

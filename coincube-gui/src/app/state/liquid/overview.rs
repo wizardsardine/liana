@@ -229,30 +229,25 @@ impl State for LiquidOverview {
                                 );
 
                                 let (desc, usdt_display) = if is_usdt {
-                                    let display =
-                                        if let PaymentDetails::Liquid { asset_info, .. } =
-                                            &payment.details
-                                        {
-                                            if let Some(info) = asset_info {
-                                                crate::app::breez::assets::format_usdt_display(
-                                                (info.amount
-                                                    * 10_f64.powi(
-                                                        crate::app::breez::assets::USDT_PRECISION
-                                                            as i32,
-                                                    ))
-                                                .round()
-                                                    as u64,
-                                            )
-                                            } else {
-                                                crate::app::breez::assets::format_usdt_display(
-                                                    payment.amount_sat,
-                                                )
-                                            }
-                                        } else {
-                                            crate::app::breez::assets::format_usdt_display(
-                                                payment.amount_sat,
-                                            )
-                                        };
+                                    let display = if let PaymentDetails::Liquid {
+                                        asset_info: Some(info),
+                                        ..
+                                    } = &payment.details
+                                    {
+                                        crate::app::breez::assets::format_usdt_display(
+                                            (info.amount
+                                                * 10_f64.powi(
+                                                    crate::app::breez::assets::USDT_PRECISION
+                                                        as i32,
+                                                ))
+                                            .round()
+                                                as u64,
+                                        )
+                                    } else {
+                                        crate::app::breez::assets::format_usdt_display(
+                                            payment.amount_sat,
+                                        )
+                                    };
                                     (
                                         "USDt Transfer".to_owned(),
                                         Some(format!("{} USDt", display)),

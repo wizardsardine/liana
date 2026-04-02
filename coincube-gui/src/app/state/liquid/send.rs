@@ -871,7 +871,7 @@ impl State for LiquidSend {
                                     // clearing a previously set URI lock. Otherwise preserve
                                     // the user's current asset selection.
                                     if self.uri_asset.is_some() {
-                                        self.to_asset = if self.to_asset == SendAsset::Usdt {
+                                        self.to_asset = if self.from_asset == SendAsset::Usdt {
                                             SendAsset::Usdt
                                         } else {
                                             SendAsset::Lbtc
@@ -885,7 +885,7 @@ impl State for LiquidSend {
                             // No asset_id in URI — only reset to_asset if we're
                             // clearing a previously set URI lock.
                             if self.uri_asset.is_some() {
-                                self.to_asset = if self.to_asset == SendAsset::Usdt {
+                                self.to_asset = if self.from_asset == SendAsset::Usdt {
                                     SendAsset::Usdt
                                 } else {
                                     SendAsset::Lbtc
@@ -922,7 +922,7 @@ impl State for LiquidSend {
                     } else {
                         // Not a LiquidAddress — clear URI asset state and restore default
                         self.uri_asset = None;
-                        self.to_asset = if self.to_asset == SendAsset::Usdt {
+                        self.to_asset = if self.from_asset == SendAsset::Usdt {
                             SendAsset::Usdt
                         } else {
                             SendAsset::Lbtc
@@ -1624,7 +1624,7 @@ impl State for LiquidSend {
                     self.comment = None;
                     self.amount_input = form::Value::default();
                     self.usdt_amount_input = form::Value::default();
-                    self.to_asset = if self.to_asset == SendAsset::Usdt {
+                    self.to_asset = if self.from_asset == SendAsset::Usdt {
                         SendAsset::Usdt
                     } else {
                         SendAsset::Lbtc
@@ -1742,7 +1742,7 @@ impl State for LiquidSend {
                     self.amount = Amount::ZERO;
                     self.amount_input = form::Value::default();
                     self.usdt_amount_input = form::Value::default();
-                    self.to_asset = if self.to_asset == SendAsset::Usdt {
+                    self.to_asset = if self.from_asset == SendAsset::Usdt {
                         SendAsset::Usdt
                     } else {
                         SendAsset::Lbtc

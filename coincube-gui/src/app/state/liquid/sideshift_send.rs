@@ -70,6 +70,12 @@ pub struct SideshiftSendFlow {
     sideshift_client: SideshiftClient,
 }
 
+impl Default for SideshiftSendFlow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SideshiftSendFlow {
     pub fn new() -> Self {
         Self {

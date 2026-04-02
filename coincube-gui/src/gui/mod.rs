@@ -534,7 +534,7 @@ impl GUI {
                                     .global_cache
                                     .fresh_fiat_price(sett.source, Currency::USD)
                                 {
-                                    if !tab.cache().and_then(|c| c.btc_usd_price).is_some() {
+                                    if tab.cache().and_then(|c| c.btc_usd_price).is_none() {
                                         need_usd_cached.push((pane_id, tab.id, fresh_usd.clone()));
                                     }
                                 } else if self
