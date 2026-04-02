@@ -42,6 +42,9 @@ color!(INPUT_BORDER, 0xCED4DA);
 pub const MENU_BG: Color = color::WHITE;
 color!(MENU_BG_HOVER, 0xE9ECEF);
 
+color!(EXTERNAL, 0x0F172A);
+color!(SAFETY_NET, 0x475569);
+
 impl Palette {
     pub fn business() -> Self {
         Self {
@@ -443,6 +446,21 @@ impl Palette {
                     background: color::DARK_GREEN,
                     text: color::WHITE.into(),
                     border: color::DARK_GREEN.into(),
+                },
+                internal: ContainerPalette {
+                    background: color::BUSINESS_BLUE,
+                    text: color::WHITE.into(),
+                    border: color::BUSINESS_BLUE.into(),
+                },
+                external: ContainerPalette {
+                    background: EXTERNAL,
+                    text: color::WHITE.into(),
+                    border: EXTERNAL.into(),
+                },
+                safety_net: ContainerPalette {
+                    background: SAFETY_NET,
+                    text: color::WHITE.into(),
+                    border: SAFETY_NET.into(),
                 },
             },
             notifications: Notifications {

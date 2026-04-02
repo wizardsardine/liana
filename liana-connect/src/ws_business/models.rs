@@ -199,7 +199,8 @@ pub enum KeyIdentity {
     // The key is related to an user account in WS account system
     Email(String),
     // The key is related to a provider in WS keys system
-    Token {
+    Token(String),
+    TokenWithProvider {
         token: String,
         provider: Option<Provider>,
     },
@@ -210,8 +211,10 @@ pub enum KeyIdentity {
 impl Display for KeyIdentity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let str = match self {
-            KeyIdentity::Token { token, .. } => token,
-            KeyIdentity::Email(s) | KeyIdentity::Other(s) => s,
+            KeyIdentity::TokenWithProvider { token, provider } => provider
+                .as_ref()
+                .map_or(token.as_str(), |p| p.name.as_str()),
+            KeyIdentity::Token(s) | KeyIdentity::Email(s) | KeyIdentity::Other(s) => s,
         };
         write!(f, "{str}")
     }
@@ -1187,12 +1190,12 @@ mod wire_format_tests {
 
     #[test]
     fn test_key_with_token_identity_wire_format() {
-        // Documentation: Key with Token identity (flattened as "token" field)
+        // Documentation: Key with TokenWithProvider identity (flattened as "token_with_provider" field)
         let json = r#"{
             "id": 1,
             "alias": "Provider Key",
             "description": "Cosigner service key",
-            "token": { "token" : "provider-token-123", "provider": null},
+            "token_with_provider": { "token": "provider-token-123", "provider": null },
             "key_type": "Cosigner"
         }"#;
 
@@ -1200,7 +1203,7 @@ mod wire_format_tests {
             id: 1,
             alias: "Provider Key".to_string(),
             description: "Cosigner service key".to_string(),
-            identity: KeyIdentity::Token {
+            identity: KeyIdentity::TokenWithProvider {
                 token: "provider-token-123".to_string(),
                 provider: None,
             },

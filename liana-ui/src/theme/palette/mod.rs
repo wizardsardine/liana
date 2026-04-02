@@ -122,6 +122,9 @@ pub struct Pills {
     pub primary: ContainerPalette,
     pub success: ContainerPalette,
     pub warning: ContainerPalette,
+    pub internal: ContainerPalette,
+    pub external: ContainerPalette,
+    pub safety_net: ContainerPalette,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
