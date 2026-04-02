@@ -32,3 +32,15 @@ pub fn success(theme: &Theme) -> Style {
 pub fn warning(theme: &Theme) -> Style {
     pill(&theme.colors.pills.warning)
 }
+
+pub fn internal(theme: &Theme) -> Style {
+    pill(&theme.colors.pills.internal)
+}
+
+pub fn external(theme: &Theme) -> Style {
+    pill(&theme.colors.pills.external)
+}
+
+pub fn safety_net(theme: &Theme) -> Style {
+    pill(&theme.colors.pills.safety_net)
+}

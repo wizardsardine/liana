@@ -477,6 +477,21 @@ impl Palette {
                     text: color::LIGHT_BLACK.into(),
                     border: color::GREEN.into(),
                 },
+                internal: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: color::GREY_3.into(),
+                    border: color::GREY_3.into(),
+                },
+                external: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: color::GREY_3.into(),
+                    border: color::GREY_3.into(),
+                },
+                safety_net: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: color::GREY_3.into(),
+                    border: color::GREY_3.into(),
+                },
             },
             notifications: Notifications {
                 pending: ContainerPalette {

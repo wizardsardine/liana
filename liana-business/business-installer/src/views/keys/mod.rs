@@ -30,12 +30,20 @@ fn key_card(
     let identity_display = (!identity_str.is_empty())
         .then(|| text::p2_medium(identity_str).style(theme::text::accent));
 
+    let style = match key.key_type {
+        ws_business::KeyType::Internal => liana_ui::theme::pill::internal,
+        ws_business::KeyType::External => liana_ui::theme::pill::external,
+        ws_business::KeyType::Cosigner | ws_business::KeyType::SafetyNet => {
+            liana_ui::theme::pill::safety_net
+        }
+    };
+
     // Key type badge
     let key_type_str = format!("{:?}", key.key_type);
     let badge = Container::new(
         Container::new(text::caption(key_type_str))
             .padding([4, 12])
-            .style(liana_ui::theme::pill::simple)
+            .style(style)
             .width(Length::Fill)
             .center_x(Length::Fill),
     )
