@@ -77,6 +77,8 @@ pub struct P2PTrade {
     /// Whether we created or took this order
     pub role: TradeRole,
     pub fiat_amount: f64,
+    pub min_amount: Option<f64>,
+    pub max_amount: Option<f64>,
     pub fiat_currency: String,
     pub sats_amount: Option<u64>,
     pub premium_percent: Option<f64>,
@@ -98,6 +100,10 @@ pub struct P2PTrade {
 }
 
 impl P2PTrade {
+    pub fn is_range_order(&self) -> bool {
+        self.min_amount.is_some() && self.max_amount.is_some()
+    }
+
     pub fn is_fixed_price(&self) -> bool {
         self.sats_amount.is_some() && self.sats_amount != Some(0)
     }
@@ -151,12 +157,25 @@ pub fn trade_card<'a>(trade: &'a P2PTrade) -> Button<'a, view::Message> {
             .spacing(10)
             .align_y(iced::alignment::Vertical::Center),
             // Amount and currency
-            row!(
-                h2(format!("{:.2}", trade.fiat_amount)),
-                p1_bold(format!(" {}", trade.fiat_currency)).style(theme::text::secondary)
-            )
-            .spacing(8)
-            .align_y(iced::alignment::Vertical::Center),
+            if trade.is_range_order() {
+                row!(
+                    h2(format!(
+                        "{:.0} - {:.0}",
+                        trade.min_amount.unwrap_or(0.0),
+                        trade.max_amount.unwrap_or(0.0)
+                    )),
+                    p1_bold(format!(" {}", trade.fiat_currency)).style(theme::text::secondary)
+                )
+                .spacing(8)
+                .align_y(iced::alignment::Vertical::Center)
+            } else {
+                row!(
+                    h2(format!("{:.2}", trade.fiat_amount)),
+                    p1_bold(format!(" {}", trade.fiat_currency)).style(theme::text::secondary)
+                )
+                .spacing(8)
+                .align_y(iced::alignment::Vertical::Center)
+            },
             // Sats amount or market price
             if trade.is_fixed_price() {
                 row![

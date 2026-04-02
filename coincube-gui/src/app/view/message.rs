@@ -682,7 +682,6 @@ pub enum P2PMessage {
     MinAmountEdited(String),
     MaxAmountEdited(String),
     LightningAddressEdited(String),
-    ExpiryDaysEdited(String),
     SubmitOrder,
     ClearForm,
     MostroOrdersReceived(Vec<super::p2p::components::P2POrder>),
@@ -706,8 +705,8 @@ pub enum P2PMessage {
     MostroSelectActiveNode(String),
     MostroNodeInfoReceived {
         currencies: Vec<String>,
-        min_order_sats: Option<i64>,
-        max_order_sats: Option<i64>,
+        min_order_sats: Option<u64>,
+        max_order_sats: Option<u64>,
     },
     ConfirmOrder,
     CancelConfirmation,
@@ -757,4 +756,26 @@ pub enum P2PMessage {
     DisputeChatInputEdited(String),
     SendDisputeChatMessage,
     DisputeChatMessageSent(Result<(), String>),
+    // Chat list
+    ChatListTabMessages,
+    ChatListTabDisputes,
+    OpenChatForTrade(String),
+    OpenDisputeChatForTrade(String),
+    // File attachments
+    AttachFile,
+    FileSelected(std::path::PathBuf),
+    /// (order_id, metadata_json) on success, error string on failure.
+    AttachmentSent(Result<(String, String), String>),
+    AttachmentDownloaded {
+        order_id: String,
+        blossom_url: String,
+        data: Result<Vec<u8>, String>,
+    },
+    SaveFile {
+        blossom_url: String,
+        filename: String,
+    },
+    FileSaved(Result<(), String>),
+    // Stream-level errors (relay connection, subscription, restore failures)
+    StreamError(String),
 }

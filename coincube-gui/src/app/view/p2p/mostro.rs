@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::convert::TryFrom;
 use std::path::PathBuf;
 use std::time::Duration;
+
+use fs4::fs_std::FileExt;
 
 use iced::futures::SinkExt;
 use iced::Subscription;
@@ -129,67 +132,83 @@ fn save_data(cube_name: &str, data: &MostroData) -> Result<(), String> {
     Ok(())
 }
 
+/// Acquire an exclusive file lock, load data, run `f`, save if `f` succeeds, then release.
+///
+/// The lock file lives at `{data_file}.lock` and is held for the entire load-modify-save
+/// cycle so that concurrent callers (subscription stream vs UI thread) cannot interleave
+/// their reads and writes.  The lock is released automatically when the `File` handle drops.
+fn with_locked_data<F, T>(cube_name: &str, f: F) -> Result<T, String>
+where
+    F: FnOnce(&mut MostroData) -> Result<T, String>,
+{
+    let path = data_file_path(cube_name)?;
+    let lock_path = path.with_extension("lock");
+    let lock_file = std::fs::File::create(&lock_path)
+        .map_err(|e| format!("Failed to create lock file: {e}"))?;
+    lock_file
+        .lock_exclusive()
+        .map_err(|e| format!("Failed to acquire lock: {e}"))?;
+
+    let mut data = load_data(cube_name)?;
+    let result = f(&mut data);
+
+    if result.is_ok() {
+        save_data(cube_name, &data)?;
+    }
+
+    // Lock released on drop of `lock_file`.
+    result
+}
+
 /// Append a DM message to a trade's message history on disk.
 /// Deduplicates by (timestamp, action) to avoid storing the same message twice.
 pub fn append_trade_message(cube_name: &str, order_id: &str, msg: TradeMessage) {
-    let mut data = match load_data(cube_name) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("Cannot append trade message: {e}");
-            return;
-        }
-    };
-    if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
-        let is_dup = session.messages.iter().any(|m| {
-            m.timestamp == msg.timestamp
-                && m.action == msg.action
-                && m.payload_json == msg.payload_json
-        });
-        if !is_dup {
-            session.messages.push(msg);
-            session.messages.sort_by_key(|m| m.timestamp);
-            if let Err(e) = save_data(cube_name, &data) {
-                tracing::warn!("Failed to persist trade message: {e}");
+    let result = with_locked_data(cube_name, |data| {
+        if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
+            let is_dup = session.messages.iter().any(|m| {
+                m.timestamp == msg.timestamp
+                    && m.action == msg.action
+                    && m.payload_json == msg.payload_json
+            });
+            if !is_dup {
+                session.messages.push(msg.clone());
+                session.messages.sort_by_key(|m| m.timestamp);
             }
         }
+        Ok(())
+    });
+    if let Err(e) = result {
+        tracing::warn!("Failed to persist trade message: {e}");
     }
 }
 
 /// Update the counterparty's trade pubkey for a given order (persisted to disk).
 pub fn set_counterparty_pubkey(cube_name: &str, order_id: &str, pubkey: &str) {
-    let mut data = match load_data(cube_name) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("Cannot set counterparty pubkey: {e}");
-            return;
-        }
-    };
-    if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
-        if session.counterparty_trade_pubkey.as_deref() != Some(pubkey) {
-            session.counterparty_trade_pubkey = Some(pubkey.to_string());
-            if let Err(e) = save_data(cube_name, &data) {
-                tracing::warn!("Failed to persist counterparty pubkey: {e}");
+    let result = with_locked_data(cube_name, |data| {
+        if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
+            if session.counterparty_trade_pubkey.as_deref() != Some(pubkey) {
+                session.counterparty_trade_pubkey = Some(pubkey.to_string());
             }
         }
+        Ok(())
+    });
+    if let Err(e) = result {
+        tracing::warn!("Failed to persist counterparty pubkey: {e}");
     }
 }
 
 /// Update the admin/solver's trade pubkey for a given order (persisted to disk).
 fn set_admin_pubkey(cube_name: &str, order_id: &str, pubkey: &str) {
-    let mut data = match load_data(cube_name) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("Cannot set admin pubkey: {e}");
-            return;
-        }
-    };
-    if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
-        if session.admin_trade_pubkey.as_deref() != Some(pubkey) {
-            session.admin_trade_pubkey = Some(pubkey.to_string());
-            if let Err(e) = save_data(cube_name, &data) {
-                tracing::warn!("Failed to persist admin pubkey: {e}");
+    let result = with_locked_data(cube_name, |data| {
+        if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
+            if session.admin_trade_pubkey.as_deref() != Some(pubkey) {
+                session.admin_trade_pubkey = Some(pubkey.to_string());
             }
         }
+        Ok(())
+    });
+    if let Err(e) = result {
+        tracing::warn!("Failed to persist admin pubkey: {e}");
     }
 }
 
@@ -236,6 +255,16 @@ fn counterparty_from_payload(
     extract_counterparty_pubkey(order, our_trade_hex)
 }
 
+/// Non-status-bearing protocol actions (acknowledged by dm_action_to_status as None).
+const NON_STATUS_ACTIONS: &[&str] = &[
+    "NewOrder",
+    "CantDo",
+    "Peer",
+    "RateUser",
+    "Orders",
+    "LastTradeIndex",
+];
+
 /// Get the latest protocol DM action for a trade from its message history.
 /// Skips non-protocol chat entries so that chat messages do not affect
 /// protocol state detection.
@@ -245,6 +274,17 @@ pub fn latest_dm_action(session: &TradeSession) -> Option<&str> {
         .iter()
         .rev()
         .find(|m| !is_chat_action(&m.action))
+        .map(|m| m.action.as_str())
+}
+
+/// Get the latest status-bearing DM action (one that maps to a TradeStatus).
+/// Skips chat entries AND no-op protocol actions like NewOrder, CantDo, etc.
+fn latest_status_action(session: &TradeSession) -> Option<&str> {
+    session
+        .messages
+        .iter()
+        .rev()
+        .find(|m| !is_chat_action(&m.action) && !NON_STATUS_ACTIONS.contains(&m.action.as_str()))
         .map(|m| m.action.as_str())
 }
 
@@ -265,7 +305,13 @@ pub fn extract_hold_invoice(session: &TradeSession) -> Option<String> {
             // payload_json is the serialized Option<Payload>
             // For PayInvoice/BuyerTookOrder: Some(PaymentRequest(Some(order), invoice_string, Some(amount)))
             let payload: Option<mostro_core::message::Payload> =
-                serde_json::from_str(&m.payload_json).ok()?;
+                match serde_json::from_str(&m.payload_json) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::debug!("Failed to deserialize hold-invoice payload: {e}");
+                        return None;
+                    }
+                };
             match payload {
                 Some(mostro_core::message::Payload::PaymentRequest(_, invoice, _)) => Some(invoice),
                 _ => None,
@@ -375,7 +421,7 @@ pub async fn restore_trades(
         order_uuids.len()
     );
 
-    let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+    let request_id = rand::random::<u64>();
     let orders_msg = mostro_core::message::Message::new_order(
         None,
         Some(request_id),
@@ -530,11 +576,41 @@ pub async fn restore_trades(
     }
 
     let count = sessions.len();
-    let data = MostroData {
-        last_trade_index,
-        trades: sessions,
-    };
+    // Acquire the data lock before merging so that any in-flight subscription
+    // stream events cannot interleave with this write.
+    let lock_path = data_file_path(cube_name)?.with_extension("lock");
+    let lock_file = std::fs::File::create(&lock_path)
+        .map_err(|e| format!("Failed to create lock file: {e}"))?;
+    lock_file
+        .lock_exclusive()
+        .map_err(|e| format!("Failed to acquire lock: {e}"))?;
+
+    // Read current on-disk state under the lock — local writes that happened
+    // while the restore was in-flight must not be silently overwritten.
+    let mut data = load_data(cube_name)?;
+
+    // Never move last_trade_index backwards, and reject out-of-range values
+    // (must fit in u32 for derive_trade_keys).
+    if last_trade_index > data.last_trade_index && last_trade_index <= i64::from(u32::MAX) {
+        data.last_trade_index = last_trade_index;
+    } else if last_trade_index > i64::from(u32::MAX) {
+        tracing::warn!(
+            "Restore: ignoring out-of-range last_trade_index {}",
+            last_trade_index
+        );
+    }
+
+    // Merge restored sessions: only add sessions for orders not already tracked
+    // locally (local state may have newer DM messages / status).
+    let existing_ids: HashSet<String> = data.trades.iter().map(|t| t.order_id.clone()).collect();
+    for session in sessions {
+        if !existing_ids.contains(&session.order_id) {
+            data.trades.push(session);
+        }
+    }
+
     save_data(cube_name, &data)?;
+    // Lock released on drop of lock_file.
 
     tracing::info!(
         "Restore: recovered {} trades, last_trade_index={}",
@@ -543,22 +619,6 @@ pub async fn restore_trades(
     );
 
     Ok(count)
-}
-
-fn append_trade(cube_name: &str, session: TradeSession) -> Result<(), String> {
-    let mut data = load_data(cube_name)?;
-    // Replace existing session for the same order (re-take after cancel uses new keys)
-    if let Some(existing) = data
-        .trades
-        .iter_mut()
-        .find(|t| t.order_id == session.order_id)
-    {
-        *existing = session;
-    } else {
-        data.trades.push(session);
-    }
-    save_data(cube_name, &data)?;
-    Ok(())
 }
 
 /// Map `mostro_core::order::Status` to UI `TradeStatus`.
@@ -605,7 +665,12 @@ pub fn dm_action_to_status(action: &str) -> Option<TradeStatus> {
         }
         "AdminSettled" => Some(TradeStatus::Success),
         "PaymentFailed" => Some(TradeStatus::PaymentFailed),
-        _ => None,
+        // Known actions that don't represent status transitions
+        "NewOrder" | "CantDo" | "Peer" | "RateUser" | "Orders" | "LastTradeIndex" => None,
+        _ => {
+            tracing::warn!("Unknown DM action: {action}");
+            None
+        }
     }
 }
 
@@ -616,7 +681,10 @@ fn derive_trade_keys(mnemonic: &str, trade_index: i64) -> Result<Keys, String> {
         mnemonic,
         None,
         Some(account),
-        Some(trade_index as u32),
+        Some(
+            u32::try_from(trade_index)
+                .map_err(|_| format!("trade_index {trade_index} exceeds u32::MAX"))?,
+        ),
         Some(0),
     )
     .map_err(|e| format!("Failed to derive trade keys: {e}"))
@@ -625,8 +693,8 @@ fn derive_trade_keys(mnemonic: &str, trade_index: i64) -> Result<Keys, String> {
 /// Info fetched from the Mostro info event (kind 38385): order limits and accepted currencies.
 #[derive(Default, Clone)]
 struct MostroNodeInfo {
-    min_order_amount: Option<i64>,
-    max_order_amount: Option<i64>,
+    min_order_amount: Option<u64>,
+    max_order_amount: Option<u64>,
     fiat_currencies: Vec<String>,
 }
 
@@ -650,10 +718,10 @@ async fn fetch_mostro_info(client: &Client, mostro_pubkey: PublicKey) -> MostroN
                 }
                 match t[0].as_str() {
                     "max_order_amount" => {
-                        info.max_order_amount = t[1].parse::<i64>().ok();
+                        info.max_order_amount = t[1].parse::<u64>().ok();
                     }
                     "min_order_amount" => {
-                        info.min_order_amount = t[1].parse::<i64>().ok();
+                        info.min_order_amount = t[1].parse::<u64>().ok();
                     }
                     "fiat_currencies_accepted" => {
                         info.fiat_currencies = t[1]
@@ -684,8 +752,8 @@ fn cant_do_description(
             match (&limits.min_order_amount, &limits.max_order_amount) {
                 (Some(min), Some(max)) => format!(
                     "Fiat amount is out of range — Mostro allows {} to {} sats equivalent",
-                    format_with_separators(*min as u64),
-                    format_with_separators(*max as u64),
+                    format_with_separators(*min),
+                    format_with_separators(*max),
                 ),
                 _ => "Fiat amount is out of the acceptable range".into(),
             }
@@ -694,8 +762,8 @@ fn cant_do_description(
             match (&limits.min_order_amount, &limits.max_order_amount) {
                 (Some(min), Some(max)) => format!(
                     "Amount out of range — Mostro allows {} to {} sats",
-                    format_with_separators(*min as u64),
-                    format_with_separators(*max as u64),
+                    format_with_separators(*min),
+                    format_with_separators(*max),
                 ),
                 _ => "Amount is too large — try a smaller fiat amount".into(),
             }
@@ -858,20 +926,19 @@ async fn sync_last_trade_index(
 
     let inner = resp.get_inner_message_kind();
     let idx = inner.trade_index();
-    if idx <= 0 {
+    if idx < 0 || idx > i64::from(u32::MAX) {
         return Err("Server returned invalid last_trade_index".to_string());
     }
 
-    let mut data = load_data(cube_name)?;
-    tracing::info!(
-        "Trade index sync: local={}, server={}",
-        data.last_trade_index,
-        idx
-    );
-    data.last_trade_index = idx;
-    save_data(cube_name, &data)?;
-
-    Ok(idx)
+    with_locked_data(cube_name, |data| {
+        tracing::info!(
+            "Trade index sync: local={}, server={}",
+            data.last_trade_index,
+            idx
+        );
+        data.last_trade_index = data.last_trade_index.max(idx);
+        Ok(data.last_trade_index)
+    })
 }
 
 /// Check if a CantDo payload is an InvalidTradeIndex error.
@@ -914,8 +981,9 @@ pub enum OrderSubmitResponse {
 /// On InvalidTradeIndex, automatically re-syncs from the server and retries once.
 pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, String> {
     for attempt in 0..2u8 {
-        let mut data = load_data(&form.cube_name)?;
-        let next_idx = data.last_trade_index + 1;
+        // Critical section 1: atomically read the next trade index.
+        // The lock is released before any .await so we never hold it across a yield point.
+        let next_idx = with_locked_data(&form.cube_name, |data| Ok(data.last_trade_index + 1))?;
 
         // Expiration based on user-chosen days (0 = no expiration)
         let expires_at = if form.expiry_days > 0 {
@@ -946,7 +1014,7 @@ pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, St
         );
 
         // Create Mostro message
-        let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+        let request_id = rand::random::<u64>();
         let order_content = mostro_core::message::Payload::Order(small_order);
         let message = mostro_core::message::Message::new_order(
             None,
@@ -980,7 +1048,7 @@ pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, St
             if is_invalid_trade_index(inner) && attempt == 0 {
                 tracing::warn!(
                     "InvalidTradeIndex (local={}), syncing from server and retrying",
-                    data.last_trade_index
+                    next_idx - 1
                 );
                 sync_last_trade_index(
                     &form.cube_name,
@@ -1014,11 +1082,7 @@ pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, St
 
         tracing::info!("Order created successfully, order_id={}", order_id);
 
-        // Update trade index
-        data.last_trade_index = next_idx;
-        save_data(&form.cube_name, &data)?;
-
-        // Persist trade session to disk (best-effort — order already succeeded)
+        // Critical section 2: atomically advance trade index AND persist session.
         let session = TradeSession {
             order_id: order_id.clone(),
             trade_index: next_idx,
@@ -1036,12 +1100,24 @@ pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, St
             created_at: chrono::Utc::now().timestamp(),
             role: "creator".to_string(),
             messages: Vec::new(),
-            counterparty_trade_pubkey: None, // set later when someone takes the order
+            counterparty_trade_pubkey: None,
             admin_trade_pubkey: None,
         };
-        if let Err(e) = append_trade(&form.cube_name, session) {
-            tracing::warn!("Failed to persist trade session: {e}");
-        }
+        with_locked_data(&form.cube_name, |data| {
+            if next_idx > data.last_trade_index {
+                data.last_trade_index = next_idx;
+            }
+            if let Some(existing) = data
+                .trades
+                .iter_mut()
+                .find(|t| t.order_id == session.order_id)
+            {
+                *existing = session.clone();
+            } else {
+                data.trades.push(session.clone());
+            }
+            Ok(())
+        })?;
 
         return Ok(OrderSubmitResponse::Success { order_id });
     }
@@ -1061,6 +1137,13 @@ pub struct TakeOrderData {
     pub lightning_invoice: Option<String>,
     pub mostro_pubkey_hex: String,
     pub relay_urls: Vec<String>,
+    pub fiat_code: Option<String>,
+    pub fiat_amount: Option<i64>,
+    pub payment_method: Option<String>,
+    pub premium: Option<i64>,
+    pub sats_amount: Option<i64>,
+    pub min_amount: Option<i64>,
+    pub max_amount: Option<i64>,
 }
 
 /// Result returned to the UI after taking an order.
@@ -1094,10 +1177,11 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
     };
 
     for attempt in 0..2u8 {
-        let mut mdata = load_data(&data.cube_name)?;
-        let next_idx = mdata.last_trade_index + 1;
+        // Critical section 1: atomically read the next trade index.
+        // The lock is released before any .await so we never hold it across a yield point.
+        let next_idx = with_locked_data(&data.cube_name, |mdata| Ok(mdata.last_trade_index + 1))?;
 
-        let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+        let request_id = rand::random::<u64>();
 
         // Build payload per mostro protocol:
         // TakeSell (buyer): PaymentRequest(None, invoice, amount) or Amount(amount)
@@ -1159,7 +1243,7 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
             if is_invalid_trade_index(inner) && attempt == 0 {
                 tracing::warn!(
                     "InvalidTradeIndex on take_order (local={}), syncing from server and retrying",
-                    mdata.last_trade_index
+                    next_idx - 1
                 );
                 sync_last_trade_index(
                     &data.cube_name,
@@ -1179,10 +1263,7 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
             return Err(reason);
         }
 
-        // Update trade index
-        mdata.last_trade_index = next_idx;
-        save_data(&data.cube_name, &mdata)?;
-
+        // Critical section 2: atomically commit the incremented trade index.
         // Determine our role's order kind: if we take a sell, we're buying
         let our_kind = match data.order_type {
             OrderType::Sell => "buy",
@@ -1195,26 +1276,39 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
             .unwrap_or_default();
         let counterparty_trade_pubkey = counterparty_from_payload(&inner.payload, &our_trade_hex);
 
+        // Critical section 2: atomically advance trade index AND persist session.
         let session = TradeSession {
             order_id: data.order_id.clone(),
             trade_index: next_idx,
             kind: our_kind.to_string(),
-            fiat_code: String::new(),
-            fiat_amount: data.amount.unwrap_or(0),
-            min_amount: None,
-            max_amount: None,
-            amount: 0,
-            premium: 0,
-            payment_method: String::new(),
+            fiat_code: data.fiat_code.clone().unwrap_or_default(),
+            fiat_amount: data.fiat_amount.unwrap_or_else(|| data.amount.unwrap_or(0)),
+            min_amount: data.min_amount,
+            max_amount: data.max_amount,
+            amount: data.sats_amount.unwrap_or(0),
+            premium: data.premium.unwrap_or(0),
+            payment_method: data.payment_method.clone().unwrap_or_default(),
             created_at: chrono::Utc::now().timestamp(),
             role: "taker".to_string(),
             messages: Vec::new(),
             counterparty_trade_pubkey,
             admin_trade_pubkey: None,
         };
-        if let Err(e) = append_trade(&data.cube_name, session) {
-            tracing::warn!("Failed to persist take-order session: {e}");
-        }
+        with_locked_data(&data.cube_name, |mdata| {
+            if next_idx > mdata.last_trade_index {
+                mdata.last_trade_index = next_idx;
+            }
+            if let Some(existing) = mdata
+                .trades
+                .iter_mut()
+                .find(|t| t.order_id == session.order_id)
+            {
+                *existing = session.clone();
+            } else {
+                mdata.trades.push(session.clone());
+            }
+            Ok(())
+        })?;
 
         // Check response payload: PaymentRequest means seller must pay a hold invoice
         return match &inner.payload {
@@ -1304,7 +1398,7 @@ pub async fn rate_counterparty(
     let order_uuid =
         uuid::Uuid::parse_str(&data.order_id).map_err(|e| format!("Invalid order ID: {e}"))?;
 
-    let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+    let request_id = rand::random::<u64>();
     let payload = Some(mostro_core::message::Payload::RatingUser(rating));
 
     let message = mostro_core::message::Message::new_order(
@@ -1354,7 +1448,7 @@ async fn trade_action(
     let order_uuid =
         uuid::Uuid::parse_str(&data.order_id).map_err(|e| format!("Invalid order ID: {e}"))?;
 
-    let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+    let request_id = rand::random::<u64>();
 
     let payload = if action == mostro_core::message::Action::AddInvoice {
         let invoice = data
@@ -1775,6 +1869,582 @@ pub fn get_chat_identity_info(cube_name: &str, mnemonic: &str, order_id: &str) -
     }
 }
 
+// ── Encrypted image attachments ─────────────────────────────────────────
+
+const BLOSSOM_SERVERS: &[&str] = &[
+    "https://blossom.primal.net",
+    "https://blossom.band",
+    "https://nostr.media",
+];
+
+/// Metadata for an encrypted image attachment, compatible with the Mostro mobile client.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ImageMetadata {
+    #[serde(rename = "type")]
+    pub msg_type: String,
+    pub blossom_url: String,
+    pub nonce: String,
+    pub mime_type: String,
+    pub original_size: u64,
+    pub width: u32,
+    pub height: u32,
+    #[serde(default)]
+    pub filename: Option<String>,
+    pub encrypted_size: u64,
+}
+
+/// Metadata for an encrypted file attachment, compatible with the Mostro mobile client.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FileMetadata {
+    #[serde(rename = "type")]
+    pub msg_type: String,
+    pub file_type: String,
+    pub blossom_url: String,
+    pub nonce: String,
+    pub mime_type: String,
+    pub original_size: u64,
+    pub filename: String,
+    pub encrypted_size: u64,
+}
+
+/// Parsed attachment metadata from a chat message.
+#[derive(Debug, Clone)]
+pub enum AttachmentMeta {
+    Image(ImageMetadata),
+    File(FileMetadata),
+}
+
+impl AttachmentMeta {
+    pub fn blossom_url(&self) -> &str {
+        match self {
+            Self::Image(m) => &m.blossom_url,
+            Self::File(m) => &m.blossom_url,
+        }
+    }
+
+    pub fn filename(&self) -> &str {
+        match self {
+            Self::Image(m) => m.filename.as_deref().unwrap_or("image"),
+            Self::File(m) => &m.filename,
+        }
+    }
+}
+
+/// Extract the inner text content from a chat payload JSON.
+fn extract_payload_text(payload_json: &str) -> Option<String> {
+    if let Ok(Some(mostro_core::message::Payload::TextMessage(t))) =
+        serde_json::from_str::<Option<mostro_core::message::Payload>>(payload_json)
+    {
+        Some(t)
+    } else {
+        serde_json::from_str::<String>(payload_json).ok()
+    }
+}
+
+/// Try to parse a chat message payload as an encrypted attachment (image or file).
+pub fn parse_attachment_metadata(payload_json: &str) -> Option<AttachmentMeta> {
+    let text = extract_payload_text(payload_json)?;
+    // Try image first
+    if let Ok(meta) = serde_json::from_str::<ImageMetadata>(&text) {
+        if meta.msg_type == "image_encrypted" {
+            return Some(AttachmentMeta::Image(meta));
+        }
+    }
+    // Try file
+    if let Ok(meta) = serde_json::from_str::<FileMetadata>(&text) {
+        if meta.msg_type == "file_encrypted" {
+            return Some(AttachmentMeta::File(meta));
+        }
+    }
+    None
+}
+
+/// Backwards-compatible alias — returns Some only for images.
+pub fn parse_image_metadata(payload_json: &str) -> Option<ImageMetadata> {
+    match parse_attachment_metadata(payload_json)? {
+        AttachmentMeta::Image(m) => Some(m),
+        AttachmentMeta::File(_) => None,
+    }
+}
+
+/// Derive the raw 32-byte ECDH shared key for ChaCha20-Poly1305 encryption.
+fn derive_encryption_key(
+    our_keys: &Keys,
+    counterparty_pubkey: &PublicKey,
+) -> Result<[u8; 32], String> {
+    nostr_sdk::util::generate_shared_key(our_keys.secret_key(), counterparty_pubkey)
+        .map_err(|e| format!("Failed to compute shared key: {e}"))
+}
+
+/// Encrypt image bytes with ChaCha20-Poly1305.
+/// Returns blob in wire format: [nonce 12B][ciphertext][auth_tag 16B].
+fn encrypt_image_blob(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, [u8; 12]), String> {
+    use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit, Nonce};
+
+    let cipher = ChaCha20Poly1305::new(key.into());
+    let nonce_bytes: [u8; 12] = rand::random();
+    let nonce = Nonce::from(nonce_bytes);
+
+    let ciphertext = cipher
+        .encrypt(&nonce, plaintext)
+        .map_err(|e| format!("Encryption failed: {e}"))?;
+
+    // Wire format: [nonce][ciphertext+tag] (chacha20poly1305 appends the 16B tag to ciphertext)
+    let mut blob = Vec::with_capacity(12 + ciphertext.len());
+    blob.extend_from_slice(&nonce_bytes);
+    blob.extend_from_slice(&ciphertext);
+
+    Ok((blob, nonce_bytes))
+}
+
+/// Decrypt an image blob (wire format: [nonce 12B][ciphertext+tag]).
+pub fn decrypt_image_blob(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>, String> {
+    use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit, Nonce};
+
+    if blob.len() < 28 {
+        return Err("Blob too small for ChaCha20-Poly1305".to_string());
+    }
+
+    let nonce = Nonce::from_slice(&blob[..12]);
+    let ciphertext_and_tag = &blob[12..];
+
+    let cipher = ChaCha20Poly1305::new(key.into());
+    cipher
+        .decrypt(nonce, ciphertext_and_tag)
+        .map_err(|e| format!("Decryption failed: {e}"))
+}
+
+/// Upload an encrypted blob to a Blossom server with Nostr auth.
+async fn upload_to_blossom(encrypted_blob: &[u8], trade_keys: &Keys) -> Result<String, String> {
+    use base64::Engine as _;
+    use sha2::{Digest, Sha256};
+
+    let hash_hex = {
+        let mut hasher = Sha256::new();
+        hasher.update(encrypted_blob);
+        hex::encode(hasher.finalize())
+    };
+
+    let timestamp = chrono::Utc::now().timestamp();
+    let expiration = (timestamp + 3600).to_string();
+
+    // Create kind-24242 Blossom auth event
+    let auth_event = EventBuilder::new(nostr_sdk::Kind::Custom(24242), "Upload image")
+        .tag(Tag::custom(
+            nostr_sdk::TagKind::SingleLetter(nostr_sdk::SingleLetterTag::lowercase(
+                nostr_sdk::Alphabet::T,
+            )),
+            ["upload"],
+        ))
+        .tag(Tag::custom(
+            nostr_sdk::TagKind::SingleLetter(nostr_sdk::SingleLetterTag::lowercase(
+                nostr_sdk::Alphabet::X,
+            )),
+            [hash_hex.as_str()],
+        ))
+        .tag(Tag::custom(
+            nostr_sdk::TagKind::Custom("expiration".into()),
+            [expiration.as_str()],
+        ))
+        .sign_with_keys(trade_keys)
+        .map_err(|e| format!("Failed to sign Blossom auth: {e}"))?;
+
+    let auth_json = auth_event.as_json();
+    let auth_base64 = base64::engine::general_purpose::STANDARD.encode(auth_json.as_bytes());
+
+    let http_client = reqwest::Client::new();
+
+    for server in BLOSSOM_SERVERS {
+        let url = format!("{}/upload", server);
+        tracing::debug!("Uploading to Blossom: {url}");
+
+        match http_client
+            .put(&url)
+            .header("Content-Type", "application/octet-stream")
+            .header("Authorization", format!("Nostr {auth_base64}"))
+            .body(encrypted_blob.to_vec())
+            .timeout(Duration::from_secs(120))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                let blob_url = format!("{}/{}", server, hash_hex);
+                tracing::info!("Blossom upload successful: {blob_url}");
+                return Ok(blob_url);
+            }
+            Ok(resp) => {
+                tracing::warn!("Blossom upload to {server} failed: {}", resp.status());
+            }
+            Err(e) => {
+                tracing::warn!("Blossom upload to {server} error: {e}");
+            }
+        }
+    }
+
+    Err("All Blossom servers failed".to_string())
+}
+
+/// Download an encrypted blob from a Blossom URL.
+pub async fn download_from_blossom(url: &str) -> Result<Vec<u8>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("Download failed: {e}"))?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Download failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Download failed: HTTP {}", resp.status()));
+    }
+
+    // Reject responses that exceed the attachment size limit
+    if let Some(len) = resp.content_length() {
+        if len > MAX_ATTACHMENT_SIZE {
+            return Err(format!(
+                "File too large: {:.1} MB (max 25 MB)",
+                len as f64 / (1024.0 * 1024.0)
+            ));
+        }
+    }
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response: {e}"))?;
+
+    if bytes.len() as u64 > MAX_ATTACHMENT_SIZE {
+        return Err(format!(
+            "File too large: {:.1} MB (max 25 MB)",
+            bytes.len() as f64 / (1024.0 * 1024.0)
+        ));
+    }
+
+    Ok(bytes.to_vec())
+}
+
+/// Download, decrypt, and save a file attachment to disk via save dialog.
+pub async fn download_and_save_file(
+    blossom_url: String,
+    filename: String,
+    order_id: String,
+    cube_name: String,
+    mnemonic: String,
+) -> Result<(), String> {
+    // Get encryption key
+    let sessions = load_data(&cube_name).unwrap_or_default().trades;
+    let session = sessions
+        .iter()
+        .find(|s| s.order_id == order_id)
+        .ok_or_else(|| format!("No trade session for order {}", order_id))?;
+
+    let cp_hex = session
+        .counterparty_trade_pubkey
+        .as_deref()
+        .ok_or("No counterparty pubkey")?;
+    let cp_pk =
+        PublicKey::from_hex(cp_hex).map_err(|e| format!("Invalid counterparty pubkey: {e}"))?;
+    let trade_keys = derive_trade_keys(&mnemonic, session.trade_index)?;
+    let encryption_key = derive_encryption_key(&trade_keys, &cp_pk)?;
+
+    // Download and decrypt
+    let blob = download_from_blossom(&blossom_url).await?;
+    let decrypted = decrypt_image_blob(&encryption_key, &blob)?;
+
+    // Save dialog
+    let ext = std::path::Path::new(&filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_string();
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title("Save File")
+        .set_file_name(&filename)
+        .add_filter("File", &[&ext]);
+    let handle = dialog
+        .save_file()
+        .await
+        .ok_or_else(|| "cancelled".to_string())?;
+
+    std::fs::write(handle.path(), &decrypted).map_err(|e| format!("Failed to save file: {e}"))
+}
+
+/// Data for sending an image attachment.
+pub struct AttachmentData {
+    pub file_path: std::path::PathBuf,
+    pub order_id: String,
+    pub cube_name: String,
+    pub mnemonic: String,
+    pub mostro_pubkey_hex: String,
+    pub relay_urls: Vec<String>,
+}
+
+/// Send an encrypted image attachment via P2P chat.
+/// Returns the JSON metadata string on success (for persisting as a TradeMessage).
+pub async fn send_image_attachment(data: AttachmentData) -> Result<String, String> {
+    // 0. Check file size before reading
+    let file_size = std::fs::metadata(&data.file_path)
+        .map_err(|e| format!("Failed to read image: {e}"))?
+        .len();
+    if file_size > MAX_ATTACHMENT_SIZE {
+        return Err(format!(
+            "Image too large ({:.1} MB). Maximum is 25 MB.",
+            file_size as f64 / (1024.0 * 1024.0)
+        ));
+    }
+
+    // 1. Read and decode image
+    let img_bytes =
+        std::fs::read(&data.file_path).map_err(|e| format!("Failed to read image: {e}"))?;
+
+    let img = ::image::load_from_memory(&img_bytes)
+        .map_err(|e| format!("Failed to decode image: {e}"))?;
+
+    // 2. Resize if too large (cap at 1920px longest side)
+    let img = if img.width().max(img.height()) > 1920 {
+        img.resize(1920, 1920, ::image::imageops::FilterType::Lanczos3)
+    } else {
+        img
+    };
+
+    let width = img.width();
+    let height = img.height();
+
+    // 3. Re-encode as JPEG
+    let mut jpeg_buf = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut jpeg_buf, ::image::ImageFormat::Jpeg)
+        .map_err(|e| format!("Failed to encode JPEG: {e}"))?;
+    let jpeg_bytes = jpeg_buf.into_inner();
+    let original_size = jpeg_bytes.len() as u64;
+
+    if original_size > MAX_ATTACHMENT_SIZE {
+        return Err(format!(
+            "Encoded image too large ({:.1} MB). Maximum is 25 MB.",
+            original_size as f64 / (1024.0 * 1024.0)
+        ));
+    }
+
+    // 4. Get encryption key
+    let sessions = load_data(&data.cube_name).unwrap_or_default().trades;
+    let session = sessions
+        .iter()
+        .find(|s| s.order_id == data.order_id)
+        .ok_or_else(|| format!("No trade session for order {}", data.order_id))?;
+
+    let cp_hex = session
+        .counterparty_trade_pubkey
+        .as_deref()
+        .ok_or("No counterparty pubkey — cannot send attachment")?;
+    let cp_pk =
+        PublicKey::from_hex(cp_hex).map_err(|e| format!("Invalid counterparty pubkey: {e}"))?;
+    let trade_keys = derive_trade_keys(&data.mnemonic, session.trade_index)?;
+    let encryption_key = derive_encryption_key(&trade_keys, &cp_pk)?;
+
+    // 5. Encrypt
+    let (encrypted_blob, nonce_bytes) = encrypt_image_blob(&encryption_key, &jpeg_bytes)?;
+    let encrypted_size = encrypted_blob.len() as u64;
+
+    // 6. Upload to Blossom
+    let blossom_url = upload_to_blossom(&encrypted_blob, &trade_keys).await?;
+
+    // 7. Build metadata JSON
+    let filename = data
+        .file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("image_{}.jpg", chrono::Utc::now().timestamp()));
+
+    let metadata = ImageMetadata {
+        msg_type: "image_encrypted".to_string(),
+        blossom_url,
+        nonce: hex::encode(nonce_bytes),
+        mime_type: "image/jpeg".to_string(),
+        original_size,
+        width,
+        height,
+        filename: Some(filename),
+        encrypted_size,
+    };
+    let metadata_json = serde_json::to_string(&metadata)
+        .map_err(|e| format!("Failed to serialize metadata: {e}"))?;
+
+    // 8. Send metadata as chat message (reuse existing chat send infrastructure)
+    let chat_data = TradeActionData {
+        order_id: data.order_id,
+        cube_name: data.cube_name,
+        mnemonic: data.mnemonic,
+        invoice: Some(metadata_json.clone()),
+        mostro_pubkey_hex: data.mostro_pubkey_hex,
+        relay_urls: data.relay_urls,
+    };
+    send_encrypted_chat(&chat_data, ChatTarget::Peer).await?;
+
+    Ok(metadata_json)
+}
+
+/// Maximum file size for attachments (25 MB, matching mobile).
+const MAX_ATTACHMENT_SIZE: u64 = 25 * 1024 * 1024;
+
+/// Image extensions that get the image pipeline (resize + re-encode).
+const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp"];
+
+/// Determine the file_type category from a MIME type (matching mobile's categories).
+fn file_type_from_mime(mime: &str) -> &'static str {
+    if mime.starts_with("image/") {
+        "image"
+    } else if mime.starts_with("video/") {
+        "video"
+    } else {
+        "document"
+    }
+}
+
+/// Guess MIME type from file extension.
+fn mime_from_extension(ext: &str) -> &'static str {
+    match ext.to_ascii_lowercase().as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        "avi" => "video/x-msvideo",
+        "pdf" => "application/pdf",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Send an encrypted file attachment (non-image) via P2P chat.
+pub async fn send_file_attachment(data: AttachmentData) -> Result<String, String> {
+    let file_bytes =
+        std::fs::read(&data.file_path).map_err(|e| format!("Failed to read file: {e}"))?;
+
+    if file_bytes.len() as u64 > MAX_ATTACHMENT_SIZE {
+        return Err(format!(
+            "File too large ({:.1} MB). Maximum is 25 MB.",
+            file_bytes.len() as f64 / (1024.0 * 1024.0)
+        ));
+    }
+
+    let original_size = file_bytes.len() as u64;
+    let filename = data
+        .file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file")
+        .to_string();
+    let ext = data
+        .file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let mime_type = mime_from_extension(ext).to_string();
+    let file_type = file_type_from_mime(&mime_type).to_string();
+
+    // Get encryption key
+    let sessions = load_data(&data.cube_name).unwrap_or_default().trades;
+    let session = sessions
+        .iter()
+        .find(|s| s.order_id == data.order_id)
+        .ok_or_else(|| format!("No trade session for order {}", data.order_id))?;
+
+    let cp_hex = session
+        .counterparty_trade_pubkey
+        .as_deref()
+        .ok_or("No counterparty pubkey — cannot send attachment")?;
+    let cp_pk =
+        PublicKey::from_hex(cp_hex).map_err(|e| format!("Invalid counterparty pubkey: {e}"))?;
+    let trade_keys = derive_trade_keys(&data.mnemonic, session.trade_index)?;
+    let encryption_key = derive_encryption_key(&trade_keys, &cp_pk)?;
+
+    // Encrypt
+    let (encrypted_blob, nonce_bytes) = encrypt_image_blob(&encryption_key, &file_bytes)?;
+    let encrypted_size = encrypted_blob.len() as u64;
+
+    // Upload
+    let blossom_url = upload_to_blossom(&encrypted_blob, &trade_keys).await?;
+
+    // Build metadata
+    let metadata = FileMetadata {
+        msg_type: "file_encrypted".to_string(),
+        file_type,
+        blossom_url,
+        nonce: hex::encode(nonce_bytes),
+        mime_type,
+        original_size,
+        filename,
+        encrypted_size,
+    };
+    let metadata_json = serde_json::to_string(&metadata)
+        .map_err(|e| format!("Failed to serialize metadata: {e}"))?;
+
+    // Send as chat message
+    let chat_data = TradeActionData {
+        order_id: data.order_id,
+        cube_name: data.cube_name,
+        mnemonic: data.mnemonic,
+        invoice: Some(metadata_json.clone()),
+        mostro_pubkey_hex: data.mostro_pubkey_hex,
+        relay_urls: data.relay_urls,
+    };
+    send_encrypted_chat(&chat_data, ChatTarget::Peer).await?;
+
+    Ok(metadata_json)
+}
+
+/// Send an attachment — routes to image or file pipeline based on extension.
+pub async fn send_attachment(data: AttachmentData) -> Result<String, String> {
+    let is_image = data
+        .file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| IMAGE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+        .unwrap_or(false);
+
+    if is_image {
+        send_image_attachment(data).await
+    } else {
+        send_file_attachment(data).await
+    }
+}
+
+/// Download and decrypt an image from a Blossom URL.
+pub async fn download_and_decrypt_image(
+    blossom_url: String,
+    order_id: String,
+    cube_name: String,
+    mnemonic: String,
+) -> Result<(String, String, Vec<u8>), String> {
+    // Get encryption key from session
+    let sessions = load_data(&cube_name).unwrap_or_default().trades;
+    let session = sessions
+        .iter()
+        .find(|s| s.order_id == order_id)
+        .ok_or_else(|| format!("No trade session for order {}", order_id))?;
+
+    let cp_hex = session
+        .counterparty_trade_pubkey
+        .as_deref()
+        .ok_or("No counterparty pubkey")?;
+    let cp_pk =
+        PublicKey::from_hex(cp_hex).map_err(|e| format!("Invalid counterparty pubkey: {e}"))?;
+    let trade_keys = derive_trade_keys(&mnemonic, session.trade_index)?;
+    let encryption_key = derive_encryption_key(&trade_keys, &cp_pk)?;
+
+    // Download
+    let blob = download_from_blossom(&blossom_url).await?;
+
+    // Decrypt
+    let decrypted = decrypt_image_blob(&encryption_key, &blob)?;
+
+    Ok((order_id, blossom_url, decrypted))
+}
+
 // ── Order fetching (existing code) ──────────────────────────────────────
 
 /// Rating data parsed from the event's `rating` tag.
@@ -2036,7 +2706,7 @@ async fn fetch_user_trades(
                 .as_ref()
                 .map(map_trade_status)
                 .unwrap_or(TradeStatus::Pending);
-            let status = latest_dm_action(session)
+            let status = latest_status_action(session)
                 .and_then(dm_action_to_status)
                 .unwrap_or(relay_status);
             let order_type = match session.kind.as_str() {
@@ -2054,6 +2724,8 @@ async fn fetch_user_trades(
                 status,
                 role: role_from_session(session),
                 fiat_amount,
+                min_amount: order.min_amount.map(|v| v as f64),
+                max_amount: order.max_amount.map(|v| v as f64),
                 fiat_currency: order.fiat_code.clone(),
                 sats_amount: if order.amount > 0 {
                     Some(order.amount as u64)
@@ -2109,7 +2781,7 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
         // Range order — show min as the display amount
         session.min_amount.unwrap_or(0) as f64
     };
-    let status = latest_dm_action(session)
+    let status = latest_status_action(session)
         .and_then(dm_action_to_status)
         .unwrap_or(TradeStatus::Pending);
     P2PTrade {
@@ -2118,6 +2790,8 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
         status,
         role: role_from_session(session),
         fiat_amount,
+        min_amount: session.min_amount.map(|v| v as f64),
+        max_amount: session.max_amount.map(|v| v as f64),
         fiat_currency: session.fiat_code.clone(),
         sats_amount: if session.amount > 0 {
             Some(session.amount as u64)
@@ -2169,11 +2843,30 @@ fn mostro_stream(
 
             // Create a single persistent client for the stream lifetime
             let client = Client::new(Keys::generate());
+            let mut relay_failures = 0usize;
             for url in &relay_urls {
-                let _ = client.add_relay(url.as_str()).await;
+                if let Err(e) = client.add_relay(url.as_str()).await {
+                    tracing::warn!("Failed to add relay {url}: {e}");
+                    relay_failures += 1;
+                }
+            }
+            if relay_failures == relay_urls.len() {
+                let _ = output
+                    .send(Message::View(view::Message::P2P(P2PMessage::StreamError(
+                        "Failed to connect to any Mostro relay".to_string(),
+                    ))))
+                    .await;
             }
             client.connect().await;
             client.wait_for_connection(Duration::from_secs(10)).await;
+
+            if !has_connected_relay(&client).await {
+                let _ = output
+                    .send(Message::View(view::Message::P2P(P2PMessage::StreamError(
+                        "Failed to connect to any Mostro relay".to_string(),
+                    ))))
+                    .await;
+            }
 
             // Track seen DM event IDs to avoid reprocessing
             // (gift-wrap timestamps are randomized per NIP-59, so we can't use timestamps)
@@ -2189,11 +2882,21 @@ fn mostro_stream(
                     min_order_sats: info.min_order_amount,
                     max_order_sats: info.max_order_amount,
                 }));
-                let _ = output.send(msg).await;
+                if output.send(msg).await.is_err() {
+                    tracing::warn!(
+                        "Failed to send P2P update to UI — channel may be full or closed"
+                    );
+                }
             }
 
             // Auto-restore: if we have a mnemonic but no local trades, scan relay for DMs
-            let data = load_data(&cube_name).unwrap_or_default();
+            let data = match load_data(&cube_name) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::error!("Failed to load P2P data: {e}");
+                    MostroData::default()
+                }
+            };
             if data.trades.is_empty() && !mnemonic.is_empty() {
                 tracing::info!("No local trades found — attempting DM-scan restore");
                 match restore_trades(&cube_name, &mnemonic, &pubkey_hex, &relay_urls).await {
@@ -2204,9 +2907,20 @@ fn mostro_stream(
                             "Recovered {} trade(s) from relay",
                             n
                         )));
-                        let _ = output.send(msg).await;
+                        if output.send(msg).await.is_err() {
+                            tracing::warn!(
+                                "Failed to send P2P update to UI — channel may be full or closed"
+                            );
+                        }
                     }
-                    Err(e) => tracing::warn!("Restore failed: {e}"),
+                    Err(e) => {
+                        tracing::warn!("Restore failed: {e}");
+                        let _ = output
+                            .send(Message::View(view::Message::P2P(P2PMessage::StreamError(
+                                format!("Failed to restore trades: {e}"),
+                            ))))
+                            .await;
+                    }
                 }
             }
 
@@ -2264,17 +2978,25 @@ fn mostro_stream(
                 }
             }
             let orders = orders_from_cache(&order_cache, &cube_name);
-            let _ = output
+            if output
                 .send(Message::View(view::Message::P2P(
                     P2PMessage::MostroOrdersReceived(orders),
                 )))
-                .await;
+                .await
+                .is_err()
+            {
+                tracing::warn!("Failed to send P2P update to UI — channel may be full or closed");
+            }
             let trades = fetch_user_trades(&client, &cube_name, mostro_pk).await;
-            let _ = output
+            if output
                 .send(Message::View(view::Message::P2P(
                     P2PMessage::MostroTradesReceived(trades),
                 )))
-                .await;
+                .await
+                .is_err()
+            {
+                tracing::warn!("Failed to send P2P update to UI — channel may be full or closed");
+            }
 
             // Real-time loop: listen for order + DM notifications, periodic trade fetch
             let mut notifications = client.notifications();
@@ -2290,11 +3012,15 @@ fn mostro_stream(
                                 if event.kind == nostr_sdk::Kind::Custom(38383) {
                                     if process_order_event(&event, &mut order_cache) {
                                         let orders = orders_from_cache(&order_cache, &cube_name);
-                                        let _ = output
+                                        if output
                                             .send(Message::View(view::Message::P2P(
                                                 P2PMessage::MostroOrdersReceived(orders),
                                             )))
-                                            .await;
+                                            .await
+                                            .is_err()
+                                        {
+                                            tracing::warn!("Failed to send P2P update to UI — channel may be full or closed");
+                                        }
                                     }
                                 }
                                 // Real-time DM notifications (kind 1059 gift wrap)
@@ -2362,17 +3088,29 @@ fn mostro_stream(
                     }
                 }
                 let orders = orders_from_cache(&order_cache, &cube_name);
-                let _ = output
+                if output
                     .send(Message::View(view::Message::P2P(
                         P2PMessage::MostroOrdersReceived(orders),
                     )))
-                    .await;
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "Failed to send P2P update to UI — channel may be full or closed"
+                    );
+                }
                 let trades = fetch_user_trades(&client, &cube_name, mostro_pk).await;
-                let _ = output
+                if output
                     .send(Message::View(view::Message::P2P(
                         P2PMessage::MostroTradesReceived(trades),
                     )))
-                    .await;
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "Failed to send P2P update to UI — channel may be full or closed"
+                    );
+                }
             }
         },
     )
@@ -2386,37 +3124,30 @@ async fn update_dm_subscriptions(
     mnemonic: &str,
     subscribed_pubkeys: &mut Vec<PublicKey>,
 ) {
-    let sessions = load_data(cube_name).unwrap_or_default().trades;
-    if sessions.is_empty() {
+    let session_keys = load_session_keys(cube_name, mnemonic);
+    if session_keys.is_empty() {
         return;
     }
 
     let mut new_pubkeys: Vec<PublicKey> = Vec::new();
-    for session in &sessions {
-        if let Ok(keys) = derive_trade_keys(mnemonic, session.trade_index) {
-            let pk = keys.public_key();
-            if !subscribed_pubkeys.contains(&pk) {
-                new_pubkeys.push(pk);
-            }
-            // Also subscribe to the ECDH shared key pubkey for P2P chat
-            if let Some(ref cp_hex) = session.counterparty_trade_pubkey {
-                if let Ok(cp_pk) = PublicKey::from_hex(cp_hex) {
-                    if let Ok(shared) = derive_shared_chat_keys(&keys, &cp_pk) {
-                        let spk = shared.public_key();
-                        if !subscribed_pubkeys.contains(&spk) {
-                            new_pubkeys.push(spk);
-                        }
-                    }
-                }
-            }
-            // Subscribe to ECDH shared key for dispute chat with admin
-            if let Some(ref admin_hex) = session.admin_trade_pubkey {
-                if let Ok(admin_pk) = PublicKey::from_hex(admin_hex) {
-                    if let Ok(shared) = derive_shared_chat_keys(&keys, &admin_pk) {
-                        let spk = shared.public_key();
-                        if !subscribed_pubkeys.contains(&spk) {
-                            new_pubkeys.push(spk);
-                        }
+    for (session, keys) in &session_keys {
+        let pk = keys.public_key();
+        if !subscribed_pubkeys.contains(&pk) {
+            new_pubkeys.push(pk);
+        }
+        // Also subscribe to ECDH shared keys for P2P chat and dispute chat
+        for party_hex in [
+            session.counterparty_trade_pubkey.as_deref(),
+            session.admin_trade_pubkey.as_deref(),
+        ]
+        .iter()
+        .copied()
+        .flatten()
+        {
+            if let Some(hex) = shared_chat_hex(keys, Some(party_hex)) {
+                if let Ok(spk) = PublicKey::from_hex(&hex) {
+                    if !subscribed_pubkeys.contains(&spk) {
+                        new_pubkeys.push(spk);
                     }
                 }
             }
@@ -2434,11 +3165,270 @@ async fn update_dm_subscriptions(
         .since(since);
 
     if let Err(e) = client.subscribe(filter, None).await {
-        tracing::debug!("Failed to subscribe for trade DMs: {e}");
+        tracing::warn!("Failed to subscribe for trade DMs: {e}");
         return;
     }
 
     subscribed_pubkeys.extend(new_pubkeys);
+}
+
+// ── DM processing helpers ───────────────────────────────────────────────
+
+/// Extract the first `p` tag value from a Nostr event.
+fn get_p_tag(event: &nostr_sdk::Event) -> Option<String> {
+    event.tags.iter().find_map(|tag| {
+        let t = tag.clone().to_vec();
+        if t.len() >= 2 && t[0] == "p" {
+            Some(t[1].clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// Derive the ECDH shared chat public key hex for a given trade pubkey hex.
+fn shared_chat_hex(keys: &Keys, trade_pubkey_hex: Option<&str>) -> Option<String> {
+    let pk = PublicKey::from_hex(trade_pubkey_hex?).ok()?;
+    derive_shared_chat_keys(keys, &pk)
+        .ok()
+        .map(|sk| sk.public_key().to_hex())
+}
+
+/// Serialize a chat text into the Mostro payload JSON format.
+fn serialize_chat_payload(text: String) -> String {
+    serde_json::to_string(&Some(mostro_core::message::Payload::TextMessage(text))).unwrap_or_else(
+        |e| {
+            tracing::warn!("Failed to serialize chat payload: {e}");
+            String::new()
+        },
+    )
+}
+
+/// Persist a trade message to disk and optionally send a UI update.
+async fn persist_and_notify(
+    cube_name: &str,
+    order_id: &str,
+    action: String,
+    payload_json: String,
+    timestamp: u64,
+    output: &mut iced::futures::channel::mpsc::Sender<Message>,
+    silent: bool,
+) {
+    append_trade_message(
+        cube_name,
+        order_id,
+        TradeMessage {
+            timestamp,
+            action: action.clone(),
+            payload_json: payload_json.clone(),
+            is_own: false,
+        },
+    );
+    if !silent {
+        let msg = Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
+            order_id: order_id.to_string(),
+            action,
+            payload_json,
+        }));
+        let _ = output.send(msg).await;
+    }
+}
+
+/// Result of processing a single DM event against one session.
+enum DmResult {
+    /// No match for this session — try the next one.
+    NoMatch,
+    /// Matched and processed; bool = new counterparty discovered.
+    Handled(bool),
+    /// CantDo received — skip without further processing.
+    CantDo,
+}
+
+/// Core logic for processing a single gift-wrap event against a single trade session.
+/// Shared by both the batch (`process_dm_notifications`) and real-time (`process_dm_event`) paths.
+#[allow(clippy::too_many_arguments)]
+async fn process_event_for_session(
+    event: &nostr_sdk::Event,
+    session: &TradeSession,
+    keys: &Keys,
+    cube_name: &str,
+    mostro_pubkey: PublicKey,
+    seen_event_ids: &mut HashSet<nostr_sdk::EventId>,
+    output: &mut iced::futures::channel::mpsc::Sender<Message>,
+    silent: bool,
+) -> DmResult {
+    let our_trade_hex = keys.public_key().to_hex();
+    let cp_shared_hex = shared_chat_hex(keys, session.counterparty_trade_pubkey.as_deref());
+    let admin_shared_hex = shared_chat_hex(keys, session.admin_trade_pubkey.as_deref());
+
+    // Match p-tag against our trade pubkey, shared chat pubkey, or admin shared pubkey
+    let p_tag = get_p_tag(event);
+    let is_mostro_dm = p_tag.as_deref() == Some(&our_trade_hex);
+    let is_chat_dm = cp_shared_hex
+        .as_deref()
+        .is_some_and(|sh| p_tag.as_deref() == Some(sh));
+    let is_admin_dm = admin_shared_hex
+        .as_deref()
+        .is_some_and(|sh| p_tag.as_deref() == Some(sh));
+    if !is_mostro_dm && !is_chat_dm && !is_admin_dm {
+        return DmResult::NoMatch;
+    }
+
+    // ── Mostro protocol message (NIP-59: gift wrap → seal → rumor) ──
+    if let Ok(unwrapped) = nip59::extract_rumor(keys, event).await {
+        if unwrapped.rumor.pubkey == mostro_pubkey {
+            let mut new_cp = false;
+            if let Ok((msg, _)) = serde_json::from_str::<(
+                mostro_core::message::Message,
+                Option<String>,
+            )>(&unwrapped.rumor.content)
+            {
+                let inner = msg.get_inner_message_kind();
+                let action = format!("{:?}", inner.action);
+                let payload_json = match serde_json::to_string(&inner.payload) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!("Failed to serialize DM payload: {e}");
+                        String::new()
+                    }
+                };
+
+                seen_event_ids.insert(event.id);
+
+                if inner.action == mostro_core::message::Action::CantDo {
+                    tracing::debug!(
+                        "Skipping CantDo DM for order {} (not a state transition)",
+                        session.order_id
+                    );
+                    return DmResult::CantDo;
+                }
+
+                // Extract counterparty trade pubkey from Order or PaymentRequest payloads
+                if let Some(cp_pk) = counterparty_from_payload(&inner.payload, &our_trade_hex) {
+                    if session.counterparty_trade_pubkey.as_deref() != Some(&cp_pk) {
+                        new_cp = true;
+                    }
+                    set_counterparty_pubkey(cube_name, &session.order_id, &cp_pk);
+                }
+
+                // Extract admin pubkey from AdminTookDispute Peer payload
+                if inner.action == mostro_core::message::Action::AdminTookDispute {
+                    if let Some(mostro_core::message::Payload::Peer(ref peer)) = inner.payload {
+                        if session.admin_trade_pubkey.as_deref() != Some(&peer.pubkey) {
+                            new_cp = true;
+                        }
+                        set_admin_pubkey(cube_name, &session.order_id, &peer.pubkey);
+                    }
+                }
+
+                let rumor_ts = unwrapped.rumor.created_at.as_u64();
+                persist_and_notify(
+                    cube_name,
+                    &session.order_id,
+                    action,
+                    payload_json,
+                    rumor_ts,
+                    output,
+                    silent,
+                )
+                .await;
+            }
+            return DmResult::Handled(new_cp);
+        }
+    }
+
+    // ── P2P chat message (2-layer: gift wrap → signed event via ECDH shared key) ──
+    if let Some(chat_msg) = try_decrypt_chat(
+        event,
+        keys,
+        session.counterparty_trade_pubkey.as_deref(),
+        session.counterparty_trade_pubkey.as_deref(),
+    ) {
+        seen_event_ids.insert(event.id);
+        persist_and_notify(
+            cube_name,
+            &session.order_id,
+            "SendDm".to_string(),
+            serialize_chat_payload(chat_msg.text),
+            chat_msg.timestamp,
+            output,
+            silent,
+        )
+        .await;
+        return DmResult::Handled(false);
+    }
+
+    // ── Dispute chat message from admin (same 2-layer, different shared key) ──
+    if let Some(chat_msg) = try_decrypt_chat(
+        event,
+        keys,
+        session.admin_trade_pubkey.as_deref(),
+        session.admin_trade_pubkey.as_deref(),
+    ) {
+        seen_event_ids.insert(event.id);
+        persist_and_notify(
+            cube_name,
+            &session.order_id,
+            "AdminDm".to_string(),
+            serialize_chat_payload(chat_msg.text),
+            chat_msg.timestamp,
+            output,
+            silent,
+        )
+        .await;
+        return DmResult::Handled(false);
+    }
+
+    DmResult::NoMatch
+}
+
+/// Decrypted chat message content.
+struct DecryptedChat {
+    text: String,
+    timestamp: u64,
+}
+
+/// Try to decrypt a 2-layer chat message using the ECDH shared key with the given party.
+/// Returns `Some` if decryption succeeds and the sender matches the expected pubkey.
+fn try_decrypt_chat(
+    event: &nostr_sdk::Event,
+    keys: &Keys,
+    party_trade_hex: Option<&str>,
+    expected_sender_hex: Option<&str>,
+) -> Option<DecryptedChat> {
+    let party_pk = PublicKey::from_hex(party_trade_hex?).ok()?;
+    let shared = derive_shared_chat_keys(keys, &party_pk).ok()?;
+    let decrypted =
+        nostr_sdk::prelude::nip44::decrypt(shared.secret_key(), &event.pubkey, &event.content)
+            .ok()?;
+    let inner_event = nostr_sdk::Event::from_json(&decrypted).ok()?;
+    let sender_hex = inner_event.pubkey.to_hex();
+    if expected_sender_hex != Some(&sender_hex) {
+        return None;
+    }
+    Some(DecryptedChat {
+        text: inner_event.content.clone(),
+        timestamp: inner_event.created_at.as_u64(),
+    })
+}
+
+/// Load sessions and derive trade keys, returning session-key pairs.
+fn load_session_keys(cube_name: &str, mnemonic: &str) -> Vec<(TradeSession, Keys)> {
+    let data = match load_data(cube_name) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("Failed to load session data for {cube_name}: {e}");
+            return Vec::new();
+        }
+    };
+    data.trades
+        .iter()
+        .filter_map(|s| {
+            derive_trade_keys(mnemonic, s.trade_index)
+                .ok()
+                .map(|k| (s.clone(), k))
+        })
+        .collect()
 }
 
 /// Process any pending DM notifications from the persistent subscription.
@@ -2453,17 +3443,7 @@ async fn process_dm_notifications(
     output: &mut iced::futures::channel::mpsc::Sender<Message>,
     silent: bool,
 ) {
-    let sessions = load_data(cube_name).unwrap_or_default().trades;
-    if sessions.is_empty() {
-        return;
-    }
-
-    let mut session_keys: Vec<(TradeSession, Keys)> = Vec::new();
-    for session in &sessions {
-        if let Ok(keys) = derive_trade_keys(mnemonic, session.trade_index) {
-            session_keys.push((session.clone(), keys));
-        }
-    }
+    let session_keys = load_session_keys(cube_name, mnemonic);
     if session_keys.is_empty() {
         return;
     }
@@ -2472,18 +3452,17 @@ async fn process_dm_notifications(
     let mut all_pubkeys: Vec<PublicKey> =
         session_keys.iter().map(|(_, k)| k.public_key()).collect();
     for (session, keys) in &session_keys {
-        if let Some(ref cp_hex) = session.counterparty_trade_pubkey {
-            if let Ok(cp_pk) = PublicKey::from_hex(cp_hex) {
-                if let Ok(shared) = derive_shared_chat_keys(keys, &cp_pk) {
-                    all_pubkeys.push(shared.public_key());
-                }
-            }
-        }
-        // Include admin shared key for dispute chat
-        if let Some(ref admin_hex) = session.admin_trade_pubkey {
-            if let Ok(admin_pk) = PublicKey::from_hex(admin_hex) {
-                if let Ok(shared) = derive_shared_chat_keys(keys, &admin_pk) {
-                    all_pubkeys.push(shared.public_key());
+        for party_hex in [
+            session.counterparty_trade_pubkey.as_deref(),
+            session.admin_trade_pubkey.as_deref(),
+        ]
+        .iter()
+        .copied()
+        .flatten()
+        {
+            if let Some(hex) = shared_chat_hex(keys, Some(party_hex)) {
+                if let Ok(pk) = PublicKey::from_hex(&hex) {
+                    all_pubkeys.push(pk);
                 }
             }
         }
@@ -2506,224 +3485,25 @@ async fn process_dm_notifications(
     };
 
     for event in events.iter() {
-        // Skip already-processed events (use event ID, not timestamp,
-        // because NIP-59 gift-wrap timestamps are randomized)
         if seen_event_ids.contains(&event.id) {
             continue;
         }
-
         for (session, keys) in &session_keys {
-            let our_trade_hex = keys.public_key().to_hex();
-
-            // Compute shared chat pubkey (if counterparty is known)
-            let shared_chat_hex = session
-                .counterparty_trade_pubkey
-                .as_deref()
-                .and_then(|cp_hex| PublicKey::from_hex(cp_hex).ok())
-                .and_then(|cp_pk| derive_shared_chat_keys(keys, &cp_pk).ok())
-                .map(|sk| sk.public_key().to_hex());
-
-            // Compute admin shared chat pubkey (if admin is known)
-            let admin_shared_chat_hex = session
-                .admin_trade_pubkey
-                .as_deref()
-                .and_then(|admin_hex| PublicKey::from_hex(admin_hex).ok())
-                .and_then(|admin_pk| derive_shared_chat_keys(keys, &admin_pk).ok())
-                .map(|sk| sk.public_key().to_hex());
-
-            // Match p-tag against our trade pubkey, shared chat pubkey, or admin shared pubkey
-            let p_tag_value = event.tags.iter().find_map(|tag| {
-                let t = tag.clone().to_vec();
-                if t.len() >= 2 && t[0] == "p" {
-                    Some(t[1].clone())
-                } else {
-                    None
-                }
-            });
-            let is_mostro_dm = p_tag_value.as_deref() == Some(&our_trade_hex);
-            let is_chat_dm = shared_chat_hex
-                .as_deref()
-                .is_some_and(|sh| p_tag_value.as_deref() == Some(sh));
-            let is_admin_dm = admin_shared_chat_hex
-                .as_deref()
-                .is_some_and(|sh| p_tag_value.as_deref() == Some(sh));
-            if !is_mostro_dm && !is_chat_dm && !is_admin_dm {
-                continue;
+            match process_event_for_session(
+                event,
+                session,
+                keys,
+                cube_name,
+                mostro_pubkey,
+                seen_event_ids,
+                output,
+                silent,
+            )
+            .await
+            {
+                DmResult::Handled(_) | DmResult::CantDo => break,
+                DmResult::NoMatch => continue,
             }
-
-            // Try NIP-59 unwrap (3-layer: gift wrap → seal → rumor)
-            if let Ok(unwrapped) = nip59::extract_rumor(keys, event).await {
-                if unwrapped.rumor.pubkey == mostro_pubkey {
-                    // ── Mostro protocol message ──
-                    if let Ok((msg, _)) = serde_json::from_str::<(
-                        mostro_core::message::Message,
-                        Option<String>,
-                    )>(&unwrapped.rumor.content)
-                    {
-                        let inner = msg.get_inner_message_kind();
-                        let action = format!("{:?}", inner.action);
-                        let payload_json =
-                            serde_json::to_string(&inner.payload).unwrap_or_default();
-
-                        seen_event_ids.insert(event.id);
-
-                        if inner.action == mostro_core::message::Action::CantDo {
-                            tracing::debug!(
-                                "Skipping CantDo DM for order {} (not a state transition)",
-                                session.order_id
-                            );
-                            continue;
-                        }
-
-                        // Extract counterparty trade pubkey from Order or PaymentRequest payloads
-                        if let Some(cp_pk) =
-                            counterparty_from_payload(&inner.payload, &our_trade_hex)
-                        {
-                            set_counterparty_pubkey(cube_name, &session.order_id, &cp_pk);
-                        }
-
-                        // Extract admin pubkey from AdminTookDispute Peer payload
-                        if inner.action == mostro_core::message::Action::AdminTookDispute {
-                            if let Some(mostro_core::message::Payload::Peer(ref peer)) =
-                                inner.payload
-                            {
-                                set_admin_pubkey(cube_name, &session.order_id, &peer.pubkey);
-                            }
-                        }
-
-                        let rumor_ts = unwrapped.rumor.created_at.as_u64();
-
-                        append_trade_message(
-                            cube_name,
-                            &session.order_id,
-                            TradeMessage {
-                                timestamp: rumor_ts,
-                                action: action.clone(),
-                                payload_json: payload_json.clone(),
-                                is_own: false,
-                            },
-                        );
-
-                        if !silent {
-                            let update_msg =
-                                Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
-                                    order_id: session.order_id.clone(),
-                                    action,
-                                    payload_json,
-                                }));
-                            let _ = output.send(update_msg).await;
-                        }
-                    }
-                    continue;
-                }
-            }
-
-            // ── P2P chat message (2-layer: gift wrap → signed event) ──
-            // Decrypt using the ECDH shared key (per Mostro chat protocol).
-            let shared_keys = session
-                .counterparty_trade_pubkey
-                .as_deref()
-                .and_then(|cp_hex| PublicKey::from_hex(cp_hex).ok())
-                .and_then(|cp_pk| derive_shared_chat_keys(keys, &cp_pk).ok());
-            if let Some(ref shared) = shared_keys {
-                if let Ok(decrypted) = nostr_sdk::prelude::nip44::decrypt(
-                    shared.secret_key(),
-                    &event.pubkey,
-                    &event.content,
-                ) {
-                    if let Ok(inner_event) = nostr_sdk::Event::from_json(&decrypted) {
-                        // Verify sender is our known counterparty (inner event is signed by trade key)
-                        let sender_hex = inner_event.pubkey.to_hex();
-                        let is_counterparty =
-                            session.counterparty_trade_pubkey.as_deref() == Some(&sender_hex);
-                        if !is_counterparty {
-                            continue;
-                        }
-
-                        seen_event_ids.insert(event.id);
-
-                        let chat_text = inner_event.content.clone();
-                        let payload_json = serde_json::to_string(&Some(
-                            mostro_core::message::Payload::TextMessage(chat_text),
-                        ))
-                        .unwrap_or_default();
-                        let rumor_ts = inner_event.created_at.as_u64();
-
-                        append_trade_message(
-                            cube_name,
-                            &session.order_id,
-                            TradeMessage {
-                                timestamp: rumor_ts,
-                                action: "SendDm".to_string(),
-                                payload_json: payload_json.clone(),
-                                is_own: false,
-                            },
-                        );
-
-                        if !silent {
-                            let update_msg =
-                                Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
-                                    order_id: session.order_id.clone(),
-                                    action: "SendDm".to_string(),
-                                    payload_json,
-                                }));
-                            let _ = output.send(update_msg).await;
-                        }
-                    }
-                } // if let Ok(decrypted)
-            } // if let Some(shared)
-
-            // ── Dispute chat message from admin (2-layer, admin shared key) ──
-            let admin_shared_keys = session
-                .admin_trade_pubkey
-                .as_deref()
-                .and_then(|admin_hex| PublicKey::from_hex(admin_hex).ok())
-                .and_then(|admin_pk| derive_shared_chat_keys(keys, &admin_pk).ok());
-            if let Some(ref admin_shared) = admin_shared_keys {
-                if let Ok(decrypted) = nostr_sdk::prelude::nip44::decrypt(
-                    admin_shared.secret_key(),
-                    &event.pubkey,
-                    &event.content,
-                ) {
-                    if let Ok(inner_event) = nostr_sdk::Event::from_json(&decrypted) {
-                        let sender_hex = inner_event.pubkey.to_hex();
-                        let is_admin = session.admin_trade_pubkey.as_deref() == Some(&sender_hex);
-                        if !is_admin {
-                            continue;
-                        }
-
-                        seen_event_ids.insert(event.id);
-
-                        let chat_text = inner_event.content.clone();
-                        let payload_json = serde_json::to_string(&Some(
-                            mostro_core::message::Payload::TextMessage(chat_text),
-                        ))
-                        .unwrap_or_default();
-                        let rumor_ts = inner_event.created_at.as_u64();
-
-                        append_trade_message(
-                            cube_name,
-                            &session.order_id,
-                            TradeMessage {
-                                timestamp: rumor_ts,
-                                action: "AdminDm".to_string(),
-                                payload_json: payload_json.clone(),
-                                is_own: false,
-                            },
-                        );
-
-                        if !silent {
-                            let update_msg =
-                                Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
-                                    order_id: session.order_id.clone(),
-                                    action: "AdminDm".to_string(),
-                                    payload_json,
-                                }));
-                            let _ = output.send(update_msg).await;
-                        }
-                    }
-                }
-            } // if let Some(admin_shared)
         }
     }
 }
@@ -2739,211 +3519,24 @@ async fn process_dm_event(
     seen_event_ids: &mut HashSet<nostr_sdk::EventId>,
     output: &mut iced::futures::channel::mpsc::Sender<Message>,
 ) -> bool {
-    let sessions = load_data(cube_name).unwrap_or_default().trades;
-    let session_keys: Vec<(TradeSession, Keys)> = sessions
-        .iter()
-        .filter_map(|s| {
-            derive_trade_keys(mnemonic, s.trade_index)
-                .ok()
-                .map(|k| (s.clone(), k))
-        })
-        .collect();
-
-    let mut new_counterparty = false;
+    let session_keys = load_session_keys(cube_name, mnemonic);
 
     for (session, keys) in &session_keys {
-        let our_trade_hex = keys.public_key().to_hex();
-
-        let shared_chat_hex = session
-            .counterparty_trade_pubkey
-            .as_deref()
-            .and_then(|cp_hex| PublicKey::from_hex(cp_hex).ok())
-            .and_then(|cp_pk| derive_shared_chat_keys(keys, &cp_pk).ok())
-            .map(|sk| sk.public_key().to_hex());
-
-        let admin_shared_chat_hex = session
-            .admin_trade_pubkey
-            .as_deref()
-            .and_then(|admin_hex| PublicKey::from_hex(admin_hex).ok())
-            .and_then(|admin_pk| derive_shared_chat_keys(keys, &admin_pk).ok())
-            .map(|sk| sk.public_key().to_hex());
-
-        let p_tag_value = event.tags.iter().find_map(|tag| {
-            let t = tag.clone().to_vec();
-            if t.len() >= 2 && t[0] == "p" {
-                Some(t[1].clone())
-            } else {
-                None
-            }
-        });
-        let is_mostro_dm = p_tag_value.as_deref() == Some(&our_trade_hex);
-        let is_chat_dm = shared_chat_hex
-            .as_deref()
-            .is_some_and(|sh| p_tag_value.as_deref() == Some(sh));
-        let is_admin_dm = admin_shared_chat_hex
-            .as_deref()
-            .is_some_and(|sh| p_tag_value.as_deref() == Some(sh));
-        if !is_mostro_dm && !is_chat_dm && !is_admin_dm {
-            continue;
-        }
-
-        // Try NIP-59 unwrap (3-layer: gift wrap → seal → rumor)
-        if let Ok(unwrapped) = nip59::extract_rumor(keys, event).await {
-            if unwrapped.rumor.pubkey == mostro_pubkey {
-                if let Ok((msg, _)) = serde_json::from_str::<(
-                    mostro_core::message::Message,
-                    Option<String>,
-                )>(&unwrapped.rumor.content)
-                {
-                    let inner = msg.get_inner_message_kind();
-                    let action = format!("{:?}", inner.action);
-                    let payload_json = serde_json::to_string(&inner.payload).unwrap_or_default();
-
-                    seen_event_ids.insert(event.id);
-
-                    if inner.action == mostro_core::message::Action::CantDo {
-                        return false;
-                    }
-
-                    if let Some(cp_pk) = counterparty_from_payload(&inner.payload, &our_trade_hex) {
-                        if session.counterparty_trade_pubkey.as_deref() != Some(&cp_pk) {
-                            new_counterparty = true;
-                        }
-                        set_counterparty_pubkey(cube_name, &session.order_id, &cp_pk);
-                    }
-
-                    // Extract admin pubkey from AdminTookDispute Peer payload
-                    if inner.action == mostro_core::message::Action::AdminTookDispute {
-                        if let Some(mostro_core::message::Payload::Peer(ref peer)) = inner.payload {
-                            if session.admin_trade_pubkey.as_deref() != Some(&peer.pubkey) {
-                                new_counterparty = true; // triggers subscription update
-                            }
-                            set_admin_pubkey(cube_name, &session.order_id, &peer.pubkey);
-                        }
-                    }
-
-                    let rumor_ts = unwrapped.rumor.created_at.as_u64();
-                    append_trade_message(
-                        cube_name,
-                        &session.order_id,
-                        TradeMessage {
-                            timestamp: rumor_ts,
-                            action: action.clone(),
-                            payload_json: payload_json.clone(),
-                            is_own: false,
-                        },
-                    );
-
-                    let update_msg = Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
-                        order_id: session.order_id.clone(),
-                        action,
-                        payload_json,
-                    }));
-                    let _ = output.send(update_msg).await;
-                }
-                return new_counterparty;
-            }
-        }
-
-        // P2P chat message (2-layer: gift wrap → signed event)
-        let shared_keys = session
-            .counterparty_trade_pubkey
-            .as_deref()
-            .and_then(|cp_hex| PublicKey::from_hex(cp_hex).ok())
-            .and_then(|cp_pk| derive_shared_chat_keys(keys, &cp_pk).ok());
-        if let Some(ref shared) = shared_keys {
-            if let Ok(decrypted) = nostr_sdk::prelude::nip44::decrypt(
-                shared.secret_key(),
-                &event.pubkey,
-                &event.content,
-            ) {
-                if let Ok(inner_event) = nostr_sdk::Event::from_json(&decrypted) {
-                    let sender_hex = inner_event.pubkey.to_hex();
-                    let is_counterparty =
-                        session.counterparty_trade_pubkey.as_deref() == Some(&sender_hex);
-                    if !is_counterparty {
-                        continue;
-                    }
-
-                    seen_event_ids.insert(event.id);
-
-                    let chat_text = inner_event.content.clone();
-                    let payload_json = serde_json::to_string(&Some(
-                        mostro_core::message::Payload::TextMessage(chat_text),
-                    ))
-                    .unwrap_or_default();
-                    let rumor_ts = inner_event.created_at.as_u64();
-
-                    append_trade_message(
-                        cube_name,
-                        &session.order_id,
-                        TradeMessage {
-                            timestamp: rumor_ts,
-                            action: "SendDm".to_string(),
-                            payload_json: payload_json.clone(),
-                            is_own: false,
-                        },
-                    );
-
-                    let update_msg = Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
-                        order_id: session.order_id.clone(),
-                        action: "SendDm".to_string(),
-                        payload_json,
-                    }));
-                    let _ = output.send(update_msg).await;
-                    return false;
-                }
-            }
-        }
-
-        // Dispute chat message from admin (same 2-layer structure, different shared key)
-        let admin_shared_keys = session
-            .admin_trade_pubkey
-            .as_deref()
-            .and_then(|admin_hex| PublicKey::from_hex(admin_hex).ok())
-            .and_then(|admin_pk| derive_shared_chat_keys(keys, &admin_pk).ok());
-        if let Some(ref admin_shared) = admin_shared_keys {
-            if let Ok(decrypted) = nostr_sdk::prelude::nip44::decrypt(
-                admin_shared.secret_key(),
-                &event.pubkey,
-                &event.content,
-            ) {
-                if let Ok(inner_event) = nostr_sdk::Event::from_json(&decrypted) {
-                    let sender_hex = inner_event.pubkey.to_hex();
-                    let is_admin = session.admin_trade_pubkey.as_deref() == Some(&sender_hex);
-                    if !is_admin {
-                        continue;
-                    }
-
-                    seen_event_ids.insert(event.id);
-
-                    let chat_text = inner_event.content.clone();
-                    let payload_json = serde_json::to_string(&Some(
-                        mostro_core::message::Payload::TextMessage(chat_text),
-                    ))
-                    .unwrap_or_default();
-                    let rumor_ts = inner_event.created_at.as_u64();
-
-                    append_trade_message(
-                        cube_name,
-                        &session.order_id,
-                        TradeMessage {
-                            timestamp: rumor_ts,
-                            action: "AdminDm".to_string(),
-                            payload_json: payload_json.clone(),
-                            is_own: false,
-                        },
-                    );
-
-                    let update_msg = Message::View(view::Message::P2P(P2PMessage::TradeUpdate {
-                        order_id: session.order_id.clone(),
-                        action: "AdminDm".to_string(),
-                        payload_json,
-                    }));
-                    let _ = output.send(update_msg).await;
-                    return false;
-                }
-            }
+        match process_event_for_session(
+            event,
+            session,
+            keys,
+            cube_name,
+            mostro_pubkey,
+            seen_event_ids,
+            output,
+            false, // never silent in real-time
+        )
+        .await
+        {
+            DmResult::Handled(new_cp) => return new_cp,
+            DmResult::CantDo => return false,
+            DmResult::NoMatch => continue,
         }
     }
     false
