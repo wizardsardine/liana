@@ -5,3 +5,4 @@
 
 pub mod keys;
 pub mod ws_business;
+pub use tungstenite;
