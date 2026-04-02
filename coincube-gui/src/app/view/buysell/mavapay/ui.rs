@@ -24,7 +24,14 @@ pub fn form<'a>(state: &'a MavapayState) -> iced::Element<'a, ViewMessage, theme
         MavapayFlowStep::OrderDetail { .. } => order_detail_view,
     };
 
-    let element: iced::Element<'a, BuySellMessage, theme::Theme> = form(state).into();
+    let element: iced::Element<'a, BuySellMessage, theme::Theme> = widget::column![
+        form(state),
+        widget::Space::new().height(Length::Fixed(5.0)),
+        text::caption("Powered by Mavapay").style(theme::text::secondary)
+    ]
+    .align_x(iced::Alignment::Center)
+    .into();
+
     element.map(ViewMessage::BuySell)
 }
 
@@ -55,6 +62,8 @@ fn buy_input_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMess
                             ..,
                             |a| { BuySellMessage::Mavapay(MavapayMessage::FiatAmountChanged(a,)) }
                         )
+                        .ignore_buttons(true)
+                        .ignore_scroll(true)
                         .on_submit(BuySellMessage::Mavapay(MavapayMessage::NormalizeAmounts))
                         .align_x(Alignment::Center)
                         .step(500.0)
@@ -68,10 +77,12 @@ fn buy_input_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMess
                         widget::text("Satoshis (BTCSAT)")
                             .size(14)
                             .style(theme::text::secondary),
-                        widget::Space::new().height(5),
+                        widget::space().height(5),
                         iced_aw::number_input(&state.sat_amount, .., |a| {
                             BuySellMessage::Mavapay(MavapayMessage::SatAmountChanged(a as _))
                         })
+                        .ignore_buttons(true)
+                        .ignore_scroll(true)
                         .on_submit(BuySellMessage::Mavapay(MavapayMessage::NormalizeAmounts))
                         .align_x(Alignment::Center)
                         .step(1000)
@@ -116,8 +127,6 @@ fn buy_input_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMess
         text::h4_bold("Buy Bitcoin using Fiat Money").center(),
         widget::Space::new().height(Length::Fixed(20.0)),
         form,
-        widget::Space::new().height(Length::Fixed(5.0)),
-        text::p2_medium("Powered by Mavapay").style(theme::text::secondary)
     ]
     .align_x(Alignment::Center)
 }
@@ -158,6 +167,8 @@ fn sell_input_form<'a>(
                     iced_aw::number_input(&sat_amount, .., |a| BuySellMessage::Mavapay(
                         MavapayMessage::SatAmountChanged(a as _)
                     ))
+                    .ignore_buttons(true)
+                    .ignore_scroll(true)
                     .on_submit(BuySellMessage::Mavapay(MavapayMessage::NormalizeAmounts))
                     .align_x(Alignment::Center)
                     .width(150)

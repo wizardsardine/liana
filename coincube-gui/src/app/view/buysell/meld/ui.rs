@@ -428,13 +428,20 @@ pub(crate) fn address_selection_ux<'a>(
                     .align_y(iced::Alignment::Center),
                     widget::container(
                         widget::row![
-                            widget::text(address)
+                            widget::text_input("..", address)
                                 .font(iced::font::Font {
                                     weight: iced::font::Weight::Medium,
                                     ..iced::font::Font::MONOSPACE
                                 })
-                                .size(15),
-                            widget::space().width(iced::Length::Fill),
+                                .width(iced::Length::Fill)
+                                .size(15)
+                                .style(|th, st| {
+                                    widget::text_input::Style {
+                                        border: iced::border::width(0).rounded(0),
+                                        ..theme::text_input::primary(th, st)
+                                    }
+                                }),
+                            widget::space().width(15),
                             widget::button(icon::clipboard_icon().size(17).width(38))
                                 .on_press(view::Message::BuySell(view::BuySellMessage::Meld(
                                     view::buysell::meld::MeldMessage::CopyAddressToClipboard
@@ -819,8 +826,8 @@ pub(super) fn webview_ux<'a>(
                                 .align_x(iced::Alignment::Center)
                                 .style(|th, st| widget::text_input::Style {
                                     border: iced::Border::default()
-                                        .width(2)
-                                        .rounded(0)
+                                        .width(0.8)
+                                        .rounded(1)
                                         .color(color::GREY_3),
                                     ..theme::text_input::primary(th, st)
                                 })
@@ -828,7 +835,7 @@ pub(super) fn webview_ux<'a>(
                         ]
                     }
                     None => {
-                        widget::column![text::p1_regular("Complete sell flow")]
+                        widget::column![text::p1_regular("Complete Sale flow: ")]
                     }
                 },
                 button::primary_compact(Some(icon::arrow_back()), "Start Over")
@@ -841,7 +848,7 @@ pub(super) fn webview_ux<'a>(
                             .color(color::ORANGE);
                         base
                     }),
-            ].spacing(5).align_y(iced::Alignment::Center),
+            ].spacing(10).align_y(iced::Alignment::Center),
             cfg!(target_os = "macos").then(|| {
                 widget::container(
                     text::caption("Keyboard shortcuts are problematic in the webview for macOS. Right-click the input field to paste.")
