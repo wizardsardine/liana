@@ -211,7 +211,9 @@ pub enum KeyIdentity {
 impl Display for KeyIdentity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let str = match self {
-            KeyIdentity::TokenWithProvider { token, .. } => token,
+            KeyIdentity::TokenWithProvider { token, provider } => provider
+                .as_ref()
+                .map_or(token.as_str(), |p| p.name.as_str()),
             KeyIdentity::Token(s) | KeyIdentity::Email(s) | KeyIdentity::Other(s) => s,
         };
         write!(f, "{str}")
