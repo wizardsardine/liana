@@ -58,6 +58,7 @@ pub fn liquid_transactions_view<'a>(
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     usdt_id: &'a str,
     asset_filter: AssetFilter,
+    show_direction_badges: bool,
 ) -> Element<'a, Message> {
     let mut content = Column::new().spacing(20).width(Length::Fill);
 
@@ -148,6 +149,7 @@ pub fn liquid_transactions_view<'a>(
                             fiat_converter,
                             bitcoin_unit,
                             usdt_id,
+                            show_direction_badges,
                         ))
                     },
                 )),
@@ -163,7 +165,13 @@ pub fn liquid_transactions_view<'a>(
                 .push(refundables.iter().enumerate().fold(
                     Column::new().spacing(10),
                     |col, (i, refundable)| {
-                        col.push(refundable_row(i, refundable, fiat_converter, bitcoin_unit))
+                        col.push(refundable_row(
+                            i,
+                            refundable,
+                            fiat_converter,
+                            bitcoin_unit,
+                            show_direction_badges,
+                        ))
                     },
                 )),
         );
@@ -178,6 +186,7 @@ fn transaction_row<'a>(
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     usdt_id: &str,
+    show_direction_badges: bool,
 ) -> Element<'a, Message> {
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
     let usdt_str = usdt_amount_str(payment, usdt_id);
@@ -232,6 +241,7 @@ fn transaction_row<'a>(
             .with_label(description.to_string())
             .with_time_ago(time_ago)
             .with_custom_icon(combo_icon)
+            .with_show_direction_badge(show_direction_badges)
             .with_amount_override(usdt_display.clone());
         return item.view(Message::Select(i)).into();
     }
@@ -244,7 +254,8 @@ fn transaction_row<'a>(
     let mut item = TransactionListItem::new(direction, &btc_amount, bitcoin_unit)
         .with_label(description.to_string())
         .with_time_ago(time_ago)
-        .with_custom_icon(combo_icon);
+        .with_custom_icon(combo_icon)
+        .with_show_direction_badge(show_direction_badges);
 
     if let Some(fiat_amount) = fiat_converter.map(|converter| {
         let fiat = converter.convert(btc_amount);
@@ -261,6 +272,7 @@ fn refundable_row<'a>(
     refundable: &'a RefundableSwap,
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
+    show_direction_badges: bool,
 ) -> Element<'a, Message> {
     let btc_amount = Amount::from_sat(refundable.amount_sat);
     let time_ago = format_time_ago(refundable.timestamp.into());
@@ -270,7 +282,8 @@ fn refundable_row<'a>(
     let mut item = TransactionListItem::new(direction, &btc_amount, bitcoin_unit)
         .with_label("Refundable Swap".to_string())
         .with_time_ago(time_ago)
-        .with_custom_icon(asset_network_logo("lbtc", "liquid", 40.0));
+        .with_custom_icon(asset_network_logo("lbtc", "liquid", 40.0))
+        .with_show_direction_badge(show_direction_badges);
 
     if let Some(fiat_amount) = fiat_converter.map(|converter| {
         let fiat = converter.convert(btc_amount);

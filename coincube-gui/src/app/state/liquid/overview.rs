@@ -125,6 +125,7 @@ impl State for LiquidOverview {
                 self.error.as_deref(),
                 cache.bitcoin_unit,
                 cache.btc_usd_price,
+                cache.show_direction_badges,
             )
             .map(view::Message::LiquidOverview);
 

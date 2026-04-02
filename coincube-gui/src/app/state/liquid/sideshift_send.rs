@@ -451,6 +451,9 @@ impl SideshiftSendFlow {
             }
 
             SideshiftSendMessage::ConfirmSend => {
+                if self.phase != SendPhase::Review {
+                    return Task::none();
+                }
                 let Some(shift) = &self.shift else {
                     return Task::none();
                 };

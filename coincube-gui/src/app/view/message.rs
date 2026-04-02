@@ -225,6 +225,7 @@ pub enum SettingsMessage {
     InstallStatsSection,
     InstallStats(InstallStatsViewMessage),
     TestToast(log::Level),
+    ToggleDirectionBadges(bool),
 }
 
 #[derive(Debug, Clone)]

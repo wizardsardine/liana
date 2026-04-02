@@ -73,7 +73,13 @@ pub fn transactions_view<'a>(
                         txs.iter()
                             .enumerate()
                             .fold(Column::new().spacing(10), |col, (i, tx)| {
-                                col.push(tx_list_view(i, tx, cache.bitcoin_unit, fiat_converter))
+                                col.push(tx_list_view(
+                                    i,
+                                    tx,
+                                    cache.bitcoin_unit,
+                                    fiat_converter,
+                                    cache.show_direction_badges,
+                                ))
                             }),
                     )
                     .push(if !is_last_page && !txs.is_empty() {
@@ -114,6 +120,7 @@ fn tx_list_view(
     tx: &HistoryTransaction,
     bitcoin_unit: BitcoinDisplayUnit,
     fiat_converter: Option<FiatAmountConverter>,
+    show_direction_badges: bool,
 ) -> Element<'_, Message> {
     let direction = if tx.is_external() {
         TransactionDirection::Incoming
@@ -147,6 +154,7 @@ fn tx_list_view(
         .with_custom_icon(coincube_ui::image::asset_network_logo(
             "btc", "bitcoin", 40.0,
         ))
+        .with_show_direction_badge(show_direction_badges)
         .with_badges(badges);
 
     if let Some(label) = label {

@@ -162,6 +162,7 @@ impl State for LiquidReceive {
             &self.recent_transaction,
             self.btc_balance,
             self.usdt_balance,
+            cache.show_direction_badges,
         )
         .map(view::Message::LiquidReceive);
 
@@ -894,7 +895,7 @@ impl LiquidReceive {
         Task::perform(
             async move {
                 let info = breez_client.info().await;
-                let payments = breez_client.list_payments(Some(5)).await;
+                let payments = breez_client.list_payments(Some(20)).await;
 
                 let btc_balance = info
                     .as_ref()

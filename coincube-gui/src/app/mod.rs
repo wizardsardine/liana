@@ -1278,6 +1278,14 @@ impl App {
                     }
                 }
 
+                // Reload global settings into cache
+                {
+                    use settings::global::GlobalSettings;
+                    let global_path = GlobalSettings::path(&self.cache.datadir_path);
+                    self.cache.show_direction_badges =
+                        GlobalSettings::load_show_direction_badges(&global_path);
+                }
+
                 // Forward to state panels so they can reload their internal state
                 if let Some(panel) = self.panels.current_mut() {
                     return Task::batch(vec![

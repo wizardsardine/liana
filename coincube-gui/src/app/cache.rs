@@ -58,6 +58,8 @@ pub struct Cache {
     /// BTC price in USD, always fetched regardless of the user's selected fiat
     /// currency. Used for converting USDt (which is pegged to USD) into sats.
     pub btc_usd_price: Option<f64>,
+    /// Whether to show direction badges (receive/spend arrows) on transaction rows.
+    pub show_direction_badges: bool,
     /// Cached Lightning Address for display in the sidebar across all panels
     pub lightning_address: Option<String>,
 }
@@ -86,6 +88,7 @@ impl std::default::Default for Cache {
             has_p2p: false,
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
             btc_usd_price: None,
+            show_direction_badges: true,
             lightning_address: None,
         }
     }

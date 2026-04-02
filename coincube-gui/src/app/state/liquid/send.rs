@@ -453,6 +453,7 @@ impl State for LiquidSend {
                     self.uri_asset = None;
                     self.error = None;
                     self.sideshift_flow = None;
+                    return self.load_balance();
                 }
                 view::LiquidSendMessage::InputEdited(value) => {
                     self.input.value = value.clone();

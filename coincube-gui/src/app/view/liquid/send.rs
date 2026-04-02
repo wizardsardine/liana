@@ -76,6 +76,7 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
                 config.input_type,
                 config.bitcoin_unit,
                 config.usdt_asset_id,
+                config.cache.show_direction_badges,
             )
             .map(Message::LiquidSend);
 
@@ -205,6 +206,7 @@ pub fn liquid_send_view<'a>(
     input_type: &'a Option<InputType>,
     bitcoin_unit: BitcoinDisplayUnit,
     usdt_asset_id: &str,
+    show_direction_badges: bool,
 ) -> Element<'a, LiquidSendMessage> {
     let mut content = Column::new().spacing(20);
 
@@ -487,6 +489,7 @@ pub fn liquid_send_view<'a>(
 
             let mut item = TransactionListItem::new(direction, &display_amount, bitcoin_unit)
                 .with_custom_icon(tx_icon)
+                .with_show_direction_badge(show_direction_badges)
                 .with_label(tx.description.clone())
                 .with_time_ago(tx.time_ago.clone());
 

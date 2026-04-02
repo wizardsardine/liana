@@ -28,6 +28,7 @@ pub fn liquid_overview_view<'a>(
     error: Option<&'a str>,
     bitcoin_unit: BitcoinDisplayUnit,
     btc_usd_price: Option<f64>,
+    show_direction_badges: bool,
 ) -> Element<'a, LiquidOverviewMessage> {
     let mut content = Column::new().spacing(20);
 
@@ -262,6 +263,7 @@ pub fn liquid_overview_view<'a>(
 
             let mut item = TransactionListItem::new(direction, &display_amount, bitcoin_unit)
                 .with_custom_icon(tx_icon)
+                .with_show_direction_badge(show_direction_badges)
                 .with_label(tx.description.clone())
                 .with_time_ago(tx.time_ago.clone());
 

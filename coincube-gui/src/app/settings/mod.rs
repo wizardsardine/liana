@@ -624,6 +624,12 @@ pub mod global {
         pub account_tier: AccountTier,
         #[serde(default)]
         pub theme_mode: coincube_ui::theme::palette::ThemeMode,
+        #[serde(default = "default_true")]
+        pub show_direction_badges: bool,
+    }
+
+    fn default_true() -> bool {
+        true
     }
 
     impl GlobalSettings {
@@ -686,6 +692,21 @@ pub mod global {
             developer_mode: bool,
         ) -> Result<(), super::SettingsError> {
             Self::update(path, |s| s.developer_mode = developer_mode, true)
+        }
+
+        pub fn load_show_direction_badges(path: &PathBuf) -> bool {
+            let mut ret = true;
+            if let Err(e) = Self::update(path, |s| ret = s.show_direction_badges, false) {
+                tracing::error!("Failed to load show_direction_badges setting: {e}");
+            }
+            ret
+        }
+
+        pub fn update_show_direction_badges(
+            path: &PathBuf,
+            show: bool,
+        ) -> Result<(), super::SettingsError> {
+            Self::update(path, |s| s.show_direction_badges = show, true)
         }
 
         pub fn load_theme_mode(path: &PathBuf) -> coincube_ui::theme::palette::ThemeMode {

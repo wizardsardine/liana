@@ -21,11 +21,13 @@ pub fn general_section<'a>(
     new_unit_setting: &'a UnitSetting,
     currencies_list: &'a [Currency],
     developer_mode: bool,
+    show_direction_badges: bool,
 ) -> Element<'a, Message> {
     let mut col = Column::new()
         .spacing(20)
         .push(super::header("General", SettingsMessage::GeneralSection))
         .push(bitcoin_display_unit(new_unit_setting))
+        .push(direction_badges_toggle(show_direction_badges))
         .push(fiat_price(new_price_setting, currencies_list));
 
     if developer_mode {
@@ -33,6 +35,24 @@ pub fn general_section<'a>(
     }
 
     dashboard(menu, cache, col)
+}
+
+fn direction_badges_toggle<'a>(show: bool) -> Element<'a, Message> {
+    card::simple(
+        Row::new()
+            .spacing(20)
+            .align_y(Alignment::Center)
+            .push(text("Show direction badges on transactions:").bold())
+            .push(Space::new().width(Length::Fill))
+            .push(
+                Toggler::new(show)
+                    .on_toggle(|new_val| SettingsMessage::ToggleDirectionBadges(new_val).into())
+                    .width(50)
+                    .style(theme::toggler::orange),
+            ),
+    )
+    .width(Length::Fill)
+    .into()
 }
 
 fn toast_testing<'a>() -> Element<'a, Message> {

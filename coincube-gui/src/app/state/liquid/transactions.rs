@@ -150,6 +150,7 @@ impl State for LiquidTransactions {
                     cache.bitcoin_unit,
                     usdt_asset_id(self.breez_client.network()).unwrap_or(""),
                     self.asset_filter,
+                    cache.show_direction_badges,
                 ),
             )
         };

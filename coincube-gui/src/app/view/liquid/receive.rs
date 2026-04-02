@@ -47,6 +47,7 @@ pub fn liquid_receive_view<'a>(
     recent_transaction: &[RecentTransaction],
     btc_balance: Amount,
     usdt_balance: u64,
+    show_direction_badges: bool,
 ) -> Element<'a, LiquidReceiveMessage> {
     let mut content = Column::new().spacing(20).width(Length::Fill);
 
@@ -180,6 +181,7 @@ pub fn liquid_receive_view<'a>(
 
             let mut item = TransactionListItem::new(direction, &display_amount, bitcoin_unit)
                 .with_custom_icon(tx_icon)
+                .with_show_direction_badge(show_direction_badges)
                 .with_label(tx.description.clone())
                 .with_time_ago(tx.time_ago.clone());
 

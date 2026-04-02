@@ -1049,6 +1049,7 @@ pub fn create_app_with_remote_backend(
             has_p2p: false, // Set later by App::new based on mnemonic availability
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
             btc_usd_price: None,
+            show_direction_badges: true,
             lightning_address: None,
         },
         Arc::new(
