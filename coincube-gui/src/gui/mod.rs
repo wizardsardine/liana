@@ -502,6 +502,8 @@ impl GUI {
                 let mut stale_pairs = HashSet::<(PriceSource, Currency)>::new();
                 // These are the tabs that need the cached global price.
                 let mut need_cached = HashMap::<(pane_grid::Pane, usize), FiatPrice>::new();
+                // Tabs that need a fresh USD price for USDt→sats conversion.
+                let mut need_usd_cached: Vec<(pane_grid::Pane, usize, FiatPrice)> = Vec::new();
                 for (&pane_id, pane) in self.panes.iter() {
                     for tab in pane.tabs.iter() {
                         if let Some(sett) = tab
@@ -524,6 +526,24 @@ impl GUI {
                                 .is_none()
                             {
                                 stale_pairs.insert((sett.source, sett.currency));
+                            }
+
+                            // Always ensure BTC/USD is fetched for USDt→sats conversion.
+                            if sett.currency != Currency::USD {
+                                if let Some(fresh_usd) = self
+                                    .global_cache
+                                    .fresh_fiat_price(sett.source, Currency::USD)
+                                {
+                                    if !tab.cache().and_then(|c| c.btc_usd_price).is_some() {
+                                        need_usd_cached.push((pane_id, tab.id, fresh_usd.clone()));
+                                    }
+                                } else if self
+                                    .global_cache
+                                    .pending_fiat_price_request(sett.source, Currency::USD)
+                                    .is_none()
+                                {
+                                    stale_pairs.insert((sett.source, Currency::USD));
+                                }
                             }
                         }
                     }
@@ -549,6 +569,19 @@ impl GUI {
                             pane.update_tab_with_app_msg(
                                 tab_id,
                                 AppFiatMessage::GetPriceResult(global_price),
+                                &self.config,
+                            )
+                            .map(move |msg| Message::Pane(pane_id, msg)),
+                        );
+                    }
+                }
+                // Distribute fresh USD prices for USDt→sats conversion.
+                for (pane_id, tab_id, usd_price) in need_usd_cached {
+                    if let Some(pane) = self.panes.get_mut(pane_id) {
+                        tasks.push(
+                            pane.update_tab_with_app_msg(
+                                tab_id,
+                                AppFiatMessage::GetPriceResult(usd_price),
                                 &self.config,
                             )
                             .map(move |msg| Message::Pane(pane_id, msg)),

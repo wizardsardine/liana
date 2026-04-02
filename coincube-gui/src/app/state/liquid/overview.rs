@@ -124,6 +124,7 @@ impl State for LiquidOverview {
                 &self.recent_transaction,
                 self.error.as_deref(),
                 cache.bitcoin_unit,
+                cache.btc_usd_price,
             )
             .map(view::Message::LiquidOverview);
 
@@ -200,8 +201,7 @@ impl State for LiquidOverview {
                     self.btc_balance = *balance;
                     self.usdt_balance = *usdt_balance;
 
-                    let recent: Vec<Payment> =
-                        recent_payment.iter().take(5).cloned().collect();
+                    let recent: Vec<Payment> = recent_payment.iter().take(5).cloned().collect();
                     self.recent_payments = recent.clone();
 
                     let usdt_id =
@@ -229,12 +229,12 @@ impl State for LiquidOverview {
                                 );
 
                                 let (desc, usdt_display) = if is_usdt {
-                                    let display = if let PaymentDetails::Liquid {
-                                        asset_info, ..
-                                    } = &payment.details
-                                    {
-                                        if let Some(info) = asset_info {
-                                            crate::app::breez::assets::format_usdt_display(
+                                    let display =
+                                        if let PaymentDetails::Liquid { asset_info, .. } =
+                                            &payment.details
+                                        {
+                                            if let Some(info) = asset_info {
+                                                crate::app::breez::assets::format_usdt_display(
                                                 (info.amount
                                                     * 10_f64.powi(
                                                         crate::app::breez::assets::USDT_PRECISION
@@ -243,16 +243,16 @@ impl State for LiquidOverview {
                                                 .round()
                                                     as u64,
                                             )
+                                            } else {
+                                                crate::app::breez::assets::format_usdt_display(
+                                                    payment.amount_sat,
+                                                )
+                                            }
                                         } else {
                                             crate::app::breez::assets::format_usdt_display(
                                                 payment.amount_sat,
                                             )
-                                        }
-                                    } else {
-                                        crate::app::breez::assets::format_usdt_display(
-                                            payment.amount_sat,
-                                        )
-                                    };
+                                        };
                                     (
                                         "USDt Transfer".to_owned(),
                                         Some(format!("{} USDt", display)),

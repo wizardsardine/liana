@@ -138,10 +138,7 @@ pub fn sidebar<'a>(
             info_col = info_col.push(
                 Button::new(
                     Row::new()
-                        .push(
-                            text::caption(display_addr.clone())
-                                .color(color::GREY_3),
-                        )
+                        .push(text::caption(display_addr.clone()).color(color::GREY_3))
                         .push(clipboard_icon().size(10).color(color::GREY_3))
                         .spacing(4)
                         .align_y(iced::Alignment::Center),
@@ -903,7 +900,14 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     cache: &'a Cache,
     content: T,
 ) -> Element<'a, Message> {
-    dashboard_with_info(menu, cache, content, &cache.cube_name, None, cache.lightning_address.as_deref())
+    dashboard_with_info(
+        menu,
+        cache,
+        content,
+        &cache.cube_name,
+        None,
+        cache.lightning_address.as_deref(),
+    )
 }
 
 pub fn dashboard_with_info<'a, T: Into<Element<'a, Message>>>(

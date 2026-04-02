@@ -23,11 +23,11 @@ use iced::{
 use crate::app::breez::assets::{format_usdt_display, AssetKind};
 use crate::app::menu::Menu;
 use crate::app::state::liquid::send::{LiquidSendFlowState, Modal, ReceiveNetwork, SendAsset};
-use coincube_ui::image::asset_network_logo;
 use crate::app::view::{
     self, vault::fiat::FiatAmount, FiatAmountConverter, LiquidSendMessage, Message,
 };
 use crate::{app::cache::Cache, loading::loading_indicator};
+use coincube_ui::image::asset_network_logo;
 
 pub struct LiquidSendFlowConfig<'a> {
     pub flow_state: &'a LiquidSendFlowState,
@@ -231,19 +231,24 @@ pub fn liquid_send_view<'a>(
 
         let card_content = Column::new()
             .spacing(6)
-            .push(
-                text("YOU SEND")
-                    .size(P2_SIZE)
-                    .style(theme::text::secondary),
-            )
+            .push(text("YOU SEND").size(P2_SIZE).style(theme::text::secondary))
             .push(
                 Row::new()
                     .spacing(8)
                     .align_y(Alignment::Center)
                     .push(ico)
-                    .push(text(asset_label).size(H3_SIZE).bold().style(theme::text::primary)),
+                    .push(
+                        text(asset_label)
+                            .size(H3_SIZE)
+                            .bold()
+                            .style(theme::text::primary),
+                    ),
             )
-            .push(text(balance_text).size(P2_SIZE).style(theme::text::secondary))
+            .push(
+                text(balance_text)
+                    .size(P2_SIZE)
+                    .style(theme::text::secondary),
+            )
             .push(
                 Container::new(text("LIQUID").size(11).color(color::ORANGE))
                     .padding([2, 8])
@@ -312,19 +317,28 @@ pub fn liquid_send_view<'a>(
                     .spacing(8)
                     .align_y(Alignment::Center)
                     .push(ico)
-                    .push(text(asset_label).size(H3_SIZE).bold().style(theme::text::primary)),
+                    .push(
+                        text(asset_label)
+                            .size(H3_SIZE)
+                            .bold()
+                            .style(theme::text::primary),
+                    ),
             )
             .push(
-                Container::new(text(network_label.to_uppercase()).size(11).color(color::ORANGE))
-                    .padding([2, 8])
-                    .style(|_: &theme::Theme| container::Style {
-                        border: iced::Border {
-                            color: color::ORANGE,
-                            width: 1.0,
-                            radius: 8.0.into(),
-                        },
-                        ..Default::default()
-                    }),
+                Container::new(
+                    text(network_label.to_uppercase())
+                        .size(11)
+                        .color(color::ORANGE),
+                )
+                .padding([2, 8])
+                .style(|_: &theme::Theme| container::Style {
+                    border: iced::Border {
+                        color: color::ORANGE,
+                        width: 1.0,
+                        radius: 8.0.into(),
+                    },
+                    ..Default::default()
+                }),
             );
 
         iced_button(
@@ -363,15 +377,13 @@ pub fn liquid_send_view<'a>(
         (_, ReceiveNetwork::Bitcoin) => "Enter Bitcoin Address",
         (_, ReceiveNetwork::Liquid) if to_asset == SendAsset::Usdt => "Enter Liquid USDt Address",
         (_, ReceiveNetwork::Liquid) => "Enter Liquid Address",
-        (_, net) if net.is_sideshift() => {
-            match net {
-                ReceiveNetwork::Ethereum => "Enter Ethereum USDt Address",
-                ReceiveNetwork::Tron => "Enter Tron USDt Address",
-                ReceiveNetwork::Binance => "Enter Binance Smart Chain USDt Address",
-                ReceiveNetwork::Solana => "Enter Solana USDt Address",
-                _ => "Enter Address",
-            }
-        }
+        (_, net) if net.is_sideshift() => match net {
+            ReceiveNetwork::Ethereum => "Enter Ethereum USDt Address",
+            ReceiveNetwork::Tron => "Enter Tron USDt Address",
+            ReceiveNetwork::Binance => "Enter Binance Smart Chain USDt Address",
+            ReceiveNetwork::Solana => "Enter Solana USDt Address",
+            _ => "Enter Address",
+        },
         _ => "Enter Address",
     };
 
@@ -463,20 +475,14 @@ pub fn liquid_send_view<'a>(
 
             // Determine combo icon from payment details
             let tx_icon = match &tx.details {
-                PaymentDetails::Lightning { .. } => {
-                    asset_network_logo("btc", "lightning", 40.0)
-                }
+                PaymentDetails::Lightning { .. } => asset_network_logo("btc", "lightning", 40.0),
                 PaymentDetails::Liquid { asset_id, .. }
                     if !usdt_asset_id.is_empty() && asset_id == usdt_asset_id =>
                 {
                     asset_network_logo("usdt", "liquid", 40.0)
                 }
-                PaymentDetails::Liquid { .. } => {
-                    asset_network_logo("lbtc", "liquid", 40.0)
-                }
-                PaymentDetails::Bitcoin { .. } => {
-                    asset_network_logo("btc", "bitcoin", 40.0)
-                }
+                PaymentDetails::Liquid { .. } => asset_network_logo("lbtc", "liquid", 40.0),
+                PaymentDetails::Bitcoin { .. } => asset_network_logo("btc", "bitcoin", 40.0),
             };
 
             let mut item = TransactionListItem::new(direction, &display_amount, bitcoin_unit)
@@ -640,7 +646,11 @@ pub fn receive_picker_modal<'a>(
 
     let options = ReceiveNetwork::options_for_send_asset(from_asset, cross_asset_supported);
 
-    let mut col = Column::new().spacing(8).padding(24).max_width(420).push(title);
+    let mut col = Column::new()
+        .spacing(8)
+        .padding(24)
+        .max_width(420)
+        .push(title);
 
     for (asset, network) in options {
         let is_selected = asset == current_to && network == current_network;
@@ -651,9 +661,7 @@ pub fn receive_picker_modal<'a>(
             (SendAsset::Lbtc, ReceiveNetwork::Liquid) => ("lbtc", "L-BTC", "liquid", "Liquid"),
             (SendAsset::Lbtc, ReceiveNetwork::Bitcoin) => ("btc", "BTC", "bitcoin", "Bitcoin"),
             (SendAsset::Usdt, ReceiveNetwork::Liquid) => ("usdt", "USDt", "liquid", "Liquid"),
-            (SendAsset::Usdt, ReceiveNetwork::Ethereum) => {
-                ("usdt", "USDt", "ethereum", "Ethereum")
-            }
+            (SendAsset::Usdt, ReceiveNetwork::Ethereum) => ("usdt", "USDt", "ethereum", "Ethereum"),
             (SendAsset::Usdt, ReceiveNetwork::Tron) => ("usdt", "USDt", "tron", "Tron"),
             (SendAsset::Usdt, ReceiveNetwork::Binance) => ("usdt", "USDt", "bsc", "Binance"),
             (SendAsset::Usdt, ReceiveNetwork::Solana) => ("usdt", "USDt", "solana", "Solana"),
@@ -691,9 +699,18 @@ fn picker_row<'a>(
         .push(
             Column::new()
                 .spacing(2)
-                .push(text(label.to_string()).size(P1_SIZE).bold().style(theme::text::primary))
+                .push(
+                    text(label.to_string())
+                        .size(P1_SIZE)
+                        .bold()
+                        .style(theme::text::primary),
+                )
                 .push_maybe(if !balance.is_empty() {
-                    Some(text(balance.to_string()).size(P2_SIZE).style(theme::text::secondary))
+                    Some(
+                        text(balance.to_string())
+                            .size(P2_SIZE)
+                            .style(theme::text::secondary),
+                    )
                 } else {
                     None
                 }),
@@ -1763,15 +1780,16 @@ fn _old_send_asset_toggle(_current_asset: SendAsset) -> Element<'static, LiquidS
                 }),
             });
 
-        let label = text("L-BTC")
-            .size(16)
-            .style(move |_theme: &theme::Theme| iced::widget::text::Style {
-                color: Some(if lbtc_active {
-                    color::ORANGE
-                } else {
-                    color::GREY_2
-                }),
-            });
+        let label =
+            text("L-BTC")
+                .size(16)
+                .style(move |_theme: &theme::Theme| iced::widget::text::Style {
+                    color: Some(if lbtc_active {
+                        color::ORANGE
+                    } else {
+                        color::GREY_2
+                    }),
+                });
 
         let button_content = Container::new(
             Row::new()
@@ -1830,15 +1848,16 @@ fn _old_send_asset_toggle(_current_asset: SendAsset) -> Element<'static, LiquidS
                 }),
             });
 
-        let label = text("USDt")
-            .size(16)
-            .style(move |_theme: &theme::Theme| iced::widget::text::Style {
-                color: Some(if usdt_active {
-                    color::ORANGE
-                } else {
-                    color::GREY_2
-                }),
-            });
+        let label =
+            text("USDt")
+                .size(16)
+                .style(move |_theme: &theme::Theme| iced::widget::text::Style {
+                    color: Some(if usdt_active {
+                        color::ORANGE
+                    } else {
+                        color::GREY_2
+                    }),
+                });
 
         let button_content = Container::new(
             Row::new()

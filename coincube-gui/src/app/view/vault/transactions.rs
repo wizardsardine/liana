@@ -13,9 +13,7 @@ use coincube_ui::{
         amount::*,
         button, card, form,
         text::*,
-        transaction::{
-            TransactionBadge, TransactionDirection, TransactionListItem,
-        },
+        transaction::{TransactionBadge, TransactionDirection, TransactionListItem},
     },
     icon::{self, receipt_icon},
     theme,
@@ -146,7 +144,9 @@ fn tx_list_view(
     }
 
     let mut item = TransactionListItem::new(direction, amount, bitcoin_unit)
-        .with_custom_icon(coincube_ui::image::asset_network_logo("btc", "bitcoin", 40.0))
+        .with_custom_icon(coincube_ui::image::asset_network_logo(
+            "btc", "bitcoin", 40.0,
+        ))
         .with_badges(badges);
 
     if let Some(label) = label {
@@ -311,11 +311,7 @@ pub fn transaction_detail_view<'a>(
             .spacing(5)
             .align_y(Alignment::Center)
             .push(icon::previous_icon().style(theme::text::secondary))
-            .push(
-                text("Previous")
-                    .size(14)
-                    .style(theme::text::secondary),
-            ),
+            .push(text("Previous").size(14).style(theme::text::secondary)),
     )
     .on_press(Message::Close)
     .style(theme::button::transparent)

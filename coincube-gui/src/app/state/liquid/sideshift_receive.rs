@@ -260,11 +260,7 @@ impl SideshiftReceiveFlow {
     // View
     // -----------------------------------------------------------------------
 
-    pub fn view<'a>(
-        &'a self,
-        menu: &'a Menu,
-        cache: &'a Cache,
-    ) -> Element<'a, view::Message> {
+    pub fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let sideshift_view = view::liquid::sideshift_receive_view(
             &self.phase,
             &self.selected_network,

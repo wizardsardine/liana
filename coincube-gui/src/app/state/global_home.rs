@@ -257,6 +257,7 @@ impl State for GlobalHome {
                 vault_pending_receive_sats,
                 pending_vault_incoming: self.pending_vault_incoming,
                 pending_animation_phase: self.pending_transfer_animation_phase,
+                btc_usd_price: cache.btc_usd_price,
             }),
         );
 

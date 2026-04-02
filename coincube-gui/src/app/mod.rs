@@ -1273,6 +1273,7 @@ impl App {
                         // Clear cached fiat price if disabled
                         if !cube.fiat_price.as_ref().is_some_and(|p| p.is_enabled) {
                             self.cache.fiat_price = None;
+                            self.cache.btc_usd_price = None;
                         }
                     }
                 }
@@ -1288,12 +1289,29 @@ impl App {
                 return Task::done(Message::CacheUpdated);
             }
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
-                // Check if fiat price is relevant based on cube settings (applies to both Liquid and Vault)
-                let is_relevant = self.cube_settings.fiat_price.as_ref().is_some_and(|sett| {
-                    sett.is_enabled
-                        && sett.source == fiat_price.source()
-                        && sett.currency == fiat_price.currency()
-                });
+                let source_matches = self
+                    .cube_settings
+                    .fiat_price
+                    .as_ref()
+                    .is_some_and(|sett| sett.is_enabled && sett.source == fiat_price.source());
+
+                let mut updated = false;
+
+                // Always extract BTC/USD price for USDt→sats conversion.
+                if source_matches && fiat_price.currency() == crate::services::fiat::Currency::USD {
+                    if let Ok(price) = fiat_price.res.as_ref() {
+                        self.cache.btc_usd_price = Some(price.value);
+                        updated = true;
+                    }
+                }
+
+                // Store user's selected currency price.
+                let is_relevant = source_matches
+                    && self
+                        .cube_settings
+                        .fiat_price
+                        .as_ref()
+                        .is_some_and(|sett| sett.currency == fiat_price.currency());
 
                 if is_relevant
                     // make sure we only update if the price is newer than the cached one
@@ -1304,6 +1322,10 @@ impl App {
                     })
                 {
                     self.cache.fiat_price = Some(fiat_price);
+                    updated = true;
+                }
+
+                if updated {
                     return Task::done(Message::CacheUpdated);
                 }
             }

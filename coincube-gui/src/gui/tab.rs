@@ -1048,6 +1048,7 @@ pub fn create_app_with_remote_backend(
             cube_name: cube_settings.name.clone(),
             has_p2p: false, // Set later by App::new based on mnemonic availability
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
+            btc_usd_price: None,
             lightning_address: None,
         },
         Arc::new(

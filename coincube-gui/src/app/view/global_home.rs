@@ -3,8 +3,8 @@ use coincube_ui::{
     color,
     component::{amount::*, button, form, text::*},
     icon::{
-        arrow_down_up_icon, arrow_right, check_circle_icon, eye_outline_icon, eye_slash_icon,
-        droplet_fill_icon, usd_icon, vault_icon, warning_icon,
+        arrow_down_up_icon, arrow_right, check_circle_icon, droplet_fill_icon, eye_outline_icon,
+        eye_slash_icon, usd_icon, vault_icon, warning_icon,
     },
     theme,
     widget::*,
@@ -433,16 +433,14 @@ fn wallet_card<'a>(
                     .spacing(8)
                     .align_y(Alignment::Center)
                     .push(icon.size(16))
-                    .push(
-                        {
-                            let t = text(title).size(14);
-                            if let Some(c) = title_color {
-                                t.color(c)
-                            } else {
-                                t.style(theme::text::secondary)
-                            }
-                        },
-                    ),
+                    .push({
+                        let t = text(title).size(14);
+                        if let Some(c) = title_color {
+                            t.color(c)
+                        } else {
+                            t.style(theme::text::secondary)
+                        }
+                    }),
             )
             .push(
                 Row::new()
@@ -704,7 +702,10 @@ fn balance_summary_card<'a>(
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
 
     let (icon, title_color) = if is_liquid {
-        (droplet_fill_icon().style(theme::text::secondary), None::<iced::Color>)
+        (
+            droplet_fill_icon().style(theme::text::secondary),
+            None::<iced::Color>,
+        )
     } else {
         (vault_icon().style(theme::text::secondary), None)
     };
@@ -1428,6 +1429,8 @@ pub struct GlobalViewConfig<'a> {
     pub spend_tx_fees: Option<Amount>,
     pub pending_vault_incoming: Option<PendingIncomingTransfer>,
     pub pending_animation_phase: f32,
+    /// BTC price in USD for accurate USDt→sats conversion regardless of user's fiat currency.
+    pub btc_usd_price: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -1456,10 +1459,10 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         liquid_balance,
         usdt_balance,
         usdt_balance_error,
-        pending_liquid_send_sats: _pending_liquid_send_sats,
-        pending_usdt_send_sats: _pending_usdt_send_sats,
-        pending_liquid_receive_sats: _pending_liquid_receive_sats,
-        pending_usdt_receive_sats: _pending_usdt_receive_sats,
+        pending_liquid_send_sats,
+        pending_usdt_send_sats,
+        pending_liquid_receive_sats,
+        pending_usdt_receive_sats,
         vault_pending_send_sats,
         vault_pending_receive_sats,
         vault_balance,
@@ -1483,6 +1486,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         spend_tx_fees,
         pending_vault_incoming,
         pending_animation_phase,
+        btc_usd_price,
     } = config;
 
     match current_view.step {
@@ -1530,11 +1534,13 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
     }
 
     // --- Combined Liquid card (L-BTC + USDt) ---
-    let usdt_fiat_value = usdt_balance as f64 / 1e8;
-    let usdt_as_sats = if let Some(ref converter) = fiat_converter {
-        let btc_price = converter.price_per_btc();
-        if btc_price > 0.0 {
-            (usdt_fiat_value / btc_price * 1e8) as u64
+    // USDt is pegged to USD, so always use BTC/USD price for conversion.
+    // When the user's fiat currency is USD, btc_usd_price == converter.price_per_btc().
+    // When it differs (e.g. EUR), we must use the dedicated USD price to avoid mispricing.
+    let usdt_fiat_value = usdt_balance as f64 / 1e8; // USDt base units → dollars
+    let usdt_as_sats = if let Some(btc_price_usd) = btc_usd_price {
+        if btc_price_usd > 0.0 {
+            (usdt_fiat_value / btc_price_usd * 1e8) as u64
         } else {
             0
         }
@@ -1546,97 +1552,169 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
     let total_fiat = fiat_converter.as_ref().map(|c| c.convert(total_amount));
     let lbtc_fiat = fiat_converter.as_ref().map(|c| c.convert(liquid_balance));
 
-    let orange_outline_btn =
-        |label: &'static str, msg: Message| -> Element<'a, Message> {
-            button::secondary(None, label)
-                .style(|_t, _s| iced::widget::button::Style {
-                    text_color: color::ORANGE,
-                    border: iced::Border {
-                        color: color::ORANGE,
-                        width: 1.0,
-                        radius: 25.0.into(),
-                    },
-                    ..Default::default()
-                })
-                .width(Length::Fixed(90.0))
-                .on_press(msg)
-                .into()
-        };
+    let orange_outline_btn = |label: &'static str, msg: Message| -> Element<'a, Message> {
+        button::secondary(None, label)
+            .style(|_t, _s| iced::widget::button::Style {
+                text_color: color::ORANGE,
+                border: iced::Border {
+                    color: color::ORANGE,
+                    width: 1.0,
+                    radius: 25.0.into(),
+                },
+                ..Default::default()
+            })
+            .width(Length::Fixed(90.0))
+            .on_press(msg)
+            .into()
+    };
 
     // L-BTC asset row
-    let lbtc_row = Row::new()
-        .spacing(8)
-        .align_y(Alignment::Center)
-        .push(coincube_ui::image::asset_network_logo::<Message>("lbtc", "liquid", 28.0))
+    let lbtc_row = Column::new()
+        .spacing(4)
         .push(
-            text("L-BTC")
-                .size(P1_SIZE)
-                .style(theme::text::secondary)
-                .width(Length::Fixed(60.0)),
-        )
-        .push(if balance_masked {
-            Row::new().push(text("********").size(P1_SIZE))
-        } else {
-            amount_with_size_and_unit(&liquid_balance, P1_SIZE, bitcoin_unit)
-        })
-        .push_maybe(
-            (!balance_masked)
-                .then(|| {
-                    lbtc_fiat.map(|f| f.to_text().size(P2_SIZE).style(theme::text::secondary))
+            Row::new()
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .push(coincube_ui::image::asset_network_logo::<Message>(
+                    "lbtc", "liquid", 28.0,
+                ))
+                .push(
+                    text("L-BTC")
+                        .size(P1_SIZE)
+                        .style(theme::text::secondary)
+                        .width(Length::Fixed(60.0)),
+                )
+                .push(if balance_masked {
+                    Row::new().push(text("********").size(P1_SIZE))
+                } else {
+                    amount_with_size_and_unit(&liquid_balance, P1_SIZE, bitcoin_unit)
                 })
-                .flatten(),
+                .push_maybe(
+                    (!balance_masked)
+                        .then(|| {
+                            lbtc_fiat
+                                .map(|f| f.to_text().size(P2_SIZE).style(theme::text::secondary))
+                        })
+                        .flatten(),
+                )
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    button::primary(None, "Send")
+                        .width(Length::Fixed(90.0))
+                        .on_press(Message::Home(HomeMessage::SendAsset(
+                            crate::app::state::liquid::send::SendAsset::Lbtc,
+                        ))),
+                )
+                .push(orange_outline_btn(
+                    "Receive",
+                    Message::Home(HomeMessage::ReceiveAsset(
+                        crate::app::state::liquid::send::SendAsset::Lbtc,
+                    )),
+                )),
         )
-        .push(Space::new().width(Length::Fill))
-        .push(
-            button::primary(None, "Send")
-                .width(Length::Fixed(90.0))
-                .on_press(Message::Home(HomeMessage::SendAsset(
-                    crate::app::state::liquid::send::SendAsset::Lbtc,
-                ))),
-        )
-        .push(orange_outline_btn(
-            "Receive",
-            Message::Home(HomeMessage::ReceiveAsset(
-                crate::app::state::liquid::send::SendAsset::Lbtc,
-            )),
-        ));
-
-    // USDt asset row
-    let usdt_row = Row::new()
-        .spacing(8)
-        .align_y(Alignment::Center)
-        .push(coincube_ui::image::asset_network_logo::<Message>("usdt", "liquid", 28.0))
-        .push(
-            text("USDt")
-                .size(P1_SIZE)
-                .style(theme::text::secondary)
-                .width(Length::Fixed(60.0)),
-        )
-        .push(if balance_masked {
-            Row::new().push(text("********").size(P1_SIZE))
-        } else if usdt_balance_error {
-            Row::new().push(text("Balance unavailable").size(P1_SIZE).color(color::RED))
-        } else {
+        .push_maybe((!balance_masked && pending_liquid_send_sats > 0).then(|| {
             Row::new()
                 .spacing(6)
                 .align_y(Alignment::Center)
-                .push(text(format_usdt_display(usdt_balance)).size(P1_SIZE).bold())
-                .push(text("USDt").size(P2_SIZE).color(color::GREY_3))
-        })
-        .push(Space::new().width(Length::Fill))
+                .push(warning_icon().size(12).style(theme::text::secondary))
+                .push(text("-").size(P2_SIZE).style(theme::text::secondary))
+                .push(amount_with_size_and_unit(
+                    &Amount::from_sat(pending_liquid_send_sats),
+                    P2_SIZE,
+                    bitcoin_unit,
+                ))
+                .push(text("pending").size(P2_SIZE).style(theme::text::secondary))
+        }))
+        .push_maybe(
+            (!balance_masked && pending_liquid_receive_sats > 0).then(|| {
+                Row::new()
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .push(warning_icon().size(12).style(theme::text::secondary))
+                    .push(text("+").size(P2_SIZE).style(theme::text::secondary))
+                    .push(amount_with_size_and_unit(
+                        &Amount::from_sat(pending_liquid_receive_sats),
+                        P2_SIZE,
+                        bitcoin_unit,
+                    ))
+                    .push(text("pending").size(P2_SIZE).style(theme::text::secondary))
+            }),
+        );
+
+    // USDt asset row
+    let usdt_row = Column::new()
+        .spacing(4)
         .push(
-            button::primary(None, "Send")
-                .width(Length::Fixed(90.0))
-                .on_press(Message::Home(HomeMessage::SendAsset(
-                    crate::app::state::liquid::send::SendAsset::Usdt,
-                ))),
+            Row::new()
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .push(coincube_ui::image::asset_network_logo::<Message>(
+                    "usdt", "liquid", 28.0,
+                ))
+                .push(
+                    text("USDt")
+                        .size(P1_SIZE)
+                        .style(theme::text::secondary)
+                        .width(Length::Fixed(60.0)),
+                )
+                .push(if balance_masked {
+                    Row::new().push(text("********").size(P1_SIZE))
+                } else if usdt_balance_error {
+                    Row::new().push(text("Balance unavailable").size(P1_SIZE).color(color::RED))
+                } else {
+                    Row::new()
+                        .spacing(6)
+                        .align_y(Alignment::Center)
+                        .push(text(format_usdt_display(usdt_balance)).size(P1_SIZE).bold())
+                        .push(text("USDt").size(P2_SIZE).color(color::GREY_3))
+                })
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    button::primary(None, "Send")
+                        .width(Length::Fixed(90.0))
+                        .on_press(Message::Home(HomeMessage::SendAsset(
+                            crate::app::state::liquid::send::SendAsset::Usdt,
+                        ))),
+                )
+                .push(orange_outline_btn(
+                    "Receive",
+                    Message::Home(HomeMessage::ReceiveAsset(
+                        crate::app::state::liquid::send::SendAsset::Usdt,
+                    )),
+                )),
         )
-        .push(orange_outline_btn(
-            "Receive",
-            Message::Home(HomeMessage::ReceiveAsset(
-                crate::app::state::liquid::send::SendAsset::Usdt,
-            )),
-        ));
+        .push_maybe(
+            (!balance_masked && !usdt_balance_error && pending_usdt_send_sats > 0).then(|| {
+                Row::new()
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .push(warning_icon().size(12).style(theme::text::secondary))
+                    .push(
+                        text(format!(
+                            "-{} USDt pending",
+                            format_usdt_display(pending_usdt_send_sats)
+                        ))
+                        .size(P2_SIZE)
+                        .style(theme::text::secondary),
+                    )
+            }),
+        )
+        .push_maybe(
+            (!balance_masked && !usdt_balance_error && pending_usdt_receive_sats > 0).then(|| {
+                Row::new()
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .push(warning_icon().size(12).style(theme::text::secondary))
+                    .push(
+                        text(format!(
+                            "+{} USDt pending",
+                            format_usdt_display(pending_usdt_receive_sats)
+                        ))
+                        .size(P2_SIZE)
+                        .style(theme::text::secondary),
+                    )
+            }),
+        );
 
     let liquid_card_content = Column::new()
         .spacing(12)
@@ -1723,9 +1801,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                             width: 1.0,
                             radius: 35.0.into(),
                         },
-                        background: Some(iced::Background::Color(
-                            t.colors.cards.simple.background,
-                        )),
+                        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                         ..Default::default()
                     })
                     .width(Length::Fixed(150.0))

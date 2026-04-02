@@ -64,7 +64,10 @@ impl ReceiveNetwork {
 
     /// Whether this network requires SideShift.
     pub fn is_sideshift(&self) -> bool {
-        matches!(self, Self::Ethereum | Self::Tron | Self::Binance | Self::Solana)
+        matches!(
+            self,
+            Self::Ethereum | Self::Tron | Self::Binance | Self::Solana
+        )
     }
 
     /// Convert to SideshiftNetwork for the SideShift API.
@@ -79,7 +82,10 @@ impl ReceiveNetwork {
     }
 
     /// Valid "They Receive" networks for a given "You Send" asset.
-    pub fn options_for_send_asset(send_asset: SendAsset, cross_asset_supported: bool) -> Vec<(SendAsset, ReceiveNetwork)> {
+    pub fn options_for_send_asset(
+        send_asset: SendAsset,
+        cross_asset_supported: bool,
+    ) -> Vec<(SendAsset, ReceiveNetwork)> {
         match send_asset {
             SendAsset::Lbtc => {
                 let mut opts = vec![
@@ -93,9 +99,7 @@ impl ReceiveNetwork {
                 opts
             }
             SendAsset::Usdt => {
-                let mut opts = vec![
-                    (SendAsset::Usdt, ReceiveNetwork::Liquid),
-                ];
+                let mut opts = vec![(SendAsset::Usdt, ReceiveNetwork::Liquid)];
                 if cross_asset_supported {
                     opts.push((SendAsset::Lbtc, ReceiveNetwork::Lightning));
                     opts.push((SendAsset::Lbtc, ReceiveNetwork::Liquid));
@@ -423,9 +427,9 @@ impl State for LiquidSend {
 
         // When SideShift flow is active, only forward DataLoaded for balance updates
         if self.sideshift_flow.is_some() {
-            if let Message::View(view::Message::LiquidSend(
-                view::LiquidSendMessage::DataLoaded { .. },
-            )) = &message
+            if let Message::View(view::Message::LiquidSend(view::LiquidSendMessage::DataLoaded {
+                ..
+            })) = &message
             {
                 // Fall through to handle DataLoaded below
             } else {
@@ -532,9 +536,11 @@ impl State for LiquidSend {
                             let network = self.receive_network.to_sideshift_network();
                             let mut tasks = vec![Task::done(addr_msg)];
                             if let Some(net) = network {
-                                tasks.push(Task::done(Message::View(view::Message::SideshiftSend(
-                                    view::SideshiftSendMessage::DisambiguateNetwork(net),
-                                ))));
+                                tasks.push(Task::done(Message::View(
+                                    view::Message::SideshiftSend(
+                                        view::SideshiftSendMessage::DisambiguateNetwork(net),
+                                    ),
+                                )));
                             }
                             tasks.push(Task::done(Message::View(view::Message::SideshiftSend(
                                 view::SideshiftSendMessage::Next,
@@ -849,7 +855,9 @@ impl State for LiquidSend {
                                     {
                                         self.to_asset = SendAsset::Lbtc;
                                         self.from_asset = SendAsset::Usdt;
-                                    } else if self.to_asset == SendAsset::Usdt && target_asset != SendAsset::Usdt {
+                                    } else if self.to_asset == SendAsset::Usdt
+                                        && target_asset != SendAsset::Usdt
+                                    {
                                         // Non-mainnet: cross-asset not available, keep USDt
                                         self.to_asset = SendAsset::Usdt;
                                         self.from_asset = self.to_asset;
@@ -1506,7 +1514,9 @@ impl State for LiquidSend {
                                 // Already in cross-asset mode — toggle back to same-asset.
                                 // On usdt_only screen: if to_asset was forced to Lbtc by URI,
                                 // we can't go back to same-asset Lbtc send — block the toggle.
-                                if self.to_asset == SendAsset::Usdt && self.to_asset != SendAsset::Usdt {
+                                if self.from_asset == SendAsset::Usdt
+                                    && self.to_asset != SendAsset::Usdt
+                                {
                                     // Can't disable cross-asset on usdt_only screen when URI
                                     // requires a non-USDt asset — ignore toggle
                                 } else {
@@ -1563,13 +1573,11 @@ impl State for LiquidSend {
                                 SendAsset::Lbtc => SendAsset::Usdt,
                                 SendAsset::Usdt => SendAsset::Lbtc,
                             };
-                            if !(next == SendAsset::Lbtc && self.to_asset == SendAsset::Usdt) {
-                                self.to_asset = next;
-                                self.from_asset = self.to_asset;
-                                self.amount = Amount::ZERO;
-                                self.usdt_amount_input = form::Value::default();
-                                self.amount_input = form::Value::default();
-                            }
+                            self.to_asset = next;
+                            self.from_asset = self.to_asset;
+                            self.amount = Amount::ZERO;
+                            self.usdt_amount_input = form::Value::default();
+                            self.amount_input = form::Value::default();
                         }
                     }
                 }

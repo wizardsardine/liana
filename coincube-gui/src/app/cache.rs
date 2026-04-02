@@ -55,6 +55,9 @@ pub struct Cache {
     pub has_p2p: bool,
     /// Current theme mode (dark/light) — used for theme-aware widget rendering
     pub theme_mode: coincube_ui::theme::palette::ThemeMode,
+    /// BTC price in USD, always fetched regardless of the user's selected fiat
+    /// currency. Used for converting USDt (which is pegged to USD) into sats.
+    pub btc_usd_price: Option<f64>,
     /// Cached Lightning Address for display in the sidebar across all panels
     pub lightning_address: Option<String>,
 }
@@ -82,6 +85,7 @@ impl std::default::Default for Cache {
             cube_name: String::new(),
             has_p2p: false,
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
+            btc_usd_price: None,
             lightning_address: None,
         }
     }

@@ -27,6 +27,7 @@ pub fn liquid_overview_view<'a>(
     recent_transaction: &[RecentTransaction],
     error: Option<&'a str>,
     bitcoin_unit: BitcoinDisplayUnit,
+    btc_usd_price: Option<f64>,
 ) -> Element<'a, LiquidOverviewMessage> {
     let mut content = Column::new().spacing(20);
 
@@ -45,13 +46,11 @@ pub fn liquid_overview_view<'a>(
         .sum();
 
     // ── Unified portfolio card ─────────────────────────────────────────────
-    // Convert USDt to sats equivalent using fiat price for the total
-    let usdt_fiat_value = usdt_balance as f64 / 1e8; // USDt base units → dollars (≈$1 each)
-    let usdt_as_sats = if let Some(ref converter) = fiat_converter {
-        // Convert USDt dollar value to sats: (usdt_usd / btc_usd) * 1e8
-        let btc_price = converter.price_per_btc();
-        if btc_price > 0.0 {
-            (usdt_fiat_value / btc_price * 1e8) as u64
+    // USDt is pegged to USD, so always use BTC/USD price for conversion.
+    let usdt_fiat_value = usdt_balance as f64 / 1e8; // USDt base units → dollars
+    let usdt_as_sats = if let Some(btc_price_usd) = btc_usd_price {
+        if btc_price_usd > 0.0 {
+            (usdt_fiat_value / btc_price_usd * 1e8) as u64
         } else {
             0
         }
@@ -63,14 +62,15 @@ pub fn liquid_overview_view<'a>(
     let total_fiat = fiat_converter.as_ref().map(|c| c.convert(total_balance));
 
     // Total balance header
-    let mut total_col = Column::new()
-        .spacing(4)
-        .push(h4_bold("Balance"))
-        .push(amount_with_size_and_unit(
-            &total_balance,
-            H2_SIZE,
-            bitcoin_unit,
-        ));
+    let mut total_col =
+        Column::new()
+            .spacing(4)
+            .push(h4_bold("Balance"))
+            .push(amount_with_size_and_unit(
+                &total_balance,
+                H2_SIZE,
+                bitcoin_unit,
+            ));
     if let Some(fiat) = total_fiat {
         total_col = total_col.push(
             text(format!("~{} {}", fiat.to_rounded_string(), fiat.currency()))
@@ -118,11 +118,20 @@ pub fn liquid_overview_view<'a>(
     let lbtc_row = Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
-        .push(coincube_ui::image::asset_network_logo::<LiquidOverviewMessage>("lbtc", "liquid", 28.0))
-        .push(text("L-BTC").size(P1_SIZE).bold().width(Length::Fixed(60.0)))
+        .push(coincube_ui::image::asset_network_logo::<
+            LiquidOverviewMessage,
+        >("lbtc", "liquid", 28.0))
         .push(
-            amount_with_size_and_unit(&btc_balance, P1_SIZE, bitcoin_unit),
+            text("L-BTC")
+                .size(P1_SIZE)
+                .bold()
+                .width(Length::Fixed(60.0)),
         )
+        .push(amount_with_size_and_unit(
+            &btc_balance,
+            P1_SIZE,
+            bitcoin_unit,
+        ))
         .push(
             text(lbtc_fiat_str)
                 .size(P2_SIZE)
@@ -160,7 +169,9 @@ pub fn liquid_overview_view<'a>(
     let usdt_row = Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
-        .push(coincube_ui::image::asset_network_logo::<LiquidOverviewMessage>("usdt", "liquid", 28.0))
+        .push(coincube_ui::image::asset_network_logo::<
+            LiquidOverviewMessage,
+        >("usdt", "liquid", 28.0))
         .push(text("USDt").size(P1_SIZE).bold().width(Length::Fixed(60.0)))
         .push(text(usdt_display).size(P1_SIZE))
         .push(

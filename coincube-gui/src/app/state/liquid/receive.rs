@@ -20,8 +20,8 @@ use crate::app::state::redirect;
 use crate::app::view::{LiquidReceiveMessage, ReceiveMethod, SenderNetwork};
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
-use crate::utils::format_time_ago;
 use crate::daemon::Daemon;
+use crate::utils::format_time_ago;
 
 pub struct LiquidReceive {
     breez_client: Arc<BreezClient>,
@@ -169,10 +169,8 @@ impl State for LiquidReceive {
 
         // Show picker modals if open
         if self.receive_picker_open {
-            let modal_content = view::liquid::receive_asset_picker_modal(
-                self.receive_asset,
-            )
-            .map(view::Message::LiquidReceive);
+            let modal_content = view::liquid::receive_asset_picker_modal(self.receive_asset)
+                .map(view::Message::LiquidReceive);
             return coincube_ui::widget::modal::Modal::new(content, modal_content)
                 .on_blur(Some(view::Message::LiquidReceive(
                     LiquidReceiveMessage::ClosePicker,
@@ -181,11 +179,9 @@ impl State for LiquidReceive {
         }
 
         if self.sender_picker_open {
-            let modal_content = view::liquid::sender_network_picker_modal(
-                self.receive_asset,
-                self.sender_network,
-            )
-            .map(view::Message::LiquidReceive);
+            let modal_content =
+                view::liquid::sender_network_picker_modal(self.receive_asset, self.sender_network)
+                    .map(view::Message::LiquidReceive);
             return coincube_ui::widget::modal::Modal::new(content, modal_content)
                 .on_blur(Some(view::Message::LiquidReceive(
                     LiquidReceiveMessage::ClosePicker,
@@ -211,6 +207,7 @@ impl State for LiquidReceive {
                         // SelectNetwork(Liquid) — switch to native Liquid USDt receive
                         self.sideshift_flow = None;
                         self.receive_method = ReceiveMethod::Usdt;
+                        self.sender_network = SenderNetwork::Liquid;
                         return self.fetch_limits();
                     }
                 }
@@ -494,7 +491,12 @@ impl State for LiquidReceive {
                                 self.receive_method = ReceiveMethod::Usdt;
                             }
                         }
-                        return self.fetch_limits();
+                        self.recent_transaction.clear();
+                        self.recent_payments.clear();
+                        return Task::batch(vec![
+                            self.fetch_limits(),
+                            self.load_recent_transactions(),
+                        ]);
                     }
                     return Task::none();
                 }
@@ -521,16 +523,13 @@ impl State for LiquidReceive {
                         }
                         _ if network.is_sideshift() => {
                             // Activate SideShift flow with the selected network
-                            let flow =
-                                SideshiftReceiveFlow::new(self.breez_client.clone());
+                            let flow = SideshiftReceiveFlow::new(self.breez_client.clone());
                             if let Some(ss_net) = network.to_sideshift_network() {
                                 self.sideshift_flow = Some(flow);
                                 // Dispatch SelectNetwork to the SideShift flow
-                                return Task::done(Message::View(
-                                    view::Message::SideshiftReceive(
-                                        view::SideshiftReceiveMessage::SelectNetwork(ss_net),
-                                    ),
-                                ));
+                                return Task::done(Message::View(view::Message::SideshiftReceive(
+                                    view::SideshiftReceiveMessage::SelectNetwork(ss_net),
+                                )));
                             }
                         }
                         _ => {}
@@ -545,8 +544,7 @@ impl State for LiquidReceive {
                     self.btc_balance = btc_balance;
                     self.usdt_balance = usdt_balance;
 
-                    let usdt_id =
-                        usdt_asset_id(self.breez_client.network()).unwrap_or("");
+                    let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
                     let receive_usdt = self.receive_asset == SendAsset::Usdt;
 
                     // Filter payments by receive asset, matching Send behavior
@@ -558,7 +556,11 @@ impl State for LiquidReceive {
                                 PaymentDetails::Liquid { asset_id, .. }
                                     if !usdt_id.is_empty() && asset_id == usdt_id
                             );
-                            if receive_usdt { is_usdt } else { !is_usdt }
+                            if receive_usdt {
+                                is_usdt
+                            } else {
+                                !is_usdt
+                            }
                         })
                         .take(5)
                         .collect();
@@ -584,15 +586,13 @@ impl State for LiquidReceive {
                             );
 
                             let (desc, usdt_display) = if is_usdt {
-                                let display = if let PaymentDetails::Liquid {
-                                    asset_info, ..
-                                } = &payment.details
+                                let display = if let PaymentDetails::Liquid { asset_info, .. } =
+                                    &payment.details
                                 {
                                     if let Some(info) = asset_info {
                                         format_usdt_display(
-                                            (info.amount
-                                                * 10_f64.powi(USDT_PRECISION as i32))
-                                            .round()
+                                            (info.amount * 10_f64.powi(USDT_PRECISION as i32))
+                                                .round()
                                                 as u64,
                                         )
                                     } else {
@@ -623,9 +623,7 @@ impl State for LiquidReceive {
                                         .as_ref()
                                         .filter(|s| !s.is_empty())
                                         .unwrap_or(description),
-                                    PaymentDetails::Bitcoin { description, .. } => {
-                                        description
-                                    }
+                                    PaymentDetails::Bitcoin { description, .. } => description,
                                 };
                                 (d.to_owned(), None)
                             };
@@ -654,9 +652,7 @@ impl State for LiquidReceive {
                     if let Some(payment) = self.recent_payments.get(idx).cloned() {
                         return Task::batch(vec![
                             redirect(Menu::Liquid(LiquidSubMenu::Transactions(None))),
-                            Task::done(Message::View(view::Message::PreselectPayment(
-                                payment,
-                            ))),
+                            Task::done(Message::View(view::Message::PreselectPayment(payment))),
                         ]);
                     }
                 }
@@ -917,16 +913,13 @@ impl LiquidReceive {
                     .as_ref()
                     .ok()
                     .and_then(|info| {
-                        info.wallet_info
-                            .asset_balances
-                            .iter()
-                            .find_map(|ab| {
-                                if ab.asset_id == usdt_id {
-                                    Some(ab.balance_sat)
-                                } else {
-                                    None
-                                }
-                            })
+                        info.wallet_info.asset_balances.iter().find_map(|ab| {
+                            if ab.asset_id == usdt_id {
+                                Some(ab.balance_sat)
+                            } else {
+                                None
+                            }
+                        })
                     })
                     .unwrap_or(0);
 

@@ -224,8 +224,9 @@ pub fn liquid_receive_view<'a>(
                 item = item.with_custom_status(pending_badge.into());
             }
 
-            let tx_element: Element<'_, LiquidReceiveMessage> =
-                item.view(LiquidReceiveMessage::SelectTransaction(idx)).into();
+            let tx_element: Element<'_, LiquidReceiveMessage> = item
+                .view(LiquidReceiveMessage::SelectTransaction(idx))
+                .into();
             content = content.push(tx_element);
         }
 
@@ -272,13 +273,11 @@ pub fn liquid_receive_view<'a>(
             .on_press(LiquidReceiveMessage::History)
         };
 
-        content = content
-            .push(Space::new().height(Length::Fixed(20.0)))
-            .push(
-                Container::new(view_tx_button)
-                    .width(Length::Fill)
-                    .center_x(Length::Fill),
-            );
+        content = content.push(Space::new().height(Length::Fixed(20.0))).push(
+            Container::new(view_tx_button)
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+        );
     }
 
     if let Some(err) = error {
@@ -523,15 +522,16 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
                 }),
             });
 
-        let label = text("USDt")
-            .size(16)
-            .style(move |_theme: &theme::Theme| iced::widget::text::Style {
-                color: Some(if usdt_active {
-                    color::ORANGE
-                } else {
-                    color::GREY_2
-                }),
-            });
+        let label =
+            text("USDt")
+                .size(16)
+                .style(move |_theme: &theme::Theme| iced::widget::text::Style {
+                    color: Some(if usdt_active {
+                        color::ORANGE
+                    } else {
+                        color::GREY_2
+                    }),
+                });
 
         let button_content = Container::new(
             Row::new()
@@ -703,11 +703,14 @@ fn usdt_input_fields<'a>(
         || parse_asset_to_minor_units(usdt_amount_input.value.trim(), USDT_PRECISION)
             .is_some_and(|units| units > 0);
 
-    let amount_input = TextInput::new("USDt amount (optional, e.g. 1.50)", &usdt_amount_input.value)
-        .on_input(LiquidReceiveMessage::UsdtAmountInput)
-        .padding(15)
-        .size(16)
-        .width(Length::Fill);
+    let amount_input = TextInput::new(
+        "USDt amount (optional, e.g. 1.50)",
+        &usdt_amount_input.value,
+    )
+    .on_input(LiquidReceiveMessage::UsdtAmountInput)
+    .padding(15)
+    .size(16)
+    .width(Length::Fill);
 
     let next_btn = Container::new(
         iced::widget::button(
@@ -717,9 +720,7 @@ fn usdt_input_fields<'a>(
                 .align_x(Alignment::Center)
                 .align_y(Alignment::Center),
         )
-        .on_press_maybe(
-            (is_valid && !loading).then_some(LiquidReceiveMessage::GenerateAddress),
-        )
+        .on_press_maybe((is_valid && !loading).then_some(LiquidReceiveMessage::GenerateAddress))
         .width(Length::Fixed(50.0))
         .height(Length::Fixed(50.0))
         .style(theme::button::primary),
@@ -989,7 +990,12 @@ fn receive_cards(
                     .spacing(8)
                     .align_y(Alignment::Center)
                     .push(ico)
-                    .push(text(asset_label).size(H3_SIZE).bold().style(theme::text::primary)),
+                    .push(
+                        text(asset_label)
+                            .size(H3_SIZE)
+                            .bold()
+                            .style(theme::text::primary),
+                    ),
             )
             .push(
                 Container::new(
@@ -1043,10 +1049,7 @@ fn receive_cards(
                 "Balance: {}",
                 btc_balance.to_formatted_string_with_unit(bitcoin_unit)
             ),
-            SendAsset::Usdt => format!(
-                "Balance: {} USDt",
-                format_usdt_display(usdt_balance)
-            ),
+            SendAsset::Usdt => format!("Balance: {} USDt", format_usdt_display(usdt_balance)),
         };
 
         let card_content = Column::new()
@@ -1061,9 +1064,18 @@ fn receive_cards(
                     .spacing(8)
                     .align_y(Alignment::Center)
                     .push(ico)
-                    .push(text(asset_label).size(H3_SIZE).bold().style(theme::text::primary)),
+                    .push(
+                        text(asset_label)
+                            .size(H3_SIZE)
+                            .bold()
+                            .style(theme::text::primary),
+                    ),
             )
-            .push(text(balance_text).size(P2_SIZE).style(theme::text::secondary))
+            .push(
+                text(balance_text)
+                    .size(P2_SIZE)
+                    .style(theme::text::secondary),
+            )
             .push(
                 Container::new(text("LIQUID").size(11).color(color::ORANGE))
                     .padding([2, 8])
@@ -1110,9 +1122,7 @@ fn receive_cards(
 // ── Picker modals ───────────────────────────────────────────────────────────
 
 /// "You Receive" asset picker modal.
-pub fn receive_asset_picker_modal(
-    current: SendAsset,
-) -> Element<'static, LiquidReceiveMessage> {
+pub fn receive_asset_picker_modal(current: SendAsset) -> Element<'static, LiquidReceiveMessage> {
     let title = text("YOU RECEIVE").size(16).bold();
 
     let lbtc_row = receive_picker_row(
@@ -1197,25 +1207,24 @@ fn receive_picker_row<'a>(
         .align_y(Alignment::Center)
         .push(ico)
         .push(
-            Column::new()
-                .spacing(2)
-                .push(text(label.to_string()).size(14).bold().style(theme::text::primary)),
+            Column::new().spacing(2).push(
+                text(label.to_string())
+                    .size(14)
+                    .bold()
+                    .style(theme::text::primary),
+            ),
         )
         .push(
-            Container::new(
-                text(network.to_uppercase())
-                    .size(10)
-                    .color(color::ORANGE),
-            )
-            .padding([2, 6])
-            .style(|_: &theme::Theme| container::Style {
-                border: iced::Border {
-                    color: color::ORANGE,
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                ..Default::default()
-            }),
+            Container::new(text(network.to_uppercase()).size(10).color(color::ORANGE))
+                .padding([2, 6])
+                .style(|_: &theme::Theme| container::Style {
+                    border: iced::Border {
+                        color: color::ORANGE,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                }),
         )
         .push(Space::new().width(Length::Fill));
 

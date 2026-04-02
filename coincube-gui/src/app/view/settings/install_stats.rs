@@ -3,8 +3,8 @@ use iced::widget::{Column, Row, Space};
 use iced::{Alignment, Color, Length, Point, Rectangle};
 
 use coincube_ui::component::{card, text::*};
-use coincube_ui::widget::*;
 use coincube_ui::theme;
+use coincube_ui::widget::*;
 
 use crate::app::cache;
 use crate::app::menu::Menu;
@@ -84,9 +84,11 @@ fn downloads_card<'a>(
         None => "—".to_string(),
     };
 
-    let inner = Column::new()
-        .spacing(8)
-        .push(text("TOTAL DOWNLOADS").size(11).style(theme::text::secondary));
+    let inner = Column::new().spacing(8).push(
+        text("TOTAL DOWNLOADS")
+            .size(11)
+            .style(theme::text::secondary),
+    );
 
     let inner = if let Some(s) = stats {
         let total = s.total;
@@ -184,16 +186,11 @@ fn chart_card<'a>(
 
 fn period_btn(p: StatsPeriod, current: StatsPeriod) -> Element<'static, Message> {
     let is_active = p == current;
-    Button::new(
-        text(p.label())
-            .size(13)
-            .bold()
-            .style(if is_active {
-                theme::text::primary
-            } else {
-                theme::text::secondary
-            }),
-    )
+    Button::new(text(p.label()).size(13).bold().style(if is_active {
+        theme::text::primary
+    } else {
+        theme::text::secondary
+    }))
     .padding([6, 16])
     .style(if is_active {
         theme::button::primary

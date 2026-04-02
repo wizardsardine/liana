@@ -485,8 +485,14 @@ pub enum LiquidReceiveMessage {
     DescriptionInput(String),
     Error(String),
     ClearError,
-    OnChainLimitsFetched { min_sat: u64, max_sat: u64 },
-    LightningLimitsFetched { min_sat: u64, max_sat: u64 },
+    OnChainLimitsFetched {
+        min_sat: u64,
+        max_sat: u64,
+    },
+    LightningLimitsFetched {
+        min_sat: u64,
+        max_sat: u64,
+    },
     /// Open the "You Receive" asset picker modal.
     OpenReceivePicker,
     /// Open the "They Send" network picker modal.
@@ -542,7 +548,10 @@ impl SenderNetwork {
     }
 
     pub fn is_sideshift(&self) -> bool {
-        matches!(self, Self::Ethereum | Self::Tron | Self::Binance | Self::Solana)
+        matches!(
+            self,
+            Self::Ethereum | Self::Tron | Self::Binance | Self::Solana
+        )
     }
 
     pub fn to_sideshift_network(&self) -> Option<SideshiftNetwork> {

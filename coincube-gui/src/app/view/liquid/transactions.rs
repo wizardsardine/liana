@@ -82,15 +82,11 @@ pub fn liquid_transactions_view<'a>(
         ] {
             let is_active = asset_filter == filter;
             let btn = iced::widget::button(
-                Container::new(
-                    text(label)
-                        .size(P2_SIZE)
-                        .color(if is_active {
-                            coincube_ui::color::WHITE
-                        } else {
-                            coincube_ui::color::GREY_3
-                        }),
-                )
+                Container::new(text(label).size(P2_SIZE).color(if is_active {
+                    coincube_ui::color::WHITE
+                } else {
+                    coincube_ui::color::GREY_3
+                }))
                 .padding([6, 14]),
             )
             .on_press(Message::SetAssetFilter(filter))
@@ -338,17 +334,18 @@ pub fn transaction_detail_view<'a>(
     };
 
     // Helper: combo icon for detail view based on payment type
-    let make_detail_icon = |is_usdt: bool, details: &PaymentDetails| -> (& 'static str, &'static str) {
-        if is_usdt {
-            ("usdt", "liquid")
-        } else {
-            match details {
-                PaymentDetails::Lightning { .. } => ("btc", "lightning"),
-                PaymentDetails::Liquid { .. } => ("lbtc", "liquid"),
-                PaymentDetails::Bitcoin { .. } => ("btc", "bitcoin"),
+    let make_detail_icon =
+        |is_usdt: bool, details: &PaymentDetails| -> (&'static str, &'static str) {
+            if is_usdt {
+                ("usdt", "liquid")
+            } else {
+                match details {
+                    PaymentDetails::Lightning { .. } => ("btc", "lightning"),
+                    PaymentDetails::Liquid { .. } => ("lbtc", "liquid"),
+                    PaymentDetails::Bitcoin { .. } => ("btc", "bitcoin"),
+                }
             }
-        }
-    };
+        };
 
     if let Some(ref usdt_display) = usdt_str {
         // USDt detail view: show USDt amount + L-BTC fees
@@ -795,11 +792,7 @@ fn detail_back_button() -> Element<'static, Message> {
             .spacing(5)
             .align_y(Alignment::Center)
             .push(icon::previous_icon().style(theme::text::secondary))
-            .push(
-                text("Previous")
-                    .size(14)
-                    .style(theme::text::secondary),
-            ),
+            .push(text("Previous").size(14).style(theme::text::secondary)),
     )
     .on_press(Message::Close)
     .style(theme::button::transparent)

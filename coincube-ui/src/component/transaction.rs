@@ -205,11 +205,12 @@ impl<'a, T> TransactionListItem<'a, T> {
         if self.direction == TransactionDirection::SelfTransfer {
             amount_column = amount_column.push(text::p1_regular("Self-transfer"));
         } else {
-            let (amount_sign, sign_style): (&str, fn(&theme::Theme) -> iced::widget::text::Style) = match self.direction {
-                TransactionDirection::Incoming => ("+", theme::text::incoming),
-                TransactionDirection::Outgoing => ("-", theme::text::outgoing),
-                TransactionDirection::SelfTransfer => ("", theme::text::default),
-            };
+            let (amount_sign, sign_style): (&str, fn(&theme::Theme) -> iced::widget::text::Style) =
+                match self.direction {
+                    TransactionDirection::Incoming => ("+", theme::text::incoming),
+                    TransactionDirection::Outgoing => ("-", theme::text::outgoing),
+                    TransactionDirection::SelfTransfer => ("", theme::text::default),
+                };
 
             if let Some(ref override_str) = self.amount_override {
                 // Only color the sign (+/-), not the amount text — consistent with BTC rendering

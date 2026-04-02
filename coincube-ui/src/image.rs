@@ -7,7 +7,6 @@ use crate::theme::Theme;
 use crate::widget::Row;
 use crate::{color, font};
 
-
 pub fn coincube_window_icon() -> icon::Icon {
     let bytes = include_bytes!("../static/logos/coincube-cc.ico");
     let img = image::load(std::io::Cursor::new(bytes), image::ImageFormat::Ico).unwrap();
