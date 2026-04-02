@@ -13,7 +13,9 @@ name = "liana_connect"
 path = "src/lib.rs"
 
 [dependencies]
+liana = { path = "../liana" }
 async-trait = { workspace = true }
+bip329 = { workspace = true, default-features = false }
 bip39 = { workspace = true }
 getrandom = { workspace = true }
 miniscript = { workspace = true, features = ["serde"]}

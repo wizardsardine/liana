@@ -22,7 +22,7 @@ use crate::{
     dir::{LianaDirectory, NetworkDirectory},
     installer::UserFlow,
     services::connect::{
-        client::{auth::AuthClient, backend::api::UserRole, get_service_config, BackendType},
+        client::{auth::AuthClient, backend::UserRole, get_service_config, BackendType},
         login::{connect_with_credentials, BackendState},
     },
 };

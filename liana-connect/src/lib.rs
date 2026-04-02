@@ -4,4 +4,5 @@
 //! Liana Connect client/server communication.
 
 pub mod keys;
+pub mod wallets;
 pub mod ws_business;
