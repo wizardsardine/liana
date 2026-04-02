@@ -475,30 +475,87 @@ impl Response {
         WsMessage::Text(json)
     }
 
-    /// Convert WebSocket message to application-level response, extracting protocol details
+    /// Convert WebSocket message to application-level response, extracting protocol details.
+    ///
+    /// Returns `Ok((None, _))` for unknown message types or known types whose payload
+    /// cannot be parsed (e.g. new enum variants added server-side). This allows older
+    /// clients to operate in degraded mode, silently ignoring messages they don't understand.
+    ///
+    /// Critical message types (`connected`, `pong`, `error`) still return hard errors
+    /// on parse failure since they are required for handshake and keepalive.
     pub fn from_ws_message(
         msg: WsMessage,
-    ) -> Result<(Self, Option<String> /* request_id */), WssConversionError> {
+    ) -> Result<(Option<Self>, Option<String> /* request_id */), WssConversionError> {
         let protocol_response = parse_ws_response(msg)?;
         let request_id = protocol_response.request_id;
 
         // Handle error responses
         if let Some(error) = protocol_response.error {
-            return Ok((Response::Error { error }, request_id));
+            return Ok((Some(Response::Error { error }), request_id));
         }
 
         let response = match protocol_response.msg_type.as_str() {
-            Self::METHOD_CONNECTED => parse_connected(protocol_response.payload)?,
-            Self::METHOD_PONG => Response::Pong,
-            Self::METHOD_ORG => parse_org(protocol_response.payload)?,
-            Self::METHOD_WALLET => parse_wallet(protocol_response.payload)?,
-            Self::METHOD_USER => parse_user(protocol_response.payload)?,
-            Self::METHOD_DELETE_USER_ORG => parse_delete_user_org(protocol_response.payload)?,
+            // Critical types: parse failure is a hard error
+            Self::METHOD_CONNECTED => Some(parse_connected(protocol_response.payload)?),
+            Self::METHOD_PONG => Some(Response::Pong),
+            // Non-critical types: parse failure is silently ignored
+            Self::METHOD_ORG => match parse_org(protocol_response.payload.clone()) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to parse '{}' payload: {}. Payload: {:?}",
+                        protocol_response.msg_type,
+                        e,
+                        protocol_response.payload
+                    );
+                    None
+                }
+            },
+            Self::METHOD_WALLET => match parse_wallet(protocol_response.payload.clone()) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to parse '{}' payload: {}. Payload: {:?}",
+                        protocol_response.msg_type,
+                        e,
+                        protocol_response.payload
+                    );
+                    None
+                }
+            },
+            Self::METHOD_USER => match parse_user(protocol_response.payload.clone()) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to parse '{}' payload: {}. Payload: {:?}",
+                        protocol_response.msg_type,
+                        e,
+                        protocol_response.payload
+                    );
+                    None
+                }
+            },
+            Self::METHOD_DELETE_USER_ORG => {
+                match parse_delete_user_org(protocol_response.payload.clone()) {
+                    Ok(r) => Some(r),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to parse '{}' payload: {}. Payload: {:?}",
+                            protocol_response.msg_type,
+                            e,
+                            protocol_response.payload
+                        );
+                        None
+                    }
+                }
+            }
             _ => {
-                return Err(WssConversionError::DeserializationFailed(format!(
-                    "Unknown message type: {}",
-                    protocol_response.msg_type
-                )))
+                tracing::debug!(
+                    "Ignoring unknown message type '{}'. Payload: {:?}",
+                    protocol_response.msg_type,
+                    protocol_response.payload
+                );
+                None
             }
         };
 
@@ -1265,7 +1322,7 @@ mod protocol_tests {
         // Verify roundtrip
         assert!(matches!(
             parsed,
-            Response::Connected { version: 1, user } if user == test_uuid(1)
+            Some(Response::Connected { version: 1, user }) if user == test_uuid(1)
         ));
         assert_eq!(request_id, Some("req-001".to_string()));
 
@@ -1289,7 +1346,7 @@ mod protocol_tests {
         let (parsed, request_id) = Response::from_ws_message(ws_msg).unwrap();
 
         // Verify roundtrip
-        assert!(matches!(parsed, Response::Pong));
+        assert!(matches!(parsed, Some(Response::Pong)));
         assert_eq!(request_id, Some("req-002".to_string()));
 
         // Verify wire format against hardcoded JSON
@@ -1333,7 +1390,7 @@ mod protocol_tests {
 
         // Verify roundtrip
         match parsed {
-            Response::Org { org: parsed_org } => assert_eq!(parsed_org, org),
+            Some(Response::Org { org: parsed_org }) => assert_eq!(parsed_org, org),
             _ => panic!("Expected Org response"),
         }
         assert_eq!(request_id, Some("req-004".to_string()));
@@ -1375,7 +1432,7 @@ mod protocol_tests {
 
         // Verify roundtrip
         match parsed {
-            Response::Org { org: parsed_org } => assert_eq!(parsed_org, org),
+            Some(Response::Org { org: parsed_org }) => assert_eq!(parsed_org, org),
             _ => panic!("Expected Org response"),
         }
         assert_eq!(request_id, Some("req-004".to_string()));
@@ -1422,9 +1479,9 @@ mod protocol_tests {
 
         // Verify roundtrip
         match parsed {
-            Response::Wallet {
+            Some(Response::Wallet {
                 wallet: parsed_wallet,
-            } => assert_eq!(parsed_wallet, wallet),
+            }) => assert_eq!(parsed_wallet, wallet),
             _ => panic!("Expected Wallet response"),
         }
         assert_eq!(request_id, Some("req-005".to_string()));
@@ -1510,9 +1567,9 @@ mod protocol_tests {
 
         // Verify roundtrip
         match parsed {
-            Response::Wallet {
+            Some(Response::Wallet {
                 wallet: parsed_wallet,
-            } => assert_eq!(parsed_wallet, wallet),
+            }) => assert_eq!(parsed_wallet, wallet),
             _ => panic!("Expected Wallet response"),
         }
         assert_eq!(request_id, Some("req-005".to_string()));
@@ -1552,7 +1609,7 @@ mod protocol_tests {
 
         // Verify roundtrip
         match parsed {
-            Response::User { user: parsed_user } => assert_eq!(parsed_user, user),
+            Some(Response::User { user: parsed_user }) => assert_eq!(parsed_user, user),
             _ => panic!("Expected User response"),
         }
         assert_eq!(request_id, Some("req-006".to_string()));
@@ -1585,7 +1642,7 @@ mod protocol_tests {
 
         // Verify roundtrip
         match parsed {
-            Response::DeleteUserOrg { user, org } => {
+            Some(Response::DeleteUserOrg { user, org }) => {
                 assert_eq!(user, test_uuid(1));
                 assert_eq!(org, test_uuid(2));
             }
@@ -1625,9 +1682,9 @@ mod protocol_tests {
 
         // Verify roundtrip
         match parsed {
-            Response::Error {
+            Some(Response::Error {
                 error: parsed_error,
-            } => assert_eq!(parsed_error, error),
+            }) => assert_eq!(parsed_error, error),
             _ => panic!("Expected Error response"),
         }
         assert_eq!(request_id, Some("req-007".to_string()));
@@ -1797,17 +1854,17 @@ mod protocol_tests {
     }
 
     #[test]
-    fn test_error_unknown_message_type() {
-        // Unknown message type should fail
+    fn test_unknown_message_type_returns_none() {
+        // Unknown message type should be silently ignored (returns None)
         let json = r#"{"type": "unknown_type", "request_id": "req-001"}"#;
         let ws_msg = WsMessage::Text(json.to_string());
         let result = Response::from_ws_message(ws_msg);
 
         match result {
-            Err(WssConversionError::DeserializationFailed(msg)) => {
-                assert!(msg.contains("Unknown message type"));
+            Ok((None, Some(req_id))) => {
+                assert_eq!(req_id, "req-001");
             }
-            _ => panic!("Expected DeserializationFailed with unknown message type"),
+            _ => panic!("Expected Ok((None, Some(request_id)))"),
         }
     }
 
@@ -1842,87 +1899,57 @@ mod protocol_tests {
     }
 
     #[test]
-    fn test_error_org_missing_payload() {
-        // "org" response without payload should fail
+    fn test_org_missing_payload_returns_none() {
+        // "org" response without payload should be silently ignored
         let json = r#"{"type": "org", "request_id": "req-001"}"#;
         let ws_msg = WsMessage::Text(json.to_string());
-        let result = Response::from_ws_message(ws_msg);
-
-        match result {
-            Err(WssConversionError::DeserializationFailed(msg)) => {
-                assert!(msg.contains("Missing payload"));
-            }
-            _ => panic!("Expected DeserializationFailed with missing payload"),
-        }
+        let (parsed, _) = Response::from_ws_message(ws_msg).unwrap();
+        assert!(parsed.is_none());
     }
 
     #[test]
-    fn test_error_org_invalid_payload() {
-        // "org" response with invalid org structure should fail
+    fn test_org_invalid_payload_returns_none() {
+        // "org" response with invalid org structure should be silently ignored
         let json = r#"{"type": "org", "request_id": "req-001", "payload": {"invalid": true}}"#;
         let ws_msg = WsMessage::Text(json.to_string());
-        let result = Response::from_ws_message(ws_msg);
-
-        assert!(matches!(
-            result,
-            Err(WssConversionError::DeserializationFailed(_))
-        ));
+        let (parsed, _) = Response::from_ws_message(ws_msg).unwrap();
+        assert!(parsed.is_none());
     }
 
     #[test]
-    fn test_error_wallet_missing_payload() {
-        // "wallet" response without payload should fail
+    fn test_wallet_missing_payload_returns_none() {
+        // "wallet" response without payload should be silently ignored
         let json = r#"{"type": "wallet", "request_id": "req-001"}"#;
         let ws_msg = WsMessage::Text(json.to_string());
-        let result = Response::from_ws_message(ws_msg);
-
-        match result {
-            Err(WssConversionError::DeserializationFailed(msg)) => {
-                assert!(msg.contains("Missing payload"));
-            }
-            _ => panic!("Expected DeserializationFailed with missing payload"),
-        }
+        let (parsed, _) = Response::from_ws_message(ws_msg).unwrap();
+        assert!(parsed.is_none());
     }
 
     #[test]
-    fn test_error_wallet_invalid_payload() {
-        // "wallet" response with invalid wallet structure should fail
+    fn test_wallet_invalid_payload_returns_none() {
+        // "wallet" response with invalid wallet structure should be silently ignored
         let json = r#"{"type": "wallet", "request_id": "req-001", "payload": {"invalid": true}}"#;
         let ws_msg = WsMessage::Text(json.to_string());
-        let result = Response::from_ws_message(ws_msg);
-
-        assert!(matches!(
-            result,
-            Err(WssConversionError::DeserializationFailed(_))
-        ));
+        let (parsed, _) = Response::from_ws_message(ws_msg).unwrap();
+        assert!(parsed.is_none());
     }
 
     #[test]
-    fn test_error_user_missing_payload() {
-        // "user" response without payload should fail
+    fn test_user_missing_payload_returns_none() {
+        // "user" response without payload should be silently ignored
         let json = r#"{"type": "user", "request_id": "req-001"}"#;
         let ws_msg = WsMessage::Text(json.to_string());
-        let result = Response::from_ws_message(ws_msg);
-
-        match result {
-            Err(WssConversionError::DeserializationFailed(msg)) => {
-                assert!(msg.contains("Missing payload"));
-            }
-            _ => panic!("Expected DeserializationFailed with missing payload"),
-        }
+        let (parsed, _) = Response::from_ws_message(ws_msg).unwrap();
+        assert!(parsed.is_none());
     }
 
     #[test]
-    fn test_error_user_invalid_payload() {
-        // "user" response with invalid user structure should fail
+    fn test_user_invalid_payload_returns_none() {
+        // "user" response with invalid user structure should be silently ignored
         let json = r#"{"type": "user", "request_id": "req-001", "payload": {"invalid": true}}"#;
         let ws_msg = WsMessage::Text(json.to_string());
-        let result = Response::from_ws_message(ws_msg);
-
-        assert!(matches!(
-            result,
-            Err(WssConversionError::DeserializationFailed(_))
-        ));
+        let (parsed, _) = Response::from_ws_message(ws_msg).unwrap();
+        assert!(parsed.is_none());
     }
 
     #[test]
@@ -1936,7 +1963,7 @@ mod protocol_tests {
         let (parsed, request_id) = Response::from_ws_message(ws_msg).unwrap();
 
         // Verify roundtrip
-        assert!(matches!(parsed, Response::Pong));
+        assert!(matches!(parsed, Some(Response::Pong)));
         assert!(request_id.is_none());
 
         // Verify wire format against hardcoded JSON
@@ -2248,7 +2275,7 @@ mod protocol_tests {
 
         assert!(matches!(
             parsed,
-            Response::Connected { version: 1, user } if user == test_uuid(1)
+            Some(Response::Connected { version: 1, user }) if user == test_uuid(1)
         ));
         assert_eq!(request_id, Some("req-001".to_string()));
     }
@@ -2259,7 +2286,7 @@ mod protocol_tests {
         let ws_msg = response.to_ws_message(Some("req-002"));
         let (parsed, request_id) = Response::from_ws_message(ws_msg).unwrap();
 
-        assert!(matches!(parsed, Response::Pong));
+        assert!(matches!(parsed, Some(Response::Pong)));
         assert_eq!(request_id, Some("req-002".to_string()));
     }
 
@@ -2279,7 +2306,7 @@ mod protocol_tests {
         let (parsed, request_id) = Response::from_ws_message(ws_msg).unwrap();
 
         match parsed {
-            Response::Org { org: o } => assert_eq!(o, org),
+            Some(Response::Org { org: o }) => assert_eq!(o, org),
             _ => panic!("Expected Org response"),
         }
         assert_eq!(request_id, Some("req-003".to_string()));
@@ -2306,7 +2333,7 @@ mod protocol_tests {
         let (parsed, request_id) = Response::from_ws_message(ws_msg).unwrap();
 
         match parsed {
-            Response::Wallet { wallet: w } => assert_eq!(w, wallet),
+            Some(Response::Wallet { wallet: w }) => assert_eq!(w, wallet),
             _ => panic!("Expected Wallet response"),
         }
         assert_eq!(request_id, Some("req-004".to_string()));
@@ -2327,7 +2354,7 @@ mod protocol_tests {
         let (parsed, request_id) = Response::from_ws_message(ws_msg).unwrap();
 
         match parsed {
-            Response::User { user: u } => assert_eq!(u, user),
+            Some(Response::User { user: u }) => assert_eq!(u, user),
             _ => panic!("Expected User response"),
         }
         assert_eq!(request_id, Some("req-005".to_string()));
@@ -2347,7 +2374,7 @@ mod protocol_tests {
         let (parsed, request_id) = Response::from_ws_message(ws_msg).unwrap();
 
         match parsed {
-            Response::Error { error: e } => assert_eq!(e, error),
+            Some(Response::Error { error: e }) => assert_eq!(e, error),
             _ => panic!("Expected Error response"),
         }
         assert_eq!(request_id, Some("req-006".to_string()));
@@ -2363,7 +2390,7 @@ mod protocol_tests {
         let (parsed, request_id) = Response::from_ws_message(ws_msg).unwrap();
 
         match parsed {
-            Response::DeleteUserOrg { user, org } => {
+            Some(Response::DeleteUserOrg { user, org }) => {
                 assert_eq!(user, test_uuid(1));
                 assert_eq!(org, test_uuid(2));
             }
@@ -2378,7 +2405,7 @@ mod protocol_tests {
         let ws_msg = response.to_ws_message(None);
         let (parsed, request_id) = Response::from_ws_message(ws_msg).unwrap();
 
-        assert!(matches!(parsed, Response::Pong));
+        assert!(matches!(parsed, Some(Response::Pong)));
         assert!(request_id.is_none());
     }
 

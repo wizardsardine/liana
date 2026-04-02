@@ -924,7 +924,7 @@ fn wss_thread(
     tracing::debug!("wss_thread: waiting for Connected response");
     if let Ok(msg) = ws_stream.read() {
         match Response::from_ws_message(msg) {
-            Ok((Response::Connected { user, .. }, _)) => {
+            Ok((Some(Response::Connected { user, .. }), _)) => {
                 tracing::info!("wss_thread: connected successfully, user_id={}", user);
                 // Store the authenticated user's ID
                 if let Ok(mut id) = user_id.lock() {
@@ -935,12 +935,21 @@ fn wss_thread(
                 // Fetch current user's info
                 let _ = request_sender.send(Request::FetchUser { id: user });
             }
-            Ok((response, _)) => {
+            Ok((Some(response), _)) => {
                 // NOTE: Handshake fails if we receive anything other than Response::Connected
                 tracing::error!(
                     "wss_thread: handshake failed, expected Connected, got {:?}",
                     response
                 );
+                Client::send_notif(
+                    &notif_sender,
+                    &notif_waker,
+                    Notification::Error(Error::WsConnection).into(),
+                );
+                return;
+            }
+            Ok((None, _)) => {
+                tracing::error!("wss_thread: handshake failed, unknown message from server");
                 Client::send_notif(
                     &notif_sender,
                     &notif_waker,
@@ -1114,6 +1123,15 @@ fn handle_wss_message(
     let (response, request_id) = Response::from_ws_message(msg)
         .map_err(|e| format!("Failed to convert WSS message: {}", e))?;
     let request_id = request_id.and_then(|s| Uuid::try_parse(&s).ok());
+
+    // Unknown or unparseable message — already logged in protocol layer.
+    let Some(response) = response else {
+        // Clean up sent_requests if there's a request_id so it doesn't hang.
+        if let Some(req_id) = &request_id {
+            sent_requests.lock().expect("poisoned").remove(req_id);
+        }
+        return Ok(());
+    };
 
     tracing::debug!(
         "handle_wss_message: received response={:?} request_id={:?}",
@@ -2055,7 +2073,7 @@ mod tests {
             let (response, request_id) = Response::from_ws_message(msg).unwrap();
 
             match response {
-                Response::Connected { version, .. } => assert_eq!(version, 1),
+                Some(Response::Connected { version, .. }) => assert_eq!(version, 1),
                 _ => panic!("Expected Connected response"),
             }
             assert_eq!(
@@ -2074,7 +2092,7 @@ mod tests {
             let (response, request_id) = Response::from_ws_message(msg).unwrap();
 
             match response {
-                Response::Connected { version, .. } => assert_eq!(version, 2),
+                Some(Response::Connected { version, .. }) => assert_eq!(version, 2),
                 _ => panic!("Expected Connected response"),
             }
             assert_eq!(request_id, None);
@@ -2090,7 +2108,7 @@ mod tests {
             let (response, request_id) = Response::from_ws_message(msg).unwrap();
 
             match response {
-                Response::Pong => {}
+                Some(Response::Pong) => {}
                 _ => panic!("Expected Pong response"),
             }
             assert_eq!(
@@ -2108,7 +2126,7 @@ mod tests {
             let (response, request_id) = Response::from_ws_message(msg).unwrap();
 
             match response {
-                Response::Pong => {}
+                Some(Response::Pong) => {}
                 _ => panic!("Expected Pong response"),
             }
             assert_eq!(request_id, None);
@@ -2139,7 +2157,7 @@ mod tests {
             let (response, request_id) = Response::from_ws_message(msg).unwrap();
 
             match response {
-                Response::Org { org } => {
+                Some(Response::Org { org }) => {
                     assert_eq!(org.name, "Acme Corp");
                     assert_eq!(org.id.to_string(), "550e8400-e29b-41d4-a716-446655440010");
                     assert_eq!(org.wallets.len(), 2);
@@ -2170,7 +2188,7 @@ mod tests {
             let (response, _) = Response::from_ws_message(msg).unwrap();
 
             match response {
-                Response::Org { org } => {
+                Some(Response::Org { org }) => {
                     assert_eq!(org.name, "Empty Org");
                     assert!(org.wallets.is_empty());
                     assert!(org.users.is_empty());
@@ -2232,7 +2250,7 @@ mod tests {
             let (response, request_id) = Response::from_ws_message(msg).unwrap();
 
             match response {
-                Response::Wallet { wallet } => {
+                Some(Response::Wallet { wallet }) => {
                     assert_eq!(
                         wallet.id.to_string(),
                         "550e8400-e29b-41d4-a716-446655440020"
@@ -2269,7 +2287,7 @@ mod tests {
             let (response, _) = Response::from_ws_message(msg).unwrap();
 
             match response {
-                Response::Wallet { wallet } => {
+                Some(Response::Wallet { wallet }) => {
                     assert_eq!(wallet.alias, "Simple Wallet");
                     assert_eq!(wallet.status, WalletStatus::Drafted);
                     assert!(wallet.template.is_none());
@@ -2294,7 +2312,7 @@ mod tests {
             let (response, request_id) = Response::from_ws_message(msg).unwrap();
 
             match response {
-                Response::User { user } => {
+                Some(Response::User { user }) => {
                     assert_eq!(user.name, "John Doe");
                     assert_eq!(
                         user.uuid.to_string(),
@@ -2326,7 +2344,7 @@ mod tests {
             let (response, request_id) = Response::from_ws_message(msg).unwrap();
 
             match response {
-                Response::Error { error } => {
+                Some(Response::Error { error }) => {
                     assert_eq!(error.code, "INVALID_REQUEST");
                     assert_eq!(error.message, "Invalid request format");
                     assert_eq!(
@@ -2358,7 +2376,7 @@ mod tests {
             let (response, request_id) = Response::from_ws_message(msg).unwrap();
 
             match response {
-                Response::Error { error } => {
+                Some(Response::Error { error }) => {
                     assert_eq!(error.code, "SERVER_ERROR");
                     assert_eq!(error.message, "Internal server error");
                     // request_id may not be in error object, but should be at protocol level
@@ -2418,10 +2436,8 @@ mod tests {
             let msg = WsMessage::Text(json.to_string());
             let result = Response::from_ws_message(msg);
 
-            assert!(matches!(
-                result,
-                Err(WssConversionError::DeserializationFailed(_))
-            ));
+            // Unknown types are silently ignored (future-proof behavior)
+            assert!(matches!(result, Ok((None, _))));
         }
 
         #[test]
@@ -2446,10 +2462,8 @@ mod tests {
             let msg = WsMessage::Text(json.to_string());
             let result = Response::from_ws_message(msg);
 
-            assert!(matches!(
-                result,
-                Err(WssConversionError::DeserializationFailed(_))
-            ));
+            // Non-critical types with unparseable payloads return None
+            assert!(matches!(result, Ok((None, _))));
         }
 
         #[test]
@@ -2465,9 +2479,9 @@ mod tests {
                 }
             }"#;
             let msg = WsMessage::Text(json.to_string());
-            // With direct deserialization to Org, invalid UUID should fail parsing
+            // Non-critical types with unparseable payloads return None
             let result = Response::from_ws_message(msg);
-            assert!(result.is_err(), "Invalid UUID should fail to parse");
+            assert!(matches!(result, Ok((None, _))));
         }
 
         #[test]
@@ -2484,9 +2498,9 @@ mod tests {
                 }
             }"#;
             let msg = WsMessage::Text(json.to_string());
-            // Parsing now fails for invalid enum variants
+            // Non-critical types with unparseable payloads return None
             let result = Response::from_ws_message(msg);
-            assert!(result.is_err(), "Parsing should fail for invalid status");
+            assert!(matches!(result, Ok((None, _))));
         }
 
         #[test]
@@ -2501,9 +2515,9 @@ mod tests {
                 }
             }"#;
             let msg = WsMessage::Text(json.to_string());
-            // Parsing now fails for invalid enum variants
+            // Non-critical types with unparseable payloads return None
             let result = Response::from_ws_message(msg);
-            assert!(result.is_err(), "Parsing should fail for invalid role");
+            assert!(matches!(result, Ok((None, _))));
         }
 
         #[test]
@@ -2537,9 +2551,9 @@ mod tests {
                 }
             }"#;
             let msg = WsMessage::Text(json.to_string());
-            // Parsing now fails for invalid enum variants
+            // Non-critical types with unparseable payloads return None
             let result = Response::from_ws_message(msg);
-            assert!(result.is_err(), "Parsing should fail for invalid key_type");
+            assert!(matches!(result, Ok((None, _))));
         }
     }
 
