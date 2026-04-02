@@ -25,8 +25,8 @@ use coincube_ui::{
     color,
     component::{button, text, text::*},
     icon::{
-        bitcoin_icon, clipboard_icon, coins_icon, connect_icon, cross_icon, cube_icon, down_icon,
-        home_icon, lightning_icon, person_icon, plus_icon, receipt_icon, receive_icon,
+        bitcoin_icon, chat_icon, clipboard_icon, coins_icon, connect_icon, cross_icon, cube_icon,
+        down_icon, home_icon, lightning_icon, person_icon, plus_icon, receipt_icon, receive_icon,
         recovery_icon, send_icon, settings_icon, shop_icon, up_icon, vault_icon,
     },
     image::*,
@@ -654,6 +654,30 @@ pub fn sidebar<'a>(
                         .width(Length::Fill)
                     };
 
+                    let p2p_chat_button = if matches!(
+                        menu,
+                        Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Chat))
+                    ) {
+                        row!(
+                            Space::new().width(Length::Fixed(40.0)),
+                            button::menu_active(Some(chat_icon()), "Chat")
+                                .on_press(Message::Reload)
+                                .width(iced::Length::Fill),
+                            menu_bar_highlight()
+                        )
+                        .width(Length::Fill)
+                    } else {
+                        row!(
+                            Space::new().width(Length::Fixed(40.0)),
+                            button::menu(Some(chat_icon()), "Chat")
+                                .on_press(Message::Menu(Menu::Marketplace(
+                                    MarketplaceSubMenu::P2P(P2PSubMenu::Chat),
+                                )))
+                                .width(iced::Length::Fill),
+                        )
+                        .width(Length::Fill)
+                    };
+
                     let p2p_create_order_button = if matches!(
                         menu,
                         Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::CreateOrder))
@@ -704,6 +728,7 @@ pub fn sidebar<'a>(
                     menu_column = menu_column
                         .push(p2p_overview_button)
                         .push(p2p_my_trades_button)
+                        .push(p2p_chat_button)
                         .push(p2p_create_order_button)
                         .push(p2p_settings_button);
                 }

@@ -31,6 +31,7 @@ pub enum ConnectSubMenu {
 pub enum P2PSubMenu {
     Overview,
     MyTrades,
+    Chat,
     CreateOrder,
     Settings,
 }

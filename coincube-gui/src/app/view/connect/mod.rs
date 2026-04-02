@@ -436,7 +436,7 @@ fn plan_tier_color(tier: &PlanTier) -> iced::Color {
     match tier {
         PlanTier::Free => color::GREY_3,
         PlanTier::Pro => color::ORANGE,
-        PlanTier::Legacy => color::BLUE,
+        PlanTier::Legacy => color::LIGHT_BLUE,
     }
 }
 

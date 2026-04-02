@@ -32,6 +32,8 @@ pub const DARK_RED: Color = iced::color!(0xC43A12); // Light-mode friendly red
 
 pub const BLUE: Color = iced::color!(0x7DD3FC);
 pub const LIQUID_TEAL: Color = iced::color!(0x46BEAE); // Liquid Network teal — matches liquid.svg
+pub const LIGHT_BLUE: Color = iced::color!(0x7DD3FC);
+pub const DARK_BLUE: Color = iced::color!(0x00496b);
 
 // === Light-mode surface colors ===
 pub const LIGHT_BG: Color = iced::color!(0xFAF9F6); // Main background (warm off-white)
