@@ -24,11 +24,14 @@ pub const LIGHT_ORANGE: Color = iced::color!(0xFFB347); // Glow halos, highlight
 pub const TRANSPARENT_ORANGE: Color = iced::color!(0xF7931A, 0.3);
 
 pub const GREEN: Color = iced::color!(0x00FF66);
+pub const DARK_GREEN: Color = iced::color!(0x1B8A4A); // Light-mode friendly green
 pub const TRANSPARENT_GREEN: Color = iced::color!(0x00FF66, 0.3);
 
 pub const RED: Color = iced::color!(0xE24E1B);
+pub const DARK_RED: Color = iced::color!(0xC43A12); // Light-mode friendly red
 
 pub const BLUE: Color = iced::color!(0x7DD3FC);
+pub const LIQUID_TEAL: Color = iced::color!(0x46BEAE); // Liquid Network teal — matches liquid.svg
 
 // === Light-mode surface colors ===
 pub const LIGHT_BG: Color = iced::color!(0xFAF9F6); // Main background (warm off-white)

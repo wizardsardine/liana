@@ -312,6 +312,24 @@ impl State for GlobalHome {
         match message {
             Message::View(view::Message::Home(msg)) => {
                 match msg {
+                    HomeMessage::SendAsset(asset) => {
+                        use crate::app::menu::LiquidSubMenu;
+                        Task::batch(vec![
+                            crate::app::state::redirect(Menu::Liquid(LiquidSubMenu::Send)),
+                            Task::done(Message::View(view::Message::LiquidSend(
+                                view::LiquidSendMessage::PresetAsset(asset),
+                            ))),
+                        ])
+                    }
+                    HomeMessage::ReceiveAsset(asset) => {
+                        use crate::app::menu::LiquidSubMenu;
+                        Task::batch(vec![
+                            crate::app::state::redirect(Menu::Liquid(LiquidSubMenu::Receive)),
+                            Task::done(Message::View(view::Message::LiquidReceive(
+                                view::LiquidReceiveMessage::SetReceiveAsset(asset),
+                            ))),
+                        ])
+                    }
                     HomeMessage::ToggleBalanceMask => {
                         self.balance_masked = !self.balance_masked;
                         Task::none()

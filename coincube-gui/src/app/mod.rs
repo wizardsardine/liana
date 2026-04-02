@@ -30,8 +30,8 @@ pub use message::Message;
 
 use state::{
     CoinsPanel, ConnectPanel, CreateSpendPanel, GlobalHome, LiquidOverview, LiquidReceive,
-    LiquidSend, LiquidSettings, LiquidTransactions, PsbtsPanel, State, UsdtOverview, UsdtReceive,
-    UsdtSend, UsdtTransactions, VaultOverview, VaultReceivePanel, VaultTransactionsPanel,
+    LiquidSend, LiquidSettings, LiquidTransactions, PsbtsPanel, State, VaultOverview,
+    VaultReceivePanel, VaultTransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
 
@@ -62,7 +62,6 @@ struct Panels {
     liquid_expanded: bool,
     marketplace_expanded: bool,
     marketplace_p2p_expanded: bool,
-    usdt_expanded: bool,
     connect_expanded: bool,
     // Always available panels
     global_home: GlobalHome,
@@ -71,10 +70,6 @@ struct Panels {
     liquid_receive: LiquidReceive,
     liquid_transactions: LiquidTransactions,
     liquid_settings: LiquidSettings,
-    usdt_overview: UsdtOverview,
-    usdt_send: UsdtSend,
-    usdt_receive: UsdtReceive,
-    usdt_transactions: UsdtTransactions,
     global_settings: GeneralSettingsState,
     // Vault-only panels - None when no vault exists
     vault_overview: Option<VaultOverview>,
@@ -110,7 +105,6 @@ impl Panels {
             liquid_expanded: false,
             marketplace_expanded: false,
             marketplace_p2p_expanded: false,
-            usdt_expanded: false,
             connect_expanded: false,
             // Liquid panels always available (use BreezClient, not Vault wallet)
             global_home: if let Some(w) = &wallet {
@@ -134,12 +128,6 @@ impl Panels {
             liquid_receive: LiquidReceive::new(breez_client.clone()),
             liquid_transactions: LiquidTransactions::new(breez_client.clone()),
             liquid_settings: LiquidSettings::new(breez_client.clone()),
-            usdt_overview: UsdtOverview::new(breez_client.clone()),
-            usdt_send: UsdtSend::new(LiquidSend::new_usdt_only(breez_client.clone())),
-            usdt_receive: UsdtReceive::new(LiquidReceive::new(breez_client.clone())),
-            usdt_transactions: UsdtTransactions::new(LiquidTransactions::new_usdt_only(
-                breez_client.clone(),
-            )),
             global_settings: {
                 let network_dir = datadir.network_directory(network);
                 let settings_file = settings::Settings::from_file(&network_dir).ok();
@@ -214,7 +202,6 @@ impl Panels {
             liquid_expanded: false,
             marketplace_expanded: false,
             marketplace_p2p_expanded: false,
-            usdt_expanded: false,
             connect_expanded: false,
             global_home: GlobalHome::new(
                 wallet.clone(),
@@ -241,12 +228,6 @@ impl Panels {
             liquid_receive: LiquidReceive::new(breez_client.clone()),
             liquid_transactions: LiquidTransactions::new(breez_client.clone()),
             liquid_settings: LiquidSettings::new(breez_client.clone()),
-            usdt_overview: UsdtOverview::new(breez_client.clone()),
-            usdt_send: UsdtSend::new(LiquidSend::new_usdt_only(breez_client.clone())),
-            usdt_receive: UsdtReceive::new(LiquidReceive::new(breez_client.clone())),
-            usdt_transactions: UsdtTransactions::new(LiquidTransactions::new_usdt_only(
-                breez_client.clone(),
-            )),
             global_settings: {
                 let network_dir = data_dir.network_directory(cache.network);
                 let settings_file = settings::Settings::from_file(&network_dir).ok();
@@ -428,12 +409,6 @@ impl Panels {
                 crate::app::menu::LiquidSubMenu::Transactions(_) => Some(&self.liquid_transactions),
                 crate::app::menu::LiquidSubMenu::Settings(_) => Some(&self.liquid_settings),
             },
-            Menu::Usdt(submenu) => match submenu {
-                crate::app::menu::UsdtSubMenu::Overview => Some(&self.usdt_overview),
-                crate::app::menu::UsdtSubMenu::Send => Some(&self.usdt_send),
-                crate::app::menu::UsdtSubMenu::Receive => Some(&self.usdt_receive),
-                crate::app::menu::UsdtSubMenu::Transactions(_) => Some(&self.usdt_transactions),
-            },
             Menu::Vault(submenu) => match submenu {
                 crate::app::menu::VaultSubMenu::Overview => {
                     self.vault_overview.as_ref().map(|v| v as &dyn State)
@@ -482,12 +457,6 @@ impl Panels {
                     Some(&mut self.liquid_transactions)
                 }
                 crate::app::menu::LiquidSubMenu::Settings(_) => Some(&mut self.liquid_settings),
-            },
-            Menu::Usdt(submenu) => match submenu {
-                crate::app::menu::UsdtSubMenu::Overview => Some(&mut self.usdt_overview),
-                crate::app::menu::UsdtSubMenu::Send => Some(&mut self.usdt_send),
-                crate::app::menu::UsdtSubMenu::Receive => Some(&mut self.usdt_receive),
-                crate::app::menu::UsdtSubMenu::Transactions(_) => Some(&mut self.usdt_transactions),
             },
             Menu::Vault(submenu) => match submenu {
                 crate::app::menu::VaultSubMenu::Overview => {
@@ -957,9 +926,6 @@ impl App {
             menu::Menu::Liquid(_submenu) => {
                 // Liquid transaction preselection is handled via PreselectPayment message
                 // since Payment objects are passed directly instead of fetching by ID
-            }
-            menu::Menu::Usdt(_submenu) => {
-                // USDt panels: preselection handled via PreselectPayment message
             }
             _ => {
                 tracing::debug!(
@@ -1506,8 +1472,6 @@ impl App {
                 if self.panels.vault_expanded {
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
-                    self.panels.usdt_expanded = false;
-                    self.cache.usdt_expanded = false;
                     self.panels.connect_expanded = false;
                     self.cache.connect_expanded = false;
                     self.panels.marketplace_expanded = false;
@@ -1523,8 +1487,6 @@ impl App {
                 if self.panels.liquid_expanded {
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
-                    self.panels.usdt_expanded = false;
-                    self.cache.usdt_expanded = false;
                     self.panels.connect_expanded = false;
                     self.cache.connect_expanded = false;
                     self.panels.marketplace_expanded = false;
@@ -1542,8 +1504,6 @@ impl App {
                     self.cache.vault_expanded = false;
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
-                    self.panels.usdt_expanded = false;
-                    self.cache.usdt_expanded = false;
                     self.panels.connect_expanded = false;
                     self.cache.connect_expanded = false;
                 } else {
@@ -1556,23 +1516,6 @@ impl App {
                 self.panels.marketplace_p2p_expanded = !self.panels.marketplace_p2p_expanded;
                 self.cache.marketplace_p2p_expanded = self.panels.marketplace_p2p_expanded;
             }
-            Message::View(view::Message::ToggleUsdt) => {
-                self.panels.usdt_expanded = !self.panels.usdt_expanded;
-                self.cache.usdt_expanded = self.panels.usdt_expanded;
-
-                if self.panels.usdt_expanded {
-                    self.panels.liquid_expanded = false;
-                    self.cache.liquid_expanded = false;
-                    self.panels.vault_expanded = false;
-                    self.cache.vault_expanded = false;
-                    self.panels.connect_expanded = false;
-                    self.cache.connect_expanded = false;
-                    self.panels.marketplace_expanded = false;
-                    self.cache.marketplace_expanded = false;
-                    self.panels.marketplace_p2p_expanded = false;
-                    self.cache.marketplace_p2p_expanded = false;
-                }
-            }
             Message::View(view::Message::ToggleConnect) => {
                 self.panels.connect_expanded = !self.panels.connect_expanded;
                 self.cache.connect_expanded = self.panels.connect_expanded;
@@ -1581,8 +1524,6 @@ impl App {
                     self.cache.vault_expanded = false;
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
-                    self.panels.usdt_expanded = false;
-                    self.cache.usdt_expanded = false;
                     self.panels.marketplace_expanded = false;
                     self.cache.marketplace_expanded = false;
                     self.panels.marketplace_p2p_expanded = false;
@@ -1607,6 +1548,22 @@ impl App {
                     .connect
                     .update(self.daemon.clone(), &self.cache, msg);
                 self.cache.connect_authenticated = self.panels.connect.account.is_authenticated();
+                // Sync lightning address to cache for sidebar display
+                self.cache.lightning_address = self
+                    .panels
+                    .connect
+                    .cube
+                    .lightning_address
+                    .as_ref()
+                    .and_then(|la| {
+                        la.lightning_address.as_ref().map(|addr| {
+                            if addr.contains('@') {
+                                addr.clone()
+                            } else {
+                                format!("{}{}", addr, "@coincube.io")
+                            }
+                        })
+                    });
                 return task;
             }
             Message::View(view::Message::OpenUrl(url)) => {
@@ -1721,9 +1678,6 @@ impl App {
                             Task::done(Message::View(view::Message::LiquidOverview(
                                 view::LiquidOverviewMessage::RefreshRequested,
                             ))),
-                            Task::done(Message::View(view::Message::UsdtOverview(
-                                view::UsdtOverviewMessage::RefreshRequested,
-                            ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
                             ))),
@@ -1744,9 +1698,6 @@ impl App {
                             ))),
                             Task::done(Message::View(view::Message::LiquidOverview(
                                 view::LiquidOverviewMessage::RefreshRequested,
-                            ))),
-                            Task::done(Message::View(view::Message::UsdtOverview(
-                                view::UsdtOverviewMessage::RefreshRequested,
                             ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
@@ -1769,9 +1720,6 @@ impl App {
                             Task::done(Message::View(view::Message::LiquidOverview(
                                 view::LiquidOverviewMessage::RefreshRequested,
                             ))),
-                            Task::done(Message::View(view::Message::UsdtOverview(
-                                view::UsdtOverviewMessage::RefreshRequested,
-                            ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
                             ))),
@@ -1787,9 +1735,6 @@ impl App {
                             ))),
                             Task::done(Message::View(view::Message::LiquidOverview(
                                 view::LiquidOverviewMessage::RefreshRequested,
-                            ))),
-                            Task::done(Message::View(view::Message::UsdtOverview(
-                                view::UsdtOverviewMessage::RefreshRequested,
                             ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,

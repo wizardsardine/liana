@@ -31,15 +31,11 @@ pub fn spend<T>() -> Container<'static, T> {
         .center_y(Length::Fixed(40.0))
 }
 
-pub fn coin<T>() -> Container<'static, T> {
-    Container::new(
-        image::coincube_logotype_grey()
-            .height(Length::Fixed(25.0))
-            .width(Length::Fixed(25.0)),
-    )
-    .style(theme::badge::simple)
-    .center_x(Length::Fixed(40.0))
-    .center_y(Length::Fixed(40.0))
+pub fn coin<T: 'static>() -> Container<'static, T> {
+    Container::new(image::coincube_wordmark_gray(10.0))
+        .style(theme::badge::simple)
+        .center_x(Length::Fixed(40.0))
+        .center_y(Length::Fixed(40.0))
 }
 
 pub fn lightning<T>() -> Container<'static, T> {

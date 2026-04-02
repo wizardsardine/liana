@@ -57,3 +57,25 @@ pub fn error(theme: &Theme) -> Style {
 pub fn custom(color: iced::Color) -> Style {
     Style { color: Some(color) }
 }
+
+/// Green for incoming amounts — darker on light backgrounds.
+pub fn incoming(theme: &Theme) -> Style {
+    use crate::color;
+    Style {
+        color: Some(match theme.mode {
+            super::palette::ThemeMode::Light => color::DARK_GREEN,
+            super::palette::ThemeMode::Dark => color::GREEN,
+        }),
+    }
+}
+
+/// Red for outgoing amounts — darker on light backgrounds.
+pub fn outgoing(theme: &Theme) -> Style {
+    use crate::color;
+    Style {
+        color: Some(match theme.mode {
+            super::palette::ThemeMode::Light => color::DARK_RED,
+            super::palette::ThemeMode::Dark => color::RED,
+        }),
+    }
+}

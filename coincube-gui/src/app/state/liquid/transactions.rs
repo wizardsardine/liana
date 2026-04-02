@@ -35,7 +35,14 @@ pub struct LiquidTransactions {
     refund_feerate: form::Value<String>,
     fee_estimator: FeeEstimator,
     refunding: bool,
-    usdt_only: bool,
+    asset_filter: AssetFilter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetFilter {
+    All,
+    LbtcOnly,
+    UsdtOnly,
 }
 
 impl LiquidTransactions {
@@ -53,15 +60,12 @@ impl LiquidTransactions {
             refund_feerate: form::Value::default(),
             fee_estimator: FeeEstimator::new(),
             refunding: false,
-            usdt_only: false,
+            asset_filter: AssetFilter::All,
         }
     }
 
-    pub fn new_usdt_only(breez_client: Arc<BreezClient>) -> Self {
-        Self {
-            usdt_only: true,
-            ..Self::new(breez_client)
-        }
+    pub fn asset_filter(&self) -> AssetFilter {
+        self.asset_filter
     }
 
     pub fn preselect(&mut self, payment: Payment) {
@@ -79,16 +83,17 @@ impl LiquidTransactions {
                 PaymentDetails::Liquid { asset_id, .. } if !usdt_id.is_empty() && asset_id == usdt_id
             );
 
-            if self.usdt_only {
-                // USDt view: only count USDt payments (amount_sat is in asset base units)
-                if !is_usdt {
-                    continue;
+            match self.asset_filter {
+                AssetFilter::UsdtOnly if !is_usdt => continue,
+                AssetFilter::LbtcOnly if is_usdt => continue,
+                AssetFilter::All => {
+                    // For All mode, skip USDt from balance calc since
+                    // USDt amount_sat is in asset base units, not sats
+                    if is_usdt {
+                        continue;
+                    }
                 }
-            } else {
-                // L-BTC view: skip USDt payments whose amount_sat is asset base units, not sats
-                if is_usdt {
-                    continue;
-                }
+                _ => {}
             }
 
             match payment.payment_type {
@@ -144,6 +149,7 @@ impl State for LiquidTransactions {
                     self.loading,
                     cache.bitcoin_unit,
                     usdt_asset_id(self.breez_client.network()).unwrap_or(""),
+                    self.asset_filter,
                 ),
             )
         };
@@ -186,8 +192,8 @@ impl State for LiquidTransactions {
             Message::PaymentsLoaded(Ok(payments)) => {
                 self.loading = false;
                 let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
-                self.payments = if self.usdt_only {
-                    payments
+                self.payments = match self.asset_filter {
+                    AssetFilter::UsdtOnly => payments
                         .into_iter()
                         .filter(|p| {
                             matches!(
@@ -196,9 +202,8 @@ impl State for LiquidTransactions {
                                     if asset_id == usdt_id
                             )
                         })
-                        .collect()
-                } else {
-                    payments
+                        .collect(),
+                    AssetFilter::LbtcOnly => payments
                         .into_iter()
                         .filter(|p| {
                             !matches!(
@@ -207,7 +212,8 @@ impl State for LiquidTransactions {
                                     if asset_id == usdt_id
                             )
                         })
-                        .collect()
+                        .collect(),
+                    AssetFilter::All => payments,
                 };
                 self.balance = self.calculate_balance();
                 Task::none()
@@ -246,6 +252,14 @@ impl State for LiquidTransactions {
             }
             Message::View(view::Message::PreselectPayment(payment)) => {
                 self.selected_payment = Some(payment);
+                Task::none()
+            }
+            Message::View(view::Message::SetAssetFilter(filter)) => {
+                if self.asset_filter != filter {
+                    self.asset_filter = filter;
+                    // Reload with the new filter
+                    return self.reload(None, None);
+                }
                 Task::none()
             }
             Message::View(view::Message::ImportExport(ImportExportMessage::Open)) => {

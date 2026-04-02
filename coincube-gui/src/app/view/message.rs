@@ -98,12 +98,11 @@ pub enum Message {
     LiquidSend(LiquidSendMessage),
     LiquidSettings(LiquidSettingsMessage),
     PreselectPayment(Payment),
+    SetAssetFilter(crate::app::state::liquid::transactions::AssetFilter),
     ShowError(String),
     ShowSuccess(String),
     ShowToast(log::Level, String),
     DismissToast(usize),
-    UsdtOverview(UsdtOverviewMessage),
-    ToggleUsdt,
     SideshiftReceive(SideshiftReceiveMessage),
     SideshiftSend(SideshiftSendMessage),
     ConnectAccount(ConnectAccountMessage),
@@ -399,23 +398,12 @@ pub enum SideshiftSendMessage {
 pub enum LiquidOverviewMessage {
     SendLbtc,
     ReceiveLbtc,
-    History,
-    SelectTransaction(usize),
-    DataLoaded {
-        balance: Amount,
-        recent_payment: Vec<Payment>,
-    },
-    Error(String),
-    RefreshRequested,
-}
-
-#[derive(Debug, Clone)]
-pub enum UsdtOverviewMessage {
     SendUsdt,
     ReceiveUsdt,
     History,
     SelectTransaction(usize),
     DataLoaded {
+        balance: Amount,
         usdt_balance: u64,
         recent_payment: Vec<Payment>,
     },
@@ -455,6 +443,19 @@ pub enum LiquidSendMessage {
         max_sat: u64,
     },
     RefreshRequested,
+    /// Open the "You Send" asset picker modal.
+    OpenSendPicker,
+    /// Open the "They Receive" asset+network picker modal.
+    OpenReceivePicker,
+    /// Close any open picker modal.
+    ClosePicker,
+    /// Set the "You Send" asset (from the picker).
+    SetSendAsset(crate::app::state::liquid::send::SendAsset),
+    /// Set the "They Receive" asset + network (from the picker).
+    SetReceiveTarget(
+        crate::app::state::liquid::send::SendAsset,
+        crate::app::state::liquid::send::ReceiveNetwork,
+    ),
 }
 
 #[derive(Debug, Clone)]
@@ -486,6 +487,94 @@ pub enum LiquidReceiveMessage {
     ClearError,
     OnChainLimitsFetched { min_sat: u64, max_sat: u64 },
     LightningLimitsFetched { min_sat: u64, max_sat: u64 },
+    /// Open the "You Receive" asset picker modal.
+    OpenReceivePicker,
+    /// Open the "They Send" network picker modal.
+    OpenSenderPicker,
+    /// Close any open picker modal.
+    ClosePicker,
+    /// Set the "You Receive" asset (from the picker).
+    SetReceiveAsset(crate::app::state::liquid::send::SendAsset),
+    /// Set the "They Send" network (from the picker).
+    SetSenderNetwork(SenderNetwork),
+    /// Balance and recent transactions loaded from Breez.
+    DataLoaded {
+        btc_balance: coincube_core::miniscript::bitcoin::Amount,
+        usdt_balance: u64,
+        recent_payment: Vec<breez_sdk_liquid::prelude::Payment>,
+    },
+    /// User tapped a recent transaction row.
+    SelectTransaction(usize),
+    /// User tapped "View All Transactions".
+    History,
+}
+
+/// Network the sender is sending from (receive flow).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SenderNetwork {
+    /// BTC via Lightning
+    Lightning,
+    /// L-BTC on Liquid
+    Liquid,
+    /// BTC on-chain
+    Bitcoin,
+    /// USDt on Ethereum (SideShift)
+    Ethereum,
+    /// USDt on Tron (SideShift)
+    Tron,
+    /// USDt on Binance Smart Chain (SideShift)
+    Binance,
+    /// USDt on Solana (SideShift)
+    Solana,
+}
+
+impl SenderNetwork {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Lightning => "Lightning",
+            Self::Liquid => "Liquid",
+            Self::Bitcoin => "Bitcoin",
+            Self::Ethereum => "Ethereum",
+            Self::Tron => "Tron",
+            Self::Binance => "Binance",
+            Self::Solana => "Solana",
+        }
+    }
+
+    pub fn is_sideshift(&self) -> bool {
+        matches!(self, Self::Ethereum | Self::Tron | Self::Binance | Self::Solana)
+    }
+
+    pub fn to_sideshift_network(&self) -> Option<SideshiftNetwork> {
+        match self {
+            Self::Ethereum => Some(SideshiftNetwork::Ethereum),
+            Self::Tron => Some(SideshiftNetwork::Tron),
+            Self::Binance => Some(SideshiftNetwork::Binance),
+            Self::Solana => Some(SideshiftNetwork::Solana),
+            _ => None,
+        }
+    }
+
+    /// Valid "They Send" networks for a given "You Receive" asset.
+    pub fn options_for_receive_asset(
+        asset: crate::app::state::liquid::send::SendAsset,
+    ) -> Vec<SenderNetwork> {
+        use crate::app::state::liquid::send::SendAsset;
+        match asset {
+            SendAsset::Lbtc => vec![
+                SenderNetwork::Lightning,
+                SenderNetwork::Liquid,
+                SenderNetwork::Bitcoin,
+            ],
+            SendAsset::Usdt => vec![
+                SenderNetwork::Liquid,
+                SenderNetwork::Ethereum,
+                SenderNetwork::Tron,
+                SenderNetwork::Binance,
+                SenderNetwork::Solana,
+            ],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -624,6 +713,10 @@ pub enum AvatarMessage {
 
 #[derive(Debug, Clone)]
 pub enum HomeMessage {
+    /// Navigate to Send with asset preset.
+    SendAsset(crate::app::state::liquid::send::SendAsset),
+    /// Navigate to Receive with asset preset.
+    ReceiveAsset(crate::app::state::liquid::send::SendAsset),
     ToggleBalanceMask,
     SelectTransferDirection(TransferDirection),
     AmountEdited(String),

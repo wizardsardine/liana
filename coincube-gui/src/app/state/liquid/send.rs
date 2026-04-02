@@ -9,11 +9,12 @@ use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{component::form, widget::*};
 use iced::Task;
 
+use super::sideshift_send::SideshiftSendFlow;
 use crate::app::breez::assets::{
     asset_kind_for_id, lbtc_asset_id, parse_asset_to_minor_units, usdt_asset_id, AssetKind,
     USDT_PRECISION,
 };
-use crate::app::menu::{LiquidSubMenu, Menu, UsdtSubMenu};
+use crate::app::menu::{LiquidSubMenu, Menu};
 use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::state::{redirect, State};
 use crate::app::view::SendPopupMessage;
@@ -26,6 +27,90 @@ use crate::utils::format_time_ago;
 pub enum SendAsset {
     Lbtc,
     Usdt,
+}
+
+/// Network/rail for the receiving side of a send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReceiveNetwork {
+    /// BTC via Lightning Network
+    Lightning,
+    /// L-BTC or USDt on Liquid
+    Liquid,
+    /// BTC on-chain
+    Bitcoin,
+    /// USDt on Ethereum (SideShift)
+    Ethereum,
+    /// USDt on Tron (SideShift)
+    Tron,
+    /// USDt on Binance Smart Chain (SideShift)
+    Binance,
+    /// USDt on Solana (SideShift)
+    Solana,
+}
+
+impl ReceiveNetwork {
+    /// Display name for the network badge.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Lightning => "Lightning",
+            Self::Liquid => "Liquid",
+            Self::Bitcoin => "Bitcoin",
+            Self::Ethereum => "Ethereum",
+            Self::Tron => "Tron",
+            Self::Binance => "Binance",
+            Self::Solana => "Solana",
+        }
+    }
+
+    /// Whether this network requires SideShift.
+    pub fn is_sideshift(&self) -> bool {
+        matches!(self, Self::Ethereum | Self::Tron | Self::Binance | Self::Solana)
+    }
+
+    /// Convert to SideshiftNetwork for the SideShift API.
+    pub fn to_sideshift_network(&self) -> Option<crate::services::sideshift::SideshiftNetwork> {
+        match self {
+            Self::Ethereum => Some(crate::services::sideshift::SideshiftNetwork::Ethereum),
+            Self::Tron => Some(crate::services::sideshift::SideshiftNetwork::Tron),
+            Self::Binance => Some(crate::services::sideshift::SideshiftNetwork::Binance),
+            Self::Solana => Some(crate::services::sideshift::SideshiftNetwork::Solana),
+            _ => None,
+        }
+    }
+
+    /// Valid "They Receive" networks for a given "You Send" asset.
+    pub fn options_for_send_asset(send_asset: SendAsset, cross_asset_supported: bool) -> Vec<(SendAsset, ReceiveNetwork)> {
+        match send_asset {
+            SendAsset::Lbtc => {
+                let mut opts = vec![
+                    (SendAsset::Lbtc, ReceiveNetwork::Lightning),
+                    (SendAsset::Lbtc, ReceiveNetwork::Liquid),
+                    (SendAsset::Lbtc, ReceiveNetwork::Bitcoin),
+                ];
+                if cross_asset_supported {
+                    opts.push((SendAsset::Usdt, ReceiveNetwork::Liquid));
+                }
+                opts
+            }
+            SendAsset::Usdt => {
+                let mut opts = vec![
+                    (SendAsset::Usdt, ReceiveNetwork::Liquid),
+                ];
+                if cross_asset_supported {
+                    opts.push((SendAsset::Lbtc, ReceiveNetwork::Lightning));
+                    opts.push((SendAsset::Lbtc, ReceiveNetwork::Liquid));
+                    opts.push((SendAsset::Lbtc, ReceiveNetwork::Bitcoin));
+                }
+                opts.extend([
+                    (SendAsset::Usdt, ReceiveNetwork::Ethereum),
+                    (SendAsset::Usdt, ReceiveNetwork::Tron),
+                    (SendAsset::Usdt, ReceiveNetwork::Binance),
+                    (SendAsset::Usdt, ReceiveNetwork::Solana),
+                ]);
+                opts
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -48,10 +133,10 @@ pub enum LiquidSendFlowState {
     Sent,
 }
 
-/// LiquidSend manages the Lightning Network send interface
+/// LiquidSend manages the send interface for all Liquid wallet assets.
 pub struct LiquidSend {
     breez_client: Arc<BreezClient>,
-    usdt_only: bool,
+    sideshift_flow: Option<SideshiftSendFlow>,
     btc_balance: Amount,
     usdt_balance: u64,
     amount: Amount,
@@ -62,6 +147,12 @@ pub struct LiquidSend {
     /// The asset the user is paying with. Equals `to_asset` for same-asset sends;
     /// differs for cross-asset swaps (via SideSwap).
     from_asset: SendAsset,
+    /// Network the recipient receives on (Lightning, Liquid, Bitcoin, Ethereum, etc.)
+    receive_network: ReceiveNetwork,
+    /// Whether the "You Send" picker modal is open.
+    send_picker_open: bool,
+    /// Whether the "They Receive" picker modal is open.
+    receive_picker_open: bool,
     recent_transaction: Vec<view::liquid::RecentTransaction>,
     recent_payments: Vec<Payment>,
     selected_payment: Option<Payment>,
@@ -84,7 +175,7 @@ impl LiquidSend {
     pub fn new(breez_client: Arc<BreezClient>) -> Self {
         Self {
             breez_client,
-            usdt_only: false,
+            sideshift_flow: None,
             btc_balance: Amount::from_sat(0),
             usdt_balance: 0,
             amount: Amount::from_sat(0),
@@ -92,6 +183,9 @@ impl LiquidSend {
             usdt_amount_input: form::Value::default(),
             to_asset: SendAsset::Lbtc,
             from_asset: SendAsset::Lbtc,
+            receive_network: ReceiveNetwork::Lightning,
+            send_picker_open: false,
+            receive_picker_open: false,
             recent_transaction: Vec::new(),
             recent_payments: Vec::new(),
             selected_payment: None,
@@ -114,6 +208,37 @@ impl LiquidSend {
         self.usdt_balance
     }
 
+    pub fn btc_balance(&self) -> Amount {
+        self.btc_balance
+    }
+
+    pub fn send_asset(&self) -> SendAsset {
+        self.from_asset
+    }
+
+    pub fn receive_asset(&self) -> SendAsset {
+        self.to_asset
+    }
+
+    pub fn receive_network(&self) -> ReceiveNetwork {
+        self.receive_network
+    }
+
+    pub fn send_picker_open(&self) -> bool {
+        self.send_picker_open
+    }
+
+    pub fn receive_picker_open(&self) -> bool {
+        self.receive_picker_open
+    }
+
+    pub fn cross_asset_supported(&self) -> bool {
+        matches!(
+            self.breez_client.network(),
+            breez_sdk_liquid::bitcoin::Network::Bitcoin
+        )
+    }
+
     pub fn breez_client(&self) -> &Arc<BreezClient> {
         &self.breez_client
     }
@@ -122,18 +247,9 @@ impl LiquidSend {
         &self.recent_transaction
     }
 
-    pub fn new_usdt_only(breez_client: Arc<BreezClient>) -> Self {
-        Self {
-            usdt_only: true,
-            to_asset: SendAsset::Usdt,
-            from_asset: SendAsset::Usdt,
-            ..Self::new(breez_client)
-        }
-    }
-
     fn load_balance(&self) -> Task<Message> {
         let breez_client = self.breez_client.clone();
-        let usdt_only = self.usdt_only;
+        let usdt_only = self.to_asset == SendAsset::Usdt;
 
         Task::perform(
             async move {
@@ -212,6 +328,18 @@ impl LiquidSend {
 
 impl State for LiquidSend {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
+        // Delegate to SideShift flow when active
+        if let Some(sideshift) = &self.sideshift_flow {
+            let asset_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
+            return sideshift.view(
+                menu,
+                cache,
+                self.usdt_balance,
+                &self.recent_transaction,
+                asset_id,
+            );
+        }
+
         let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
 
         if let Some(payment) = &self.selected_payment {
@@ -239,6 +367,9 @@ impl State for LiquidSend {
                 usdt_amount_input: &self.usdt_amount_input,
                 to_asset: self.to_asset,
                 from_asset: self.from_asset,
+                receive_network: self.receive_network,
+                send_picker_open: self.send_picker_open,
+                receive_picker_open: self.receive_picker_open,
                 uri_asset: self.uri_asset,
                 usdt_asset_id: usdt_asset_id(self.breez_client.network()).unwrap_or(""),
                 comment,
@@ -269,15 +400,55 @@ impl State for LiquidSend {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        // Handle SideShift send messages when flow is active
+        if let Message::View(view::Message::SideshiftSend(ref msg)) = message {
+            if let Some(sideshift) = &mut self.sideshift_flow {
+                // Intercept Reset/Back to return to native send
+                if matches!(
+                    msg,
+                    view::SideshiftSendMessage::Reset | view::SideshiftSendMessage::Back
+                ) && matches!(
+                    sideshift.phase(),
+                    super::sideshift_send::SendPhase::Sent
+                        | super::sideshift_send::SendPhase::Failed
+                        | super::sideshift_send::SendPhase::AddressInput
+                ) {
+                    self.sideshift_flow = None;
+                    return self.load_balance();
+                }
+                return sideshift.update(msg, &self.breez_client, self.usdt_balance);
+            }
+            return Task::none();
+        }
+
+        // When SideShift flow is active, only forward DataLoaded for balance updates
+        if self.sideshift_flow.is_some() {
+            if let Message::View(view::Message::LiquidSend(
+                view::LiquidSendMessage::DataLoaded { .. },
+            )) = &message
+            {
+                // Fall through to handle DataLoaded below
+            } else {
+                return Task::none();
+            }
+        }
+
         if let Message::View(view::Message::LiquidSend(ref msg)) = message {
             match msg {
                 view::LiquidSendMessage::PresetAsset(asset) => {
-                    if *asset == SendAsset::Lbtc && self.usdt_only {
-                        // usdt_only invariant: ignore attempts to switch to BTC
-                    } else if *asset != self.to_asset {
-                        self.to_asset = *asset;
-                        self.amount = Amount::ZERO;
-                    }
+                    // Set both "You Send" and "They Receive" to the same asset
+                    self.from_asset = *asset;
+                    self.to_asset = *asset;
+                    self.receive_network = match asset {
+                        SendAsset::Lbtc => ReceiveNetwork::Lightning,
+                        SendAsset::Usdt => ReceiveNetwork::Liquid,
+                    };
+                    self.amount = Amount::ZERO;
+                    self.input = form::Value::default();
+                    self.input_type = None;
+                    self.uri_asset = None;
+                    self.error = None;
+                    self.sideshift_flow = None;
                 }
                 view::LiquidSendMessage::InputEdited(value) => {
                     self.input.value = value.clone();
@@ -347,6 +518,35 @@ impl State for LiquidSend {
                     return validate_input;
                 }
                 view::LiquidSendMessage::Send => {
+                    // Route to SideShift for cross-chain sends
+                    if self.receive_network.is_sideshift() {
+                        let flow = SideshiftSendFlow::new();
+                        // Pre-fill the address from the input and auto-select the network
+                        let addr = self.input.value.trim().to_string();
+                        if !addr.is_empty() {
+                            // Dispatch address edit + network selection + Next
+                            self.sideshift_flow = Some(flow);
+                            let addr_msg = Message::View(view::Message::SideshiftSend(
+                                view::SideshiftSendMessage::RecipientAddressEdited(addr),
+                            ));
+                            let network = self.receive_network.to_sideshift_network();
+                            let mut tasks = vec![Task::done(addr_msg)];
+                            if let Some(net) = network {
+                                tasks.push(Task::done(Message::View(view::Message::SideshiftSend(
+                                    view::SideshiftSendMessage::DisambiguateNetwork(net),
+                                ))));
+                            }
+                            tasks.push(Task::done(Message::View(view::Message::SideshiftSend(
+                                view::SideshiftSendMessage::Next,
+                            ))));
+                            return Task::batch(tasks);
+                        } else {
+                            // No address yet — just open SideShift flow
+                            self.sideshift_flow = Some(flow);
+                            return Task::none();
+                        }
+                    }
+
                     let description = if let Some(input_type) = &self.input_type {
                         match input_type {
                             InputType::BitcoinAddress { address } => {
@@ -500,23 +700,13 @@ impl State for LiquidSend {
                     };
                 }
                 view::LiquidSendMessage::History => {
-                    let target = if self.usdt_only {
-                        Menu::Usdt(UsdtSubMenu::Transactions(None))
-                    } else {
-                        Menu::Liquid(LiquidSubMenu::Transactions(None))
-                    };
-                    return redirect(target);
+                    return redirect(Menu::Liquid(LiquidSubMenu::Transactions(None)));
                 }
                 view::LiquidSendMessage::SelectTransaction(idx) => {
                     if let Some(payment) = self.recent_payments.get(*idx).cloned() {
                         self.selected_payment = Some(payment.clone());
-                        let target = if self.usdt_only {
-                            Menu::Usdt(UsdtSubMenu::Transactions(None))
-                        } else {
-                            Menu::Liquid(LiquidSubMenu::Transactions(None))
-                        };
                         return Task::batch(vec![
-                            redirect(target),
+                            redirect(Menu::Liquid(LiquidSubMenu::Transactions(None))),
                             Task::done(Message::View(view::Message::PreselectPayment(payment))),
                         ]);
                     }
@@ -597,6 +787,7 @@ impl State for LiquidSend {
                                     status,
                                     details,
                                     fees_sat,
+                                    usdt_display: None,
                                 }
                             })
                             .collect();
@@ -652,13 +843,13 @@ impl State for LiquidSend {
                                         network,
                                         breez_sdk_liquid::bitcoin::Network::Bitcoin
                                     );
-                                    if self.usdt_only
+                                    if self.to_asset == SendAsset::Usdt
                                         && target_asset == SendAsset::Lbtc
                                         && cross_asset_supported
                                     {
                                         self.to_asset = SendAsset::Lbtc;
                                         self.from_asset = SendAsset::Usdt;
-                                    } else if self.usdt_only && target_asset != SendAsset::Usdt {
+                                    } else if self.to_asset == SendAsset::Usdt && target_asset != SendAsset::Usdt {
                                         // Non-mainnet: cross-asset not available, keep USDt
                                         self.to_asset = SendAsset::Usdt;
                                         self.from_asset = self.to_asset;
@@ -672,7 +863,7 @@ impl State for LiquidSend {
                                     // clearing a previously set URI lock. Otherwise preserve
                                     // the user's current asset selection.
                                     if self.uri_asset.is_some() {
-                                        self.to_asset = if self.usdt_only {
+                                        self.to_asset = if self.to_asset == SendAsset::Usdt {
                                             SendAsset::Usdt
                                         } else {
                                             SendAsset::Lbtc
@@ -686,7 +877,7 @@ impl State for LiquidSend {
                             // No asset_id in URI — only reset to_asset if we're
                             // clearing a previously set URI lock.
                             if self.uri_asset.is_some() {
-                                self.to_asset = if self.usdt_only {
+                                self.to_asset = if self.to_asset == SendAsset::Usdt {
                                     SendAsset::Usdt
                                 } else {
                                     SendAsset::Lbtc
@@ -723,7 +914,7 @@ impl State for LiquidSend {
                     } else {
                         // Not a LiquidAddress — clear URI asset state and restore default
                         self.uri_asset = None;
-                        self.to_asset = if self.usdt_only {
+                        self.to_asset = if self.to_asset == SendAsset::Usdt {
                             SendAsset::Usdt
                         } else {
                             SendAsset::Lbtc
@@ -1315,7 +1506,7 @@ impl State for LiquidSend {
                                 // Already in cross-asset mode — toggle back to same-asset.
                                 // On usdt_only screen: if to_asset was forced to Lbtc by URI,
                                 // we can't go back to same-asset Lbtc send — block the toggle.
-                                if self.usdt_only && self.to_asset != SendAsset::Usdt {
+                                if self.to_asset == SendAsset::Usdt && self.to_asset != SendAsset::Usdt {
                                     // Can't disable cross-asset on usdt_only screen when URI
                                     // requires a non-USDt asset — ignore toggle
                                 } else {
@@ -1372,7 +1563,7 @@ impl State for LiquidSend {
                                 SendAsset::Lbtc => SendAsset::Usdt,
                                 SendAsset::Usdt => SendAsset::Lbtc,
                             };
-                            if !(next == SendAsset::Lbtc && self.usdt_only) {
+                            if !(next == SendAsset::Lbtc && self.to_asset == SendAsset::Usdt) {
                                 self.to_asset = next;
                                 self.from_asset = self.to_asset;
                                 self.amount = Amount::ZERO;
@@ -1425,7 +1616,7 @@ impl State for LiquidSend {
                     self.comment = None;
                     self.amount_input = form::Value::default();
                     self.usdt_amount_input = form::Value::default();
-                    self.to_asset = if self.usdt_only {
+                    self.to_asset = if self.to_asset == SendAsset::Usdt {
                         SendAsset::Usdt
                     } else {
                         SendAsset::Lbtc
@@ -1543,7 +1734,7 @@ impl State for LiquidSend {
                     self.amount = Amount::ZERO;
                     self.amount_input = form::Value::default();
                     self.usdt_amount_input = form::Value::default();
-                    self.to_asset = if self.usdt_only {
+                    self.to_asset = if self.to_asset == SendAsset::Usdt {
                         SendAsset::Usdt
                     } else {
                         SendAsset::Lbtc
@@ -1573,6 +1764,59 @@ impl State for LiquidSend {
                 view::LiquidSendMessage::RefreshRequested => {
                     return self.load_balance();
                 }
+                view::LiquidSendMessage::OpenSendPicker => {
+                    self.send_picker_open = true;
+                    self.receive_picker_open = false;
+                    return Task::none();
+                }
+                view::LiquidSendMessage::OpenReceivePicker => {
+                    self.receive_picker_open = true;
+                    self.send_picker_open = false;
+                    return Task::none();
+                }
+                view::LiquidSendMessage::ClosePicker => {
+                    self.send_picker_open = false;
+                    self.receive_picker_open = false;
+                    return Task::none();
+                }
+                view::LiquidSendMessage::SetSendAsset(asset) => {
+                    self.send_picker_open = false;
+                    if self.from_asset != *asset {
+                        self.from_asset = *asset;
+                        self.to_asset = *asset;
+                        // Reset receive network to default for the new asset
+                        self.receive_network = match asset {
+                            SendAsset::Lbtc => ReceiveNetwork::Lightning,
+                            SendAsset::Usdt => ReceiveNetwork::Liquid,
+                        };
+                        // Reset input state
+                        self.input = form::Value::default();
+                        self.input_type = None;
+                        self.uri_asset = None;
+                        self.error = None;
+                        self.sideshift_flow = None;
+                        return self.load_balance();
+                    }
+                    return Task::none();
+                }
+                view::LiquidSendMessage::SetReceiveTarget(asset, network) => {
+                    self.receive_picker_open = false;
+                    self.to_asset = *asset;
+                    self.receive_network = *network;
+                    // If cross-asset, set from_asset differently
+                    if *asset != self.from_asset {
+                        // Cross-asset swap: from_asset stays, to_asset changes
+                    } else {
+                        self.from_asset = *asset;
+                    }
+                    // Reset input state for new target
+                    self.input = form::Value::default();
+                    self.input_type = None;
+                    self.uri_asset = None;
+                    self.error = None;
+                    self.sideshift_flow = None;
+                    return Task::none();
+                }
             }
         }
         if let Message::View(view::Message::Close) | Message::View(view::Message::Reload) = message
@@ -1583,6 +1827,9 @@ impl State for LiquidSend {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
+        if let Some(sideshift) = &self.sideshift_flow {
+            return sideshift.subscription();
+        }
         if self.is_sending {
             iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick)
         } else {
@@ -1596,6 +1843,7 @@ impl State for LiquidSend {
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.selected_payment = None;
+        self.sideshift_flow = None;
         self.load_balance()
     }
 }

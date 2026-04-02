@@ -1,5 +1,4 @@
 use crate::{
-    color,
     component::{amount, amount::BitcoinDisplayUnit, badge, text},
     theme,
     widget::*,
@@ -42,6 +41,8 @@ pub struct TransactionListItem<'a, T> {
     fiat_amount: Option<String>,
     amount_override: Option<String>,
     custom_status: Option<Element<'static, T>>,
+    /// Custom icon element replacing the default type+direction badges.
+    custom_icon: Option<Element<'static, T>>,
 }
 
 impl<'a, T> TransactionListItem<'a, T> {
@@ -62,6 +63,7 @@ impl<'a, T> TransactionListItem<'a, T> {
             fiat_amount: None,
             amount_override: None,
             custom_status: None,
+            custom_icon: None,
         }
     }
 
@@ -108,6 +110,12 @@ impl<'a, T> TransactionListItem<'a, T> {
 
     pub fn with_custom_status(mut self, status: Element<'static, T>) -> Self {
         self.custom_status = Some(status);
+        self
+    }
+
+    /// Replace the default type+direction badges with a custom icon element.
+    pub fn with_custom_icon(mut self, icon: Element<'static, T>) -> Self {
+        self.custom_icon = Some(icon);
         self
     }
 
@@ -167,11 +175,14 @@ impl<'a, T> TransactionListItem<'a, T> {
 
         let mut left_side = Row::new().spacing(10).align_y(Alignment::Center);
 
-        if let Some(type_badge) = type_badge {
-            left_side = left_side.push(type_badge);
+        if let Some(custom_icon) = self.custom_icon {
+            left_side = left_side.push(custom_icon);
+        } else {
+            if let Some(type_badge) = type_badge {
+                left_side = left_side.push(type_badge);
+            }
+            left_side = left_side.push(direction_badge);
         }
-
-        left_side = left_side.push(direction_badge);
 
         left_side = left_side.push(info_column).width(Length::Fill);
 
@@ -194,25 +205,26 @@ impl<'a, T> TransactionListItem<'a, T> {
         if self.direction == TransactionDirection::SelfTransfer {
             amount_column = amount_column.push(text::p1_regular("Self-transfer"));
         } else {
-            let (amount_sign, sign_color) = match self.direction {
-                TransactionDirection::Incoming => ("+", color::GREEN),
-                TransactionDirection::Outgoing => ("-", color::RED),
-                TransactionDirection::SelfTransfer => ("", color::WHITE),
+            let (amount_sign, sign_style): (&str, fn(&theme::Theme) -> iced::widget::text::Style) = match self.direction {
+                TransactionDirection::Incoming => ("+", theme::text::incoming),
+                TransactionDirection::Outgoing => ("-", theme::text::outgoing),
+                TransactionDirection::SelfTransfer => ("", theme::text::default),
             };
 
             if let Some(ref override_str) = self.amount_override {
+                // Only color the sign (+/-), not the amount text — consistent with BTC rendering
                 amount_column = amount_column.push(
                     Row::new()
                         .spacing(5)
-                        .push(text::p1_regular(amount_sign).color(sign_color))
-                        .push(text::p1_regular(override_str.clone()).color(sign_color))
+                        .push(text::p1_regular(amount_sign).style(sign_style))
+                        .push(text::p1_bold(override_str.clone()))
                         .align_y(Alignment::Center),
                 );
             } else {
                 amount_column = amount_column.push(
                     Row::new()
                         .spacing(5)
-                        .push(text::p1_regular(amount_sign).color(sign_color))
+                        .push(text::p1_regular(amount_sign).style(sign_style))
                         .push(amount::amount_with_unit(self.amount, self.bitcoin_unit))
                         .align_y(Alignment::Center),
                 );

@@ -16,7 +16,7 @@ use coincube_ui::{
         button, card, form, spinner,
         text::*,
         transaction::{
-            TransactionBadge, TransactionDirection, TransactionListItem, TransactionType,
+            TransactionBadge, TransactionDirection, TransactionListItem,
         },
     },
     icon::{self, cross_icon},
@@ -315,7 +315,7 @@ fn event_list_view(
     };
 
     let mut item = TransactionListItem::new(direction, &event.amount, bitcoin_unit)
-        .with_type(TransactionType::Bitcoin);
+        .with_custom_icon(coincube_ui::image::asset_network_logo("btc", "bitcoin", 40.0));
 
     if let Some(label) = label {
         item = item.with_label(label);
