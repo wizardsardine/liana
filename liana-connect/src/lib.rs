@@ -6,3 +6,4 @@
 pub mod keys;
 pub mod wallets;
 pub mod ws_business;
+pub use tungstenite;
