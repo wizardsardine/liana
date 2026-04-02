@@ -98,6 +98,16 @@ pub fn transparent(theme: &Theme, status: Status) -> Style {
     )
 }
 
+pub fn transparent_primary_text(theme: &Theme, status: Status) -> Style {
+    let mut style = button(
+        &theme.colors.buttons.transparent,
+        status,
+        theme.button_border_width,
+    );
+    style.text_color = theme.colors.text.primary;
+    style
+}
+
 pub fn transparent_border(theme: &Theme, status: Status) -> Style {
     button(
         &theme.colors.buttons.transparent_border,

@@ -193,7 +193,7 @@ fn section_header(title: &'static str) -> Element<'static, Msg> {
         .align_y(Alignment::Center)
         .push(
             iced::widget::Button::new(panel_title("Settings"))
-                .style(theme::button::transparent)
+                .style(theme::button::transparent_primary_text)
                 .on_press(Msg::Home),
         )
         .push(icon::chevron_right().size(30))
