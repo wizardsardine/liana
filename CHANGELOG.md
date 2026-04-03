@@ -1,6 +1,63 @@
 
 # Liana daemon and GUI release notes
 
+## 14.0
+
+This release includes a UI rework for liana-gui, several UX improvements, and bug fixes across liana,
+lianad, and liana-gui.
+
+### Features
+
+#### Liana GUI
+
+- UI rework: reworked home page, menu, payment history, panel titles, and sidebar. Menu width is now
+  fixed and menu entries have been renamed.
+- Support importing xpub from Coldcard ccxp file.
+- Display BitBox pairing code when taproot is enabled during key selection in the installer.
+- Add option to export encrypted descriptor in the Settings Import/Export section, with improved wording
+  for export buttons.
+- Show derivation paths in a tooltip for airgap devices in the decrypt modal.
+- Hint user that entering mnemonic is unsafe in the decrypt modal.
+- Change default fiat price source to mempool.space and add disclaimer about fiat prices from third
+  parties.
+- Add User-Agent header to CoinGecko and all Liana Connect requests.
+- Redirect user to login page on authentication errors for Liana Connect wallets.
+- Update hardware wallet aliases from the key editing modal in the installer.
+- Force user to save PSBT before exporting it.
+- Truncate (with an explicit message) amounts with more than 8 decimals.
+
+#### Liana
+
+- Change dust output limit default value from 5,000 to 500 sats.
+
+### Fixes
+
+#### Liana GUI
+
+- Fix panic during GUI window resizing.
+- Fix previous addresses card display.
+- Fix empty fiat labels when max is selected in the spend panel.
+- Make it more understandable when a maxxed output is under the dust limit.
+- Fix wording for coin expiration status.
+- Fix wording for devices not supporting taproot miniscript.
+- Remove label for non-owned outputs.
+- Fix descriptor not populated when importing from backup in Liana Connect flow.
+- Fix message not forwarded to decrypt modal in Liana Connect flow.
+- Fix decrypt modal alignment and scroll bar overlap.
+- Fix button for backup descriptor in Settings > Wallet.
+- Fix panel title color when embedded into buttons in settings.
+- Fix login error display.
+- Check if provider key fingerprint has already been added.
+- Use default alias for provider keys.
+- Map insufficient funds error to success result.
+- Show pasted value in BTC amount form even if invalid.
+- Create network directory if it does not exist.
+- Fix the inconsistency in the text and icon for the paste an xpub option
+
+#### Lianad
+
+- Fix bitcoind startup: retry on RPC authentication error (401).
+
 ## 13.0
 
 This release mostly modifies liana-gui by adding new features:
