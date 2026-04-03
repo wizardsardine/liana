@@ -151,6 +151,11 @@ pub fn create_spend_tx<'a>(
     error: Option<&'a Error>,
     is_first_step: bool,
     max_under_dust: bool,
+    // Sweep individually parameters
+    is_sweep_individually: bool,
+    sweep_feerate_min: &form::Value<String>,
+    sweep_feerate_max: &form::Value<String>,
+    _sweep_coin_feerates: &[(liana::miniscript::bitcoin::OutPoint, &'a form::Value<String>, Option<&'a Amount>)],
 ) -> Element<'a, Message> {
     let is_self_send = recipients.is_empty();
 
@@ -192,38 +197,101 @@ pub fn create_spend_tx<'a>(
         .push(Space::with_width(Length::Fill))
         .push_maybe(add_payment_btn);
 
-    // Fee-rate row
-    let fee_input = Container::new(
-        form::Form::new_trimmed("42 (in sats/vbyte)", feerate, move |msg| {
-            Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
-        })
-        .warning("Feerate must be an integer less than or equal to 1000 sats/vbyte")
-        .size(P1_SIZE)
-        .padding(10),
-    )
-    .width(150);
-    let fee_amount = fee_amount.map(|fee| {
+    // Sweep individually checkbox (only for self-send)
+    let sweep_checkbox = is_self_send.then(|| {
+        checkbox(
+            "Sweep individually (one tx per coin \u{2014} does not consolidate)",
+            is_sweep_individually,
+        )
+        .on_toggle(|_| Message::CreateSpend(CreateSpendMessage::ToggleSweepIndividually))
+    });
+
+    // Fee-rate section
+    let fee_rate_row: Element<'a, Message> = if is_sweep_individually && is_self_send {
+        // Sweep mode: show min/max + randomize, apply-to-all, and per-coin feerates
+        let feerate_base_input = Container::new(
+            form::Form::new_trimmed("Base feerate", feerate, move |msg| {
+                Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
+            })
+            .warning("Feerate must be an integer less than or equal to 1000 sats/vbyte")
+            .size(P1_SIZE)
+            .padding(10),
+        )
+        .width(120);
+        let apply_all_btn =
+            button::secondary(None, "Apply to all")
+                .on_press(Message::CreateSpend(CreateSpendMessage::SweepApplyToAll));
+
+        let min_input = Container::new(
+            form::Form::new_trimmed("Min", sweep_feerate_min, |msg| {
+                Message::CreateSpend(CreateSpendMessage::SweepFeerateMinEdited(msg))
+            })
+            .size(P1_SIZE)
+            .padding(10),
+        )
+        .width(80);
+        let max_input = Container::new(
+            form::Form::new_trimmed("Max", sweep_feerate_max, |msg| {
+                Message::CreateSpend(CreateSpendMessage::SweepFeerateMaxEdited(msg))
+            })
+            .size(P1_SIZE)
+            .padding(10),
+        )
+        .width(80);
+        let randomize_btn =
+            button::secondary(None, "Randomize")
+                .on_press(Message::CreateSpend(CreateSpendMessage::SweepRandomizeFees));
+
+        let controls_row = Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(Container::new(p1_bold("Feerate:")).padding(10))
+            .push(feerate_base_input)
+            .push(apply_all_btn)
+            .push(p1_regular("or").style(theme::text::secondary))
+            .push(p1_regular("Min:").style(theme::text::secondary))
+            .push(min_input)
+            .push(p1_regular("Max:").style(theme::text::secondary))
+            .push(max_input)
+            .push(randomize_btn)
+            .wrap();
+
+        controls_row.into()
+    } else {
+        // Normal single feerate
+        let fee_input = Container::new(
+            form::Form::new_trimmed("42 (in sats/vbyte)", feerate, move |msg| {
+                Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
+            })
+            .warning("Feerate must be an integer less than or equal to 1000 sats/vbyte")
+            .size(P1_SIZE)
+            .padding(10),
+        )
+        .width(150);
+        let fee_amount = fee_amount.map(|fee| {
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(p1_regular("Fee:").style(theme::text::secondary))
+                .push(amount_with_size(fee, P1_SIZE))
+                .push_maybe(fiat_converter.map(|conv| {
+                    Row::new().spacing(10).align_y(Alignment::Center).push(
+                        conv.convert(*fee)
+                            .to_text()
+                            .size(P2_SIZE)
+                            .style(theme::text::secondary),
+                    )
+                }))
+        });
         Row::new()
             .spacing(10)
             .align_y(Alignment::Center)
-            .push(p1_regular("Fee:").style(theme::text::secondary))
-            .push(amount_with_size(fee, P1_SIZE))
-            .push_maybe(fiat_converter.map(|conv| {
-                Row::new().spacing(10).align_y(Alignment::Center).push(
-                    conv.convert(*fee)
-                        .to_text()
-                        .size(P2_SIZE)
-                        .style(theme::text::secondary),
-                )
-            }))
-    });
-    let fee_rate_row = Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(Container::new(p1_bold("Feerate:")).padding(10))
-        .push(fee_input)
-        .push_maybe(fee_amount)
-        .wrap();
+            .push(Container::new(p1_bold("Feerate:")).padding(10))
+            .push(fee_input)
+            .push_maybe(fee_amount)
+            .wrap()
+            .into()
+    };
 
     // Coin selection
     let selected_amount = (is_self_send || recovery_timelock.is_some()).then_some(
@@ -343,6 +411,7 @@ pub fn create_spend_tx<'a>(
         .push_maybe(batch_label)
         .push(recipients_cards)
         .push(add_payment_row)
+        .push_maybe(sweep_checkbox.map(|cb| Container::new(cb).padding(5)))
         .push(fee_rate_row)
         .push(coin_selection)
         .push(bottom_row)

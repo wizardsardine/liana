@@ -66,6 +66,12 @@ pub enum CreateSpendMessage {
     Generate,
     SendMaxToRecipient(usize),
     Clear,
+    ToggleSweepIndividually,
+    SweepFeerateEdited(usize, String),
+    SweepFeerateMinEdited(String),
+    SweepFeerateMaxEdited(String),
+    SweepRandomizeFees,
+    SweepApplyToAll,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +93,8 @@ pub enum SpendTxMessage {
     EditPsbt,
     PsbtEdited(String),
     Next,
+    BatchNext,
+    BatchPrev,
 }
 
 #[derive(Debug, Clone)]
