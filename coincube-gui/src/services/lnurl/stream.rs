@@ -165,6 +165,7 @@ fn create_stream(
                                         }
                                         Ok(None) => {
                                             log::info!("[LNURL] EventSource exiting safely");
+                                            tokio::time::sleep(backoff).await;
                                             let _ = channel
                                                 .send(LnurlMessage::EventSourceDisconnected(
                                                     "EventSource stream ended".to_string(),
