@@ -21,6 +21,8 @@ pub struct MostroConfig {
     pub nodes: Vec<MostroNode>,
     pub active_node_pubkey: String,
     pub relays: Vec<String>,
+    #[serde(default)]
+    pub blossom_url: Option<String>,
 }
 
 /// Build default nodes from `MOSTRO_NODES` env var or compile-time fallbacks.
@@ -83,21 +85,34 @@ impl Default for MostroConfig {
             nodes,
             active_node_pubkey: active,
             relays: default_relays(),
+            blossom_url: None,
         }
     }
 }
 
 impl MostroConfig {
     pub fn active_node(&self) -> &MostroNode {
+        static FALLBACK: std::sync::LazyLock<MostroNode> =
+            std::sync::LazyLock::new(|| MostroNode {
+                name: "Mostro (Default)".to_string(),
+                pubkey_hex: "82fa8cb978b43c79b2156585bac2c011176a21d2aead6d9f7c575c005be88390"
+                    .to_string(),
+            });
         self.nodes
             .iter()
             .find(|n| n.pubkey_hex == self.active_node_pubkey)
             .or_else(|| self.nodes.first())
-            .expect("MostroConfig must always have at least one node")
+            .unwrap_or(&FALLBACK)
     }
 
     pub fn active_pubkey_hex(&self) -> &str {
         &self.active_node().pubkey_hex
+    }
+
+    pub fn blossom_url(&self) -> &str {
+        self.blossom_url
+            .as_deref()
+            .unwrap_or("https://blossom.primal.net")
     }
 
     /// Ensure there is always at least one node and one relay.

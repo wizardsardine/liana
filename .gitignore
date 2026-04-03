@@ -20,6 +20,7 @@ release_assets
 bin/
 lib/
 pyvenv.cfg
+plans/
 
 .vscode
 coincube-gui/default

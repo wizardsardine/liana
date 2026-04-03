@@ -111,6 +111,7 @@ pub struct Badges {
 pub struct Pills {
     pub simple: ContainerPalette,
     pub primary: ContainerPalette,
+    pub selected: ContainerPalette,
     pub success: ContainerPalette,
     pub warning: ContainerPalette,
     pub error: ContainerPalette,
@@ -473,7 +474,7 @@ impl std::default::Default for Palette {
             },
             banners: Banners {
                 network: ContainerPalette {
-                    background: color::BLUE,
+                    background: color::LIGHT_BLUE,
                     text: color::LIGHT_BLACK.into(),
                     border: None,
                 },
@@ -505,6 +506,11 @@ impl std::default::Default for Palette {
                     background: color::TRANSPARENT,
                     text: color::GREY_3.into(),
                     border: color::GREY_3.into(),
+                },
+                selected: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: color::ORANGE.into(),
+                    border: Some(color::ORANGE),
                 },
                 warning: ContainerPalette {
                     background: color::WARN_ORANGE,
@@ -659,38 +665,38 @@ impl Palette {
             },
             text: Text {
                 primary: color::DARK_GRAY,
-                secondary: color::GREY_3,
+                secondary: color::GREY_5,
                 warning: color::ORANGE,
-                success: color::GREEN,
-                error: color::RED,
+                success: color::DARK_GREEN,
+                error: color::DARK_RED,
             },
             buttons: Buttons {
                 primary: Button {
                     active: ButtonPalette {
                         background: color::ORANGE,
-                        text: color::WHITE,
+                        text: color::BLACK,
                         border: Some(color::ORANGE),
                     },
                     hovered: ButtonPalette {
                         background: color::DARK_ORANGE,
-                        text: color::WHITE,
+                        text: color::BLACK,
                         border: Some(color::DARK_ORANGE),
                     },
                     pressed: Some(ButtonPalette {
                         background: color::DARK_ORANGE,
-                        text: color::WHITE,
+                        text: color::BLACK,
                         border: Some(color::DARK_ORANGE),
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::LIGHT_CARD_BG,
-                        text: color::GREY_3,
+                        text: color::GREY_5,
                         border: Some(color::LIGHT_BORDER),
                     }),
                 },
                 secondary: Button {
                     active: ButtonPalette {
                         background: color::LIGHT_CARD_BG,
-                        text: color::GREY_3,
+                        text: color::GREY_5,
                         border: Some(color::LIGHT_BORDER),
                     },
                     hovered: ButtonPalette {
@@ -705,7 +711,7 @@ impl Palette {
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::LIGHT_CARD_BG,
-                        text: color::GREY_3,
+                        text: color::GREY_6,
                         border: Some(color::LIGHT_BORDER),
                     }),
                 },
@@ -920,7 +926,7 @@ impl Palette {
             },
             banners: Banners {
                 network: ContainerPalette {
-                    background: color::BLUE,
+                    background: color::LIGHT_BLUE,
                     text: color::DARK_GRAY.into(),
                     border: None,
                 },
@@ -952,6 +958,11 @@ impl Palette {
                     background: color::TRANSPARENT,
                     text: color::GREY_3.into(),
                     border: color::GREY_3.into(),
+                },
+                selected: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: color::ORANGE.into(),
+                    border: Some(color::ORANGE),
                 },
                 warning: ContainerPalette {
                     background: color::WARN_ORANGE,
@@ -1009,7 +1020,7 @@ impl Palette {
             text_inputs: TextInputs {
                 primary: TextInput {
                     active: TextInputPalette {
-                        background: color::LIGHT_SURFACE,
+                        background: color::LIGHT_BG,
                         icon: color::GREY_3,
                         placeholder: color::LIGHT_BORDER,
                         value: color::DARK_GRAY,
@@ -1027,7 +1038,7 @@ impl Palette {
                 },
                 invalid: TextInput {
                     active: TextInputPalette {
-                        background: color::LIGHT_SURFACE,
+                        background: color::LIGHT_BG,
                         icon: color::GREY_3,
                         placeholder: color::LIGHT_BORDER,
                         value: color::DARK_GRAY,

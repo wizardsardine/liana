@@ -9,7 +9,10 @@ use crate::{
     },
     export::ImportExportMessage,
     node::bitcoind::{Bitcoind, RpcAuthType},
-    services::fiat::{Currency, PriceSource},
+    services::{
+        fiat::{Currency, PriceSource},
+        sideshift::{ShiftQuote, ShiftResponse, ShiftStatus, SideshiftNetwork},
+    },
 };
 use coincubed::config::BitcoindConfig;
 
@@ -95,12 +98,13 @@ pub enum Message {
     LiquidSend(LiquidSendMessage),
     LiquidSettings(LiquidSettingsMessage),
     PreselectPayment(Payment),
+    SetAssetFilter(crate::app::state::liquid::transactions::AssetFilter),
     ShowError(String),
     ShowSuccess(String),
     ShowToast(log::Level, String),
     DismissToast(usize),
-    UsdtOverview(UsdtOverviewMessage),
-    ToggleUsdt,
+    SideshiftReceive(SideshiftReceiveMessage),
+    SideshiftSend(SideshiftSendMessage),
     ConnectAccount(ConnectAccountMessage),
     ConnectCube(ConnectCubeMessage),
     ToggleConnect,
@@ -221,6 +225,7 @@ pub enum SettingsMessage {
     InstallStatsSection,
     InstallStats(InstallStatsViewMessage),
     TestToast(log::Level),
+    ToggleDirectionBadges(bool),
 }
 
 #[derive(Debug, Clone)]
@@ -336,27 +341,70 @@ pub enum FiatMessage {
     CurrencyEdited(Currency),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SideshiftShiftType {
+    Fixed,
+    Variable,
+}
+
+#[derive(Debug, Clone)]
+pub enum SideshiftReceiveMessage {
+    SelectNetwork(SideshiftNetwork),
+    AmountInput(String),
+    Generate,
+    AffiliateFetched(Result<String, String>),
+    QuoteFetched(Result<ShiftQuote, String>),
+    ShiftCreated(Result<ShiftResponse, String>),
+    PollStatus,
+    StatusUpdated(Result<ShiftStatus, String>),
+    Copy,
+    /// Go back one step, preserving entered data.
+    Back,
+    Reset,
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum SideshiftSendMessage {
+    /// Address input changed — triggers network auto-detection.
+    RecipientAddressEdited(String),
+    /// User picks a network when address is ambiguous (0x → ETH/BSC).
+    DisambiguateNetwork(SideshiftNetwork),
+    /// Proceed from address screen to amount screen.
+    Next,
+    /// Amount input changed.
+    AmountInput(String),
+    /// Start the shift creation pipeline.
+    Generate,
+    AffiliateFetched(Result<String, String>),
+    QuoteFetched(Result<ShiftQuote, String>),
+    ShiftCreated(Result<ShiftResponse, String>),
+    ConfirmSend,
+    /// Breez prepare_send_asset succeeded — ready to execute payment.
+    PaymentPrepared(breez_sdk_liquid::prelude::PrepareSendResponse),
+    /// Breez send_payment completed.
+    PaymentSent,
+    /// Breez payment failed.
+    PaymentFailed(String),
+    PollStatus,
+    StatusUpdated(Result<ShiftStatus, String>),
+    /// Go back one step, preserving entered data.
+    Back,
+    Reset,
+    Error(String),
+    Copy,
+}
+
 #[derive(Debug, Clone)]
 pub enum LiquidOverviewMessage {
     SendLbtc,
     ReceiveLbtc,
-    History,
-    SelectTransaction(usize),
-    DataLoaded {
-        balance: Amount,
-        recent_payment: Vec<Payment>,
-    },
-    Error(String),
-    RefreshRequested,
-}
-
-#[derive(Debug, Clone)]
-pub enum UsdtOverviewMessage {
     SendUsdt,
     ReceiveUsdt,
     History,
     SelectTransaction(usize),
     DataLoaded {
+        balance: Amount,
         usdt_balance: u64,
         recent_payment: Vec<Payment>,
     },
@@ -396,6 +444,19 @@ pub enum LiquidSendMessage {
         max_sat: u64,
     },
     RefreshRequested,
+    /// Open the "You Send" asset picker modal.
+    OpenSendPicker,
+    /// Open the "They Receive" asset+network picker modal.
+    OpenReceivePicker,
+    /// Close any open picker modal.
+    ClosePicker,
+    /// Set the "You Send" asset (from the picker).
+    SetSendAsset(crate::app::state::liquid::send::SendAsset),
+    /// Set the "They Receive" asset + network (from the picker).
+    SetReceiveTarget(
+        crate::app::state::liquid::send::SendAsset,
+        crate::app::state::liquid::send::ReceiveNetwork,
+    ),
 }
 
 #[derive(Debug, Clone)]
@@ -425,8 +486,105 @@ pub enum LiquidReceiveMessage {
     DescriptionInput(String),
     Error(String),
     ClearError,
-    OnChainLimitsFetched { min_sat: u64, max_sat: u64 },
-    LightningLimitsFetched { min_sat: u64, max_sat: u64 },
+    OnChainLimitsFetched {
+        min_sat: u64,
+        max_sat: u64,
+    },
+    LightningLimitsFetched {
+        min_sat: u64,
+        max_sat: u64,
+    },
+    /// Open the "You Receive" asset picker modal.
+    OpenReceivePicker,
+    /// Open the "They Send" network picker modal.
+    OpenSenderPicker,
+    /// Close any open picker modal.
+    ClosePicker,
+    /// Set the "You Receive" asset (from the picker).
+    SetReceiveAsset(crate::app::state::liquid::send::SendAsset),
+    /// Set the "They Send" network (from the picker).
+    SetSenderNetwork(SenderNetwork),
+    /// Balance and recent transactions loaded from Breez.
+    DataLoaded {
+        btc_balance: coincube_core::miniscript::bitcoin::Amount,
+        usdt_balance: u64,
+        recent_payment: Vec<breez_sdk_liquid::prelude::Payment>,
+    },
+    /// User tapped a recent transaction row.
+    SelectTransaction(usize),
+    /// User tapped "View All Transactions".
+    History,
+}
+
+/// Network the sender is sending from (receive flow).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SenderNetwork {
+    /// BTC via Lightning
+    Lightning,
+    /// L-BTC on Liquid
+    Liquid,
+    /// BTC on-chain
+    Bitcoin,
+    /// USDt on Ethereum (SideShift)
+    Ethereum,
+    /// USDt on Tron (SideShift)
+    Tron,
+    /// USDt on Binance Smart Chain (SideShift)
+    Binance,
+    /// USDt on Solana (SideShift)
+    Solana,
+}
+
+impl SenderNetwork {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Lightning => "Lightning",
+            Self::Liquid => "Liquid",
+            Self::Bitcoin => "Bitcoin",
+            Self::Ethereum => "Ethereum",
+            Self::Tron => "Tron",
+            Self::Binance => "Binance",
+            Self::Solana => "Solana",
+        }
+    }
+
+    pub fn is_sideshift(&self) -> bool {
+        matches!(
+            self,
+            Self::Ethereum | Self::Tron | Self::Binance | Self::Solana
+        )
+    }
+
+    pub fn to_sideshift_network(&self) -> Option<SideshiftNetwork> {
+        match self {
+            Self::Ethereum => Some(SideshiftNetwork::Ethereum),
+            Self::Tron => Some(SideshiftNetwork::Tron),
+            Self::Binance => Some(SideshiftNetwork::Binance),
+            Self::Solana => Some(SideshiftNetwork::Solana),
+            _ => None,
+        }
+    }
+
+    /// Valid "They Send" networks for a given "You Receive" asset.
+    pub fn options_for_receive_asset(
+        asset: crate::app::state::liquid::send::SendAsset,
+    ) -> Vec<SenderNetwork> {
+        use crate::app::state::liquid::send::SendAsset;
+        match asset {
+            SendAsset::Lbtc => vec![
+                SenderNetwork::Lightning,
+                SenderNetwork::Liquid,
+                SenderNetwork::Bitcoin,
+            ],
+            SendAsset::Usdt => vec![
+                SenderNetwork::Liquid,
+                SenderNetwork::Ethereum,
+                SenderNetwork::Tron,
+                SenderNetwork::Binance,
+                SenderNetwork::Solana,
+            ],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -565,6 +723,10 @@ pub enum AvatarMessage {
 
 #[derive(Debug, Clone)]
 pub enum HomeMessage {
+    /// Navigate to Send with asset preset.
+    SendAsset(crate::app::state::liquid::send::SendAsset),
+    /// Navigate to Receive with asset preset.
+    ReceiveAsset(crate::app::state::liquid::send::SendAsset),
     ToggleBalanceMask,
     SelectTransferDirection(TransferDirection),
     AmountEdited(String),
@@ -623,7 +785,6 @@ pub enum P2PMessage {
     MinAmountEdited(String),
     MaxAmountEdited(String),
     LightningAddressEdited(String),
-    ExpiryDaysEdited(String),
     SubmitOrder,
     ClearForm,
     MostroOrdersReceived(Vec<super::p2p::components::P2POrder>),
@@ -647,8 +808,8 @@ pub enum P2PMessage {
     MostroSelectActiveNode(String),
     MostroNodeInfoReceived {
         currencies: Vec<String>,
-        min_order_sats: Option<i64>,
-        max_order_sats: Option<i64>,
+        min_order_sats: Option<u64>,
+        max_order_sats: Option<u64>,
     },
     ConfirmOrder,
     CancelConfirmation,
@@ -698,4 +859,26 @@ pub enum P2PMessage {
     DisputeChatInputEdited(String),
     SendDisputeChatMessage,
     DisputeChatMessageSent(Result<(), String>),
+    // Chat list
+    ChatListTabMessages,
+    ChatListTabDisputes,
+    OpenChatForTrade(String),
+    OpenDisputeChatForTrade(String),
+    // File attachments
+    AttachFile,
+    FileSelected(std::path::PathBuf),
+    /// (order_id, metadata_json) on success, error string on failure.
+    AttachmentSent(Result<(String, String), String>),
+    AttachmentDownloaded {
+        order_id: String,
+        blossom_url: String,
+        data: Result<Vec<u8>, String>,
+    },
+    SaveFile {
+        blossom_url: String,
+        filename: String,
+    },
+    FileSaved(Result<(), String>),
+    // Stream-level errors (relay connection, subscription, restore failures)
+    StreamError(String),
 }

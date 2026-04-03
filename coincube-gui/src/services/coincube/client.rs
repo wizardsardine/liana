@@ -407,6 +407,25 @@ impl CoincubeClient {
 }
 
 impl CoincubeClient {
+    /// GET /api/v1/config/sideshift — fetch the SideShift affiliate ID.
+    pub async fn get_sideshift_affiliate_id(&self) -> Result<String, String> {
+        let url = format!("{}/api/v1/config/sideshift", self.base_url);
+        let res = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .check_success()
+            .await
+            .map_err(|e| format!("HTTP {}: {}", e.status_code, e.text))?;
+        let config: crate::services::sideshift::SideshiftConfig =
+            res.json().await.map_err(|e| e.to_string())?;
+        Ok(config.affiliate_id)
+    }
+}
+
+impl CoincubeClient {
     /// Detects the user's country and returns (country_name, iso_code)
     pub async fn locate(&self) -> Result<&'static Country, CoincubeError> {
         // allow users (and developers) to override detected ISO_CODE

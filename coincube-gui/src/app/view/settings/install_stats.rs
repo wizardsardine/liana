@@ -3,8 +3,8 @@ use iced::widget::{Column, Row, Space};
 use iced::{Alignment, Color, Length, Point, Rectangle};
 
 use coincube_ui::component::{card, text::*};
+use coincube_ui::theme;
 use coincube_ui::widget::*;
-use coincube_ui::{color, theme};
 
 use crate::app::cache;
 use crate::app::menu::Menu;
@@ -84,9 +84,11 @@ fn downloads_card<'a>(
         None => "—".to_string(),
     };
 
-    let inner = Column::new()
-        .spacing(8)
-        .push(text("TOTAL DOWNLOADS").size(11).color(color::GREY_2));
+    let inner = Column::new().spacing(8).push(
+        text("TOTAL DOWNLOADS")
+            .size(11)
+            .style(theme::text::secondary),
+    );
 
     let inner = if let Some(s) = stats {
         let total = s.total;
@@ -101,7 +103,7 @@ fn downloads_card<'a>(
             .push(
                 text(format!("of {} downloads", format_count(DOWNLOAD_GOAL)))
                     .size(13)
-                    .color(color::GREY_2),
+                    .style(theme::text::secondary),
             )
             .push(Space::new().height(Length::Fixed(4.0)))
             .push(ProgressBar::new(0.0..=1.0, bar_pct))
@@ -109,7 +111,7 @@ fn downloads_card<'a>(
                 Row::new().push(Space::new().width(Length::Fill)).push(
                     text(format!("{:.2}% of goal", raw_pct * 100.0))
                         .size(12)
-                        .color(color::GREY_2),
+                        .style(theme::text::secondary),
                 ),
             )
     } else {
@@ -117,14 +119,14 @@ fn downloads_card<'a>(
             text(if loading { "Loading…" } else { "—" })
                 .size(38)
                 .bold()
-                .color(color::GREY_2),
+                .style(theme::text::secondary),
         )
     };
 
     let today_row = Row::new()
         .align_y(Alignment::Center)
         .push(Space::new().width(Length::Fill))
-        .push(text(today_label).size(14).color(color::WHITE))
+        .push(text(today_label).size(14).style(theme::text::secondary))
         .push(Space::new().width(Length::Fill));
 
     card::simple(Column::new().spacing(10).push(inner).push(today_row))
@@ -140,7 +142,7 @@ fn chart_card<'a>(
     let chart_area: Element<'a, Message> = if loading && timeseries.is_none() {
         Row::new()
             .push(Space::new().width(Length::Fill))
-            .push(text("Loading…").size(13).color(color::GREY_2))
+            .push(text("Loading…").size(13).style(theme::text::secondary))
             .push(Space::new().width(Length::Fill))
             .height(Length::Fixed(160.0))
             .into()
@@ -148,7 +150,7 @@ fn chart_card<'a>(
         if points.is_empty() {
             Row::new()
                 .push(Space::new().width(Length::Fill))
-                .push(text("No data").size(13).color(color::GREY_2))
+                .push(text("No data").size(13).style(theme::text::secondary))
                 .push(Space::new().width(Length::Fill))
                 .height(Length::Fixed(160.0))
                 .into()
@@ -184,10 +186,10 @@ fn chart_card<'a>(
 
 fn period_btn(p: StatsPeriod, current: StatsPeriod) -> Element<'static, Message> {
     let is_active = p == current;
-    Button::new(text(p.label()).size(13).bold().color(if is_active {
-        color::BLACK
+    Button::new(text(p.label()).size(13).bold().style(if is_active {
+        theme::text::primary
     } else {
-        color::WHITE
+        theme::text::secondary
     }))
     .padding([6, 16])
     .style(if is_active {
@@ -224,7 +226,7 @@ impl canvas::Program<Message, coincube_ui::theme::Theme> for LineChart {
         &self,
         _state: &Self::State,
         renderer: &iced::Renderer,
-        _theme: &coincube_ui::theme::Theme,
+        theme: &coincube_ui::theme::Theme,
         bounds: Rectangle,
         _cursor: iced::mouse::Cursor,
     ) -> Vec<Geometry<iced::Renderer>> {
@@ -233,6 +235,31 @@ impl canvas::Program<Message, coincube_ui::theme::Theme> for LineChart {
         if self.points.is_empty() {
             return vec![frame.into_geometry()];
         }
+
+        let is_light = theme.mode == coincube_ui::theme::palette::ThemeMode::Light;
+
+        // Theme-aware colors for the chart
+        let grid_color = if is_light {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.08)
+        } else {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.07)
+        };
+        let label_color = if is_light {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.45)
+        } else {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.4)
+        };
+        let line_color = if is_light {
+            Color::from_rgb(0.97, 0.57, 0.10) // orange
+        } else {
+            Color::WHITE
+        };
+        let fill_color = if is_light {
+            Color::from_rgba(0.97, 0.57, 0.10, 0.12)
+        } else {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+        };
+        let dot_color = line_color;
 
         let pad_left = 38.0_f32;
         let pad_right = 10.0_f32;
@@ -258,7 +285,6 @@ impl canvas::Program<Message, coincube_ui::theme::Theme> for LineChart {
             .map(|(i, p)| Point::new(map_x(i), map_y(p.count)))
             .collect();
 
-        let grid_color = Color::from_rgba(1.0, 1.0, 1.0, 0.07);
         for step in 0..=4 {
             let y = pad_top + (step as f32 / 4.0) * h;
             let grid_line = Path::line(Point::new(pad_left, y), Point::new(pad_left + w, y));
@@ -272,7 +298,7 @@ impl canvas::Program<Message, coincube_ui::theme::Theme> for LineChart {
             frame.fill_text(canvas::Text {
                 content: label,
                 position: Point::new(0.0, y - 6.0),
-                color: Color::from_rgba(1.0, 1.0, 1.0, 0.4),
+                color: label_color,
                 size: iced::Pixels(9.0),
                 ..canvas::Text::default()
             });
@@ -287,7 +313,7 @@ impl canvas::Program<Message, coincube_ui::theme::Theme> for LineChart {
             builder.line_to(Point::new(pts[n - 1].x, pad_top + h));
             builder.close();
         });
-        frame.fill(&fill_path, Color::from_rgba(1.0, 1.0, 1.0, 0.08));
+        frame.fill(&fill_path, fill_color);
 
         let line_path = Path::new(|builder| {
             builder.move_to(pts[0]);
@@ -297,12 +323,12 @@ impl canvas::Program<Message, coincube_ui::theme::Theme> for LineChart {
         });
         frame.stroke(
             &line_path,
-            Stroke::default().with_color(Color::WHITE).with_width(2.0),
+            Stroke::default().with_color(line_color).with_width(2.0),
         );
 
         let last = pts[n - 1];
         let dot = Path::circle(last, 5.0);
-        frame.fill(&dot, Color::WHITE);
+        frame.fill(&dot, dot_color);
 
         let label_step = ((n as f32 / 7.0).ceil() as usize).max(1);
         for (i, p) in self.points.iter().enumerate() {
@@ -315,7 +341,7 @@ impl canvas::Program<Message, coincube_ui::theme::Theme> for LineChart {
             frame.fill_text(canvas::Text {
                 content: label,
                 position: Point::new(text_x, pad_top + h + 8.0),
-                color: Color::from_rgba(1.0, 1.0, 1.0, 0.45),
+                color: label_color,
                 size: iced::Pixels(9.0),
                 ..canvas::Text::default()
             });
@@ -326,22 +352,10 @@ impl canvas::Program<Message, coincube_ui::theme::Theme> for LineChart {
 }
 
 fn short_date_label(date: &str) -> String {
-    // Strip time component if present (e.g., "2026-03-17T00:00:00Z" → "2026-03-17")
-    let date_only = date.split('T').next().unwrap_or(date);
-    let parts: Vec<&str> = date_only.split('-').collect();
-    if parts.len() == 3 {
-        let month_names = [
-            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-        ];
-        if let Ok(m) = parts[1].parse::<usize>() {
-            if (1..=12).contains(&m) {
-                return format!(
-                    "{} {}",
-                    month_names[m - 1],
-                    parts[2].trim_start_matches('0')
-                );
-            }
-        }
+    // date is "YYYY-MM-DD"; show "MM/DD"
+    if date.len() >= 10 {
+        format!("{}/{}", &date[5..7], &date[8..10])
+    } else {
+        date.to_string()
     }
-    date_only.to_string()
 }

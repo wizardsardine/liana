@@ -25,6 +25,10 @@ pub fn primary(theme: &Theme) -> Style {
     pill(&theme.colors.pills.primary)
 }
 
+pub fn selected(theme: &Theme) -> Style {
+    pill(&theme.colors.pills.selected)
+}
+
 pub fn success(theme: &Theme) -> Style {
     pill(&theme.colors.pills.success)
 }

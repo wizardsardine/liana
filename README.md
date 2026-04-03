@@ -8,6 +8,8 @@ _Secure Bitcoin wallet with Vault multi-sig, Liquid spending, Buy/Sell and inher
 
 </div>
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/coincubetech/coincube)
+
 ## About
 
 COINCUBE is a comprehensive Bitcoin wallet solution built on a hard fork of [Liana](https://github.com/wizardsardine/liana) with significant modifications by [Coincube Technology LLC](https://coincube.io). We retain the original license and acknowledge the foundational work of the Liana project. This wallet provides:

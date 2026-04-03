@@ -1,21 +1,40 @@
+use std::convert::TryInto;
 use std::sync::Arc;
 use std::time::Duration;
 
+use breez_sdk_liquid::model::PaymentDetails;
+use breez_sdk_liquid::prelude::Payment;
 use coincube_core::miniscript::bitcoin::{Amount, Denomination};
 use coincube_ui::component::form;
 use coincube_ui::widget::*;
 use iced::{clipboard, widget::qr_code, Subscription, Task};
 
-use crate::app::breez::assets::{parse_asset_to_minor_units, usdt_asset_id, USDT_PRECISION};
+use super::sideshift_receive::SideshiftReceiveFlow;
+use crate::app::breez::assets::{
+    format_usdt_display, parse_asset_to_minor_units, usdt_asset_id, USDT_PRECISION,
+};
+use crate::app::menu::LiquidSubMenu;
 use crate::app::settings::unit::BitcoinDisplayUnit;
-use crate::app::view::{LiquidReceiveMessage, ReceiveMethod};
+use crate::app::state::liquid::send::SendAsset;
+use crate::app::state::redirect;
+use crate::app::view::{LiquidReceiveMessage, ReceiveMethod, SenderNetwork};
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
+use crate::utils::format_time_ago;
 
 pub struct LiquidReceive {
     breez_client: Arc<BreezClient>,
     receive_method: ReceiveMethod,
+    sideshift_flow: Option<SideshiftReceiveFlow>,
+    /// Asset the user wants to receive into their wallet.
+    receive_asset: SendAsset,
+    /// Network the sender is sending from.
+    sender_network: SenderNetwork,
+    /// Whether the "You Receive" picker modal is open.
+    receive_picker_open: bool,
+    /// Whether the "They Send" picker modal is open.
+    sender_picker_open: bool,
     lightning_address: Option<String>,
     lightning_qr_data: Option<qr_code::Data>,
     liquid_address: Option<String>,
@@ -31,13 +50,43 @@ pub struct LiquidReceive {
     lightning_receive_limits: Option<(u64, u64)>, // (min_sat, max_sat)
     onchain_receive_limits: Option<(u64, u64)>,   // (min_sat, max_sat)
     error: Option<String>,
+    btc_balance: Amount,
+    usdt_balance: u64,
+    recent_transaction: Vec<view::liquid::RecentTransaction>,
+    recent_payments: Vec<Payment>,
 }
 
 impl LiquidReceive {
+    /// Returns a clone of the inner `Arc<BreezClient>`.
+    pub fn breez_client_arc(&self) -> Arc<BreezClient> {
+        self.breez_client.clone()
+    }
+
+    pub fn receive_asset(&self) -> SendAsset {
+        self.receive_asset
+    }
+
+    pub fn sender_network(&self) -> SenderNetwork {
+        self.sender_network
+    }
+
+    pub fn receive_picker_open(&self) -> bool {
+        self.receive_picker_open
+    }
+
+    pub fn sender_picker_open(&self) -> bool {
+        self.sender_picker_open
+    }
+
     pub fn new(breez_client: Arc<BreezClient>) -> Self {
         Self {
             breez_client,
             receive_method: ReceiveMethod::Lightning,
+            sideshift_flow: None,
+            receive_asset: SendAsset::Lbtc,
+            sender_network: SenderNetwork::Lightning,
+            receive_picker_open: false,
+            sender_picker_open: false,
             lightning_address: None,
             lightning_qr_data: None,
             liquid_address: None,
@@ -53,6 +102,10 @@ impl LiquidReceive {
             lightning_receive_limits: None,
             onchain_receive_limits: None,
             error: None,
+            btc_balance: Amount::ZERO,
+            usdt_balance: 0,
+            recent_transaction: Vec::new(),
+            recent_payments: Vec::new(),
         }
     }
 
@@ -87,6 +140,11 @@ impl LiquidReceive {
 
 impl State for LiquidReceive {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
+        // Delegate to SideShift flow when active
+        if let Some(sideshift) = &self.sideshift_flow {
+            return sideshift.view(menu, cache);
+        }
+
         let receive_view = view::liquid::liquid_receive_view(
             &self.receive_method,
             self.current_address(),
@@ -99,12 +157,39 @@ impl State for LiquidReceive {
             self.error.as_ref(),
             self.lightning_receive_limits,
             self.onchain_receive_limits,
+            self.receive_asset,
+            self.sender_network,
+            &self.recent_transaction,
+            self.btc_balance,
+            self.usdt_balance,
+            cache.show_direction_badges,
         )
         .map(view::Message::LiquidReceive);
 
         let content = view::dashboard(menu, cache, receive_view);
 
-        // Use global toast overlay instead of local toast
+        // Show picker modals if open
+        if self.receive_picker_open {
+            let modal_content = view::liquid::receive_asset_picker_modal(self.receive_asset)
+                .map(view::Message::LiquidReceive);
+            return coincube_ui::widget::modal::Modal::new(content, modal_content)
+                .on_blur(Some(view::Message::LiquidReceive(
+                    LiquidReceiveMessage::ClosePicker,
+                )))
+                .into();
+        }
+
+        if self.sender_picker_open {
+            let modal_content =
+                view::liquid::sender_network_picker_modal(self.receive_asset, self.sender_network)
+                    .map(view::Message::LiquidReceive);
+            return coincube_ui::widget::modal::Modal::new(content, modal_content)
+                .on_blur(Some(view::Message::LiquidReceive(
+                    LiquidReceiveMessage::ClosePicker,
+                )))
+                .into();
+        }
+
         content
     }
 
@@ -114,6 +199,28 @@ impl State for LiquidReceive {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        // Handle SideShift receive messages when flow is active
+        if let Message::View(view::Message::SideshiftReceive(ref msg)) = message {
+            if let Some(sideshift) = &mut self.sideshift_flow {
+                match sideshift.update(msg) {
+                    Some(task) => return task,
+                    None => {
+                        // SelectNetwork(Liquid) — switch to native Liquid USDt receive
+                        self.sideshift_flow = None;
+                        self.receive_method = ReceiveMethod::Usdt;
+                        self.sender_network = SenderNetwork::Liquid;
+                        return self.fetch_limits();
+                    }
+                }
+            }
+            return Task::none();
+        }
+
+        // When SideShift flow is active, ignore other messages
+        if self.sideshift_flow.is_some() {
+            return Task::none();
+        }
+
         if let Message::View(view::Message::LiquidReceive(msg)) = message {
             match msg {
                 LiquidReceiveMessage::ToggleMethod(method) => {
@@ -353,6 +460,217 @@ impl State for LiquidReceive {
                 LiquidReceiveMessage::OnChainLimitsFetched { min_sat, max_sat } => {
                     self.onchain_receive_limits = Some((min_sat, max_sat));
                 }
+                LiquidReceiveMessage::OpenReceivePicker => {
+                    self.receive_picker_open = true;
+                    self.sender_picker_open = false;
+                    return Task::none();
+                }
+                LiquidReceiveMessage::OpenSenderPicker => {
+                    self.sender_picker_open = true;
+                    self.receive_picker_open = false;
+                    return Task::none();
+                }
+                LiquidReceiveMessage::ClosePicker => {
+                    self.receive_picker_open = false;
+                    self.sender_picker_open = false;
+                    return Task::none();
+                }
+                LiquidReceiveMessage::SetReceiveAsset(asset) => {
+                    self.receive_picker_open = false;
+                    if self.receive_asset != asset {
+                        self.receive_asset = asset;
+                        self.sideshift_flow = None;
+                        self.error = None;
+                        // Reset to default sender network for the new asset
+                        match asset {
+                            SendAsset::Lbtc => {
+                                self.sender_network = SenderNetwork::Lightning;
+                                self.receive_method = ReceiveMethod::Lightning;
+                            }
+                            SendAsset::Usdt => {
+                                self.sender_network = SenderNetwork::Liquid;
+                                self.receive_method = ReceiveMethod::Usdt;
+                            }
+                        }
+                        self.recent_transaction.clear();
+                        self.recent_payments.clear();
+                        return Task::batch(vec![
+                            self.fetch_limits(),
+                            self.load_recent_transactions(),
+                        ]);
+                    }
+                    return Task::none();
+                }
+                LiquidReceiveMessage::SetSenderNetwork(network) => {
+                    self.sender_picker_open = false;
+                    self.sender_network = network;
+                    self.sideshift_flow = None;
+                    self.error = None;
+
+                    // Map sender network to internal ReceiveMethod or SideShift flow
+                    match network {
+                        SenderNetwork::Lightning => {
+                            self.receive_method = ReceiveMethod::Lightning;
+                        }
+                        SenderNetwork::Liquid => {
+                            if self.receive_asset == SendAsset::Usdt {
+                                self.receive_method = ReceiveMethod::Usdt;
+                            } else {
+                                self.receive_method = ReceiveMethod::Liquid;
+                            }
+                        }
+                        SenderNetwork::Bitcoin => {
+                            self.receive_method = ReceiveMethod::OnChain;
+                        }
+                        _ if network.is_sideshift() => {
+                            // Activate SideShift flow with the selected network
+                            let flow = SideshiftReceiveFlow::new(self.breez_client.clone());
+                            if let Some(ss_net) = network.to_sideshift_network() {
+                                self.sideshift_flow = Some(flow);
+                                // Dispatch SelectNetwork to the SideShift flow
+                                return Task::done(Message::View(view::Message::SideshiftReceive(
+                                    view::SideshiftReceiveMessage::SelectNetwork(ss_net),
+                                )));
+                            }
+                        }
+                        _ => {}
+                    }
+                    return self.fetch_limits();
+                }
+                LiquidReceiveMessage::DataLoaded {
+                    btc_balance,
+                    usdt_balance,
+                    recent_payment,
+                } => {
+                    self.btc_balance = btc_balance;
+                    self.usdt_balance = usdt_balance;
+
+                    let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
+                    let receive_usdt = self.receive_asset == SendAsset::Usdt;
+
+                    // Filter payments by receive asset, matching Send behavior
+                    let filtered: Vec<Payment> = recent_payment
+                        .into_iter()
+                        .filter(|p| {
+                            let is_usdt = matches!(
+                                &p.details,
+                                PaymentDetails::Liquid { asset_id, .. }
+                                    if !usdt_id.is_empty() && asset_id == usdt_id
+                            );
+                            if receive_usdt {
+                                is_usdt
+                            } else {
+                                !is_usdt
+                            }
+                        })
+                        .take(5)
+                        .collect();
+                    self.recent_payments = filtered.clone();
+
+                    let fiat_converter: Option<view::FiatAmountConverter> =
+                        cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+
+                    self.recent_transaction = filtered
+                        .iter()
+                        .map(|payment| {
+                            let status = payment.status;
+                            let time_ago = format_time_ago(payment.timestamp.into());
+                            let is_usdt = matches!(
+                                &payment.details,
+                                PaymentDetails::Liquid { asset_id, .. }
+                                    if !usdt_id.is_empty() && asset_id == usdt_id
+                            );
+
+                            let amount = if is_usdt {
+                                if let PaymentDetails::Liquid { asset_info: Some(ref info), .. } = &payment.details {
+                                    Amount::from_sat((info.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64)
+                                } else {
+                                    Amount::from_sat(payment.amount_sat)
+                                }
+                            } else {
+                                Amount::from_sat(payment.amount_sat)
+                            };
+
+                            // Only compute fiat for BTC rows; USDt has its own display.
+                            let fiat_amount = if is_usdt {
+                                None
+                            } else {
+                                fiat_converter
+                                    .as_ref()
+                                    .map(|c: &view::FiatAmountConverter| c.convert(amount))
+                            };
+
+                            let (desc, usdt_display) = if is_usdt {
+                                let display = if let PaymentDetails::Liquid {
+                                    asset_info: Some(info),
+                                    ..
+                                } = &payment.details
+                                {
+                                    format_usdt_display(
+                                        (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round()
+                                            as u64,
+                                    )
+                                } else {
+                                    format_usdt_display(payment.amount_sat)
+                                };
+                                (
+                                    "USDt Transfer".to_owned(),
+                                    Some(format!("{} USDt", display)),
+                                )
+                            } else {
+                                let d: &str = match &payment.details {
+                                    PaymentDetails::Lightning {
+                                        payer_note,
+                                        description,
+                                        ..
+                                    } => payer_note
+                                        .as_ref()
+                                        .filter(|s| !s.is_empty())
+                                        .unwrap_or(description),
+                                    PaymentDetails::Liquid {
+                                        payer_note,
+                                        description,
+                                        ..
+                                    } => payer_note
+                                        .as_ref()
+                                        .filter(|s| !s.is_empty())
+                                        .unwrap_or(description),
+                                    PaymentDetails::Bitcoin { description, .. } => description,
+                                };
+                                (d.to_owned(), None)
+                            };
+
+                            let is_incoming = matches!(
+                                payment.payment_type,
+                                breez_sdk_liquid::prelude::PaymentType::Receive
+                            );
+                            let details = payment.details.clone();
+                            let fees_sat = Amount::from_sat(payment.fees_sat);
+                            view::liquid::RecentTransaction {
+                                description: desc,
+                                time_ago,
+                                amount,
+                                fiat_amount,
+                                is_incoming,
+                                status,
+                                details,
+                                fees_sat,
+                                usdt_display,
+                            }
+                        })
+                        .collect();
+                }
+                LiquidReceiveMessage::SelectTransaction(idx) => {
+                    if let Some(payment) = self.recent_payments.get(idx).cloned() {
+                        return Task::batch(vec![
+                            redirect(Menu::Liquid(LiquidSubMenu::Transactions(None))),
+                            Task::done(Message::View(view::Message::PreselectPayment(payment))),
+                        ]);
+                    }
+                }
+                LiquidReceiveMessage::History => {
+                    return redirect(Menu::Liquid(LiquidSubMenu::Transactions(None)));
+                }
             }
         }
         Task::none()
@@ -363,10 +681,16 @@ impl State for LiquidReceive {
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
-        self.fetch_limits()
+        self.sideshift_flow = None;
+        self.receive_picker_open = false;
+        self.sender_picker_open = false;
+        Task::batch(vec![self.fetch_limits(), self.load_recent_transactions()])
     }
 
     fn subscription(&self) -> Subscription<Message> {
+        if let Some(sideshift) = &self.sideshift_flow {
+            return sideshift.subscription();
+        }
         if self.loading {
             iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick)
         } else {
@@ -394,6 +718,26 @@ impl LiquidReceive {
 
         // Use global toast overlay instead of local toast
         content
+    }
+
+    pub fn current_usdt_address(&self) -> Option<&String> {
+        self.usdt_address.as_ref()
+    }
+
+    pub fn current_usdt_qr(&self) -> Option<&qr_code::Data> {
+        self.usdt_qr_data.as_ref()
+    }
+
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    pub fn usdt_amount_input(&self) -> &form::Value<String> {
+        &self.usdt_amount_input
+    }
+
+    pub fn current_error(&self) -> Option<&String> {
+        self.error.as_ref()
     }
 
     fn current_address(&self) -> Option<&String> {
@@ -558,6 +902,68 @@ impl LiquidReceive {
             BitcoinDisplayUnit::Sats => Denomination::Satoshi,
         };
         Amount::from_str_in(&self.amount_input.value, denomination).ok()
+    }
+
+    fn load_recent_transactions(&self) -> Task<Message> {
+        let breez_client = self.breez_client.clone();
+        Task::perform(
+            async move {
+                let info = breez_client.info().await;
+                let payments = breez_client.list_payments(Some(20)).await;
+
+                let btc_balance = info
+                    .as_ref()
+                    .map(|info| {
+                        Amount::from_sat(
+                            info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat,
+                        )
+                    })
+                    .unwrap_or(Amount::ZERO);
+
+                let usdt_id = usdt_asset_id(breez_client.network()).unwrap_or("");
+                let usdt_balance = info
+                    .as_ref()
+                    .ok()
+                    .and_then(|info| {
+                        info.wallet_info.asset_balances.iter().find_map(|ab| {
+                            if ab.asset_id == usdt_id {
+                                Some(ab.balance_sat)
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .unwrap_or(0);
+
+                let error = match (&info, &payments) {
+                    (Err(_), Err(_)) => {
+                        Some("Couldn't fetch balance or transactions".to_string())
+                    }
+                    (Err(_), _) => Some("Couldn't fetch account balance".to_string()),
+                    (_, Err(_)) => Some("Couldn't fetch recent transactions".to_string()),
+                    _ => None,
+                };
+
+                let payments = payments.unwrap_or_default();
+
+                (btc_balance, usdt_balance, payments, error)
+            },
+            |(btc_balance, usdt_balance, recent_payment, error)| {
+                if let Some(err) = error {
+                    Message::View(view::Message::LiquidReceive(
+                        LiquidReceiveMessage::Error(err),
+                    ))
+                } else {
+                    Message::View(view::Message::LiquidReceive(
+                        LiquidReceiveMessage::DataLoaded {
+                            btc_balance,
+                            usdt_balance,
+                            recent_payment,
+                        },
+                    ))
+                }
+            },
+        )
     }
 
     fn fetch_limits(&mut self) -> Task<Message> {

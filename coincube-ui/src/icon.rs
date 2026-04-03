@@ -147,6 +147,10 @@ pub fn check_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F633}')
 }
 
+pub fn check2_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F272}')
+}
+
 pub fn round_key_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F44E}')
 }
@@ -257,6 +261,10 @@ pub fn lightning_icon<'a>() -> Text<'a> {
 
 pub fn droplet_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F30C}')
+}
+
+pub fn droplet_fill_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F30B}')
 }
 
 pub fn eye_icon<'a>() -> Text<'a> {

@@ -1,8 +1,14 @@
+use breez_sdk_liquid::model::{PaymentDetails, PaymentState};
 use coincube_core::miniscript::bitcoin::{Amount, Denomination};
 
 use coincube_ui::{
     color,
-    component::{amount::DisplayAmount, button, form, text::*},
+    component::{
+        amount::DisplayAmount,
+        button, form,
+        text::*,
+        transaction::{TransactionDirection, TransactionListItem},
+    },
     icon, theme,
     widget::*,
 };
@@ -14,10 +20,13 @@ use iced::{
     Alignment, Background, Length,
 };
 
+use coincube_ui::image::asset_network_logo;
+
 use crate::app::{
-    breez::assets::{parse_asset_to_minor_units, USDT_PRECISION},
+    breez::assets::{format_usdt_display, parse_asset_to_minor_units, USDT_PRECISION},
     settings::unit::BitcoinDisplayUnit,
-    view::{LiquidReceiveMessage, ReceiveMethod},
+    state::liquid::send::SendAsset,
+    view::{liquid::RecentTransaction, LiquidReceiveMessage, ReceiveMethod, SenderNetwork},
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -33,15 +42,25 @@ pub fn liquid_receive_view<'a>(
     error: Option<&'a String>,
     lightning_limits: Option<(u64, u64)>,
     onchain_limits: Option<(u64, u64)>,
+    receive_asset: SendAsset,
+    sender_network: SenderNetwork,
+    recent_transaction: &[RecentTransaction],
+    btc_balance: Amount,
+    usdt_balance: u64,
+    show_direction_badges: bool,
 ) -> Element<'a, LiquidReceiveMessage> {
-    let mut content = Column::new()
-        .spacing(40)
-        .width(Length::Fill)
-        .align_x(Alignment::Center)
-        .padding(40);
+    let mut content = Column::new().spacing(20).width(Length::Fill);
 
-    content = content.push(method_toggle(receive_method));
+    // ── Two-card "You Receive ← They Send" layout ───────────────────────────
+    content = content.push(receive_cards(
+        receive_asset,
+        sender_network,
+        btc_balance,
+        usdt_balance,
+        bitcoin_unit,
+    ));
 
+    // ── Input section (matches Send layout) ─────────────────────────────────
     match receive_method {
         ReceiveMethod::Lightning => {
             content = content.push(input_fields(
@@ -70,9 +89,9 @@ pub fn liquid_receive_view<'a>(
     } else if let (Some(addr), Some(qr)) = (address, qr_data) {
         // Lightning invoices contain more data, so use smaller cell size
         let cell_size = if *receive_method == ReceiveMethod::Lightning {
-            4
+            3
         } else {
-            8
+            5
         };
 
         // Clean on-chain addresses for display (but keep original for QR code)
@@ -89,7 +108,7 @@ pub fn liquid_receive_view<'a>(
                 .align_x(Alignment::Center)
                 .push(
                     Container::new(QRCode::<theme::Theme>::new(qr).cell_size(cell_size))
-                        .padding(30)
+                        .padding(20)
                         .style(theme::card::simple),
                 )
                 .push(
@@ -123,6 +142,146 @@ pub fn liquid_receive_view<'a>(
         }
     }
 
+    // ── Last transactions (matching Send screen) ────────────────────────────
+    content = content.push(Column::new().spacing(10).push(h4_bold("Last transactions")));
+
+    if !recent_transaction.is_empty() {
+        for (idx, tx) in recent_transaction.iter().enumerate() {
+            let direction = if tx.is_incoming {
+                TransactionDirection::Incoming
+            } else {
+                TransactionDirection::Outgoing
+            };
+
+            let is_usdt = tx.usdt_display.is_some();
+
+            let tx_icon = if is_usdt {
+                coincube_ui::image::asset_network_logo("usdt", "liquid", 40.0)
+            } else {
+                match &tx.details {
+                    PaymentDetails::Lightning { .. } => {
+                        coincube_ui::image::asset_network_logo("btc", "lightning", 40.0)
+                    }
+                    PaymentDetails::Liquid { .. } => {
+                        coincube_ui::image::asset_network_logo("lbtc", "liquid", 40.0)
+                    }
+                    PaymentDetails::Bitcoin { .. } => {
+                        coincube_ui::image::asset_network_logo("btc", "bitcoin", 40.0)
+                    }
+                }
+            };
+
+            let display_amount = if is_usdt {
+                Amount::ZERO
+            } else if tx.is_incoming {
+                tx.amount
+            } else {
+                tx.amount + tx.fees_sat
+            };
+
+            let mut item = TransactionListItem::new(direction, &display_amount, bitcoin_unit)
+                .with_custom_icon(tx_icon)
+                .with_show_direction_badge(show_direction_badges)
+                .with_label(tx.description.clone())
+                .with_time_ago(tx.time_ago.clone());
+
+            if let Some(ref usdt_str) = tx.usdt_display {
+                item = item.with_amount_override(usdt_str.clone());
+            } else {
+                let fiat_str = tx
+                    .fiat_amount
+                    .as_ref()
+                    .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()));
+                if let Some(fiat) = fiat_str {
+                    item = item.with_fiat_amount(fiat);
+                }
+            }
+
+            if matches!(tx.status, PaymentState::Pending) {
+                let (bg, fg) = (color::GREY_3, color::BLACK);
+                let pending_badge = Container::new(
+                    Row::new()
+                        .push(
+                            icon::warning_icon()
+                                .size(14)
+                                .style(move |_| iced::widget::text::Style { color: Some(fg) }),
+                        )
+                        .push(
+                            text("Pending")
+                                .bold()
+                                .size(14)
+                                .style(move |_| iced::widget::text::Style { color: Some(fg) }),
+                        )
+                        .spacing(4),
+                )
+                .padding([2, 8])
+                .style(move |_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(bg)),
+                    border: iced::Border {
+                        radius: 12.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+                item = item.with_custom_status(pending_badge.into());
+            }
+
+            let tx_element: Element<'_, LiquidReceiveMessage> = item
+                .view(LiquidReceiveMessage::SelectTransaction(idx))
+                .into();
+            content = content.push(tx_element);
+        }
+
+        // "View All Transactions" button
+        let view_tx_button = {
+            let the_icon = icon::history_icon()
+                .size(18)
+                .style(|_theme: &theme::Theme| iced::widget::text::Style {
+                    color: Some(color::ORANGE),
+                });
+
+            let label = text("View All Transactions")
+                .size(15)
+                .style(|_theme: &theme::Theme| iced::widget::text::Style {
+                    color: Some(color::ORANGE),
+                });
+
+            let button_content = Row::new()
+                .spacing(8)
+                .align_y(iced::alignment::Vertical::Center)
+                .push(the_icon)
+                .push(label);
+
+            iced_button(Container::new(button_content).padding([10, 20]).style(
+                |_theme: &theme::Theme| container::Style {
+                    background: Some(Background::Color(color::TRANSPARENT)),
+                    border: iced::Border {
+                        color: color::ORANGE,
+                        width: 1.5,
+                        radius: 20.0.into(),
+                    },
+                    ..Default::default()
+                },
+            ))
+            .style(|_theme: &theme::Theme, _| iced_button::Style {
+                background: Some(Background::Color(color::TRANSPARENT)),
+                text_color: color::ORANGE,
+                border: iced::Border {
+                    radius: 20.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .on_press(LiquidReceiveMessage::History)
+        };
+
+        content = content.push(Space::new().height(Length::Fixed(20.0))).push(
+            Container::new(view_tx_button)
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+        );
+    }
+
     if let Some(err) = error {
         Column::new()
             .push(
@@ -135,7 +294,7 @@ pub fn liquid_receive_view<'a>(
                         .max_width(800),
                 )
                 .width(Length::Fill)
-                .padding([20, 40])
+                .padding([20, 0])
                 .align_x(Alignment::Center),
             )
             .push(content)
@@ -145,10 +304,12 @@ pub fn liquid_receive_view<'a>(
     }
 }
 
+#[allow(dead_code)]
 fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage> {
     let lightning_liquid = *current_method == ReceiveMethod::Lightning;
     let liquid_active = *current_method == ReceiveMethod::Liquid;
     let onchain_liquid = *current_method == ReceiveMethod::OnChain;
+    let usdt_active = *current_method == ReceiveMethod::Usdt;
 
     let lightning_button = {
         let icon = icon::lightning_icon()
@@ -352,11 +513,80 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
         })
     };
 
+    let usdt_button = {
+        let ico = icon::usd_icon()
+            .size(18)
+            .style(move |_theme: &theme::Theme| iced::widget::text::Style {
+                color: Some(if usdt_active {
+                    color::ORANGE
+                } else {
+                    color::GREY_2
+                }),
+            });
+
+        let label =
+            text("USDt")
+                .size(16)
+                .style(move |_theme: &theme::Theme| iced::widget::text::Style {
+                    color: Some(if usdt_active {
+                        color::ORANGE
+                    } else {
+                        color::GREY_2
+                    }),
+                });
+
+        let button_content = Container::new(
+            Row::new()
+                .spacing(8)
+                .align_y(iced::alignment::Vertical::Center)
+                .push(ico)
+                .push(label),
+        )
+        .width(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Center);
+
+        Container::new(
+            iced_button(Container::new(button_content).padding([10, 30]))
+                .style(move |_theme: &theme::Theme, _status| iced_button::Style {
+                    background: Some(Background::Color(color::TRANSPARENT)),
+                    text_color: if usdt_active {
+                        color::WHITE
+                    } else {
+                        color::GREY_2
+                    },
+                    border: iced::Border {
+                        radius: 50.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .on_press(LiquidReceiveMessage::ToggleMethod(ReceiveMethod::Usdt)),
+        )
+        .style(move |_theme: &theme::Theme| container::Style {
+            background: Some(Background::Color(if usdt_active {
+                iced::color!(0x161716)
+            } else {
+                color::TRANSPARENT
+            })),
+            border: iced::Border {
+                radius: 50.0.into(),
+                color: if usdt_active {
+                    color::ORANGE
+                } else {
+                    color::TRANSPARENT
+                },
+                width: if usdt_active { 0.7 } else { 0.0 },
+            },
+            ..Default::default()
+        })
+    };
+
     Container::new(
         Row::new()
             .push(lightning_button)
             .push(liquid_button)
-            .push(onchain_button),
+            .push(onchain_button)
+            .push(usdt_button),
     )
     .padding(4)
     .max_width(800.0)
@@ -379,48 +609,6 @@ fn input_fields<'a>(
     lightning_limits: Option<(u64, u64)>,
     loading: bool,
 ) -> Element<'a, LiquidReceiveMessage> {
-    let mut amount_field = Column::new()
-        .spacing(5)
-        .push(
-            text(format!("Amount ({})", bitcoin_unit))
-                .size(14)
-                .style(theme::text::secondary),
-        )
-        .push(if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
-            form::Form::new_amount_btc("Enter amount", amount_input, |v| {
-                LiquidReceiveMessage::AmountInput(v)
-            })
-            .padding(10)
-        } else {
-            form::Form::new_amount_sats("Enter amount", amount_input, |v| {
-                LiquidReceiveMessage::AmountInput(v)
-            })
-            .padding(10)
-        });
-
-    if let Some((min_sat, max_sat)) = lightning_limits {
-        let min_btc = Amount::from_sat(min_sat);
-        let max_btc = Amount::from_sat(max_sat);
-        amount_field = amount_field.push(
-            text(format!(
-                "Enter an amount between {} and {}",
-                min_btc.to_formatted_string_with_unit(bitcoin_unit),
-                max_btc.to_formatted_string_with_unit(bitcoin_unit),
-            ))
-            .size(12),
-        );
-    }
-
-    let description_field = Column::new()
-        .spacing(8)
-        .push(text("Description").size(14).style(theme::text::secondary))
-        .push(
-            TextInput::new("Optional", description_input)
-                .on_input(LiquidReceiveMessage::DescriptionInput)
-                .padding(12)
-                .width(Length::Fill),
-        );
-
     let is_amount_valid = match Amount::from_str_in(
         &amount_input.value,
         if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
@@ -441,69 +629,118 @@ fn input_fields<'a>(
         Err(_) => false,
     };
 
-    let generate_btn = button::primary(None, "Generate Invoice")
+    let mut hints = Column::new().spacing(4);
+    if let Some((min_sat, max_sat)) = lightning_limits {
+        let min_btc = Amount::from_sat(min_sat);
+        let max_btc = Amount::from_sat(max_sat);
+        hints = hints.push(
+            text(format!(
+                "Enter an amount between {} and {}",
+                min_btc.to_formatted_string_with_unit(bitcoin_unit),
+                max_btc.to_formatted_string_with_unit(bitcoin_unit),
+            ))
+            .size(12)
+            .style(theme::text::secondary),
+        );
+    }
+
+    let amount_form = if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+        form::Form::new_amount_btc("Enter amount", amount_input, |v| {
+            LiquidReceiveMessage::AmountInput(v)
+        })
+        .size(16)
+        .padding(15)
+    } else {
+        form::Form::new_amount_sats("Enter amount", amount_input, |v| {
+            LiquidReceiveMessage::AmountInput(v)
+        })
+        .size(16)
+        .padding(15)
+    };
+
+    let description_input_field = TextInput::new("Description (optional)", description_input)
+        .on_input(LiquidReceiveMessage::DescriptionInput)
+        .padding(15)
+        .size(16)
+        .width(Length::Fill);
+
+    let next_btn = Container::new(
+        iced::widget::button(
+            Container::new(icon::arrow_right())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center),
+        )
         .on_press_maybe(
             (is_amount_valid && !loading).then_some(LiquidReceiveMessage::GenerateAddress),
         )
-        .width(Length::Fill)
-        .padding(5);
-
-    Container::new(
-        Column::new()
-            .spacing(15)
-            .max_width(500)
-            .push(amount_field)
-            .push(Space::new().width(3))
-            .push(description_field)
-            .push(generate_btn),
+        .width(Length::Fixed(50.0))
+        .height(Length::Fixed(50.0))
+        .style(theme::button::primary),
     )
-    .width(Length::Fill)
-    .center_x(Length::Fill)
-    .into()
+    .width(Length::Fixed(50.0))
+    .height(Length::Fixed(50.0));
+
+    Column::new()
+        .spacing(12)
+        .width(Length::Fill)
+        .push(hints)
+        .push(
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(amount_form)
+                .push(description_input_field)
+                .push(next_btn),
+        )
+        .into()
 }
 
 fn usdt_input_fields<'a>(
     usdt_amount_input: &'a form::Value<String>,
     loading: bool,
 ) -> Element<'a, LiquidReceiveMessage> {
-    let amount_field = Column::new()
-        .spacing(5)
-        .push(
-            text("Amount (USDt) — Optional")
-                .size(14)
-                .style(theme::text::secondary),
-        )
-        .push(
-            TextInput::new("e.g. 1.50", &usdt_amount_input.value)
-                .on_input(LiquidReceiveMessage::UsdtAmountInput)
-                .padding(12)
-                .width(Length::Fill),
-        )
-        .push(
-            text("Leave empty to generate an amountless address")
-                .size(12)
-                .style(theme::text::secondary),
-        );
-
     let is_valid = usdt_amount_input.value.trim().is_empty()
         || parse_asset_to_minor_units(usdt_amount_input.value.trim(), USDT_PRECISION)
             .is_some_and(|units| units > 0);
 
-    let generate_btn = button::primary(None, "Generate USDt Address")
-        .on_press_maybe((is_valid && !loading).then_some(LiquidReceiveMessage::GenerateAddress))
-        .width(Length::Fill)
-        .padding(5);
-
-    Container::new(
-        Column::new()
-            .spacing(15)
-            .max_width(500)
-            .push(amount_field)
-            .push(generate_btn),
+    let amount_input = TextInput::new(
+        "USDt amount (optional, e.g. 1.50)",
+        &usdt_amount_input.value,
     )
-    .width(Length::Fill)
-    .center_x(Length::Fill)
-    .into()
+    .on_input(LiquidReceiveMessage::UsdtAmountInput)
+    .padding(15)
+    .size(16)
+    .width(Length::Fill);
+
+    let next_btn = Container::new(
+        iced::widget::button(
+            Container::new(icon::arrow_right())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center),
+        )
+        .on_press_maybe((is_valid && !loading).then_some(LiquidReceiveMessage::GenerateAddress))
+        .width(Length::Fixed(50.0))
+        .height(Length::Fixed(50.0))
+        .style(theme::button::primary),
+    )
+    .width(Length::Fixed(50.0))
+    .height(Length::Fixed(50.0));
+
+    Column::new()
+        .spacing(12)
+        .width(Length::Fill)
+        .push(
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(amount_input)
+                .push(next_btn),
+        )
+        .into()
 }
 
 fn generate_button<'a>() -> Element<'a, LiquidReceiveMessage> {
@@ -639,42 +876,43 @@ pub fn usdt_only_receive_view<'a>(
             "Generating Address",
         )));
     } else if let (Some(addr), Some(qr)) = (address, qr_data) {
+        let address_row = Row::new()
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .push(
+                Container::new(
+                    text(addr)
+                        .size(12)
+                        .font(iced::Font::MONOSPACE)
+                        .style(theme::text::secondary)
+                        .wrapping(iced::widget::text::Wrapping::Glyph),
+                )
+                .padding([8, 12])
+                .style(theme::card::simple)
+                .width(Length::Fill),
+            )
+            .push(
+                iced::widget::button(icon::clipboard_icon().size(16))
+                    .on_press(LiquidReceiveMessage::Copy)
+                    .style(theme::button::transparent_border),
+            );
+
         content = content.push(
             Column::new()
-                .spacing(30)
+                .spacing(20)
                 .align_x(Alignment::Center)
                 .push(
-                    Container::new(QRCode::<theme::Theme>::new(qr).cell_size(8))
-                        .padding(30)
+                    Container::new(QRCode::<theme::Theme>::new(qr).cell_size(6))
+                        .padding(20)
                         .style(theme::card::simple),
                 )
+                .push(address_row)
                 .push(
-                    Container::new(
-                        text(addr)
-                            .size(12)
-                            .style(theme::text::secondary)
-                            .wrapping(iced::widget::text::Wrapping::Glyph),
+                    text(
+                        "Share this address to receive USDt (Liquid Tether) from any Liquid wallet",
                     )
-                    .width(Length::Fill)
-                    .max_width(600)
-                    .padding(10)
-                    .center_x(Length::Fill),
-                )
-                .push(
-                    Column::new()
-                        .spacing(15)
-                        .align_x(Alignment::Center)
-                        .push(Row::new().spacing(15).push(
-                            button::primary(Some(icon::clipboard_icon()), "Copy")
-                                .on_press(LiquidReceiveMessage::Copy)
-                                .width(Length::Fixed(150.0))
-                                .padding(15),
-                        ))
-                        .push(
-                            text("Share this address to receive USDt (Liquid Tether) from any Liquid wallet")
-                                .size(13)
-                                .style(theme::text::secondary),
-                        ),
+                    .size(13)
+                    .style(theme::text::secondary),
                 )
                 .push(
                     Container::new(
@@ -684,8 +922,7 @@ pub fn usdt_only_receive_view<'a>(
                             .padding(10),
                     )
                     .width(Length::Fill)
-                    .center_x(Length::Fill)
-                    .padding(10),
+                    .center_x(Length::Fill),
                 ),
         );
     }
@@ -709,5 +946,330 @@ pub fn usdt_only_receive_view<'a>(
             .into()
     } else {
         content.into()
+    }
+}
+
+// ── Two-card layout ─────────────────────────────────────────────────────────
+
+fn receive_cards(
+    receive_asset: SendAsset,
+    sender_network: SenderNetwork,
+    btc_balance: Amount,
+    usdt_balance: u64,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<'static, LiquidReceiveMessage> {
+    let they_send_card = {
+        let asset_label = match (receive_asset, sender_network) {
+            (SendAsset::Lbtc, SenderNetwork::Lightning) => "BTC",
+            (SendAsset::Lbtc, SenderNetwork::Bitcoin) => "BTC",
+            (SendAsset::Lbtc, _) => "L-BTC",
+            (SendAsset::Usdt, _) => "USDt",
+        };
+        let (asset_slug, network_slug) = match (receive_asset, sender_network) {
+            (SendAsset::Lbtc, SenderNetwork::Lightning) => ("btc", "lightning"),
+            (SendAsset::Lbtc, SenderNetwork::Bitcoin) => ("btc", "bitcoin"),
+            (SendAsset::Lbtc, _) => ("lbtc", "liquid"),
+            (SendAsset::Usdt, SenderNetwork::Ethereum) => ("usdt", "ethereum"),
+            (SendAsset::Usdt, SenderNetwork::Tron) => ("usdt", "tron"),
+            (SendAsset::Usdt, SenderNetwork::Binance) => ("usdt", "bsc"),
+            (SendAsset::Usdt, SenderNetwork::Solana) => ("usdt", "solana"),
+            (SendAsset::Usdt, _) => ("usdt", "liquid"),
+        };
+        let ico: Element<'static, LiquidReceiveMessage> =
+            asset_network_logo(asset_slug, network_slug, 40.0);
+
+        let network_label = sender_network.display_name();
+
+        let card_content = Column::new()
+            .spacing(6)
+            .push(
+                text("THEY SEND")
+                    .size(P2_SIZE)
+                    .style(theme::text::secondary),
+            )
+            .push(
+                Row::new()
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .push(ico)
+                    .push(
+                        text(asset_label)
+                            .size(H3_SIZE)
+                            .bold()
+                            .style(theme::text::primary),
+                    ),
+            )
+            .push(
+                Container::new(
+                    text(network_label.to_uppercase())
+                        .size(11)
+                        .color(color::ORANGE),
+                )
+                .padding([2, 8])
+                .style(|_: &theme::Theme| container::Style {
+                    border: iced::Border {
+                        color: color::ORANGE,
+                        width: 1.0,
+                        radius: 8.0.into(),
+                    },
+                    ..Default::default()
+                }),
+            );
+
+        iced_button(
+            Container::new(card_content)
+                .padding(16)
+                .width(Length::Fill)
+                .height(Length::Fixed(160.0))
+                .style(theme::card::simple),
+        )
+        .on_press(LiquidReceiveMessage::OpenSenderPicker)
+        .style(|_: &theme::Theme, _| iced::widget::button::Style {
+            background: Some(Background::Color(color::TRANSPARENT)),
+            border: iced::Border {
+                radius: 16.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    };
+
+    let you_receive_card = {
+        let asset_label = match receive_asset {
+            SendAsset::Lbtc => "L-BTC",
+            SendAsset::Usdt => "USDt",
+        };
+        let asset_slug = match receive_asset {
+            SendAsset::Lbtc => "lbtc",
+            SendAsset::Usdt => "usdt",
+        };
+        let ico: Element<'static, LiquidReceiveMessage> =
+            asset_network_logo(asset_slug, "liquid", 40.0);
+
+        let balance_text = match receive_asset {
+            SendAsset::Lbtc => format!(
+                "Balance: {}",
+                btc_balance.to_formatted_string_with_unit(bitcoin_unit)
+            ),
+            SendAsset::Usdt => format!("Balance: {} USDt", format_usdt_display(usdt_balance)),
+        };
+
+        let card_content = Column::new()
+            .spacing(6)
+            .push(
+                text("YOU RECEIVE")
+                    .size(P2_SIZE)
+                    .style(theme::text::secondary),
+            )
+            .push(
+                Row::new()
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .push(ico)
+                    .push(
+                        text(asset_label)
+                            .size(H3_SIZE)
+                            .bold()
+                            .style(theme::text::primary),
+                    ),
+            )
+            .push(
+                text(balance_text)
+                    .size(P2_SIZE)
+                    .style(theme::text::secondary),
+            )
+            .push(
+                Container::new(text("LIQUID").size(11).color(color::ORANGE))
+                    .padding([2, 8])
+                    .style(|_: &theme::Theme| container::Style {
+                        border: iced::Border {
+                            color: color::ORANGE,
+                            width: 1.0,
+                            radius: 8.0.into(),
+                        },
+                        ..Default::default()
+                    }),
+            );
+
+        iced_button(
+            Container::new(card_content)
+                .padding(16)
+                .width(Length::Fill)
+                .height(Length::Fixed(160.0))
+                .style(theme::card::simple),
+        )
+        .on_press(LiquidReceiveMessage::OpenReceivePicker)
+        .style(|_: &theme::Theme, _| iced::widget::button::Style {
+            background: Some(Background::Color(color::TRANSPARENT)),
+            border: iced::Border {
+                radius: 16.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    };
+
+    let arrow = text("←").size(H3_SIZE).style(theme::text::secondary);
+
+    Row::new()
+        .spacing(12)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .push(Container::new(you_receive_card).width(Length::FillPortion(1)))
+        .push(arrow)
+        .push(Container::new(they_send_card).width(Length::FillPortion(1)))
+        .into()
+}
+
+// ── Picker modals ───────────────────────────────────────────────────────────
+
+/// "You Receive" asset picker modal.
+pub fn receive_asset_picker_modal(current: SendAsset) -> Element<'static, LiquidReceiveMessage> {
+    let title = text("YOU RECEIVE").size(16).bold();
+
+    let lbtc_row = receive_picker_row(
+        asset_network_logo("lbtc", "liquid", 36.0),
+        "L-BTC",
+        "Liquid",
+        current == SendAsset::Lbtc,
+        LiquidReceiveMessage::SetReceiveAsset(SendAsset::Lbtc),
+    );
+
+    let usdt_row = receive_picker_row(
+        asset_network_logo("usdt", "liquid", 36.0),
+        "USDt",
+        "Liquid",
+        current == SendAsset::Usdt,
+        LiquidReceiveMessage::SetReceiveAsset(SendAsset::Usdt),
+    );
+
+    Column::new()
+        .spacing(16)
+        .padding(24)
+        .max_width(420)
+        .push(title)
+        .push(lbtc_row)
+        .push(usdt_row)
+        .into()
+}
+
+/// "They Send" network picker modal.
+pub fn sender_network_picker_modal(
+    receive_asset: SendAsset,
+    current_network: SenderNetwork,
+) -> Element<'static, LiquidReceiveMessage> {
+    let title = text("THEY SEND").size(16).bold();
+
+    let options = SenderNetwork::options_for_receive_asset(receive_asset);
+
+    let mut col = Column::new()
+        .spacing(8)
+        .padding(24)
+        .max_width(420)
+        .push(title);
+
+    for network in options {
+        let is_selected = network == current_network;
+        let (asset_slug, label, net_slug, net_label) = match network {
+            SenderNetwork::Lightning => ("btc", "BTC", "lightning", "Lightning"),
+            SenderNetwork::Liquid if receive_asset == SendAsset::Usdt => {
+                ("usdt", "USDt", "liquid", "Liquid")
+            }
+            SenderNetwork::Liquid => ("lbtc", "L-BTC", "liquid", "Liquid"),
+            SenderNetwork::Bitcoin => ("btc", "BTC", "bitcoin", "Bitcoin"),
+            SenderNetwork::Ethereum => ("usdt", "USDt", "ethereum", "Ethereum"),
+            SenderNetwork::Tron => ("usdt", "USDt", "tron", "Tron"),
+            SenderNetwork::Binance => ("usdt", "USDt", "bsc", "Binance"),
+            SenderNetwork::Solana => ("usdt", "USDt", "solana", "Solana"),
+        };
+        let ico: Element<'static, LiquidReceiveMessage> =
+            asset_network_logo(asset_slug, net_slug, 36.0);
+
+        col = col.push(receive_picker_row(
+            ico,
+            label,
+            net_label,
+            is_selected,
+            LiquidReceiveMessage::SetSenderNetwork(network),
+        ));
+    }
+
+    col.into()
+}
+
+fn receive_picker_row<'a>(
+    ico: impl Into<Element<'a, LiquidReceiveMessage>>,
+    label: &str,
+    network: &str,
+    is_selected: bool,
+    on_press: LiquidReceiveMessage,
+) -> Element<'a, LiquidReceiveMessage> {
+    let mut row = Row::new()
+        .spacing(12)
+        .align_y(Alignment::Center)
+        .push(ico)
+        .push(
+            Column::new().spacing(2).push(
+                text(label.to_string())
+                    .size(14)
+                    .bold()
+                    .style(theme::text::primary),
+            ),
+        )
+        .push(
+            Container::new(text(network.to_uppercase()).size(10).color(color::ORANGE))
+                .padding([2, 6])
+                .style(|_: &theme::Theme| container::Style {
+                    border: iced::Border {
+                        color: color::ORANGE,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                }),
+        )
+        .push(Space::new().width(Length::Fill));
+
+    if is_selected {
+        row = row.push(icon::check2_icon().size(18).color(color::ORANGE));
+    }
+
+    iced_button(
+        Container::new(row)
+            .padding([12, 16])
+            .width(Length::Fill)
+            .style(if is_selected {
+                picker_row_selected
+            } else {
+                theme::card::simple
+            }),
+    )
+    .on_press(on_press)
+    .style(|_: &theme::Theme, _| iced::widget::button::Style {
+        background: Some(Background::Color(color::TRANSPARENT)),
+        border: iced::Border {
+            radius: 12.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .width(Length::Fill)
+    .into()
+}
+
+/// Selected row in picker modals — orange border with subtle tinted background.
+fn picker_row_selected(theme: &theme::Theme) -> iced::widget::container::Style {
+    let bg = match theme.mode {
+        coincube_ui::theme::palette::ThemeMode::Dark => iced::color!(0x1a1a10),
+        coincube_ui::theme::palette::ThemeMode::Light => iced::color!(0xFFF5E6),
+    };
+    iced::widget::container::Style {
+        background: Some(Background::Color(bg)),
+        border: iced::Border {
+            color: color::ORANGE,
+            width: 1.0,
+            radius: 12.0.into(),
+        },
+        ..Default::default()
     }
 }

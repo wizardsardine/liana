@@ -436,7 +436,7 @@ fn plan_tier_color(tier: &PlanTier) -> iced::Color {
     match tier {
         PlanTier::Free => color::GREY_3,
         PlanTier::Pro => color::ORANGE,
-        PlanTier::Legacy => color::BLUE,
+        PlanTier::Legacy => color::LIGHT_BLUE,
     }
 }
 
@@ -633,11 +633,14 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
 
     let card_content: Element<ConnectCubeMessage> = if has_address {
         // Display the claimed address
-        let address = state
+        let mut address = state
             .lightning_address
             .as_ref()
             .and_then(|la| la.lightning_address.clone())
             .unwrap_or_default();
+        if !address.contains('@') {
+            address.push_str(LN_ADDRESS_DOMAIN);
+        }
 
         container(
             Column::new()

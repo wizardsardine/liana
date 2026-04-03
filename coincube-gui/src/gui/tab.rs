@@ -1042,13 +1042,15 @@ pub fn create_app_with_remote_backend(
             liquid_expanded: false,
             marketplace_expanded: false,
             marketplace_p2p_expanded: false,
-            usdt_expanded: false,
             connect_expanded: false,
             connect_authenticated: false,
             has_vault: true,
             cube_name: cube_settings.name.clone(),
             has_p2p: false, // Set later by App::new based on mnemonic availability
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
+            btc_usd_price: None,
+            show_direction_badges: true,
+            lightning_address: None,
         },
         Arc::new(
             Wallet::new(wallet.descriptor)
