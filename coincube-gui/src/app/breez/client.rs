@@ -263,6 +263,14 @@ impl BreezClient {
         payer_amount_sat: u64,
         description_hash: String,
     ) -> Result<breez::ReceivePaymentResponse, BreezError> {
+        if description_hash.len() != 64 || !description_hash.chars().all(|c| c.is_ascii_hexdigit())
+        {
+            return Err(BreezError::Sdk(format!(
+                "invalid description_hash: expected 64-char hex SHA256, got \"{}\"",
+                description_hash
+            )));
+        }
+
         let sdk = self.get_sdk()?;
         let prepare = sdk
             .prepare_receive_payment(&breez::PrepareReceiveRequest {
@@ -276,7 +284,9 @@ impl BreezClient {
             prepare_response: prepare,
             description: None,
             payer_note: None,
-            description_hash: Some(breez::DescriptionHash::Custom { hash: description_hash }),
+            description_hash: Some(breez::DescriptionHash::Custom {
+                hash: description_hash,
+            }),
         })
         .await
         .map_err(|e| BreezError::Sdk(e.to_string()))

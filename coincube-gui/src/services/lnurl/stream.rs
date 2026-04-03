@@ -63,6 +63,7 @@ fn create_stream(
     let auth = format!("Bearer {}", data.token);
     let sse_url = format!("{}/api/v1/lnurl/stream", events_base_url);
     let breez_client = data.breez_client.clone();
+    let retries = data.retries;
 
     // Attempt to parse parameters for the SSE connection
     let init = match reqwest::Url::parse(&sse_url) {
@@ -91,6 +92,18 @@ fn create_stream(
     iced::stream::channel(
         8,
         move |mut channel: iced::futures::channel::mpsc::Sender<LnurlMessage>| async move {
+            // Exponential backoff: 2^retries seconds, capped at 60s.
+            // Delays before the stream exits so the subscription recreation
+            // (triggered by the retry counter bump) doesn't spin in a tight loop.
+            let backoff = std::time::Duration::from_secs((1u64 << retries.min(6)).min(60));
+
+            // Client for outgoing POST requests (invoice responses).
+            // 10s timeout leaves headroom within the API's 15s callback window.
+            let http = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+
             if let Some((request, auth_header)) = init {
                 match reqwest::Client::new().execute(request).await {
                     Ok(res) => {
@@ -108,6 +121,7 @@ fn create_stream(
 
                                 match futures::future::select(timeout, event).await {
                                     futures::future::Either::Left(_) => {
+                                        tokio::time::sleep(backoff).await;
                                         let _ = channel
                                             .send(LnurlMessage::EventSourceDisconnected(
                                                 "EventSource heartbeat failure, client is probably offline".to_string(),
@@ -125,6 +139,7 @@ fn create_stream(
                                                         handle_invoice_request(
                                                             &mut channel,
                                                             &breez_client,
+                                                            &http,
                                                             api_base_url,
                                                             &auth_header,
                                                             req_event,
@@ -147,6 +162,7 @@ fn create_stream(
                                             break;
                                         }
                                         Err(err) => {
+                                            tokio::time::sleep(backoff).await;
                                             let _ = channel
                                                 .send(LnurlMessage::EventSourceDisconnected(
                                                     err.to_string(),
@@ -159,6 +175,7 @@ fn create_stream(
                             },
                             Err(err) => {
                                 log::error!("[LNURL] Failed to get event source: {}", err);
+                                tokio::time::sleep(backoff).await;
                                 let _ = channel
                                     .send(LnurlMessage::StreamError(err.to_string()))
                                     .await;
@@ -167,6 +184,7 @@ fn create_stream(
                     }
                     Err(err) => {
                         log::error!("[LNURL] EventSource pre-request failed: {}", err);
+                        tokio::time::sleep(backoff).await;
                         let _ = channel
                             .send(LnurlMessage::StreamError(err.to_string()))
                             .await;
@@ -183,6 +201,7 @@ fn create_stream(
 async fn handle_invoice_request(
     channel: &mut iced::futures::channel::mpsc::Sender<LnurlMessage>,
     breez_client: &Arc<BreezClient>,
+    http: &reqwest::Client,
     api_base_url: &str,
     auth_header: &str,
     event: InvoiceRequestEvent,
@@ -200,6 +219,21 @@ async fn handle_invoice_request(
         .send(LnurlMessage::InvoiceRequest(event.clone()))
         .await;
 
+    if event.amount_msats % 1000 != 0 {
+        let error = format!(
+            "amount_msats {} is not a whole satoshi multiple",
+            event.amount_msats
+        );
+        log::warn!(
+            "[LNURL] Rejecting invoice request {}: {}",
+            request_id,
+            error
+        );
+        let _ = channel
+            .send(LnurlMessage::InvoiceError { request_id, error })
+            .await;
+        return;
+    }
     let amount_sat = event.amount_msats / 1000;
 
     // Generate BOLT11 invoice via Breez Liquid SDK
@@ -225,7 +259,7 @@ async fn handle_invoice_request(
             };
 
             let url = format!("{}/api/v1/lnurl/invoice-response", api_base_url);
-            let post_result = reqwest::Client::new()
+            let post_result = http
                 .post(&url)
                 .header("Authorization", auth_header)
                 .json(&invoice_response)
@@ -234,14 +268,9 @@ async fn handle_invoice_request(
 
             match post_result {
                 Ok(res) if res.status().is_success() => {
-                    log::info!(
-                        "[LNURL] Invoice delivered for request {}",
-                        request_id
-                    );
+                    log::info!("[LNURL] Invoice delivered for request {}", request_id);
                     let _ = channel
-                        .send(LnurlMessage::InvoiceGenerated {
-                            request_id,
-                        })
+                        .send(LnurlMessage::InvoiceGenerated { request_id })
                         .await;
                 }
                 Ok(res) => {
@@ -253,10 +282,7 @@ async fn handle_invoice_request(
                         error
                     );
                     let _ = channel
-                        .send(LnurlMessage::InvoiceError {
-                            request_id,
-                            error,
-                        })
+                        .send(LnurlMessage::InvoiceError { request_id, error })
                         .await;
                 }
                 Err(err) => {
@@ -267,10 +293,7 @@ async fn handle_invoice_request(
                         error
                     );
                     let _ = channel
-                        .send(LnurlMessage::InvoiceError {
-                            request_id,
-                            error,
-                        })
+                        .send(LnurlMessage::InvoiceError { request_id, error })
                         .await;
                 }
             }
@@ -284,10 +307,7 @@ async fn handle_invoice_request(
             );
             // Don't POST back — the 15s API timeout will trigger "offline" for the payer
             let _ = channel
-                .send(LnurlMessage::InvoiceError {
-                    request_id,
-                    error,
-                })
+                .send(LnurlMessage::InvoiceError { request_id, error })
                 .await;
         }
     }

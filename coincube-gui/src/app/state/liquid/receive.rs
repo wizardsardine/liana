@@ -582,8 +582,15 @@ impl State for LiquidReceive {
                             );
 
                             let amount = if is_usdt {
-                                if let PaymentDetails::Liquid { asset_info: Some(ref info), .. } = &payment.details {
-                                    Amount::from_sat((info.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64)
+                                if let PaymentDetails::Liquid {
+                                    asset_info: Some(ref info),
+                                    ..
+                                } = &payment.details
+                                {
+                                    Amount::from_sat(
+                                        (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round()
+                                            as u64,
+                                    )
                                 } else {
                                     Amount::from_sat(payment.amount_sat)
                                 }
@@ -936,9 +943,7 @@ impl LiquidReceive {
                     .unwrap_or(0);
 
                 let error = match (&info, &payments) {
-                    (Err(_), Err(_)) => {
-                        Some("Couldn't fetch balance or transactions".to_string())
-                    }
+                    (Err(_), Err(_)) => Some("Couldn't fetch balance or transactions".to_string()),
                     (Err(_), _) => Some("Couldn't fetch account balance".to_string()),
                     (_, Err(_)) => Some("Couldn't fetch recent transactions".to_string()),
                     _ => None,
@@ -950,9 +955,9 @@ impl LiquidReceive {
             },
             |(btc_balance, usdt_balance, recent_payment, error)| {
                 if let Some(err) = error {
-                    Message::View(view::Message::LiquidReceive(
-                        LiquidReceiveMessage::Error(err),
-                    ))
+                    Message::View(view::Message::LiquidReceive(LiquidReceiveMessage::Error(
+                        err,
+                    )))
                 } else {
                     Message::View(view::Message::LiquidReceive(
                         LiquidReceiveMessage::DataLoaded {
