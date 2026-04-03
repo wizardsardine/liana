@@ -370,7 +370,7 @@ impl State for GeneralSettingsState {
             )) => {
                 self.show_direction_badges = show;
                 let datadir_path = cache.datadir_path.clone();
-                return Task::perform(
+                Task::perform(
                     async move {
                         use crate::app::settings::global::GlobalSettings;
                         GlobalSettings::update_show_direction_badges(
@@ -382,7 +382,7 @@ impl State for GeneralSettingsState {
                         Ok(()) => Message::SettingsSaved,
                         Err(e) => Message::SettingsSaveFailed(e.into()),
                     },
-                );
+                )
             }
             Message::View(view::Message::Settings(view::SettingsMessage::TestToast(level))) => {
                 let label = match level {

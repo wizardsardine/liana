@@ -576,15 +576,21 @@ impl State for LiquidReceive {
                             let status = payment.status;
                             let time_ago = format_time_ago(payment.timestamp.into());
                             let amount = Amount::from_sat(payment.amount_sat);
-                            let fiat_amount = fiat_converter
-                                .as_ref()
-                                .map(|c: &view::FiatAmountConverter| c.convert(amount));
 
                             let is_usdt = matches!(
                                 &payment.details,
                                 PaymentDetails::Liquid { asset_id, .. }
                                     if !usdt_id.is_empty() && asset_id == usdt_id
                             );
+
+                            // Only compute fiat for BTC rows; USDt has its own display.
+                            let fiat_amount = if is_usdt {
+                                None
+                            } else {
+                                fiat_converter
+                                    .as_ref()
+                                    .map(|c: &view::FiatAmountConverter| c.convert(amount))
+                            };
 
                             let (desc, usdt_display) = if is_usdt {
                                 let display = if let PaymentDetails::Liquid {

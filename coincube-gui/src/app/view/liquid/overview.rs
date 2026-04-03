@@ -20,6 +20,7 @@ use iced::{
 use crate::app::breez::assets::format_usdt_display;
 use crate::app::view::{liquid::RecentTransaction, FiatAmountConverter, LiquidOverviewMessage};
 
+#[allow(clippy::too_many_arguments)]
 pub fn liquid_overview_view<'a>(
     btc_balance: Amount,
     usdt_balance: u64,

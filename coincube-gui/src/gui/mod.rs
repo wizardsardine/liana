@@ -506,11 +506,10 @@ impl GUI {
                 let mut need_usd_cached: Vec<(pane_grid::Pane, usize, FiatPrice)> = Vec::new();
                 for (&pane_id, pane) in self.panes.iter() {
                     for tab in pane.tabs.iter() {
-                        if let Some(sett) = tab
-                            .cube_settings()
-                            .and_then(|cs| cs.fiat_price.as_ref())
-                            .filter(|sett| sett.is_enabled)
-                        {
+                        let fiat_sett = tab.cube_settings().and_then(|cs| cs.fiat_price.as_ref());
+
+                        // When fiat display is enabled, fetch the user's selected currency.
+                        if let Some(sett) = fiat_sett.filter(|s| s.is_enabled) {
                             if let Some(fresh_price) = self
                                 .global_cache
                                 .fresh_fiat_price(sett.source, sett.currency)
@@ -527,24 +526,27 @@ impl GUI {
                             {
                                 stale_pairs.insert((sett.source, sett.currency));
                             }
+                        }
 
-                            // Always ensure BTC/USD is fetched for USDt→sats conversion.
-                            if sett.currency != Currency::USD {
-                                if let Some(fresh_usd) = self
-                                    .global_cache
-                                    .fresh_fiat_price(sett.source, Currency::USD)
-                                {
-                                    if tab.cache().and_then(|c| c.btc_usd_price).is_none() {
-                                        need_usd_cached.push((pane_id, tab.id, fresh_usd.clone()));
-                                    }
-                                } else if self
-                                    .global_cache
-                                    .pending_fiat_price_request(sett.source, Currency::USD)
-                                    .is_none()
-                                {
-                                    stale_pairs.insert((sett.source, Currency::USD));
-                                }
+                        // Always fetch BTC/USD for USDt→sats conversion, even when
+                        // fiat display is disabled. Use the configured source if
+                        // available, otherwise fall back to the default source.
+                        let usd_source = fiat_sett
+                            .map(|s| s.source)
+                            .unwrap_or(PriceSource::default());
+                        if let Some(fresh_usd) = self
+                            .global_cache
+                            .fresh_fiat_price(usd_source, Currency::USD)
+                        {
+                            if tab.cache().and_then(|c| c.btc_usd_price).is_none() {
+                                need_usd_cached.push((pane_id, tab.id, fresh_usd.clone()));
                             }
+                        } else if self
+                            .global_cache
+                            .pending_fiat_price_request(usd_source, Currency::USD)
+                            .is_none()
+                        {
+                            stale_pairs.insert((usd_source, Currency::USD));
                         }
                     }
                 }

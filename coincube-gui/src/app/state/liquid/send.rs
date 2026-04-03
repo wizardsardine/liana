@@ -1824,7 +1824,7 @@ impl State for LiquidSend {
                     self.uri_asset = None;
                     self.error = None;
                     self.sideshift_flow = None;
-                    return Task::none();
+                    return self.load_balance();
                 }
             }
         }
