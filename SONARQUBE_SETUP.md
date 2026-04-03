@@ -127,10 +127,15 @@ sonar.sourceEncoding=UTF-8
 From the project root:
 
 ```bash
-sonar-scanner
+sonar-scanner \
+  -Dsonar.projectKey=coincube \
+  -Dsonar.sources=. \
+  -Dsonar.host.url=http://localhost:9000 \
+  -Dsonar.token=sqp_21afb714ffddfd5d823ef89b8226d4be82e42f56
 ```
 
 The scan will:
+
 - Parse Rust source files (some modern syntax may fail to parse with v0.1.4)
 - Analyze for code smells, bugs, and security issues
 - Import coverage reports if configured
@@ -167,6 +172,7 @@ The scan will:
 **Error:** `fatal exception while booting Elasticsearch` with codec issues
 
 **Fix:** Clean the data volume:
+
 ```bash
 docker compose down
 docker volume rm coincube_sonarqube_data
@@ -183,12 +189,12 @@ docker compose up -d
 
 ## Version Compatibility Matrix
 
-| SonarQube | Plugin API | Rust Plugin | Status |
-|-----------|------------|-------------|--------|
-| 10.6-community | 10.7.0.2191 | v0.1.4 | ✅ Working |
-| 10.6-community | 10.7.0.2191 | v0.2.6+ | ❌ Requires API 10.11.0.2468 |
-| 10.4-community | 10.6.0.2114 | v0.1.4 | ✅ Working |
-| 25.x+ | 25.x | Any | ❌ Incompatible (Lucene issues) |
+| SonarQube      | Plugin API  | Rust Plugin | Status                          |
+| -------------- | ----------- | ----------- | ------------------------------- |
+| 10.6-community | 10.7.0.2191 | v0.1.4      | ✅ Working                      |
+| 10.6-community | 10.7.0.2191 | v0.2.6+     | ❌ Requires API 10.11.0.2468    |
+| 10.4-community | 10.6.0.2114 | v0.1.4      | ✅ Working                      |
+| 25.x+          | 25.x        | Any         | ❌ Incompatible (Lucene issues) |
 
 ## References
 
