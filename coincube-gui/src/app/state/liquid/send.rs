@@ -151,6 +151,11 @@ pub struct LiquidSend {
     /// The asset the user is paying with. Equals `to_asset` for same-asset sends;
     /// differs for cross-asset swaps (via SideSwap).
     from_asset: SendAsset,
+    /// The wallet screen the user entered from. Set once when the send screen is
+    /// opened and never mutated by cross-asset toggles. Used for guards and resets
+    /// that need to know the user's original intent (replaces the old `usdt_only`
+    /// invariant).
+    home_asset: SendAsset,
     /// Network the recipient receives on (Lightning, Liquid, Bitcoin, Ethereum, etc.)
     receive_network: ReceiveNetwork,
     /// Whether the "You Send" picker modal is open.
@@ -187,6 +192,7 @@ impl LiquidSend {
             usdt_amount_input: form::Value::default(),
             to_asset: SendAsset::Lbtc,
             from_asset: SendAsset::Lbtc,
+            home_asset: SendAsset::Lbtc,
             receive_network: ReceiveNetwork::Lightning,
             send_picker_open: false,
             receive_picker_open: false,
@@ -253,7 +259,7 @@ impl LiquidSend {
 
     fn load_balance(&self) -> Task<Message> {
         let breez_client = self.breez_client.clone();
-        let usdt_only = self.to_asset == SendAsset::Usdt;
+        let usdt_only = self.home_asset == SendAsset::Usdt;
 
         Task::perform(
             async move {
@@ -443,6 +449,7 @@ impl State for LiquidSend {
                     // Set both "You Send" and "They Receive" to the same asset
                     self.from_asset = *asset;
                     self.to_asset = *asset;
+                    self.home_asset = *asset;
                     self.receive_network = match asset {
                         SendAsset::Lbtc => ReceiveNetwork::Lightning,
                         SendAsset::Usdt => ReceiveNetwork::Liquid,
@@ -859,13 +866,13 @@ impl State for LiquidSend {
                                         network,
                                         breez_sdk_liquid::bitcoin::Network::Bitcoin
                                     );
-                                    if self.to_asset == SendAsset::Usdt
+                                    if self.home_asset == SendAsset::Usdt
                                         && target_asset == SendAsset::Lbtc
                                         && cross_asset_supported
                                     {
                                         self.to_asset = SendAsset::Lbtc;
                                         self.from_asset = SendAsset::Usdt;
-                                    } else if self.to_asset == SendAsset::Usdt
+                                    } else if self.home_asset == SendAsset::Usdt
                                         && target_asset != SendAsset::Usdt
                                     {
                                         // Non-mainnet: cross-asset not available, keep USDt
@@ -881,7 +888,7 @@ impl State for LiquidSend {
                                     // clearing a previously set URI lock. Otherwise preserve
                                     // the user's current asset selection.
                                     if self.uri_asset.is_some() {
-                                        self.to_asset = if self.from_asset == SendAsset::Usdt {
+                                        self.to_asset = if self.home_asset == SendAsset::Usdt {
                                             SendAsset::Usdt
                                         } else {
                                             SendAsset::Lbtc
@@ -895,7 +902,7 @@ impl State for LiquidSend {
                             // No asset_id in URI — only reset to_asset if we're
                             // clearing a previously set URI lock.
                             if self.uri_asset.is_some() {
-                                self.to_asset = if self.from_asset == SendAsset::Usdt {
+                                self.to_asset = if self.home_asset == SendAsset::Usdt {
                                     SendAsset::Usdt
                                 } else {
                                     SendAsset::Lbtc
@@ -932,7 +939,7 @@ impl State for LiquidSend {
                     } else {
                         // Not a LiquidAddress — clear URI asset state and restore default
                         self.uri_asset = None;
-                        self.to_asset = if self.from_asset == SendAsset::Usdt {
+                        self.to_asset = if self.home_asset == SendAsset::Usdt {
                             SendAsset::Usdt
                         } else {
                             SendAsset::Lbtc
@@ -1524,7 +1531,7 @@ impl State for LiquidSend {
                                 // Already in cross-asset mode — toggle back to same-asset.
                                 // On usdt_only screen: if to_asset was forced to Lbtc by URI,
                                 // we can't go back to same-asset Lbtc send — block the toggle.
-                                if self.from_asset == SendAsset::Usdt
+                                if self.home_asset == SendAsset::Usdt
                                     && self.to_asset != SendAsset::Usdt
                                 {
                                     // Can't disable cross-asset on usdt_only screen when URI
@@ -1634,7 +1641,7 @@ impl State for LiquidSend {
                     self.comment = None;
                     self.amount_input = form::Value::default();
                     self.usdt_amount_input = form::Value::default();
-                    self.to_asset = if self.from_asset == SendAsset::Usdt {
+                    self.to_asset = if self.home_asset == SendAsset::Usdt {
                         SendAsset::Usdt
                     } else {
                         SendAsset::Lbtc
@@ -1752,7 +1759,7 @@ impl State for LiquidSend {
                     self.amount = Amount::ZERO;
                     self.amount_input = form::Value::default();
                     self.usdt_amount_input = form::Value::default();
-                    self.to_asset = if self.from_asset == SendAsset::Usdt {
+                    self.to_asset = if self.home_asset == SendAsset::Usdt {
                         SendAsset::Usdt
                     } else {
                         SendAsset::Lbtc
@@ -1802,6 +1809,7 @@ impl State for LiquidSend {
                     if self.from_asset != *asset {
                         self.from_asset = *asset;
                         self.to_asset = *asset;
+                        self.home_asset = *asset;
                         // Reset receive network to default for the new asset
                         self.receive_network = match asset {
                             SendAsset::Lbtc => ReceiveNetwork::Lightning,
