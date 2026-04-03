@@ -12,7 +12,7 @@ use iced::{
 };
 
 use crate::app::breez::assets::format_usdt_display;
-use crate::app::state::usdt::send::SendPhase;
+use crate::app::state::liquid::sideshift_send::SendPhase;
 use crate::app::view::liquid::RecentTransaction;
 use crate::app::view::{SideshiftSendMessage, SideshiftShiftType};
 use crate::services::sideshift::{ShiftResponse, ShiftStatusKind, SideshiftNetwork};
@@ -23,7 +23,7 @@ use breez_sdk_liquid::model::PaymentDetails;
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
-pub fn usdt_send_view<'a>(
+pub fn sideshift_send_view<'a>(
     phase: &SendPhase,
     selected_network: Option<&SideshiftNetwork>,
     detected_networks: &[SideshiftNetwork],
@@ -69,7 +69,6 @@ pub fn usdt_send_view<'a>(
         SendPhase::Review => review_view(selected_network, shift, amount_input, error),
         SendPhase::Sent => sent_view(selected_network, shift, shift_status),
         SendPhase::Failed => error_view(error),
-        SendPhase::LiquidNative => Column::new().into(),
     }
 }
 

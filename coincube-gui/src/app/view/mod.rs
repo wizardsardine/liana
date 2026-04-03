@@ -6,7 +6,6 @@ pub mod global_home;
 pub mod liquid;
 pub mod p2p;
 pub mod settings;
-pub mod usdt;
 
 pub mod vault;
 
@@ -14,7 +13,6 @@ use std::iter::FromIterator;
 
 pub use liquid::*;
 pub use message::*;
-pub use usdt::*;
 pub use vault::fiat::FiatAmountConverter;
 pub use vault::warning::warn;
 
@@ -27,9 +25,9 @@ use coincube_ui::{
     color,
     component::{button, text, text::*},
     icon::{
-        bitcoin_icon, chat_icon, coins_icon, connect_icon, cross_icon, cube_icon, down_icon,
-        home_icon, lightning_icon, person_icon, plus_icon, receipt_icon, receive_icon,
-        recovery_icon, send_icon, settings_icon, shop_icon, up_icon, usd_icon, vault_icon,
+        bitcoin_icon, chat_icon, clipboard_icon, coins_icon, connect_icon, cross_icon, cube_icon,
+        down_icon, home_icon, lightning_icon, person_icon, plus_icon, receipt_icon, receive_icon,
+        recovery_icon, send_icon, settings_icon, shop_icon, up_icon, vault_icon,
     },
     image::*,
     theme,
@@ -132,10 +130,21 @@ pub fn sidebar<'a>(
             .width(Length::Fill);
 
         if let Some(addr) = lightning_address {
+            let display_addr = if addr.contains('@') {
+                addr.to_string()
+            } else {
+                format!("{}@coincube.io", addr)
+            };
             info_col = info_col.push(
-                text::caption(addr)
-                    .color(color::GREY_3)
-                    .align_x(iced::Alignment::Center),
+                Button::new(
+                    Row::new()
+                        .push(text::caption(display_addr.clone()).color(color::GREY_3))
+                        .push(clipboard_icon().size(10).color(color::GREY_3))
+                        .spacing(4)
+                        .align_y(iced::Alignment::Center),
+                )
+                .style(theme::button::transparent)
+                .on_press(Message::Clipboard(display_addr)),
             );
         }
 
@@ -162,7 +171,7 @@ pub fn sidebar<'a>(
         Row::new()
             .spacing(10)
             .align_y(iced::alignment::Vertical::Center)
-            .push(lightning_icon().style(theme::text::secondary))
+            .push(coincube_ui::icon::droplet_fill_icon().style(theme::text::secondary))
             .push(text("Liquid").size(15))
             .push(Space::new().width(Length::Fill))
             .push(liquid_chevron.style(theme::text::secondary))
@@ -287,116 +296,6 @@ pub fn sidebar<'a>(
             .push(liquid_receive_button)
             .push(liquid_transactions_button)
             .push(liquid_settings_button);
-    }
-
-    // ── USDt nav group ──────────────────────────────────────────────────────
-    let is_usdt_expanded = cache.usdt_expanded;
-
-    let usdt_chevron = if is_usdt_expanded {
-        up_icon()
-    } else {
-        down_icon()
-    };
-    let usdt_button = Button::new(
-        Row::new()
-            .spacing(10)
-            .align_y(iced::alignment::Vertical::Center)
-            .push(usd_icon().style(theme::text::secondary))
-            .push(text("USDt").size(15))
-            .push(Space::new().width(Length::Fill))
-            .push(usdt_chevron.style(theme::text::secondary))
-            .padding(10),
-    )
-    .width(iced::Length::Fill)
-    .style(theme::button::menu)
-    .on_press(Message::ToggleUsdt);
-
-    menu_column = menu_column.push(usdt_button);
-
-    if is_usdt_expanded {
-        use crate::app::menu::UsdtSubMenu;
-
-        let usdt_overview_button = if matches!(menu, Menu::Usdt(UsdtSubMenu::Overview)) {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(home_icon()), "Overview")
-                    .on_press(Message::Reload)
-                    .width(iced::Length::Fill),
-                menu_bar_highlight()
-            )
-            .width(Length::Fill)
-        } else {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu(Some(home_icon()), "Overview")
-                    .on_press(Message::Menu(Menu::Usdt(UsdtSubMenu::Overview)))
-                    .width(iced::Length::Fill),
-            )
-            .width(Length::Fill)
-        };
-
-        let usdt_send_button = if matches!(menu, Menu::Usdt(UsdtSubMenu::Send)) {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(send_icon()), "Send")
-                    .on_press(Message::Reload)
-                    .width(iced::Length::Fill),
-                menu_bar_highlight()
-            )
-            .width(Length::Fill)
-        } else {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu(Some(send_icon()), "Send")
-                    .on_press(Message::Menu(Menu::Usdt(UsdtSubMenu::Send)))
-                    .width(iced::Length::Fill),
-            )
-            .width(Length::Fill)
-        };
-
-        let usdt_receive_button = if matches!(menu, Menu::Usdt(UsdtSubMenu::Receive)) {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(receive_icon()), "Receive")
-                    .on_press(Message::Reload)
-                    .width(iced::Length::Fill),
-                menu_bar_highlight()
-            )
-            .width(Length::Fill)
-        } else {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu(Some(receive_icon()), "Receive")
-                    .on_press(Message::Menu(Menu::Usdt(UsdtSubMenu::Receive)))
-                    .width(iced::Length::Fill),
-            )
-            .width(Length::Fill)
-        };
-
-        let usdt_transactions_button = if matches!(menu, Menu::Usdt(UsdtSubMenu::Transactions(_))) {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(receipt_icon()), "Transactions")
-                    .on_press(Message::Reload)
-                    .width(iced::Length::Fill),
-                menu_bar_highlight()
-            )
-            .width(Length::Fill)
-        } else {
-            row!(
-                Space::new().width(Length::Fixed(20.0)),
-                button::menu(Some(receipt_icon()), "Transactions")
-                    .on_press(Message::Menu(Menu::Usdt(UsdtSubMenu::Transactions(None))))
-                    .width(iced::Length::Fill),
-            )
-            .width(Length::Fill)
-        };
-
-        menu_column = menu_column
-            .push(usdt_overview_button)
-            .push(usdt_send_button)
-            .push(usdt_receive_button)
-            .push(usdt_transactions_button);
     }
 
     // Check if Vault submenu is expanded from cache
@@ -1001,7 +900,14 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     cache: &'a Cache,
     content: T,
 ) -> Element<'a, Message> {
-    dashboard_with_info(menu, cache, content, &cache.cube_name, None, None)
+    dashboard_with_info(
+        menu,
+        cache,
+        content,
+        &cache.cube_name,
+        None,
+        cache.lightning_address.as_deref(),
+    )
 }
 
 pub fn dashboard_with_info<'a, T: Into<Element<'a, Message>>>(

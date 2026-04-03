@@ -7,8 +7,6 @@ use crate::theme::Theme;
 use crate::widget::Row;
 use crate::{color, font};
 
-const COINCUBE_LOGOTYPE_GREY: &[u8] = include_bytes!("../static/logos/coincube-logo-gray.svg");
-
 pub fn coincube_window_icon() -> icon::Icon {
     let bytes = include_bytes!("../static/logos/coincube-cc.ico");
     let img = image::load(std::io::Cursor::new(bytes), image::ImageFormat::Ico).unwrap();
@@ -59,10 +57,19 @@ pub fn theme_toggle_button<'a, M: Clone + 'a>(
     .padding([8, 12])
 }
 
-/// Grey SVG logotype — used for small badge icons where text rendering is impractical.
-pub fn coincube_logotype_grey<'a>() -> Svg<'a, Theme> {
-    let h = svg::Handle::from_memory(COINCUBE_LOGOTYPE_GREY);
-    Svg::new(h)
+/// COINCUBE wordmark in gray tones using Space Grotesk Bold.
+/// "COIN" is medium gray; "CUBE" is lighter gray.
+pub fn coincube_wordmark_gray<'a, M: 'a>(size: f32) -> Row<'a, M> {
+    iced::widget::row![
+        iced::widget::text("COIN")
+            .font(font::SPACE_GROTESK_BOLD)
+            .size(size)
+            .color(color::GREY_3),
+        iced::widget::text("CUBE")
+            .font(font::SPACE_GROTESK_BOLD)
+            .size(size)
+            .color(color::GREY_2),
+    ]
 }
 
 const CREATE_NEW_WALLET_ICON: &[u8] = include_bytes!("../static/icons/blueprint.svg");
@@ -128,15 +135,35 @@ pub fn multisig_security_template_description<'a>() -> Svg<'a, Theme> {
 // USDt + network logos
 // ---------------------------------------------------------------------------
 
+const BTC_LOGO: &[u8] = include_bytes!("../static/logos/btc.svg");
+const LBTC_LOGO: &[u8] = include_bytes!("../static/logos/lbtc.svg");
 const USDT_LOGO: &[u8] = include_bytes!("../static/logos/usdt.svg");
 const ETH_LOGO: &[u8] = include_bytes!("../static/logos/eth.svg");
 const TRX_LOGO: &[u8] = include_bytes!("../static/logos/trx.svg");
 const BNB_LOGO: &[u8] = include_bytes!("../static/logos/bnb.svg");
 const SOL_LOGO: &[u8] = include_bytes!("../static/logos/sol.svg");
 const LIQUID_LOGO: &[u8] = include_bytes!("../static/logos/liquid.svg");
+const LIGHTNING_BADGE: &[u8] = include_bytes!("../static/logos/lightning_badge.svg");
+const CHAIN_BADGE: &[u8] = include_bytes!("../static/logos/chain_badge.svg");
+
+pub fn btc_logo<'a>() -> Svg<'a, Theme> {
+    Svg::new(svg::Handle::from_memory(BTC_LOGO))
+}
+
+pub fn lbtc_logo<'a>() -> Svg<'a, Theme> {
+    Svg::new(svg::Handle::from_memory(LBTC_LOGO))
+}
 
 pub fn usdt_logo<'a>() -> Svg<'a, Theme> {
     Svg::new(svg::Handle::from_memory(USDT_LOGO))
+}
+
+pub fn lightning_badge<'a>() -> Svg<'a, Theme> {
+    Svg::new(svg::Handle::from_memory(LIGHTNING_BADGE))
+}
+
+pub fn chain_badge<'a>() -> Svg<'a, Theme> {
+    Svg::new(svg::Handle::from_memory(CHAIN_BADGE))
 }
 
 pub fn eth_logo<'a>() -> Svg<'a, Theme> {
@@ -168,7 +195,18 @@ pub fn network_logo<'a>(network: &str) -> Svg<'a, Theme> {
         "solana" => sol_logo(),
         "liquid" => liquid_logo(),
         "polygon" => eth_logo(),
+        "lightning" => lightning_badge(),
+        "bitcoin" => chain_badge(),
         _ => usdt_logo(),
+    }
+}
+
+/// Returns the asset logo SVG for a given asset slug.
+pub fn asset_logo<'a>(asset: &str) -> Svg<'a, Theme> {
+    match asset {
+        "btc" | "lbtc" => btc_logo(),
+        "usdt" => usdt_logo(),
+        _ => btc_logo(),
     }
 }
 
@@ -209,6 +247,48 @@ pub fn usdt_network_logo<'a, M: 'a>(
         .height(Length::Fixed(badge_size));
 
     // Use iced::widget::stack to overlay the badge on the primary logo
+    iced::widget::stack![
+        Container::new(primary)
+            .width(Length::Fixed(total))
+            .height(Length::Fixed(total)),
+        Container::new(badge_container)
+            .width(Length::Fixed(total))
+            .height(Length::Fixed(total))
+            .align_right(Length::Fixed(total))
+            .align_bottom(Length::Fixed(total)),
+    ]
+    .width(Length::Fixed(total))
+    .height(Length::Fixed(total))
+    .into()
+}
+
+/// Composite any asset logo with a network badge at the bottom-right.
+///
+/// `asset` — slug for the primary logo: "btc", "lbtc", "usdt"
+/// `network` — slug for the badge: "lightning", "liquid", "bitcoin",
+///             "ethereum", "tron", "bsc", "solana"
+pub fn asset_network_logo<'a, M: 'a>(
+    asset: &str,
+    network: &str,
+    primary_size: f32,
+) -> iced::Element<'a, M, Theme, iced::Renderer> {
+    use iced::{widget::Container, Length};
+
+    let badge_size = (primary_size * 0.45).round();
+    let total = primary_size;
+
+    let primary = asset_logo(asset)
+        .width(Length::Fixed(primary_size))
+        .height(Length::Fixed(primary_size));
+
+    let badge = network_logo(network)
+        .width(Length::Fixed(badge_size))
+        .height(Length::Fixed(badge_size));
+
+    let badge_container = Container::new(badge)
+        .width(Length::Fixed(badge_size))
+        .height(Length::Fixed(badge_size));
+
     iced::widget::stack![
         Container::new(primary)
             .width(Length::Fixed(total))

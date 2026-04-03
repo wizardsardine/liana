@@ -43,8 +43,6 @@ pub struct Cache {
     pub marketplace_expanded: bool,
     /// UI state: whether the P2P sub-accordion within Marketplace is expanded
     pub marketplace_p2p_expanded: bool,
-    /// UI state: whether the USDt submenu is expanded
-    pub usdt_expanded: bool,
     /// UI state: whether the Connect submenu is expanded
     pub connect_expanded: bool,
     /// Whether the Connect user is authenticated (Dashboard step reached)
@@ -57,6 +55,13 @@ pub struct Cache {
     pub has_p2p: bool,
     /// Current theme mode (dark/light) — used for theme-aware widget rendering
     pub theme_mode: coincube_ui::theme::palette::ThemeMode,
+    /// BTC price in USD, always fetched regardless of the user's selected fiat
+    /// currency. Used for converting USDt (which is pegged to USD) into sats.
+    pub btc_usd_price: Option<f64>,
+    /// Whether to show direction badges (receive/spend arrows) on transaction rows.
+    pub show_direction_badges: bool,
+    /// Cached Lightning Address for display in the sidebar across all panels
+    pub lightning_address: Option<String>,
 }
 
 /// only used for tests.
@@ -76,13 +81,15 @@ impl std::default::Default for Cache {
             liquid_expanded: false,
             marketplace_expanded: false,
             marketplace_p2p_expanded: false,
-            usdt_expanded: false,
             connect_expanded: false,
             connect_authenticated: false,
             has_vault: false,
             cube_name: String::new(),
             has_p2p: false,
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
+            btc_usd_price: None,
+            show_direction_badges: true,
+            lightning_address: None,
         }
     }
 }

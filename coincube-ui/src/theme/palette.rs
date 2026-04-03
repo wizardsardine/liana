@@ -667,8 +667,8 @@ impl Palette {
                 primary: color::DARK_GRAY,
                 secondary: color::GREY_5,
                 warning: color::ORANGE,
-                success: color::GREEN,
-                error: color::RED,
+                success: color::DARK_GREEN,
+                error: color::DARK_RED,
             },
             buttons: Buttons {
                 primary: Button {

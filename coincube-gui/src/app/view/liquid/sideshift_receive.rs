@@ -11,7 +11,7 @@ use iced::{
     Alignment, Length,
 };
 
-use crate::app::state::usdt::receive::ReceivePhase;
+use crate::app::state::liquid::sideshift_receive::ReceivePhase;
 use crate::app::view::{SideshiftReceiveMessage, SideshiftShiftType};
 use crate::services::sideshift::{ShiftResponse, ShiftStatusKind, SideshiftNetwork};
 
@@ -20,7 +20,7 @@ use crate::services::sideshift::{ShiftResponse, ShiftStatusKind, SideshiftNetwor
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
-pub fn usdt_receive_view<'a>(
+pub fn sideshift_receive_view<'a>(
     phase: &ReceivePhase,
     selected_network: &SideshiftNetwork,
     shift_type: &SideshiftShiftType,
@@ -43,10 +43,6 @@ pub fn usdt_receive_view<'a>(
             active_shift_view(selected_network, shift, qr_data, shift_status, amount_input)
         }
         ReceivePhase::Failed => error_view(error),
-        ReceivePhase::LiquidNative => {
-            // Handled by LiquidReceive in the state — should not reach here.
-            Column::new().into()
-        }
     }
 }
 
@@ -276,7 +272,6 @@ fn active_shift_view<'a>(
     .padding([6, 12])
     .style(theme::pill::warning);
 
-    // Use a cell_size that produces ~300px for short addresses (29 modules × 10 = 290px)
     let qr_section: Element<SideshiftReceiveMessage> = if let Some(data) = qr_data {
         Container::new(
             Container::new(qr_code(data).cell_size(10))
@@ -333,8 +328,6 @@ fn active_shift_view<'a>(
 
     let is_terminal = shift_status.map(|s| s.is_terminal()).unwrap_or(false);
 
-    // Only show the "Done" / reset button once the shift has reached a terminal
-    // state; while in-progress, the deposit address must stay visible.
     let back_btn: Element<SideshiftReceiveMessage> = if is_terminal {
         iced::widget::button(
             Row::new()

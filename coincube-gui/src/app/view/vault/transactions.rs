@@ -13,9 +13,7 @@ use coincube_ui::{
         amount::*,
         button, card, form,
         text::*,
-        transaction::{
-            TransactionBadge, TransactionDirection, TransactionListItem, TransactionType,
-        },
+        transaction::{TransactionBadge, TransactionDirection, TransactionListItem},
     },
     icon::{self, receipt_icon},
     theme,
@@ -36,6 +34,7 @@ use crate::{
     },
     daemon::model::{HistoryTransaction, Txid},
     export::ImportExportMessage,
+    utils::format_time_ago,
 };
 
 pub fn transactions_view<'a>(
@@ -74,7 +73,13 @@ pub fn transactions_view<'a>(
                         txs.iter()
                             .enumerate()
                             .fold(Column::new().spacing(10), |col, (i, tx)| {
-                                col.push(tx_list_view(i, tx, cache.bitcoin_unit, fiat_converter))
+                                col.push(tx_list_view(
+                                    i,
+                                    tx,
+                                    cache.bitcoin_unit,
+                                    fiat_converter,
+                                    cache.show_direction_badges,
+                                ))
                             }),
                     )
                     .push(if !is_last_page && !txs.is_empty() {
@@ -115,6 +120,7 @@ fn tx_list_view(
     tx: &HistoryTransaction,
     bitcoin_unit: BitcoinDisplayUnit,
     fiat_converter: Option<FiatAmountConverter>,
+    show_direction_badges: bool,
 ) -> Element<'_, Message> {
     let direction = if tx.is_external() {
         TransactionDirection::Incoming
@@ -136,10 +142,6 @@ fn tx_list_view(
         tx.labels.get(&tx.tx.compute_txid().to_string()).cloned()
     };
 
-    let timestamp = tx
-        .time
-        .and_then(|t| DateTime::<Utc>::from_timestamp(t as i64, 0));
-
     let mut badges = Vec::new();
     if tx.time.is_none() {
         badges.push(TransactionBadge::Unconfirmed);
@@ -149,15 +151,18 @@ fn tx_list_view(
     }
 
     let mut item = TransactionListItem::new(direction, amount, bitcoin_unit)
-        .with_type(TransactionType::Bitcoin)
+        .with_custom_icon(coincube_ui::image::asset_network_logo(
+            "btc", "bitcoin", 40.0,
+        ))
+        .with_show_direction_badge(show_direction_badges)
         .with_badges(badges);
 
     if let Some(label) = label {
         item = item.with_label(label);
     }
 
-    if let Some(timestamp) = timestamp {
-        item = item.with_timestamp(timestamp);
+    if let Some(t) = tx.time {
+        item = item.with_time_ago(format_time_ago(t as i64));
     }
 
     if let Some(fiat_amount) = fiat_converter.map(|converter| {
@@ -309,10 +314,22 @@ pub fn transaction_detail_view<'a>(
     bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let txid = tx.tx.compute_txid().to_string();
+    let back_btn: Element<'_, Message> = iced::widget::button(
+        Row::new()
+            .spacing(5)
+            .align_y(Alignment::Center)
+            .push(icon::previous_icon().style(theme::text::secondary))
+            .push(text("Previous").size(14).style(theme::text::secondary)),
+    )
+    .on_press(Message::Close)
+    .style(theme::button::transparent)
+    .into();
+
     dashboard(
         menu,
         cache,
         Column::new()
+            .push(back_btn)
             .push(if tx.is_send_to_self() {
                 Container::new(h3("Transaction")).width(Length::Fill)
             } else if tx.is_external() {

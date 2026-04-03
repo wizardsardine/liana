@@ -107,6 +107,7 @@ pub struct GeneralSettingsState {
     new_unit_setting: UnitSetting,
     currencies: Vec<Currency>,
     developer_mode: bool,
+    show_direction_badges: bool,
     error: Option<Error>,
 }
 
@@ -124,14 +125,16 @@ impl GeneralSettingsState {
         datadir_path: &CoincubeDirectory,
     ) -> Self {
         use crate::app::settings::global::GlobalSettings;
-        let developer_mode =
-            GlobalSettings::load_developer_mode(&GlobalSettings::path(datadir_path));
+        let global_path = GlobalSettings::path(datadir_path);
+        let developer_mode = GlobalSettings::load_developer_mode(&global_path);
+        let show_direction_badges = GlobalSettings::load_show_direction_badges(&global_path);
         Self {
             cube_id,
             new_price_setting: price_setting,
             new_unit_setting: unit_setting,
             currencies: Vec::new(),
             developer_mode,
+            show_direction_badges,
             error: None,
         }
     }
@@ -146,6 +149,7 @@ impl State for GeneralSettingsState {
             &self.new_unit_setting,
             &self.currencies,
             self.developer_mode,
+            self.show_direction_badges,
         )
     }
 
@@ -360,6 +364,25 @@ impl State for GeneralSettingsState {
                         }
                     },
                 );
+            }
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::ToggleDirectionBadges(show),
+            )) => {
+                self.show_direction_badges = show;
+                let datadir_path = cache.datadir_path.clone();
+                Task::perform(
+                    async move {
+                        use crate::app::settings::global::GlobalSettings;
+                        GlobalSettings::update_show_direction_badges(
+                            &GlobalSettings::path(&datadir_path),
+                            show,
+                        )
+                    },
+                    |res| match res {
+                        Ok(()) => Message::SettingsSaved,
+                        Err(e) => Message::SettingsSaveFailed(e.into()),
+                    },
+                )
             }
             Message::View(view::Message::Settings(view::SettingsMessage::TestToast(level))) => {
                 let label = match level {

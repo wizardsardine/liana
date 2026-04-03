@@ -6,7 +6,7 @@ use coincube_ui::{
         amount::DisplayAmount,
         button, card, form,
         text::*,
-        transaction::{TransactionDirection, TransactionListItem, TransactionType},
+        transaction::{TransactionDirection, TransactionListItem},
     },
     icon, theme,
     widget::*,
@@ -16,8 +16,11 @@ use iced::{
     Alignment, Length,
 };
 
+use coincube_ui::image::asset_network_logo;
+
 use crate::app::breez::assets::{format_usdt_display, USDT_PRECISION};
 use crate::app::menu::Menu;
+use crate::app::state::liquid::transactions::AssetFilter;
 use crate::app::view::message::{FeeratePriority, Message};
 use crate::app::view::FiatAmountConverter;
 use crate::export::ImportExportMessage;
@@ -45,6 +48,7 @@ fn usdt_amount_str(payment: &Payment, usdt_id: &str) -> Option<String> {
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn liquid_transactions_view<'a>(
     payments: &'a [Payment],
     refundables: &'a [RefundableSwap],
@@ -53,6 +57,8 @@ pub fn liquid_transactions_view<'a>(
     _loading: bool,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     usdt_id: &'a str,
+    asset_filter: AssetFilter,
+    show_direction_badges: bool,
 ) -> Element<'a, Message> {
     let mut content = Column::new().spacing(20).width(Length::Fill);
 
@@ -66,6 +72,34 @@ pub fn liquid_transactions_view<'a>(
                     .on_press(ImportExportMessage::Open.into()),
             ),
     );
+
+    // Asset filter tabs
+    {
+        let mut filter_row = Row::new().spacing(8);
+        for (label, filter) in [
+            ("All", AssetFilter::All),
+            ("L-BTC", AssetFilter::LbtcOnly),
+            ("USDt", AssetFilter::UsdtOnly),
+        ] {
+            let is_active = asset_filter == filter;
+            let btn = iced::widget::button(
+                Container::new(text(label).size(P2_SIZE).color(if is_active {
+                    coincube_ui::color::WHITE
+                } else {
+                    coincube_ui::color::GREY_3
+                }))
+                .padding([6, 14]),
+            )
+            .on_press(Message::SetAssetFilter(filter))
+            .style(if is_active {
+                theme::button::primary
+            } else {
+                theme::button::transparent_border
+            });
+            filter_row = filter_row.push(btn);
+        }
+        content = content.push(filter_row);
+    }
 
     if payments.is_empty() {
         // Empty state
@@ -115,6 +149,7 @@ pub fn liquid_transactions_view<'a>(
                             fiat_converter,
                             bitcoin_unit,
                             usdt_id,
+                            show_direction_badges,
                         ))
                     },
                 )),
@@ -130,7 +165,13 @@ pub fn liquid_transactions_view<'a>(
                 .push(refundables.iter().enumerate().fold(
                     Column::new().spacing(10),
                     |col, (i, refundable)| {
-                        col.push(refundable_row(i, refundable, fiat_converter, bitcoin_unit))
+                        col.push(refundable_row(
+                            i,
+                            refundable,
+                            fiat_converter,
+                            bitcoin_unit,
+                            show_direction_badges,
+                        ))
                     },
                 )),
         );
@@ -145,6 +186,7 @@ fn transaction_row<'a>(
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     usdt_id: &str,
+    show_direction_badges: bool,
 ) -> Element<'a, Message> {
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
     let usdt_str = usdt_amount_str(payment, usdt_id);
@@ -183,16 +225,23 @@ fn transaction_row<'a>(
         TransactionDirection::Outgoing
     };
 
-    let tx_type = match &payment.details {
-        PaymentDetails::Lightning { .. } => TransactionType::Lightning,
-        PaymentDetails::Liquid { .. } | PaymentDetails::Bitcoin { .. } => TransactionType::Bitcoin,
+    // Determine the combo icon based on payment type
+    let combo_icon: Element<'_, Message> = if is_usdt {
+        asset_network_logo("usdt", "liquid", 40.0)
+    } else {
+        match &payment.details {
+            PaymentDetails::Lightning { .. } => asset_network_logo("btc", "lightning", 40.0),
+            PaymentDetails::Liquid { .. } => asset_network_logo("lbtc", "liquid", 40.0),
+            PaymentDetails::Bitcoin { .. } => asset_network_logo("btc", "bitcoin", 40.0),
+        }
     };
 
     if let Some(ref usdt_display) = usdt_str {
         let item = TransactionListItem::new(direction, &Amount::ZERO, bitcoin_unit)
             .with_label(description.to_string())
             .with_time_ago(time_ago)
-            .with_type(tx_type)
+            .with_custom_icon(combo_icon)
+            .with_show_direction_badge(show_direction_badges)
             .with_amount_override(usdt_display.clone());
         return item.view(Message::Select(i)).into();
     }
@@ -205,7 +254,8 @@ fn transaction_row<'a>(
     let mut item = TransactionListItem::new(direction, &btc_amount, bitcoin_unit)
         .with_label(description.to_string())
         .with_time_ago(time_ago)
-        .with_type(tx_type);
+        .with_custom_icon(combo_icon)
+        .with_show_direction_badge(show_direction_badges);
 
     if let Some(fiat_amount) = fiat_converter.map(|converter| {
         let fiat = converter.convert(btc_amount);
@@ -222,17 +272,18 @@ fn refundable_row<'a>(
     refundable: &'a RefundableSwap,
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
+    show_direction_badges: bool,
 ) -> Element<'a, Message> {
     let btc_amount = Amount::from_sat(refundable.amount_sat);
     let time_ago = format_time_ago(refundable.timestamp.into());
 
     let direction = TransactionDirection::Incoming;
-    let tx_type = TransactionType::Bitcoin;
 
     let mut item = TransactionListItem::new(direction, &btc_amount, bitcoin_unit)
         .with_label("Refundable Swap".to_string())
         .with_time_ago(time_ago)
-        .with_type(tx_type);
+        .with_custom_icon(asset_network_logo("lbtc", "liquid", 40.0))
+        .with_show_direction_badge(show_direction_badges);
 
     if let Some(fiat_amount) = fiat_converter.map(|converter| {
         let fiat = converter.convert(btc_amount);
@@ -295,6 +346,20 @@ pub fn transaction_detail_view<'a>(
         "Outgoing payment"
     };
 
+    // Helper: combo icon for detail view based on payment type
+    let make_detail_icon =
+        |is_usdt: bool, details: &PaymentDetails| -> (&'static str, &'static str) {
+            if is_usdt {
+                ("usdt", "liquid")
+            } else {
+                match details {
+                    PaymentDetails::Lightning { .. } => ("btc", "lightning"),
+                    PaymentDetails::Liquid { .. } => ("lbtc", "liquid"),
+                    PaymentDetails::Bitcoin { .. } => ("btc", "bitcoin"),
+                }
+            }
+        };
+
     if let Some(ref usdt_display) = usdt_str {
         // USDt detail view: show USDt amount + L-BTC fees
         let usdt_num = match &payment.details {
@@ -330,8 +395,16 @@ pub fn transaction_detail_view<'a>(
         };
         return Column::new()
             .spacing(20)
+            .push(detail_back_button())
             .push(Container::new(h3(title)).width(Length::Fill))
-            .push(Column::new().push(p1_regular(description)).spacing(10))
+            .push({
+                let (a, n) = make_detail_icon(true, &payment.details);
+                Row::new()
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .push(asset_network_logo::<Message>(a, n, 32.0))
+                    .push(p1_regular(description))
+            })
             .push(
                 Column::new()
                     .spacing(20)
@@ -425,12 +498,20 @@ pub fn transaction_detail_view<'a>(
 
     Column::new()
         .spacing(20)
+        .push(detail_back_button())
         .push(if is_receive {
             Container::new(h3("Incoming payment")).width(Length::Fill)
         } else {
             Container::new(h3("Outgoing payment")).width(Length::Fill)
         })
-        .push(Column::new().push(p1_regular(description)).spacing(10))
+        .push({
+            let (a, n) = make_detail_icon(false, &payment.details);
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(asset_network_logo::<Message>(a, n, 32.0))
+                .push(p1_regular(description))
+        })
         .push(
             Column::new().spacing(20).push(
                 Column::new()
@@ -716,4 +797,17 @@ pub fn refundable_detail_view<'a>(
                 ),
         )
         .into()
+}
+
+fn detail_back_button() -> Element<'static, Message> {
+    iced::widget::button(
+        Row::new()
+            .spacing(5)
+            .align_y(Alignment::Center)
+            .push(icon::previous_icon().style(theme::text::secondary))
+            .push(text("Previous").size(14).style(theme::text::secondary)),
+    )
+    .on_press(Message::Close)
+    .style(theme::button::transparent)
+    .into()
 }

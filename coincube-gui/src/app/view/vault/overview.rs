@@ -15,9 +15,7 @@ use coincube_ui::{
         amount::*,
         button, card, form, spinner,
         text::*,
-        transaction::{
-            TransactionBadge, TransactionDirection, TransactionListItem, TransactionType,
-        },
+        transaction::{TransactionBadge, TransactionDirection, TransactionListItem},
     },
     icon::{self, cross_icon},
     theme,
@@ -87,6 +85,7 @@ pub fn vault_overview_view<'a>(
     bitcoin_unit: BitcoinDisplayUnit,
     node_bitcoind_sync_progress: Option<f64>,
     node_bitcoind_ibd: Option<bool>,
+    show_direction_badges: bool,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
     let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
@@ -257,7 +256,12 @@ pub fn vault_overview_view<'a>(
                 .push(h4_bold("Last transactions"))
                 .push(events.iter().fold(Column::new().spacing(10), |col, event| {
                     if event.kind != PaymentKind::SendToSelf {
-                        col.push(event_list_view(event, bitcoin_unit, fiat_converter))
+                        col.push(event_list_view(
+                            event,
+                            bitcoin_unit,
+                            fiat_converter,
+                            show_direction_badges,
+                        ))
                     } else {
                         col
                     }
@@ -298,6 +302,7 @@ fn event_list_view(
     event: &Payment,
     bitcoin_unit: BitcoinDisplayUnit,
     fiat_converter: Option<FiatAmountConverter>,
+    show_direction_badges: bool,
 ) -> Element<'_, Message> {
     let direction = if event.kind == PaymentKind::Incoming {
         TransactionDirection::Incoming
@@ -315,7 +320,10 @@ fn event_list_view(
     };
 
     let mut item = TransactionListItem::new(direction, &event.amount, bitcoin_unit)
-        .with_type(TransactionType::Bitcoin);
+        .with_custom_icon(coincube_ui::image::asset_network_logo(
+            "btc", "bitcoin", 40.0,
+        ))
+        .with_show_direction_badge(show_direction_badges);
 
     if let Some(label) = label {
         item = item.with_label(label);
