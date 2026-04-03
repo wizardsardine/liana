@@ -1,0 +1,6 @@
+projectKey=coincube
+serverUrl=http://localhost:9000
+serverVersion=10.6.0.92116
+dashboardUrl=http://localhost:9000/dashboard?id=coincube
+ceTaskId=79c34d84-bfaf-46a7-bd02-da0aa74eecd3
+ceTaskUrl=http://localhost:9000/api/ce/task?id=79c34d84-bfaf-46a7-bd02-da0aa74eecd3
