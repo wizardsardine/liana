@@ -94,6 +94,7 @@ pub enum Message {
     /// bitcoind's debug.log.  `None` means no matching line found yet.
     PendingBitcoindLog(Option<String>),
     InstallStats(InstallStatsMessage),
+    Lnurl(crate::services::lnurl::LnurlMessage),
 }
 
 #[derive(Debug)]
