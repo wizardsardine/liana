@@ -449,17 +449,7 @@ pub fn liquid_send_view<'a>(
                 TransactionDirection::Outgoing
             };
 
-            let usdt_display = if let PaymentDetails::Liquid { asset_id, .. } = &tx.details {
-                if !usdt_asset_id.is_empty() && asset_id == usdt_asset_id {
-                    Some(format!("{} USDt", format_usdt_display(tx.amount.to_sat())))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            let fiat_str = if usdt_display.is_some() {
+            let fiat_str = if tx.usdt_display.is_some() {
                 None
             } else {
                 tx.fiat_amount
@@ -467,7 +457,7 @@ pub fn liquid_send_view<'a>(
                     .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()))
             };
 
-            let display_amount = if usdt_display.is_some() {
+            let display_amount = if tx.usdt_display.is_some() {
                 Amount::ZERO
             } else if tx.is_incoming {
                 tx.amount
@@ -493,7 +483,7 @@ pub fn liquid_send_view<'a>(
                 .with_label(tx.description.clone())
                 .with_time_ago(tx.time_ago.clone());
 
-            if let Some(ref usdt_str) = usdt_display {
+            if let Some(ref usdt_str) = tx.usdt_display {
                 item = item.with_amount_override(usdt_str.clone());
             }
 

@@ -217,7 +217,6 @@ impl State for LiquidOverview {
                             .map(|payment| {
                                 let status = payment.status;
                                 let time_ago = format_time_ago(payment.timestamp.into());
-                                let amount = Amount::from_sat(payment.amount_sat);
 
                                 // Detect USDt payments and build display string
                                 let is_usdt = matches!(
@@ -225,6 +224,30 @@ impl State for LiquidOverview {
                                     PaymentDetails::Liquid { asset_id, .. }
                                         if !usdt_id.is_empty() && asset_id == usdt_id
                                 );
+
+                                // For USDt, extract the correct amount from asset_info
+                                // (amount_sat is BTC-denominated and wrong for USDt).
+                                let amount = if is_usdt {
+                                    if let PaymentDetails::Liquid {
+                                        asset_info: Some(ref info),
+                                        ..
+                                    } = &payment.details
+                                    {
+                                        Amount::from_sat(
+                                            (info.amount
+                                                * 10_f64.powi(
+                                                    crate::app::breez::assets::USDT_PRECISION
+                                                        as i32,
+                                                ))
+                                            .round()
+                                                as u64,
+                                        )
+                                    } else {
+                                        Amount::from_sat(payment.amount_sat)
+                                    }
+                                } else {
+                                    Amount::from_sat(payment.amount_sat)
+                                };
 
                                 // Only compute fiat for BTC rows; USDt has its own display.
                                 let fiat_amount = if is_usdt {
@@ -236,28 +259,14 @@ impl State for LiquidOverview {
                                 };
 
                                 let (desc, usdt_display) = if is_usdt {
-                                    let display = if let PaymentDetails::Liquid {
-                                        asset_info: Some(info),
-                                        ..
-                                    } = &payment.details
-                                    {
-                                        crate::app::breez::assets::format_usdt_display(
-                                            (info.amount
-                                                * 10_f64.powi(
-                                                    crate::app::breez::assets::USDT_PRECISION
-                                                        as i32,
-                                                ))
-                                            .round()
-                                                as u64,
-                                        )
-                                    } else {
-                                        crate::app::breez::assets::format_usdt_display(
-                                            payment.amount_sat,
-                                        )
-                                    };
                                     (
                                         "USDt Transfer".to_owned(),
-                                        Some(format!("{} USDt", display)),
+                                        Some(format!(
+                                            "{} USDt",
+                                            crate::app::breez::assets::format_usdt_display(
+                                                amount.to_sat()
+                                            )
+                                        )),
                                     )
                                 } else {
                                     let d: &str = match &payment.details {
