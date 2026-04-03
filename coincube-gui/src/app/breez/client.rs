@@ -256,6 +256,32 @@ impl BreezClient {
         .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
+    /// Generate a BOLT11 invoice for an LNURL-pay request.
+    /// Uses `description_hash` (required by LNURL spec) instead of `description`.
+    pub async fn receive_lnurl_invoice(
+        &self,
+        payer_amount_sat: u64,
+        description_hash: String,
+    ) -> Result<breez::ReceivePaymentResponse, BreezError> {
+        let sdk = self.get_sdk()?;
+        let prepare = sdk
+            .prepare_receive_payment(&breez::PrepareReceiveRequest {
+                payment_method: breez::PaymentMethod::Bolt11Invoice,
+                amount: Some(breez::ReceiveAmount::Bitcoin { payer_amount_sat }),
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+        sdk.receive_payment(&breez::ReceivePaymentRequest {
+            prepare_response: prepare,
+            description: None,
+            payer_note: None,
+            description_hash: Some(breez::DescriptionHash::Custom { hash: description_hash }),
+        })
+        .await
+        .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
     pub async fn receive_onchain(
         &self,
         amount_sat: Option<u64>,

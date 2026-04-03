@@ -68,6 +68,10 @@ impl CoincubeClient {
             .unwrap();
     }
 
+    pub fn token(&self) -> Option<&str> {
+        self.token.as_deref()
+    }
+
     /// Save a Mavapay quote to coincube-api
     pub async fn save_quote<T: serde::Serialize>(
         &self,

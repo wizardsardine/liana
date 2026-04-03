@@ -522,6 +522,8 @@ pub struct App {
     /// True while a check_bitcoind_sync_progress probe is in flight; prevents
     /// multiple concurrent RPC calls from piling up across subscription ticks.
     bitcoind_sync_probe_in_progress: bool,
+    /// Retry counter for LNURL SSE reconnection (same pattern as Meld).
+    lnurl_sse_retries: usize,
 }
 
 /// Returns true when a `DaemonError` indicates the daemon process is no longer
@@ -646,6 +648,7 @@ impl App {
                 errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
+                lnurl_sse_retries: 0,
             },
             cmd,
         )
@@ -709,6 +712,7 @@ impl App {
                 errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
+                lnurl_sse_retries: 0,
             },
             cmd,
         )
@@ -987,6 +991,24 @@ impl App {
             );
         }
 
+        // LNURL SSE stream — active while the user is logged in to Connect.
+        // Listens for Lightning Address invoice requests and generates BOLT11
+        // invoices via the Breez SDK.
+        if self.panels.connect.account.is_authenticated() {
+            if let Some(client) = self.panels.connect.account.authenticated_client() {
+                if let Some(token) = client.token() {
+                    subscriptions.push(
+                        crate::services::lnurl::stream::lnurl_subscription(
+                            token.to_string(),
+                            self.lnurl_sse_retries,
+                            self.breez_client.clone(),
+                        )
+                        .map(Message::Lnurl),
+                    );
+                }
+            }
+        }
+
         // Poll pending local Bitcoind IBD progress on a fixed interval,
         // independent of the variable-rate tick subscription.
         if self
@@ -1181,6 +1203,37 @@ impl App {
             Message::InstallStats(_) => {
                 if let Some(panel) = self.panels.current_mut() {
                     return panel.update(self.daemon.clone(), &self.cache, message);
+                }
+            }
+            Message::Lnurl(msg) => {
+                use crate::services::lnurl::LnurlMessage;
+                match msg {
+                    LnurlMessage::StreamConnected => {
+                        info!("[LNURL] SSE stream connected");
+                    }
+                    LnurlMessage::InvoiceRequest(event) => {
+                        info!(
+                            "[LNURL] Invoice request: id={}, user={}, amount_msats={}",
+                            event.request_id, event.username, event.amount_msats
+                        );
+                    }
+                    LnurlMessage::InvoiceGenerated { request_id } => {
+                        info!("[LNURL] Invoice delivered for request {}", request_id);
+                    }
+                    LnurlMessage::InvoiceError { request_id, error } => {
+                        warn!(
+                            "[LNURL] Invoice error for request {}: {}",
+                            request_id, error
+                        );
+                    }
+                    LnurlMessage::EventSourceDisconnected(reason) => {
+                        warn!("[LNURL] SSE disconnected: {}", reason);
+                        self.lnurl_sse_retries += 1;
+                    }
+                    LnurlMessage::StreamError(err) => {
+                        warn!("[LNURL] Stream error: {}", err);
+                        self.lnurl_sse_retries += 1;
+                    }
                 }
             }
             Message::SetInternalBitcoind(bitcoind) => {
