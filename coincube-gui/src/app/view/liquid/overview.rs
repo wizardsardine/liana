@@ -35,15 +35,17 @@ pub fn liquid_overview_view<'a>(
 
     let btc_fiat = fiat_converter.as_ref().map(|c| c.convert(btc_balance));
 
+    // Only sum BTC pending amounts; USDt transactions have usdt_display set
+    // and their amount field holds USDt base units, not BTC sats.
     let pending_outgoing_sats: u64 = recent_transaction
         .iter()
-        .filter(|t| !t.is_incoming && matches!(t.status, PaymentState::Pending))
+        .filter(|t| !t.is_incoming && t.usdt_display.is_none() && matches!(t.status, PaymentState::Pending))
         .map(|t| (t.amount + t.fees_sat).to_sat())
         .sum();
 
     let pending_incoming_sats: u64 = recent_transaction
         .iter()
-        .filter(|t| t.is_incoming && matches!(t.status, PaymentState::Pending))
+        .filter(|t| t.is_incoming && t.usdt_display.is_none() && matches!(t.status, PaymentState::Pending))
         .map(|t| t.amount.to_sat())
         .sum();
 

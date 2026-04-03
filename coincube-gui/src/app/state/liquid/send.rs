@@ -11,8 +11,8 @@ use iced::Task;
 
 use super::sideshift_send::SideshiftSendFlow;
 use crate::app::breez::assets::{
-    asset_kind_for_id, lbtc_asset_id, parse_asset_to_minor_units, usdt_asset_id, AssetKind,
-    USDT_PRECISION,
+    asset_kind_for_id, format_usdt_display, lbtc_asset_id, parse_asset_to_minor_units,
+    usdt_asset_id, AssetKind, USDT_PRECISION,
 };
 use crate::app::menu::{LiquidSubMenu, Menu};
 use crate::app::settings::unit::BitcoinDisplayUnit;
@@ -785,6 +785,15 @@ impl State for LiquidSend {
                                 let fees_sat = Amount::from_sat(payment.fees_sat);
 
                                 let details = payment.details.clone();
+                                let usdt_display = if is_usdt_payment {
+                                    Some(format!(
+                                        "{} USDt",
+                                        format_usdt_display(amount.to_sat())
+                                    ))
+                                } else {
+                                    None
+                                };
+
                                 view::liquid::RecentTransaction {
                                     description: desc.to_owned(),
                                     time_ago,
@@ -794,7 +803,7 @@ impl State for LiquidSend {
                                     status,
                                     details,
                                     fees_sat,
-                                    usdt_display: None,
+                                    usdt_display,
                                 }
                             })
                             .collect();
