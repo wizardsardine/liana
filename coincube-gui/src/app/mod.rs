@@ -1624,11 +1624,19 @@ impl App {
             }
             msg @ Message::View(view::Message::ConnectAccount(_))
             | msg @ Message::View(view::Message::ConnectCube(_)) => {
+                let was_authenticated = self.cache.connect_authenticated;
                 let task = self
                     .panels
                     .connect
                     .update(self.daemon.clone(), &self.cache, msg);
                 self.cache.connect_authenticated = self.panels.connect.account.is_authenticated();
+                // Reset LNURL backoff when auth state changes (login/logout).
+                // The token is part of the subscription hash, so changing it
+                // already causes Iced to recreate the subscription — resetting
+                // retries just ensures backoff starts fresh.
+                if was_authenticated != self.cache.connect_authenticated {
+                    self.lnurl_sse_retries = 0;
+                }
                 // Sync lightning address to cache for sidebar display
                 self.cache.lightning_address = self
                     .panels
