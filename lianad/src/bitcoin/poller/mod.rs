@@ -4,7 +4,7 @@ use crate::{bitcoin::BitcoinInterface, database::DatabaseInterface};
 use liana::descriptors;
 
 use std::{
-    sync::{self, mpsc},
+    sync::{self, atomic, mpsc},
     time,
 };
 
@@ -12,7 +12,6 @@ use miniscript::bitcoin::secp256k1;
 
 #[derive(Debug, Clone)]
 pub enum PollerMessage {
-    Shutdown,
     /// Ask the Bitcoin poller to poll immediately, get notified through the passed channel once
     /// it's done.
     PollNow(mpsc::SyncSender<()>),
@@ -59,12 +58,18 @@ impl Poller {
     pub fn poll_forever(
         &mut self,
         poll_interval: time::Duration,
+        shutdown: sync::Arc<atomic::AtomicBool>,
         receiver: mpsc::Receiver<PollerMessage>,
     ) {
         let mut last_poll = None;
         let mut synced = false;
 
         loop {
+            if shutdown.load(atomic::Ordering::Relaxed) {
+                log::info!("Bitcoin poller was told to shut down.");
+                return;
+            }
+
             // How long to wait before the next poll.
             let time_before_poll = if let Some(last_poll) = last_poll {
                 let time_since_poll = time::Instant::now().duration_since(last_poll);
@@ -84,10 +89,6 @@ impl Poller {
             // Wait for the duration of the interval between polls, but listen to messages in the
             // meantime.
             match receiver.recv_timeout(time_before_poll) {
-                Ok(PollerMessage::Shutdown) => {
-                    log::info!("Bitcoin poller was told to shut down.");
-                    return;
-                }
                 Ok(PollerMessage::PollNow(sender)) => {
                     // We've been asked to poll, don't wait any further and signal completion to
                     // the caller, unless the block chain is still syncing.

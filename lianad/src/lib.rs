@@ -365,11 +365,13 @@ impl DaemonControl {
 /// JSONRPC server or one which exposes its API through a `DaemonControl`.
 pub enum DaemonHandle {
     Controller {
+        poller_shutdown: sync::Arc<sync::atomic::AtomicBool>,
         poller_sender: mpsc::SyncSender<poller::PollerMessage>,
         poller_handle: thread::JoinHandle<()>,
         control: DaemonControl,
     },
     Server {
+        poller_shutdown: sync::Arc<sync::atomic::AtomicBool>,
         poller_sender: mpsc::SyncSender<poller::PollerMessage>,
         poller_handle: thread::JoinHandle<()>,
         rpcserver_shutdown: sync::Arc<sync::atomic::AtomicBool>,
@@ -453,13 +455,15 @@ impl DaemonHandle {
         let mut bitcoin_poller =
             poller::Poller::new(bit.clone(), db.clone(), config.main_descriptor.clone());
         let (poller_sender, poller_receiver) = mpsc::sync_channel(0);
+        let poller_shutdown = sync::Arc::from(sync::atomic::AtomicBool::from(false));
         let poller_handle = thread::Builder::new()
             .name("Bitcoin Network poller".to_string())
             .spawn({
                 let poll_interval = config.bitcoin_config.poll_interval_secs;
+                let shutdown = poller_shutdown.clone();
                 move || {
                     log::info!("Bitcoin poller started.");
-                    bitcoin_poller.poll_forever(poll_interval, poller_receiver);
+                    bitcoin_poller.poll_forever(poll_interval, shutdown, poller_receiver);
                     log::info!("Bitcoin poller stopped.");
                 }
             })
@@ -483,6 +487,7 @@ impl DaemonHandle {
                 .expect("Spawning the RPC server thread should never fail.");
 
             return Ok(DaemonHandle::Server {
+                poller_shutdown,
                 poller_sender,
                 poller_handle,
                 rpcserver_shutdown,
@@ -491,6 +496,7 @@ impl DaemonHandle {
         }
 
         Ok(DaemonHandle::Controller {
+            poller_shutdown,
             poller_sender,
             poller_handle,
             control,
@@ -531,25 +537,22 @@ impl DaemonHandle {
     pub fn stop(self) -> Result<(), Box<dyn error::Error>> {
         match self {
             Self::Controller {
-                poller_sender,
+                poller_shutdown,
                 poller_handle,
                 ..
             } => {
-                poller_sender
-                    .send(poller::PollerMessage::Shutdown)
-                    .expect("The other end should never have hung up before this.");
+                poller_shutdown.store(true, sync::atomic::Ordering::Relaxed);
                 poller_handle.join().expect("Poller thread must not panic");
                 Ok(())
             }
             Self::Server {
-                poller_sender,
+                poller_shutdown,
                 poller_handle,
                 rpcserver_shutdown,
                 rpcserver_handle,
+                ..
             } => {
-                poller_sender
-                    .send(poller::PollerMessage::Shutdown)
-                    .expect("The other end should never have hung up before this.");
+                poller_shutdown.store(true, sync::atomic::Ordering::Relaxed);
                 rpcserver_shutdown.store(true, sync::atomic::Ordering::Relaxed);
                 rpcserver_handle
                     .join()
