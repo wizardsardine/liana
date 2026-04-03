@@ -219,7 +219,7 @@ async fn handle_invoice_request(
         .send(LnurlMessage::InvoiceRequest(event.clone()))
         .await;
 
-    if event.amount_msats % 1000 != 0 {
+    if !event.amount_msats.is_multiple_of(1000) {
         let error = format!(
             "amount_msats {} is not a whole satoshi multiple",
             event.amount_msats
