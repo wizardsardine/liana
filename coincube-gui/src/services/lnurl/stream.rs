@@ -105,7 +105,13 @@ fn create_stream(
                 .unwrap_or_else(|_| reqwest::Client::new());
 
             if let Some((request, auth_header)) = init {
-                match reqwest::Client::new().execute(request).await {
+                // Use connect_timeout only — a full response timeout would kill
+                // the long-lived SSE stream. The 60s heartbeat loop handles idle detection.
+                let sse_client = reqwest::Client::builder()
+                    .connect_timeout(std::time::Duration::from_secs(10))
+                    .build()
+                    .unwrap_or_else(|_| reqwest::Client::new());
+                match sse_client.execute(request).await {
                     Ok(res) => {
                         log::info!("[LNURL] SSE stream connected");
                         let _ = channel.send(LnurlMessage::StreamConnected).await;
@@ -159,6 +165,11 @@ fn create_stream(
                                         }
                                         Ok(None) => {
                                             log::info!("[LNURL] EventSource exiting safely");
+                                            let _ = channel
+                                                .send(LnurlMessage::EventSourceDisconnected(
+                                                    "EventSource stream ended".to_string(),
+                                                ))
+                                                .await;
                                             break;
                                         }
                                         Err(err) => {

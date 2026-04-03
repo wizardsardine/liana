@@ -1210,7 +1210,9 @@ impl App {
                 match msg {
                     LnurlMessage::StreamConnected => {
                         info!("[LNURL] SSE stream connected");
-                        self.lnurl_sse_retries = 0;
+                        // Note: do NOT reset lnurl_sse_retries here — retries
+                        // is part of the subscription hash, so changing it would
+                        // cause Iced to tear down this just-connected stream.
                     }
                     LnurlMessage::InvoiceRequest(event) => {
                         info!(
