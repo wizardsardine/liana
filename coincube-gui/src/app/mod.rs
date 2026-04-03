@@ -1210,6 +1210,7 @@ impl App {
                 match msg {
                     LnurlMessage::StreamConnected => {
                         info!("[LNURL] SSE stream connected");
+                        self.lnurl_sse_retries = 0;
                     }
                     LnurlMessage::InvoiceRequest(event) => {
                         info!(
