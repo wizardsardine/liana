@@ -155,7 +155,11 @@ pub fn create_spend_tx<'a>(
     is_sweep_individually: bool,
     sweep_feerate_min: &form::Value<String>,
     sweep_feerate_max: &form::Value<String>,
-    _sweep_coin_feerates: &[(liana::miniscript::bitcoin::OutPoint, &'a form::Value<String>, Option<&'a Amount>)],
+    _sweep_coin_feerates: &[(
+        liana::miniscript::bitcoin::OutPoint,
+        &'a form::Value<String>,
+        Option<&'a Amount>,
+    )],
 ) -> Element<'a, Message> {
     let is_self_send = recipients.is_empty();
 
@@ -218,9 +222,8 @@ pub fn create_spend_tx<'a>(
             .padding(10),
         )
         .width(120);
-        let apply_all_btn =
-            button::secondary(None, "Apply to all")
-                .on_press(Message::CreateSpend(CreateSpendMessage::SweepApplyToAll));
+        let apply_all_btn = button::secondary(None, "Apply to all")
+            .on_press(Message::CreateSpend(CreateSpendMessage::SweepApplyToAll));
 
         let min_input = Container::new(
             form::Form::new_trimmed("Min", sweep_feerate_min, |msg| {
@@ -238,9 +241,8 @@ pub fn create_spend_tx<'a>(
             .padding(10),
         )
         .width(80);
-        let randomize_btn =
-            button::secondary(None, "Randomize")
-                .on_press(Message::CreateSpend(CreateSpendMessage::SweepRandomizeFees));
+        let randomize_btn = button::secondary(None, "Randomize")
+            .on_press(Message::CreateSpend(CreateSpendMessage::SweepRandomizeFees));
 
         let controls_row = Row::new()
             .spacing(10)

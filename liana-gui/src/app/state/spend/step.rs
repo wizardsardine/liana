@@ -747,9 +747,7 @@ impl Step for DefineSpend {
                             let coin_feerates: Vec<(OutPoint, u64)> = self
                                 .sweep_coin_feerates
                                 .iter()
-                                .map(|(op, fr, _)| {
-                                    (*op, fr.value.parse::<u64>().unwrap_or(1))
-                                })
+                                .map(|(op, fr, _)| (*op, fr.value.parse::<u64>().unwrap_or(1)))
                                 .collect();
                             return Task::perform(
                                 async move {
@@ -768,17 +766,11 @@ impl Step for DefineSpend {
                                             CreateSpendResult::Success { psbt, warnings } => {
                                                 batch.push((psbt, warnings));
                                             }
-                                            CreateSpendResult::InsufficientFunds {
-                                                missing,
-                                            } => {
-                                                return Err(
-                                                    SpendCreationError::CoinSelection(
-                                                        liana::spend::InsufficientFunds {
-                                                            missing,
-                                                        },
-                                                    )
-                                                    .into(),
-                                                );
+                                            CreateSpendResult::InsufficientFunds { missing } => {
+                                                return Err(SpendCreationError::CoinSelection(
+                                                    liana::spend::InsufficientFunds { missing },
+                                                )
+                                                .into());
                                             }
                                         }
                                     }
