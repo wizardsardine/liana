@@ -207,7 +207,7 @@ impl HotSigner {
         datadir_root: &path::Path,
         network: bitcoin::Network,
         password: Option<&str>,
-        skip_liquid: bool,
+        vault_only: bool,
     ) -> Result<Vec<Self>, SignerError> {
         let mut signers = Vec::new();
 
@@ -218,10 +218,12 @@ impl HotSigner {
         for entry in mnemonic_paths {
             let path = entry.map_err(SignerError::MnemonicStorage)?.path();
 
-            // Skip Liquid and master-seed mnemonics if requested (vault-only mode).
-            if skip_liquid {
+            // Skip Liquid and master-seed mnemonics when in vault-only mode.
+            if vault_only {
                 if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                    if filename.contains("-liquid_") || filename.contains("-master_") {
+                    if filename.contains(&format!("-{}", LEGACY_LIQUID_SEED_LABEL))
+                        || filename.contains(&format!("-{}", MASTER_SEED_LABEL))
+                    {
                         continue;
                     }
                 }
@@ -370,33 +372,15 @@ impl HotSigner {
         result
     }
 
-    /// Derive the NIP-06 Nostr identity key pair at `m/44'/1237'/0'/0'/0'`.
-    /// Returns (secret_key_bytes_32, compressed_pubkey_bytes_33).
-    pub fn nostr_identity_keys(
-        &self,
-        secp: &secp256k1::Secp256k1<secp256k1::All>,
-    ) -> ([u8; 32], [u8; 33]) {
-        use bip32::ChildNumber;
-        let path = bip32::DerivationPath::from(vec![
-            ChildNumber::from_hardened_idx(44).expect("valid"),
-            ChildNumber::from_hardened_idx(1237).expect("valid"),
-            ChildNumber::from_hardened_idx(0).expect("valid"),
-            ChildNumber::from_hardened_idx(0).expect("valid"),
-            ChildNumber::from_hardened_idx(0).expect("valid"),
-        ]);
-        let child = self
-            .master_xpriv
-            .derive_priv(secp, &path)
-            .expect("BIP32 derivation from valid master is infallible for hardened paths");
-        let secret_bytes = child.private_key.secret_bytes();
-        let pubkey = secp256k1::PublicKey::from_secret_key(secp, &child.private_key);
-        (secret_bytes, pubkey.serialize())
-    }
-
     /// Reconstructs an equivalent signer by re-deriving from this signer's mnemonic.
     /// Useful when a second owner needs the same key material (e.g., the installer
     /// re-using the cube's master seed as the vault hot-signer in dev mode).
-    pub fn try_clone(&self, network: bitcoin::Network) -> Result<Self, SignerError> {
+    pub fn try_clone(&self) -> Result<Self, SignerError> {
+        let network = if self.master_xpriv.network == bitcoin::NetworkKind::Main {
+            bitcoin::Network::Bitcoin
+        } else {
+            bitcoin::Network::Testnet
+        };
         Self::from_mnemonic(network, self.mnemonic.clone())
     }
 
@@ -1616,5 +1600,13 @@ mod tests {
 
         // Invalid timestamp
         assert!(MnemonicFileName::from_str("mnemonic-abcd1234-def456-notanumber.txt").is_err());
+    }
+
+    #[test]
+    fn test_try_clone_fingerprint_matches() {
+        let secp = secp256k1::Secp256k1::new();
+        let signer = HotSigner::generate(bitcoin::Network::Bitcoin).unwrap();
+        let cloned = signer.try_clone().unwrap();
+        assert_eq!(signer.fingerprint(&secp), cloned.fingerprint(&secp));
     }
 }
