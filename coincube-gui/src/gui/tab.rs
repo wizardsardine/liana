@@ -178,7 +178,7 @@ impl Tab {
                         }
                     }
                     let (install, command) =
-                        Installer::new(datadir, network, None, init, false, None, None);
+                        Installer::new(datadir, network, None, init, false, None, None, false);
                     self.state = State::Installer(install);
                     command.map(Message::Install)
                 }
@@ -229,6 +229,7 @@ impl Tab {
                         false,
                         None,
                         None, // No breez_client from login screen
+                        false,
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
@@ -403,6 +404,11 @@ impl Tab {
                         true, // launched from app (loader is part of app flow)
                         Some(loader.cube_settings.clone()), // pass cube settings for returning
                         loader.breez_client.clone(), // pass breez_client to avoid re-entering PIN
+                        crate::app::settings::global::GlobalSettings::load_developer_mode(
+                            &crate::app::settings::global::GlobalSettings::path(
+                                &loader.datadir_path,
+                            ),
+                        ),
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
@@ -537,6 +543,11 @@ impl Tab {
                             true,                              // launched from app
                             Some(app.cube_settings().clone()), // pass cube settings for returning
                             Some(app.breez_client()), // pass breez_client to avoid re-entering PIN
+                            crate::app::settings::global::GlobalSettings::load_developer_mode(
+                                &crate::app::settings::global::GlobalSettings::path(
+                                    app.datadir(),
+                                ),
+                            ),
                         );
                         self.state = State::Installer(install);
                         command.map(Message::Install)

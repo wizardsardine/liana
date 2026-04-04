@@ -182,6 +182,7 @@ pub struct SelectKeySource {
     /// Informations about the actual spending path.
     actual_path: PathData,
     hot_signer: Arc<Mutex<Signer>>,
+    developer_mode: bool,
     /// The currently selected key.
     selected_key: SelectedKey,
     step: Step,
@@ -211,6 +212,7 @@ impl SelectKeySource {
         keys: HashMap<Fingerprint, (Vec<(usize, usize)>, Key)>,
         accounts: HashMap<Fingerprint, ChildNumber>,
         hot_signer: Arc<Mutex<Signer>>,
+        developer_mode: bool,
     ) -> Self {
         Self {
             network,
@@ -219,6 +221,7 @@ impl SelectKeySource {
             accounts,
             actual_path,
             hot_signer,
+            developer_mode,
             selected_key: SelectedKey::None,
             step: Step::Select,
             focus: Focus::None,
@@ -1061,7 +1064,9 @@ impl SelectKeySource {
         );
 
         let hot_signer_fg = self.hot_signer.lock().expect("poisoned").fingerprint();
-        let hot_signer = (!self.keys.contains_key(&hot_signer_fg) && safety_net_token.is_none())
+        let hot_signer = (self.developer_mode
+            && !self.keys.contains_key(&hot_signer_fg)
+            && safety_net_token.is_none())
             .then_some(self.widget_generate_hot_key());
 
         let load_key = safety_net_token.is_none().then_some(self.widget_load_key());

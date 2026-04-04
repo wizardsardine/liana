@@ -97,6 +97,8 @@ pub struct Installer {
 
     /// Pre-loaded BreezClient when launched from app (avoids re-entering PIN)
     pub breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
+
+    pub developer_mode: bool,
 }
 
 impl Installer {
@@ -138,8 +140,23 @@ impl Installer {
         launched_from_app: bool,
         cube_settings: Option<crate::app::settings::CubeSettings>,
         breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
+        developer_mode: bool,
     ) -> (Installer, Task<Message>) {
-        let signer = Arc::new(Mutex::new(Signer::generate(network).unwrap()));
+        let signer = if developer_mode {
+            breez_client
+                .as_ref()
+                .and_then(|bc| bc.liquid_signer())
+                .and_then(|arc_hs| {
+                    arc_hs
+                        .lock()
+                        .ok()
+                        .and_then(|hs_guard| hs_guard.try_clone().ok())
+                        .map(|hs| Arc::new(Mutex::new(Signer::new(hs))))
+                })
+                .unwrap_or_else(|| Arc::new(Mutex::new(Signer::generate(network).unwrap())))
+        } else {
+            Arc::new(Mutex::new(Signer::generate(network).unwrap()))
+        };
         let context = Context::new(
             network,
             destination_path.clone(),
@@ -168,7 +185,7 @@ impl Installer {
                 UserFlow::CreateWallet => vec![
                     ChooseDescriptorTemplate::default().into(),
                     DescriptorTemplateDescription::default().into(),
-                    DefineDescriptor::new(network, signer.clone()).into(),
+                    DefineDescriptor::new(network, signer.clone(), developer_mode).into(),
                     BackupMnemonic::new(signer.clone()).into(),
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::new_create_wallet().into(),
@@ -198,6 +215,7 @@ impl Installer {
             },
             context,
             signer,
+            developer_mode,
         };
         // skip the step according to the current context.
         installer.skip_steps();

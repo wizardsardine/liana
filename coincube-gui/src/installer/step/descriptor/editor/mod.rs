@@ -57,6 +57,7 @@ pub struct DefineDescriptor {
 
     modal: Option<Box<dyn DescriptorEditModal>>,
     signer: Arc<Mutex<Signer>>,
+    developer_mode: bool,
 
     keys: HashMap<Fingerprint, Key>,
     paths: Vec<Path>,
@@ -67,13 +68,14 @@ pub struct DefineDescriptor {
 }
 
 impl DefineDescriptor {
-    pub fn new(network: Network, signer: Arc<Mutex<Signer>>) -> Self {
+    pub fn new(network: Network, signer: Arc<Mutex<Signer>>, developer_mode: bool) -> Self {
         Self {
             network,
             use_taproot: false,
             modal: None,
 
             signer,
+            developer_mode,
             error: None,
             keys: HashMap::new(),
             descriptor_template: DescriptorTemplate::default(),
@@ -213,6 +215,7 @@ impl DefineDescriptor {
             keys,
             self.accounts.clone(),
             self.signer.clone(),
+            self.developer_mode,
         )
     }
 }
@@ -826,6 +829,7 @@ mod tests {
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
             Network::Signet,
             Arc::new(Mutex::new(Signer::generate(Network::Bitcoin).unwrap())),
+            true,
         ));
         sandbox.load(&ctx).await;
 
@@ -908,6 +912,7 @@ mod tests {
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
             Network::Testnet,
             Arc::new(Mutex::new(Signer::generate(Network::Testnet).unwrap())),
+            false,
         ));
         sandbox.load(&ctx).await;
 
