@@ -246,7 +246,7 @@ impl State for LiquidSettings {
                                 let network_dir = dir.network_directory(breez_client.network());
                                 update_settings_file(&network_dir, |mut settings| {
                                     if let Some(cube) = settings.cubes.iter_mut().find(|cube| {
-                                        cube.liquid_wallet_signer_fingerprint.as_ref()
+                                        cube.master_signer_fingerprint.as_ref()
                                             == Some(&fingerprint)
                                     }) {
                                         cube.backed_up = true;
@@ -313,7 +313,7 @@ fn fetch_main_menu_state(breez_client: Arc<BreezClient>) -> bool {
                 match Settings::from_file(&network_dir) {
                     Ok(settings) => {
                         let cube = settings.cubes.into_iter().find(|cube| {
-                            cube.liquid_wallet_signer_fingerprint.as_ref() == Some(&fingerprint)
+                            cube.master_signer_fingerprint.as_ref() == Some(&fingerprint)
                         });
                         if let Some(cube) = cube {
                             backed_up = cube.backed_up;

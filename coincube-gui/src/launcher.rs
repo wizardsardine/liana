@@ -289,7 +289,7 @@ impl Launcher {
 
                         // Create secp context for fingerprint calculation
                         let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-                        let liquid_fingerprint = liquid_signer.fingerprint(&secp);
+                        let master_fingerprint = liquid_signer.fingerprint(&secp);
 
                         // Store Liquid wallet mnemonic (encrypted with PIN if provided)
                         let network_dir = datadir_path.network_directory(network);
@@ -314,11 +314,11 @@ impl Launcher {
                                 format!("Failed to store Liquid wallet mnemonic: {}", e)
                             })?;
 
-                        tracing::info!("Liquid wallet signer created and stored (encrypted with PIN) with fingerprint: {}", liquid_fingerprint);
+                        tracing::info!("Master signer created and stored (encrypted with PIN) with fingerprint: {}", master_fingerprint);
 
                         // Build Cube settings using the pre-generated, stable UUID.
                         let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
-                            .with_liquid_signer(liquid_fingerprint)
+                            .with_master_signer(master_fingerprint)
                             .with_pin(&pin)
                             .map_err(|e| format!("Failed to hash PIN: {}", e))?;
 
@@ -601,7 +601,7 @@ impl Launcher {
                                 // Create secp context for fingerprint calculation
                                 let secp =
                                     coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-                                let liquid_fingerprint = liquid_signer.fingerprint(&secp);
+                                let master_fingerprint = liquid_signer.fingerprint(&secp);
 
                                 // Store Liquid wallet mnemonic (encrypted with PIN if provided)
                                 let network_dir = datadir_path.network_directory(network);
@@ -626,11 +626,11 @@ impl Launcher {
                                         format!("Failed to store Liquid wallet mnemonic: {}", e)
                                     })?;
 
-                                tracing::info!("Liquid wallet signer created and stored (encrypted with PIN) with fingerprint: {}", liquid_fingerprint);
+                                tracing::info!("Master signer created and stored (encrypted with PIN) with fingerprint: {}", master_fingerprint);
 
                                 // Build Cube settings using the pre-generated, stable UUID.
                                 let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
-                                    .with_liquid_signer(liquid_fingerprint)
+                                    .with_master_signer(master_fingerprint)
                                     .with_pin(&pin)
                                     .map_err(|e| format!("Failed to hash PIN: {}", e))?;
 

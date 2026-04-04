@@ -135,8 +135,14 @@ pub struct CubeSettings {
     /// Optional security PIN (stored as Argon2id hash with salt in PHC format)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security_pin_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub liquid_wallet_signer_fingerprint: Option<Fingerprint>,
+    /// Fingerprint of this Cube's master seed HotSigner.
+    /// The serde alias keeps existing settings.json files readable without migration.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "liquid_wallet_signer_fingerprint"
+    )]
+    pub master_signer_fingerprint: Option<Fingerprint>,
     /// Bitcoin display unit preference for this cube
     #[serde(default)]
     pub unit_setting: unit::UnitSetting,
@@ -167,7 +173,7 @@ impl CubeSettings {
             created_at: chrono::Utc::now().timestamp(),
             vault_wallet_id: None,
             security_pin_hash: None,
-            liquid_wallet_signer_fingerprint: None,
+            master_signer_fingerprint: None,
             backed_up: false,
             mfa_done: false,
             unit_setting: unit::UnitSetting::default(),
@@ -185,9 +191,14 @@ impl CubeSettings {
         self
     }
 
-    pub fn with_liquid_signer(mut self, fingerprint: Fingerprint) -> Self {
-        self.liquid_wallet_signer_fingerprint = Some(fingerprint);
+    pub fn with_master_signer(mut self, fingerprint: Fingerprint) -> Self {
+        self.master_signer_fingerprint = Some(fingerprint);
         self
+    }
+
+    #[deprecated(note = "use with_master_signer")]
+    pub fn with_liquid_signer(self, fingerprint: Fingerprint) -> Self {
+        self.with_master_signer(fingerprint)
     }
 
     pub fn with_pin(mut self, pin: &str) -> Result<Self, Box<dyn std::error::Error>> {
@@ -1118,5 +1129,27 @@ mod test {
         assert!(cube.verify_pin("1234"));
         assert!(cube.verify_pin("0000"));
         assert!(cube.verify_pin("9999"));
+    }
+
+    #[test]
+    fn test_cube_settings_alias_backward_compat() {
+        use super::CubeSettings;
+
+        let json = r#"{
+            "id": "00000000-0000-0000-0000-000000000001",
+            "name": "My Cube",
+            "network": "bitcoin",
+            "backed_up": false,
+            "mfa_done": false,
+            "created_at": 0,
+            "liquid_wallet_signer_fingerprint": "aabbccdd"
+        }"#;
+
+        let cube: CubeSettings = serde_json::from_str(json).expect("alias must deserialise");
+        assert_eq!(
+            cube.master_signer_fingerprint.map(|f| f.to_string()),
+            Some("aabbccdd".to_string()),
+            "serde alias should map old field name to master_signer_fingerprint"
+        );
     }
 }

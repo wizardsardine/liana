@@ -574,7 +574,7 @@ impl Tab {
                                 async move {
                                     // Load BreezClient for Liquid wallet with PIN
                                     let breez_result = if let Some(fingerprint) =
-                                        cube.liquid_wallet_signer_fingerprint
+                                        cube.master_signer_fingerprint
                                     {
                                         breez::load_breez_client(
                                             datadir_clone.path(),
