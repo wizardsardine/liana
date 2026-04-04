@@ -1,10 +1,13 @@
 use breez_sdk_liquid::model::{PaymentDetails, PaymentState};
 use breez_sdk_liquid::prelude::{Payment, PaymentType, RefundableSwap};
 use coincube_core::miniscript::bitcoin::Amount;
+use iced::widget::image;
+
 use coincube_ui::{
     component::{
         amount::DisplayAmount,
         button, card, form,
+        kage_quote::{self, KageQuoteDisplayProps, Quote},
         text::*,
         transaction::{TransactionDirection, TransactionListItem},
     },
@@ -59,6 +62,8 @@ pub fn liquid_transactions_view<'a>(
     usdt_id: &'a str,
     asset_filter: AssetFilter,
     show_direction_badges: bool,
+    empty_state_quote: &'a Quote,
+    empty_state_image_handle: &'a image::Handle,
 ) -> Element<'a, Message> {
     let mut content = Column::new().spacing(20).width(Length::Fill);
 
@@ -102,14 +107,17 @@ pub fn liquid_transactions_view<'a>(
     }
 
     if payments.is_empty() {
-        // Empty state
+        // Empty state with Kage quote
         content = content.push(
             Column::new()
                 .spacing(20)
                 .width(Length::Fill)
                 .align_x(Alignment::Center)
-                .push(Space::new().height(Length::Fixed(100.0)))
-                .push(h2("No transactions yet").style(theme::text::primary))
+                .push(Space::new().height(Length::Fixed(40.0)))
+                .push(kage_quote::kage_quote_display(
+                    &KageQuoteDisplayProps::new("empty-wallet", empty_state_quote, empty_state_image_handle),
+                ))
+                .push(Space::new().height(Length::Fixed(10.0)))
                 .push(
                     text("Your Lightning wallet is ready. Once you send or receive\nsats, they'll show up here.")
                         .size(16)
@@ -117,7 +125,6 @@ pub fn liquid_transactions_view<'a>(
                         .wrapping(iced::widget::text::Wrapping::Word)
                         .align_x(iced::alignment::Horizontal::Center),
                 )
-                .push(Space::new().height(Length::Fixed(20.0)))
                 .push(
                     Row::new()
                         .spacing(15)
@@ -477,7 +484,20 @@ pub fn transaction_detail_view<'a>(
                             )
                             .spacing(20),
                     )
-                    .push(
+                    .push(if fees_sat.to_sat() == 0 && !is_receive {
+                        Row::new()
+                            .push(
+                                Column::new()
+                                    .width(Length::FillPortion(1))
+                                    .push(text("Fees").bold()),
+                            )
+                            .push(
+                                Column::new()
+                                    .width(Length::FillPortion(2))
+                                    .push(text("Paid in USDt")),
+                            )
+                            .spacing(20)
+                    } else {
                         Row::new()
                             .push(
                                 Column::new()
@@ -489,8 +509,8 @@ pub fn transaction_detail_view<'a>(
                                     fees_sat.to_formatted_string_with_unit(bitcoin_unit),
                                 )),
                             )
-                            .spacing(20),
-                    )
+                            .spacing(20)
+                    })
                     .spacing(15),
             ))
             .into();

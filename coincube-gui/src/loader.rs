@@ -12,9 +12,16 @@ use tokio::runtime::Handle;
 use tracing::{debug, info, warn};
 
 use coincube_core::miniscript::bitcoin;
+use iced::widget::image;
+
 use coincube_ui::{
-    component::{button, notification, text::*},
-    icon, theme,
+    component::{
+        button,
+        kage_quote::{self, KageQuoteDisplayProps, Quote, QuoteProvider},
+        notification,
+        text::*,
+    },
+    theme,
     widget::*,
 };
 use coincubed::{
@@ -71,6 +78,9 @@ pub struct Loader {
     pub cube_settings: CubeSettings,
     pub breez_client: Option<std::sync::Arc<BreezClient>>,
     step: Step,
+    quote_provider: QuoteProvider,
+    current_quote: Quote,
+    current_image_handle: image::Handle,
 }
 
 pub enum Step {
@@ -163,6 +173,10 @@ impl Loader {
             Task::none()
         };
 
+        let mut quote_provider = QuoteProvider::new();
+        let current_quote = quote_provider.select("loading");
+        let current_image_handle = kage_quote::image_handle_for_context("loading");
+
         (
             Loader {
                 network,
@@ -176,9 +190,17 @@ impl Loader {
                 cube_settings,
                 backup,
                 breez_client,
+                quote_provider,
+                current_quote,
+                current_image_handle,
             },
             task,
         )
+    }
+
+    fn set_quote_context(&mut self, context: &str) {
+        self.current_quote = self.quote_provider.select(context);
+        self.current_image_handle = kage_quote::image_handle_for_context(context);
     }
 
     fn is_first_esplora_scan(&self, wallet_settings: &WalletSettings) -> bool {
@@ -246,6 +268,7 @@ impl Loader {
             progress: 0.0,
             bitcoind_logs: String::new(),
         };
+        self.set_quote_context("syncing");
         Task::perform(sync(daemon, false), Message::Syncing)
     }
 
@@ -263,6 +286,7 @@ impl Loader {
             Err(e) => match e {
                 Error::Config(_) => {
                     self.step = Step::Error(Box::new(e));
+                    self.set_quote_context("error");
                 }
                 Error::Daemon(DaemonError::ClientNotSupported)
                 | Error::Daemon(DaemonError::RpcSocket(Some(ErrorKind::ConnectionRefused), _))
@@ -272,6 +296,7 @@ impl Loader {
                         .clone()
                         .expect("wallet_settings must be Some when starting daemon");
                     self.step = if self.is_first_esplora_scan(&wallet_settings) {
+                        self.set_quote_context("syncing");
                         Step::FullScan { progress: 0.0 }
                     } else {
                         Step::StartingDaemon { progress: 0.0 }
@@ -290,6 +315,7 @@ impl Loader {
                 }
                 _ => {
                     self.step = Step::Error(Box::new(e));
+                    self.set_quote_context("error");
                 }
             },
         }
@@ -318,6 +344,7 @@ impl Loader {
             }
             Err(e) => {
                 self.step = Step::Error(Box::new(e));
+                self.set_quote_context("error");
                 Task::none()
             }
         }
@@ -354,6 +381,7 @@ impl Loader {
                     }
                     Err(e) => {
                         self.step = Step::Error(Box::new(e.into()));
+                        self.set_quote_context("error");
                         return Task::none();
                     }
                 };
@@ -420,6 +448,7 @@ impl Loader {
             }
             Message::Synced(Err(e)) => {
                 self.step = Step::Error(Box::new(e));
+                self.set_quote_context("error");
                 Task::none()
             }
             Message::Failure(_) => {
@@ -451,7 +480,7 @@ impl Loader {
     }
 
     pub fn view(&self) -> Element<Message> {
-        view(&self.step).map(Message::View)
+        view(&self.step, &self.current_quote, &self.current_image_handle).map(Message::View)
     }
 }
 
@@ -597,12 +626,23 @@ pub enum ViewMessage {
     SetupVault,
 }
 
-pub fn view(step: &Step) -> Element<ViewMessage> {
+pub fn view<'a>(
+    step: &'a Step,
+    quote: &'a Quote,
+    image_handle: &'a image::Handle,
+) -> Element<'a, ViewMessage> {
     match &step {
         Step::StartingDaemon { progress } => cover(
             None,
             Column::new()
                 .width(Length::Fill)
+                .spacing(20)
+                .align_x(Alignment::Center)
+                .push(kage_quote::kage_quote_display(&KageQuoteDisplayProps::new(
+                    "loading",
+                    quote,
+                    image_handle,
+                )))
                 .push(ProgressBar::new(0.0..=1.0, *progress).length(Length::Fill))
                 .push(text("Starting daemon...")),
         ),
@@ -611,6 +651,12 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
             Column::new()
                 .width(Length::Fill)
                 .spacing(10)
+                .align_x(Alignment::Center)
+                .push(kage_quote::kage_quote_display(&KageQuoteDisplayProps::new(
+                    "syncing",
+                    quote,
+                    image_handle,
+                )))
                 .push(ProgressBar::new(0.0..=1.0, *progress).length(Length::Fill))
                 .push(text("Scanning the blockchain..."))
                 .push(
@@ -625,6 +671,13 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
             None,
             Column::new()
                 .width(Length::Fill)
+                .spacing(20)
+                .align_x(Alignment::Center)
+                .push(kage_quote::kage_quote_display(&KageQuoteDisplayProps::new(
+                    "loading",
+                    quote,
+                    image_handle,
+                )))
                 .push(ProgressBar::new(0.0..=1.0, 0.0).length(Length::Fill))
                 .push(text("Connecting to daemon...")),
         ),
@@ -637,6 +690,12 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
             Column::new()
                 .width(Length::Fill)
                 .spacing(5)
+                .align_x(Alignment::Center)
+                .push(kage_quote::kage_quote_display(&KageQuoteDisplayProps::new(
+                    "syncing",
+                    quote,
+                    image_handle,
+                )))
                 .push(text(format!("Progress {:.2}%", 100.0 * *progress)))
                 .push(ProgressBar::new(0.0..=1.0, *progress as f32).length(Length::Fill))
                 .push(text(if *progress > 0.98 {
@@ -654,7 +713,11 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
                 .spacing(20)
                 .width(Length::Fill)
                 .align_x(Alignment::Center)
-                .push(icon::plug_icon().size(100).width(Length::Fixed(300.0)))
+                .push(kage_quote::kage_quote_display(&KageQuoteDisplayProps::new(
+                    "error",
+                    quote,
+                    image_handle,
+                )))
                 .push(
                     if matches!(
                         error.as_ref(),

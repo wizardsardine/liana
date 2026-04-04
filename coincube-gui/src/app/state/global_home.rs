@@ -98,6 +98,8 @@ pub struct GlobalHome {
     datadir_path: CoincubeDirectory,
     network: coincube_core::miniscript::bitcoin::Network,
     cube_id: String,
+    idle_quote: coincube_ui::component::kage_quote::Quote,
+    idle_image_handle: iced::widget::image::Handle,
 }
 
 impl GlobalHome {
@@ -140,6 +142,8 @@ impl GlobalHome {
             datadir_path,
             network,
             cube_id,
+            idle_quote: coincube_ui::component::kage_quote::QuoteProvider::new().select("idle"),
+            idle_image_handle: coincube_ui::component::kage_quote::image_handle_for_context("idle"),
         }
     }
 
@@ -181,6 +185,8 @@ impl GlobalHome {
             datadir_path,
             network,
             cube_id,
+            idle_quote: coincube_ui::component::kage_quote::QuoteProvider::new().select("idle"),
+            idle_image_handle: coincube_ui::component::kage_quote::image_handle_for_context("idle"),
         }
     }
 }
@@ -258,6 +264,8 @@ impl State for GlobalHome {
                 pending_vault_incoming: self.pending_vault_incoming,
                 pending_animation_phase: self.pending_transfer_animation_phase,
                 btc_usd_price: cache.btc_usd_price,
+                idle_quote: &self.idle_quote,
+                idle_image_handle: &self.idle_image_handle,
             }),
         );
 

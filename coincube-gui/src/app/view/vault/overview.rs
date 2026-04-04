@@ -469,3 +469,47 @@ pub fn payment_view<'a>(
             .spacing(20),
     )
 }
+
+/// Full-screen celebration view when a vault payment is received.
+pub fn received_celebration_page<'a>(
+    amount_display: &'a str,
+    quote: &'a coincube_ui::component::kage_quote::Quote,
+    image_handle: &'a iced::widget::image::Handle,
+) -> Element<'a, Message> {
+    use coincube_ui::component::kage_quote::{self, KageQuoteDisplayProps};
+
+    Column::new()
+        .spacing(20)
+        .width(Length::Fill)
+        .align_x(Alignment::Center)
+        .push(Space::new().height(Length::Fixed(20.0)))
+        .push(kage_quote::kage_quote_display(
+            &KageQuoteDisplayProps::new("transaction-received", quote, image_handle)
+                .image_size(480),
+        ))
+        .push(h3("Payment received!"))
+        .push(
+            Row::new()
+                .spacing(5)
+                .push(
+                    text(amount_display)
+                        .size(20)
+                        .color(color::GREEN)
+                        .font(iced::Font {
+                            style: iced::font::Style::Italic,
+                            ..Default::default()
+                        }),
+                )
+                .push(text("has arrived.").size(20).font(iced::Font {
+                    style: iced::font::Style::Italic,
+                    ..Default::default()
+                })),
+        )
+        .push(Space::new().height(Length::Fixed(10.0)))
+        .push(
+            button::primary(None, "Back")
+                .width(Length::Fixed(150.0))
+                .on_press(Message::DismissReceivedCelebration),
+        )
+        .into()
+}
