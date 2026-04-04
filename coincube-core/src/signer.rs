@@ -102,6 +102,10 @@ impl fmt::Display for SignerError {
 impl error::Error for SignerError {}
 
 pub const MNEMONICS_FOLDER_NAME: &str = "mnemonics";
+/// Label embedded in the checksum portion of mnemonic filenames for master seeds.
+pub const MASTER_SEED_LABEL: &str = "master_";
+/// Legacy label kept for backward-compat reading of old Liquid-signer files.
+pub const LEGACY_LIQUID_SEED_LABEL: &str = "liquid_";
 
 /// A signer that keeps the key on the laptop. Based on BIP39.
 pub struct HotSigner {
@@ -188,8 +192,8 @@ impl HotSigner {
         .collect()
     }
 
-    /// Read mnemonics from datadir (with optional password for encrypted files)
-    /// If `skip_liquid` is true, skip files containing "-liquid-" in the filename (Liquid wallet mnemonics)
+    /// Read mnemonics from datadir (with optional password for encrypted files).
+    /// To exclude Liquid/master-seed files, use [`Self::from_datadir_with_password_filtered`].
     pub fn from_datadir_with_password(
         datadir_root: &path::Path,
         network: bitcoin::Network,
@@ -198,7 +202,7 @@ impl HotSigner {
         Self::from_datadir_with_password_filtered(datadir_root, network, password, false)
     }
 
-    /// Read mnemonics from datadir, optionally filtering out Liquid wallet mnemonics
+    /// Read mnemonics from datadir, optionally filtering out Liquid-wallet and master-seed mnemonics.
     pub fn from_datadir_with_password_filtered(
         datadir_root: &path::Path,
         network: bitcoin::Network,
@@ -214,10 +218,10 @@ impl HotSigner {
         for entry in mnemonic_paths {
             let path = entry.map_err(SignerError::MnemonicStorage)?.path();
 
-            // Skip Liquid wallet mnemonics if requested (they're managed by Breez SDK)
+            // Skip Liquid and master-seed mnemonics if requested (vault-only mode).
             if skip_liquid {
                 if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                    if filename.contains("-liquid_") {
+                    if filename.contains("-liquid_") || filename.contains("-master_") {
                         continue;
                     }
                 }
@@ -366,10 +370,39 @@ impl HotSigner {
         result
     }
 
+    /// Derive the NIP-06 Nostr identity key pair at `m/44'/1237'/0'/0'/0'`.
+    /// Returns (secret_key_bytes_32, compressed_pubkey_bytes_33).
+    pub fn nostr_identity_keys(
+        &self,
+        secp: &secp256k1::Secp256k1<secp256k1::All>,
+    ) -> ([u8; 32], [u8; 33]) {
+        use bip32::ChildNumber;
+        let path = bip32::DerivationPath::from(vec![
+            ChildNumber::from_hardened_idx(44).expect("valid"),
+            ChildNumber::from_hardened_idx(1237).expect("valid"),
+            ChildNumber::from_hardened_idx(0).expect("valid"),
+            ChildNumber::from_hardened_idx(0).expect("valid"),
+            ChildNumber::from_hardened_idx(0).expect("valid"),
+        ]);
+        let child = self
+            .master_xpriv
+            .derive_priv(secp, &path)
+            .expect("BIP32 derivation from valid master is infallible for hardened paths");
+        let secret_bytes = child.private_key.secret_bytes();
+        let pubkey = secp256k1::PublicKey::from_secret_key(secp, &child.private_key);
+        (secret_bytes, pubkey.serialize())
+    }
+
+    /// Reconstructs an equivalent signer by re-deriving from this signer's mnemonic.
+    /// Useful when a second owner needs the same key material (e.g., the installer
+    /// re-using the cube's master seed as the vault hot-signer in dev mode).
+    pub fn try_clone(&self, network: bitcoin::Network) -> Result<Self, SignerError> {
+        Self::from_mnemonic(network, self.mnemonic.clone())
+    }
+
     /// Store the mnemonic in a file within the given "data directory".
     /// The file is stored within a "mnemonics" folder, with the filename set to the fingerprint of
-    /// the master xpub corresponding to this mnemonic.
-    /// Store the mnemonic (encrypted if password provided)
+    /// the master xpub corresponding to this mnemonic. Encrypted when `password` is provided.
     pub fn store_encrypted(
         &self,
         datadir_root: &path::Path,
