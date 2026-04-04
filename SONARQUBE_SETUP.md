@@ -130,10 +130,10 @@ From the project root:
 
 ```bash
 sonar-scanner \
-  -Dsonar.projectKey=coincube \
+  -Dsonar.projectKey=coincubetech_coincube \
   -Dsonar.sources=. \
   -Dsonar.host.url=http://localhost:9000 \
-  -Dsonar.token=sqp_21afb714ffddfd5d823ef89b8226d4be82e42f56
+  -Dsonar.token=YOUR_GENERATED_TOKEN_HERE
 ```
 
 The scan will:
