@@ -5,7 +5,7 @@ use breez_sdk_liquid::model::{PaymentDetails, RefundRequest};
 use breez_sdk_liquid::prelude::{Payment, RefundableSwap};
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::component::form;
-use coincube_ui::component::kage_quote::{self, Quote, QuoteProvider};
+use coincube_ui::component::quote_display::{self, Quote};
 use coincube_ui::widget::*;
 use iced::{widget::image, Task};
 
@@ -50,8 +50,8 @@ pub enum AssetFilter {
 
 impl LiquidTransactions {
     pub fn new(breez_client: Arc<BreezClient>) -> Self {
-        let empty_state_quote = QuoteProvider::new().select("empty-wallet");
-        let empty_state_image_handle = kage_quote::image_handle_for_context("empty-wallet");
+        let empty_state_quote = quote_display::random_quote("empty-wallet");
+        let empty_state_image_handle = quote_display::image_handle_for_context("empty-wallet");
         Self {
             breez_client,
             payments: Vec::new(),

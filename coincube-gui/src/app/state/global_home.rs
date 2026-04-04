@@ -98,7 +98,7 @@ pub struct GlobalHome {
     datadir_path: CoincubeDirectory,
     network: coincube_core::miniscript::bitcoin::Network,
     cube_id: String,
-    idle_quote: coincube_ui::component::kage_quote::Quote,
+    idle_quote: coincube_ui::component::quote_display::Quote,
     idle_image_handle: iced::widget::image::Handle,
 }
 
@@ -142,8 +142,10 @@ impl GlobalHome {
             datadir_path,
             network,
             cube_id,
-            idle_quote: coincube_ui::component::kage_quote::QuoteProvider::new().select("idle"),
-            idle_image_handle: coincube_ui::component::kage_quote::image_handle_for_context("idle"),
+            idle_quote: coincube_ui::component::quote_display::random_quote("idle"),
+            idle_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
+                "idle",
+            ),
         }
     }
 
@@ -185,8 +187,10 @@ impl GlobalHome {
             datadir_path,
             network,
             cube_id,
-            idle_quote: coincube_ui::component::kage_quote::QuoteProvider::new().select("idle"),
-            idle_image_handle: coincube_ui::component::kage_quote::image_handle_for_context("idle"),
+            idle_quote: coincube_ui::component::quote_display::random_quote("idle"),
+            idle_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
+                "idle",
+            ),
         }
     }
 }

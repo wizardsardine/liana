@@ -61,7 +61,7 @@ pub struct LiquidSendFlowConfig<'a> {
     pub cross_asset_supported: bool,
     pub pay_fees_with_asset: bool,
     pub max_loading: bool,
-    pub sent_quote: &'a coincube_ui::component::kage_quote::Quote,
+    pub sent_quote: &'a coincube_ui::component::quote_display::Quote,
     pub sent_image_handle: &'a iced::widget::image::Handle,
 }
 
@@ -1502,12 +1502,22 @@ pub fn final_check_page<'a>(
         );
 
         if let Some(asset_fee) = usdt_asset_fees {
-            // Fees paid in USDt
+            // Fees paid in USDt — convert f64 to base units for consistent formatting
+            let fee_base = (asset_fee
+                * 10_u64.pow(crate::app::breez::assets::USDT_PRECISION as u32) as f64)
+                .ceil() as u64;
             details_box = details_box.push(
                 Row::new()
                     .push(text("Fees (USDt):").size(16))
                     .push(Space::new().width(Length::Fill))
-                    .push(text(format!("{:.2} USDt", asset_fee)).size(16).bold())
+                    .push(
+                        text(format!(
+                            "{} USDt",
+                            crate::app::breez::assets::format_usdt_display(fee_base)
+                        ))
+                        .size(16)
+                        .bold(),
+                    )
                     .width(Length::Fill)
                     .align_y(Alignment::Center),
             );
@@ -1778,10 +1788,10 @@ pub fn sent_page<'a>(
     bitcoin_unit: BitcoinDisplayUnit,
     to_asset: SendAsset,
     usdt_send_amount: &str,
-    quote: &'a coincube_ui::component::kage_quote::Quote,
+    quote: &'a coincube_ui::component::quote_display::Quote,
     image_handle: &'a iced::widget::image::Handle,
 ) -> Element<'a, LiquidSendMessage> {
-    use coincube_ui::component::kage_quote::{self, KageQuoteDisplayProps};
+    use coincube_ui::component::quote_display::{self, QuoteDisplayProps};
     use coincube_ui::widget::{Column, Row};
 
     let sent_amount_str = if to_asset == SendAsset::Usdt && !usdt_send_amount.is_empty() {
@@ -1797,8 +1807,8 @@ pub fn sent_page<'a>(
         .width(Length::Fill)
         .align_x(Alignment::Center)
         .push(Space::new().height(Length::Fixed(20.0)))
-        .push(kage_quote::kage_quote_display(
-            &KageQuoteDisplayProps::new("transaction-sent", quote, image_handle).image_size(480),
+        .push(quote_display::display(
+            &QuoteDisplayProps::new("transaction-sent", quote, image_handle).image_size(480),
         ))
         .push(h3("Transaction complete!"))
         .push(

@@ -81,6 +81,14 @@ pub struct QuoteProvider {
     recent_ids: VecDeque<String>,
 }
 
+/// Pick a single random quote for a context without recency tracking.
+/// Use this for one-shot selections (init, celebrations). For repeated
+/// selections during a session (e.g. loading screen rotation), use
+/// [`QuoteProvider`] to avoid showing the same quote back-to-back.
+pub fn random_quote(context: &str) -> Quote {
+    QuoteProvider::new().select(context)
+}
+
 impl QuoteProvider {
     pub fn new() -> Self {
         Self::default()
@@ -145,7 +153,7 @@ impl QuoteProvider {
 }
 
 // ---------------------------------------------------------------------------
-// KageQuoteDisplay — stateless display component
+// QuoteDisplay — stateless display component
 // ---------------------------------------------------------------------------
 
 /// Create a cached `image::Handle` for a given context key.
@@ -158,8 +166,8 @@ pub fn image_handle_for_context(context: &str) -> image::Handle {
     image::Handle::from_bytes(bytes)
 }
 
-/// Props for the [`kage_quote_display`] component.
-pub struct KageQuoteDisplayProps<'a> {
+/// Props for the [`quote_display`] component.
+pub struct QuoteDisplayProps<'a> {
     pub quote: &'a Quote,
     pub image_handle: &'a image::Handle,
     pub image_size: u16,
@@ -167,7 +175,7 @@ pub struct KageQuoteDisplayProps<'a> {
     pub show_separator: bool,
 }
 
-impl<'a> KageQuoteDisplayProps<'a> {
+impl<'a> QuoteDisplayProps<'a> {
     pub fn new(context: &str, quote: &'a Quote, image_handle: &'a image::Handle) -> Self {
         let (_, default_size) = default_image_for_context(context);
         Self {
@@ -195,17 +203,17 @@ impl<'a> KageQuoteDisplayProps<'a> {
     }
 }
 
-/// Renders a Kage/Cube image paired with a contextual quote.
+/// Renders an image paired with a contextual quote.
 ///
 /// ```text
 /// ┌─────────────────────────────┐
-/// │    [Kage/Cube Image]        │
+/// │        [Image]              │
 /// ├─────────────────────────────┤  ← 1px separator
 /// │  "Quote text here..."       │
 /// │  — Author, Source           │
 /// └─────────────────────────────┘
 /// ```
-pub fn kage_quote_display<'a, M: 'a>(props: &KageQuoteDisplayProps<'a>) -> Container<'a, M> {
+pub fn display<'a, M: 'a>(props: &QuoteDisplayProps<'a>) -> Container<'a, M> {
     // Image — uses a pre-built handle to avoid flicker from recreating on every render
     let img = iced::widget::image(props.image_handle.clone())
         .height(Length::Fixed(props.image_size as f32))
@@ -262,9 +270,8 @@ pub fn kage_quote_display<'a, M: 'a>(props: &KageQuoteDisplayProps<'a>) -> Conta
     Container::new(col).center_x(Length::Fill).max_width(448)
 }
 
-/// Format the attribution line for a quote, if any.
+/// Format the attribution line for a quote.
 ///
-/// - `kage` category: no attribution (Kage is "speaking")
 /// - `scripture`: em-dash + author (which contains the verse reference)
 /// - All others: em-dash + author + source
 fn format_attribution(quote: &Quote) -> Option<String> {

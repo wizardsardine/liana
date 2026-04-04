@@ -55,7 +55,7 @@ pub struct VaultOverview {
     show_rescan_warning: bool,
     show_received_celebration: bool,
     received_amount_display: String,
-    received_quote: coincube_ui::component::kage_quote::Quote,
+    received_quote: coincube_ui::component::quote_display::Quote,
     received_image_handle: iced::widget::image::Handle,
 }
 
@@ -89,9 +89,10 @@ impl VaultOverview {
             last_reload: Instant::now(),
             show_received_celebration: false,
             received_amount_display: String::new(),
-            received_quote: coincube_ui::component::kage_quote::QuoteProvider::new()
-                .select("transaction-received"),
-            received_image_handle: coincube_ui::component::kage_quote::image_handle_for_context(
+            received_quote: coincube_ui::component::quote_display::random_quote(
+                "transaction-received",
+            ),
+            received_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
                 "transaction-received",
             ),
         }
@@ -208,10 +209,11 @@ impl State for VaultOverview {
                                 .amount
                                 .to_formatted_string_with_unit(cache.bitcoin_unit);
                             self.received_quote =
-                                coincube_ui::component::kage_quote::QuoteProvider::new()
-                                    .select("transaction-received");
+                                coincube_ui::component::quote_display::random_quote(
+                                    "transaction-received",
+                                );
                             self.received_image_handle =
-                                coincube_ui::component::kage_quote::image_handle_for_context(
+                                coincube_ui::component::quote_display::image_handle_for_context(
                                     "transaction-received",
                                 );
                             self.show_received_celebration = true;

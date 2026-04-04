@@ -4,7 +4,7 @@ use iced::{Alignment, Length, Task};
 use coincube_ui::{
     component::{
         button,
-        kage_quote::{self, KageQuoteDisplayProps, Quote, QuoteProvider},
+        quote_display::{self, Quote, QuoteDisplayProps},
         text::*,
     },
     icon, theme,
@@ -47,8 +47,8 @@ pub enum Message {
 
 impl PinEntry {
     pub fn new(cube: CubeSettings, on_success: PinEntrySuccess) -> Self {
-        let loading_quote = QuoteProvider::new().select("loading");
-        let loading_image_handle = kage_quote::image_handle_for_context("loading");
+        let loading_quote = quote_display::random_quote("loading");
+        let loading_image_handle = quote_display::image_handle_for_context("loading");
         Self {
             cube,
             pin_input: pin_input::PinInput::new(),
@@ -111,7 +111,7 @@ impl PinEntry {
                     .width(Length::Fill)
                     .align_x(Alignment::Center)
                     .push(Space::new().height(Length::Fill))
-                    .push(kage_quote::kage_quote_display(&KageQuoteDisplayProps::new(
+                    .push(quote_display::display(&QuoteDisplayProps::new(
                         "loading",
                         &self.loading_quote,
                         &self.loading_image_handle,

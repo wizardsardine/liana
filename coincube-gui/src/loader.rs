@@ -16,9 +16,8 @@ use iced::widget::image;
 
 use coincube_ui::{
     component::{
-        button,
-        kage_quote::{self, KageQuoteDisplayProps, Quote, QuoteProvider},
-        notification,
+        button, notification,
+        quote_display::{self, Quote, QuoteDisplayProps, QuoteProvider},
         text::*,
     },
     theme,
@@ -175,7 +174,7 @@ impl Loader {
 
         let mut quote_provider = QuoteProvider::new();
         let current_quote = quote_provider.select("loading");
-        let current_image_handle = kage_quote::image_handle_for_context("loading");
+        let current_image_handle = quote_display::image_handle_for_context("loading");
 
         (
             Loader {
@@ -200,7 +199,7 @@ impl Loader {
 
     fn set_quote_context(&mut self, context: &str) {
         self.current_quote = self.quote_provider.select(context);
-        self.current_image_handle = kage_quote::image_handle_for_context(context);
+        self.current_image_handle = quote_display::image_handle_for_context(context);
     }
 
     fn is_first_esplora_scan(&self, wallet_settings: &WalletSettings) -> bool {
@@ -638,7 +637,7 @@ pub fn view<'a>(
                 .width(Length::Fill)
                 .spacing(20)
                 .align_x(Alignment::Center)
-                .push(kage_quote::kage_quote_display(&KageQuoteDisplayProps::new(
+                .push(quote_display::display(&QuoteDisplayProps::new(
                     "loading",
                     quote,
                     image_handle,
@@ -652,7 +651,7 @@ pub fn view<'a>(
                 .width(Length::Fill)
                 .spacing(10)
                 .align_x(Alignment::Center)
-                .push(kage_quote::kage_quote_display(&KageQuoteDisplayProps::new(
+                .push(quote_display::display(&QuoteDisplayProps::new(
                     "syncing",
                     quote,
                     image_handle,
@@ -673,7 +672,7 @@ pub fn view<'a>(
                 .width(Length::Fill)
                 .spacing(20)
                 .align_x(Alignment::Center)
-                .push(kage_quote::kage_quote_display(&KageQuoteDisplayProps::new(
+                .push(quote_display::display(&QuoteDisplayProps::new(
                     "loading",
                     quote,
                     image_handle,
@@ -691,7 +690,7 @@ pub fn view<'a>(
                 .width(Length::Fill)
                 .spacing(5)
                 .align_x(Alignment::Center)
-                .push(kage_quote::kage_quote_display(&KageQuoteDisplayProps::new(
+                .push(quote_display::display(&QuoteDisplayProps::new(
                     "syncing",
                     quote,
                     image_handle,
@@ -713,7 +712,7 @@ pub fn view<'a>(
                 .spacing(20)
                 .width(Length::Fill)
                 .align_x(Alignment::Center)
-                .push(kage_quote::kage_quote_display(&KageQuoteDisplayProps::new(
+                .push(quote_display::display(&QuoteDisplayProps::new(
                     "error",
                     quote,
                     image_handle,

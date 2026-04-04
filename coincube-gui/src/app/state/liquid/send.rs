@@ -195,7 +195,7 @@ pub struct LiquidSend {
     /// Whether a SendMax prepare call is in flight.
     max_loading: bool,
     /// Quote and image handle for the "Transaction complete" screen.
-    sent_quote: coincube_ui::component::kage_quote::Quote,
+    sent_quote: coincube_ui::component::quote_display::Quote,
     sent_image_handle: iced::widget::image::Handle,
 }
 
@@ -232,9 +232,8 @@ impl LiquidSend {
             is_sending: false,
             pay_fees_with_asset: true,
             max_loading: false,
-            sent_quote: coincube_ui::component::kage_quote::QuoteProvider::new()
-                .select("transaction-sent"),
-            sent_image_handle: coincube_ui::component::kage_quote::image_handle_for_context(
+            sent_quote: coincube_ui::component::quote_display::random_quote("transaction-sent"),
+            sent_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
                 "transaction-sent",
             ),
         }
@@ -1928,10 +1927,10 @@ impl State for LiquidSend {
                     self.prepare_response = None;
                     self.is_sending = false;
                     // Fresh quote for the success screen
-                    self.sent_quote = coincube_ui::component::kage_quote::QuoteProvider::new()
-                        .select("transaction-sent");
+                    self.sent_quote =
+                        coincube_ui::component::quote_display::random_quote("transaction-sent");
                     self.sent_image_handle =
-                        coincube_ui::component::kage_quote::image_handle_for_context(
+                        coincube_ui::component::quote_display::image_handle_for_context(
                             "transaction-sent",
                         );
                     let breez_client = self.breez_client.clone();

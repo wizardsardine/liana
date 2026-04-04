@@ -7,7 +7,7 @@ use coincube_ui::{
     component::{
         amount::DisplayAmount,
         button, card, form,
-        kage_quote::{self, KageQuoteDisplayProps, Quote},
+        quote_display::{self, Quote, QuoteDisplayProps},
         text::*,
         transaction::{TransactionDirection, TransactionListItem},
     },
@@ -114,12 +114,12 @@ pub fn liquid_transactions_view<'a>(
                 .width(Length::Fill)
                 .align_x(Alignment::Center)
                 .push(Space::new().height(Length::Fixed(40.0)))
-                .push(kage_quote::kage_quote_display(
-                    &KageQuoteDisplayProps::new("empty-wallet", empty_state_quote, empty_state_image_handle),
+                .push(quote_display::display(
+                    &QuoteDisplayProps::new("empty-wallet", empty_state_quote, empty_state_image_handle),
                 ))
                 .push(Space::new().height(Length::Fixed(10.0)))
                 .push(
-                    text("Your Lightning wallet is ready. Once you send or receive\nsats, they'll show up here.")
+                    text("Your Liquid wallet is ready. Once you send or receive\nfunds, they'll show up here.")
                         .size(16)
                         .style(theme::text::secondary)
                         .wrapping(iced::widget::text::Wrapping::Word)

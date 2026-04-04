@@ -1126,19 +1126,18 @@ fn receive_cards(
 /// Full-screen celebration view when a payment is received.
 pub fn received_celebration_page<'a>(
     amount_display: &'a str,
-    quote: &'a coincube_ui::component::kage_quote::Quote,
+    quote: &'a coincube_ui::component::quote_display::Quote,
     image_handle: &'a iced::widget::image::Handle,
 ) -> Element<'a, LiquidReceiveMessage> {
-    use coincube_ui::component::kage_quote::{self, KageQuoteDisplayProps};
+    use coincube_ui::component::quote_display::{self, QuoteDisplayProps};
 
     Column::new()
         .spacing(20)
         .width(Length::Fill)
         .align_x(Alignment::Center)
         .push(Space::new().height(Length::Fixed(20.0)))
-        .push(kage_quote::kage_quote_display(
-            &KageQuoteDisplayProps::new("transaction-received", quote, image_handle)
-                .image_size(480),
+        .push(quote_display::display(
+            &QuoteDisplayProps::new("transaction-received", quote, image_handle).image_size(480),
         ))
         .push(h3("Payment received!"))
         .push(

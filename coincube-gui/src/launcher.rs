@@ -104,7 +104,7 @@ pub struct Launcher {
     pub active_section: LauncherSection,
     /// Current theme mode (dark/light) — used for theme-aware rendering
     pub theme_mode: coincube_ui::theme::palette::ThemeMode,
-    welcome_quote: coincube_ui::component::kage_quote::Quote,
+    welcome_quote: coincube_ui::component::quote_display::Quote,
     welcome_image_handle: iced::widget::image::Handle,
 }
 
@@ -149,11 +149,9 @@ impl Launcher {
                 connect_expanded: false,
                 active_section: LauncherSection::Cubes,
                 theme_mode: GlobalSettings::load_theme_mode(&GlobalSettings::path(&datadir_path)),
-                welcome_quote: coincube_ui::component::kage_quote::QuoteProvider::new()
-                    .select("first-launch"),
-                welcome_image_handle: coincube_ui::component::kage_quote::image_handle_for_context(
-                    "first-launch",
-                ),
+                welcome_quote: coincube_ui::component::quote_display::random_quote("first-launch"),
+                welcome_image_handle:
+                    coincube_ui::component::quote_display::image_handle_for_context("first-launch"),
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
@@ -907,14 +905,14 @@ impl Launcher {
                                     }
                                 }
                                 State::NoCube | State::Unchecked => {
-                                    use coincube_ui::component::kage_quote::{
-                                        self as kq, KageQuoteDisplayProps,
+                                    use coincube_ui::component::quote_display::{
+                                        self as kq, QuoteDisplayProps,
                                     };
                                     Column::new()
                                         .spacing(20)
                                         .align_x(Alignment::Center)
-                                        .push(kq::kage_quote_display(
-                                            &KageQuoteDisplayProps::new(
+                                        .push(kq::display(
+                                            &QuoteDisplayProps::new(
                                                 "first-launch",
                                                 &self.welcome_quote,
                                                 &self.welcome_image_handle,
