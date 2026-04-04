@@ -162,6 +162,7 @@ impl Tab {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        use crate::app::settings::global::GlobalSettings;
         let result = match (&mut self.state, message) {
             (State::Launcher(l), Message::Launch(msg)) => match msg {
                 launcher::Message::Install(datadir, network, init) => {
@@ -404,8 +405,8 @@ impl Tab {
                         true, // launched from app (loader is part of app flow)
                         Some(loader.cube_settings.clone()), // pass cube settings for returning
                         loader.breez_client.clone(), // pass breez_client to avoid re-entering PIN
-                        crate::app::settings::global::GlobalSettings::load_developer_mode(
-                            &crate::app::settings::global::GlobalSettings::path(
+                        GlobalSettings::load_developer_mode(
+                            &GlobalSettings::path(
                                 &loader.datadir_path,
                             ),
                         ),
@@ -543,8 +544,8 @@ impl Tab {
                             true,                              // launched from app
                             Some(app.cube_settings().clone()), // pass cube settings for returning
                             Some(app.breez_client()), // pass breez_client to avoid re-entering PIN
-                            crate::app::settings::global::GlobalSettings::load_developer_mode(
-                                &crate::app::settings::global::GlobalSettings::path(
+                            GlobalSettings::load_developer_mode(
+                                &GlobalSettings::path(
                                     app.datadir(),
                                 ),
                             ),

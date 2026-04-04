@@ -143,7 +143,7 @@ impl Installer {
         developer_mode: bool,
     ) -> (Installer, Task<Message>) {
         let signer = if developer_mode {
-            breez_client
+            let master_signer = breez_client
                 .as_ref()
                 .and_then(|bc| bc.liquid_signer())
                 .and_then(|arc_hs| {
@@ -152,8 +152,14 @@ impl Installer {
                         .ok()
                         .and_then(|hs_guard| hs_guard.try_clone().ok())
                         .map(|hs| Arc::new(Mutex::new(Signer::new(hs))))
-                })
-                .unwrap_or_else(|| Arc::new(Mutex::new(Signer::generate(network).unwrap())))
+                });
+            if master_signer.is_none() {
+                tracing::warn!(
+                    "developer_mode=true but master signer unavailable; \
+                     vault signer will be a fresh random key"
+                );
+            }
+            master_signer.unwrap_or_else(|| Arc::new(Mutex::new(Signer::generate(network).unwrap())))
         } else {
             Arc::new(Mutex::new(Signer::generate(network).unwrap()))
         };

@@ -1195,10 +1195,15 @@ impl SelectKeySource {
         )
     }
     fn widget_generate_hot_key(&self) -> Element<Message> {
+        let subtitle = if self.developer_mode {
+            "⚠ Dev mode: derived from master seed — not for production use"
+        } else {
+            "We recommend to use this option only for test purposes"
+        };
         modal::button_entry(
             Some(icon::round_key_icon().color(color::RED)),
             "Generate hot key stored on this computer",
-            Some("We recommend to use this option only for test purposes"),
+            Some(subtitle),
             None,
             Some(|| Self::route(SelectKeySourceMessage::SelectGenerateHotKey)),
         )
@@ -1297,7 +1302,14 @@ impl super::DescriptorEditModal for SelectKeySource {
                 SelectKeySourceMessage::SelectEnterXpub => self.on_select_enter_xpub(),
                 SelectKeySourceMessage::PasteXpub => self.on_paste_xpub(),
                 SelectKeySourceMessage::Xpub(xpub) => self.on_update_xpub(xpub),
-                SelectKeySourceMessage::SelectGenerateHotKey => self.on_select_generate_hot_key(),
+                SelectKeySourceMessage::SelectGenerateHotKey => {
+                    if self.developer_mode {
+                        self.on_select_generate_hot_key()
+                    } else {
+                        tracing::warn!("hot-signer message received in production mode — ignoring");
+                        Task::none()
+                    }
+                }
                 SelectKeySourceMessage::FetchFromHotSigner(account) => {
                     self.on_fetch_from_hotsigner(account)
                 }
