@@ -912,7 +912,7 @@ mod tests {
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
             Network::Testnet,
             Arc::new(Mutex::new(Signer::generate(Network::Testnet).unwrap())),
-            false,
+            true, // developer_mode=true: test exercises the hot-signer path
         ));
         sandbox.load(&ctx).await;
 
