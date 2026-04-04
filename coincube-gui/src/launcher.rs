@@ -297,21 +297,21 @@ impl Launcher {
                             .init()
                             .map_err(|e| format!("Failed to create network directory: {}", e))?;
 
-                        // Use a timestamp for the Liquid wallet storage
+                        // Use a timestamp for the master seed storage
                         let timestamp = chrono::Utc::now().timestamp();
-                        let liquid_checksum = format!("liquid_{}", timestamp);
+                        let master_checksum = format!("master_{}", timestamp);
 
-                        // Store Liquid wallet mnemonic encrypted with PIN (always required)
+                        // Store master seed mnemonic encrypted with PIN (always required)
                         liquid_signer
                             .store_encrypted(
                                 datadir_path.path(),
                                 network,
                                 &secp,
-                                Some((liquid_checksum, timestamp)),
+                                Some((master_checksum, timestamp)),
                                 Some(&pin),
                             )
                             .map_err(|e| {
-                                format!("Failed to store Liquid wallet mnemonic: {}", e)
+                                format!("Failed to store master seed mnemonic: {}", e)
                             })?;
 
                         tracing::info!("Master signer created and stored (encrypted with PIN) with fingerprint: {}", master_fingerprint);
@@ -609,21 +609,21 @@ impl Launcher {
                                     format!("Failed to create network directory: {}", e)
                                 })?;
 
-                                // Use a timestamp for the Liquid wallet storage
+                                // Use a timestamp for the master seed storage
                                 let timestamp = chrono::Utc::now().timestamp();
-                                let liquid_checksum = format!("liquid_{}", timestamp);
+                                let master_checksum = format!("master_{}", timestamp);
 
-                                // Store Liquid wallet mnemonic encrypted with PIN (always required)
+                                // Store master seed mnemonic encrypted with PIN (always required)
                                 liquid_signer
                                     .store_encrypted(
                                         datadir_path.path(),
                                         network,
                                         &secp,
-                                        Some((liquid_checksum, timestamp)),
+                                        Some((master_checksum, timestamp)),
                                         Some(&pin),
                                     )
                                     .map_err(|e| {
-                                        format!("Failed to store Liquid wallet mnemonic: {}", e)
+                                        format!("Failed to store master seed mnemonic: {}", e)
                                     })?;
 
                                 tracing::info!("Master signer created and stored (encrypted with PIN) with fingerprint: {}", master_fingerprint);
