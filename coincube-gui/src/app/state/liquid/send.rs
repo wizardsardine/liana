@@ -1771,8 +1771,16 @@ impl State for LiquidSend {
                                 if max_sat == 0 {
                                     self.error = Some("Balance too low to cover fees".to_string());
                                 } else {
-                                    self.amount = Amount::from_sat(max_sat);
-                                    self.amount_input.value = max_sat.to_string();
+                                    let max_amount = Amount::from_sat(max_sat);
+                                    self.amount = max_amount;
+                                    self.amount_input.value = if matches!(
+                                        cache.bitcoin_unit,
+                                        BitcoinDisplayUnit::BTC
+                                    ) {
+                                        max_amount.to_btc().to_string()
+                                    } else {
+                                        max_sat.to_string()
+                                    };
                                     self.amount_input.valid = true;
                                     self.amount_input.warning = None;
                                 }
