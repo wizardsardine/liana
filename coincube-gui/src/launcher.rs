@@ -245,7 +245,9 @@ impl Launcher {
                     0
                 };
                 let limit = self.account_tier.cube_limit();
-                if cube_count >= limit {
+                let at_limit = cube_count >= limit
+                    && !matches!(self.network, Network::Regtest | Network::Testnet | Network::Testnet4 | Network::Signet);
+                if at_limit {
                     self.error = Some(format!(
                         "Cube limit reached ({}/{}) for the {} plan. \
                          Upgrade your Connect account to create more Cubes.",
@@ -855,8 +857,8 @@ impl Launcher {
                                                 Column::new().spacing(20),
                                                 |col, (i, cube)| col.push(cubes_list_item(cube, i)),
                                             );
-                                        let at_limit =
-                                            cubes.len() >= self.account_tier.cube_limit();
+                                        let at_limit = cubes.len() >= self.account_tier.cube_limit()
+                                            && !matches!(self.network, Network::Regtest | Network::Testnet | Network::Testnet4 | Network::Signet);
                                         if at_limit {
                                             col = col.push(
                                                 Column::new()
