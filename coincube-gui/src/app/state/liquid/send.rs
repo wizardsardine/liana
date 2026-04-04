@@ -1773,14 +1773,12 @@ impl State for LiquidSend {
                                 } else {
                                     let max_amount = Amount::from_sat(max_sat);
                                     self.amount = max_amount;
-                                    self.amount_input.value = if matches!(
-                                        cache.bitcoin_unit,
-                                        BitcoinDisplayUnit::BTC
-                                    ) {
-                                        max_amount.to_btc().to_string()
-                                    } else {
-                                        max_sat.to_string()
-                                    };
+                                    self.amount_input.value =
+                                        if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                            max_amount.to_btc().to_string()
+                                        } else {
+                                            max_sat.to_string()
+                                        };
                                     self.amount_input.valid = true;
                                     self.amount_input.warning = None;
                                 }
