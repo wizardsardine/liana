@@ -1,2 +1,2 @@
-FROM sonarqube:community
-COPY community-rust-plugin-0.2.7.jar /opt/sonarqube/extensions/plugins/
+FROM sonarqube:10.6-community
+COPY community-rust-plugin-0.1.4.jar /opt/sonarqube/extensions/plugins/

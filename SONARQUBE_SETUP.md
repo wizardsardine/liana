@@ -72,10 +72,12 @@ docker logs -f sonarqube
 
 ### Generate Scanner Token
 
-1. Go to **User → My Account → Security → Generate Tokens**
+1. Go to the **Coincube project → Project Settings → Project Analysis Tokens**
 2. Name: `local-scan`
-3. Type: **Global Analysis Token**
+3. Type: **Project Analysis Token** (recommended for least privilege)
 4. Copy the generated token
+
+Alternatively, you can create a Global Analysis Token from **User → My Account → Security**, but project-scoped tokens follow the principle of least privilege.
 
 ## Step 5: Configure Project Properties
 
@@ -120,7 +122,7 @@ sonar.test.inclusions=**/tests/**/*.rs,**/*_test.rs
 sonar.sourceEncoding=UTF-8
 ```
 
-**Important:** Replace `YOUR_GENERATED_TOKEN_HERE` with the actual token from Step 4.
+**Important:** Replace `YOUR_GENERATED_TOKEN_HERE` with the actual token from Step 4. **Never commit this file with a real token to git.**
 
 ## Step 6: Run Analysis
 
@@ -200,4 +202,4 @@ docker compose up -d
 
 - [Community Rust Plugin Releases](https://github.com/elegoff/sonar-rust/releases)
 - [SonarQube Docker Hub](https://hub.docker.com/_/sonarqube)
-- [SonarScanner Documentation](https://docs.sonarqube.org/latest/analyzing-source-code/scanners/sonarscanner/)
+- [SonarScanner Documentation](https://docs.sonarsource.com/sonarqube-server/latest/analyzing-source-code/scanners/sonarscanner/)
