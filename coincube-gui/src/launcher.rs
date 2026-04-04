@@ -33,7 +33,7 @@ use crate::{
         login::{connect_with_credentials, BackendState},
     },
 };
-use coincube_core::signer::HotSigner;
+use coincube_core::signer::{HotSigner, MASTER_SEED_LABEL};
 
 const NETWORKS: [Network; 5] = [
     Network::Bitcoin,
@@ -283,15 +283,15 @@ impl Launcher {
                 let without_recovery = Task::perform(
                     async move {
                         // Generate Liquid wallet HotSigner
-                        let liquid_signer = HotSigner::generate(network).map_err(|e| {
-                            format!("Failed to generate Liquid wallet signer: {}", e)
+                        let master_signer = HotSigner::generate(network).map_err(|e| {
+                            format!("Failed to generate master seed signer: {}", e)
                         })?;
 
                         // Create secp context for fingerprint calculation
                         let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-                        let master_fingerprint = liquid_signer.fingerprint(&secp);
+                        let master_fingerprint = master_signer.fingerprint(&secp);
 
-                        // Store Liquid wallet mnemonic (encrypted with PIN if provided)
+                        // Store master seed mnemonic (encrypted with PIN)
                         let network_dir = datadir_path.network_directory(network);
                         network_dir
                             .init()
@@ -299,10 +299,10 @@ impl Launcher {
 
                         // Use a timestamp for the master seed storage
                         let timestamp = chrono::Utc::now().timestamp();
-                        let master_checksum = format!("master_{}", timestamp);
+                        let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
 
                         // Store master seed mnemonic encrypted with PIN (always required)
-                        liquid_signer
+                        master_signer
                             .store_encrypted(
                                 datadir_path.path(),
                                 network,
@@ -593,7 +593,7 @@ impl Launcher {
                         Task::perform(
                             async move {
                                 // Restore Liquid wallet HotSigner from mnemonic
-                                let liquid_signer = HotSigner::from_mnemonic(network, mnemonic)
+                                let master_signer = HotSigner::from_mnemonic(network, mnemonic)
                                     .map_err(|e| {
                                         format!("Failed to restore from mnemonic: {}", e)
                                     })?;
@@ -601,9 +601,9 @@ impl Launcher {
                                 // Create secp context for fingerprint calculation
                                 let secp =
                                     coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-                                let master_fingerprint = liquid_signer.fingerprint(&secp);
+                                let master_fingerprint = master_signer.fingerprint(&secp);
 
-                                // Store Liquid wallet mnemonic (encrypted with PIN if provided)
+                                // Store master seed mnemonic (encrypted with PIN)
                                 let network_dir = datadir_path.network_directory(network);
                                 network_dir.init().map_err(|e| {
                                     format!("Failed to create network directory: {}", e)
@@ -611,10 +611,10 @@ impl Launcher {
 
                                 // Use a timestamp for the master seed storage
                                 let timestamp = chrono::Utc::now().timestamp();
-                                let master_checksum = format!("master_{}", timestamp);
+                                let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
 
                                 // Store master seed mnemonic encrypted with PIN (always required)
-                                liquid_signer
+                                master_signer
                                     .store_encrypted(
                                         datadir_path.path(),
                                         network,
