@@ -51,10 +51,6 @@ use crate::{
     },
 };
 
-const SYNCING_PROGRESS_1: &str = "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster.";
-const SYNCING_PROGRESS_2: &str = "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance.";
-const SYNCING_PROGRESS_3: &str = "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance.";
-
 type Coincubed = client::Coincubed<client::jsonrpc::JsonRPCClient>;
 type StartedResult = Result<
     (
@@ -631,7 +627,7 @@ pub fn view<'a>(
     image_handle: &'a image::Handle,
 ) -> Element<'a, ViewMessage> {
     match &step {
-        Step::StartingDaemon { progress } => cover(
+        Step::StartingDaemon { .. } => cover(
             None,
             Column::new()
                 .width(Length::Fill)
@@ -642,10 +638,10 @@ pub fn view<'a>(
                     quote,
                     image_handle,
                 )))
-                .push(ProgressBar::new(0.0..=1.0, *progress).length(Length::Fill))
-                .push(text("Starting daemon...")),
+                .push(crate::loading::loading_indicator(None))
+                .push(text("Starting daemon...").style(theme::text::secondary)),
         ),
-        Step::FullScan { progress } => cover(
+        Step::FullScan { .. } => cover(
             None,
             Column::new()
                 .width(Length::Fill)
@@ -656,8 +652,8 @@ pub fn view<'a>(
                     quote,
                     image_handle,
                 )))
-                .push(ProgressBar::new(0.0..=1.0, *progress).length(Length::Fill))
-                .push(text("Scanning the blockchain..."))
+                .push(crate::loading::loading_indicator(None))
+                .push(text("Scanning the blockchain...").style(theme::text::secondary))
                 .push(
                     p2_regular(
                         "Performing an initial scan of the Bitcoin blockchain via Esplora. \
@@ -677,8 +673,8 @@ pub fn view<'a>(
                     quote,
                     image_handle,
                 )))
-                .push(ProgressBar::new(0.0..=1.0, 0.0).length(Length::Fill))
-                .push(text("Connecting to daemon...")),
+                .push(crate::loading::loading_indicator(None))
+                .push(text("Connecting to daemon...").style(theme::text::secondary)),
         ),
         Step::Syncing {
             progress,
@@ -695,15 +691,15 @@ pub fn view<'a>(
                     quote,
                     image_handle,
                 )))
-                .push(text(format!("Progress {:.2}%", 100.0 * *progress)))
-                .push(ProgressBar::new(0.0..=1.0, *progress as f32).length(Length::Fill))
-                .push(text(if *progress > 0.98 {
-                    SYNCING_PROGRESS_3
-                } else if *progress > 0.9 {
-                    SYNCING_PROGRESS_2
-                } else {
-                    SYNCING_PROGRESS_1
-                }))
+                .push(crate::loading::loading_indicator(None))
+                .push(
+                    text(if *progress > 0.98 {
+                        "Almost there..."
+                    } else {
+                        "Syncing blockchain..."
+                    })
+                    .style(theme::text::secondary),
+                )
                 .push(p2_regular(bitcoind_logs).style(theme::text::secondary)),
         ),
         Step::Error(error) => cover(

@@ -109,6 +109,7 @@ impl PinEntry {
             return Container::new(
                 Column::new()
                     .width(Length::Fill)
+                    .spacing(20)
                     .align_x(Alignment::Center)
                     .push(Space::new().height(Length::Fill))
                     .push(quote_display::display(&QuoteDisplayProps::new(
@@ -116,12 +117,13 @@ impl PinEntry {
                         &self.loading_quote,
                         &self.loading_image_handle,
                     )))
-                    .push(Space::new().height(Length::Fixed(30.0)))
+                    .push(crate::loading::loading_indicator(None))
                     .push(text("Loading your Cube...").style(theme::text::secondary))
                     .push(Space::new().height(Length::Fill)),
             )
             .width(Length::Fill)
             .height(Length::Fill)
+            .padding(50)
             .into();
         }
 

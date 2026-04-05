@@ -601,7 +601,8 @@ pub fn liquid_send_view<'a>(
                 Container::new(view_transaction_button)
                     .width(Length::Fill)
                     .center_x(Length::Fill),
-            );
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(40.0)));
     }
 
     content.into()

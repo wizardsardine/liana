@@ -1431,8 +1431,6 @@ pub struct GlobalViewConfig<'a> {
     pub pending_animation_phase: f32,
     /// BTC price in USD for accurate USDt→sats conversion regardless of user's fiat currency.
     pub btc_usd_price: Option<f64>,
-    pub idle_quote: &'a coincube_ui::component::quote_display::Quote,
-    pub idle_image_handle: &'a iced::widget::image::Handle,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -1489,8 +1487,6 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         pending_vault_incoming,
         pending_animation_phase,
         btc_usd_price,
-        idle_quote,
-        idle_image_handle,
     } = config;
 
     match current_view.step {
@@ -1815,13 +1811,5 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
             .center_x(Length::Fill),
         )
         .push(vault_card_element)
-        .push(Space::new().height(Length::Fixed(20.0)))
-        .push({
-            use coincube_ui::component::quote_display::{self, QuoteDisplayProps};
-            Container::new(quote_display::display(
-                &QuoteDisplayProps::new("idle", idle_quote, idle_image_handle).image_size(160),
-            ))
-            .center_x(Length::Fill)
-        })
         .into()
 }

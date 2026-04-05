@@ -297,11 +297,14 @@ pub fn liquid_receive_view<'a>(
             .on_press(LiquidReceiveMessage::History)
         };
 
-        content = content.push(Space::new().height(Length::Fixed(20.0))).push(
-            Container::new(view_tx_button)
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-        );
+        content = content
+            .push(Space::new().height(Length::Fixed(20.0)))
+            .push(
+                Container::new(view_tx_button)
+                    .width(Length::Fill)
+                    .center_x(Length::Fill),
+            )
+            .push(Space::new().height(Length::Fixed(40.0)));
     }
 
     if let Some(err) = error {

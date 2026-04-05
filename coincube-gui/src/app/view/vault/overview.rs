@@ -294,6 +294,59 @@ pub fn vault_overview_view<'a>(
                     None
                 }),
         )
+        .push_maybe(if !events.is_empty() {
+            Some(
+                Container::new({
+                    let tx_icon = icon::history_icon()
+                        .size(18)
+                        .style(|_theme: &theme::Theme| iced::widget::text::Style {
+                            color: Some(color::ORANGE),
+                        });
+                    let tx_label =
+                        text("View All Transactions")
+                            .size(15)
+                            .style(|_theme: &theme::Theme| iced::widget::text::Style {
+                                color: Some(color::ORANGE),
+                            });
+                    iced::widget::button(
+                        Container::new(
+                            Row::new()
+                                .spacing(8)
+                                .align_y(iced::Alignment::Center)
+                                .push(tx_icon)
+                                .push(tx_label),
+                        )
+                        .padding([10, 20])
+                        .style(|_theme: &theme::Theme| {
+                            iced::widget::container::Style {
+                                background: Some(iced::Background::Color(color::TRANSPARENT)),
+                                border: iced::Border {
+                                    color: color::ORANGE,
+                                    width: 1.5,
+                                    radius: 20.0.into(),
+                                },
+                                ..Default::default()
+                            }
+                        }),
+                    )
+                    .style(|_theme: &theme::Theme, _| iced::widget::button::Style {
+                        background: Some(iced::Background::Color(color::TRANSPARENT)),
+                        text_color: color::ORANGE,
+                        border: iced::Border {
+                            radius: 20.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })
+                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Transactions(None))))
+                })
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+            )
+        } else {
+            None
+        })
+        .push(Space::new().height(Length::Fixed(40.0)))
         .spacing(20)
         .into()
 }
