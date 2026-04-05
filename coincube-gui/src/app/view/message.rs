@@ -434,6 +434,7 @@ pub enum LiquidSendMessage {
     PrepareResponseReceived(PrepareSendResponse),
     PrepareOnChainResponseReceived(PreparePayOnchainResponse),
     SendMaxPrepared(Result<PrepareSendResponse, String>),
+    SendMaxOnChainResult(u64),
     ConfirmSend,
     SendComplete,
     BackToHome,

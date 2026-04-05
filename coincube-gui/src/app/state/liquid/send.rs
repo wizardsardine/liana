@@ -1658,9 +1658,16 @@ impl State for LiquidSend {
                     } = &self.flow_state
                     {
                         self.error = None;
-                        if self.to_asset == SendAsset::Usdt {
-                            if !self.pay_fees_with_asset || self.from_asset != self.to_asset {
-                                // Fees paid in L-BTC or cross-asset — full USDt balance can be sent
+                        if self.from_asset != self.to_asset {
+                            // Cross-asset swap: max depends on a SideSwap quote
+                            // which we don't have yet. Skip SendMax.
+                            self.error = Some(
+                                "Max send is not available for cross-asset swaps. Please enter an amount manually."
+                                    .to_string(),
+                            );
+                        } else if self.to_asset == SendAsset::Usdt {
+                            if !self.pay_fees_with_asset {
+                                // Fees paid in L-BTC — full USDt balance can be sent
                                 let display = format_usdt_display(self.usdt_balance);
                                 self.usdt_amount_input.value = display;
                                 self.usdt_amount_input.valid = true;
@@ -1702,10 +1709,44 @@ impl State for LiquidSend {
                             }
                         } else if let Some(input_type) = &self.input_type {
                             // L-BTC send: use Drain to let SDK calculate max minus fees
+                            if let InputType::BitcoinAddress { .. } = input_type {
+                                // On-chain sends use prepare_pay_onchain (different swap path)
+                                let breez_client = self.breez_client.clone();
+                                let btc_balance = self.btc_balance;
+                                self.max_loading = true;
+                                return Task::perform(
+                                    async move {
+                                        let onchain_resp = breez_client
+                                            .prepare_pay_onchain(
+                                                &breez_sdk_liquid::prelude::PreparePayOnchainRequest {
+                                                    amount: breez_sdk_liquid::prelude::PayAmount::Drain,
+                                                    fee_rate_sat_per_vbyte: None,
+                                                },
+                                            )
+                                            .await
+                                            .map_err(|e| e.to_string())?;
+                                        // Calculate max sendable: balance - total fees
+                                        let max_sat = btc_balance
+                                            .to_sat()
+                                            .saturating_sub(onchain_resp.total_fees_sat);
+                                        Ok::<u64, String>(max_sat)
+                                    },
+                                    |result| match result {
+                                        Ok(max_sat) => Message::View(view::Message::LiquidSend(
+                                            view::LiquidSendMessage::SendMaxOnChainResult(max_sat),
+                                        )),
+                                        Err(e) => Message::View(view::Message::LiquidSend(
+                                            view::LiquidSendMessage::Error(format!(
+                                                "Failed to estimate max: {e}"
+                                            )),
+                                        )),
+                                    },
+                                );
+                            }
+
                             let destination = match input_type {
                                 InputType::Bolt11 { invoice } => invoice.bolt11.clone(),
                                 InputType::Bolt12Offer { offer, .. } => offer.offer.clone(),
-                                InputType::BitcoinAddress { address } => address.address.clone(),
                                 InputType::LiquidAddress { address } => address.address.clone(),
                                 _ => return Task::none(),
                             };
@@ -1787,6 +1828,24 @@ impl State for LiquidSend {
                         Err(e) => {
                             self.error = Some(format!("Failed to estimate max: {}", e));
                         }
+                    }
+                }
+                view::LiquidSendMessage::SendMaxOnChainResult(max_sat) => {
+                    self.max_loading = false;
+                    let max_sat = *max_sat;
+                    if max_sat == 0 {
+                        self.error = Some("Balance too low to cover fees".to_string());
+                    } else {
+                        let max_amount = Amount::from_sat(max_sat);
+                        self.amount = max_amount;
+                        self.amount_input.value =
+                            if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                max_amount.to_btc().to_string()
+                            } else {
+                                max_sat.to_string()
+                            };
+                        self.amount_input.valid = true;
+                        self.amount_input.warning = None;
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::UsdtAmountEdited(v)) => {
