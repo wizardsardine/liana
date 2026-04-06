@@ -20,7 +20,7 @@ curl -L -o ~/sonarqube/plugins/community-rust-plugin-0.1.4.jar \
 
 ## Step 2: Configure Docker Compose
 
-Create or update `docker-compose.yml` in the project root:
+Create or update `docker-compose.yml` in the `sonarqube/` folder:
 
 ```yaml
 version: "3.8"
@@ -35,7 +35,7 @@ services:
       SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
     volumes:
       - sonarqube_data:/opt/sonarqube/data
-      - ~/sonarqube/plugins:/opt/sonarqube/extensions/plugins
+      - ${HOME}/sonarqube/plugins:/opt/sonarqube/extensions/plugins
 
 volumes:
   sonarqube_data:
@@ -46,11 +46,8 @@ volumes:
 ## Step 3: Start SonarQube
 
 ```bash
-# Stop any existing containers and clean data if needed
-docker compose down
-docker volume rm coincube_sonarqube_data 2>/dev/null || true
-
-# Start SonarQube
+# Navigate to sonarqube folder and start
+cd sonarqube
 docker compose up -d
 
 # Wait for startup (watch for "SonarQube is up" in logs)
@@ -81,57 +78,28 @@ Alternatively, you can create a Global Analysis Token from **User → My Account
 
 ## Step 5: Configure Project Properties
 
-Create/update `sonar-project.properties` in the project root:
+The `sonar-project.properties` file is already configured in the `sonarqube/` folder with the correct source paths. Update the token:
 
 ```properties
-sonar.projectKey=coincubetech_coincube
-sonar.projectName=Coincube
-sonar.sources=./coincube-core/src,./coincubed/src,./coincube-gui/src,./coincube-ui/src
-sonar.host.url=http://localhost:9000
 sonar.token=YOUR_GENERATED_TOKEN_HERE
-
-# Rust language settings
-sonar.language=rust
-
-# Coverage report location (optional)
-# sonar.rust.coverage.reportPaths=coverage.xml
-
-# Ignore rules
-sonar.issue.ignore.multicriteria=e1,e2,e3
-
-# Ignore string duplication warnings in Rust test files
-sonar.issue.ignore.multicriteria.e1.ruleKey=rust:S1192
-sonar.issue.ignore.multicriteria.e1.resourceKey=**/tests/**/*.rs
-
-# Ignore function naming conventions for test modules
-sonar.issue.ignore.multicriteria.e2.ruleKey=rust:S100
-sonar.issue.ignore.multicriteria.e2.resourceKey=**/*_test.rs
-
-# Ignore cognitive complexity in UI state machines (complex by nature)
-sonar.issue.ignore.multicriteria.e3.ruleKey=rust:S3776
-sonar.issue.ignore.multicriteria.e3.resourceKey=**/state/**/*.rs
-
-# exclusions
-sonar.exclusions=**/target/**,**/fuzz/**,**/static/**,**/*.toml,**/*.md,**/*.yml,**/*.yaml
-
-# test files
-sonar.tests=.
-sonar.test.inclusions=**/tests/**/*.rs,**/*_test.rs
-
-# Additional source directories for workspace members
-sonar.sourceEncoding=UTF-8
 ```
 
 **Important:** Replace `YOUR_GENERATED_TOKEN_HERE` with the actual token from Step 4. **Never commit this file with a real token to git.**
 
 ## Step 6: Run Analysis
 
-From the project root:
+From the **project root** (not the `sonarqube/` folder):
+
+```bash
+sonar-scanner -Dproject.settings=sonarqube/sonar-project.properties -Dsonar.token=YOUR_GENERATED_TOKEN_HERE
+```
+
+Or specify all options manually:
 
 ```bash
 sonar-scanner \
   -Dsonar.projectKey=coincubetech_coincube \
-  -Dsonar.sources=. \
+  -Dsonar.sources=../coincube-core/src,../coincubed/src,../coincube-gui/src,../coincube-ui/src \
   -Dsonar.host.url=http://localhost:9000 \
   -Dsonar.token=YOUR_GENERATED_TOKEN_HERE
 ```
@@ -173,11 +141,11 @@ The scan will:
 
 **Error:** `fatal exception while booting Elasticsearch` with codec issues
 
-**Fix:** Clean the data volume:
+**Fix:** Clean the data volume (run from the `sonarqube/` folder):
 
 ```bash
 docker compose down
-docker volume rm coincube_sonarqube_data
+docker volume rm sonarqube_sonarqube_data
 docker compose up -d
 ```
 
