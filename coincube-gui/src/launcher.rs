@@ -712,18 +712,7 @@ impl Launcher {
                     LauncherSection::Connect(app::menu::ConnectSubMenu::Contacts)
                 ) && self.connect_account.is_authenticated()
                 {
-                    self.connect_account.contacts_state.step =
-                        crate::app::state::connect::ContactsStep::List;
-                    self.connect_account.contacts_state.contacts = None;
-                    self.connect_account.contacts_state.invites = None;
-                    self.connect_account.contacts_state.error = None;
-                    self.connect_account.contacts_state.loading = true;
-                    return map_connect_task(
-                        crate::app::state::connect::account::load_contacts_data(
-                            &self.connect_account.client,
-                            self.connect_account.session_generation(),
-                        ),
-                    );
+                    return map_connect_task(self.connect_account.reload_contacts());
                 }
                 Task::none()
             }

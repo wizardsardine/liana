@@ -930,16 +930,7 @@ impl App {
                 if matches!(submenu, menu::ConnectSubMenu::Contacts)
                     && self.panels.connect.account.is_authenticated()
                 {
-                    self.panels.connect.account.contacts_state.step =
-                        crate::app::state::connect::ContactsStep::List;
-                    self.panels.connect.account.contacts_state.contacts = None;
-                    self.panels.connect.account.contacts_state.invites = None;
-                    self.panels.connect.account.contacts_state.error = None;
-                    self.panels.connect.account.contacts_state.loading = true;
-                    let contacts_task = crate::app::state::connect::account::load_contacts_data(
-                        &self.panels.connect.account.client,
-                        self.panels.connect.account.session_generation(),
-                    );
+                    let contacts_task = self.panels.connect.account.reload_contacts();
                     self.panels.current = menu;
                     return contacts_task;
                 }

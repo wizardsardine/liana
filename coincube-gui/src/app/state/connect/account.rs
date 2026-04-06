@@ -29,6 +29,7 @@ pub struct ContactsState {
     pub invite_role: ContactRole,
     pub invite_sending: bool,
     pub detail_cubes: Option<Vec<ContactCube>>,
+    pub detail_cubes_error: Option<String>,
     pub loading: bool,
     pub error: Option<String>,
 }
@@ -43,6 +44,7 @@ impl ContactsState {
             invite_role: ContactRole::Keyholder,
             invite_sending: false,
             detail_cubes: None,
+            detail_cubes_error: None,
             loading: false,
             error: None,
         }
@@ -126,6 +128,16 @@ impl ConnectAccountPanel {
 
     pub fn session_generation(&self) -> u64 {
         self.session_generation
+    }
+
+    /// Reset contacts state to list view and reload data from the API.
+    pub fn reload_contacts(&mut self) -> iced::Task<Message> {
+        self.contacts_state.step = ContactsStep::List;
+        self.contacts_state.contacts = None;
+        self.contacts_state.invites = None;
+        self.contacts_state.error = None;
+        self.contacts_state.loading = true;
+        load_contacts_data(&self.client, self.session_generation)
     }
 
     fn load_session_from_keyring(&mut self) -> Option<LoginResponse> {
@@ -553,6 +565,7 @@ impl ConnectAccountPanel {
             ContactsMessage::ShowDetail(contact_id) => {
                 self.contacts_state.step = ContactsStep::Detail(contact_id);
                 self.contacts_state.detail_cubes = None;
+                self.contacts_state.detail_cubes_error = None;
                 self.contacts_state.error = None;
                 let client = self.client.clone();
                 let gen = self.session_generation;
@@ -565,7 +578,10 @@ impl ConnectAccountPanel {
                             )),
                         )),
                         Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
+                            ConnectAccountMessage::Contacts(ContactsMessage::ContactCubesFailed(
+                                contact_id,
+                                e.to_string(),
+                            )),
                         )),
                     },
                 );
@@ -617,13 +633,7 @@ impl ConnectAccountPanel {
 
             ContactsMessage::InviteCreated => {
                 self.contacts_state.invite_sending = false;
-                self.contacts_state.step = ContactsStep::List;
-                // Clear stale data so the loading coordination works correctly
-                self.contacts_state.contacts = None;
-                self.contacts_state.invites = None;
-                self.contacts_state.error = None;
-                self.contacts_state.loading = true;
-                return load_contacts_data(&self.client, self.session_generation);
+                return self.reload_contacts();
             }
 
             ContactsMessage::ResendInvite(invite_id) => {
@@ -676,6 +686,14 @@ impl ConnectAccountPanel {
                     && matches!(self.contacts_state.step, ContactsStep::Detail(id) if id == contact_id)
                 {
                     self.contacts_state.detail_cubes = Some(cubes);
+                }
+            }
+
+            ContactsMessage::ContactCubesFailed(contact_id, e) => {
+                if matches!(self.contacts_state.step, ContactsStep::Detail(id) if id == contact_id)
+                {
+                    log::error!("[CONTACTS] Cubes fetch failed: {}", e);
+                    self.contacts_state.detail_cubes_error = Some(e);
                 }
             }
 

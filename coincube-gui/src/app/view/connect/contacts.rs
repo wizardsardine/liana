@@ -463,10 +463,14 @@ fn contact_detail_ux<'a>(
 
     // Associated Cubes section
     let cubes_section: Element<ConnectAccountMessage> = match &cs.detail_cubes {
-        None if cs.error.is_some() => Column::new()
+        None if cs.detail_cubes_error.is_some() => Column::new()
             .push(
-                text::p2_regular(cs.error.as_deref().unwrap_or("Failed to load cubes"))
-                    .color(color::RED),
+                text::p2_regular(
+                    cs.detail_cubes_error
+                        .as_deref()
+                        .unwrap_or("Failed to load cubes"),
+                )
+                .color(color::RED),
             )
             .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
             .push(
