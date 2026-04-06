@@ -930,6 +930,8 @@ impl App {
                 if matches!(submenu, menu::ConnectSubMenu::Contacts)
                     && self.panels.connect.account.is_authenticated()
                 {
+                    self.panels.connect.account.contacts_state.step =
+                        crate::app::state::connect::ContactsStep::List;
                     self.panels.connect.account.contacts_state.loading = true;
                     let contacts_task = crate::app::state::connect::account::load_contacts_data(
                         &self.panels.connect.account.client,
