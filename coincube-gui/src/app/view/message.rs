@@ -662,8 +662,6 @@ pub enum ConnectAccountMessage {
 
 #[derive(Debug, Clone)]
 pub enum ContactsMessage {
-    /// Load contacts + invites from the API.
-    Load,
     /// Contacts list loaded.
     ContactsLoaded(Vec<crate::services::coincube::Contact>, u64),
     /// Invites list loaded.

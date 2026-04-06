@@ -53,6 +53,12 @@ impl ContactsState {
     }
 }
 
+impl Default for ContactsState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug)]
 pub enum ConnectFlowStep {
     CheckingSession,
@@ -512,12 +518,6 @@ impl ConnectAccountPanel {
 impl ConnectAccountPanel {
     fn update_contacts(&mut self, msg: ContactsMessage) -> iced::Task<Message> {
         match msg {
-            ContactsMessage::Load => {
-                self.contacts_state.loading = true;
-                self.contacts_state.error = None;
-                return load_contacts_data(&self.client, self.session_generation);
-            }
-
             ContactsMessage::ContactsLoaded(contacts, gen) => {
                 if gen == self.session_generation {
                     self.contacts_state.contacts = Some(contacts);
@@ -622,7 +622,9 @@ impl ConnectAccountPanel {
             ContactsMessage::InviteCreated => {
                 self.contacts_state.invite_sending = false;
                 self.contacts_state.step = ContactsStep::List;
-                // Refresh the lists
+                // Clear stale data so the loading coordination works correctly
+                self.contacts_state.contacts = None;
+                self.contacts_state.invites = None;
                 self.contacts_state.loading = true;
                 return load_contacts_data(&self.client, self.session_generation);
             }
