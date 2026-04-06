@@ -926,6 +926,16 @@ impl App {
                         ),
                     ));
                 }
+                // Load Contacts data on demand
+                if matches!(submenu, menu::ConnectSubMenu::Contacts) {
+                    let contacts_task =
+                        crate::app::state::connect::account::load_contacts_data(
+                            &self.panels.connect.account.client,
+                            self.panels.connect.account.session_generation(),
+                        );
+                    self.panels.current = menu;
+                    return contacts_task;
+                }
             }
             menu::Menu::Liquid(_submenu) => {
                 // Liquid transaction preselection is handled via PreselectPayment message

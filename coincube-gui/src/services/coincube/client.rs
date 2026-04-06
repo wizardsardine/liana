@@ -455,3 +455,85 @@ impl CoincubeClient {
         }
     }
 }
+
+// =============================================================================
+// Contacts & Invites
+// =============================================================================
+
+impl CoincubeClient {
+    /// GET /api/v1/connect/contacts
+    pub async fn get_contacts(&self) -> Result<Vec<super::Contact>, CoincubeError> {
+        let url = format!("{}/api/v1/connect/contacts", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<Vec<super::Contact>> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// GET /api/v1/connect/invites
+    pub async fn get_invites(&self) -> Result<Vec<super::Invite>, CoincubeError> {
+        let url = format!("{}/api/v1/connect/invites", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<Vec<super::Invite>> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// POST /api/v1/connect/invites
+    pub async fn create_invite(
+        &self,
+        req: super::CreateInviteRequest,
+    ) -> Result<(), CoincubeError> {
+        let url = format!("{}/api/v1/connect/invites", self.base_url);
+        let res = self.client.post(&url).json(&req).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// POST /api/v1/connect/invites/{id}/resend
+    pub async fn resend_invite(&self, invite_id: u64) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/invites/{}/resend",
+            self.base_url, invite_id
+        );
+        let res = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({}))
+            .send()
+            .await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// POST /api/v1/connect/invites/{id}/revoke
+    pub async fn revoke_invite(&self, invite_id: u64) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/invites/{}/revoke",
+            self.base_url, invite_id
+        );
+        let res = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({}))
+            .send()
+            .await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// GET /api/v1/connect/cubes/by-contact/{contactId}
+    pub async fn get_cubes_by_contact(
+        &self,
+        contact_id: u64,
+    ) -> Result<Vec<super::ContactCube>, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/by-contact/{}",
+            self.base_url, contact_id
+        );
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<Vec<super::ContactCube>> = res.json().await?;
+        Ok(resp.data)
+    }
+}
