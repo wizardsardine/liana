@@ -621,6 +621,7 @@ impl ConnectAccountPanel {
                 // Clear stale data so the loading coordination works correctly
                 self.contacts_state.contacts = None;
                 self.contacts_state.invites = None;
+                self.contacts_state.error = None;
                 self.contacts_state.loading = true;
                 return load_contacts_data(&self.client, self.session_generation);
             }
@@ -680,14 +681,18 @@ impl ConnectAccountPanel {
 
             ContactsMessage::Error(e) => {
                 log::error!("[CONTACTS] Error: {}", e);
-                self.contacts_state.loading = false;
-                self.contacts_state.invite_sending = false;
-                // Only store the error for display if we already have data
-                // (i.e., this is a mutation failure, not an initial load failure).
-                if self.contacts_state.contacts.is_some()
-                    || self.contacts_state.invites.is_some()
-                    || matches!(self.contacts_state.step, ContactsStep::InviteForm)
-                {
+                // Determine which operation failed based on current state,
+                // and only reset the relevant flag.
+                if self.contacts_state.invite_sending {
+                    // Error from SubmitInvite
+                    self.contacts_state.invite_sending = false;
+                    self.contacts_state.error = Some(e);
+                } else if self.contacts_state.loading {
+                    // Error from initial load (contacts/invites fetch)
+                    self.contacts_state.loading = false;
+                    // Don't display load errors — the empty state is shown instead
+                } else {
+                    // Error from resend/revoke/cubes fetch — display inline
                     self.contacts_state.error = Some(e);
                 }
             }
