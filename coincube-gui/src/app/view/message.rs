@@ -690,8 +690,8 @@ pub enum ContactsMessage {
     RevokeInvite(u64),
     /// Invite revoked successfully.
     InviteRevoked(u64),
-    /// Contact detail cubes loaded.
-    ContactCubesLoaded(Vec<crate::services::coincube::ContactCube>),
+    /// Contact detail cubes loaded — includes contact_id and session_generation to guard against stale responses.
+    ContactCubesLoaded(u64, Vec<crate::services::coincube::ContactCube>, u64),
     /// Error.
     Error(String),
 }

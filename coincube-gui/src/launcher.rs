@@ -712,6 +712,7 @@ impl Launcher {
                     LauncherSection::Connect(app::menu::ConnectSubMenu::Contacts)
                 ) && self.connect_account.is_authenticated()
                 {
+                    self.connect_account.contacts_state.loading = true;
                     return map_connect_task(
                         crate::app::state::connect::account::load_contacts_data(
                             &self.connect_account.client,

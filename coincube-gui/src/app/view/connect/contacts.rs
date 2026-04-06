@@ -117,11 +117,9 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
                             .color(color::GREY_3),
                     )
                     .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
-                    .push(
-                        button::primary(None, "Invite Contact").on_press(
-                            ConnectAccountMessage::Contacts(ContactsMessage::ShowInviteForm),
-                        ),
-                    )
+                    .push(button::primary(None, "Invite Contact").on_press(
+                        ConnectAccountMessage::Contacts(ContactsMessage::ShowInviteForm),
+                    ))
                     .align_x(Alignment::Center)
                     .padding(24)
                     .spacing(0),
@@ -169,20 +167,14 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
                 .push(iced::widget::Space::new().width(Length::Fill))
                 .align_y(Alignment::Center);
 
-            let btn = iced::widget::button(
-                container(row).padding(12).width(Length::Fill),
-            )
-            .style(theme::button::transparent)
-            .on_press(ConnectAccountMessage::Contacts(
-                ContactsMessage::ShowDetail(contact.id),
-            ))
-            .width(Length::Fill);
+            let btn = iced::widget::button(container(row).padding(12).width(Length::Fill))
+                .style(theme::button::transparent)
+                .on_press(ConnectAccountMessage::Contacts(
+                    ContactsMessage::ShowDetail(contact.id),
+                ))
+                .width(Length::Fill);
 
-            col = col.push(
-                container(btn)
-                    .style(card_style)
-                    .width(Length::Fill),
-            );
+            col = col.push(container(btn).style(card_style).width(Length::Fill));
             col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
         }
     }
@@ -236,6 +228,9 @@ fn invite_card<'a>(invite: &'a Invite) -> Element<'a, ConnectAccountMessage> {
 fn expiry_element<'a>(expires_at: &str) -> Element<'a, ConnectAccountMessage> {
     let days = compute_days_until(expires_at);
     match days {
+        Some(1) => text::p2_regular("Expires in 1 day")
+            .color(color::GREY_3)
+            .into(),
         Some(d) if d > 0 => text::p2_regular(format!("Expires in {} days", d))
             .color(color::GREY_3)
             .into(),
@@ -272,8 +267,9 @@ fn invite_form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcco
     .on_press(ConnectAccountMessage::Contacts(ContactsMessage::BackToList));
 
     let email = &cs.invite_email;
+    let email_trimmed = email.trim();
     let email_valid = {
-        let parts: Vec<&str> = email.split('@').collect();
+        let parts: Vec<&str> = email_trimmed.split('@').collect();
         parts.len() == 2
             && !parts[0].is_empty()
             && parts[1].contains('.')
@@ -282,7 +278,11 @@ fn invite_form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcco
     };
 
     let role_chips = Row::new()
-        .push(role_chip("Keyholder", ContactRole::Keyholder, cs.invite_role))
+        .push(role_chip(
+            "Keyholder",
+            ContactRole::Keyholder,
+            cs.invite_role,
+        ))
         .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
         .push(role_chip(
             "Beneficiary",
@@ -305,10 +305,9 @@ fn invite_form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcco
         .into()
     } else {
         button::primary(None, "Send Invite")
-            .on_press_maybe(
-                (email_valid && !email.is_empty())
-                    .then_some(ConnectAccountMessage::Contacts(ContactsMessage::SubmitInvite)),
-            )
+            .on_press_maybe((email_valid && !email_trimmed.is_empty()).then_some(
+                ConnectAccountMessage::Contacts(ContactsMessage::SubmitInvite),
+            ))
             .width(Length::Fill)
             .into()
     };
@@ -322,11 +321,12 @@ fn invite_form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcco
         .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
         .push(
             TextInput::new("email@example.com", email)
-                .on_input(|s| ConnectAccountMessage::Contacts(ContactsMessage::InviteEmailChanged(s)))
-                .on_submit_maybe(
-                    (email_valid && !cs.invite_sending)
-                        .then_some(ConnectAccountMessage::Contacts(ContactsMessage::SubmitInvite)),
-                )
+                .on_input(|s| {
+                    ConnectAccountMessage::Contacts(ContactsMessage::InviteEmailChanged(s))
+                })
+                .on_submit_maybe((email_valid && !cs.invite_sending).then_some(
+                    ConnectAccountMessage::Contacts(ContactsMessage::SubmitInvite),
+                ))
                 .size(16)
                 .padding(15),
         )
@@ -431,24 +431,22 @@ fn contact_detail_ux<'a>(
             ..Default::default()
         });
 
-    let role_badge = container(
-        text::p2_regular(role_label).color(rc),
-    )
-    .padding(iced::Padding {
-        top: 2.0,
-        bottom: 2.0,
-        left: 8.0,
-        right: 8.0,
-    })
-    .style(move |_t| container::Style {
-        background: None,
-        border: iced::Border {
-            color: rc,
-            width: 1.0,
-            radius: 8.0.into(),
-        },
-        ..Default::default()
-    });
+    let role_badge = container(text::p2_regular(role_label).color(rc))
+        .padding(iced::Padding {
+            top: 2.0,
+            bottom: 2.0,
+            left: 8.0,
+            right: 8.0,
+        })
+        .style(move |_t| container::Style {
+            background: None,
+            border: iced::Border {
+                color: rc,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..Default::default()
+        });
 
     let contact_header = container(
         Column::new()
@@ -458,9 +456,7 @@ fn contact_detail_ux<'a>(
             .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
             .push(role_badge)
             .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
-            .push(
-                text::p2_regular(format!("Connected {}", connected_date)).color(color::GREY_3),
-            )
+            .push(text::p2_regular(format!("Connected {}", connected_date)).color(color::GREY_3))
             .align_x(Alignment::Center)
             .padding(20)
             .spacing(0),
@@ -470,6 +466,18 @@ fn contact_detail_ux<'a>(
 
     // Associated Cubes section
     let cubes_section: Element<ConnectAccountMessage> = match &cs.detail_cubes {
+        None if cs.error.is_some() => Column::new()
+            .push(
+                text::p2_regular(cs.error.as_deref().unwrap_or("Failed to load cubes"))
+                    .color(color::RED),
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+            .push(
+                button::secondary(None, "Retry").on_press(ConnectAccountMessage::Contacts(
+                    ContactsMessage::ShowDetail(contact_id),
+                )),
+            )
+            .into(),
         None => text::p2_regular("Loading cubes\u{2026}")
             .color(color::GREY_3)
             .into(),
@@ -487,23 +495,21 @@ fn contact_detail_ux<'a>(
                     row = row
                         .push(iced::widget::Space::new().width(Length::Fixed(12.0)))
                         .push(
-                            container(
-                                text::caption("Recovery Kit").color(color::ORANGE),
-                            )
-                            .padding(iced::Padding {
-                                top: 2.0,
-                                bottom: 2.0,
-                                left: 6.0,
-                                right: 6.0,
-                            })
-                            .style(|_t| container::Style {
-                                border: iced::Border {
-                                    color: color::ORANGE,
-                                    width: 0.5,
-                                    radius: 6.0.into(),
-                                },
-                                ..Default::default()
-                            }),
+                            container(text::caption("Recovery Kit").color(color::ORANGE))
+                                .padding(iced::Padding {
+                                    top: 2.0,
+                                    bottom: 2.0,
+                                    left: 6.0,
+                                    right: 6.0,
+                                })
+                                .style(|_t| container::Style {
+                                    border: iced::Border {
+                                        color: color::ORANGE,
+                                        width: 0.5,
+                                        radius: 6.0.into(),
+                                    },
+                                    ..Default::default()
+                                }),
                         );
                 }
                 row = row.align_y(Alignment::Center);
@@ -521,14 +527,9 @@ fn contact_detail_ux<'a>(
         .push(text::p1_bold("Associated Cubes").style(theme::text::primary))
         .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
         .push(
-            container(
-                Column::new()
-                    .push(cubes_section)
-                    .padding(16)
-                    .spacing(2),
-            )
-            .style(card_style)
-            .width(Length::Fill),
+            container(Column::new().push(cubes_section).padding(16).spacing(2))
+                .style(card_style)
+                .width(Length::Fill),
         )
         .spacing(0)
         .width(Length::Fill)

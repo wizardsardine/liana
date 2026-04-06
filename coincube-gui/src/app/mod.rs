@@ -927,12 +927,14 @@ impl App {
                     ));
                 }
                 // Load Contacts data on demand
-                if matches!(submenu, menu::ConnectSubMenu::Contacts) {
-                    let contacts_task =
-                        crate::app::state::connect::account::load_contacts_data(
-                            &self.panels.connect.account.client,
-                            self.panels.connect.account.session_generation(),
-                        );
+                if matches!(submenu, menu::ConnectSubMenu::Contacts)
+                    && self.panels.connect.account.is_authenticated()
+                {
+                    self.panels.connect.account.contacts_state.loading = true;
+                    let contacts_task = crate::app::state::connect::account::load_contacts_data(
+                        &self.panels.connect.account.client,
+                        self.panels.connect.account.session_generation(),
+                    );
                     self.panels.current = menu;
                     return contacts_task;
                 }

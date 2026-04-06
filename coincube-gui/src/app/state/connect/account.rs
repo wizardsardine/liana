@@ -555,12 +555,13 @@ impl ConnectAccountPanel {
                 self.contacts_state.detail_cubes = None;
                 self.contacts_state.error = None;
                 let client = self.client.clone();
+                let gen = self.session_generation;
                 return iced::Task::perform(
                     async move { client.get_cubes_by_contact(contact_id).await },
-                    |res| match res {
+                    move |res| match res {
                         Ok(cubes) => Message::View(view::Message::ConnectAccount(
                             ConnectAccountMessage::Contacts(ContactsMessage::ContactCubesLoaded(
-                                cubes,
+                                contact_id, cubes, gen,
                             )),
                         )),
                         Err(e) => Message::View(view::Message::ConnectAccount(
@@ -602,7 +603,11 @@ impl ConnectAccountPanel {
                 let client = self.client.clone();
                 let role = self.contacts_state.invite_role;
                 return iced::Task::perform(
-                    async move { client.create_invite(CreateInviteRequest { email, role }).await },
+                    async move {
+                        client
+                            .create_invite(CreateInviteRequest { email, role })
+                            .await
+                    },
                     |res| match res {
                         Ok(()) => Message::View(view::Message::ConnectAccount(
                             ConnectAccountMessage::Contacts(ContactsMessage::InviteCreated),
@@ -666,8 +671,13 @@ impl ConnectAccountPanel {
                 }
             }
 
-            ContactsMessage::ContactCubesLoaded(cubes) => {
-                self.contacts_state.detail_cubes = Some(cubes);
+            ContactsMessage::ContactCubesLoaded(contact_id, cubes, gen) => {
+                // Only store if session is current and we're still viewing this contact
+                if gen == self.session_generation
+                    && matches!(self.contacts_state.step, ContactsStep::Detail(id) if id == contact_id)
+                {
+                    self.contacts_state.detail_cubes = Some(cubes);
+                }
             }
 
             ContactsMessage::Error(e) => {
