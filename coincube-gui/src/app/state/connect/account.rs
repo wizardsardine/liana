@@ -585,15 +585,11 @@ impl ConnectAccountPanel {
                     return iced::Task::none();
                 }
                 let email = self.contacts_state.invite_email.trim().to_string();
-                // Basic email validation
-                let valid = {
-                    let parts: Vec<&str> = email.split('@').collect();
-                    parts.len() == 2
-                        && !parts[0].is_empty()
-                        && parts[1].contains('.')
-                        && !parts[1].starts_with('.')
-                        && !parts[1].ends_with('.')
-                };
+                let valid = email_address::EmailAddress::parse_with_options(
+                    &email,
+                    email_address::Options::default().with_required_tld(),
+                )
+                .is_ok();
                 if !valid {
                     self.contacts_state.error = Some("Please enter a valid email address".into());
                     return iced::Task::none();

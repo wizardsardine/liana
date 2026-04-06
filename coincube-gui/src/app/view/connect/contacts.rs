@@ -268,14 +268,11 @@ fn invite_form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcco
 
     let email = &cs.invite_email;
     let email_trimmed = email.trim();
-    let email_valid = {
-        let parts: Vec<&str> = email_trimmed.split('@').collect();
-        parts.len() == 2
-            && !parts[0].is_empty()
-            && parts[1].contains('.')
-            && !parts[1].starts_with('.')
-            && !parts[1].ends_with('.')
-    };
+    let email_valid = email_address::EmailAddress::parse_with_options(
+        email_trimmed,
+        email_address::Options::default().with_required_tld(),
+    )
+    .is_ok();
 
     let role_chips = Row::new()
         .push(role_chip(
