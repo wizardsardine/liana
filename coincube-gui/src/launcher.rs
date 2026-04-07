@@ -82,7 +82,6 @@ pub enum LauncherSection {
 /// Context stashed for firing a remote cube update after local rename succeeds.
 struct PendingRemoteRename {
     cube_id: String,
-    cube_uuid: String,
     cube_network: Network,
     new_name: String,
 }
@@ -126,7 +125,9 @@ pub struct Launcher {
     /// Pending remote rename: stashed after local rename succeeds so the
     /// `CubeRenamed` handler can fire the API update.
     pending_remote_rename: Option<PendingRemoteRename>,
+    #[allow(dead_code)]
     welcome_quote: coincube_ui::component::quote_display::Quote,
+    #[allow(dead_code)]
     welcome_image_handle: iced::widget::image::Handle,
 }
 
@@ -535,8 +536,8 @@ impl Launcher {
                                 name: Some(pending.new_name),
                                 status: None,
                             };
+                            let cube_uuid = pending.cube_id.clone();
                             let cube_id = pending.cube_id;
-                            let cube_uuid = pending.cube_uuid;
                             let cube_network = pending.cube_network;
                             let remote_task = Task::perform(
                                 async move {
@@ -654,29 +655,30 @@ impl Launcher {
                 let delete_task = if let Some(client) = self.connect_account.authenticated_client()
                 {
                     // Capture the cube UUID before closing the modal
-                    let cube_uuid = self.delete_cube_modal.as_ref().map(|m| m.cube.id.clone());
-                    if let Some(uuid) = cube_uuid {
-                        // Look up the server-side cube by UUID, then delete it
-                        Some(Task::perform(
-                            async move {
-                                let cubes = client.list_cubes().await.map_err(|e| e.to_string())?;
-                                let server_cube = cubes.iter().find(|c| c.uuid == uuid);
-                                if let Some(cube) = server_cube {
-                                    let server_id = cube.id.to_string();
-                                    client
-                                        .delete_cube(&server_id)
-                                        .await
-                                        .map_err(|e| e.to_string())
-                                } else {
-                                    // Not registered server-side, nothing to delete
-                                    Ok(())
-                                }
-                            },
-                            Message::CubeRemoteDeleted,
-                        ))
-                    } else {
-                        None
-                    }
+                    self.delete_cube_modal
+                        .as_ref()
+                        .map(|m| m.cube.id.clone())
+                        .map(|uuid| {
+                            // Look up the server-side cube by UUID, then delete it
+                            Task::perform(
+                                async move {
+                                    let cubes =
+                                        client.list_cubes().await.map_err(|e| e.to_string())?;
+                                    let server_cube = cubes.iter().find(|c| c.uuid == uuid);
+                                    if let Some(cube) = server_cube {
+                                        let server_id = cube.id.to_string();
+                                        client
+                                            .delete_cube(&server_id)
+                                            .await
+                                            .map_err(|e| e.to_string())
+                                    } else {
+                                        // Not registered server-side, nothing to delete
+                                        Ok(())
+                                    }
+                                },
+                                Message::CubeRemoteDeleted,
+                            )
+                        })
                 } else {
                     None
                 };
@@ -976,7 +978,6 @@ impl Launcher {
                 if self.connect_account.is_authenticated() {
                     self.pending_remote_rename = Some(PendingRemoteRename {
                         cube_id: cube.id.clone(),
-                        cube_uuid: cube.id.clone(),
                         cube_network: cube.network,
                         new_name: new_name.clone(),
                     });
