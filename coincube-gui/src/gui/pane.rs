@@ -1,4 +1,10 @@
-use coincube_ui::{component::text::*, icon::plus_icon, theme, widget::*};
+use coincube_ui::{
+    color,
+    component::text::*,
+    icon::{cross_icon, plus_icon},
+    theme,
+    widget::*,
+};
 use iced::{Length, Subscription, Task};
 use iced_aw::ContextMenu;
 
@@ -182,45 +188,83 @@ impl Pane {
         let tabs_len = self.tabs.len();
         for (i, tab) in self.tabs.iter().enumerate() {
             let title = tab.title();
-            menu = menu.push(ContextMenu::new(
-                Into::<Element<ViewMessage>>::into(
-                    Button::new(if title.len() < 20 {
-                        Row::new().push(p1_regular(title)).push(p1_regular(
-                            "                     "[..21 - title.len()].to_string(),
-                        ))
-                    } else {
-                        Row::new()
-                            .push(p1_regular(&title[..17]))
-                            .push(p1_regular("..."))
-                    })
+            let title_row = if title.len() < 20 {
+                Row::new().push(p1_regular(title)).push(p1_regular(
+                    "                     "[..21 - title.len()].to_string(),
+                ))
+            } else {
+                Row::new()
+                    .push(p1_regular(&title[..17]))
+                    .push(p1_regular("..."))
+            };
+
+            let tab_content: Element<ViewMessage> = if tabs_len > 1 {
+                // Show close button when more than one tab
+                Row::new()
+                    .align_y(iced::Alignment::Center)
+                    .push(
+                        Button::new(title_row)
+                            .style(if i == self.focused_tab {
+                                theme::button::tab_liquid
+                            } else {
+                                theme::button::tab
+                            })
+                            .on_press(ViewMessage::FocusTab(i)),
+                    )
+                    .push(
+                        Button::new(
+                            iced::widget::Container::new(cross_icon().size(14))
+                                .center_x(iced::Length::Fill)
+                                .center_y(iced::Length::Fill),
+                        )
+                        .width(iced::Length::Fixed(28.0))
+                        .height(iced::Length::Fixed(28.0))
+                        .style(|_: &coincube_ui::theme::Theme, status| {
+                            iced::widget::button::Style {
+                                background: Some(iced::Background::Color(color::TRANSPARENT)),
+                                text_color: match status {
+                                    iced::widget::button::Status::Hovered => color::ORANGE,
+                                    _ => color::GREY_3,
+                                },
+                                ..Default::default()
+                            }
+                        })
+                        .padding(0)
+                        .on_press(ViewMessage::CloseTab(i)),
+                    )
+                    .into()
+            } else {
+                // Single tab — no close button
+                Button::new(title_row)
                     .style(if i == self.focused_tab {
                         theme::button::tab_liquid
                     } else {
                         theme::button::tab
                     })
-                    .on_press(ViewMessage::FocusTab(i)),
-                ),
-                move || {
-                    Column::new()
-                        .push(
-                            Button::new(p1_regular("Close"))
+                    .on_press(ViewMessage::FocusTab(i))
+                    .into()
+            };
+
+            menu = menu.push(ContextMenu::new(tab_content, move || {
+                Column::new()
+                    .push(
+                        Button::new(p1_regular("Close"))
+                            .style(theme::button::secondary)
+                            .on_press(ViewMessage::CloseTab(i))
+                            .width(100),
+                    )
+                    .push(if tabs_len > 1 {
+                        Some(
+                            Button::new(p1_regular("Split"))
                                 .style(theme::button::secondary)
-                                .on_press(ViewMessage::CloseTab(i))
+                                .on_press(ViewMessage::SplitTab(i))
                                 .width(100),
                         )
-                        .push(if tabs_len > 1 {
-                            Some(
-                                Button::new(p1_regular("Split"))
-                                    .style(theme::button::secondary)
-                                    .on_press(ViewMessage::SplitTab(i))
-                                    .width(100),
-                            )
-                        } else {
-                            None
-                        })
-                        .into()
-                },
-            ));
+                    } else {
+                        None
+                    })
+                    .into()
+            }));
         }
         menu = menu.push(
             Button::new(plus_icon())

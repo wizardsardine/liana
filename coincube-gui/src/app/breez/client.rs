@@ -447,6 +447,11 @@ impl BreezClient {
     /// `amount` is in base units; `precision` is the asset's decimal precision (8 for USDt).
     /// `from_asset` enables cross-asset swaps via SideSwap when it differs from `asset_id`.
     /// Returns a `PrepareSendResponse` that must be passed to `send_payment()`.
+    /// Always requests asset fee estimation for same-asset sends so the response
+    /// contains both `fees_sat` (L-BTC) and `estimated_asset_fees` (asset).
+    /// If L-BTC fee estimation fails inside the SDK, the prepare still succeeds
+    /// as long as asset fees are available. The caller inspects the response
+    /// to decide which fee path to use.
     pub async fn prepare_send_asset(
         &self,
         destination: String,
@@ -456,15 +461,18 @@ impl BreezClient {
         from_asset_id: Option<&str>,
     ) -> Result<breez::PrepareSendResponse, BreezError> {
         let receiver_amount = safe_base_units_to_f64(amount, precision)?;
-        // Cross-asset swaps (from_asset != to_asset) cannot use asset fees per SDK constraint
+        // Cross-asset swaps cannot use asset fees per SDK constraint.
+        // For same-asset sends, always request asset fee estimation so we get
+        // both fee options back. The user's choice is applied at send time.
         let is_cross_asset = from_asset_id.is_some_and(|from| from != to_asset_id);
+        let estimate_asset_fees = if is_cross_asset { None } else { Some(true) };
         self.get_sdk()?
             .prepare_send_payment(&breez::PrepareSendRequest {
                 destination,
                 amount: Some(breez::PayAmount::Asset {
                     to_asset: to_asset_id.to_string(),
                     receiver_amount,
-                    estimate_asset_fees: if is_cross_asset { None } else { Some(true) },
+                    estimate_asset_fees,
                     from_asset: from_asset_id.map(|s| s.to_string()),
                 }),
                 disable_mrh: None,

@@ -110,6 +110,7 @@ pub enum Message {
     ToggleConnect,
     P2P(P2PMessage),
     ToggleTheme,
+    DismissReceivedCelebration,
 }
 
 impl Close for Message {
@@ -432,6 +433,8 @@ pub enum LiquidSendMessage {
     PopupMessage(SendPopupMessage),
     PrepareResponseReceived(PrepareSendResponse),
     PrepareOnChainResponseReceived(PreparePayOnchainResponse),
+    SendMaxPrepared(Result<PrepareSendResponse, String>),
+    SendMaxOnChainResult(u64),
     ConfirmSend,
     SendComplete,
     BackToHome,
@@ -472,6 +475,8 @@ pub enum SendPopupMessage {
     Done,
     Close,
     ToggleSendAsset,
+    ToggleFeeAsset,
+    SendMax,
     UsdtAmountEdited(String),
 }
 
@@ -479,6 +484,9 @@ pub enum SendPopupMessage {
 pub enum LiquidReceiveMessage {
     ToggleMethod(ReceiveMethod),
     Copy,
+    ShowQrCode,
+    CloseQrCode,
+    DismissCelebration,
     GenerateAddress,
     AddressGenerated(ReceiveMethod, Result<String, String>),
     AmountInput(String),
