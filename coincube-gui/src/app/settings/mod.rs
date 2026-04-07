@@ -118,6 +118,20 @@ where
     Ok(())
 }
 
+/// Mark a cube as synced with the remote Connect API.
+pub async fn mark_cube_synced(
+    network_dir: &NetworkDirectory,
+    cube_id: &str,
+) -> Result<(), SettingsError> {
+    update_settings_file(network_dir, |mut settings| {
+        if let Some(cube) = settings.cubes.iter_mut().find(|c| c.id == cube_id) {
+            cube.remote_synced = true;
+        }
+        Some(settings)
+    })
+    .await
+}
+
 /// Cubes represent user accounts that can contain multiple features (Vault, Liquid wallet, etc.)
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CubeSettings {
@@ -128,6 +142,10 @@ pub struct CubeSettings {
     pub backed_up: bool,
     #[serde(default)]
     pub mfa_done: bool,
+    /// Whether this cube has been registered with the Connect API.
+    /// Defaults to `false` so that existing cubes are picked up by catch-up sync.
+    #[serde(default)]
+    pub remote_synced: bool,
     pub created_at: i64,
     /// The Vault wallet for this Cube (optional - may not be set up yet)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -170,6 +188,7 @@ impl CubeSettings {
             liquid_wallet_signer_fingerprint: None,
             backed_up: false,
             mfa_done: false,
+            remote_synced: false,
             unit_setting: unit::UnitSetting::default(),
             fiat_price: Some(fiat::PriceSetting::default()), // Initialize with default (enabled: true)
             pending_liquid_to_vault_transfer: None,
@@ -268,6 +287,18 @@ impl CubeSettings {
         })?;
 
         Ok(Some(cube_settings))
+    }
+
+    /// Convert this cube's network to the API network string.
+    pub fn api_network_string(&self) -> String {
+        match self.network {
+            Network::Bitcoin => "mainnet",
+            Network::Testnet => "testnet",
+            Network::Testnet4 => "testnet4",
+            Network::Signet => "signet",
+            Network::Regtest => "regtest",
+        }
+        .to_string()
     }
 }
 

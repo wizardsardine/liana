@@ -236,6 +236,45 @@ impl CoincubeClient {
         Ok(resp.data)
     }
 
+    /// GET /api/v1/connect/cubes — list all cubes for the authenticated user.
+    pub async fn list_cubes(&self) -> Result<Vec<super::CubeResponse>, CoincubeError> {
+        let url = format!("{}/api/v1/connect/cubes", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<Vec<super::CubeResponse>> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// PUT /api/v1/connect/cubes/{cubeId} — update a cube's name or status.
+    pub async fn update_cube(
+        &self,
+        cube_id: &str,
+        req: super::UpdateCubeRequest,
+    ) -> Result<super::CubeResponse, CoincubeError> {
+        let url = format!("{}/api/v1/connect/cubes/{}", self.base_url, cube_id);
+        let res = self.client.put(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::CubeResponse> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// DELETE /api/v1/connect/cubes/{cubeId} — delete a cube.
+    pub async fn delete_cube(&self, cube_id: &str) -> Result<(), CoincubeError> {
+        let url = format!("{}/api/v1/connect/cubes/{}", self.base_url, cube_id);
+        let res = self.client.delete(&url).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// GET /api/v1/connect/cubes/limits — get cube limits for the authenticated user.
+    pub async fn get_cube_limits(&self) -> Result<super::CubeLimitsResponse, CoincubeError> {
+        let url = format!("{}/api/v1/connect/cubes/limits", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::CubeLimitsResponse> = res.json().await?;
+        Ok(resp.data)
+    }
+
     // --- Cube-scoped endpoints (Lightning Address, Avatar) ---
     // All use /connect/cubes/{cubeId}/... paths (server-side numeric ID)
 

@@ -233,6 +233,15 @@ pub struct RegisterCubeRequest {
     pub network: String,
 }
 
+/// Request body for PUT /api/v1/connect/cubes/{id}
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateCubeRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
 /// Response from POST/GET /api/v1/connect/cubes/{id}
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -244,6 +253,15 @@ pub struct CubeResponse {
     pub lightning_address: Option<String>,
     pub bolt12_offer: Option<String>,
     pub status: String,
+}
+
+/// Response from GET /api/v1/connect/cubes/limits
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CubeLimitsResponse {
+    pub network: String,
+    pub current_count: i64,
+    pub max_allowed: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]

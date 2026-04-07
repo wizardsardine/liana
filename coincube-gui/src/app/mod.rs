@@ -499,12 +499,16 @@ impl Panels {
 /// Interval between bitcoind sync progress polls (in seconds).
 const BITCOIND_SYNC_POLL_INTERVAL: Duration = Duration::from_secs(10);
 
-/// Convert a bitcoin::Network to the API network string ("mainnet" or "testnet").
+/// Convert a bitcoin::Network to the API network string.
 fn network_api_string(network: bitcoin::Network) -> String {
     match network {
-        bitcoin::Network::Bitcoin => "mainnet".to_string(),
-        _ => "testnet".to_string(),
+        bitcoin::Network::Bitcoin => "mainnet",
+        bitcoin::Network::Testnet => "testnet",
+        bitcoin::Network::Testnet4 => "testnet4",
+        bitcoin::Network::Signet => "signet",
+        bitcoin::Network::Regtest => "regtest",
     }
+    .to_string()
 }
 
 pub struct App {
