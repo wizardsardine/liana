@@ -758,7 +758,7 @@ checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 
 [[package]]
 name = "business-installer"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-hwi",
  "chrono",
@@ -3115,7 +3115,7 @@ dependencies = [
 
 [[package]]
 name = "liana-business"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-hwi",
  "backtrace",
