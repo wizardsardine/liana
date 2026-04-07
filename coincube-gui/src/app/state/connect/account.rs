@@ -126,6 +126,15 @@ impl ConnectAccountPanel {
         matches!(self.step, ConnectFlowStep::Dashboard)
     }
 
+    /// Returns `true` if a session has been previously stored in the OS keyring,
+    /// indicating the user has (or had) a Connect account on this device.
+    pub fn has_stored_session() -> bool {
+        keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER)
+            .ok()
+            .and_then(|e| e.get_secret().ok())
+            .is_some()
+    }
+
     pub fn session_generation(&self) -> u64 {
         self.session_generation
     }
