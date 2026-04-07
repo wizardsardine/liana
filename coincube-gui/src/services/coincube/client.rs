@@ -266,10 +266,18 @@ impl CoincubeClient {
         Ok(())
     }
 
-    /// GET /api/v1/connect/cubes/limits — get cube limits for the authenticated user.
-    pub async fn get_cube_limits(&self) -> Result<super::CubeLimitsResponse, CoincubeError> {
+    /// GET /api/v1/connect/cubes/limits?network={network} — get cube limits for the authenticated user.
+    pub async fn get_cube_limits(
+        &self,
+        network: &str,
+    ) -> Result<super::CubeLimitsResponse, CoincubeError> {
         let url = format!("{}/api/v1/connect/cubes/limits", self.base_url);
-        let res = self.client.get(&url).send().await?;
+        let res = self
+            .client
+            .get(&url)
+            .query(&[("network", network)])
+            .send()
+            .await?;
         let res = res.check_success().await?;
         let resp: super::ApiResponse<super::CubeLimitsResponse> = res.json().await?;
         Ok(resp.data)

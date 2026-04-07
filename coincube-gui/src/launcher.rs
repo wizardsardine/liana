@@ -628,8 +628,27 @@ impl Launcher {
                     return Task::none();
                 }
                 self.network = network;
+                // Clear stale limit from previous network
+                self.server_cube_limit = None;
                 let network_dir = self.datadir_path.network_directory(self.network);
-                Task::perform(check_network_datadir(network_dir), Message::Checked)
+                let mut tasks: Vec<Task<Message>> = vec![Task::perform(
+                    check_network_datadir(network_dir),
+                    Message::Checked,
+                )];
+                // Re-fetch limits for the new network if authenticated
+                if let Some(client) = self.connect_account.authenticated_client() {
+                    let network_str = settings::network_to_api_string(self.network);
+                    tasks.push(Task::perform(
+                        async move {
+                            client
+                                .get_cube_limits(&network_str)
+                                .await
+                                .map_err(|e| e.to_string())
+                        },
+                        Message::CubeLimitsLoaded,
+                    ));
+                }
+                Task::batch(tasks)
             }
             Message::View(ViewMessage::ToggleDeveloperMode(enabled)) => {
                 let previous_developer_mode = self.developer_mode;
@@ -1029,6 +1048,7 @@ impl Launcher {
                     self.connect_expanded = true;
                 }
                 // Sync account tier from the Connect plan data
+                let old_tier = self.account_tier;
                 self.account_tier =
                     self.connect_account
                         .plan
@@ -1038,6 +1058,12 @@ impl Launcher {
                             crate::services::coincube::PlanTier::Pro => AccountTier::Pro,
                             crate::services::coincube::PlanTier::Legacy => AccountTier::Legacy,
                         });
+                // When the plan tier changes (e.g. upgrade), invalidate the
+                // cached server limit so `cube_limit()` uses the new tier
+                // until fresh limits are fetched.
+                if old_tier != self.account_tier {
+                    self.server_cube_limit = None;
+                }
                 if let Err(e) = GlobalSettings::update_account_tier(
                     &GlobalSettings::path(&self.datadir_path),
                     self.account_tier,
@@ -1049,12 +1075,13 @@ impl Launcher {
                 if !was_authenticated && now_authenticated {
                     let mut tasks = vec![task];
 
-                    // Fetch cube limits from the server
+                    // Fetch cube limits for the current network from the server
                     if let Some(limits_client) = self.connect_account.authenticated_client() {
+                        let network_str = settings::network_to_api_string(self.network);
                         tasks.push(Task::perform(
                             async move {
                                 limits_client
-                                    .get_cube_limits()
+                                    .get_cube_limits(&network_str)
                                     .await
                                     .map_err(|e| e.to_string())
                             },

@@ -499,7 +499,6 @@ impl Panels {
 /// Interval between bitcoind sync progress polls (in seconds).
 const BITCOIND_SYNC_POLL_INTERVAL: Duration = Duration::from_secs(10);
 
-
 pub struct App {
     cache: Cache,
     wallet: Option<Arc<Wallet>>,
