@@ -1541,13 +1541,18 @@ impl State for LiquidSend {
                     }
                 }
                 view::LiquidSendMessage::PrepareResponseReceived(prepare_response) => {
-                    // If the user wanted L-BTC fees but the SDK couldn't estimate
-                    // them (fees_sat is None), fall back to asset fees automatically.
+                    // If the preferred fee method is unavailable, fall back to the
+                    // other one automatically.
                     if !self.pay_fees_with_asset
                         && prepare_response.fees_sat.is_none()
                         && prepare_response.estimated_asset_fees.is_some()
                     {
                         self.pay_fees_with_asset = true;
+                    } else if self.pay_fees_with_asset
+                        && prepare_response.estimated_asset_fees.is_none()
+                        && prepare_response.fees_sat.is_some()
+                    {
+                        self.pay_fees_with_asset = false;
                     }
                     self.prepare_response = Some(prepare_response.clone());
                     self.flow_state = LiquidSendFlowState::FinalCheck;

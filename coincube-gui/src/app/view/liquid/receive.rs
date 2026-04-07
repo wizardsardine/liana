@@ -1132,41 +1132,12 @@ pub fn received_celebration_page<'a>(
     quote: &'a coincube_ui::component::quote_display::Quote,
     image_handle: &'a iced::widget::image::Handle,
 ) -> Element<'a, LiquidReceiveMessage> {
-    use coincube_ui::component::quote_display::{self, QuoteDisplayProps};
-
-    Column::new()
-        .spacing(20)
-        .width(Length::Fill)
-        .align_x(Alignment::Center)
-        .push(Space::new().height(Length::Fixed(20.0)))
-        .push(quote_display::display(
-            &QuoteDisplayProps::new("transaction-received", quote, image_handle).image_size(480),
-        ))
-        .push(h3("Payment received!"))
-        .push(
-            Row::new()
-                .spacing(5)
-                .push(
-                    text(amount_display)
-                        .size(20)
-                        .color(color::GREEN)
-                        .font(iced::Font {
-                            style: iced::font::Style::Italic,
-                            ..Default::default()
-                        }),
-                )
-                .push(text("has arrived.").size(20).font(iced::Font {
-                    style: iced::font::Style::Italic,
-                    ..Default::default()
-                })),
-        )
-        .push(Space::new().height(Length::Fixed(10.0)))
-        .push(
-            button::primary(None, "Back")
-                .width(Length::Fixed(150.0))
-                .on_press(LiquidReceiveMessage::DismissCelebration),
-        )
-        .into()
+    coincube_ui::component::received_celebration_page(
+        amount_display,
+        quote,
+        image_handle,
+        LiquidReceiveMessage::DismissCelebration,
+    )
 }
 
 /// QR code modal overlay (matches Vault receive pattern).
