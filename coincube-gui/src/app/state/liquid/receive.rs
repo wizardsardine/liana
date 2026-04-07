@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use breez_sdk_liquid::model::PaymentDetails;
-use breez_sdk_liquid::prelude::Payment;
+use breez_sdk_liquid::prelude::{Payment, PaymentState};
 use coincube_core::miniscript::bitcoin::{Amount, Denomination};
 use coincube_ui::component::form;
 use coincube_ui::widget::*;
@@ -54,6 +54,12 @@ pub struct LiquidReceive {
     usdt_balance: u64,
     recent_transaction: Vec<view::liquid::RecentTransaction>,
     recent_payments: Vec<Payment>,
+    show_qr_modal: bool,
+    /// Show the "Payment received!" celebration screen.
+    show_received_celebration: bool,
+    received_amount_display: String,
+    received_quote: coincube_ui::component::quote_display::Quote,
+    received_image_handle: iced::widget::image::Handle,
 }
 
 impl LiquidReceive {
@@ -106,6 +112,15 @@ impl LiquidReceive {
             usdt_balance: 0,
             recent_transaction: Vec::new(),
             recent_payments: Vec::new(),
+            show_qr_modal: false,
+            show_received_celebration: false,
+            received_amount_display: String::new(),
+            received_quote: coincube_ui::component::quote_display::random_quote(
+                "transaction-received",
+            ),
+            received_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
+                "transaction-received",
+            ),
         }
     }
 
@@ -143,6 +158,17 @@ impl State for LiquidReceive {
         // Delegate to SideShift flow when active
         if let Some(sideshift) = &self.sideshift_flow {
             return sideshift.view(menu, cache);
+        }
+
+        // Show celebration screen when a new payment is received
+        if self.show_received_celebration {
+            let celebration = view::liquid::received_celebration_page(
+                &self.received_amount_display,
+                &self.received_quote,
+                &self.received_image_handle,
+            )
+            .map(view::Message::LiquidReceive);
+            return view::dashboard(menu, cache, celebration);
         }
 
         let receive_view = view::liquid::liquid_receive_view(
@@ -190,6 +216,18 @@ impl State for LiquidReceive {
                 .into();
         }
 
+        if self.show_qr_modal {
+            if let (Some(qr), Some(addr)) = (self.current_qr_data(), self.current_address()) {
+                let modal_content = view::liquid::qr_modal(qr, addr, &self.receive_method)
+                    .map(view::Message::LiquidReceive);
+                return coincube_ui::widget::modal::Modal::new(content, modal_content)
+                    .on_blur(Some(view::Message::LiquidReceive(
+                        LiquidReceiveMessage::CloseQrCode,
+                    )))
+                    .into();
+            }
+        }
+
         content
     }
 
@@ -227,8 +265,18 @@ impl State for LiquidReceive {
                     if self.receive_method != method {
                         self.receive_method = method.clone();
                         self.error = None;
+                        self.show_qr_modal = false;
                     }
                     return self.fetch_limits();
+                }
+                LiquidReceiveMessage::ShowQrCode => {
+                    self.show_qr_modal = true;
+                }
+                LiquidReceiveMessage::CloseQrCode => {
+                    self.show_qr_modal = false;
+                }
+                LiquidReceiveMessage::DismissCelebration => {
+                    self.show_received_celebration = false;
                 }
                 LiquidReceiveMessage::Copy => {
                     if let Some(address) = self.current_address() {
@@ -565,6 +613,58 @@ impl State for LiquidReceive {
                         })
                         .take(5)
                         .collect();
+                    // Detect new incoming payment by scanning the unseen prefix
+                    // of filtered (all items newer than the previous head).
+                    if !self.recent_payments.is_empty() {
+                        let prev_head_tx_id = self.recent_payments.first().map(|p| &p.tx_id);
+                        // Scan filtered until we hit the previous head (unseen prefix)
+                        for payment in &filtered {
+                            // Stop at the previous head — everything after is already known
+                            if Some(&payment.tx_id) == prev_head_tx_id {
+                                break;
+                            }
+                            let is_receive = matches!(
+                                payment.payment_type,
+                                breez_sdk_liquid::prelude::PaymentType::Receive
+                            );
+                            if is_receive && matches!(payment.status, PaymentState::Complete) {
+                                let usdt_id_str =
+                                    usdt_asset_id(self.breez_client.network()).unwrap_or("");
+                                let is_usdt = matches!(
+                                    &payment.details,
+                                    PaymentDetails::Liquid { asset_id, .. }
+                                        if !usdt_id_str.is_empty() && asset_id == usdt_id_str
+                                );
+                                self.received_amount_display = if is_usdt {
+                                    let usdt_base = if let PaymentDetails::Liquid {
+                                        asset_info: Some(ref info),
+                                        ..
+                                    } = &payment.details
+                                    {
+                                        (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round()
+                                            as u64
+                                    } else {
+                                        payment.amount_sat
+                                    };
+                                    format!("{} USDt", format_usdt_display(usdt_base))
+                                } else {
+                                    use coincube_ui::component::amount::DisplayAmount;
+                                    Amount::from_sat(payment.amount_sat)
+                                        .to_formatted_string_with_unit(cache.bitcoin_unit)
+                                };
+                                self.received_quote =
+                                    coincube_ui::component::quote_display::random_quote(
+                                        "transaction-received",
+                                    );
+                                self.received_image_handle =
+                                    coincube_ui::component::quote_display::image_handle_for_context(
+                                        "transaction-received",
+                                    );
+                                self.show_received_celebration = true;
+                                break; // Only fire for the first unseen receive
+                            }
+                        }
+                    }
                     self.recent_payments = filtered.clone();
 
                     let fiat_converter: Option<view::FiatAmountConverter> =

@@ -20,6 +20,7 @@ pub struct PinInput {
 pub enum Message {
     DigitChanged(usize, String),
     ToggleShow,
+    Submit,
 }
 
 impl PinInput {
@@ -101,6 +102,7 @@ impl PinInput {
                 self.hidden = !self.hidden;
                 Task::none()
             }
+            Message::Submit => Task::none(),
         }
     }
 
@@ -115,7 +117,8 @@ impl PinInput {
                 .align_x(iced::Alignment::Center)
                 .padding(15)
                 .secure(self.hidden)
-                .on_input(move |v| Message::DigitChanged(i, v));
+                .on_input(move |v| Message::DigitChanged(i, v))
+                .on_submit(Message::Submit);
 
             pin_inputs = pin_inputs.push(input);
         }

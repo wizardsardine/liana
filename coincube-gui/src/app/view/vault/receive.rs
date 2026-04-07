@@ -356,7 +356,7 @@ pub fn verify_address_modal<'a>(
     .into()
 }
 
-pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a String) -> Element<'a, Message> {
+pub fn qr_modal<'a>(qr: &'a qr_code::Data, _address: &'a String) -> Element<'a, Message> {
     Column::new()
         .push(
             Row::new()
@@ -367,8 +367,6 @@ pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a String) -> Element<'a, M
                 )
                 .push(Space::new().width(Length::Fill)),
         )
-        .push(Space::new().height(Length::Fixed(15.0)))
-        .push(Container::new(text(address).size(15)).center_x(Length::Fill))
         .width(Length::Fill)
         .max_width(400)
         .into()

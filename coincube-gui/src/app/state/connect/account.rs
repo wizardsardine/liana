@@ -2,15 +2,64 @@ use crate::{
     app::{
         menu::ConnectSubMenu,
         message::Message,
-        view::{self, ConnectAccountMessage},
+        view::{self, ConnectAccountMessage, ContactsMessage},
     },
     services::coincube::{
-        CoincubeClient, ConnectPlan, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
-        User, VerifiedDevice,
+        CoincubeClient, ConnectPlan, Contact, ContactCube, ContactRole, CreateInviteRequest,
+        Invite, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest, User, VerifiedDevice,
     },
 };
 
 use super::{CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER};
+
+/// Which sub-view of the Contacts section is shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContactsStep {
+    List,
+    InviteForm,
+    Detail(u64),
+}
+
+/// State for the Contacts section within ConnectAccountPanel.
+pub struct ContactsState {
+    pub step: ContactsStep,
+    pub contacts: Option<Vec<Contact>>,
+    pub invites: Option<Vec<Invite>>,
+    pub invite_email: String,
+    pub invite_role: ContactRole,
+    pub invite_sending: bool,
+    pub detail_cubes: Option<Vec<ContactCube>>,
+    pub detail_cubes_error: Option<String>,
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
+impl ContactsState {
+    pub fn new() -> Self {
+        Self {
+            step: ContactsStep::List,
+            contacts: None,
+            invites: None,
+            invite_email: String::new(),
+            invite_role: ContactRole::Keyholder,
+            invite_sending: false,
+            detail_cubes: None,
+            detail_cubes_error: None,
+            loading: false,
+            error: None,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::new();
+    }
+}
+
+impl Default for ContactsState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Debug)]
 pub enum ConnectFlowStep {
@@ -41,6 +90,7 @@ pub struct ConnectAccountPanel {
     pub plan: Option<ConnectPlan>,
     pub verified_devices: Option<Vec<VerifiedDevice>>,
     pub login_activity: Option<Vec<LoginActivity>>,
+    pub contacts_state: ContactsState,
     pub error: Option<String>,
     /// Incremented on each login/logout so stale async completions can be discarded.
     session_generation: u64,
@@ -56,6 +106,7 @@ impl ConnectAccountPanel {
             plan: None,
             verified_devices: None,
             login_activity: None,
+            contacts_state: ContactsState::new(),
             error: None,
             session_generation: 0,
         }
@@ -86,6 +137,16 @@ impl ConnectAccountPanel {
 
     pub fn session_generation(&self) -> u64 {
         self.session_generation
+    }
+
+    /// Reset contacts state to list view and reload data from the API.
+    pub fn reload_contacts(&mut self) -> iced::Task<Message> {
+        self.contacts_state.step = ContactsStep::List;
+        self.contacts_state.contacts = None;
+        self.contacts_state.invites = None;
+        self.contacts_state.error = None;
+        self.contacts_state.loading = true;
+        load_contacts_data(&self.client, self.session_generation)
     }
 
     fn load_session_from_keyring(&mut self) -> Option<LoginResponse> {
@@ -220,6 +281,7 @@ impl ConnectAccountPanel {
                 self.plan = None;
                 self.verified_devices = None;
                 self.login_activity = None;
+                self.contacts_state.clear();
                 self.clear_keyring_session();
                 self.client = CoincubeClient::new();
                 self.step = ConnectFlowStep::Login {
@@ -454,6 +516,10 @@ impl ConnectAccountPanel {
                 return iced::clipboard::write(text);
             }
 
+            ConnectAccountMessage::Contacts(contacts_msg) => {
+                return self.update_contacts(contacts_msg);
+            }
+
             ConnectAccountMessage::Error(e) => {
                 log::error!("[CONNECT] Error: {}", e);
                 self.error = Some(e);
@@ -470,10 +536,237 @@ impl ConnectAccountPanel {
     }
 }
 
+impl ConnectAccountPanel {
+    fn update_contacts(&mut self, msg: ContactsMessage) -> iced::Task<Message> {
+        match msg {
+            ContactsMessage::ContactsLoaded(contacts, gen) => {
+                if gen == self.session_generation {
+                    self.contacts_state.contacts = Some(contacts);
+                    // Clear loading only when both are done
+                    if self.contacts_state.invites.is_some() {
+                        self.contacts_state.loading = false;
+                    }
+                }
+            }
+
+            ContactsMessage::InvitesLoaded(invites, gen) => {
+                if gen == self.session_generation {
+                    self.contacts_state.invites = Some(invites);
+                    if self.contacts_state.contacts.is_some() {
+                        self.contacts_state.loading = false;
+                    }
+                }
+            }
+
+            ContactsMessage::ShowInviteForm => {
+                self.contacts_state.step = ContactsStep::InviteForm;
+                self.contacts_state.invite_email.clear();
+                self.contacts_state.invite_role = ContactRole::Keyholder;
+                self.contacts_state.invite_sending = false;
+                self.contacts_state.error = None;
+            }
+
+            ContactsMessage::BackToList => {
+                self.contacts_state.step = ContactsStep::List;
+                self.contacts_state.error = None;
+            }
+
+            ContactsMessage::ShowDetail(contact_id) => {
+                self.contacts_state.step = ContactsStep::Detail(contact_id);
+                self.contacts_state.detail_cubes = None;
+                self.contacts_state.detail_cubes_error = None;
+                self.contacts_state.error = None;
+                let client = self.client.clone();
+                let gen = self.session_generation;
+                return iced::Task::perform(
+                    async move { client.get_cubes_by_contact(contact_id).await },
+                    move |res| match res {
+                        Ok(cubes) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Contacts(ContactsMessage::ContactCubesLoaded(
+                                contact_id, cubes, gen,
+                            )),
+                        )),
+                        Err(e) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Contacts(ContactsMessage::ContactCubesFailed(
+                                contact_id,
+                                e.to_string(),
+                            )),
+                        )),
+                    },
+                );
+            }
+
+            ContactsMessage::InviteEmailChanged(email) => {
+                self.contacts_state.invite_email = email;
+                self.contacts_state.error = None;
+            }
+
+            ContactsMessage::InviteRoleChanged(role) => {
+                self.contacts_state.invite_role = role;
+            }
+
+            ContactsMessage::SubmitInvite => {
+                if self.contacts_state.invite_sending {
+                    return iced::Task::none();
+                }
+                let email = self.contacts_state.invite_email.trim().to_string();
+                let valid = email_address::EmailAddress::parse_with_options(
+                    &email,
+                    email_address::Options::default().with_required_tld(),
+                )
+                .is_ok();
+                if !valid {
+                    self.contacts_state.error = Some("Please enter a valid email address".into());
+                    return iced::Task::none();
+                }
+                self.contacts_state.invite_sending = true;
+                self.contacts_state.error = None;
+                let client = self.client.clone();
+                let role = self.contacts_state.invite_role;
+                return iced::Task::perform(
+                    async move {
+                        client
+                            .create_invite(CreateInviteRequest { email, role })
+                            .await
+                    },
+                    |res| match res {
+                        Ok(()) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Contacts(ContactsMessage::InviteCreated),
+                        )),
+                        Err(e) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
+                        )),
+                    },
+                );
+            }
+
+            ContactsMessage::InviteCreated => {
+                self.contacts_state.invite_sending = false;
+                return self.reload_contacts();
+            }
+
+            ContactsMessage::ResendInvite(invite_id) => {
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move { client.resend_invite(invite_id).await },
+                    move |res| match res {
+                        Ok(()) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Contacts(ContactsMessage::InviteResent(
+                                invite_id,
+                            )),
+                        )),
+                        Err(e) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
+                        )),
+                    },
+                );
+            }
+
+            ContactsMessage::InviteResent(_invite_id) => {
+                log::info!("[CONTACTS] Invite resent successfully");
+            }
+
+            ContactsMessage::RevokeInvite(invite_id) => {
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move { client.revoke_invite(invite_id).await },
+                    move |res| match res {
+                        Ok(()) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Contacts(ContactsMessage::InviteRevoked(
+                                invite_id,
+                            )),
+                        )),
+                        Err(e) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
+                        )),
+                    },
+                );
+            }
+
+            ContactsMessage::InviteRevoked(invite_id) => {
+                if let Some(ref mut invites) = self.contacts_state.invites {
+                    invites.retain(|i| i.id != invite_id);
+                }
+            }
+
+            ContactsMessage::ContactCubesLoaded(contact_id, cubes, gen) => {
+                // Only store if session is current and we're still viewing this contact
+                if gen == self.session_generation
+                    && matches!(self.contacts_state.step, ContactsStep::Detail(id) if id == contact_id)
+                {
+                    self.contacts_state.detail_cubes = Some(cubes);
+                }
+            }
+
+            ContactsMessage::ContactCubesFailed(contact_id, e) => {
+                if matches!(self.contacts_state.step, ContactsStep::Detail(id) if id == contact_id)
+                {
+                    log::error!("[CONTACTS] Cubes fetch failed: {}", e);
+                    self.contacts_state.detail_cubes_error = Some(e);
+                }
+            }
+
+            ContactsMessage::Error(e) => {
+                log::error!("[CONTACTS] Error: {}", e);
+                // Determine which operation failed based on current state,
+                // and only reset the relevant flag.
+                if self.contacts_state.invite_sending {
+                    // Error from SubmitInvite
+                    self.contacts_state.invite_sending = false;
+                    self.contacts_state.error = Some(e);
+                } else if self.contacts_state.loading {
+                    // Error from initial load (contacts/invites fetch)
+                    self.contacts_state.loading = false;
+                    // Don't display load errors — the empty state is shown instead
+                } else {
+                    // Error from resend/revoke/cubes fetch — display inline
+                    self.contacts_state.error = Some(e);
+                }
+            }
+        }
+
+        iced::Task::none()
+    }
+}
+
 impl Default for ConnectAccountPanel {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Load Contacts tab data (contacts + invites).
+pub fn load_contacts_data(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
+    let c1 = client.clone();
+    let c2 = client.clone();
+    iced::Task::batch([
+        iced::Task::perform(
+            async move { c1.get_contacts().await },
+            move |res| match res {
+                Ok(contacts) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::ContactsLoaded(
+                        contacts, generation,
+                    )),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
+                )),
+            },
+        ),
+        iced::Task::perform(
+            async move { c2.get_invites().await },
+            move |res| match res {
+                Ok(invites) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::InvitesLoaded(
+                        invites, generation,
+                    )),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
+                )),
+            },
+        ),
+    ])
 }
 
 /// Load Security tab data (verified devices + login activity).
