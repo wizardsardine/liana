@@ -656,6 +656,43 @@ pub enum ConnectAccountMessage {
     VerifiedDevicesLoaded(Vec<crate::services::coincube::VerifiedDevice>, u64),
     LoginActivityLoaded(Vec<crate::services::coincube::LoginActivity>, u64),
     CopyToClipboard(String),
+    Contacts(ContactsMessage),
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum ContactsMessage {
+    /// Contacts list loaded.
+    ContactsLoaded(Vec<crate::services::coincube::Contact>, u64),
+    /// Invites list loaded.
+    InvitesLoaded(Vec<crate::services::coincube::Invite>, u64),
+    /// Navigate to invite form.
+    ShowInviteForm,
+    /// Navigate back to list.
+    BackToList,
+    /// Navigate to contact detail.
+    ShowDetail(u64),
+    /// Email input changed (invite form).
+    InviteEmailChanged(String),
+    /// Role changed (invite form).
+    InviteRoleChanged(crate::services::coincube::ContactRole),
+    /// Submit invite.
+    SubmitInvite,
+    /// Invite created successfully — reload list.
+    InviteCreated,
+    /// Resend a pending invite.
+    ResendInvite(u64),
+    /// Invite resent successfully.
+    InviteResent(u64),
+    /// Revoke a pending invite.
+    RevokeInvite(u64),
+    /// Invite revoked successfully.
+    InviteRevoked(u64),
+    /// Contact detail cubes loaded — includes contact_id and session_generation to guard against stale responses.
+    ContactCubesLoaded(u64, Vec<crate::services::coincube::ContactCube>, u64),
+    /// Contact detail cubes fetch failed — includes contact_id for stale guard.
+    ContactCubesFailed(u64, String),
+    /// Error.
     Error(String),
 }
 

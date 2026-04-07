@@ -524,3 +524,74 @@ pub struct RegenerationData {
     pub used: i32,
     pub remaining: i32,
 }
+
+// =============================================================================
+// Contacts System Types
+// =============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContactRole {
+    Keyholder,
+    Beneficiary,
+    Observer,
+}
+
+impl std::fmt::Display for ContactRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ContactRole::Keyholder => write!(f, "Keyholder"),
+            ContactRole::Beneficiary => write!(f, "Beneficiary"),
+            ContactRole::Observer => write!(f, "Observer"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactUser {
+    pub id: u64,
+    pub email: String,
+    pub email_verified: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Contact {
+    pub id: u64,
+    pub user_id: u64,
+    pub contact_user_id: u64,
+    pub invite_id: Option<u64>,
+    pub role: ContactRole,
+    pub contact_user: ContactUser,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Invite {
+    pub id: u64,
+    pub owner_user_id: u64,
+    pub invitee_email: String,
+    pub invitee_user_id: Option<u64>,
+    pub role: ContactRole,
+    pub status: String,
+    pub expires_at: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateInviteRequest {
+    pub email: String,
+    pub role: ContactRole,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactCube {
+    pub id: u64,
+    pub uuid: String,
+    pub name: String,
+    pub network: String,
+    pub has_recovery_kit: bool,
+}

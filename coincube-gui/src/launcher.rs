@@ -706,6 +706,14 @@ impl Launcher {
                         ),
                     );
                 }
+                // Load Contacts data on demand
+                if matches!(
+                    self.active_section,
+                    LauncherSection::Connect(app::menu::ConnectSubMenu::Contacts)
+                ) && self.connect_account.is_authenticated()
+                {
+                    return map_connect_task(self.connect_account.reload_contacts());
+                }
                 Task::none()
             }
 
@@ -1038,6 +1046,7 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
         use app::menu::ConnectSubMenu;
         let items: &[(&str, ConnectSubMenu)] = &[
             ("Overview", ConnectSubMenu::Overview),
+            ("Contacts", ConnectSubMenu::Contacts),
             ("Plan & Billing", ConnectSubMenu::PlanBilling),
             ("Security", ConnectSubMenu::Security),
             ("Duress", ConnectSubMenu::Duress),
