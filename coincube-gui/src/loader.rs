@@ -12,9 +12,15 @@ use tokio::runtime::Handle;
 use tracing::{debug, info, warn};
 
 use coincube_core::miniscript::bitcoin;
+use iced::widget::image;
+
 use coincube_ui::{
-    component::{button, notification, text::*},
-    icon, theme,
+    component::{
+        button, notification,
+        quote_display::{self, Quote, QuoteDisplayProps, QuoteProvider},
+        text::*,
+    },
+    theme,
     widget::*,
 };
 use coincubed::{
@@ -45,10 +51,6 @@ use crate::{
     },
 };
 
-const SYNCING_PROGRESS_1: &str = "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster.";
-const SYNCING_PROGRESS_2: &str = "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance.";
-const SYNCING_PROGRESS_3: &str = "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance.";
-
 type Coincubed = client::Coincubed<client::jsonrpc::JsonRPCClient>;
 type StartedResult = Result<
     (
@@ -71,6 +73,9 @@ pub struct Loader {
     pub cube_settings: CubeSettings,
     pub breez_client: Option<std::sync::Arc<BreezClient>>,
     step: Step,
+    quote_provider: QuoteProvider,
+    current_quote: Quote,
+    current_image_handle: image::Handle,
 }
 
 pub enum Step {
@@ -163,6 +168,10 @@ impl Loader {
             Task::none()
         };
 
+        let mut quote_provider = QuoteProvider::new();
+        let current_quote = quote_provider.select("loading");
+        let current_image_handle = quote_display::image_handle_for_context("loading");
+
         (
             Loader {
                 network,
@@ -176,9 +185,17 @@ impl Loader {
                 cube_settings,
                 backup,
                 breez_client,
+                quote_provider,
+                current_quote,
+                current_image_handle,
             },
             task,
         )
+    }
+
+    fn set_quote_context(&mut self, context: &str) {
+        self.current_quote = self.quote_provider.select(context);
+        self.current_image_handle = quote_display::image_handle_for_context(context);
     }
 
     fn is_first_esplora_scan(&self, wallet_settings: &WalletSettings) -> bool {
@@ -246,6 +263,7 @@ impl Loader {
             progress: 0.0,
             bitcoind_logs: String::new(),
         };
+        self.set_quote_context("syncing");
         Task::perform(sync(daemon, false), Message::Syncing)
     }
 
@@ -263,6 +281,7 @@ impl Loader {
             Err(e) => match e {
                 Error::Config(_) => {
                     self.step = Step::Error(Box::new(e));
+                    self.set_quote_context("error");
                 }
                 Error::Daemon(DaemonError::ClientNotSupported)
                 | Error::Daemon(DaemonError::RpcSocket(Some(ErrorKind::ConnectionRefused), _))
@@ -272,6 +291,7 @@ impl Loader {
                         .clone()
                         .expect("wallet_settings must be Some when starting daemon");
                     self.step = if self.is_first_esplora_scan(&wallet_settings) {
+                        self.set_quote_context("syncing");
                         Step::FullScan { progress: 0.0 }
                     } else {
                         Step::StartingDaemon { progress: 0.0 }
@@ -290,6 +310,7 @@ impl Loader {
                 }
                 _ => {
                     self.step = Step::Error(Box::new(e));
+                    self.set_quote_context("error");
                 }
             },
         }
@@ -318,6 +339,7 @@ impl Loader {
             }
             Err(e) => {
                 self.step = Step::Error(Box::new(e));
+                self.set_quote_context("error");
                 Task::none()
             }
         }
@@ -354,6 +376,7 @@ impl Loader {
                     }
                     Err(e) => {
                         self.step = Step::Error(Box::new(e.into()));
+                        self.set_quote_context("error");
                         return Task::none();
                     }
                 };
@@ -420,6 +443,7 @@ impl Loader {
             }
             Message::Synced(Err(e)) => {
                 self.step = Step::Error(Box::new(e));
+                self.set_quote_context("error");
                 Task::none()
             }
             Message::Failure(_) => {
@@ -451,7 +475,7 @@ impl Loader {
     }
 
     pub fn view(&self) -> Element<Message> {
-        view(&self.step).map(Message::View)
+        view(&self.step, &self.current_quote, &self.current_image_handle).map(Message::View)
     }
 }
 
@@ -597,22 +621,39 @@ pub enum ViewMessage {
     SetupVault,
 }
 
-pub fn view(step: &Step) -> Element<ViewMessage> {
+pub fn view<'a>(
+    step: &'a Step,
+    quote: &'a Quote,
+    image_handle: &'a image::Handle,
+) -> Element<'a, ViewMessage> {
     match &step {
-        Step::StartingDaemon { progress } => cover(
+        Step::StartingDaemon { .. } => cover(
             None,
             Column::new()
                 .width(Length::Fill)
-                .push(ProgressBar::new(0.0..=1.0, *progress).length(Length::Fill))
-                .push(text("Starting daemon...")),
+                .spacing(20)
+                .align_x(Alignment::Center)
+                .push(quote_display::display(&QuoteDisplayProps::new(
+                    "loading",
+                    quote,
+                    image_handle,
+                )))
+                .push(crate::loading::loading_indicator(None))
+                .push(text("Starting daemon...").style(theme::text::secondary)),
         ),
-        Step::FullScan { progress } => cover(
+        Step::FullScan { .. } => cover(
             None,
             Column::new()
                 .width(Length::Fill)
                 .spacing(10)
-                .push(ProgressBar::new(0.0..=1.0, *progress).length(Length::Fill))
-                .push(text("Scanning the blockchain..."))
+                .align_x(Alignment::Center)
+                .push(quote_display::display(&QuoteDisplayProps::new(
+                    "syncing",
+                    quote,
+                    image_handle,
+                )))
+                .push(crate::loading::loading_indicator(None))
+                .push(text("Scanning the blockchain...").style(theme::text::secondary))
                 .push(
                     p2_regular(
                         "Performing an initial scan of the Bitcoin blockchain via Esplora. \
@@ -625,8 +666,15 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
             None,
             Column::new()
                 .width(Length::Fill)
-                .push(ProgressBar::new(0.0..=1.0, 0.0).length(Length::Fill))
-                .push(text("Connecting to daemon...")),
+                .spacing(20)
+                .align_x(Alignment::Center)
+                .push(quote_display::display(&QuoteDisplayProps::new(
+                    "loading",
+                    quote,
+                    image_handle,
+                )))
+                .push(crate::loading::loading_indicator(None))
+                .push(text("Connecting to daemon...").style(theme::text::secondary)),
         ),
         Step::Syncing {
             progress,
@@ -637,15 +685,21 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
             Column::new()
                 .width(Length::Fill)
                 .spacing(5)
-                .push(text(format!("Progress {:.2}%", 100.0 * *progress)))
-                .push(ProgressBar::new(0.0..=1.0, *progress as f32).length(Length::Fill))
-                .push(text(if *progress > 0.98 {
-                    SYNCING_PROGRESS_3
-                } else if *progress > 0.9 {
-                    SYNCING_PROGRESS_2
-                } else {
-                    SYNCING_PROGRESS_1
-                }))
+                .align_x(Alignment::Center)
+                .push(quote_display::display(&QuoteDisplayProps::new(
+                    "syncing",
+                    quote,
+                    image_handle,
+                )))
+                .push(crate::loading::loading_indicator(None))
+                .push(
+                    text(if *progress > 0.98 {
+                        "Almost there..."
+                    } else {
+                        "Syncing blockchain..."
+                    })
+                    .style(theme::text::secondary),
+                )
                 .push(p2_regular(bitcoind_logs).style(theme::text::secondary)),
         ),
         Step::Error(error) => cover(
@@ -654,7 +708,11 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
                 .spacing(20)
                 .width(Length::Fill)
                 .align_x(Alignment::Center)
-                .push(icon::plug_icon().size(100).width(Length::Fixed(300.0)))
+                .push(quote_display::display(&QuoteDisplayProps::new(
+                    "error",
+                    quote,
+                    image_handle,
+                )))
                 .push(
                     if matches!(
                         error.as_ref(),

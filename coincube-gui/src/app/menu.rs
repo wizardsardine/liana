@@ -24,6 +24,7 @@ pub enum ConnectSubMenu {
     PlanBilling,
     Security,
     Duress,
+    Contacts,
     Invites,
 }
 

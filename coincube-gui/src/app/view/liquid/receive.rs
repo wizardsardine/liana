@@ -5,7 +5,7 @@ use coincube_ui::{
     color,
     component::{
         amount::DisplayAmount,
-        button, form,
+        button, card, form,
         text::*,
         transaction::{TransactionDirection, TransactionListItem},
     },
@@ -14,7 +14,7 @@ use coincube_ui::{
 };
 use iced::{
     widget::{
-        button as iced_button, container, qr_code, text::Wrapping, Column, Container, QRCode, Row,
+        button as iced_button, container, qr_code, scrollable, Column, Container, QRCode, Row,
         Space, TextInput,
     },
     Alignment, Background, Length,
@@ -86,15 +86,8 @@ pub fn liquid_receive_view<'a>(
         content = content.push(crate::loading::loading_indicator(Some(
             "Generating Address",
         )));
-    } else if let (Some(addr), Some(qr)) = (address, qr_data) {
-        // Lightning invoices contain more data, so use smaller cell size
-        let cell_size = if *receive_method == ReceiveMethod::Lightning {
-            3
-        } else {
-            5
-        };
-
-        // Clean on-chain addresses for display (but keep original for QR code)
+    } else if let (Some(addr), Some(_qr)) = (address, qr_data) {
+        // Clean on-chain addresses for display
         let display_addr = if *receive_method == ReceiveMethod::OnChain {
             let cleaned = addr.strip_prefix("bitcoin:").unwrap_or(addr);
             cleaned.split('?').next().unwrap_or(cleaned)
@@ -102,43 +95,72 @@ pub fn liquid_receive_view<'a>(
             addr
         };
 
-        content = content.push(
-            Column::new()
-                .spacing(30)
-                .align_x(Alignment::Center)
-                .push(
-                    Container::new(QRCode::<theme::Theme>::new(qr).cell_size(cell_size))
-                        .padding(20)
-                        .style(theme::card::simple),
-                )
-                .push(
-                    Container::new(
-                        text(display_addr)
-                            .size(12)
-                            .style(theme::text::secondary)
-                            .wrapping(Wrapping::Glyph),
+        // Address card (Vault-style): scrollable address + copy icon + action buttons
+        let address_row = Row::new()
+            .push(
+                Container::new(
+                    scrollable(
+                        Column::new()
+                            .push(Space::new().height(Length::Fixed(10.0)))
+                            .push(
+                                p2_regular(display_addr)
+                                    .small()
+                                    .style(theme::text::secondary),
+                            )
+                            .push(Space::new().height(Length::Fixed(10.0))),
                     )
-                    .width(Length::Fill)
-                    .max_width(600)
-                    .padding(10)
-                    .center_x(Length::Fill),
+                    .direction(scrollable::Direction::Horizontal(
+                        scrollable::Scrollbar::new().width(2).scroller_width(2),
+                    )),
                 )
-                .push(action_buttons(receive_method, onchain_limits, bitcoin_unit)),
+                .width(Length::Fill),
+            )
+            .push(
+                iced::widget::Button::new(icon::clipboard_icon().style(theme::text::secondary))
+                    .on_press(LiquidReceiveMessage::Copy)
+                    .style(theme::button::transparent_border),
+            )
+            .align_y(Alignment::Center);
+
+        let mut button_row = Row::new();
+
+        if *receive_method == ReceiveMethod::OnChain || *receive_method == ReceiveMethod::Usdt {
+            button_row = button_row.push(
+                button::secondary(None, "Generate New Address")
+                    .on_press(LiquidReceiveMessage::GenerateAddress),
+            );
+            button_row = button_row.push(Space::new().width(Length::Fill));
+        }
+
+        button_row = button_row.push(
+            button::secondary(None, "Show QR Code").on_press(LiquidReceiveMessage::ShowQrCode),
         );
 
-        // Add generate new address button for on-chain
-        if *receive_method == ReceiveMethod::OnChain || *receive_method == ReceiveMethod::Usdt {
-            content = content.push(
-                Container::new(
-                    button::secondary(None, "Generate New Address")
-                        .on_press(LiquidReceiveMessage::GenerateAddress)
-                        .width(Length::Fixed(200.0))
-                        .padding(10),
-                )
-                .width(Length::Fill)
-                .center_x(Length::Fill)
-                .padding(10),
-            );
+        // Descriptive text inside the card
+        let description = match receive_method {
+            ReceiveMethod::Lightning => Some("Share this invoice to receive sats via Lightning"),
+            ReceiveMethod::Liquid => {
+                Some("Share this address to receive L-BTC from any Liquid wallet")
+            }
+            ReceiveMethod::OnChain => None, // OnChain has its own warning box below
+            ReceiveMethod::Usdt => {
+                Some("Share this address to receive USDt (Liquid Tether) from any Liquid wallet")
+            }
+        };
+
+        let mut card_col = Column::new().spacing(10).push(address_row);
+
+        if let Some(desc) = description {
+            card_col = card_col.push(p2_regular(desc).style(theme::text::secondary));
+        }
+
+        card_col = card_col.push(button_row);
+
+        content = content.push(card::simple(card_col));
+
+        // OnChain warning box
+        if *receive_method == ReceiveMethod::OnChain {
+            content = content.push(onchain_warning_box(onchain_limits, bitcoin_unit));
         }
     }
 
@@ -275,11 +297,14 @@ pub fn liquid_receive_view<'a>(
             .on_press(LiquidReceiveMessage::History)
         };
 
-        content = content.push(Space::new().height(Length::Fixed(20.0))).push(
-            Container::new(view_tx_button)
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-        );
+        content = content
+            .push(Space::new().height(Length::Fixed(20.0)))
+            .push(
+                Container::new(view_tx_button)
+                    .width(Length::Fill)
+                    .center_x(Length::Fill),
+            )
+            .push(Space::new().height(Length::Fixed(40.0)));
     }
 
     if let Some(err) = error {
@@ -755,102 +780,70 @@ fn generate_button<'a>() -> Element<'a, LiquidReceiveMessage> {
     .into()
 }
 
-fn action_buttons<'a>(
-    receive_method: &ReceiveMethod,
+fn onchain_warning_box<'a>(
     onchain_limits: Option<(u64, u64)>,
     bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, LiquidReceiveMessage> {
-    let copy_button = button::primary(Some(icon::clipboard_icon()), "Copy")
-        .on_press(LiquidReceiveMessage::Copy)
-        .width(Length::Fixed(150.0))
-        .padding(15);
+    let mut warning_content = Column::new().spacing(8).push(
+        Row::new()
+            .spacing(8)
+            .push(icon::warning_icon().size(16).color(color::ORANGE))
+            .push(
+                text("Important")
+                    .size(14)
+                    .bold()
+                    .style(|_theme: &theme::Theme| iced::widget::text::Style {
+                        color: Some(color::ORANGE),
+                    }),
+            ),
+    );
 
-    let mut column = Column::new()
-        .spacing(15)
-        .align_x(Alignment::Center)
-        .push(Row::new().spacing(15).push(copy_button));
-
-    if *receive_method == ReceiveMethod::Liquid {
-        column = column.push(
-            text("Share this address to receive L-BTC from any Liquid wallet")
-                .size(13)
-                .style(theme::text::secondary),
+    if let Some((min_sat, max_sat)) = onchain_limits {
+        let min_btc = Amount::from_sat(min_sat);
+        let max_btc = Amount::from_sat(max_sat);
+        warning_content = warning_content.push(
+            text(format!(
+                "- Receive amount must be between {} and {}",
+                min_btc.to_formatted_string_with_unit(bitcoin_unit),
+                max_btc.to_formatted_string_with_unit(bitcoin_unit),
+            ))
+            .size(14)
+            .style(theme::text::secondary),
         );
-    }
-
-    if *receive_method == ReceiveMethod::Usdt {
-        column = column.push(
-            text("Share this address to receive USDt (Liquid Tether) from any Liquid wallet")
-                .size(13)
-                .style(theme::text::secondary),
-        );
-    }
-
-    if *receive_method == ReceiveMethod::OnChain {
-        let mut warning_content = Column::new().spacing(8).push(
-            Row::new()
-                .spacing(8)
-                .push(icon::warning_icon().size(16).color(color::ORANGE))
-                .push(
-                    text("Important")
-                        .size(14)
-                        .bold()
-                        .style(|_theme: &theme::Theme| iced::widget::text::Style {
-                            color: Some(color::ORANGE),
-                        }),
-                ),
-        );
-
-        if let Some((min_sat, max_sat)) = onchain_limits {
-            let min_btc = Amount::from_sat(min_sat);
-            let max_btc = Amount::from_sat(max_sat);
-            warning_content = warning_content.push(
-                text(format!(
-                    "- Receive amount must be between {} and {}",
-                    min_btc.to_formatted_string_with_unit(bitcoin_unit),
-                    max_btc.to_formatted_string_with_unit(bitcoin_unit),
-                ))
+    } else {
+        warning_content = warning_content.push(
+            text("- Receive amount must be within the specified limits")
                 .size(14)
                 .style(theme::text::secondary),
-            );
-        } else {
-            warning_content = warning_content.push(
-                text("- Receive amount must be within the specified limits")
-                    .size(14)
-                    .style(theme::text::secondary),
-            );
-        }
-
-        warning_content = warning_content
-            .push(
-                text("- Use this address for ONE transaction only")
-                    .size(14)
-                    .style(theme::text::secondary),
-            )
-            .push(
-                text("- For multiple transactions, generate new addresses")
-                    .size(14)
-                    .style(theme::text::secondary),
-            );
-
-        let warning_box = Container::new(warning_content)
-            .padding(15)
-            .width(Length::Fill)
-            .max_width(600)
-            .style(|_theme: &theme::Theme| container::Style {
-                background: Some(Background::Color(iced::color!(0x2A2520))),
-                border: iced::Border {
-                    color: color::ORANGE,
-                    width: 1.0,
-                    radius: 8.0.into(),
-                },
-                ..Default::default()
-            });
-
-        column = column.push(warning_box);
+        );
     }
 
-    column.into()
+    warning_content = warning_content
+        .push(
+            text("- Use this address for ONE transaction only")
+                .size(14)
+                .style(theme::text::secondary),
+        )
+        .push(
+            text("- For multiple transactions, generate new addresses")
+                .size(14)
+                .style(theme::text::secondary),
+        );
+
+    Container::new(warning_content)
+        .padding(15)
+        .width(Length::Fill)
+        .max_width(600)
+        .style(|_theme: &theme::Theme| container::Style {
+            background: Some(Background::Color(iced::color!(0x2A2520))),
+            border: iced::Border {
+                color: color::ORANGE,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
 }
 
 /// Standalone USDt receive view — no tab bar, only USDt address generation.
@@ -1024,11 +1017,16 @@ fn receive_cards(
                 .style(theme::card::simple),
         )
         .on_press(LiquidReceiveMessage::OpenSenderPicker)
-        .style(|_: &theme::Theme, _| iced::widget::button::Style {
+        .style(|_: &theme::Theme, status| iced::widget::button::Style {
             background: Some(Background::Color(color::TRANSPARENT)),
             border: iced::Border {
+                color: if matches!(status, iced::widget::button::Status::Hovered) {
+                    color::ORANGE
+                } else {
+                    color::TRANSPARENT
+                },
+                width: 1.0,
                 radius: 16.0.into(),
-                ..Default::default()
             },
             ..Default::default()
         })
@@ -1099,11 +1097,16 @@ fn receive_cards(
                 .style(theme::card::simple),
         )
         .on_press(LiquidReceiveMessage::OpenReceivePicker)
-        .style(|_: &theme::Theme, _| iced::widget::button::Style {
+        .style(|_: &theme::Theme, status| iced::widget::button::Style {
             background: Some(Background::Color(color::TRANSPARENT)),
             border: iced::Border {
+                color: if matches!(status, iced::widget::button::Status::Hovered) {
+                    color::ORANGE
+                } else {
+                    color::TRANSPARENT
+                },
+                width: 1.0,
                 radius: 16.0.into(),
-                ..Default::default()
             },
             ..Default::default()
         })
@@ -1122,6 +1125,49 @@ fn receive_cards(
 }
 
 // ── Picker modals ───────────────────────────────────────────────────────────
+
+/// Full-screen celebration view when a payment is received.
+pub fn received_celebration_page<'a>(
+    amount_display: &'a str,
+    quote: &'a coincube_ui::component::quote_display::Quote,
+    image_handle: &'a iced::widget::image::Handle,
+) -> Element<'a, LiquidReceiveMessage> {
+    coincube_ui::component::received_celebration_page(
+        amount_display,
+        quote,
+        image_handle,
+        LiquidReceiveMessage::DismissCelebration,
+    )
+}
+
+/// QR code modal overlay (matches Vault receive pattern).
+pub fn qr_modal<'a>(
+    qr: &'a qr_code::Data,
+    _address: &'a str,
+    receive_method: &ReceiveMethod,
+) -> Element<'a, LiquidReceiveMessage> {
+    let cell_size = if *receive_method == ReceiveMethod::Lightning {
+        5
+    } else {
+        8
+    };
+
+    Column::new()
+        .push(
+            Row::new()
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    Container::new(
+                        QRCode::<coincube_ui::theme::Theme>::new(qr).cell_size(cell_size),
+                    )
+                    .padding(10),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .width(Length::Fill)
+        .max_width(400)
+        .into()
+}
 
 /// "You Receive" asset picker modal.
 pub fn receive_asset_picker_modal(current: SendAsset) -> Element<'static, LiquidReceiveMessage> {

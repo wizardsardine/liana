@@ -923,6 +923,14 @@ impl App {
                         ),
                     ));
                 }
+                // Load Contacts data on demand
+                if matches!(submenu, menu::ConnectSubMenu::Contacts)
+                    && self.panels.connect.account.is_authenticated()
+                {
+                    let contacts_task = self.panels.connect.account.reload_contacts();
+                    self.panels.current = menu;
+                    return contacts_task;
+                }
             }
             menu::Menu::Liquid(_submenu) => {
                 // Liquid transaction preselection is handled via PreselectPayment message

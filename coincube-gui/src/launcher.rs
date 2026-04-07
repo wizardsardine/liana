@@ -112,6 +112,8 @@ pub struct Launcher {
     has_stored_session: bool,
     /// Rename cube modal: (cube index, new name input)
     rename_cube_modal: Option<(usize, String)>,
+    welcome_quote: coincube_ui::component::quote_display::Quote,
+    welcome_image_handle: iced::widget::image::Handle,
 }
 
 impl Launcher {
@@ -157,6 +159,9 @@ impl Launcher {
                 theme_mode: GlobalSettings::load_theme_mode(&GlobalSettings::path(&datadir_path)),
                 has_stored_session: ConnectAccountPanel::has_stored_session(),
                 rename_cube_modal: None,
+                welcome_quote: coincube_ui::component::quote_display::random_quote("first-launch"),
+                welcome_image_handle:
+                    coincube_ui::component::quote_display::image_handle_for_context("first-launch"),
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
@@ -869,6 +874,14 @@ impl Launcher {
                         ),
                     );
                 }
+                // Load Contacts data on demand
+                if matches!(
+                    self.active_section,
+                    LauncherSection::Connect(app::menu::ConnectSubMenu::Contacts)
+                ) && self.connect_account.is_authenticated()
+                {
+                    return map_connect_task(self.connect_account.reload_contacts());
+                }
                 Task::none()
             }
 
@@ -1428,6 +1441,7 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
         use app::menu::ConnectSubMenu;
         let items: &[(&str, ConnectSubMenu)] = &[
             ("Overview", ConnectSubMenu::Overview),
+            ("Contacts", ConnectSubMenu::Contacts),
             ("Plan & Billing", ConnectSubMenu::PlanBilling),
             ("Security", ConnectSubMenu::Security),
             ("Duress", ConnectSubMenu::Duress),

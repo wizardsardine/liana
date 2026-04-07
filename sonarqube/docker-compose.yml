@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  sonarqube:
+    image: sonarqube:10.6-community
+    container_name: sonarqube
+    ports:
+      - "9000:9000"
+    environment:
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - ${HOME}/sonarqube/plugins:/opt/sonarqube/extensions/plugins
+
+volumes:
+  sonarqube_data:
