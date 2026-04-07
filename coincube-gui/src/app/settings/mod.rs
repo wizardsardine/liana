@@ -291,15 +291,20 @@ impl CubeSettings {
 
     /// Convert this cube's network to the API network string.
     pub fn api_network_string(&self) -> String {
-        match self.network {
-            Network::Bitcoin => "mainnet",
-            Network::Testnet => "testnet",
-            Network::Testnet4 => "testnet4",
-            Network::Signet => "signet",
-            Network::Regtest => "regtest",
-        }
-        .to_string()
+        network_to_api_string(self.network)
     }
+}
+
+/// Convert a `Network` to the API network string used by the Connect backend.
+pub fn network_to_api_string(network: Network) -> String {
+    match network {
+        Network::Bitcoin => "mainnet",
+        Network::Testnet => "testnet",
+        Network::Testnet4 => "testnet4",
+        Network::Signet => "signet",
+        Network::Regtest => "regtest",
+    }
+    .to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
