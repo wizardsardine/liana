@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .subscription(LianaGUI::subscription)
         .settings(settings)
         .window(window_settings)
-        .run_with(move || LianaGUI::new((config, log_level)))
+        .run_with(move || LianaGUI::new((config, log_level, VERSION)))
     {
         log::error!("{}", e);
         Err(format!("Failed to launch UI: {}", e).into())

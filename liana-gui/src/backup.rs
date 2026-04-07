@@ -38,7 +38,10 @@ const SETTINGS_KEY: &str = "settings";
 const LIANA_VERSION_KEY: &str = "liana_version";
 
 pub fn liana_version() -> String {
-    format!("{}.{}", VERSION.major, VERSION.minor)
+    VERSION
+        .trim_end_matches("-dev")
+        .trim_end_matches("-rc")
+        .to_string()
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]

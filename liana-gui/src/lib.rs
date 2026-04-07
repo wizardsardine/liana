@@ -19,19 +19,19 @@ pub mod signer;
 pub mod utils;
 pub mod window;
 
-pub use lianad::Version;
-
-pub const VERSION: Version = Version {
-    major: 14,
-    minor: 0,
-};
+pub const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION_MAJOR"),
+    ".",
+    env!("CARGO_PKG_VERSION_MINOR"),
+    "-dev"
+);
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn gui_version() {
-        // liana-gui major version should always be superior or equal to lianad version.
-        let lianad_version = lianad::VERSION.major;
-        assert!(super::VERSION.major >= lianad_version);
+        let gui_major: u32 = env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap();
+        let lianad_major: u32 = lianad::VERSION.split('.').next().unwrap().parse().unwrap();
+        assert!(gui_major >= lianad_major);
     }
 }
