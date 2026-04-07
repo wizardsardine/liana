@@ -110,6 +110,9 @@ pub struct Launcher {
     /// Whether a Connect session exists in the OS keyring (cached to avoid
     /// synchronous keyring I/O on every render).
     has_stored_session: bool,
+    /// Server-authoritative cube limit per network, if fetched from the API.
+    /// Takes precedence over `account_tier.cube_limit()` when set.
+    server_cube_limit: Option<usize>,
     /// Rename cube modal: (cube index, new name input)
     rename_cube_modal: Option<(usize, String)>,
     welcome_quote: coincube_ui::component::quote_display::Quote,
@@ -158,6 +161,7 @@ impl Launcher {
                 active_section: LauncherSection::Cubes,
                 theme_mode: GlobalSettings::load_theme_mode(&GlobalSettings::path(&datadir_path)),
                 has_stored_session: ConnectAccountPanel::has_stored_session(),
+                server_cube_limit: None,
                 rename_cube_modal: None,
                 welcome_quote: coincube_ui::component::quote_display::random_quote("first-launch"),
                 welcome_image_handle:
@@ -172,6 +176,13 @@ impl Launcher {
             check_network_datadir(self.datadir_path.network_directory(self.network)),
             Message::Checked,
         )
+    }
+
+    /// Returns the effective per-network cube limit, preferring the
+    /// server-authoritative value when available.
+    fn cube_limit(&self) -> usize {
+        self.server_cube_limit
+            .unwrap_or_else(|| self.cube_limit())
     }
 
     pub fn stop(&mut self) {}
@@ -259,7 +270,7 @@ impl Launcher {
                 } else {
                     0
                 };
-                let limit = self.account_tier.cube_limit();
+                let limit = self.cube_limit();
                 if cube_count >= limit {
                     self.error = Some(format!(
                         "Cube limit reached ({}/{}) for the {} plan. \
@@ -459,16 +470,7 @@ impl Launcher {
             Message::CubeLimitsLoaded(result) => {
                 match result {
                     Ok(limits) => {
-                        let new_tier = match limits.max_allowed {
-                            0..=2 => AccountTier::Free,
-                            3..=4 => AccountTier::Pro,
-                            _ => AccountTier::Legacy,
-                        };
-                        self.account_tier = new_tier;
-                        let path = GlobalSettings::path(&self.datadir_path);
-                        if let Err(e) = GlobalSettings::update_account_tier(&path, new_tier) {
-                            log::warn!("[LAUNCHER] Failed to persist account tier: {}", e);
-                        }
+                        self.server_cube_limit = Some(limits.max_allowed);
                     }
                     Err(e) => {
                         log::warn!("[LAUNCHER] Failed to fetch cube limits: {}", e);
@@ -915,7 +917,7 @@ impl Launcher {
                     return Task::none();
                 };
 
-                let network_dir = self.datadir_path.network_directory(self.network);
+                let network_dir = self.datadir_path.network_directory(cube.network);
                 let cube_id = cube.id.clone();
                 let name_for_settings = new_name.clone();
 
@@ -993,6 +995,9 @@ impl Launcher {
                 // Update cached keyring state on login/logout transitions
                 if was_authenticated != now_authenticated {
                     self.has_stored_session = now_authenticated;
+                    if !now_authenticated {
+                        self.server_cube_limit = None;
+                    }
                 }
                 // Auto-expand Connect submenu after login
                 if !was_authenticated && now_authenticated {
@@ -1221,7 +1226,7 @@ impl Launcher {
                                                 |col, (i, cube)| col.push(cubes_list_item(cube, i)),
                                             );
                                         let at_limit =
-                                            cubes.len() >= self.account_tier.cube_limit();
+                                            cubes.len() >= self.cube_limit();
                                         if at_limit {
                                             col = col.push(
                                                 Column::new()
@@ -1240,7 +1245,7 @@ impl Launcher {
                                                                 "Cube limit reached ({}/{}) on the {} plan. \
                                                                  Upgrade your Connect account to create more.",
                                                                 cubes.len(),
-                                                                self.account_tier.cube_limit(),
+                                                                self.cube_limit(),
                                                                 self.account_tier.display_name(),
                                                             ))
                                                             .style(theme::text::secondary),
