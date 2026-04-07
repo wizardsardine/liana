@@ -33,3 +33,6 @@ default
 # OS
 .DS_Store
 Thumbs.db
+
+# Sonarqube
+.scannerwork/
