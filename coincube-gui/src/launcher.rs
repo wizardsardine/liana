@@ -79,6 +79,14 @@ pub enum LauncherSection {
     Connect(app::menu::ConnectSubMenu),
 }
 
+/// Context stashed for firing a remote cube update after local rename succeeds.
+struct PendingRemoteRename {
+    cube_id: String,
+    cube_uuid: String,
+    cube_network: Network,
+    new_name: String,
+}
+
 pub struct Launcher {
     state: State,
     displayed_networks: Vec<Network>,
@@ -115,6 +123,9 @@ pub struct Launcher {
     server_cube_limit: Option<usize>,
     /// Rename cube modal: (cube index, new name input)
     rename_cube_modal: Option<(usize, String)>,
+    /// Pending remote rename: stashed after local rename succeeds so the
+    /// `CubeRenamed` handler can fire the API update.
+    pending_remote_rename: Option<PendingRemoteRename>,
     welcome_quote: coincube_ui::component::quote_display::Quote,
     welcome_image_handle: iced::widget::image::Handle,
 }
@@ -163,6 +174,7 @@ impl Launcher {
                 has_stored_session: ConnectAccountPanel::has_stored_session(),
                 server_cube_limit: None,
                 rename_cube_modal: None,
+                pending_remote_rename: None,
                 welcome_quote: coincube_ui::component::quote_display::random_quote("first-launch"),
                 welcome_image_handle:
                     coincube_ui::component::quote_display::image_handle_for_context("first-launch"),
@@ -182,7 +194,7 @@ impl Launcher {
     /// server-authoritative value when available.
     fn cube_limit(&self) -> usize {
         self.server_cube_limit
-            .unwrap_or_else(|| self.cube_limit())
+            .unwrap_or_else(|| self.account_tier.cube_limit())
     }
 
     pub fn stop(&mut self) {}
@@ -511,12 +523,50 @@ impl Launcher {
                 }
                 Task::none()
             }
-            Message::CubeRenamed(result) => match &result {
+            Message::CubeRenamed(result) => match result {
                 Ok(()) => {
                     self.rename_cube_modal = None;
-                    self.reload()
+                    let reload_task = self.reload();
+
+                    // Fire remote update now that local write succeeded
+                    if let Some(pending) = self.pending_remote_rename.take() {
+                        if let Some(client) = self.connect_account.authenticated_client() {
+                            let update_req = UpdateCubeRequest {
+                                name: Some(pending.new_name),
+                                status: None,
+                            };
+                            let cube_id = pending.cube_id;
+                            let cube_uuid = pending.cube_uuid;
+                            let cube_network = pending.cube_network;
+                            let remote_task = Task::perform(
+                                async move {
+                                    let cubes =
+                                        client.list_cubes().await.map_err(|e| e.to_string())?;
+                                    let server_cube = cubes.iter().find(|c| c.uuid == cube_uuid);
+                                    if let Some(sc) = server_cube {
+                                        let server_id = sc.id.to_string();
+                                        client
+                                            .update_cube(&server_id, update_req)
+                                            .await
+                                            .map_err(|e| e.to_string())
+                                    } else {
+                                        Err("Cube not yet registered remotely".to_string())
+                                    }
+                                },
+                                move |result| Message::CubeRemoteUpdated {
+                                    cube_id,
+                                    network: cube_network,
+                                    result,
+                                },
+                            );
+                            return Task::batch([reload_task, remote_task]);
+                        }
+                    }
+                    reload_task
                 }
                 Err(e) => {
+                    // Clear pending remote rename on local failure
+                    self.pending_remote_rename = None;
                     self.error = Some(format!("Failed to rename Cube: {}", e));
                     Task::none()
                 }
@@ -921,14 +971,27 @@ impl Launcher {
                 let cube_id = cube.id.clone();
                 let name_for_settings = new_name.clone();
 
-                // Update local settings file
-                let rename_task = Task::perform(
+                // Stash context for remote update — will be consumed in
+                // CubeRenamed handler only if the local write succeeds.
+                if self.connect_account.is_authenticated() {
+                    self.pending_remote_rename = Some(PendingRemoteRename {
+                        cube_id: cube.id.clone(),
+                        cube_uuid: cube.id.clone(),
+                        cube_network: cube.network,
+                        new_name: new_name.clone(),
+                    });
+                }
+
+                // Update local settings file first; remote update follows
+                // in the CubeRenamed success handler.
+                Task::perform(
                     async move {
                         settings::update_settings_file(&network_dir, |mut s| {
                             if let Some(c) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
                                 c.name = name_for_settings;
-                                // Mark unsynced if not currently synced, so catch-up
-                                // can pick up the name change on next login
+                                // Mark unsynced so catch-up can pick up the
+                                // name change if the remote update fails or
+                                // we're offline.
                                 c.remote_synced = false;
                             }
                             Some(s)
@@ -937,46 +1000,7 @@ impl Launcher {
                         .map_err(|e| e.to_string())
                     },
                     Message::CubeRenamed,
-                );
-
-                let mut tasks = vec![rename_task];
-
-                // If authenticated, also update the remote API
-                if let Some(client) = self.connect_account.authenticated_client() {
-                    let cube_id = cube.id.clone();
-                    let cube_uuid = cube.id.clone();
-                    let cube_network = cube.network;
-                    let update_req = UpdateCubeRequest {
-                        name: Some(new_name),
-                        status: None,
-                    };
-                    tasks.push(Task::perform(
-                        async move {
-                            // Look up the server-side cube by UUID
-                            let cubes = client.list_cubes().await.map_err(|e| e.to_string())?;
-                            let server_cube = cubes.iter().find(|c| c.uuid == cube_uuid);
-                            if let Some(sc) = server_cube {
-                                let server_id = sc.id.to_string();
-                                client
-                                    .update_cube(&server_id, update_req)
-                                    .await
-                                    .map_err(|e| e.to_string())
-                            } else {
-                                // Cube not registered server-side yet; catch-up
-                                // sync will register it with the new name on
-                                // next login (remote_synced is already false).
-                                Err("Cube not yet registered remotely".to_string())
-                            }
-                        },
-                        move |result| Message::CubeRemoteUpdated {
-                            cube_id,
-                            network: cube_network,
-                            result,
-                        },
-                    ));
-                }
-
-                Task::batch(tasks)
+                )
             }
             Message::View(ViewMessage::RenameCubeCancel) => {
                 self.rename_cube_modal = None;
@@ -1058,9 +1082,19 @@ impl Launcher {
                         if !unsynced.is_empty() {
                             tasks.push(Task::perform(
                                 async move {
-                                    // Fetch all server cubes once
-                                    let server_cubes =
-                                        client.list_cubes().await.unwrap_or_default();
+                                    // Fetch all server cubes once — bail if this
+                                    // fails so we don't re-register everything.
+                                    let server_cubes = match client.list_cubes().await {
+                                        Ok(cubes) => cubes,
+                                        Err(e) => {
+                                            log::warn!(
+                                                "[LAUNCHER] Catch-up sync aborted: \
+                                                 failed to list server cubes: {}",
+                                                e
+                                            );
+                                            return;
+                                        }
+                                    };
 
                                     for cube in &unsynced {
                                         let server_match =
