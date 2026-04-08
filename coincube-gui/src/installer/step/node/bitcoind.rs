@@ -376,12 +376,14 @@ impl Step for SelectBitcoindTypeStep {
                 }
             } else {
                 // Connect-only: set Esplora backend now.
-                if let Some(token) = &ctx.connect_jwt {
-                    ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
-                        addr: crate::installer::connect_url(ctx.network),
-                        token: Some(token.clone()),
-                    }));
-                }
+                let token = ctx
+                    .connect_jwt
+                    .as_ref()
+                    .expect("Connect JWT must be set when use_connect is true");
+                ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
+                    addr: crate::installer::connect_url(ctx.network),
+                    token: Some(token.clone()),
+                }));
                 ctx.internal_bitcoind_config = None;
                 ctx.pending_bitcoind_config = None;
                 ctx.internal_bitcoind = None;
@@ -862,12 +864,14 @@ impl Step for InternalBitcoindStep {
                 if let Some(cfg) = bitcoind_config {
                     ctx.pending_bitcoind_config = Some(cfg);
                 }
-                if let Some(token) = &ctx.connect_jwt {
-                    ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
-                        addr: crate::installer::connect_url(ctx.network),
-                        token: Some(token.clone()),
-                    }));
-                }
+                let token = ctx
+                    .connect_jwt
+                    .as_ref()
+                    .expect("Connect JWT must be set when install_node_alongside_connect is true");
+                ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
+                    addr: crate::installer::connect_url(ctx.network),
+                    token: Some(token.clone()),
+                }));
             } else {
                 ctx.bitcoin_backend = bitcoind_config.map(BitcoinBackend::Bitcoind);
             }
