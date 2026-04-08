@@ -9,8 +9,8 @@ use crate::{
     services::coincube::{
         BillingCycle, BillingHistoryEntry, ChargeStatus, CheckoutRequest, CheckoutResponse,
         CoincubeClient, ConnectPlan, Contact, ContactCube, ContactRole, CreateInviteRequest,
-        FeaturesResponse, Invite, LoginActivity, LoginResponse, OtpRequest,
-        OtpVerifyRequest, User, VerifiedDevice,
+        FeaturesResponse, Invite, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest, User,
+        VerifiedDevice,
     },
 };
 
@@ -39,6 +39,7 @@ pub struct CheckoutState {
     pub phase: CheckoutPhase,
     pub checkout: Option<CheckoutResponse>,
     pub lightning_qr: Option<qr_code::Data>,
+    pub poll_errors: u8,
 }
 
 /// Which sub-view of the Contacts section is shown.
@@ -577,7 +578,6 @@ impl ConnectAccountPanel {
             }
 
             // ── Plan & Billing ──────────────────────────────────────────
-
             ConnectAccountMessage::FeaturesLoaded(features, gen) => {
                 if gen == self.session_generation {
                     self.features = features;
@@ -593,6 +593,7 @@ impl ConnectAccountPanel {
                     phase: CheckoutPhase::Creating,
                     checkout: None,
                     lightning_qr: None,
+                    poll_errors: 0,
                 });
                 let gen = self.session_generation;
                 let client = self.client.clone();
@@ -611,7 +612,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::CheckoutCreated(result, gen) => {
-                if gen != self.session_generation {
+                if gen != self.session_generation || self.checkout.is_none() {
                     return iced::Task::none();
                 }
                 match result {
@@ -621,6 +622,7 @@ impl ConnectAccountPanel {
                             phase: CheckoutPhase::AwaitingPayment,
                             checkout: Some(resp),
                             lightning_qr: qr,
+                            poll_errors: 0,
                         });
                         return iced::Task::done(Message::View(view::Message::ConnectAccount(
                             ConnectAccountMessage::PollChargeStatus,
@@ -659,10 +661,18 @@ impl ConnectAccountPanel {
                 return iced::Task::perform(
                     async move {
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                        client
-                            .get_charge_status(&charge_id)
-                            .await
-                            .map_err(|e| e.to_string())
+                        client.get_charge_status(&charge_id).await.map_err(|e| {
+                            use crate::services::coincube::CoincubeError;
+                            match &e {
+                                // 4xx errors are terminal — don't retry
+                                CoincubeError::Unsuccessful(info)
+                                    if (400..500).contains(&info.status_code) =>
+                                {
+                                    (e.to_string(), true)
+                                }
+                                _ => (e.to_string(), false),
+                            }
+                        })
                     },
                     move |result| {
                         Message::View(view::Message::ConnectAccount(
@@ -679,6 +689,7 @@ impl ConnectAccountPanel {
                 match result {
                     Ok(status) => {
                         let cs = self.checkout.as_mut().unwrap();
+                        cs.poll_errors = 0;
                         match status.status {
                             ChargeStatus::Unpaid => {
                                 // Keep polling
@@ -715,12 +726,33 @@ impl ConnectAccountPanel {
                             }
                         }
                     }
-                    Err(e) => {
-                        log::warn!("[CONNECT] Charge poll error: {}", e);
-                        // Continue polling on transient errors
-                        return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::PollChargeStatus,
-                        )));
+                    Err((e, terminal)) => {
+                        let cs = self.checkout.as_mut().unwrap();
+                        if terminal {
+                            log::error!("[CONNECT] Charge poll terminal error: {}", e);
+                            cs.phase = CheckoutPhase::Failed(e);
+                        } else {
+                            cs.poll_errors += 1;
+                            if cs.poll_errors >= 3 {
+                                log::error!(
+                                    "[CONNECT] Charge poll failed after {} retries: {}",
+                                    cs.poll_errors,
+                                    e
+                                );
+                                cs.phase = CheckoutPhase::Failed(e);
+                            } else {
+                                log::warn!(
+                                    "[CONNECT] Charge poll error ({}/3): {}",
+                                    cs.poll_errors,
+                                    e
+                                );
+                                return iced::Task::done(Message::View(
+                                    view::Message::ConnectAccount(
+                                        ConnectAccountMessage::PollChargeStatus,
+                                    ),
+                                ));
+                            }
+                        }
                     }
                 }
             }
@@ -739,7 +771,12 @@ impl ConnectAccountPanel {
                     let gen = self.session_generation;
                     let client = self.client.clone();
                     return iced::Task::perform(
-                        async move { client.get_billing_history().await.map_err(|e| e.to_string()) },
+                        async move {
+                            client
+                                .get_billing_history()
+                                .await
+                                .map_err(|e| e.to_string())
+                        },
                         move |result| {
                             Message::View(view::Message::ConnectAccount(
                                 ConnectAccountMessage::BillingHistoryLoaded(result, gen),
@@ -753,9 +790,13 @@ impl ConnectAccountPanel {
                 if gen == self.session_generation {
                     match result {
                         Ok(history) => self.billing_history = Some(history),
-                        Err(e) => self.error = Some(e),
+                        Err(e) => {
+                            self.billing_history = Some(Vec::new());
+                            self.error = Some(e);
+                        }
                     }
                 }
+            }
             ConnectAccountMessage::Contacts(contacts_msg) => {
                 return self.update_contacts(contacts_msg);
             }

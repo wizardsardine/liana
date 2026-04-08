@@ -17,8 +17,8 @@ use crate::{
     app::{
         menu::ConnectSubMenu,
         state::connect::{
-            AvatarFlowStep, CheckoutPhase, ConnectAccountPanel, ConnectCubePanel,
-            ConnectFlowStep, ConnectPanel,
+            AvatarFlowStep, CheckoutPhase, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep,
+            ConnectPanel,
         },
         view::{AvatarMessage, ConnectAccountMessage, ConnectCubeMessage},
     },
@@ -603,9 +603,8 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
             .push(iced::widget::Space::new().height(Length::Fixed(6.0)));
 
         for feature in card.features {
-            card_col = card_col.push(
-                text::p2_regular(format!("• {}", feature)).color(color::GREY_3),
-            );
+            card_col =
+                card_col.push(text::p2_regular(format!("• {}", feature)).color(color::GREY_3));
         }
 
         card_col = card_col
@@ -631,9 +630,7 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         col = col.push(
             container(card_col)
                 .style(move |t| container::Style {
-                    background: Some(iced::Background::Color(
-                        t.colors.cards.simple.background,
-                    )),
+                    background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                     border: iced::Border {
                         color: if is_current {
                             badge_color
@@ -702,10 +699,7 @@ fn checkout_ux<'a>(
                     "{} {} ({} sats)",
                     resp.amount_fiat, resp.fiat_currency, resp.amount_sats
                 );
-                let plan_line = format!(
-                    "Upgrade to {} ({})",
-                    resp.plan, resp.billing_cycle
-                );
+                let plan_line = format!("Upgrade to {} ({})", resp.plan, resp.billing_cycle);
 
                 col = col
                     .push(text::p1_bold(plan_line).style(theme::text::primary))
@@ -783,16 +777,14 @@ fn checkout_ux<'a>(
 
                 // Expires
                 col = col.push(
-                    text::p2_regular(format!("Expires: {}", resp.expires_at))
-                        .color(color::GREY_3),
+                    text::p2_regular(format!("Expires: {}", resp.expires_at)).color(color::GREY_3),
                 );
 
                 if matches!(checkout_state.phase, CheckoutPhase::Processing) {
                     col = col
                         .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
                         .push(
-                            text::p2_regular("Payment detected, confirming…")
-                                .color(color::ORANGE),
+                            text::p2_regular("Payment detected, confirming…").color(color::ORANGE),
                         );
                 }
             }
@@ -853,9 +845,7 @@ fn checkout_ux<'a>(
 
 // ── Billing history view ────────────────────────────────────────────────────
 
-fn billing_history_ux<'a>(
-    state: &'a ConnectAccountPanel,
-) -> Element<'a, ConnectAccountMessage> {
+fn billing_history_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
     let mut col = Column::new()
         .push(
             Row::new()
@@ -912,9 +902,7 @@ fn billing_history_ux<'a>(
                                         ))
                                         .style(theme::text::primary),
                                     )
-                                    .push(
-                                        text::p2_regular(amount_label).color(color::GREY_3),
-                                    )
+                                    .push(text::p2_regular(amount_label).color(color::GREY_3))
                                     .width(Length::Fill),
                             )
                             .push(
@@ -927,9 +915,7 @@ fn billing_history_ux<'a>(
                             .padding(12),
                     )
                     .style(|t| container::Style {
-                        background: Some(iced::Background::Color(
-                            t.colors.cards.simple.background,
-                        )),
+                        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                         border: iced::Border {
                             color: t.colors.cards.simple.border.unwrap_or(color::GREY_5),
                             width: 0.2,
