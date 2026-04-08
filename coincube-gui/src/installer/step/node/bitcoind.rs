@@ -392,6 +392,7 @@ impl Step for SelectBitcoindTypeStep {
             ctx.use_coincube_connect = false;
             ctx.install_node_alongside_connect = false;
             ctx.bitcoind_is_external = true;
+            ctx.bitcoin_backend = None;
             ctx.internal_bitcoind_config = None;
             ctx.pending_bitcoind_config = None;
             ctx.internal_bitcoind = None;
