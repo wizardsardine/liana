@@ -6,6 +6,7 @@ use iced::{
 
 use coincube_core::{bip39, miniscript::bitcoin::Network};
 use coincube_ui::{
+    color,
     component::{button, card, network_banner, notification, spinner, text::*},
     icon, image, theme,
     widget::{modal::Modal, CheckBox, Column, Container, Element, Row},
@@ -70,6 +71,14 @@ fn bip39_suggestions(prefix: &str, limit: usize) -> Vec<String> {
         .collect()
 }
 
+/// A cube that exists on the Connect server but has no local data on this machine.
+#[derive(Debug, Clone)]
+pub struct RemoteCube {
+    pub uuid: String,
+    pub name: String,
+    pub network: String, // API string: "mainnet", "testnet", etc.
+}
+
 /// Which section is shown in the launcher's main content area.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LauncherSection {
@@ -125,6 +134,8 @@ pub struct Launcher {
     /// Pending remote rename: stashed after local rename succeeds so the
     /// `CubeRenamed` handler can fire the API update.
     pending_remote_rename: Option<PendingRemoteRename>,
+    /// Cubes that exist on the Connect server but not locally on this machine.
+    remote_cubes: Vec<RemoteCube>,
     #[allow(dead_code)]
     welcome_quote: coincube_ui::component::quote_display::Quote,
     #[allow(dead_code)]
@@ -176,6 +187,7 @@ impl Launcher {
                 server_cube_limit: None,
                 rename_cube_modal: None,
                 pending_remote_rename: None,
+                remote_cubes: Vec::new(),
                 welcome_quote: coincube_ui::component::quote_display::random_quote("first-launch"),
                 welcome_image_handle:
                     coincube_ui::component::quote_display::image_handle_for_context("first-launch"),
@@ -491,6 +503,36 @@ impl Launcher {
                 }
                 Task::none()
             }
+            Message::RemoteCubesLoaded(result) => {
+                match result {
+                    Ok(server_cubes) => {
+                        // Collect all local cube UUIDs across all networks
+                        let mut local_uuids = std::collections::HashSet::new();
+                        for net in &NETWORKS {
+                            let nd = self.datadir_path.network_directory(*net);
+                            if let Ok(s) = settings::Settings::from_file(&nd) {
+                                for cube in &s.cubes {
+                                    local_uuids.insert(cube.id.clone());
+                                }
+                            }
+                        }
+                        // Keep only server cubes with no local counterpart
+                        self.remote_cubes = server_cubes
+                            .into_iter()
+                            .filter(|sc| !local_uuids.contains(&sc.uuid))
+                            .map(|sc| RemoteCube {
+                                uuid: sc.uuid,
+                                name: sc.name,
+                                network: sc.network,
+                            })
+                            .collect();
+                    }
+                    Err(e) => {
+                        log::warn!("[LAUNCHER] Failed to fetch remote cubes: {e}");
+                    }
+                }
+                Task::none()
+            }
             Message::CubeRemoteUpdated {
                 cube_id,
                 network,
@@ -726,6 +768,13 @@ impl Launcher {
                     Task::none()
                 }
                 Ok(state) => {
+                    // Prune remote cubes that now exist locally
+                    if let State::Cubes { cubes, .. } = &state {
+                        let local_ids: std::collections::HashSet<&str> =
+                            cubes.iter().map(|c| c.id.as_str()).collect();
+                        self.remote_cubes
+                            .retain(|rc| !local_ids.contains(rc.uuid.as_str()));
+                    }
                     self.state = state;
                     Task::none()
                 }
@@ -1041,6 +1090,7 @@ impl Launcher {
                     self.has_stored_session = now_authenticated;
                     if !now_authenticated {
                         self.server_cube_limit = None;
+                        self.remote_cubes.clear();
                     }
                 }
                 // Auto-expand Connect submenu after login
@@ -1162,6 +1212,15 @@ impl Launcher {
                                 |_| Message::View(ViewMessage::Check),
                             ));
                         }
+                    }
+
+                    // Fetch full server cube list to identify remote-only cubes
+                    // (cubes on the server with no local counterpart).
+                    if let Some(rc_client) = self.connect_account.authenticated_client() {
+                        tasks.push(Task::perform(
+                            async move { rc_client.list_cubes().await.map_err(|e| e.to_string()) },
+                            Message::RemoteCubesLoaded,
+                        ));
                     }
 
                     return Task::batch(tasks);
@@ -1287,11 +1346,21 @@ impl Launcher {
                                             self.recover_liquid_wallet,
                                         )
                                     } else {
+                                        let current_net_str =
+                                            settings::network_to_api_string(self.network);
                                         let mut col =
                                             cubes.iter().enumerate().fold(
                                                 Column::new().spacing(20),
                                                 |col, (i, cube)| col.push(cubes_list_item(cube, i)),
                                             );
+                                        // Show remote-only cubes (on server but not local)
+                                        for rc in self
+                                            .remote_cubes
+                                            .iter()
+                                            .filter(|rc| rc.network == current_net_str)
+                                        {
+                                            col = col.push(remote_cube_list_item(rc));
+                                        }
                                         let at_limit =
                                             cubes.len() >= self.cube_limit();
                                         if at_limit {
@@ -1746,6 +1815,34 @@ fn cubes_list_item<'a>(cube: &'a CubeSettings, i: usize) -> Element<'a, ViewMess
     .into()
 }
 
+fn remote_cube_list_item<'a>(cube: &'a RemoteCube) -> Element<'a, ViewMessage> {
+    let disabled_style = |_t: &theme::Theme| theme::text::custom(color::GREY_3);
+    Container::new(
+        Row::new()
+            .align_y(Alignment::Center)
+            .spacing(20)
+            .push(
+                Container::new(
+                    Button::new(
+                        Column::new()
+                            .push(p1_bold(&cube.name).style(disabled_style))
+                            .push(p1_regular("On another device").style(disabled_style)),
+                    )
+                    .padding(15)
+                    .style(theme::button::container_border)
+                    .width(Length::Fixed(500.0)),
+                )
+                .style(theme::card::simple),
+            )
+            .push(
+                Button::new(icon::file_earmark_arrow_down_icon())
+                    .style(theme::button::secondary)
+                    .padding(10),
+            ),
+    )
+    .into()
+}
+
 fn recovery_input_view(
     recovery_words: &[String; 12],
     active_index: Option<usize>,
@@ -1982,6 +2079,8 @@ pub enum Message {
     CubeRemoteDeleted(Result<(), String>),
     /// Result of renaming a cube locally (settings file updated).
     CubeRenamed(Result<(), String>),
+    /// Server cube list fetched after login; used to identify remote-only cubes.
+    RemoteCubesLoaded(Result<Vec<CubeResponse>, String>),
 }
 
 #[derive(Debug, Clone)]

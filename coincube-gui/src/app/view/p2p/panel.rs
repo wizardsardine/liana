@@ -25,8 +25,9 @@ use crate::app::{
 use super::components::order_card::TakeOrderState;
 use super::components::trade_card::{TradeRole, TradeStatus};
 use super::components::{
-    buy_sell_tabs, order_card, order_detail, payment_methods_for, trade_card, trade_status_filter,
-    BuySellFilter, OrderType, P2POrder, P2PTrade, PricingMode, TradeFilter, FIAT_CURRENCIES,
+    order_card, order_detail, order_filter_sidebar, payment_methods_for, trade_card,
+    trade_status_filter, BuySellFilter, OrderFilterState, OrderType, P2POrder, P2PTrade,
+    PricingMode, TradeFilter, FIAT_CURRENCIES,
 };
 use super::config::{load_mostro_config, save_mostro_config, MostroConfig, MostroNode};
 
@@ -174,6 +175,14 @@ pub struct P2PPanel {
     /// if the subscription delivers the event before the session is persisted.
     my_created_order_ids: HashSet<String>,
     buy_sell_filter: BuySellFilter,
+    // Order book filters
+    filter_currency: String,
+    filter_currency_combo_state: combo_box::State<String>,
+    filter_deselected_payment_methods: HashSet<String>,
+    filter_min_rating: f32,
+    filter_min_days_active: u32,
+    /// Cached unique payment methods from orders matching buy/sell + currency.
+    filter_available_payment_methods: Vec<String>,
     selected_order: Option<String>,
     // Trades state
     trades: Vec<P2PTrade>,
@@ -247,7 +256,12 @@ pub struct P2PPanel {
 }
 
 impl P2PPanel {
-    pub fn new(wallet: Option<Arc<Wallet>>, mnemonic: String) -> Self {
+    pub fn new(
+        wallet: Option<Arc<Wallet>>,
+        mnemonic: String,
+        default_currency: Option<String>,
+    ) -> Self {
+        let default_currency = default_currency.unwrap_or_else(|| "USD".to_string());
         Self {
             wallet,
             mnemonic,
@@ -257,6 +271,16 @@ impl P2PPanel {
             orders: Vec::new(),
             my_created_order_ids: HashSet::new(),
             buy_sell_filter: BuySellFilter::Sell,
+            filter_currency: default_currency.clone(),
+            filter_currency_combo_state: combo_box::State::new(
+                std::iter::once("All".to_string())
+                    .chain(FIAT_CURRENCIES.iter().map(|s| s.to_string()))
+                    .collect(),
+            ),
+            filter_deselected_payment_methods: HashSet::new(),
+            filter_min_rating: 4.0,
+            filter_min_days_active: 0,
+            filter_available_payment_methods: Vec::new(),
             selected_order: None,
             trades: Vec::new(),
             trade_filters: vec![TradeFilter::All],
@@ -432,16 +456,73 @@ impl P2PPanel {
         }
     }
 
+    /// Orders matching the current buy/sell tab + all active filters.
     fn filtered_orders(&self) -> Vec<&P2POrder> {
         self.orders
             .iter()
-            .filter(|order| match self.buy_sell_filter {
-                // "BUY BTC" tab: show sell orders (counterparty is selling)
-                BuySellFilter::Buy => order.order_type == OrderType::Sell,
-                // "SELL BTC" tab: show buy orders (counterparty is buying)
-                BuySellFilter::Sell => order.order_type == OrderType::Buy,
+            .filter(|order| {
+                let type_match = match self.buy_sell_filter {
+                    BuySellFilter::Buy => order.order_type == OrderType::Sell,
+                    BuySellFilter::Sell => order.order_type == OrderType::Buy,
+                };
+                type_match && self.order_passes_filters(order)
             })
             .collect()
+    }
+
+    /// Whether an order passes the currency, payment method, and reputation filters
+    /// (everything except the buy/sell tab).
+    fn order_passes_filters(&self, order: &P2POrder) -> bool {
+        // Currency
+        if self.filter_currency != "All" && order.fiat_currency != self.filter_currency {
+            return false;
+        }
+        // Payment methods
+        if !order.payment_methods.is_empty()
+            && !order
+                .payment_methods
+                .iter()
+                .any(|m| !self.filter_deselected_payment_methods.contains(m))
+        {
+            return false;
+        }
+        // Min rating
+        if self.filter_min_rating > 0.0 {
+            match order.seller_rating {
+                Some(rating) if rating >= self.filter_min_rating => {}
+                _ => return false,
+            }
+        }
+        // Min days active
+        if self.filter_min_days_active > 0 {
+            match order.seller_days_old {
+                Some(days) if days >= self.filter_min_days_active => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// Recompute the cached payment methods from orders matching buy/sell + currency filters.
+    fn recompute_available_payment_methods(&mut self) {
+        let mut methods: Vec<String> = self
+            .orders
+            .iter()
+            .filter(|order| {
+                let type_match = match self.buy_sell_filter {
+                    BuySellFilter::Buy => order.order_type == OrderType::Sell,
+                    BuySellFilter::Sell => order.order_type == OrderType::Buy,
+                };
+                type_match
+                    && (self.filter_currency == "All"
+                        || order.fiat_currency == self.filter_currency)
+            })
+            .flat_map(|order| order.payment_methods.iter().cloned())
+            .collect::<HashSet<String>>()
+            .into_iter()
+            .collect();
+        methods.sort();
+        self.filter_available_payment_methods = methods;
     }
 
     fn filtered_trades(&self) -> Vec<&P2PTrade> {
@@ -3227,16 +3308,13 @@ impl State for P2PPanel {
                                 column![
                                     Space::new().height(Length::Fixed(30.0)),
                                     column![
-                                        h1("Order Details"),
+                                        h3("Order Details").bold(),
                                         p2_regular("View order information")
                                             .style(theme::text::secondary),
                                     ]
                                     .spacing(8)
-                                    .width(Length::Fill)
-                                    .padding(20),
-                                    container(order_detail(order, take_state))
-                                        .padding([0, 20])
-                                        .width(Length::Fill),
+                                    .width(Length::Fill),
+                                    container(order_detail(order, take_state)).width(Length::Fill),
                                     Space::new().height(Length::Fixed(40.0)),
                                 ]
                                 .spacing(16)
@@ -3278,62 +3356,71 @@ impl State for P2PPanel {
 
                     let filtered_orders = self.filtered_orders();
 
-                    // Count offers per tab
+                    // Count offers per tab (applying all filters except buy/sell)
                     let buy_count = self
                         .orders
                         .iter()
-                        .filter(|o| o.order_type == OrderType::Sell)
+                        .filter(|o| o.order_type == OrderType::Sell && self.order_passes_filters(o))
                         .count();
                     let sell_count = self
                         .orders
                         .iter()
-                        .filter(|o| o.order_type == OrderType::Buy)
+                        .filter(|o| o.order_type == OrderType::Buy && self.order_passes_filters(o))
                         .count();
 
-                    let mut overview_col = column![
-                        // Title and filters
-                        column![
-                            h1("P2P Order Book"),
-                            p2_regular(
-                                "Browse and take P2P trading orders from the Mostro network"
-                            )
+                    let filter_state = OrderFilterState {
+                        buy_sell: &self.buy_sell_filter,
+                        buy_count,
+                        sell_count,
+                        filter_currency: &self.filter_currency,
+                        currency_combo_state: &self.filter_currency_combo_state,
+                        available_payment_methods: &self.filter_available_payment_methods,
+                        deselected_payment_methods: &self.filter_deselected_payment_methods,
+                        min_rating: self.filter_min_rating,
+                        min_days_active: self.filter_min_days_active,
+                        filtered_count: filtered_orders.len(),
+                    };
+
+                    // --- Header ---
+                    let mut overview_col = column![column![
+                        h3("P2P Order Book").bold(),
+                        p2_regular("Browse and take P2P trading orders from the Mostro network")
                             .style(theme::text::secondary),
-                        ]
-                        .spacing(8)
-                        .width(Length::Fill)
-                        .padding(20),
                     ]
+                    .spacing(8)
+                    .width(Length::Fill),]
                     .spacing(16);
-                    // Stream error banner (relay connection / restore failures)
+
+                    // Stream error banner
                     if let Some(ref err) = self.stream_error {
                         overview_col = overview_col.push(
                             container(p2_regular(err.as_str()).style(theme::text::warning))
-                                .padding([8, 20])
                                 .width(Length::Fill),
                         );
                     }
-                    // Buy / Sell tabs with counts
-                    overview_col = overview_col.push(
-                        container(buy_sell_tabs(&self.buy_sell_filter, buy_count, sell_count))
-                            .padding([0, 20])
-                            .width(Length::Fill),
-                    );
-                    // Orders list
-                    overview_col = overview_col.push(if filtered_orders.is_empty() {
-                        Element::from(
-                            container(p1_bold("No orders found"))
-                                .padding(40)
-                                .align_x(Alignment::Center)
-                                .width(Length::Fill),
-                        )
+
+                    // --- Sidebar + order list side by side ---
+                    let sidebar = order_filter_sidebar(filter_state);
+
+                    let order_list: Element<'_, view::Message> = if filtered_orders.is_empty() {
+                        container(p1_bold("No orders found"))
+                            .padding(40)
+                            .align_x(Alignment::Center)
+                            .width(Length::Fill)
+                            .into()
                     } else {
-                        Element::from(
-                            column(filtered_orders.iter().map(|order| order_card(order).into()))
-                                .spacing(16)
-                                .width(Length::Fill)
-                                .padding([0, 20]),
-                        )
-                    });
+                        column(filtered_orders.iter().map(|order| order_card(order).into()))
+                            .spacing(16)
+                            .width(Length::Fill)
+                            .into()
+                    };
+
+                    let content_row = row![sidebar, container(order_list).width(Length::Fill),]
+                        .spacing(20)
+                        .align_y(iced::alignment::Vertical::Top)
+                        .width(Length::Fill);
+
+                    overview_col = overview_col.push(content_row);
                     overview_col = overview_col.push(Space::new().height(Length::Fixed(40.0)));
 
                     let overview_content: Element<'_, view::Message> =
@@ -3490,16 +3577,13 @@ impl State for P2PPanel {
                                 cache,
                                 column![
                                     column![
-                                        h1("Trade Details"),
+                                        h3("Trade Details").bold(),
                                         p2_regular("View trade information and take actions")
                                             .style(theme::text::secondary),
                                     ]
                                     .spacing(8)
-                                    .width(Length::Fill)
-                                    .padding(20),
-                                    container(self.trade_detail_view(trade))
-                                        .padding([0, 20])
-                                        .width(Length::Fill),
+                                    .width(Length::Fill),
+                                    container(self.trade_detail_view(trade)).width(Length::Fill),
                                     Space::new().height(Length::Fixed(40.0)),
                                 ]
                                 .spacing(16),
@@ -3516,16 +3600,14 @@ impl State for P2PPanel {
                         column![
                             // Title
                             column![
-                                h1("My Trades"),
+                                h3("My Trades").bold(),
                                 p2_regular("Your active and completed P2P trades")
                                     .style(theme::text::secondary),
                             ]
                             .spacing(8)
-                            .width(Length::Fill)
-                            .padding(20),
+                            .width(Length::Fill),
                             // Trade status filter
                             container(trade_status_filter(&self.trade_filters, shown_count,))
-                                .padding([0, 20])
                                 .width(Length::Fill),
                             // Trade list
                             if filtered.is_empty() {
@@ -3539,8 +3621,7 @@ impl State for P2PPanel {
                                 Element::from(
                                     column(filtered.iter().map(|trade| trade_card(trade).into()))
                                         .spacing(16)
-                                        .width(Length::Fill)
-                                        .padding([0, 20]),
+                                        .width(Length::Fill),
                                 )
                             },
                             Space::new().height(Length::Fixed(40.0)),
@@ -3683,16 +3764,13 @@ impl State for P2PPanel {
                         cache,
                         column![
                             column![
-                                h1("Chat"),
+                                h3("Chat").bold(),
                                 p2_regular("Your P2P trade conversations")
                                     .style(theme::text::secondary),
                             ]
                             .spacing(8)
-                            .width(Length::Fill)
-                            .padding(20),
-                            container(self.chat_list_view())
-                                .padding([0, 20])
-                                .width(Length::Fill),
+                            .width(Length::Fill),
+                            container(self.chat_list_view()).width(Length::Fill),
                             Space::new().height(Length::Fixed(40.0)),
                         ]
                         .spacing(16),
@@ -3704,18 +3782,15 @@ impl State for P2PPanel {
                         cache,
                         column![
                             column![
-                                h1("Create P2P Order"),
+                                h3("Create P2P Order").bold(),
                                 p2_regular(
                                     "Create a new buy or sell order for the P2P marketplace"
                                 )
                                 .style(theme::text::secondary),
                             ]
                             .spacing(8)
-                            .width(Length::Fill)
-                            .padding(20),
-                            container(self.create_order_view())
-                                .padding([0, 20])
-                                .width(Length::Fill),
+                            .width(Length::Fill),
+                            container(self.create_order_view()).width(Length::Fill),
                             Space::new().height(Length::Fixed(40.0)),
                         ]
                         .spacing(16),
@@ -3737,16 +3812,13 @@ impl State for P2PPanel {
                     cache,
                     column![
                         column![
-                            h1("P2P Settings"),
+                            h3("P2P Settings").bold(),
                             p2_regular("Configure Mostro nodes and relays")
                                 .style(theme::text::secondary),
                         ]
                         .spacing(8)
-                        .width(Length::Fill)
-                        .padding(20),
-                        container(self.mostro_settings_view())
-                            .padding([0, 20])
-                            .width(Length::Fill),
+                        .width(Length::Fill),
+                        container(self.mostro_settings_view()).width(Length::Fill),
                         Space::new().height(Length::Fixed(40.0)),
                     ]
                     .spacing(16),
@@ -3909,6 +3981,7 @@ impl State for P2PPanel {
                     }
                 }
                 self.orders = orders;
+                self.recompute_available_payment_methods();
                 // Clear transient stream/relay errors — data is flowing successfully.
                 // Preserve restore failure messages (they require user attention).
                 if self
@@ -3933,7 +4006,26 @@ impl State for P2PPanel {
                     }
                 }
             }
-            P2PMessage::BuySellFilterChanged(filter) => self.buy_sell_filter = filter,
+            P2PMessage::BuySellFilterChanged(filter) => {
+                self.buy_sell_filter = filter;
+                self.recompute_available_payment_methods();
+            }
+            P2PMessage::FilterCurrencySelected(currency) => {
+                self.filter_currency = currency;
+                self.filter_deselected_payment_methods.clear();
+                self.recompute_available_payment_methods();
+            }
+            P2PMessage::FilterPaymentMethodToggled(method) => {
+                if !self.filter_deselected_payment_methods.remove(&method) {
+                    self.filter_deselected_payment_methods.insert(method);
+                }
+            }
+            P2PMessage::FilterMinRatingChanged(v) => {
+                self.filter_min_rating = (v * 2.0).round() / 2.0;
+            }
+            P2PMessage::FilterMinDaysActiveChanged(v) => {
+                self.filter_min_days_active = v;
+            }
             P2PMessage::TradeFilterChanged(filter) => {
                 if filter == TradeFilter::All {
                     // "All" is exclusive — toggle it alone

@@ -99,6 +99,19 @@ impl Panels {
         // NO VAULT - All vault panels are None, but Liquid panels always work
         // The UI layer prevents navigation to vault panels when has_vault=false
 
+        let default_fiat_currency = {
+            let network_dir = datadir.network_directory(network);
+            settings::Settings::from_file(&network_dir)
+                .ok()
+                .and_then(|s| {
+                    s.cubes
+                        .iter()
+                        .find(|c| c.id == cube_id)
+                        .and_then(|c| c.fiat_price.as_ref())
+                        .map(|fp| fp.currency.to_string())
+                })
+        };
+
         Self {
             current: Menu::Home,
             vault_expanded: false,
@@ -164,9 +177,9 @@ impl Panels {
                 .liquid_signer()
                 .map(|s| s.lock().expect("signer lock").mnemonic_str())
             {
-                Some(mnemonic) if !mnemonic.is_empty() => {
-                    Some(crate::app::view::p2p::P2PPanel::new(None, mnemonic))
-                }
+                Some(mnemonic) if !mnemonic.is_empty() => Some(
+                    crate::app::view::p2p::P2PPanel::new(None, mnemonic, default_fiat_currency),
+                ),
                 _ => {
                     log::warn!("P2P panel disabled: no mnemonic available from liquid signer");
                     None
@@ -196,6 +209,20 @@ impl Panels {
                 .map(|nt| nt == NodeType::Bitcoind)
                 // We don't know the node type for external coincubed so assume it's bitcoind.
                 .unwrap_or(true);
+
+        let default_fiat_currency = {
+            let network_dir = data_dir.network_directory(cache.network);
+            settings::Settings::from_file(&network_dir)
+                .ok()
+                .and_then(|s| {
+                    s.cubes
+                        .iter()
+                        .find(|c| c.id == cube_id)
+                        .and_then(|c| c.fiat_price.as_ref())
+                        .map(|fp| fp.currency.to_string())
+                })
+        };
+
         Self {
             current: Menu::Home,
             vault_expanded: false,
@@ -307,7 +334,11 @@ impl Panels {
                 .map(|s| s.lock().expect("signer lock").mnemonic_str())
             {
                 Some(mnemonic) if !mnemonic.is_empty() => {
-                    Some(crate::app::view::p2p::P2PPanel::new(Some(wallet), mnemonic))
+                    Some(crate::app::view::p2p::P2PPanel::new(
+                        Some(wallet),
+                        mnemonic,
+                        default_fiat_currency,
+                    ))
                 }
                 _ => {
                     log::warn!("P2P panel disabled: no mnemonic available from liquid signer");
