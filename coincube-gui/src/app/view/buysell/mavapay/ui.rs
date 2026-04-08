@@ -703,28 +703,22 @@ fn order_success_view<'a>(
                         widget::Space::new().height(15),
                         text::p2_medium("Order Date").style(theme::text::secondary),
                         text::p2_bold(pretty_timestamp(&order.created_at))
-                    ]
-                ]
-                .width(Length::Fill)
-                .padding(20)
-            )
-            .width(Length::Fill),
-            widget::Space::new().height(10),
-            card::simple(
-                widget::column![
-                    text::p2_medium("Thank you for using Mavapay!")
-                        .style(theme::text::success)
-                        .center()
-                        .width(Length::Fill),
-                    widget::Space::new().height(15),
+                    ],
+                    // separator
+                    widget::container(
+                        widget::Space::new()
+                            .height(Length::Fixed(3.0))
+                            .width(Length::Fill)
+                    )
+                    .style(theme::container::border_grey),
                     button::primary(Some(reload_icon()), "Start New Transaction")
                         .on_press(BuySellMessage::ResetWidget)
                         .width(Length::Fill)
                 ]
+                .spacing(15)
                 .width(Length::Fill)
                 .padding(20)
-            )
-            .width(Length::Fill)
+            ),
         ])
         .padding(10)
     ]
@@ -1292,21 +1286,18 @@ fn order_status_text(status: &TransactionStatus) -> &'static str {
 /// For DEPOSIT transactions, even SUCCESS means "Processing" since the order
 /// isn't complete until the WITHDRAWAL succeeds.
 fn transaction_status_info(transaction: &OrderTransaction) -> (&'static str, iced::Color) {
-    match transaction.transaction_type {
-        // DEPOSIT success just means payment received, order still processing
-        TransactionType::Deposit => match transaction.status {
-            TransactionStatus::Pending => ("Processing", color::ORANGE),
-            TransactionStatus::Success | TransactionStatus::Paid => ("Processing", color::ORANGE),
-            TransactionStatus::Expired => ("Expired", color::RED),
-            TransactionStatus::Failed => ("Failed", color::RED),
-        },
-        // WITHDRAWAL success means order is actually complete
-        TransactionType::Withdrawal => match transaction.status {
-            TransactionStatus::Pending => ("Processing", color::ORANGE),
-            TransactionStatus::Success | TransactionStatus::Paid => ("Complete", color::GREEN),
-            TransactionStatus::Expired => ("Expired", color::RED),
-            TransactionStatus::Failed => ("Failed", color::RED),
-        },
+    match transaction.status {
+        TransactionStatus::Pending => ("Processing", color::ORANGE),
+        TransactionStatus::Success | TransactionStatus::Paid => {
+            match transaction.transaction_type {
+                // WITHDRAWAL success means order is actually complete
+                TransactionType::Withdrawal => ("Complete", color::GREEN),
+                // DEPOSIT success just means payment received, order still processing
+                TransactionType::Deposit => ("Processing", color::ORANGE),
+            }
+        }
+        TransactionStatus::Expired => ("Expired", color::RED),
+        TransactionStatus::Failed => ("Failed", color::RED),
     }
 }
 

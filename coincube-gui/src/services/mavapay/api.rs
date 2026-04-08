@@ -1,47 +1,17 @@
 use crate::services::{coincube, http::NotSuccessResponseInfo};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(tag = "status")]
 pub enum MavapayApiResult<T> {
-    Success(T),
-    Error(String),
-}
-
-impl<'de, T: Deserialize<'de>> Deserialize<'de> for MavapayApiResult<T> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        // Check if this is a wrapped format: { "status": "ok/error", "data"?: T, "message"?: String }
-        // Only treat as wrapped if status is specifically "ok", "success", or "error"
-        if let Some(status) = value.get("status").and_then(|s| s.as_str()) {
-            match status {
-                "ok" | "success" => {
-                    if let Some(data) = value.get("data") {
-                        return T::deserialize(data.clone())
-                            .map(MavapayApiResult::Success)
-                            .map_err(serde::de::Error::custom);
-                    }
-                    // No "data" field with "ok"/"success" status - try parsing as T directly
-                }
-                "error" => {
-                    let message = value
-                        .get("message")
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("Unknown error")
-                        .to_string();
-                    return Ok(MavapayApiResult::Error(message));
-                }
-                st => unreachable!("Unknown status: {}", st),
-            }
-        }
-
-        T::deserialize(value)
-            .map(MavapayApiResult::Success)
-            .map_err(serde::de::Error::custom)
-    }
+    #[serde(alias = "ok", alias = "PAID")]
+    Success {
+        data: T,
+    },
+    Error {
+        message: String,
+    },
 }
 
 impl<T> From<coincube::CoincubeError> for MavapayApiResult<T> {
@@ -58,7 +28,8 @@ impl<T> From<coincube::CoincubeError> for MavapayApiResult<T> {
             coincube::CoincubeError::Parse(e) => format!("Parse error: {e:?}"),
             coincube::CoincubeError::SseError(e) => format!("EventSource error: {:?}", e),
         };
-        Self::Error(message)
+
+        MavapayApiResult::Error { message }
     }
 }
 
@@ -281,6 +252,7 @@ pub enum Beneficiary {
     },
     KES(KenyanBeneficiary),
 }
+
 impl Beneficiary {
     pub(crate) fn format(&self) -> &'static str {
         match self {
@@ -446,31 +418,14 @@ pub struct BankCustomerInquiry {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderQuote {
-    pub id: String,
-    #[serde(default)]
-    pub account_id: Option<String>,
-    pub exchange_rate: f64,
-    pub usd_to_target_currency_rate: f64,
-    #[serde(default)]
-    pub usd_amount: Option<u64>,
     pub transaction_fees_in_source_currency: u64,
     pub transaction_fees_in_target_currency: u64,
     pub transaction_fees_in_usd_cent: u64,
     pub payment_btc_detail: String,
-    pub payment_method: MavapayPaymentMethod,
     pub total_amount: u64,
     pub equivalent_amount: u64,
-    pub expiry: String,
     pub source_currency: MavapayUnitCurrency,
     pub target_currency: MavapayUnitCurrency,
-    pub payment_currency: MavapayUnitCurrency,
-    #[serde(default)]
-    pub btc_usd_rate: Option<f64>,
-    #[serde(default)]
-    pub customer_internal_fee_in_usd_cent: Option<u64>,
-    pub customer_internal_fee: u64,
-    pub created_at: String,
-    pub updated_at: String,
 }
 
 /// Nested order data wrapper from the API response
@@ -491,13 +446,10 @@ pub struct OrderDataInner {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct GetOrderResponse {
-    #[serde(rename = "id")]
-    pub internal_id: u64,
+    pub id: u64,
     pub order_id: String,
     #[serde(default)]
     pub quote_id: Option<String>,
-    #[serde(default)]
-    pub user_id: Option<u64>,
     pub amount: u64,
     pub status: TransactionStatus,
     pub currency: MavapayCurrency,
@@ -508,7 +460,6 @@ pub struct GetOrderResponse {
     pub payment_btc_detail: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-    #[serde(default)]
     pub order_data: Option<OrderDataWrapper>,
 }
 
@@ -580,12 +531,8 @@ pub struct GetTransaction<'a> {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderTransaction {
-    pub id: u64,
     pub order_id: String,
-    pub user_id: u64,
-    pub event_type: String,
     pub transaction_id: String,
-    pub wallet_id: String,
     pub amount: u64,
     pub fees: u64,
     pub currency: MavapayCurrency,
@@ -593,12 +540,7 @@ pub struct OrderTransaction {
     pub transaction_type: TransactionType,
     pub status: TransactionStatus,
     pub payment_method: MavapayPaymentMethod,
-    pub external_ref: String,
-    pub ln_invoice: String,
-    pub on_chain_address: String,
-    pub raw_payload: serde_json::Value,
     pub created_at: String,
-    pub updated_at: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]

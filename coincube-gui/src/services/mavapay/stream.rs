@@ -97,17 +97,18 @@ pub fn transaction_stream(
                                                             if update.order_id == order_id =>
                                                         {
                                                             log::info!(
-                                                        "[MAVAPAY] Update for order {}: status={:?}",
-                                                        update.order_id,
-                                                        update.status
-                                                    );
+                                                                "[MAVAPAY] Update for order {}: status={:?}",
+                                                                update.order_id,
+                                                                update.status
+                                                            );
+
                                                             let _ = channel
-                                                            .send(
-                                                                MavapayMessage::TransactionUpdated(
-                                                                    update,
-                                                                ),
-                                                            )
-                                                            .await;
+                                                                .send(
+                                                                    MavapayMessage::TransactionUpdated(
+                                                                        update,
+                                                                    ),
+                                                                )
+                                                                .await;
                                                         }
                                                         Ok(_) => continue, // Different order, ignore
                                                         Err(e) => {

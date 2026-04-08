@@ -101,13 +101,13 @@ impl MavapayState {
                 let task = iced::Task::perform(
                     async move { MavapayClient(&client).get_price(currency).await },
                     |result| match result {
-                        MavapayApiResult::Success(price) => {
-                            MavapayMessage::PriceReceived(price).into()
+                        MavapayApiResult::Success { data } => {
+                            MavapayMessage::PriceReceived(data).into()
                         }
-                        MavapayApiResult::Error(e) => {
+                        MavapayApiResult::Error { message } => {
                             view::Message::BuySell(view::BuySellMessage::SessionError(
                                 "Unable to get latest Bitcoin price",
-                                e,
+                                message,
                             ))
                         }
                     },
@@ -138,8 +138,8 @@ impl MavapayState {
                         // Step 1: Create quote with Mavapay
                         let quote =
                             match MavapayClient(&coincube_client).create_quote(request).await {
-                                MavapayApiResult::Success(q) => q,
-                                MavapayApiResult::Error(e) => return Err(e),
+                                MavapayApiResult::Success { data } => data,
+                                MavapayApiResult::Error { message } => return Err(message),
                             };
 
                         // Step 2: Save quote to coincube-api (fallible)
@@ -308,13 +308,13 @@ impl MavapayState {
                     let task = iced::Task::perform(
                         async move { MavapayClient(&client).get_banks(code).await },
                         |result| match result {
-                            MavapayApiResult::Success(banks) => {
-                                MavapayMessage::BanksReceived(banks).into()
+                            MavapayApiResult::Success { data } => {
+                                MavapayMessage::BanksReceived(data).into()
                             }
-                            MavapayApiResult::Error(e) => {
+                            MavapayApiResult::Error { message } => {
                                 view::Message::BuySell(view::BuySellMessage::SessionError(
                                     "Unable to fetch supported banks for your country",
-                                    e,
+                                    message,
                                 ))
                             }
                         },
@@ -438,13 +438,13 @@ impl MavapayState {
                                     .await
                             },
                             |res| match res {
-                                MavapayApiResult::Success(details) => {
-                                    MavapayMessage::VerifiedNgnBankDetails(details).into()
+                                MavapayApiResult::Success { data } => {
+                                    MavapayMessage::VerifiedNgnBankDetails(data).into()
                                 }
-                                MavapayApiResult::Error(err) => {
+                                MavapayApiResult::Error { message } => {
                                     view::Message::BuySell(view::BuySellMessage::SessionError(
                                         "Unable to verify Bank Details",
-                                        err,
+                                        message,
                                     ))
                                 }
                             },
@@ -581,7 +581,7 @@ impl MavapayState {
 
                 MavapayMessage::TransactionUpdated(update) => {
                     log::info!(
-                        "[MAVAPAY SSE] Order {} event={} status={:?}",
+                        "[MAVAPAY-SSE] Order({}): event={} status={:?}",
                         update.order_id,
                         update.event_type,
                         update.status
@@ -591,12 +591,6 @@ impl MavapayState {
                         update.status,
                         TransactionStatus::Paid | TransactionStatus::Success
                     ) {
-                        log::info!(
-                            "[MAVAPAY] Quote({}) has been fulfilled via SSE, order_id={}",
-                            quote.id,
-                            update.order_id
-                        );
-
                         let client = coincube_client.clone();
                         let order_id = update.order_id.clone();
 
@@ -604,11 +598,16 @@ impl MavapayState {
                             async move {
                                 let mut res = MavapayClient(&client).get_order(&order_id).await;
 
-                                for _ in 0..5 {
-                                    match &res {
-                                        MavapayApiResult::Success(_) => return res,
-                                        MavapayApiResult::Error(_) => {
-                                            tokio::time::sleep(std::time::Duration::from_secs(1))
+                                for attempt in 0..10 {
+                                    match res.as_ref() {
+                                        Ok(..) => break,
+                                        Err(err) => {
+                                            log::error!(
+                                                "[MAVAPAY] Unable to get order information: {:?}, Attempts: {}",
+                                                err, 5 - attempt
+                                            );
+
+                                            tokio::time::sleep(std::time::Duration::from_secs(5))
                                                 .await
                                         }
                                     }
@@ -619,17 +618,16 @@ impl MavapayState {
                                 res
                             },
                             |result| match result {
-                                MavapayApiResult::Success(order) => {
-                                    MavapayMessage::QuoteFulfilled(order).into()
-                                }
-                                MavapayApiResult::Error(e) => {
+                                Ok(order) => MavapayMessage::QuoteFulfilled(order).into(),
+                                Err(err) => {
                                     view::Message::BuySell(view::BuySellMessage::SessionError(
                                         "Failed to fetch order details",
-                                        e,
+                                        err.to_string(),
                                     ))
                                 }
                             },
                         );
+
                         return Some(task);
                     }
                 }
@@ -644,20 +642,20 @@ impl MavapayState {
                     *fulfilled_order = Some(order);
                     *stream_order_id = None;
 
-                    return Some(iced::Task::batch([
-                        iced::Task::done(view::Message::ShowSuccess(format!(
-                            "Quote[{}] fulfilled: Deposit of {} {} was successful",
-                            quote.id, quote.amount_in_target_currency, quote.target_currency,
-                        ))),
-                        iced::Task::future(async {
-                            tokio::time::sleep(std::time::Duration::from_secs(3)).await
-                        })
-                        .then(|_| {
-                            iced::Task::done(view::Message::BuySell(
-                                view::BuySellMessage::ResetWidget,
-                            ))
-                        }),
-                    ]));
+                    // return Some(iced::Task::batch([
+                    //     iced::Task::done(view::Message::ShowSuccess(format!(
+                    //         "Deposit of {} {} was successful",
+                    //         quote.amount_in_target_currency, quote.target_currency,
+                    //     ))),
+                    //     iced::Task::future(async {
+                    //         tokio::time::sleep(std::time::Duration::from_secs(3)).await
+                    //     })
+                    //     .then(|_| {
+                    //         iced::Task::done(view::Message::BuySell(
+                    //             view::BuySellMessage::ResetWidget,
+                    //         ))
+                    //     }),
+                    // ]));
                 }
 
                 #[cfg(debug_assertions)]
@@ -684,11 +682,11 @@ impl MavapayState {
                     let task = iced::Task::perform(
                         async move { MavapayClient(&client).simulate_pay_in(&request).await },
                         |s| match s {
-                            MavapayApiResult::Success(message) => {
-                                log::info!("[MAVAPAY] {}", message)
+                            MavapayApiResult::Success { data } => {
+                                log::info!("[MAVAPAY] {}", data)
                             }
-                            MavapayApiResult::Error(e) => {
-                                log::error!("[MAVAPAY] Unable to simulate Pay-In: {}", e)
+                            MavapayApiResult::Error { message } => {
+                                log::error!("[MAVAPAY] Unable to simulate Pay-In: {}", message)
                             }
                         },
                     );
@@ -716,18 +714,18 @@ impl MavapayState {
             ) => match msg {
                 MavapayMessage::FetchTransactions => {
                     *loading = true;
-                    let client = coincube_client.clone();
 
+                    let client = coincube_client.clone();
                     let task = iced::Task::perform(
                         async move { MavapayClient(&client).get_transactions().await },
                         |result| match result {
-                            MavapayApiResult::Success(response) => {
-                                MavapayMessage::TransactionsReceived(response.transactions).into()
+                            MavapayApiResult::Success { data } => {
+                                MavapayMessage::TransactionsReceived(data.transactions).into()
                             }
-                            MavapayApiResult::Error(e) => {
+                            MavapayApiResult::Error { message } => {
                                 view::Message::BuySell(view::BuySellMessage::SessionError(
                                     "Failed to fetch transactions",
-                                    e,
+                                    message,
                                 ))
                             }
                         },
@@ -755,15 +753,11 @@ impl MavapayState {
                     let task = iced::Task::perform(
                         async move { MavapayClient(&client).get_order(&order_id).await },
                         |result| match result {
-                            MavapayApiResult::Success(order) => {
-                                MavapayMessage::OrderReceived(order).into()
-                            }
-                            MavapayApiResult::Error(e) => {
-                                view::Message::BuySell(view::BuySellMessage::SessionError(
-                                    "Failed to fetch order details",
-                                    e,
-                                ))
-                            }
+                            Ok(data) => MavapayMessage::OrderReceived(data).into(),
+                            Err(err) => view::Message::BuySell(view::BuySellMessage::SessionError(
+                                "Failed to fetch order details",
+                                err.to_string(),
+                            )),
                         },
                     );
 
