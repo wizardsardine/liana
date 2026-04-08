@@ -791,7 +791,18 @@ impl State for LiquidReceive {
         self.sideshift_flow = None;
         self.receive_picker_open = false;
         self.sender_picker_open = false;
-        Task::batch(vec![self.fetch_limits(), self.load_recent_transactions()])
+        // Trigger an SDK sync so on-chain state is fresh when waiting for payments.
+        let breez = self.breez_client.clone();
+        Task::batch(vec![
+            Task::perform(
+                async move {
+                    let _ = breez.sync().await;
+                },
+                |_| Message::Tick,
+            ),
+            self.fetch_limits(),
+            self.load_recent_transactions(),
+        ])
     }
 
     fn subscription(&self) -> Subscription<Message> {

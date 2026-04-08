@@ -66,8 +66,11 @@ impl BreezConfig {
             asset_metadata: None,              // USDt is already a built-in default in the SDK DB
             sideswap_api_key: None,
             use_magic_routing_hints: true,
-            // Increased from 10 to 60 seconds to reduce API rate limiting
-            onchain_sync_period_sec: 60,
+            // 10 minutes baseline — real-time payment events (PaymentPending,
+            // PaymentSucceeded, etc.) are delivered instantly via websocket
+            // regardless of this setting. This only controls how often the SDK
+            // reconciles on-chain state with Esplora.
+            onchain_sync_period_sec: 600,
             onchain_sync_request_timeout_sec: 10,
         }
     }
