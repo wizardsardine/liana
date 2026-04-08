@@ -778,6 +778,9 @@ impl State for LiquidReceive {
                 LiquidReceiveMessage::History => {
                     return redirect(Menu::Liquid(LiquidSubMenu::Transactions(None)));
                 }
+                LiquidReceiveMessage::RefreshRequested => {
+                    return self.load_recent_transactions();
+                }
             }
         }
         Task::none()

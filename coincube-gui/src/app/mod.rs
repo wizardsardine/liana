@@ -511,6 +511,9 @@ impl Panels {
                 crate::app::menu::LiquidSubMenu::Send => Some(Message::View(
                     view::Message::LiquidSend(view::LiquidSendMessage::RefreshRequested),
                 )),
+                crate::app::menu::LiquidSubMenu::Receive => Some(Message::View(
+                    view::Message::LiquidReceive(view::LiquidReceiveMessage::RefreshRequested),
+                )),
                 _ => None,
             },
             _ => None,

@@ -522,6 +522,8 @@ pub enum LiquidReceiveMessage {
     SelectTransaction(usize),
     /// User tapped "View All Transactions".
     History,
+    /// Refresh balance and recent transactions (e.g. after a payment event).
+    RefreshRequested,
 }
 
 /// Network the sender is sending from (receive flow).
