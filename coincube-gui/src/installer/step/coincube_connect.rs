@@ -181,6 +181,7 @@ impl Step for CoincubeConnectStep {
                     match res {
                         Ok(token) => {
                             self.jwt = Some(token);
+                            self.skipped = false;
                             return Task::done(Message::Next);
                         }
                         Err(e) => {

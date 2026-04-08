@@ -869,8 +869,7 @@ impl Step for InternalBitcoindStep {
                     }));
                 }
             } else {
-                ctx.bitcoin_backend =
-                    bitcoind_config.map(BitcoinBackend::Bitcoind);
+                ctx.bitcoin_backend = bitcoind_config.map(BitcoinBackend::Bitcoind);
             }
             return true;
         }
