@@ -1328,6 +1328,16 @@ pub fn define_coincube_connect<'a>(
         Column::new()
             .spacing(20)
             .push(text(
+                "Create a free COINCUBE | Connect account to unlock:",
+            ))
+            .push(
+                Column::new()
+                    .spacing(8)
+                    .push(text("  •  Hosted Esplora server — use your Vault instantly while your node syncs"))
+                    .push(text("  •  Encrypted wallet descriptor backup"))
+                    .push(text("  •  Integration with the companion Keychain mobile app")),
+            )
+            .push(text(
                 "Enter your email address to receive a verification code.",
             ))
             .push(
@@ -1351,6 +1361,11 @@ pub fn define_coincube_connect<'a>(
             .push(
                 button::transparent(None, toggle_label)
                     .on_press(Message::CoincubeConnect(CoincubeConnectMsg::ToggleMode)),
+            )
+            .push(Space::new().height(Length::Fixed(10.0)))
+            .push(
+                button::transparent(None, "Skip for now")
+                    .on_press(Message::CoincubeConnect(CoincubeConnectMsg::Skip)),
             )
             .into()
     } else {
@@ -1397,6 +1412,7 @@ pub fn select_bitcoind_type<'a>(
     install_node: bool,
     show_advanced: bool,
     prune_default_mb: u32,
+    connect_authenticated: bool,
 ) -> Element<'a, Message> {
     let content: Column<'a, Message> = if network == bitcoin::Network::Regtest {
         // Regtest: offer only the two node-based options inline.
@@ -1481,9 +1497,93 @@ pub fn select_bitcoind_type<'a>(
             .push(header_row)
             .push(description_row)
             .push(button_row)
+    } else if !connect_authenticated {
+        // User skipped Connect: show only node-based options.
+        let disk_gb = (prune_default_mb as f64 / 1024.0).round() as u32;
+        let header_row = Row::new()
+            .spacing(20)
+            .align_y(Alignment::Start)
+            .push(
+                Container::new(
+                    Column::new()
+                        .spacing(10)
+                        .width(Length::Fixed(300.0))
+                        .push(text("I already have a node").bold()),
+                )
+                .padding(20),
+            )
+            .push(
+                Container::new(
+                    Column::new()
+                        .spacing(10)
+                        .width(Length::Fixed(300.0))
+                        .push(text("Install a local pruned node").bold()),
+                )
+                .padding(20),
+            );
+        let description_row = Row::new()
+            .spacing(20)
+            .align_y(Alignment::Start)
+            .push(
+                Container::new(Column::new().spacing(10).width(Length::Fixed(300.0)).push(
+                    text(
+                        "Select this option if you already have a Bitcoin node \
+                        running locally or remotely. Coincube will connect to it.",
+                    ),
+                ))
+                .padding(20),
+            )
+            .push(
+                Container::new(Column::new().spacing(10).width(Length::Fixed(300.0)).push(
+                    text(format!(
+                        "Coincube will download and configure a pruned Bitcoin node \
+                        on your computer (~{} GB of disk space required).",
+                        disk_gb
+                    )),
+                ))
+                .padding(20),
+            );
+        let button_row = Row::new()
+            .spacing(20)
+            .align_y(Alignment::End)
+            .push(
+                Container::new(
+                    Column::new()
+                        .width(Length::Fixed(300.0))
+                        .align_x(Alignment::Center)
+                        .push(
+                            button::secondary(None, "Select")
+                                .width(Length::Fixed(250.0))
+                                .on_press(Message::SelectBitcoindType(
+                                    message::SelectBitcoindTypeMsg::UseExternal(true),
+                                )),
+                        ),
+                )
+                .padding(20),
+            )
+            .push(
+                Container::new(
+                    Column::new()
+                        .width(Length::Fixed(300.0))
+                        .align_x(Alignment::Center)
+                        .push(
+                            button::secondary(None, "Select")
+                                .width(Length::Fixed(250.0))
+                                .on_press(Message::SelectBitcoindType(
+                                    message::SelectBitcoindTypeMsg::UseExternal(false),
+                                )),
+                        ),
+                )
+                .padding(20),
+            );
+        Column::new()
+            .spacing(10)
+            .push(header_row)
+            .push(description_row)
+            .push(button_row)
     } else {
-        // Non-regtest: opinionated default card (Connect + optional node) plus a
-        // collapsible Advanced section for power users.
+        // Connect authenticated: opinionated default card (Connect + optional node)
+        // plus a collapsible Advanced section for power users.
         let node_description = if install_node {
             let disk_gb = (prune_default_mb as f64 / 1024.0).round() as u32;
             format!(

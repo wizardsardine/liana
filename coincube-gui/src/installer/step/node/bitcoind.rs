@@ -6,7 +6,7 @@ use std::str::FromStr;
 
 use bitcoin_hashes::sha256;
 use coincube_core::miniscript::bitcoin::Network;
-use coincubed::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth};
+use coincubed::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, EsploraConfig};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use flate2::read::GzDecoder;
 use iced::{Subscription, Task};
@@ -291,6 +291,7 @@ pub struct SelectBitcoindTypeStep {
     install_node: bool,
     show_advanced: bool,
     network: Network,
+    connect_authenticated: bool,
 }
 
 impl Default for SelectBitcoindTypeStep {
@@ -313,6 +314,7 @@ impl SelectBitcoindTypeStep {
             install_node: true,
             show_advanced: false,
             network: Network::Bitcoin,
+            connect_authenticated: false,
         }
     }
 }
@@ -320,6 +322,7 @@ impl SelectBitcoindTypeStep {
 impl Step for SelectBitcoindTypeStep {
     fn load_context(&mut self, ctx: &Context) {
         self.network = ctx.network;
+        self.connect_authenticated = ctx.use_coincube_connect;
         // Expand advanced section by default on non-mainnet networks.
         if ctx.network != Network::Bitcoin {
             self.show_advanced = true;
@@ -372,6 +375,13 @@ impl Step for SelectBitcoindTypeStep {
                     ctx.bitcoin_backend = None;
                 }
             } else {
+                // Connect-only: set Esplora backend now.
+                if let Some(token) = &ctx.connect_jwt {
+                    ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
+                        addr: crate::installer::connect_url(ctx.network),
+                        token: Some(token.clone()),
+                    }));
+                }
                 ctx.internal_bitcoind_config = None;
                 ctx.pending_bitcoind_config = None;
                 ctx.internal_bitcoind = None;
@@ -407,6 +417,7 @@ impl Step for SelectBitcoindTypeStep {
             self.install_node,
             self.show_advanced,
             PRUNE_DEFAULT,
+            self.connect_authenticated,
         )
     }
 }
@@ -838,14 +849,29 @@ impl Step for InternalBitcoindStep {
     fn apply(&mut self, ctx: &mut Context) -> bool {
         // Any errors have been handled as part of `message::InternalBitcoindMsg::Start`
         if let Some(Ok(_)) = self.started {
-            ctx.bitcoin_backend = self
-                .bitcoind_config
-                .as_ref()
-                .map(|bitcoind_config| BitcoinBackend::Bitcoind(bitcoind_config.clone()));
+            let bitcoind_config = self.bitcoind_config.clone();
             ctx.internal_bitcoind_config
                 .clone_from(&self.internal_bitcoind_config);
             ctx.internal_bitcoind.clone_from(&self.internal_bitcoind);
             self.error = None;
+
+            if ctx.install_node_alongside_connect {
+                // Connect + local node: Esplora is the active backend while
+                // the local node syncs. Bitcoind goes to pending and will
+                // become the primary backend once IBD completes.
+                if let Some(cfg) = bitcoind_config {
+                    ctx.pending_bitcoind_config = Some(cfg);
+                }
+                if let Some(token) = &ctx.connect_jwt {
+                    ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
+                        addr: crate::installer::connect_url(ctx.network),
+                        token: Some(token.clone()),
+                    }));
+                }
+            } else {
+                ctx.bitcoin_backend =
+                    bitcoind_config.map(BitcoinBackend::Bitcoind);
+            }
             return true;
         }
         false
