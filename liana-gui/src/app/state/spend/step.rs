@@ -42,6 +42,8 @@ pub struct TransactionDraft {
     inputs: Vec<Coin>,
     recipients: Vec<Recipient>,
     generated: Option<(Psbt, Vec<String>)>,
+    /// Individual sweep mode: one (Psbt, warnings) per selected coin.
+    pub batch_generated: Option<Vec<(Psbt, Vec<String>)>>,
     batch_label: Option<String>,
     labels: HashMap<String, String>,
     /// The timelock of the recovery path to use for spending.
@@ -59,6 +61,7 @@ impl TransactionDraft {
             inputs: Vec::new(),
             recipients: Vec::new(),
             generated: None,
+            batch_generated: None,
             batch_label: None,
             labels: HashMap::new(),
             recovery_timelock,
@@ -160,10 +163,17 @@ pub struct DefineSpend {
     feerate: form::Value<String>,
     fee_amount: Option<Amount>,
     generated: Option<(Psbt, Vec<String>)>,
+    batch_generated: Option<Vec<(Psbt, Vec<String>)>>,
     warning: Option<Error>,
     /// Whether this is the first step of the spend creation.
     /// Required in order to know whether the user can navigate to a previous step.
     is_first_step: bool,
+    // Sweep individually fields
+    is_sweep_individually: bool,
+    sweep_feerate_min: form::Value<String>,
+    sweep_feerate_max: form::Value<String>,
+    /// Per-coin feerate for individual sweep mode. Indexed same as selected coins.
+    sweep_coin_feerates: Vec<(OutPoint, form::Value<String>, Option<Amount>)>,
 }
 
 impl DefineSpend {
@@ -203,6 +213,19 @@ impl DefineSpend {
             amount_left_to_select: None,
             warning: None,
             is_first_step,
+            is_sweep_individually: false,
+            sweep_feerate_min: form::Value {
+                value: "1".to_string(),
+                valid: true,
+                warning: None,
+            },
+            sweep_feerate_max: form::Value {
+                value: "4".to_string(),
+                valid: true,
+                warning: None,
+            },
+            sweep_coin_feerates: Vec::new(),
+            batch_generated: None,
         }
     }
 
@@ -241,6 +264,41 @@ impl DefineSpend {
         self
     }
 
+    /// Rebuild the per-coin feerate list from currently selected coins,
+    /// preserving existing feerate values where the outpoint matches.
+    fn rebuild_sweep_feerates(&mut self) {
+        let default_feerate = if self.feerate.value.is_empty() {
+            "1".to_string()
+        } else {
+            self.feerate.value.clone()
+        };
+        let old: HashMap<OutPoint, (form::Value<String>, Option<Amount>)> = self
+            .sweep_coin_feerates
+            .drain(..)
+            .map(|(op, fr, fee)| (op, (fr, fee)))
+            .collect();
+        self.sweep_coin_feerates = self
+            .coins
+            .iter()
+            .filter(|(_, selected)| *selected)
+            .map(|(coin, _)| {
+                if let Some((fr, fee)) = old.get(&coin.outpoint) {
+                    (coin.outpoint, fr.clone(), *fee)
+                } else {
+                    (
+                        coin.outpoint,
+                        form::Value {
+                            value: default_feerate.clone(),
+                            valid: true,
+                            warning: None,
+                        },
+                        None,
+                    )
+                }
+            })
+            .collect();
+    }
+
     /// This is used for calculating a coin's remaining sequence.
     ///
     /// Use the first timelock if this is a primary path spend and otherwise the same
@@ -254,8 +312,16 @@ impl DefineSpend {
     // whether any should receive the max amount. Otherwise, all recipients
     // will be fully validated.
     fn form_values_are_valid(&self, is_redraft: bool) -> bool {
-        self.feerate.valid
-            && !self.feerate.value.is_empty()
+        let feerate_valid = if self.is_sweep_individually {
+            !self.sweep_coin_feerates.is_empty()
+                && self
+                    .sweep_coin_feerates
+                    .iter()
+                    .all(|(_, fr, _)| fr.valid && !fr.value.is_empty())
+        } else {
+            self.feerate.valid && !self.feerate.value.is_empty()
+        };
+        feerate_valid
             && (self.batch_label.valid || self.recipients.len() < 2)
             // Recipients will be empty for self-send.
             && self.recipients.iter().enumerate().all(|(i, r)|
@@ -283,6 +349,12 @@ impl DefineSpend {
     /// redraft calculates the amount left to select and auto selects coins
     /// if the user did not select a coin manually
     fn redraft(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) {
+        // In sweep mode, skip redraft — fee estimates are computed at Generate time.
+        if self.is_sweep_individually {
+            self.amount_left_to_select = None;
+            self.fee_amount = None;
+            return;
+        }
         if !self.form_values_are_valid(true) || self.exists_duplicate() {
             // The current form details are not valid to draft a spend, so remove any previously
             // calculated amount as it will no longer be valid and could be misleading, e.g. if
@@ -668,6 +740,46 @@ impl Step for DefineSpend {
                         self.warning = None;
                     }
                     view::CreateSpendMessage::Generate => {
+                        self.warning = None;
+
+                        // Individual sweep: generate one PSBT per selected coin
+                        if self.is_sweep_individually {
+                            let coin_feerates: Vec<(OutPoint, u64)> = self
+                                .sweep_coin_feerates
+                                .iter()
+                                .map(|(op, fr, _)| (*op, fr.value.parse::<u64>().unwrap_or(1)))
+                                .collect();
+                            return Task::perform(
+                                async move {
+                                    let mut batch = Vec::new();
+                                    for (outpoint, feerate) in coin_feerates {
+                                        let result = daemon
+                                            .create_spend_tx(
+                                                &[outpoint],
+                                                &HashMap::new(),
+                                                feerate,
+                                                None,
+                                            )
+                                            .await
+                                            .map_err(|e| -> Error { e.into() })?;
+                                        match result {
+                                            CreateSpendResult::Success { psbt, warnings } => {
+                                                batch.push((psbt, warnings));
+                                            }
+                                            CreateSpendResult::InsufficientFunds { missing } => {
+                                                return Err(SpendCreationError::CoinSelection(
+                                                    liana::spend::InsufficientFunds { missing },
+                                                )
+                                                .into());
+                                            }
+                                        }
+                                    }
+                                    Ok(batch)
+                                },
+                                Message::BatchPsbt,
+                            );
+                        }
+
                         let inputs: Vec<OutPoint> = self
                             .coins
                             .iter()
@@ -684,7 +796,6 @@ impl Step for DefineSpend {
                         let mut outputs: HashMap<Address<address::NetworkUnchecked>, u64> =
                             HashMap::new();
                         let feerate_vb = self.feerate.value.parse::<u64>().unwrap_or(0);
-                        self.warning = None;
                         if let Some(reco_tl) = self.recovery_timelock {
                             let recovery_address = Address::from_str(
                                 &self
@@ -745,6 +856,89 @@ impl Step for DefineSpend {
                             // Once user edits selection, auto-selection can no longer be used.
                             self.is_user_coin_selection = true;
                         }
+                        if self.is_sweep_individually {
+                            self.rebuild_sweep_feerates();
+                        }
+                    }
+                    view::CreateSpendMessage::ToggleSweepIndividually => {
+                        self.is_sweep_individually = !self.is_sweep_individually;
+                        if self.is_sweep_individually {
+                            self.rebuild_sweep_feerates();
+                        }
+                    }
+                    view::CreateSpendMessage::SweepFeerateEdited(i, s) => {
+                        if let Some(entry) = self.sweep_coin_feerates.get_mut(i) {
+                            if let Ok(value) = s.parse::<u64>() {
+                                entry.1.value = s;
+                                entry.1.valid = value != 0 && value <= MAX_FEERATE;
+                            } else if s.is_empty() {
+                                entry.1.value = "".to_string();
+                                entry.1.valid = true;
+                            } else {
+                                entry.1.valid = false;
+                            }
+                        }
+                        self.warning = None;
+                    }
+                    view::CreateSpendMessage::SweepFeerateMinEdited(s) => {
+                        if let Ok(value) = s.parse::<u64>() {
+                            self.sweep_feerate_min.value = s;
+                            self.sweep_feerate_min.valid = value != 0 && value <= MAX_FEERATE;
+                        } else if s.is_empty() {
+                            self.sweep_feerate_min.value = "".to_string();
+                            self.sweep_feerate_min.valid = true;
+                        } else {
+                            self.sweep_feerate_min.valid = false;
+                        }
+                    }
+                    view::CreateSpendMessage::SweepFeerateMaxEdited(s) => {
+                        if let Ok(value) = s.parse::<u64>() {
+                            self.sweep_feerate_max.value = s;
+                            self.sweep_feerate_max.valid = value != 0 && value <= MAX_FEERATE;
+                        } else if s.is_empty() {
+                            self.sweep_feerate_max.value = "".to_string();
+                            self.sweep_feerate_max.valid = true;
+                        } else {
+                            self.sweep_feerate_max.valid = false;
+                        }
+                    }
+                    view::CreateSpendMessage::SweepRandomizeFees => {
+                        if let (Ok(min), Ok(max)) = (
+                            self.sweep_feerate_min.value.parse::<u64>(),
+                            self.sweep_feerate_max.value.parse::<u64>(),
+                        ) {
+                            if min > 0 && max >= min {
+                                // Use liana's random_bytes for randomness
+                                if let Ok(rand_bytes) = liana::random::random_bytes() {
+                                    for (i, entry) in
+                                        self.sweep_coin_feerates.iter_mut().enumerate()
+                                    {
+                                        // Use 4 bytes per coin to derive a feerate in [min, max]
+                                        let offset = (i * 4) % 28; // 32 bytes / 4 = 8 slots, wrap around
+                                        let rand_val = u32::from_le_bytes([
+                                            rand_bytes[offset],
+                                            rand_bytes[offset + 1],
+                                            rand_bytes[offset + 2],
+                                            rand_bytes[offset + 3],
+                                        ]);
+                                        let range = max - min + 1;
+                                        let feerate = min + (rand_val as u64 % range);
+                                        entry.1.value = feerate.to_string();
+                                        entry.1.valid = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    view::CreateSpendMessage::SweepApplyToAll => {
+                        if let Ok(rate) = self.feerate.value.parse::<u64>() {
+                            if rate > 0 && rate <= MAX_FEERATE {
+                                for entry in &mut self.sweep_coin_feerates {
+                                    entry.1.value = self.feerate.value.clone();
+                                    entry.1.valid = true;
+                                }
+                            }
+                        }
                     }
                     view::CreateSpendMessage::SendMaxToRecipient(i) => {
                         if let Some(recipient) = self.recipients.get_mut(i) {
@@ -772,6 +966,13 @@ impl Step for DefineSpend {
             Message::Psbt(res) => match res {
                 Ok(psbt) => {
                     self.generated = Some(psbt);
+                    return Task::perform(async {}, |_| Message::View(view::Message::Next));
+                }
+                Err(e) => self.warning = Some(e),
+            },
+            Message::BatchPsbt(res) => match res {
+                Ok(batch) => {
+                    self.batch_generated = Some(batch);
                     return Task::perform(async {}, |_| Message::View(view::Message::Next));
                 }
                 Err(e) => self.warning = Some(e),
@@ -852,6 +1053,7 @@ impl Step for DefineSpend {
             draft.batch_label = Some(self.batch_label.value.clone());
         }
         draft.generated.clone_from(&self.generated);
+        draft.batch_generated.clone_from(&self.batch_generated);
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
@@ -860,6 +1062,11 @@ impl Step for DefineSpend {
             .recipients
             .iter()
             .any(|r| r.estimated_max.is_some() || r.dust_warning.is_some());
+        let sweep_feerates: Vec<_> = self
+            .sweep_coin_feerates
+            .iter()
+            .map(|(op, fr, fee)| (*op, fr, fee.as_ref()))
+            .collect();
         view::spend::create_spend_tx(
             cache,
             converter.as_ref(),
@@ -885,6 +1092,10 @@ impl Step for DefineSpend {
             self.warning.as_ref(),
             self.is_first_step,
             max_under_dust,
+            self.is_sweep_individually,
+            &self.sweep_feerate_min,
+            &self.sweep_feerate_max,
+            &sweep_feerates,
         )
     }
 
@@ -1094,6 +1305,10 @@ impl Recipient {
 pub struct SaveSpend {
     wallet: Arc<Wallet>,
     spend: Option<(psbt::PsbtState, Vec<String>)>,
+    /// Batch mode: multiple PSBTs for individual sweep.
+    batch_spends: Vec<(psbt::PsbtState, Vec<String>)>,
+    batch_index: usize,
+    is_batch: bool,
     curve: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 }
 
@@ -1102,6 +1317,9 @@ impl SaveSpend {
         Self {
             wallet,
             spend: None,
+            batch_spends: Vec::new(),
+            batch_index: 0,
+            is_batch: false,
             curve: secp256k1::Secp256k1::verification_only(),
         }
     }
@@ -1109,6 +1327,37 @@ impl SaveSpend {
 
 impl Step for SaveSpend {
     fn load(&mut self, _coins: &[Coin], _tip_height: i32, draft: &TransactionDraft) {
+        if let Some(batch) = &draft.batch_generated {
+            // Batch mode: individual sweep
+            self.is_batch = true;
+            self.batch_index = 0;
+            self.batch_spends = batch
+                .iter()
+                .enumerate()
+                .map(|(i, (psbt, warnings))| {
+                    // For batch, each PSBT has a single input from draft.inputs
+                    let inputs = if i < draft.inputs.len() {
+                        vec![draft.inputs[i].clone()]
+                    } else {
+                        Vec::new()
+                    };
+                    let tx = SpendTx::new(
+                        None,
+                        psbt.clone(),
+                        inputs,
+                        &self.wallet.main_descriptor,
+                        &self.curve,
+                        draft.network,
+                    );
+                    (
+                        psbt::PsbtState::new(self.wallet.clone(), tx, false),
+                        warnings.clone(),
+                    )
+                })
+                .collect();
+            return;
+        }
+
         let (psbt, warnings) = draft.generated.clone().unwrap();
         let mut tx = SpendTx::new(
             None,
@@ -1146,13 +1395,23 @@ impl Step for SaveSpend {
     }
 
     fn interrupt(&mut self) {
-        if let Some((psbt_state, _)) = &mut self.spend {
+        if self.is_batch {
+            if let Some((psbt_state, _)) = self.batch_spends.get_mut(self.batch_index) {
+                psbt_state.interrupt()
+            }
+        } else if let Some((psbt_state, _)) = &mut self.spend {
             psbt_state.interrupt()
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        if let Some((psbt_state, _)) = &self.spend {
+        if self.is_batch {
+            if let Some((psbt_state, _)) = self.batch_spends.get(self.batch_index) {
+                psbt_state.subscription()
+            } else {
+                Subscription::none()
+            }
+        } else if let Some((psbt_state, _)) = &self.spend {
             psbt_state.subscription()
         } else {
             Subscription::none()
@@ -1165,7 +1424,30 @@ impl Step for SaveSpend {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        if let Some((psbt_state, _)) = &mut self.spend {
+        // Handle batch navigation
+        if self.is_batch {
+            if let Message::View(view::Message::Spend(ref msg)) = message {
+                match msg {
+                    view::SpendTxMessage::BatchNext => {
+                        if self.batch_index + 1 < self.batch_spends.len() {
+                            self.batch_index += 1;
+                        }
+                        return Task::none();
+                    }
+                    view::SpendTxMessage::BatchPrev => {
+                        if self.batch_index > 0 {
+                            self.batch_index -= 1;
+                        }
+                        return Task::none();
+                    }
+                    _ => {}
+                }
+            }
+            if let Some((psbt_state, _)) = self.batch_spends.get_mut(self.batch_index) {
+                return psbt_state.update(daemon, cache, message);
+            }
+            Task::none()
+        } else if let Some((psbt_state, _)) = &mut self.spend {
             psbt_state.update(daemon, cache, message)
         } else {
             Task::none()
@@ -1173,27 +1455,85 @@ impl Step for SaveSpend {
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let (psbt_state, warnings) = self.spend.as_ref().unwrap();
-        let content = view::spend::spend_view(
-            cache,
-            &psbt_state.tx,
-            warnings,
-            psbt_state.saved,
-            &psbt_state.desc_policy,
-            &psbt_state.wallet.keys_aliases,
-            psbt_state.labels_edited.cache(),
-            cache.network,
-            if let Some(psbt::PsbtModal::Sign(m)) = &psbt_state.modal {
-                m.is_signing()
+        if self.is_batch {
+            let (psbt_state, warnings) = &self.batch_spends[self.batch_index];
+            let total = self.batch_spends.len();
+            let current = self.batch_index + 1;
+
+            use iced::widget::{column, row, text, Space};
+            use iced::Length;
+            use liana_ui::component::button;
+
+            let next_btn = if self.batch_index + 1 < total {
+                button::primary(None, "Next transaction >")
+                    .on_press(view::Message::Spend(view::SpendTxMessage::BatchNext))
             } else {
-                false
-            },
-            psbt_state.warning.as_ref(),
-        );
-        if let Some(modal) = &psbt_state.modal {
-            modal.as_ref().view(content)
+                button::secondary(None, "Done")
+            };
+            let prev_btn = if self.batch_index > 0 {
+                button::secondary(None, "< Previous")
+                    .on_press(view::Message::Spend(view::SpendTxMessage::BatchPrev))
+            } else {
+                button::secondary(None, "< Previous")
+            };
+
+            let nav_row = row![
+                prev_btn,
+                Space::with_width(Length::Fill),
+                text(format!("Transaction {} of {}", current, total)).size(16),
+                Space::with_width(Length::Fill),
+                next_btn,
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center);
+
+            let content = view::spend::spend_view(
+                cache,
+                &psbt_state.tx,
+                warnings,
+                psbt_state.saved,
+                &psbt_state.desc_policy,
+                &psbt_state.wallet.keys_aliases,
+                psbt_state.labels_edited.cache(),
+                cache.network,
+                if let Some(psbt::PsbtModal::Sign(m)) = &psbt_state.modal {
+                    m.is_signing()
+                } else {
+                    false
+                },
+                psbt_state.warning.as_ref(),
+            );
+
+            let full = column![nav_row, content].spacing(10).into();
+
+            if let Some(modal) = &psbt_state.modal {
+                modal.as_ref().view(full)
+            } else {
+                full
+            }
         } else {
-            content
+            let (psbt_state, warnings) = self.spend.as_ref().unwrap();
+            let content = view::spend::spend_view(
+                cache,
+                &psbt_state.tx,
+                warnings,
+                psbt_state.saved,
+                &psbt_state.desc_policy,
+                &psbt_state.wallet.keys_aliases,
+                psbt_state.labels_edited.cache(),
+                cache.network,
+                if let Some(psbt::PsbtModal::Sign(m)) = &psbt_state.modal {
+                    m.is_signing()
+                } else {
+                    false
+                },
+                psbt_state.warning.as_ref(),
+            );
+            if let Some(modal) = &psbt_state.modal {
+                modal.as_ref().view(content)
+            } else {
+                content
+            }
         }
     }
 }
