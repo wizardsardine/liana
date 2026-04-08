@@ -194,6 +194,8 @@ pub struct LiquidSend {
     pay_fees_with_asset: bool,
     /// Whether a SendMax prepare call is in flight.
     max_loading: bool,
+    /// Whether the current amount was set via "Send Max" for L-BTC (use Drain).
+    is_drain: bool,
     /// Quote and image handle for the "Transaction complete" screen.
     sent_quote: coincube_ui::component::quote_display::Quote,
     sent_image_handle: iced::widget::image::Handle,
@@ -232,6 +234,7 @@ impl LiquidSend {
             is_sending: false,
             pay_fees_with_asset: true,
             max_loading: false,
+            is_drain: false,
             sent_quote: coincube_ui::component::quote_display::random_quote("transaction-sent"),
             sent_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
                 "transaction-sent",
@@ -497,6 +500,7 @@ impl State for LiquidSend {
                     self.uri_asset = None;
                     self.error = None;
                     self.sideshift_flow = None;
+                    self.is_drain = false;
                     return self.load_balance();
                 }
                 view::LiquidSendMessage::InputEdited(value) => {
@@ -607,6 +611,7 @@ impl State for LiquidSend {
                                 )
                             }
                             InputType::Bolt11 { invoice } => {
+                                self.is_drain = false;
                                 if let Some(amt) = invoice.amount_msat {
                                     if let Ok(amount) = Amount::from_str_in(
                                         &amt.to_string(),
@@ -669,6 +674,7 @@ impl State for LiquidSend {
                             }
 
                             InputType::LiquidAddress { address } => {
+                                self.is_drain = false;
                                 if self.to_asset == SendAsset::Usdt {
                                     if let Some(amount) = address.amount {
                                         let amount_str = format!("{}", amount);
@@ -989,6 +995,7 @@ impl State for LiquidSend {
                         modal: Modal::AmountInput,
                     } = &mut self.flow_state
                     {
+                        self.is_drain = false;
                         self.amount_input.value = v.clone();
 
                         if v.is_empty() {
@@ -1220,6 +1227,7 @@ impl State for LiquidSend {
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatDone) => {
+                    self.is_drain = false;
                     let is_cross_asset = self.from_asset != self.to_asset;
                     if let LiquidSendFlowState::Main {
                         modal:
@@ -1466,18 +1474,22 @@ impl State for LiquidSend {
                             let breez_client = self.breez_client.clone();
                             let breez_clone = self.breez_client.clone();
                             let amount_sat = self.amount.to_sat();
+                            let is_drain = self.is_drain;
 
                             let lightning_send = Task::perform(
                                 async move {
+                                    let pay_amount = if is_drain {
+                                        breez_sdk_liquid::prelude::PayAmount::Drain
+                                    } else {
+                                        breez_sdk_liquid::prelude::PayAmount::Bitcoin {
+                                            receiver_amount_sat: amount_sat,
+                                        }
+                                    };
                                     breez_client
                                         .prepare_send_payment(
                                             &breez_sdk_liquid::prelude::PrepareSendRequest {
                                                 destination,
-                                                amount: Some(
-                                                    breez_sdk_liquid::prelude::PayAmount::Bitcoin {
-                                                        receiver_amount_sat: amount_sat,
-                                                    },
-                                                ),
+                                                amount: Some(pay_amount),
                                                 disable_mrh: None,
                                                 payment_timeout_sec: None,
                                             },
@@ -1503,13 +1515,17 @@ impl State for LiquidSend {
 
                             let onchain_send = Task::perform(
                                 async move {
+                                    let pay_amount = if is_drain {
+                                        breez_sdk_liquid::prelude::PayAmount::Drain
+                                    } else {
+                                        breez_sdk_liquid::prelude::PayAmount::Bitcoin {
+                                            receiver_amount_sat: amount_sat,
+                                        }
+                                    };
                                     breez_clone
                                         .prepare_pay_onchain(
                                             &breez_sdk_liquid::prelude::PreparePayOnchainRequest {
-                                                amount:
-                                                    breez_sdk_liquid::prelude::PayAmount::Bitcoin {
-                                                        receiver_amount_sat: amount_sat,
-                                                    },
+                                                amount: pay_amount,
                                                 fee_rate_sat_per_vbyte: None,
                                             },
                                         )
@@ -1645,6 +1661,7 @@ impl State for LiquidSend {
                             self.amount = Amount::ZERO;
                             self.usdt_amount_input = form::Value::default();
                             self.amount_input = form::Value::default();
+                            self.is_drain = false;
                         }
                     }
                 }
@@ -1827,6 +1844,7 @@ impl State for LiquidSend {
                                         };
                                     self.amount_input.valid = true;
                                     self.amount_input.warning = None;
+                                    self.is_drain = true;
                                 }
                             }
                         }
@@ -1851,6 +1869,7 @@ impl State for LiquidSend {
                             };
                         self.amount_input.valid = true;
                         self.amount_input.warning = None;
+                        self.is_drain = true;
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::UsdtAmountEdited(v)) => {
@@ -1891,6 +1910,7 @@ impl State for LiquidSend {
                     self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
                     self.error = None;
                     self.amount = Amount::ZERO;
+                    self.is_drain = false;
                     self.lightning_limits = None;
                     self.description = None;
                     self.comment = None;
@@ -1996,6 +2016,7 @@ impl State for LiquidSend {
                     self.flow_state = LiquidSendFlowState::Sent;
                     self.prepare_response = None;
                     self.is_sending = false;
+                    self.is_drain = false;
                     // Fresh quote for the success screen
                     self.sent_quote =
                         coincube_ui::component::quote_display::random_quote("transaction-sent");
@@ -2036,6 +2057,7 @@ impl State for LiquidSend {
                     self.lightning_limits = None;
                     self.prepare_response = None;
                     self.is_sending = false;
+                    self.is_drain = false;
                     self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
                 }
                 view::LiquidSendMessage::LightningLimitsFetched { min_sat, max_sat } => {

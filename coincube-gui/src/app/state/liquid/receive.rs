@@ -778,6 +778,9 @@ impl State for LiquidReceive {
                 LiquidReceiveMessage::History => {
                     return redirect(Menu::Liquid(LiquidSubMenu::Transactions(None)));
                 }
+                LiquidReceiveMessage::RefreshRequested => {
+                    return self.load_recent_transactions();
+                }
             }
         }
         Task::none()
@@ -791,7 +794,19 @@ impl State for LiquidReceive {
         self.sideshift_flow = None;
         self.receive_picker_open = false;
         self.sender_picker_open = false;
-        Task::batch(vec![self.fetch_limits(), self.load_recent_transactions()])
+        // Trigger an SDK sync in the background so on-chain state is fresh.
+        // When the sync completes the SDK fires SdkEvent::Synced automatically.
+        let breez = self.breez_client.clone();
+        Task::batch(vec![
+            Task::perform(
+                async move {
+                    let _ = breez.sync().await;
+                },
+                |_| Message::CacheUpdated,
+            ),
+            self.fetch_limits(),
+            self.load_recent_transactions(),
+        ])
     }
 
     fn subscription(&self) -> Subscription<Message> {

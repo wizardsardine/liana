@@ -1053,7 +1053,7 @@ impl Launcher {
                     self.connect_account
                         .plan
                         .as_ref()
-                        .map_or(AccountTier::default(), |plan| match plan.tier {
+                        .map_or(AccountTier::default(), |plan| match plan.tier() {
                             crate::services::coincube::PlanTier::Free => AccountTier::Free,
                             crate::services::coincube::PlanTier::Pro => AccountTier::Pro,
                             crate::services::coincube::PlanTier::Legacy => AccountTier::Legacy,
@@ -1168,6 +1168,13 @@ impl Launcher {
                 }
 
                 task
+            }
+
+            Message::View(ViewMessage::OpenUrl(url)) => {
+                if let Err(e) = open::that_detached(&url) {
+                    log::error!("[LAUNCHER] Error opening '{}': {}", url, e);
+                }
+                Task::none()
             }
 
             _ => {
@@ -1929,11 +1936,14 @@ fn has_existing_wallet(data_dir: &CoincubeDirectory, network: Network) -> bool {
 /// Map a `Task<app::message::Message>` (from ConnectAccountPanel) into a
 /// `Task<launcher::Message>` by extracting the ConnectAccountMessage.
 fn map_connect_task(task: Task<app::message::Message>) -> Task<Message> {
-    task.map(|app_msg| {
-        if let app::message::Message::View(app::view::Message::ConnectAccount(acct_msg)) = app_msg {
+    task.map(|app_msg| match app_msg {
+        app::message::Message::View(app::view::Message::ConnectAccount(acct_msg)) => {
             Message::View(ViewMessage::ConnectAccount(acct_msg))
-        } else {
-            // Shouldn't happen — ConnectAccountPanel only emits ConnectAccount messages
+        }
+        app::message::Message::View(app::view::Message::OpenUrl(url)) => {
+            Message::View(ViewMessage::OpenUrl(url))
+        }
+        _ => {
             log::warn!("[LAUNCHER] Unexpected message from ConnectAccountPanel");
             Message::View(ViewMessage::Check)
         }
@@ -2017,6 +2027,8 @@ pub enum ViewMessage {
     ConnectAccount(ConnectAccountMessage),
     /// Toggle light/dark theme
     ToggleTheme,
+    /// Open a URL in the default browser
+    OpenUrl(String),
 }
 
 #[derive(Debug, Clone)]

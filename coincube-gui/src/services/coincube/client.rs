@@ -209,6 +209,46 @@ impl CoincubeClient {
         Ok(res.json().await?)
     }
 
+    /// GET /api/v1/connect/features (public — no auth required)
+    pub async fn get_connect_features(&self) -> Result<super::FeaturesResponse, CoincubeError> {
+        let url = format!("{}/api/v1/connect/features", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+
+    /// POST /api/v1/connect/checkout (authenticated)
+    pub async fn create_checkout(
+        &self,
+        req: super::CheckoutRequest,
+    ) -> Result<super::CheckoutResponse, CoincubeError> {
+        let url = format!("{}/api/v1/connect/checkout", self.base_url);
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+
+    /// GET /api/v1/connect/checkout/{chargeId} (authenticated)
+    pub async fn get_charge_status(
+        &self,
+        charge_id: &str,
+    ) -> Result<super::ChargeStatusResponse, CoincubeError> {
+        let url = format!("{}/api/v1/connect/checkout/{}", self.base_url, charge_id);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+
+    /// GET /api/v1/connect/billing/history (authenticated)
+    pub async fn get_billing_history(
+        &self,
+    ) -> Result<Vec<super::BillingHistoryEntry>, CoincubeError> {
+        let url = format!("{}/api/v1/connect/billing/history", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+
     pub async fn get_verified_devices(&self) -> Result<Vec<super::VerifiedDevice>, CoincubeError> {
         let url = format!("{}/api/v1/verified-device/", self.base_url);
         let res = self.client.get(&url).send().await?;

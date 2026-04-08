@@ -494,6 +494,31 @@ impl Panels {
             Menu::Settings(_) => Some(&mut self.global_settings as &mut dyn State),
         }
     }
+
+    /// Returns the refresh message for the currently visible liquid-related panel, if any.
+    /// Used to avoid refreshing all liquid panels when only one is visible.
+    /// When `exclude_home` is true, skips the Home panel (useful when the caller
+    /// already sends a separate RefreshLiquidBalance message).
+    fn active_liquid_refresh(&self, exclude_home: bool) -> Option<Message> {
+        match &self.current {
+            Menu::Home if !exclude_home => Some(Message::View(view::Message::Home(
+                view::HomeMessage::RefreshLiquidBalance,
+            ))),
+            Menu::Liquid(sub) => match sub {
+                crate::app::menu::LiquidSubMenu::Overview => Some(Message::View(
+                    view::Message::LiquidOverview(view::LiquidOverviewMessage::RefreshRequested),
+                )),
+                crate::app::menu::LiquidSubMenu::Send => Some(Message::View(
+                    view::Message::LiquidSend(view::LiquidSendMessage::RefreshRequested),
+                )),
+                crate::app::menu::LiquidSubMenu::Receive => Some(Message::View(
+                    view::Message::LiquidReceive(view::LiquidReceiveMessage::RefreshRequested),
+                )),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
 }
 
 /// Interval between bitcoind sync progress polls (in seconds).
@@ -1738,19 +1763,18 @@ impl App {
                             )))
                         });
 
-                        return Task::batch(vec![
-                            Task::done(Message::Tick),
-                            Task::done(Message::View(view::Message::LiquidSend(
-                                view::LiquidSendMessage::RefreshRequested,
-                            ))),
-                            Task::done(Message::View(view::Message::LiquidOverview(
-                                view::LiquidOverviewMessage::RefreshRequested,
-                            ))),
+                        // Refresh only the active liquid panel + home balance.
+                        // Inactive panels refresh when navigated to via reload().
+                        let mut tasks = vec![
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
                             ))),
                             home_task.unwrap_or_else(Task::none),
-                        ]);
+                        ];
+                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
+                            tasks.push(Task::done(msg));
+                        }
+                        return Task::batch(tasks);
                     }
                     SdkEvent::PaymentSucceeded { details } => {
                         let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
@@ -1759,19 +1783,16 @@ impl App {
                             )))
                         });
 
-                        return Task::batch(vec![
-                            Task::done(Message::Tick),
-                            Task::done(Message::View(view::Message::LiquidSend(
-                                view::LiquidSendMessage::RefreshRequested,
-                            ))),
-                            Task::done(Message::View(view::Message::LiquidOverview(
-                                view::LiquidOverviewMessage::RefreshRequested,
-                            ))),
+                        let mut tasks = vec![
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
                             ))),
                             home_task.unwrap_or_else(Task::none),
-                        ]);
+                        ];
+                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
+                            tasks.push(Task::done(msg));
+                        }
+                        return Task::batch(tasks);
                     }
                     SdkEvent::PaymentFailed { details } => {
                         let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
@@ -1780,19 +1801,16 @@ impl App {
                             )))
                         });
 
-                        return Task::batch(vec![
-                            Task::done(Message::Tick),
-                            Task::done(Message::View(view::Message::LiquidSend(
-                                view::LiquidSendMessage::RefreshRequested,
-                            ))),
-                            Task::done(Message::View(view::Message::LiquidOverview(
-                                view::LiquidOverviewMessage::RefreshRequested,
-                            ))),
+                        let mut tasks = vec![
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
                             ))),
                             home_task.unwrap_or_else(Task::none),
-                        ]);
+                        ];
+                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
+                            tasks.push(Task::done(msg));
+                        }
+                        return Task::batch(tasks);
                     }
                     SdkEvent::PaymentWaitingConfirmation { details } => {
                         let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
@@ -1801,34 +1819,24 @@ impl App {
                             )))
                         });
 
-                        return Task::batch(vec![
-                            Task::done(Message::Tick),
-                            Task::done(Message::View(view::Message::LiquidSend(
-                                view::LiquidSendMessage::RefreshRequested,
-                            ))),
-                            Task::done(Message::View(view::Message::LiquidOverview(
-                                view::LiquidOverviewMessage::RefreshRequested,
-                            ))),
+                        let mut tasks = vec![
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
                             ))),
                             home_task.unwrap_or_else(Task::none),
-                        ]);
+                        ];
+                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
+                            tasks.push(Task::done(msg));
+                        }
+                        return Task::batch(tasks);
                     }
                     SdkEvent::Synced => {
-                        // Payment state changed - trigger cache update
-                        return Task::batch(vec![
-                            Task::done(Message::Tick),
-                            Task::done(Message::View(view::Message::LiquidSend(
-                                view::LiquidSendMessage::RefreshRequested,
-                            ))),
-                            Task::done(Message::View(view::Message::LiquidOverview(
-                                view::LiquidOverviewMessage::RefreshRequested,
-                            ))),
-                            Task::done(Message::View(view::Message::Home(
-                                view::HomeMessage::RefreshLiquidBalance,
-                            ))),
-                        ]);
+                        // SDK completed an internal sync — refresh only the
+                        // active liquid panel to avoid redundant info() calls.
+                        // Inactive panels refresh when navigated to via reload().
+                        if let Some(msg) = self.panels.active_liquid_refresh(false) {
+                            return Task::done(msg);
+                        }
                     }
                     _ => {
                         // Other events - just log

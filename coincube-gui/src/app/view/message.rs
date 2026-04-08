@@ -522,6 +522,8 @@ pub enum LiquidReceiveMessage {
     SelectTransaction(usize),
     /// User tapped "View All Transactions".
     History,
+    /// Refresh balance and recent transactions (e.g. after a payment event).
+    RefreshRequested,
 }
 
 /// Network the sender is sending from (receive flow).
@@ -666,6 +668,26 @@ pub enum ConnectAccountMessage {
     CopyToClipboard(String),
     Contacts(ContactsMessage),
     Error(String),
+    // --- Plan & Billing ---
+    FeaturesLoaded(Option<crate::services::coincube::FeaturesResponse>, u64),
+    BillingCycleSelected(crate::services::coincube::BillingCycle),
+    StartCheckout(crate::services::coincube::PlanTier),
+    CheckoutCreated(
+        Result<crate::services::coincube::CheckoutResponse, String>,
+        u64,
+    ),
+    PollChargeStatus,
+    ChargeStatusUpdated(
+        Result<crate::services::coincube::ChargeStatusResponse, (String, bool)>,
+        u64,
+    ),
+    DismissCheckout,
+    OpenCheckoutUrl(String),
+    BillingHistoryLoaded(
+        Result<Vec<crate::services::coincube::BillingHistoryEntry>, String>,
+        u64,
+    ),
+    ToggleBillingHistory,
 }
 
 #[derive(Debug, Clone)]

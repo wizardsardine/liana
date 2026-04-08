@@ -8,19 +8,23 @@ use coincube_ui::{
     theme,
     widget::*,
 };
-use iced::{widget::container, Alignment, Length};
+use iced::{
+    widget::{container, QRCode},
+    Alignment, Length,
+};
 
 use crate::{
     app::{
         menu::ConnectSubMenu,
         state::connect::{
-            AvatarFlowStep, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep, ConnectPanel,
+            AvatarFlowStep, CheckoutPhase, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep,
+            ConnectPanel,
         },
         view::{AvatarMessage, ConnectAccountMessage, ConnectCubeMessage},
     },
     services::coincube::{
         AvatarAccentMotif, AvatarAgeFeel, AvatarArchetype, AvatarArmorStyle, AvatarDemeanor,
-        AvatarGender, PlanTier,
+        AvatarGender, BillingCycle, PlanTier,
     },
 };
 
@@ -377,7 +381,7 @@ fn overview_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
     let plan_label = state
         .plan
         .as_ref()
-        .map(|p| p.tier.to_string())
+        .map(|p| p.tier().to_string())
         .unwrap_or_else(|| "Free".to_string());
 
     let verification_badge: Element<ConnectAccountMessage> = if verified {
@@ -446,86 +450,217 @@ fn plan_tier_color(tier: &PlanTier) -> iced::Color {
     }
 }
 
+// ── Plan & Billing — top-level router ───────────────────────────────────────
+
 fn plan_billing_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
+    if let Some(checkout_state) = &state.checkout {
+        return checkout_ux(checkout_state);
+    }
+    if state.show_billing_history {
+        return billing_history_ux(state);
+    }
+    plan_selection_ux(state)
+}
+
+// ── Plan selection view ─────────────────────────────────────────────────────
+
+fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
     let current_tier = state
         .plan
         .as_ref()
-        .map(|p| &p.tier)
+        .map(|p| p.tier())
         .unwrap_or(&PlanTier::Free);
 
-    let plan_card = |name: &'static str,
-                     tier: &PlanTier,
-                     desc: &'static str,
-                     price: &'static str|
-     -> Element<'a, ConnectAccountMessage> {
-        let is_current = tier == current_tier;
-        let badge_color = plan_tier_color(tier);
+    let cycle = state.selected_billing_cycle;
 
-        container(
-            Column::new()
-                .push(
-                    Row::new()
-                        .push(text::p1_bold(name).color(badge_color))
-                        .push(iced::widget::Space::new().width(Length::Fill))
-                        .push(text::p1_regular(price).color(color::GREY_3)),
-                )
-                .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
-                .push(text::p2_regular(desc).color(color::GREY_3))
-                .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-                .push(if is_current {
-                    button::secondary(None, "Current Plan").width(Length::Fill)
-                } else {
-                    button::primary(None, "Upgrade (Coming Soon)").width(Length::Fill)
-                })
-                .padding(16)
-                .spacing(2),
-        )
-        .style(move |t| container::Style {
-            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-            border: iced::Border {
-                color: if is_current {
-                    badge_color
-                } else {
-                    t.colors.cards.simple.border.unwrap_or(color::GREY_5)
-                },
-                width: if is_current { 1.0 } else { 0.2 },
-                radius: 16.0.into(),
-            },
-            ..Default::default()
-        })
-        .width(Length::Fill)
-        .into()
+    // Billing cycle toggle
+    let monthly_btn = if cycle == BillingCycle::Monthly {
+        button::primary(None, "Monthly").width(Length::Fill)
+    } else {
+        button::secondary(None, "Monthly")
+            .on_press(ConnectAccountMessage::BillingCycleSelected(
+                BillingCycle::Monthly,
+            ))
+            .width(Length::Fill)
+    };
+    let annual_btn = if cycle == BillingCycle::Annual {
+        button::primary(None, "Annual").width(Length::Fill)
+    } else {
+        button::secondary(None, "Annual")
+            .on_press(ConnectAccountMessage::BillingCycleSelected(
+                BillingCycle::Annual,
+            ))
+            .width(Length::Fill)
+    };
+    let cycle_toggle = Row::new()
+        .push(monthly_btn)
+        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+        .push(annual_btn)
+        .width(Length::Fill);
+
+    // Determine upgrade order: Free < Pro < Legacy
+    let tier_rank = |t: &PlanTier| -> u8 {
+        match t {
+            PlanTier::Free => 0,
+            PlanTier::Pro => 1,
+            PlanTier::Legacy => 2,
+        }
     };
 
-    Column::new()
+    // Build plan cards from features response, or static fallback
+    struct PlanCardData {
+        name: String,
+        tier: PlanTier,
+        features: Vec<String>,
+        price_label: String,
+    }
+
+    let cards: Vec<PlanCardData> = if let Some(ref features) = state.features {
+        features
+            .plans
+            .iter()
+            .filter_map(|info| {
+                let tier = match info.name.as_str() {
+                    "free" => PlanTier::Free,
+                    "pro" => PlanTier::Pro,
+                    "legacy" => PlanTier::Legacy,
+                    _ => return None,
+                };
+                let price_label = match &info.price {
+                    Some(p) => match cycle {
+                        BillingCycle::Monthly => format!("${}/mo", p.monthly),
+                        BillingCycle::Annual => format!("${}/yr", p.annual),
+                    },
+                    None => "Free".to_string(),
+                };
+                Some(PlanCardData {
+                    name: tier.to_string(),
+                    tier,
+                    features: info.features.clone(),
+                    price_label,
+                })
+            })
+            .collect()
+    } else {
+        vec![
+            PlanCardData {
+                name: "Free".to_string(),
+                tier: PlanTier::Free,
+                features: vec![
+                    "Esplora access".into(),
+                    "Descriptor backup".into(),
+                    "1 signing key (no policies)".into(),
+                ],
+                price_label: "Free".to_string(),
+            },
+            PlanCardData {
+                name: "Pro".to_string(),
+                tier: PlanTier::Pro,
+                features: vec![
+                    "Signing policies".into(),
+                    "Unlimited self keys".into(),
+                    "Keychain backup/migration".into(),
+                ],
+                price_label: match cycle {
+                    BillingCycle::Monthly => "$12/mo".to_string(),
+                    BillingCycle::Annual => "$120/yr".to_string(),
+                },
+            },
+            PlanCardData {
+                name: "Legacy".to_string(),
+                tier: PlanTier::Legacy,
+                features: vec![
+                    "Invites".into(),
+                    "Linked keychains".into(),
+                    "Inheritance coordination".into(),
+                ],
+                price_label: match cycle {
+                    BillingCycle::Monthly => "$35/mo".to_string(),
+                    BillingCycle::Annual => "$350/yr".to_string(),
+                },
+            },
+        ]
+    };
+
+    let mut col = Column::new()
         .push(text::h4_bold("Plan & Billing").style(theme::text::primary))
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
-        .push(plan_card(
-            "Free",
-            &PlanTier::Free,
-            "Core features: Liquid wallet, Buy/Sell",
-            "Free",
-        ))
+        .push(cycle_toggle)
+        .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+
+    for card in cards {
+        let is_current = card.tier == *current_tier;
+        let is_upgrade = tier_rank(&card.tier) > tier_rank(current_tier);
+        let badge_color = plan_tier_color(&card.tier);
+
+        let mut card_col = Column::new()
+            .push(
+                Row::new()
+                    .push(text::p1_bold(card.name).color(badge_color))
+                    .push(iced::widget::Space::new().width(Length::Fill))
+                    .push(text::p1_regular(card.price_label).color(color::GREY_3)),
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+
+        for feature in card.features {
+            card_col =
+                card_col.push(text::p2_regular(format!("• {}", feature)).color(color::GREY_3));
+        }
+
+        card_col = card_col
+            .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
+            .push(if is_current {
+                button::secondary(None, "Current Plan").width(Length::Fill)
+            } else if is_upgrade {
+                let label = match &card.tier {
+                    PlanTier::Pro => "Upgrade to Pro",
+                    PlanTier::Legacy => "Upgrade to Legacy",
+                    _ => "Upgrade",
+                };
+                button::primary(None, label)
+                    .on_press(ConnectAccountMessage::StartCheckout(card.tier))
+                    .width(Length::Fill)
+            } else {
+                // Downgrade or Free — no action
+                button::secondary(None, "—").width(Length::Fill)
+            })
+            .padding(16)
+            .spacing(2);
+
+        col = col.push(
+            container(card_col)
+                .style(move |t| container::Style {
+                    background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+                    border: iced::Border {
+                        color: if is_current {
+                            badge_color
+                        } else {
+                            t.colors.cards.simple.border.unwrap_or(color::GREY_5)
+                        },
+                        width: if is_current { 1.0 } else { 0.2 },
+                        radius: 16.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .width(Length::Fill),
+        );
+        col = col.push(iced::widget::Space::new().height(Length::Fixed(10.0)));
+    }
+
+    // Billing history link
+    col = col
+        .push(iced::widget::Space::new().height(Length::Fixed(5.0)))
+        .push(
+            button::secondary(None, "View Billing History")
+                .on_press(ConnectAccountMessage::ToggleBillingHistory)
+                .width(Length::Fill),
+        )
         .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(plan_card(
-            "Pro",
-            &PlanTier::Pro,
-            "Advanced policy templates, priority support",
-            "Coming Soon",
-        ))
-        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(plan_card(
-            "Legacy",
-            &PlanTier::Legacy,
-            "Full feature access including Invites and Duress",
-            "Coming Soon",
-        ))
-        .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
         .push(
             container(
                 text::p2_regular(
-                    "Paid plans will be available via Bitcoin / Lightning (OpenNode). \
-                     No subscriptions — pay upfront, auto-renew reminders sent by email.",
+                    "Payments via Bitcoin (Lightning or on-chain). \
+                     No recurring subscriptions — pay upfront, renewal reminders sent by email.",
                 )
                 .color(color::GREY_3),
             )
@@ -539,10 +674,263 @@ fn plan_billing_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcc
                 ..Default::default()
             })
             .width(Length::Fill),
+        );
+
+    col.spacing(0).width(Length::Fill).into()
+}
+
+// ── Checkout / payment view ─────────────────────────────────────────────────
+
+fn checkout_ux<'a>(
+    checkout_state: &'a crate::app::state::connect::CheckoutState,
+) -> Element<'a, ConnectAccountMessage> {
+    let mut col = Column::new()
+        .push(text::h4_bold("Checkout").style(theme::text::primary))
+        .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+
+    match &checkout_state.phase {
+        CheckoutPhase::Creating => {
+            col = col.push(text::p1_regular("Creating invoice…").color(color::GREY_3));
+        }
+
+        CheckoutPhase::AwaitingPayment | CheckoutPhase::Processing => {
+            if let Some(ref resp) = checkout_state.checkout {
+                let amount_line = format!(
+                    "{} {} ({} sats)",
+                    resp.amount_fiat, resp.fiat_currency, resp.amount_sats
+                );
+                let plan_line = format!("Upgrade to {} ({})", resp.plan, resp.billing_cycle);
+
+                col = col
+                    .push(text::p1_bold(plan_line).style(theme::text::primary))
+                    .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
+                    .push(text::p1_regular(amount_line).color(color::ORANGE))
+                    .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+
+                // Lightning QR
+                if let Some(ref qr) = checkout_state.lightning_qr {
+                    col = col.push(
+                        container(QRCode::new(qr).cell_size(6))
+                            .width(Length::Fill)
+                            .center_x(Length::Fill),
+                    );
+                    col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+                }
+
+                // Lightning invoice (truncated) + copy
+                let invoice_display = if resp.lightning_invoice.len() > 40 {
+                    format!("{}…", &resp.lightning_invoice[..40])
+                } else {
+                    resp.lightning_invoice.clone()
+                };
+                col = col.push(
+                    Row::new()
+                        .push(
+                            text::p2_regular(invoice_display)
+                                .color(color::GREY_3)
+                                .width(Length::Fill),
+                        )
+                        .push(
+                            button::secondary(None, "Copy")
+                                .on_press(ConnectAccountMessage::CopyToClipboard(
+                                    resp.lightning_invoice.clone(),
+                                ))
+                                .width(Length::Shrink),
+                        )
+                        .align_y(Alignment::Center)
+                        .spacing(8),
+                );
+
+                col = col.push(iced::widget::Space::new().height(Length::Fixed(10.0)));
+
+                // On-chain address + copy
+                col = col.push(
+                    Row::new()
+                        .push(
+                            text::p2_regular(format!("On-chain: {}", resp.on_chain_address))
+                                .color(color::GREY_3)
+                                .width(Length::Fill),
+                        )
+                        .push(
+                            button::secondary(None, "Copy")
+                                .on_press(ConnectAccountMessage::CopyToClipboard(
+                                    resp.on_chain_address.clone(),
+                                ))
+                                .width(Length::Shrink),
+                        )
+                        .align_y(Alignment::Center)
+                        .spacing(8),
+                );
+
+                col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+
+                // Open in browser
+                col = col.push(
+                    button::secondary(None, "Open in Browser")
+                        .on_press(ConnectAccountMessage::OpenCheckoutUrl(
+                            resp.checkout_url.clone(),
+                        ))
+                        .width(Length::Fill),
+                );
+
+                col = col.push(iced::widget::Space::new().height(Length::Fixed(10.0)));
+
+                // Expires
+                col = col.push(
+                    text::p2_regular(format!("Expires: {}", resp.expires_at)).color(color::GREY_3),
+                );
+
+                if matches!(checkout_state.phase, CheckoutPhase::Processing) {
+                    col = col
+                        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                        .push(
+                            text::p2_regular("Payment detected, confirming…").color(color::ORANGE),
+                        );
+                }
+            }
+
+            col = col
+                .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
+                .push(
+                    button::secondary(None, "Cancel")
+                        .on_press(ConnectAccountMessage::DismissCheckout)
+                        .width(Length::Fill),
+                );
+        }
+
+        CheckoutPhase::Paid => {
+            let plan_name = checkout_state
+                .checkout
+                .as_ref()
+                .map(|c| c.plan.to_string())
+                .unwrap_or_else(|| "your new plan".to_string());
+            col = col
+                .push(
+                    text::p1_bold(format!("Payment confirmed! Upgraded to {}.", plan_name))
+                        .color(color::ORANGE),
+                )
+                .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
+                .push(
+                    button::primary(None, "Done")
+                        .on_press(ConnectAccountMessage::DismissCheckout)
+                        .width(Length::Fill),
+                );
+        }
+
+        CheckoutPhase::Expired => {
+            col = col
+                .push(text::p1_regular("Invoice expired.").color(color::RED))
+                .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
+                .push(
+                    button::primary(None, "Try Again")
+                        .on_press(ConnectAccountMessage::DismissCheckout)
+                        .width(Length::Fill),
+                );
+        }
+
+        CheckoutPhase::Failed(msg) => {
+            col = col
+                .push(text::p1_regular(format!("Error: {}", msg)).color(color::RED))
+                .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
+                .push(
+                    button::primary(None, "Try Again")
+                        .on_press(ConnectAccountMessage::DismissCheckout)
+                        .width(Length::Fill),
+                );
+        }
+    }
+
+    col.spacing(0).width(Length::Fill).into()
+}
+
+// ── Billing history view ────────────────────────────────────────────────────
+
+fn billing_history_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
+    let mut col = Column::new()
+        .push(
+            Row::new()
+                .push(
+                    button::secondary(None, "← Back")
+                        .on_press(ConnectAccountMessage::ToggleBillingHistory),
+                )
+                .push(iced::widget::Space::new().width(Length::Fixed(10.0)))
+                .push(text::h4_bold("Billing History").style(theme::text::primary))
+                .align_y(Alignment::Center),
         )
-        .spacing(0)
-        .width(Length::Fill)
-        .into()
+        .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+
+    match &state.billing_history {
+        None => {
+            col = col.push(text::p1_regular("Loading…").color(color::GREY_3));
+        }
+        Some(entries) if entries.is_empty() => {
+            col = col.push(text::p1_regular("No billing history yet.").color(color::GREY_3));
+        }
+        Some(entries) => {
+            for entry in entries {
+                let status_color = match entry.status {
+                    crate::services::coincube::ChargeStatus::Paid => color::ORANGE,
+                    crate::services::coincube::ChargeStatus::Expired => color::RED,
+                    _ => color::GREY_3,
+                };
+                let status_label = match entry.status {
+                    crate::services::coincube::ChargeStatus::Unpaid => "Unpaid",
+                    crate::services::coincube::ChargeStatus::Processing => "Processing",
+                    crate::services::coincube::ChargeStatus::Paid => "Paid",
+                    crate::services::coincube::ChargeStatus::Expired => "Expired",
+                };
+                let amount_label = format!(
+                    "{} {} ({} sats)",
+                    entry.amount_fiat, entry.fiat_currency, entry.amount_sats
+                );
+                let date = entry
+                    .paid_at
+                    .as_deref()
+                    .unwrap_or(entry.created_at.as_str());
+                // Truncate ISO date to just the date portion
+                let date_short = if date.len() >= 10 { &date[..10] } else { date };
+
+                col = col.push(
+                    container(
+                        Row::new()
+                            .push(
+                                Column::new()
+                                    .push(
+                                        text::p2_bold(format!(
+                                            "{} ({})",
+                                            entry.plan, entry.billing_cycle
+                                        ))
+                                        .style(theme::text::primary),
+                                    )
+                                    .push(text::p2_regular(amount_label).color(color::GREY_3))
+                                    .width(Length::Fill),
+                            )
+                            .push(
+                                Column::new()
+                                    .push(text::p2_regular(date_short).color(color::GREY_3))
+                                    .push(text::p2_bold(status_label).color(status_color))
+                                    .align_x(Alignment::End),
+                            )
+                            .align_y(Alignment::Center)
+                            .padding(12),
+                    )
+                    .style(|t| container::Style {
+                        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+                        border: iced::Border {
+                            color: t.colors.cards.simple.border.unwrap_or(color::GREY_5),
+                            width: 0.2,
+                            radius: 12.0.into(),
+                        },
+                        ..Default::default()
+                    })
+                    .width(Length::Fill),
+                );
+                col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+            }
+        }
+    }
+
+    col.spacing(0).width(Length::Fill).into()
 }
 
 fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
@@ -1336,7 +1724,7 @@ fn invites_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountM
     let is_legacy = state
         .plan
         .as_ref()
-        .map(|p| p.tier == PlanTier::Legacy)
+        .map(|p| *p.tier() == PlanTier::Legacy)
         .unwrap_or(false);
 
     let card_content: Element<ConnectAccountMessage> = if !is_legacy {
