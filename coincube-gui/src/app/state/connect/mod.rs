@@ -9,7 +9,7 @@ pub(crate) const CONNECT_KEYRING_SERVICE: &str = if cfg!(debug_assertions) {
 
 pub(crate) const CONNECT_KEYRING_USER: &str = "global_session";
 
-pub use account::{CheckoutPhase, CheckoutState, ConnectAccountPanel, ConnectFlowStep};
+pub use account::{CheckoutPhase, CheckoutState, ConnectAccountPanel, ConnectFlowStep, ContactsState, ContactsStep};
 pub use cube::ConnectCubePanel;
 
 use std::sync::Arc;

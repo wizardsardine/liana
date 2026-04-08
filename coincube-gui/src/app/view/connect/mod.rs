@@ -1,3 +1,5 @@
+mod contacts;
+
 use coincube_ui::{
     color,
     component::{button, text},
@@ -72,6 +74,9 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
             ConnectSubMenu::PlanBilling => plan_billing_ux(acct).map(ViewMessage::ConnectAccount),
             ConnectSubMenu::Security => security_ux(acct).map(ViewMessage::ConnectAccount),
             ConnectSubMenu::Duress => duress_ux().map(ViewMessage::ConnectAccount),
+            ConnectSubMenu::Contacts => {
+                contacts::contacts_ux(acct).map(ViewMessage::ConnectAccount)
+            }
             ConnectSubMenu::Invites => invites_ux(acct).map(ViewMessage::ConnectAccount),
         },
     };
@@ -138,6 +143,7 @@ pub fn connect_account_panel<'a>(
             ConnectSubMenu::PlanBilling => plan_billing_ux(acct),
             ConnectSubMenu::Security => security_ux(acct),
             ConnectSubMenu::Duress => duress_ux(),
+            ConnectSubMenu::Contacts => contacts::contacts_ux(acct),
             // Cube-specific submenus shouldn't appear in the launcher
             _ => Column::new()
                 .push(

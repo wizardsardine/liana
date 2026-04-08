@@ -374,7 +374,8 @@ pub fn liquid_overview_view<'a>(
                 Container::new(view_transactions_button)
                     .width(Length::Fill)
                     .center_x(Length::Fill),
-            );
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(40.0)));
     }
 
     if let Some(err) = error {

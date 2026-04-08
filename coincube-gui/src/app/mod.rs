@@ -499,14 +499,6 @@ impl Panels {
 /// Interval between bitcoind sync progress polls (in seconds).
 const BITCOIND_SYNC_POLL_INTERVAL: Duration = Duration::from_secs(10);
 
-/// Convert a bitcoin::Network to the API network string ("mainnet" or "testnet").
-fn network_api_string(network: bitcoin::Network) -> String {
-    match network {
-        bitcoin::Network::Bitcoin => "mainnet".to_string(),
-        _ => "testnet".to_string(),
-    }
-}
-
 pub struct App {
     cache: Cache,
     wallet: Option<Arc<Wallet>>,
@@ -617,7 +609,7 @@ impl App {
             restored_from_backup,
             cube_settings.id.clone(),
             cube_settings.name.clone(),
-            network_api_string(cache.network),
+            settings::network_to_api_string(cache.network),
         );
         let mut tasks = vec![];
         if let Some(vault_overview) = panels.vault_overview.as_mut() {
@@ -691,7 +683,7 @@ impl App {
             network,
             cube_settings.id.clone(),
             cube_settings.name.clone(),
-            network_api_string(network),
+            settings::network_to_api_string(network),
         );
         let mut cache = cache;
         cache.has_p2p = panels.p2p.is_some();
@@ -925,6 +917,14 @@ impl App {
                             ),
                         ),
                     ));
+                }
+                // Load Contacts data on demand
+                if matches!(submenu, menu::ConnectSubMenu::Contacts)
+                    && self.panels.connect.account.is_authenticated()
+                {
+                    let contacts_task = self.panels.connect.account.reload_contacts();
+                    self.panels.current = menu;
+                    return contacts_task;
                 }
             }
             menu::Menu::Liquid(_submenu) => {
