@@ -19,8 +19,8 @@ use liana_gui::{
 };
 use liana_ui::widget::{modal, Element};
 
-use crate::message::{Msg, Section};
-use crate::views;
+use super::message::{Msg, Section};
+use super::views;
 
 /// Business-specific settings UI.
 pub struct BusinessSettingsUI {
@@ -83,7 +83,7 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
             None => views::list_view(),
             Some(Section::Wallet) => views::wallet_view(self),
             Some(Section::General) => {
-                let bc = crate::BackendCurrency::try_from(self.fiat_setting.currency)
+                let bc = crate::settings::BackendCurrency::try_from(self.fiat_setting.currency)
                     .unwrap_or_default();
                 views::general_view(self.fiat_setting.is_enabled, bc)
             }
@@ -123,11 +123,11 @@ impl BusinessSettingsUI {
         let fiat_currency = if !setting.is_enabled {
             liana_gui::services::connect::client::backend::api::FiatCurrency::None
         } else {
-            match crate::BackendCurrency::try_from(setting.currency) {
-                Ok(crate::BackendCurrency::USD) => {
+            match crate::settings::BackendCurrency::try_from(setting.currency) {
+                Ok(crate::settings::BackendCurrency::USD) => {
                     liana_gui::services::connect::client::backend::api::FiatCurrency::USD
                 }
-                Ok(crate::BackendCurrency::EUR) => {
+                Ok(crate::settings::BackendCurrency::EUR) => {
                     liana_gui::services::connect::client::backend::api::FiatCurrency::EUR
                 }
                 Err(_) => liana_gui::services::connect::client::backend::api::FiatCurrency::None,

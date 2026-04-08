@@ -8,8 +8,8 @@ use liana_ui::{
     widget::Element,
 };
 
-use crate::message::{Msg, Section};
-use crate::ui::BusinessSettingsUI;
+use crate::settings::message::{Msg, Section};
+use crate::settings::ui::BusinessSettingsUI;
 
 /// Settings section list view.
 pub fn list_view() -> Element<'static, Msg> {
@@ -83,7 +83,10 @@ pub fn wallet_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
 }
 
 /// General settings section view with fiat price configuration.
-pub fn general_view(fiat_enabled: bool, currency: crate::BackendCurrency) -> Element<'static, Msg> {
+pub fn general_view(
+    fiat_enabled: bool,
+    currency: crate::settings::BackendCurrency,
+) -> Element<'static, Msg> {
     let header = section_header("General");
 
     let fiat_card = card::simple(
@@ -110,7 +113,7 @@ pub fn general_view(fiat_enabled: bool, currency: crate::BackendCurrency) -> Ele
                         .push(Space::with_width(Length::Fill))
                         .push(
                             pick_list::pick_list(
-                                crate::ALL_BACKEND_CURRENCIES,
+                                crate::settings::ALL_BACKEND_CURRENCIES,
                                 Some(currency),
                                 Msg::FiatCurrencyEdited,
                             )

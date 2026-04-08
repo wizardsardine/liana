@@ -6,3 +6,6 @@
 
 // Re-export the main public API from business-installer
 pub use business_installer::{BusinessInstaller, Message};
+
+pub mod settings;
+pub use settings::BusinessSettings;

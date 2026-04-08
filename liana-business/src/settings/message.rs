@@ -1,6 +1,6 @@
 //! Message types for business settings UI.
 
-use crate::BackendCurrency;
+use super::BackendCurrency;
 
 /// Settings section for navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

@@ -14,7 +14,7 @@ use liana::miniscript::bitcoin;
 use liana_ui::{image, theme};
 
 use business_installer::{BusinessInstaller, Message};
-use business_settings::BusinessSettings;
+use liana_business::BusinessSettings;
 use liana_gui::{
     args::{args_to_config, parse_args},
     gui::GUI,
