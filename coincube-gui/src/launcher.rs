@@ -726,7 +726,7 @@ impl Launcher {
                     self.connect_account
                         .plan
                         .as_ref()
-                        .map_or(AccountTier::default(), |plan| match plan.tier {
+                        .map_or(AccountTier::default(), |plan| match plan.tier() {
                             crate::services::coincube::PlanTier::Free => AccountTier::Free,
                             crate::services::coincube::PlanTier::Pro => AccountTier::Pro,
                             crate::services::coincube::PlanTier::Legacy => AccountTier::Legacy,

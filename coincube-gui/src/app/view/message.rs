@@ -657,6 +657,26 @@ pub enum ConnectAccountMessage {
     LoginActivityLoaded(Vec<crate::services::coincube::LoginActivity>, u64),
     CopyToClipboard(String),
     Error(String),
+    // --- Plan & Billing ---
+    FeaturesLoaded(Option<crate::services::coincube::FeaturesResponse>, u64),
+    BillingCycleSelected(crate::services::coincube::BillingCycle),
+    StartCheckout(crate::services::coincube::PlanTier),
+    CheckoutCreated(
+        Result<crate::services::coincube::CheckoutResponse, String>,
+        u64,
+    ),
+    PollChargeStatus,
+    ChargeStatusUpdated(
+        Result<crate::services::coincube::ChargeStatusResponse, String>,
+        u64,
+    ),
+    DismissCheckout,
+    OpenCheckoutUrl(String),
+    BillingHistoryLoaded(
+        Result<Vec<crate::services::coincube::BillingHistoryEntry>, String>,
+        u64,
+    ),
+    ToggleBillingHistory,
 }
 
 /// Per-Cube Connect messages (Lightning Address, Avatar).

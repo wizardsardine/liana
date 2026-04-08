@@ -217,12 +217,134 @@ impl std::fmt::Display for PlanTier {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanStatus {
+    Active,
+    PastDue,
+    Canceled,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanEntitlements {
+    pub free_signing_key_count: i32,
+    pub policy_editing: bool,
+    pub legacy_invites: bool,
+    pub linked_keychains: bool,
+    pub duress_remote_lock: bool,
+    pub business_orgs: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectPlan {
-    pub tier: PlanTier,
-    pub paid_until: Option<String>,
-    pub status: String,
+    pub plan: PlanTier,
+    pub status: PlanStatus,
+    pub renewal_at: Option<String>,
+    pub entitlements: PlanEntitlements,
+}
+
+impl ConnectPlan {
+    /// Convenience accessor — returns `&self.plan` so existing call sites
+    /// that used the old `tier` field can migrate with minimal churn.
+    pub fn tier(&self) -> &PlanTier {
+        &self.plan
+    }
+}
+
+// ── Plan Features (public pricing endpoint) ─────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlanPrice {
+    pub monthly: u32,
+    pub annual: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanFeatureInfo {
+    pub name: String,
+    pub price: Option<PlanPrice>,
+    pub features: Vec<String>,
+    #[serde(default)]
+    pub included_linked_participants: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FeaturesResponse {
+    pub plans: Vec<PlanFeatureInfo>,
+}
+
+// ── Checkout / Billing ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BillingCycle {
+    Monthly,
+    Annual,
+}
+
+impl std::fmt::Display for BillingCycle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BillingCycle::Monthly => write!(f, "Monthly"),
+            BillingCycle::Annual => write!(f, "Annual"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckoutRequest {
+    pub plan: PlanTier,
+    pub billing_cycle: BillingCycle,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckoutResponse {
+    pub charge_id: String,
+    pub lightning_invoice: String,
+    pub on_chain_address: String,
+    pub amount_sats: u64,
+    pub amount_fiat: f64,
+    pub fiat_currency: String,
+    pub plan: PlanTier,
+    pub billing_cycle: BillingCycle,
+    pub checkout_url: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChargeStatus {
+    Unpaid,
+    Processing,
+    Paid,
+    Expired,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChargeStatusResponse {
+    pub charge_id: String,
+    pub status: ChargeStatus,
+    pub plan: PlanTier,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BillingHistoryEntry {
+    pub charge_id: String,
+    pub plan: PlanTier,
+    pub billing_cycle: BillingCycle,
+    pub amount_sats: u64,
+    pub amount_fiat: f64,
+    pub fiat_currency: String,
+    pub status: ChargeStatus,
+    pub created_at: String,
+    pub paid_at: Option<String>,
 }
 
 /// Request body for POST /api/v1/connect/cubes

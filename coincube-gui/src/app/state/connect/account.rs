@@ -1,3 +1,5 @@
+use iced::widget::qr_code;
+
 use crate::{
     app::{
         menu::ConnectSubMenu,
@@ -5,12 +7,38 @@ use crate::{
         view::{self, ConnectAccountMessage},
     },
     services::coincube::{
-        CoincubeClient, ConnectPlan, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
-        User, VerifiedDevice,
+        BillingCycle, BillingHistoryEntry, ChargeStatus, CheckoutRequest, CheckoutResponse,
+        CoincubeClient, ConnectPlan, FeaturesResponse, LoginActivity, LoginResponse, OtpRequest,
+        OtpVerifyRequest, User, VerifiedDevice,
     },
 };
 
 use super::{CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER};
+
+// ── Checkout state machine ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub enum CheckoutPhase {
+    /// Waiting for POST /checkout response.
+    Creating,
+    /// Invoice received, awaiting payment.
+    AwaitingPayment,
+    /// Server reported "processing" (mempool confirmation pending).
+    Processing,
+    /// Payment confirmed.
+    Paid,
+    /// Invoice expired before payment.
+    Expired,
+    /// API error during checkout creation or polling.
+    Failed(String),
+}
+
+#[derive(Debug)]
+pub struct CheckoutState {
+    pub phase: CheckoutPhase,
+    pub checkout: Option<CheckoutResponse>,
+    pub lightning_qr: Option<qr_code::Data>,
+}
 
 #[derive(Debug)]
 pub enum ConnectFlowStep {
@@ -44,6 +72,17 @@ pub struct ConnectAccountPanel {
     pub error: Option<String>,
     /// Incremented on each login/logout so stale async completions can be discarded.
     session_generation: u64,
+    // ── Plan & Billing ──
+    /// Cached plan features from GET /connect/features.
+    pub features: Option<FeaturesResponse>,
+    /// The currently selected billing cycle for the upgrade cards.
+    pub selected_billing_cycle: BillingCycle,
+    /// Active checkout flow (None when no checkout in progress).
+    pub checkout: Option<CheckoutState>,
+    /// Billing history entries.
+    pub billing_history: Option<Vec<BillingHistoryEntry>>,
+    /// Whether the billing history sub-view is shown.
+    pub show_billing_history: bool,
 }
 
 impl ConnectAccountPanel {
@@ -58,6 +97,11 @@ impl ConnectAccountPanel {
             login_activity: None,
             error: None,
             session_generation: 0,
+            features: None,
+            selected_billing_cycle: BillingCycle::Monthly,
+            checkout: None,
+            billing_history: None,
+            show_billing_history: false,
         }
     }
 
@@ -185,17 +229,28 @@ impl ConnectAccountPanel {
                 self.plan = plan;
                 self.step = ConnectFlowStep::Dashboard;
                 self.error = None;
-                // Fetch plan in background (non-blocking)
+                // Fetch plan + features in background (non-blocking)
                 let gen = self.session_generation;
                 let c1 = self.client.clone();
-                return iced::Task::perform(
-                    async move { (c1.get_connect_plan().await.ok(), gen) },
-                    |(plan, g)| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::PlanLoaded(plan, g),
-                        ))
-                    },
-                );
+                let c2 = self.client.clone();
+                return iced::Task::batch([
+                    iced::Task::perform(
+                        async move { (c1.get_connect_plan().await.ok(), gen) },
+                        |(plan, g)| {
+                            Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::PlanLoaded(plan, g),
+                            ))
+                        },
+                    ),
+                    iced::Task::perform(
+                        async move { (c2.get_connect_features().await.ok(), gen) },
+                        |(features, g)| {
+                            Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::FeaturesLoaded(features, g),
+                            ))
+                        },
+                    ),
+                ]);
             }
 
             ConnectAccountMessage::PlanLoaded(plan, gen) => {
@@ -211,6 +266,10 @@ impl ConnectAccountPanel {
                 self.plan = None;
                 self.verified_devices = None;
                 self.login_activity = None;
+                self.features = None;
+                self.checkout = None;
+                self.billing_history = None;
+                self.show_billing_history = false;
                 self.clear_keyring_session();
                 self.client = CoincubeClient::new();
                 self.step = ConnectFlowStep::Login {
@@ -443,6 +502,188 @@ impl ConnectAccountPanel {
 
             ConnectAccountMessage::CopyToClipboard(text) => {
                 return iced::clipboard::write(text);
+            }
+
+            // ── Plan & Billing ──────────────────────────────────────────
+
+            ConnectAccountMessage::FeaturesLoaded(features, gen) => {
+                if gen == self.session_generation {
+                    self.features = features;
+                }
+            }
+
+            ConnectAccountMessage::BillingCycleSelected(cycle) => {
+                self.selected_billing_cycle = cycle;
+            }
+
+            ConnectAccountMessage::StartCheckout(tier) => {
+                self.checkout = Some(CheckoutState {
+                    phase: CheckoutPhase::Creating,
+                    checkout: None,
+                    lightning_qr: None,
+                });
+                let gen = self.session_generation;
+                let client = self.client.clone();
+                let req = CheckoutRequest {
+                    plan: tier,
+                    billing_cycle: self.selected_billing_cycle,
+                };
+                return iced::Task::perform(
+                    async move { client.create_checkout(req).await.map_err(|e| e.to_string()) },
+                    move |result| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::CheckoutCreated(result, gen),
+                        ))
+                    },
+                );
+            }
+
+            ConnectAccountMessage::CheckoutCreated(result, gen) => {
+                if gen != self.session_generation {
+                    return iced::Task::none();
+                }
+                match result {
+                    Ok(resp) => {
+                        let qr = qr_code::Data::new(&resp.lightning_invoice).ok();
+                        self.checkout = Some(CheckoutState {
+                            phase: CheckoutPhase::AwaitingPayment,
+                            checkout: Some(resp),
+                            lightning_qr: qr,
+                        });
+                        return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::PollChargeStatus,
+                        )));
+                    }
+                    Err(e) => {
+                        if let Some(cs) = &mut self.checkout {
+                            cs.phase = CheckoutPhase::Failed(e);
+                        }
+                    }
+                }
+            }
+
+            ConnectAccountMessage::PollChargeStatus => {
+                let should_poll = self
+                    .checkout
+                    .as_ref()
+                    .map(|cs| {
+                        matches!(
+                            cs.phase,
+                            CheckoutPhase::AwaitingPayment | CheckoutPhase::Processing
+                        )
+                    })
+                    .unwrap_or(false);
+                if !should_poll {
+                    return iced::Task::none();
+                }
+                let charge_id = self
+                    .checkout
+                    .as_ref()
+                    .and_then(|cs| cs.checkout.as_ref())
+                    .map(|c| c.charge_id.clone())
+                    .unwrap_or_default();
+                let gen = self.session_generation;
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        client
+                            .get_charge_status(&charge_id)
+                            .await
+                            .map_err(|e| e.to_string())
+                    },
+                    move |result| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::ChargeStatusUpdated(result, gen),
+                        ))
+                    },
+                );
+            }
+
+            ConnectAccountMessage::ChargeStatusUpdated(result, gen) => {
+                if gen != self.session_generation || self.checkout.is_none() {
+                    return iced::Task::none();
+                }
+                match result {
+                    Ok(status) => {
+                        let cs = self.checkout.as_mut().unwrap();
+                        match status.status {
+                            ChargeStatus::Unpaid => {
+                                // Keep polling
+                                return iced::Task::done(Message::View(
+                                    view::Message::ConnectAccount(
+                                        ConnectAccountMessage::PollChargeStatus,
+                                    ),
+                                ));
+                            }
+                            ChargeStatus::Processing => {
+                                cs.phase = CheckoutPhase::Processing;
+                                return iced::Task::done(Message::View(
+                                    view::Message::ConnectAccount(
+                                        ConnectAccountMessage::PollChargeStatus,
+                                    ),
+                                ));
+                            }
+                            ChargeStatus::Paid => {
+                                cs.phase = CheckoutPhase::Paid;
+                                // Refresh plan
+                                let g = self.session_generation;
+                                let c = self.client.clone();
+                                return iced::Task::perform(
+                                    async move { (c.get_connect_plan().await.ok(), g) },
+                                    |(plan, g)| {
+                                        Message::View(view::Message::ConnectAccount(
+                                            ConnectAccountMessage::PlanLoaded(plan, g),
+                                        ))
+                                    },
+                                );
+                            }
+                            ChargeStatus::Expired => {
+                                cs.phase = CheckoutPhase::Expired;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("[CONNECT] Charge poll error: {}", e);
+                        // Continue polling on transient errors
+                        return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::PollChargeStatus,
+                        )));
+                    }
+                }
+            }
+
+            ConnectAccountMessage::DismissCheckout => {
+                self.checkout = None;
+            }
+
+            ConnectAccountMessage::OpenCheckoutUrl(url) => {
+                return iced::Task::done(Message::View(view::Message::OpenUrl(url)));
+            }
+
+            ConnectAccountMessage::ToggleBillingHistory => {
+                self.show_billing_history = !self.show_billing_history;
+                if self.show_billing_history && self.billing_history.is_none() {
+                    let gen = self.session_generation;
+                    let client = self.client.clone();
+                    return iced::Task::perform(
+                        async move { client.get_billing_history().await.map_err(|e| e.to_string()) },
+                        move |result| {
+                            Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::BillingHistoryLoaded(result, gen),
+                            ))
+                        },
+                    );
+                }
+            }
+
+            ConnectAccountMessage::BillingHistoryLoaded(result, gen) => {
+                if gen == self.session_generation {
+                    match result {
+                        Ok(history) => self.billing_history = Some(history),
+                        Err(e) => self.error = Some(e),
+                    }
+                }
             }
 
             ConnectAccountMessage::Error(e) => {
