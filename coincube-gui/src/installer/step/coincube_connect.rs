@@ -1,5 +1,4 @@
 use coincube_ui::{component::form, widget::*};
-use coincubed::config::{BitcoinBackend, EsploraConfig};
 use iced::Task;
 
 use crate::{
@@ -23,6 +22,7 @@ pub struct CoincubeConnectStep {
     jwt: Option<String>,
     processing: bool,
     error: Option<String>,
+    skipped: bool,
 }
 
 impl CoincubeConnectStep {
@@ -40,6 +40,7 @@ impl CoincubeConnectStep {
             jwt: None,
             processing: false,
             error: None,
+            skipped: false,
         }
     }
 }
@@ -68,31 +69,28 @@ async fn send_otp(client: CoincubeClient, email: String, is_signup: bool) -> Res
 
 impl Step for CoincubeConnectStep {
     fn skip(&self, ctx: &Context) -> bool {
-        !ctx.use_coincube_connect
-            || ctx.network == coincube_core::miniscript::bitcoin::Network::Regtest
+        ctx.network == coincube_core::miniscript::bitcoin::Network::Regtest
+            || ctx.remote_backend.is_some()
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
+        if self.skipped {
+            ctx.use_coincube_connect = false;
+            ctx.connect_jwt = None;
+            return true;
+        }
         if let Some(token) = &self.jwt {
-            let esplora = EsploraConfig {
-                addr: super::super::connect_url(ctx.network),
-                token: Some(token.clone()),
-            };
-            if ctx.install_node_alongside_connect {
-                // Connect-first: promote Connect to active backend and move the
-                // Bitcoind config (set by InternalBitcoindStep) to pending so
-                // the app can switch to it once IBD completes.
-                if let Some(BitcoinBackend::Bitcoind(bitcoind_cfg)) = ctx.bitcoin_backend.take() {
-                    ctx.pending_bitcoind_config = Some(bitcoind_cfg);
-                }
-                ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(esplora));
-            } else {
-                ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(esplora));
-            }
+            ctx.use_coincube_connect = true;
+            ctx.connect_jwt = Some(token.clone());
             true
         } else {
             false
         }
+    }
+
+    fn revert(&self, ctx: &mut Context) {
+        ctx.use_coincube_connect = false;
+        ctx.connect_jwt = None;
     }
 
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
@@ -183,6 +181,7 @@ impl Step for CoincubeConnectStep {
                     match res {
                         Ok(token) => {
                             self.jwt = Some(token);
+                            self.skipped = false;
                             return Task::done(Message::Next);
                         }
                         Err(e) => {
@@ -190,6 +189,10 @@ impl Step for CoincubeConnectStep {
                             self.error = Some(e);
                         }
                     }
+                }
+                CoincubeConnectMsg::Skip => {
+                    self.skipped = true;
+                    return Task::done(Message::Next);
                 }
             }
         }

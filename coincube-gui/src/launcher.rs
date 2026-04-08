@@ -1278,8 +1278,6 @@ impl Launcher {
                                             &self.error,
                                             self.creating_cube,
                                             self.recover_liquid_wallet,
-                                            !self.connect_account.is_authenticated()
-                                                && self.has_stored_session,
                                         )
                                     } else {
                                         let mut col =
@@ -1338,8 +1336,6 @@ impl Launcher {
                                     &self.error,
                                     self.creating_cube,
                                     self.recover_liquid_wallet,
-                                    !self.connect_account.is_authenticated()
-                                        && self.has_stored_session,
                                 ),
                             })
                             .align_x(Alignment::Center),
@@ -1597,7 +1593,6 @@ fn create_cube_form<'a>(
     error: &'a Option<String>,
     creating_cube: bool,
     recover_liquid_wallet: bool,
-    show_login_prompt: bool,
 ) -> Element<'a, ViewMessage> {
     use coincube_ui::component::form;
     use std::time::Duration;
@@ -1613,19 +1608,6 @@ fn create_cube_form<'a>(
             )
             .style(theme::text::secondary),
         );
-
-    if show_login_prompt {
-        column = column.push(
-            Container::new(
-                p1_regular(
-                    "Log in to your Connect account first so this Cube syncs automatically.",
-                )
-                .style(theme::text::warning),
-            )
-            .padding(10)
-            .width(Length::Fill),
-        );
-    }
 
     column = column.push(
         Container::new(
