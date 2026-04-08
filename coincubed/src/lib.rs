@@ -517,7 +517,7 @@ impl DaemonHandle {
         // an atomic to be able to stop it.
         let mut bitcoin_poller =
             poller::Poller::new(bit.clone(), db.clone(), config.main_descriptor.clone());
-        let (poller_sender, poller_receiver) = mpsc::sync_channel(0);
+        let (poller_sender, poller_receiver) = mpsc::sync_channel(1);
         let poller_handle = thread::Builder::new()
             .name("Bitcoin Network poller".to_string())
             .spawn({

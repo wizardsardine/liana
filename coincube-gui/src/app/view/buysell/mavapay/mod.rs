@@ -568,6 +568,17 @@ impl MavapayState {
                         )),
                     ]));
                 }
+
+                MavapayMessage::StreamConnected => {
+                    log::info!("[MAVAPAY SSE] Connected to transaction stream");
+                }
+                MavapayMessage::EventSourceDisconnected(msg) => {
+                    log::info!("[MAVAPAY SSE] Stream disconnected: {}", msg);
+                }
+                MavapayMessage::StreamError(err) => {
+                    log::error!("[MAVAPAY SSE] Stream error: {}", err);
+                }
+
                 MavapayMessage::TransactionUpdated(update) => {
                     log::info!(
                         "[MAVAPAY SSE] Order {} event={} status={:?}",
@@ -623,15 +634,6 @@ impl MavapayState {
                     }
                 }
 
-                MavapayMessage::StreamConnected => {
-                    log::info!("[MAVAPAY SSE] Connected to transaction stream");
-                }
-                MavapayMessage::EventSourceDisconnected(msg) => {
-                    log::info!("[MAVAPAY SSE] Stream disconnected: {}", msg);
-                }
-                MavapayMessage::StreamError(err) => {
-                    log::error!("[MAVAPAY SSE] Stream error: {}", err);
-                }
                 MavapayMessage::QuoteFulfilled(order) => {
                     log::info!(
                         "[MAVAPAY] Quote({}) has been fulfilled: Order = {:?}",
@@ -641,6 +643,21 @@ impl MavapayState {
 
                     *fulfilled_order = Some(order);
                     *stream_order_id = None;
+
+                    return Some(iced::Task::batch([
+                        iced::Task::done(view::Message::ShowSuccess(format!(
+                            "Quote[{}] fulfilled: Deposit of {} {} was successful",
+                            quote.id, quote.amount_in_target_currency, quote.target_currency,
+                        ))),
+                        iced::Task::future(async {
+                            tokio::time::sleep(std::time::Duration::from_secs(3)).await
+                        })
+                        .then(|_| {
+                            iced::Task::done(view::Message::BuySell(
+                                view::BuySellMessage::ResetWidget,
+                            ))
+                        }),
+                    ]));
                 }
 
                 #[cfg(debug_assertions)]
