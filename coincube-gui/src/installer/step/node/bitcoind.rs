@@ -376,10 +376,9 @@ impl Step for SelectBitcoindTypeStep {
                 }
             } else {
                 // Connect-only: set Esplora backend now.
-                let token = ctx
-                    .connect_jwt
-                    .as_ref()
-                    .expect("Connect JWT must be set when use_connect is true");
+                let Some(token) = &ctx.connect_jwt else {
+                    return false;
+                };
                 ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
                     addr: crate::installer::connect_url(ctx.network),
                     token: Some(token.clone()),
@@ -865,10 +864,9 @@ impl Step for InternalBitcoindStep {
                 if let Some(cfg) = bitcoind_config {
                     ctx.pending_bitcoind_config = Some(cfg);
                 }
-                let token = ctx
-                    .connect_jwt
-                    .as_ref()
-                    .expect("Connect JWT must be set when install_node_alongside_connect is true");
+                let Some(token) = &ctx.connect_jwt else {
+                    return false;
+                };
                 ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
                     addr: crate::installer::connect_url(ctx.network),
                     token: Some(token.clone()),
