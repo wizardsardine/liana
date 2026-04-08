@@ -60,7 +60,7 @@ fn request<U: IntoUrl>(
         .request(method, url)
         .header("Authorization", format!("Bearer {}", access_token))
         .header("Content-Type", "application/json")
-        .header("Liana-Version", format!("{}", crate::VERSION))
+        .header("Liana-Version", crate::VERSION)
         .header("User-Agent", user_agent);
     tracing::debug!("Sending http request: {:?}", req);
     req

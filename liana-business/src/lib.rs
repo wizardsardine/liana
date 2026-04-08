@@ -9,3 +9,10 @@ pub use business_installer::{BusinessInstaller, Message};
 
 pub mod settings;
 pub use settings::BusinessSettings;
+
+pub const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION_MAJOR"),
+    ".",
+    env!("CARGO_PKG_VERSION_MINOR"),
+    "-dev"
+);

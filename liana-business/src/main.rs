@@ -20,8 +20,9 @@ use liana_gui::{
     gui::GUI,
     logger::parse_log_level,
     window::{create_app_settings, create_window_settings, load_initial_size},
-    VERSION,
 };
+
+use liana_business::VERSION;
 
 /// Type alias for liana-business GUI.
 ///
@@ -72,7 +73,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     .subscription(LianaBusiness::subscription)
     .settings(settings)
     .window(window_settings)
-    .run_with(move || LianaBusiness::new((config, log_level)))
+    .run_with(move || LianaBusiness::new((config, log_level, VERSION)))
     {
         log::error!("{}", e);
         Err(format!("Failed to launch UI: {}", e).into())

@@ -10,6 +10,7 @@ use liana_ui::{
 
 use crate::settings::message::{Msg, Section};
 use crate::settings::ui::BusinessSettingsUI;
+use crate::VERSION;
 
 /// Settings section list view.
 pub fn list_view() -> Element<'static, Msg> {
@@ -152,7 +153,7 @@ pub fn about_view() -> Element<'static, Msg> {
             .push(
                 Row::new()
                     .push(Space::with_width(Length::Fill))
-                    .push(text(format!("liana-business v{}", liana_gui::VERSION))),
+                    .push(text(format!("liana-business v{}", VERSION))),
             ),
     );
 

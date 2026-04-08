@@ -36,7 +36,6 @@ use crate::{
         api::{ListCurrenciesResult, PriceApi, PriceApiError},
         Currency, PriceClient, PriceSource,
     },
-    VERSION,
 };
 
 use iced::window::Id;
@@ -57,6 +56,7 @@ where
     window_init: Option<bool>,
     window_config: Option<WindowConfig>,
     global_cache: GlobalCache,
+    version: &'static str,
     _phantom: PhantomData<M>,
 }
 
@@ -134,11 +134,11 @@ where
     M: Clone + Send + 'static,
 {
     pub fn title(&self) -> String {
-        format!("{} v{}", self.config.app_name, VERSION)
+        format!("{} v{}", self.config.app_name, self.version)
     }
 
     pub fn new(
-        (config, log_level): (Config, Option<LevelFilter>),
+        (config, log_level, version): (Config, Option<LevelFilter>, &'static str),
     ) -> (GUI<I, S, M>, Task<Message<M>>) {
         let log_level = log_level.unwrap_or(LevelFilter::INFO);
         if let Err(e) = setup_logger(log_level, config.liana_directory.clone()) {
@@ -162,6 +162,7 @@ where
                 window_id: None,
                 window_init,
                 window_config,
+                version,
                 global_cache: GlobalCache::default(),
                 _phantom: PhantomData,
             },

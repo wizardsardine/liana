@@ -67,22 +67,13 @@ pub fn setup_panic_hook() {
     }));
 }
 
-#[derive(Debug, Clone)]
-pub struct Version {
-    pub major: u32,
-    pub minor: u32,
-}
-
-impl fmt::Display for Version {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}.{}-dev", self.major, self.minor)
-    }
-}
-
-pub const VERSION: Version = Version {
-    major: 14,
-    minor: 0,
-};
+// Simple compile-time constant
+pub const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION_MAJOR"),
+    ".",
+    env!("CARGO_PKG_VERSION_MINOR"),
+    "-dev"
+);
 
 #[derive(Debug)]
 pub enum StartupError {

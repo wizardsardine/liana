@@ -88,8 +88,6 @@ time_machine shell --no-cwd \
     --expose="$PWD/liana-business/src=/liana/liana-business/src" \
     --expose="$PWD/liana-business/business-installer/Cargo.toml=/liana/liana-business/business-installer/Cargo.toml" \
     --expose="$PWD/liana-business/business-installer/src=/liana/liana-business/business-installer/src" \
-    --expose="$PWD/liana-business/business-settings/Cargo.toml=/liana/liana-business/business-settings/Cargo.toml" \
-    --expose="$PWD/liana-business/business-settings/src=/liana/liana-business/business-settings/src" \
     --expose="$PWD/liana-connect/Cargo.toml=/liana/liana-connect/Cargo.toml" \
     --expose="$PWD/liana-connect/src=/liana/liana-connect/src" \
     --expose="$PWD/lianad/src=/liana/lianad/src" \
