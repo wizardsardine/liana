@@ -9,7 +9,6 @@ members = [
     "liana-connect",
     "liana-business",
     "liana-business/business-installer",
-    "liana-business/business-settings",
 ]
 default-members = [
     "liana",
@@ -19,7 +18,6 @@ default-members = [
     "liana-connect",
     "liana-business",
     "liana-business/business-installer",
-    "liana-business/business-settings",
 ]
 
 [workspace.dependencies]
