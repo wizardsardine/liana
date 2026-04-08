@@ -341,18 +341,16 @@ impl State for LiquidOverview {
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.selected_payment = None;
-        // Trigger an SDK sync so on-chain state is fresh, then load balance.
+        // Load balance immediately for fast display, and trigger an SDK sync
+        // in the background. When the sync completes the SDK fires
+        // SdkEvent::Synced which will refresh the active panel automatically.
         let breez = self.breez_client.clone();
         Task::batch(vec![
             Task::perform(
                 async move {
                     let _ = breez.sync().await;
                 },
-                |_| {
-                    Message::View(view::Message::LiquidOverview(
-                        view::LiquidOverviewMessage::RefreshRequested,
-                    ))
-                },
+                |_| Message::CacheUpdated,
             ),
             self.load_balance(),
         ])

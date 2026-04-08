@@ -709,6 +709,8 @@ impl ConnectAccountPanel {
                             }
                             ChargeStatus::Paid => {
                                 cs.phase = CheckoutPhase::Paid;
+                                // Invalidate cached billing history so next view fetches fresh data
+                                self.billing_history = None;
                                 // Refresh plan
                                 let g = self.session_generation;
                                 let c = self.client.clone();
@@ -767,7 +769,7 @@ impl ConnectAccountPanel {
 
             ConnectAccountMessage::ToggleBillingHistory => {
                 self.show_billing_history = !self.show_billing_history;
-                if self.show_billing_history && self.billing_history.is_none() {
+                if self.show_billing_history {
                     let gen = self.session_generation;
                     let client = self.client.clone();
                     return iced::Task::perform(
@@ -791,7 +793,7 @@ impl ConnectAccountPanel {
                     match result {
                         Ok(history) => self.billing_history = Some(history),
                         Err(e) => {
-                            self.billing_history = Some(Vec::new());
+                            // Leave billing_history as None so ToggleBillingHistory retries
                             self.error = Some(e);
                         }
                     }

@@ -500,6 +500,7 @@ impl State for LiquidSend {
                     self.uri_asset = None;
                     self.error = None;
                     self.sideshift_flow = None;
+                    self.is_drain = false;
                     return self.load_balance();
                 }
                 view::LiquidSendMessage::InputEdited(value) => {
@@ -610,6 +611,7 @@ impl State for LiquidSend {
                                 )
                             }
                             InputType::Bolt11 { invoice } => {
+                                self.is_drain = false;
                                 if let Some(amt) = invoice.amount_msat {
                                     if let Ok(amount) = Amount::from_str_in(
                                         &amt.to_string(),
@@ -672,6 +674,7 @@ impl State for LiquidSend {
                             }
 
                             InputType::LiquidAddress { address } => {
+                                self.is_drain = false;
                                 if self.to_asset == SendAsset::Usdt {
                                     if let Some(amount) = address.amount {
                                         let amount_str = format!("{}", amount);
@@ -1224,6 +1227,7 @@ impl State for LiquidSend {
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatDone) => {
+                    self.is_drain = false;
                     let is_cross_asset = self.from_asset != self.to_asset;
                     if let LiquidSendFlowState::Main {
                         modal:
@@ -1657,6 +1661,7 @@ impl State for LiquidSend {
                             self.amount = Amount::ZERO;
                             self.usdt_amount_input = form::Value::default();
                             self.amount_input = form::Value::default();
+                            self.is_drain = false;
                         }
                     }
                 }
@@ -1864,6 +1869,7 @@ impl State for LiquidSend {
                             };
                         self.amount_input.valid = true;
                         self.amount_input.warning = None;
+                        self.is_drain = true;
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::UsdtAmountEdited(v)) => {
@@ -1904,6 +1910,7 @@ impl State for LiquidSend {
                     self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
                     self.error = None;
                     self.amount = Amount::ZERO;
+                    self.is_drain = false;
                     self.lightning_limits = None;
                     self.description = None;
                     self.comment = None;
