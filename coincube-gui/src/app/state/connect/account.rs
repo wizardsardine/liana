@@ -249,6 +249,12 @@ impl ConnectAccountPanel {
             ConnectAccountMessage::Init => {
                 if let Some(session) = self.load_session_from_keyring() {
                     let refresh_token = session.refresh_token.clone();
+                    // Transition out of CheckingSession so re-navigation
+                    // won't re-trigger Init while the refresh is in flight.
+                    self.step = ConnectFlowStep::Login {
+                        email: String::new(),
+                        loading: true,
+                    };
                     return iced::Task::done(Message::View(view::Message::ConnectAccount(
                         ConnectAccountMessage::RefreshSession { refresh_token },
                     )));
