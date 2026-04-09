@@ -804,7 +804,8 @@ fn transaction_row<'a>(
     transaction: &'a OrderTransaction,
 ) -> widget::Container<'a, BuySellMessage, theme::Theme> {
     let (tx_status_text, tx_status_color) = transaction_status_info(transaction);
-    let (order_type, order_type_color) = order_type_from_payment(transaction.payment_method.as_ref());
+    let (order_type, order_type_color) =
+        order_type_from_payment(transaction.payment_method.as_ref());
 
     card::simple(
         widget::column![

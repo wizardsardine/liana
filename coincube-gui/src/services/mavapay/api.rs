@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "status")]
 pub enum MavapayApiResult<T> {
-    #[serde(alias = "ok", alias = "PAID")]
+    #[serde(alias = "ok")]
     Success {
         data: T,
     },
