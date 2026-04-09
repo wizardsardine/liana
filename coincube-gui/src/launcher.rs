@@ -559,22 +559,27 @@ impl Launcher {
                     Task::none()
                 }
             },
-            Message::CubeRemoteDeleted(result) => {
+            Message::CubeBackupDeleted(result) => {
                 match &result {
+                    Ok(()) => log::info!("[LAUNCHER] Cube Connect backup deleted"),
+                    Err(e) => log::warn!("[LAUNCHER] Failed to delete cube backup: {}", e),
+                }
+                Task::none()
+            }
+            Message::RemoteCubeDeleted(result) => {
+                match result {
                     Ok(()) => {
-                        log::info!("[LAUNCHER] Cube deleted remotely");
-                        // If this was a remote-only cube deletion, close modal and reload
+                        log::info!("[LAUNCHER] Remote cube deleted");
                         if let Some(modal) = self.delete_remote_cube_modal.take() {
                             self.remote_cubes.retain(|rc| rc.uuid != modal.cube.uuid);
                             return self.reload();
                         }
                     }
                     Err(e) => {
-                        log::warn!("[LAUNCHER] Failed to delete cube remotely: {}", e);
-                        // Show error in the remote delete modal if open
+                        log::warn!("[LAUNCHER] Failed to delete remote cube: {}", e);
                         if let Some(modal) = &mut self.delete_remote_cube_modal {
                             modal.deleting = false;
-                            modal.error = Some(e.clone());
+                            modal.error = Some(e);
                         }
                     }
                 }
@@ -671,6 +676,7 @@ impl Launcher {
                             wallet_datadir,
                             wallet_settings,
                             internal_bitcoind,
+                            self.connect_account.is_authenticated(),
                         ));
                     }
                 }
@@ -711,7 +717,7 @@ impl Launcher {
                                 Err("Cube not found on server".to_string())
                             }
                         },
-                        Message::CubeRemoteDeleted,
+                        Message::RemoteCubeDeleted,
                     )
                 } else {
                     if let Some(modal) = &mut self.delete_remote_cube_modal {
@@ -798,7 +804,7 @@ impl Launcher {
                                             Ok(())
                                         }
                                     },
-                                    Message::CubeRemoteDeleted,
+                                    Message::CubeBackupDeleted,
                                 )
                             })
                     } else {
@@ -2204,8 +2210,10 @@ pub enum Message {
         network: Network,
         result: Result<CubeResponse, String>,
     },
-    /// Result of deleting a cube on the remote Connect API.
-    CubeRemoteDeleted(Result<(), String>),
+    /// Result of deleting a local cube's Connect backup.
+    CubeBackupDeleted(Result<(), String>),
+    /// Result of deleting a remote-only cube from the Connect API.
+    RemoteCubeDeleted(Result<(), String>),
     /// Result of renaming a cube locally (settings file updated).
     CubeRenamed(Result<(), String>),
     /// Remote-only cubes (on server but not local) computed off the UI thread.
@@ -2283,6 +2291,8 @@ struct DeleteCubeModal {
     delete_liana_connect: bool,
     /// Whether to also delete the cube from the Connect API (frees a cube slot).
     delete_connect_backup: bool,
+    /// Whether the user is authenticated and the cube is synced (backup exists).
+    can_delete_backup: bool,
     user_role: Option<UserRole>,
     // `None` means we were not able to determine whether wallet uses internal bitcoind.
     internal_bitcoind: Option<bool>,
@@ -2364,7 +2374,9 @@ impl DeleteCubeModal {
         network_directory: NetworkDirectory,
         wallet_settings: Option<WalletSettings>,
         internal_bitcoind: Option<bool>,
+        is_authenticated: bool,
     ) -> Self {
+        let can_delete_backup = is_authenticated && cube.remote_synced;
         let mut modal = Self {
             cube: cube.clone(),
             wallet_settings: wallet_settings.clone(),
@@ -2373,6 +2385,7 @@ impl DeleteCubeModal {
             deleted: false,
             delete_liana_connect: false,
             delete_connect_backup: false,
+            can_delete_backup,
             internal_bitcoind,
             user_role: None,
             pin_input: pin_input::PinInput::new(),
@@ -2530,22 +2543,24 @@ impl DeleteCubeModal {
             .push(Row::new())
             .push(Row::new().push(text(help_text_3)));
 
-        // Option to also delete the Connect API backup
-        col = col.push(Space::new().height(Length::Fixed(5.0))).push(
-            CheckBox::new(self.delete_connect_backup)
-                .label("Also delete Connect backup (frees a Cube slot)")
-                .on_toggle(|checked| {
-                    ViewMessage::DeleteCube(DeleteCubeMessage::DeleteConnectBackup(checked))
-                }),
-        );
-        if self.delete_connect_backup {
-            col = col.push(
-                p1_regular(
-                    "The Connect backup will be permanently deleted. \
-                     This frees a Cube slot on your account.",
-                )
-                .style(theme::text::warning),
+        // Option to also delete the Connect API backup (only when relevant)
+        if self.can_delete_backup {
+            col = col.push(Space::new().height(Length::Fixed(5.0))).push(
+                CheckBox::new(self.delete_connect_backup)
+                    .label("Also delete Connect backup (frees a Cube slot)")
+                    .on_toggle(|checked| {
+                        ViewMessage::DeleteCube(DeleteCubeMessage::DeleteConnectBackup(checked))
+                    }),
             );
+            if self.delete_connect_backup {
+                col = col.push(
+                    p1_regular(
+                        "The Connect backup will be permanently deleted. \
+                         This frees a Cube slot on your account.",
+                    )
+                    .style(theme::text::warning),
+                );
+            }
         }
 
         // PIN entry section

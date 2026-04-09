@@ -134,7 +134,12 @@ pub fn order_filter_sidebar<'a>(state: OrderFilterState<'a>) -> Container<'a, vi
     // --- Payment methods filter ---
     let payment_methods_section: Element<'_, view::Message> =
         if state.available_payment_methods.is_empty() {
-            column![].into()
+            column![
+                p2_bold("PAYMENT METHODS").style(theme::text::secondary),
+                p2_regular("No payment methods for current filters").style(theme::text::secondary),
+            ]
+            .spacing(8)
+            .into()
         } else {
             let chips = row(state.available_payment_methods.iter().map(|method| {
                 let is_selected = !state.deselected_payment_methods.contains(method);
