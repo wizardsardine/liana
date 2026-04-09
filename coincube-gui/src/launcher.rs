@@ -1506,14 +1506,29 @@ impl Launcher {
                                         col.into()
                                     }
                                 }
-                                State::NoCube | State::Unchecked => create_cube_form(
-                                    &self.create_cube_name,
-                                    &self.create_cube_pin,
-                                    &self.create_cube_pin_confirm,
-                                    &self.error,
-                                    self.creating_cube,
-                                    self.recover_liquid_wallet,
-                                ),
+                                State::NoCube | State::Unchecked => {
+                                    let current_net_str =
+                                        settings::network_to_api_string(self.network);
+                                    let remote_for_net: Vec<_> = self
+                                        .remote_cubes
+                                        .iter()
+                                        .filter(|rc| rc.network == current_net_str)
+                                        .collect();
+
+                                    let mut col = Column::new().spacing(20);
+                                    for rc in &remote_for_net {
+                                        col = col.push(remote_cube_list_item(rc));
+                                    }
+                                    col.push(create_cube_form(
+                                        &self.create_cube_name,
+                                        &self.create_cube_pin,
+                                        &self.create_cube_pin_confirm,
+                                        &self.error,
+                                        self.creating_cube,
+                                        self.recover_liquid_wallet,
+                                    ))
+                                    .into()
+                                }
                             })
                             .align_x(Alignment::Center),
                     )
