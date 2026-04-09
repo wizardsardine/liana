@@ -178,13 +178,20 @@ pub fn order_filter_sidebar<'a>(state: OrderFilterState<'a>) -> Container<'a, vi
         format!("{}+ days", state.min_days_active)
     };
 
-    let description = if state.min_rating > 0.0 || state.min_days_active > 0 {
-        format!(
-            "Showing only verified traders with {:.1}+ star ratings and at least {} days active.",
+    let description = match (state.min_rating > 0.0, state.min_days_active > 0) {
+        (true, true) => format!(
+            "Showing traders with {:.1}+ star ratings and at least {} days active.",
             state.min_rating, state.min_days_active
-        )
-    } else {
-        "Showing all traders regardless of reputation.".to_string()
+        ),
+        (true, false) => format!(
+            "Showing traders with {:.1}+ star ratings.",
+            state.min_rating
+        ),
+        (false, true) => format!(
+            "Showing traders with at least {} days active.",
+            state.min_days_active
+        ),
+        (false, false) => "Showing all traders regardless of reputation.".to_string(),
     };
 
     let reputation_card = container(

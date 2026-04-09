@@ -524,27 +524,8 @@ impl Launcher {
             }
             Message::RemoteCubesLoaded(result) => {
                 match result {
-                    Ok(server_cubes) => {
-                        // Collect all local cube UUIDs across all networks
-                        let mut local_uuids = std::collections::HashSet::new();
-                        for net in &NETWORKS {
-                            let nd = self.datadir_path.network_directory(*net);
-                            if let Ok(s) = settings::Settings::from_file(&nd) {
-                                for cube in &s.cubes {
-                                    local_uuids.insert(cube.id.clone());
-                                }
-                            }
-                        }
-                        // Keep only server cubes with no local counterpart
-                        self.remote_cubes = server_cubes
-                            .into_iter()
-                            .filter(|sc| !local_uuids.contains(&sc.uuid))
-                            .map(|sc| RemoteCube {
-                                uuid: sc.uuid,
-                                name: sc.name,
-                                network: sc.network,
-                            })
-                            .collect();
+                    Ok(remote_only) => {
+                        self.remote_cubes = remote_only;
                     }
                     Err(e) => {
                         log::warn!("[LAUNCHER] Failed to fetch remote cubes: {e}");
@@ -1298,11 +1279,40 @@ impl Launcher {
                         }
                     }
 
-                    // Fetch full server cube list to identify remote-only cubes
-                    // (cubes on the server with no local counterpart).
+                    // Fetch full server cube list and compare with local cubes
+                    // to identify remote-only cubes. Both the API call and the
+                    // local settings reads run off the UI thread.
                     if let Some(rc_client) = self.connect_account.authenticated_client() {
+                        let datadir = self.datadir_path.clone();
                         tasks.push(Task::perform(
-                            async move { rc_client.list_cubes().await.map_err(|e| e.to_string()) },
+                            async move {
+                                let server_cubes =
+                                    rc_client.list_cubes().await.map_err(|e| e.to_string())?;
+
+                                // Collect local cube UUIDs across all networks
+                                let mut local_uuids = std::collections::HashSet::new();
+                                for net in &NETWORKS {
+                                    let nd = datadir.network_directory(*net);
+                                    if let Ok(s) = settings::Settings::from_file(&nd) {
+                                        for cube in &s.cubes {
+                                            local_uuids.insert(cube.id.clone());
+                                        }
+                                    }
+                                }
+
+                                // Keep only server cubes with no local counterpart
+                                let remote_only: Vec<RemoteCube> = server_cubes
+                                    .into_iter()
+                                    .filter(|sc| !local_uuids.contains(&sc.uuid))
+                                    .map(|sc| RemoteCube {
+                                        uuid: sc.uuid,
+                                        name: sc.name,
+                                        network: sc.network,
+                                    })
+                                    .collect();
+
+                                Ok(remote_only)
+                            },
                             Message::RemoteCubesLoaded,
                         ));
                     }
@@ -2198,8 +2208,8 @@ pub enum Message {
     CubeRemoteDeleted(Result<(), String>),
     /// Result of renaming a cube locally (settings file updated).
     CubeRenamed(Result<(), String>),
-    /// Server cube list fetched after login; used to identify remote-only cubes.
-    RemoteCubesLoaded(Result<Vec<CubeResponse>, String>),
+    /// Remote-only cubes (on server but not local) computed off the UI thread.
+    RemoteCubesLoaded(Result<Vec<RemoteCube>, String>),
 }
 
 #[derive(Debug, Clone)]

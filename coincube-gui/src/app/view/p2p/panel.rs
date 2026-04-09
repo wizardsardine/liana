@@ -4008,6 +4008,7 @@ impl State for P2PPanel {
             }
             P2PMessage::BuySellFilterChanged(filter) => {
                 self.buy_sell_filter = filter;
+                self.filter_deselected_payment_methods.clear();
                 self.recompute_available_payment_methods();
             }
             P2PMessage::FilterCurrencySelected(currency) => {
