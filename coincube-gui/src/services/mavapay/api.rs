@@ -204,13 +204,13 @@ pub enum MavapayPaymentMethod {
     USDT,
 }
 
-impl std::fmt::Display for MavapayPaymentMethod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl MavapayPaymentMethod {
+    pub fn as_str(&self) -> &'static str {
         match self {
-            MavapayPaymentMethod::Lightning => write!(f, "Bitcoin Lightning"),
-            MavapayPaymentMethod::Onchain => write!(f, "Bitcoin Mainnet Transaction"),
-            MavapayPaymentMethod::BankTransfer => write!(f, "Bank Transfer"),
-            MavapayPaymentMethod::USDT => write!(f, "USDT Transaction"),
+            MavapayPaymentMethod::Lightning => "Bitcoin Lightning",
+            MavapayPaymentMethod::Onchain => "Bitcoin Mainnet Transaction",
+            MavapayPaymentMethod::BankTransfer => "Bank Transfer",
+            MavapayPaymentMethod::USDT => "USDT Transaction",
         }
     }
 }
@@ -539,14 +539,28 @@ pub struct OrderTransaction {
     #[serde(rename = "transactionType")]
     pub transaction_type: TransactionType,
     pub status: TransactionStatus,
-    pub payment_method: MavapayPaymentMethod,
+    #[serde(deserialize_with = "deserialize_optional")]
+    pub payment_method: Option<MavapayPaymentMethod>,
     pub created_at: String,
+}
+
+fn deserialize_optional<'de, D, T: serde::de::DeserializeOwned>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Ok(None);
+    }
+    // Re-use the derived impl via a string-value deserializer
+    T::deserialize(serde::de::value::StringDeserializer::new(s)).map(Some)
 }
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTransactionsResponse {
-    pub count: u64,
     pub transactions: Vec<OrderTransaction>,
 }
 

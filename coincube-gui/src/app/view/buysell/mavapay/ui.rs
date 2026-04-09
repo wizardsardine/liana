@@ -695,7 +695,7 @@ fn order_success_view<'a>(
                         .width(Length::Fill),
                         widget::column![
                             text::p2_medium("Payment Method").style(theme::text::secondary),
-                            text::p1_bold(format!("{}", order.payment_method))
+                            text::p1_bold(order.payment_method.as_str())
                         ]
                         .width(Length::Fill)
                     ],
@@ -803,8 +803,8 @@ fn transaction_row<'a>(
     idx: usize,
     transaction: &'a OrderTransaction,
 ) -> widget::Container<'a, BuySellMessage, theme::Theme> {
-    let (order_type, order_type_color) = order_type_from_payment(&transaction.payment_method);
     let (tx_status_text, tx_status_color) = transaction_status_info(transaction);
+    let (order_type, order_type_color) = order_type_from_payment(transaction.payment_method.as_ref());
 
     card::simple(
         widget::column![
@@ -826,11 +826,14 @@ fn transaction_row<'a>(
                     text::p2_bold(format_amount(transaction.amount, &transaction.currency))
                 ]
                 .width(Length::Fill),
-                widget::column![
-                    text::p2_medium("Payment").style(theme::text::secondary),
-                    text::p2_bold(transaction.payment_method.to_string())
-                ]
-                .width(Length::Fill),
+                transaction
+                    .payment_method
+                    .as_ref()
+                    .map(|pm| widget::column![
+                        text::p2_medium("Payment Method").style(theme::text::secondary),
+                        text::p2_bold(pm.as_str())
+                    ]
+                    .width(Length::Fill)),
                 widget::column![
                     text::p2_medium("Date").style(theme::text::secondary),
                     text::p2_bold(pretty_timestamp(&transaction.created_at))
@@ -882,7 +885,8 @@ fn order_detail_view<'a>(
         unreachable!()
     };
 
-    let (order_type, order_type_color) = order_type_from_payment(&transaction.payment_method);
+    let (order_type, order_type_color) =
+        order_type_from_payment(transaction.payment_method.as_ref());
     let (tx_status_text, tx_status_color) = transaction_status_info(transaction);
 
     let back_button = widget::button(
@@ -946,10 +950,10 @@ fn order_detail_view<'a>(
                 info_field("Fees", fees_display),
             ],
             widget::Space::new().height(8),
-            widget::row![
-                info_field("Payment Method", &transaction.payment_method),
+            transaction.payment_method.as_ref().map(|pm| widget::row![
+                info_field("Payment Method", pm.as_str()),
                 info_field("Date", pretty_timestamp(&transaction.created_at)),
-            ]
+            ])
         ]
         .padding(20)
         .width(Length::Fill),
@@ -994,7 +998,7 @@ fn order_detail_view<'a>(
                         widget::Space::new().height(8),
                         widget::row![
                             info_field("Currency", &order.currency),
-                            info_field("Payment Method", &order.payment_method),
+                            info_field("Payment Method", order.payment_method.as_str()),
                         ],
                     ]
                     .padding(20)
@@ -1265,10 +1269,17 @@ fn status_color(status: &TransactionStatus) -> iced::Color {
 /// Determine order type based on payment method.
 /// - BankTransfer/USDT = BUY (user paying fiat to receive BTC)
 /// - Lightning/Onchain = SELL (user paying BTC to receive fiat)
-fn order_type_from_payment(payment_method: &MavapayPaymentMethod) -> (&'static str, iced::Color) {
+fn order_type_from_payment(
+    payment_method: Option<&MavapayPaymentMethod>,
+) -> (&'static str, iced::Color) {
     match payment_method {
-        MavapayPaymentMethod::BankTransfer | MavapayPaymentMethod::USDT => ("BUY", color::GREEN),
-        MavapayPaymentMethod::Lightning | MavapayPaymentMethod::Onchain => ("SELL", color::ORANGE),
+        Some(MavapayPaymentMethod::BankTransfer) | Some(MavapayPaymentMethod::USDT) => {
+            ("BUY", color::GREEN)
+        }
+        Some(MavapayPaymentMethod::Lightning) | Some(MavapayPaymentMethod::Onchain) => {
+            ("SELL", color::ORANGE)
+        }
+        None => ("N/A", color::BLUE),
     }
 }
 

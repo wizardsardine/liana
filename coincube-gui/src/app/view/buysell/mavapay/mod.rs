@@ -719,15 +719,13 @@ impl MavapayState {
                     let task = iced::Task::perform(
                         async move { MavapayClient(&client).get_transactions().await },
                         |result| match result {
-                            MavapayApiResult::Success { data } => {
+                            Ok(data) => {
                                 MavapayMessage::TransactionsReceived(data.transactions).into()
                             }
-                            MavapayApiResult::Error { message } => {
-                                view::Message::BuySell(view::BuySellMessage::SessionError(
-                                    "Failed to fetch transactions",
-                                    message,
-                                ))
-                            }
+                            Err(err) => view::Message::BuySell(view::BuySellMessage::SessionError(
+                                "Failed to fetch transactions",
+                                err.to_string(),
+                            )),
                         },
                     );
 
