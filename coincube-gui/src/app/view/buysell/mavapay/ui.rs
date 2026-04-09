@@ -951,10 +951,13 @@ fn order_detail_view<'a>(
                 info_field("Fees", fees_display),
             ],
             widget::Space::new().height(8),
-            transaction.payment_method.as_ref().map(|pm| widget::row![
-                info_field("Payment Method", pm.as_str()),
+            widget::row![
+                transaction
+                    .payment_method
+                    .as_ref()
+                    .map(|pm| info_field("Payment Method", pm.as_str())),
                 info_field("Date", pretty_timestamp(&transaction.created_at)),
-            ])
+            ]
         ]
         .padding(20)
         .width(Length::Fill),
