@@ -583,7 +583,10 @@ impl P2PPanel {
         } else {
             self.node_currencies.clone()
         };
-        self.currency_combo_state = combo_box::State::new(options);
+        self.currency_combo_state = combo_box::State::new(options.clone());
+        // Keep filter combo in sync (with "All" prepended)
+        self.filter_currency_combo_state =
+            combo_box::State::new(std::iter::once("All".to_string()).chain(options).collect());
     }
 
     fn rebuild_payment_method_combo(&mut self) {
@@ -3967,6 +3970,14 @@ impl State for P2PPanel {
                             .unwrap_or_else(|| "USD".to_string());
                         self.create_payment_methods.clear();
                         self.rebuild_payment_method_combo();
+                    }
+                    // Reset filter currency if no longer supported (unless "All")
+                    if self.filter_currency != "All"
+                        && !self.node_currencies.contains(&self.filter_currency)
+                    {
+                        self.filter_currency = "All".to_string();
+                        self.filter_deselected_payment_methods.clear();
+                        self.recompute_available_payment_methods();
                     }
                 }
                 self.node_min_order_sats = min_order_sats;

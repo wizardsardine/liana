@@ -1519,15 +1519,34 @@ impl Launcher {
                                     for rc in &remote_for_net {
                                         col = col.push(remote_cube_list_item(rc));
                                     }
-                                    col.push(create_cube_form(
-                                        &self.create_cube_name,
-                                        &self.create_cube_pin,
-                                        &self.create_cube_pin_confirm,
-                                        &self.error,
-                                        self.creating_cube,
-                                        self.recover_liquid_wallet,
-                                    ))
-                                    .into()
+
+                                    let total_count = self.total_cube_count();
+                                    let at_limit = total_count >= self.cube_limit();
+                                    if at_limit && !remote_for_net.is_empty() {
+                                        col = col.push(
+                                            Container::new(
+                                                p1_regular(format!(
+                                                    "Cube limit reached ({}/{}) on the {} plan. \
+                                                     Upgrade your Connect account or delete a remote Cube to create one here.",
+                                                    total_count,
+                                                    self.cube_limit(),
+                                                    self.account_tier.display_name(),
+                                                ))
+                                                .style(theme::text::secondary),
+                                            )
+                                            .max_width(500),
+                                        );
+                                    } else {
+                                        col = col.push(create_cube_form(
+                                            &self.create_cube_name,
+                                            &self.create_cube_pin,
+                                            &self.create_cube_pin_confirm,
+                                            &self.error,
+                                            self.creating_cube,
+                                            self.recover_liquid_wallet,
+                                        ));
+                                    }
+                                    col.into()
                                 }
                             })
                             .align_x(Alignment::Center),
