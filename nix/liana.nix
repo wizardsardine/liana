@@ -24,10 +24,7 @@ let
 
     SOURCE_DATE_EPOCH = 1;
     CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
-    # CARGO_BUILD_RUSTFLAGS = "-C link-arg=-Wl,--no-insert-timestamp -C link-arg=-L${pkgs.pkgsCross.mingwW64.windows.pthreads}/lib";
-    # CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = "-C link-arg=-Wl,--no-insert-timestamp -C link-arg=-L${pkgs.pkgsCross.mingwW64.windows.pthreads}/lib";
-    # CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = "-C link-arg=-Wl,--no-insert-timestamp -C link-arg=-Wl,--image-base,0x10000 -C link-arg=-L${pkgs.pkgsCross.mingwW64.windows.pthreads}/lib";
-    CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = "-C link-arg=-Wl,--no-insert-timestamp -C link-arg=-L${pkgs.pkgsCross.mingwW64.windows.pthreads}/lib";
+    CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = "-C link-arg=-Wl,--no-insert-timestamp -C link-arg=-Wl,--strip-all -C link-arg=-L${pkgs.pkgsCross.mingwW64.windows.pthreads}/lib";
 
     HOST_CC = "${pkgs.stdenv.cc}/bin/cc";
     TARGET_CC = "${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/${pkgs.pkgsCross.mingwW64.stdenv.cc.targetPrefix}cc";
