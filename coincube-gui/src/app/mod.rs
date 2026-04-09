@@ -87,6 +87,24 @@ struct Panels {
 }
 
 impl Panels {
+    /// Read the cube's fiat currency preference from the settings file.
+    fn default_fiat_currency(
+        datadir: &CoincubeDirectory,
+        network: bitcoin::Network,
+        cube_id: &str,
+    ) -> Option<String> {
+        let network_dir = datadir.network_directory(network);
+        settings::Settings::from_file(&network_dir)
+            .ok()
+            .and_then(|s| {
+                s.cubes
+                    .iter()
+                    .find(|c| c.id == cube_id)
+                    .and_then(|c| c.fiat_price.as_ref())
+                    .map(|fp| fp.currency.to_string())
+            })
+    }
+
     fn new_without_vault(
         breez_client: Arc<BreezClient>,
         wallet: Option<Arc<Wallet>>,
@@ -99,18 +117,7 @@ impl Panels {
         // NO VAULT - All vault panels are None, but Liquid panels always work
         // The UI layer prevents navigation to vault panels when has_vault=false
 
-        let default_fiat_currency = {
-            let network_dir = datadir.network_directory(network);
-            settings::Settings::from_file(&network_dir)
-                .ok()
-                .and_then(|s| {
-                    s.cubes
-                        .iter()
-                        .find(|c| c.id == cube_id)
-                        .and_then(|c| c.fiat_price.as_ref())
-                        .map(|fp| fp.currency.to_string())
-                })
-        };
+        let default_fiat_currency = Self::default_fiat_currency(datadir, network, &cube_id);
 
         Self {
             current: Menu::Home,
@@ -210,18 +217,7 @@ impl Panels {
                 // We don't know the node type for external coincubed so assume it's bitcoind.
                 .unwrap_or(true);
 
-        let default_fiat_currency = {
-            let network_dir = data_dir.network_directory(cache.network);
-            settings::Settings::from_file(&network_dir)
-                .ok()
-                .and_then(|s| {
-                    s.cubes
-                        .iter()
-                        .find(|c| c.id == cube_id)
-                        .and_then(|c| c.fiat_price.as_ref())
-                        .map(|fp| fp.currency.to_string())
-                })
-        };
+        let default_fiat_currency = Self::default_fiat_currency(&data_dir, cache.network, &cube_id);
 
         Self {
             current: Menu::Home,

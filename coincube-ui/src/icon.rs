@@ -303,8 +303,8 @@ pub fn file_earmark_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F373}')
 }
 
-pub fn file_earmark_arrow_down_icon<'a>() -> Text<'a> {
-    bootstrap_icon('\u{F356}')
+pub fn cloud_arrow_down_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F295}')
 }
 
 pub fn check_circle_icon<'a>() -> Text<'a> {
@@ -365,4 +365,12 @@ pub fn moon_icon<'a>() -> Text<'a> {
 
 pub fn shield_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F53F}')
+}
+
+pub fn cloud_check_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F299}')
+}
+
+pub fn cloud_slash_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F2B8}')
 }

@@ -278,7 +278,7 @@ impl P2PPanel {
                     .collect(),
             ),
             filter_deselected_payment_methods: HashSet::new(),
-            filter_min_rating: 4.0,
+            filter_min_rating: 0.0,
             filter_min_days_active: 0,
             filter_available_payment_methods: Vec::new(),
             selected_order: None,
