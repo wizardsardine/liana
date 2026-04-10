@@ -99,7 +99,7 @@ Or specify all options manually:
 ```bash
 sonar-scanner \
   -Dsonar.projectKey=coincubetech_coincube \
-  -Dsonar.sources=../coincube-core/src,../coincubed/src,../coincube-gui/src,../coincube-ui/src \
+  -Dsonar.sources=. \
   -Dsonar.host.url=http://localhost:9000 \
   -Dsonar.token=YOUR_GENERATED_TOKEN_HERE
 ```
