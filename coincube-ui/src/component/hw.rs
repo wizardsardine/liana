@@ -497,7 +497,7 @@ pub fn unsupported_version_hardware_wallet<'a, T: 'static, K: Display, V: Displa
     .padding(10)
 }
 
-pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
+pub fn sign_success_master_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
     alias: Option<impl Into<Cow<'a, str>>>,
 ) -> Container<'a, T> {
@@ -529,7 +529,7 @@ pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
     .padding(10)
 }
 
-pub fn selected_hot_signer<'a, T: 'a, F: Display>(
+pub fn selected_master_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
     alias: Option<impl Into<Cow<'a, str>>>,
 ) -> Container<'a, T> {
@@ -558,7 +558,7 @@ pub fn selected_hot_signer<'a, T: 'a, F: Display>(
     .padding(10)
 }
 
-pub fn unselected_hot_signer<'a, T: 'a, F: Display>(
+pub fn unselected_master_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
     alias: Option<impl Into<Cow<'a, str>>>,
 ) -> Container<'a, T> {
@@ -582,7 +582,7 @@ pub fn unselected_hot_signer<'a, T: 'a, F: Display>(
     .padding(10)
 }
 
-pub fn hot_signer<'a, T: 'a, F: Display>(
+pub fn master_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
     alias: Option<impl Into<Cow<'a, str>>>,
     can_sign: bool,

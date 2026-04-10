@@ -1050,15 +1050,15 @@ pub fn sign_action<'a>(
                 let can_sign =
                     descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);
                 let btn = Button::new(if signed.contains(&fingerprint) {
-                    hw::sign_success_hot_signer(fingerprint, signer_alias)
+                    hw::sign_success_master_signer(fingerprint, signer_alias)
                 } else {
-                    hw::hot_signer(fingerprint, signer_alias, can_sign)
+                    hw::master_signer(fingerprint, signer_alias, can_sign)
                 })
                 .padding(10)
                 .style(theme::button::secondary)
                 .width(Length::Fill);
                 if can_sign {
-                    btn.on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
+                    btn.on_press(Message::Spend(SpendTxMessage::SelectMasterSigner))
                 } else {
                     btn
                 }

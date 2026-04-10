@@ -184,8 +184,23 @@ impl Tab {
                     command.map(Message::Install)
                 }
                 launcher::Message::Run(datadir_path, cfg, network, cube) => {
-                    // PIN is always required - determine what to do after PIN verification
-                    // Try to load Vault wallet settings if cube has a vault configured
+                    if cube.is_passkey_cube() {
+                        // Passkey Cube: start passkey authentication ceremony.
+                        // The launcher will open a webview, get the PRF output,
+                        // derive the master signer, and then load the app.
+                        // For now, this is a TODO — we need to add a
+                        // PasskeyAuth state to the launcher that holds the
+                        // config/network/cube and waits for the ceremony result.
+                        // As an interim step, load the app directly (the signer
+                        // won't be available until the ceremony page is integrated).
+                        tracing::info!(
+                            "Passkey Cube detected — passkey auth flow not yet wired for Cube open"
+                        );
+                        // Fall through to PIN entry for now (passkey cubes
+                        // don't have a PIN, so this will auto-pass)
+                    }
+
+                    // PIN entry (or auto-pass for passkey cubes without a PIN)
                     let wallet_settings = cube.vault_wallet_id.as_ref().and_then(|vault_id| {
                         let network_dir = datadir_path.network_directory(network);
                         app::settings::Settings::from_file(&network_dir)
@@ -405,11 +420,9 @@ impl Tab {
                         true, // launched from app (loader is part of app flow)
                         Some(loader.cube_settings.clone()), // pass cube settings for returning
                         loader.breez_client.clone(), // pass breez_client to avoid re-entering PIN
-                        GlobalSettings::load_developer_mode(
-                            &GlobalSettings::path(
-                                &loader.datadir_path,
-                            ),
-                        ),
+                        GlobalSettings::load_developer_mode(&GlobalSettings::path(
+                            &loader.datadir_path,
+                        )),
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
@@ -544,11 +557,9 @@ impl Tab {
                             true,                              // launched from app
                             Some(app.cube_settings().clone()), // pass cube settings for returning
                             Some(app.breez_client()), // pass breez_client to avoid re-entering PIN
-                            GlobalSettings::load_developer_mode(
-                                &GlobalSettings::path(
-                                    app.datadir(),
-                                ),
-                            ),
+                            GlobalSettings::load_developer_mode(&GlobalSettings::path(
+                                app.datadir(),
+                            )),
                         );
                         self.state = State::Installer(install);
                         command.map(Message::Install)
@@ -585,21 +596,20 @@ impl Tab {
                             Task::perform(
                                 async move {
                                     // Load BreezClient for Liquid wallet with PIN
-                                    let breez_result = if let Some(fingerprint) =
-                                        cube.master_signer_fingerprint
-                                    {
-                                        breez::load_breez_client(
-                                            datadir_clone.path(),
-                                            network_val,
-                                            fingerprint,
-                                            &pin,
-                                        )
-                                        .await
-                                    } else {
-                                        Err(breez::BreezError::SignerError(
-                                            "No Liquid wallet configured".to_string(),
-                                        ))
-                                    };
+                                    let breez_result =
+                                        if let Some(fingerprint) = cube.master_signer_fingerprint {
+                                            breez::load_breez_client(
+                                                datadir_clone.path(),
+                                                network_val,
+                                                fingerprint,
+                                                &pin,
+                                            )
+                                            .await
+                                        } else {
+                                            Err(breez::BreezError::SignerError(
+                                                "No Liquid wallet configured".to_string(),
+                                            ))
+                                        };
 
                                     (
                                         config_clone,

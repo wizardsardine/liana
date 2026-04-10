@@ -140,7 +140,7 @@ impl Installer {
         launched_from_app: bool,
         cube_settings: Option<crate::app::settings::CubeSettings>,
         breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
-        developer_mode: bool,
+        mut developer_mode: bool,
     ) -> (Installer, Task<Message>) {
         let signer = if developer_mode {
             let master_signer = breez_client
@@ -153,13 +153,16 @@ impl Installer {
                         .and_then(|hs_guard| hs_guard.try_clone().ok())
                         .map(|hs| Arc::new(Mutex::new(Signer::new(hs))))
                 });
-            if master_signer.is_none() {
+            if let Some(ms) = master_signer {
+                ms
+            } else {
                 tracing::warn!(
                     "developer_mode=true but master signer unavailable; \
-                     vault signer will be a fresh random key"
+                     downgrading to normal mode"
                 );
+                developer_mode = false;
+                Arc::new(Mutex::new(Signer::generate(network).unwrap()))
             }
-            master_signer.unwrap_or_else(|| Arc::new(Mutex::new(Signer::generate(network).unwrap())))
         } else {
             Arc::new(Mutex::new(Signer::generate(network).unwrap()))
         };

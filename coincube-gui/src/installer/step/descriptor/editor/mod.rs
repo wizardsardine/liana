@@ -250,8 +250,12 @@ impl Step for DefineDescriptor {
             Message::DefineDescriptor(message::DefineDescriptor::OpenBorderWalletWizard(
                 coordinates,
             )) => {
-                let modal =
-                    border_wallet_wizard::BorderWalletWizard::new(self.network, coordinates);
+                let modal = border_wallet_wizard::BorderWalletWizard::new(
+                    self.network,
+                    coordinates,
+                    self.signer.clone(),
+                    false, // Default: use master-derived grid phrase
+                );
                 self.modal = Some(Box::new(modal));
             }
             Message::DefineDescriptor(message::DefineDescriptor::KeysEdited(coordinates, key)) => {
@@ -828,7 +832,7 @@ mod tests {
         );
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
             Network::Signet,
-            Arc::new(Mutex::new(Signer::generate(Network::Bitcoin).unwrap())),
+            Arc::new(Mutex::new(Signer::generate(Network::Signet).unwrap())),
             true,
         ));
         sandbox.load(&ctx).await;
@@ -848,7 +852,7 @@ mod tests {
             .await;
         sandbox
             .update(SelectKeySource::route(key::SelectKeySourceMessage::Alias(
-                "hot_signer_key".to_string(),
+                "master_signer_key".to_string(),
             )))
             .await;
         sandbox

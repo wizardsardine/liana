@@ -157,7 +157,7 @@ pub enum SpendTxMessage {
     Save,
     Confirm,
     Cancel,
-    SelectHotSigner,
+    SelectMasterSigner,
     SelectBorderWallet(Fingerprint),
     BorderWalletRecon(BorderWalletReconMessage),
     EditPsbt,
@@ -226,6 +226,9 @@ pub enum SettingsMessage {
     InstallStats(InstallStatsViewMessage),
     TestToast(log::Level),
     ToggleDirectionBadges(bool),
+    /// Master seed backup flow (moved from Liquid Settings to Cube/General Settings).
+    BackupMasterSeed(BackupWalletMessage),
+    BackupMasterSeedUpdated,
 }
 
 #[derive(Debug, Clone)]
@@ -610,7 +613,14 @@ pub enum BackupWalletMessage {
     PreviousStep,
     VerifyPhrase,
     Complete,
-    WordInput { index: u8, input: String },
+    WordInput {
+        index: u8,
+        input: String,
+    },
+    /// Digit entry in the backup-flow PIN re-verification gate.
+    PinInput(crate::pin_input::Message),
+    /// User submits the PIN to unlock the mnemonic.
+    VerifyPin,
 }
 
 impl From<FiatMessage> for Message {
