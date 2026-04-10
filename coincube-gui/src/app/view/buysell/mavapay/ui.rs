@@ -695,7 +695,7 @@ fn order_success_view<'a>(
                         .width(Length::Fill),
                         widget::column![
                             text::p2_medium("Payment Method").style(theme::text::secondary),
-                            text::p1_bold(format!("{}", order.payment_method))
+                            text::p1_bold(order.payment_method.as_str())
                         ]
                         .width(Length::Fill)
                     ],
@@ -703,28 +703,22 @@ fn order_success_view<'a>(
                         widget::Space::new().height(15),
                         text::p2_medium("Order Date").style(theme::text::secondary),
                         text::p2_bold(pretty_timestamp(&order.created_at))
-                    ]
-                ]
-                .width(Length::Fill)
-                .padding(20)
-            )
-            .width(Length::Fill),
-            widget::Space::new().height(10),
-            card::simple(
-                widget::column![
-                    text::p2_medium("Thank you for using Mavapay!")
-                        .style(theme::text::success)
-                        .center()
-                        .width(Length::Fill),
-                    widget::Space::new().height(15),
+                    ],
+                    // separator
+                    widget::container(
+                        widget::Space::new()
+                            .height(Length::Fixed(3.0))
+                            .width(Length::Fill)
+                    )
+                    .style(theme::container::border_grey),
                     button::primary(Some(reload_icon()), "Start New Transaction")
                         .on_press(BuySellMessage::ResetWidget)
                         .width(Length::Fill)
                 ]
+                .spacing(15)
                 .width(Length::Fill)
                 .padding(20)
-            )
-            .width(Length::Fill)
+            ),
         ])
         .padding(10)
     ]
@@ -809,8 +803,9 @@ fn transaction_row<'a>(
     idx: usize,
     transaction: &'a OrderTransaction,
 ) -> widget::Container<'a, BuySellMessage, theme::Theme> {
-    let (order_type, order_type_color) = order_type_from_payment(&transaction.payment_method);
     let (tx_status_text, tx_status_color) = transaction_status_info(transaction);
+    let (order_type, order_type_color) =
+        order_type_from_payment(transaction.payment_method.as_ref());
 
     card::simple(
         widget::column![
@@ -832,11 +827,14 @@ fn transaction_row<'a>(
                     text::p2_bold(format_amount(transaction.amount, &transaction.currency))
                 ]
                 .width(Length::Fill),
-                widget::column![
-                    text::p2_medium("Payment").style(theme::text::secondary),
-                    text::p2_bold(transaction.payment_method.to_string())
-                ]
-                .width(Length::Fill),
+                transaction
+                    .payment_method
+                    .as_ref()
+                    .map(|pm| widget::column![
+                        text::p2_medium("Payment Method").style(theme::text::secondary),
+                        text::p2_bold(pm.as_str())
+                    ]
+                    .width(Length::Fill)),
                 widget::column![
                     text::p2_medium("Date").style(theme::text::secondary),
                     text::p2_bold(pretty_timestamp(&transaction.created_at))
@@ -888,7 +886,8 @@ fn order_detail_view<'a>(
         unreachable!()
     };
 
-    let (order_type, order_type_color) = order_type_from_payment(&transaction.payment_method);
+    let (order_type, order_type_color) =
+        order_type_from_payment(transaction.payment_method.as_ref());
     let (tx_status_text, tx_status_color) = transaction_status_info(transaction);
 
     let back_button = widget::button(
@@ -953,7 +952,10 @@ fn order_detail_view<'a>(
             ],
             widget::Space::new().height(8),
             widget::row![
-                info_field("Payment Method", &transaction.payment_method),
+                transaction
+                    .payment_method
+                    .as_ref()
+                    .map(|pm| info_field("Payment Method", pm.as_str())),
                 info_field("Date", pretty_timestamp(&transaction.created_at)),
             ]
         ]
@@ -1000,7 +1002,7 @@ fn order_detail_view<'a>(
                         widget::Space::new().height(8),
                         widget::row![
                             info_field("Currency", &order.currency),
-                            info_field("Payment Method", &order.payment_method),
+                            info_field("Payment Method", order.payment_method.as_str()),
                         ],
                     ]
                     .padding(20)
@@ -1271,10 +1273,17 @@ fn status_color(status: &TransactionStatus) -> iced::Color {
 /// Determine order type based on payment method.
 /// - BankTransfer/USDT = BUY (user paying fiat to receive BTC)
 /// - Lightning/Onchain = SELL (user paying BTC to receive fiat)
-fn order_type_from_payment(payment_method: &MavapayPaymentMethod) -> (&'static str, iced::Color) {
+fn order_type_from_payment(
+    payment_method: Option<&MavapayPaymentMethod>,
+) -> (&'static str, iced::Color) {
     match payment_method {
-        MavapayPaymentMethod::BankTransfer | MavapayPaymentMethod::USDT => ("BUY", color::GREEN),
-        MavapayPaymentMethod::Lightning | MavapayPaymentMethod::Onchain => ("SELL", color::ORANGE),
+        Some(MavapayPaymentMethod::BankTransfer) | Some(MavapayPaymentMethod::USDT) => {
+            ("BUY", color::GREEN)
+        }
+        Some(MavapayPaymentMethod::Lightning) | Some(MavapayPaymentMethod::Onchain) => {
+            ("SELL", color::ORANGE)
+        }
+        None => ("N/A", color::BLUE),
     }
 }
 
@@ -1292,21 +1301,18 @@ fn order_status_text(status: &TransactionStatus) -> &'static str {
 /// For DEPOSIT transactions, even SUCCESS means "Processing" since the order
 /// isn't complete until the WITHDRAWAL succeeds.
 fn transaction_status_info(transaction: &OrderTransaction) -> (&'static str, iced::Color) {
-    match transaction.transaction_type {
-        // DEPOSIT success just means payment received, order still processing
-        TransactionType::Deposit => match transaction.status {
-            TransactionStatus::Pending => ("Processing", color::ORANGE),
-            TransactionStatus::Success | TransactionStatus::Paid => ("Processing", color::ORANGE),
-            TransactionStatus::Expired => ("Expired", color::RED),
-            TransactionStatus::Failed => ("Failed", color::RED),
-        },
-        // WITHDRAWAL success means order is actually complete
-        TransactionType::Withdrawal => match transaction.status {
-            TransactionStatus::Pending => ("Processing", color::ORANGE),
-            TransactionStatus::Success | TransactionStatus::Paid => ("Complete", color::GREEN),
-            TransactionStatus::Expired => ("Expired", color::RED),
-            TransactionStatus::Failed => ("Failed", color::RED),
-        },
+    match transaction.status {
+        TransactionStatus::Pending => ("Processing", color::ORANGE),
+        TransactionStatus::Success | TransactionStatus::Paid => {
+            match transaction.transaction_type {
+                // WITHDRAWAL success means order is actually complete
+                TransactionType::Withdrawal => ("Complete", color::GREEN),
+                // DEPOSIT success just means payment received, order still processing
+                TransactionType::Deposit => ("Processing", color::ORANGE),
+            }
+        }
+        TransactionStatus::Expired => ("Expired", color::RED),
+        TransactionStatus::Failed => ("Failed", color::RED),
     }
 }
 
