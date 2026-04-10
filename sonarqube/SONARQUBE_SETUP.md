@@ -27,7 +27,7 @@ version: "3.8"
 
 services:
   sonarqube:
-    image: sonarqube:community
+    image: sonarqube:10.6-community
     container_name: sonarqube
     ports:
       - "9000:9000"
@@ -98,7 +98,7 @@ Or specify all options manually:
 
 ```bash
 sonar-scanner \
-  -Dsonar.projectKey=coincube \
+  -Dsonar.projectKey=coincubetech_coincube \
   -Dsonar.sources=. \
   -Dsonar.host.url=http://localhost:9000 \
   -Dsonar.token=YOUR_GENERATED_TOKEN_HERE
