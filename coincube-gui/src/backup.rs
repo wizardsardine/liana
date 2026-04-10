@@ -146,7 +146,7 @@ impl Backup {
                 proprietary.insert(SETTINGS_KEY.to_string(), settings);
             }
             wallet_alias = settings.alias;
-        };
+        }
 
         if let Ok(config) = serde_json::to_value((*config).clone()) {
             proprietary.insert(CONFIG_KEY.to_string(), config);

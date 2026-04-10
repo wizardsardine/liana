@@ -379,7 +379,7 @@ impl Loader {
                         self.set_quote_context("error");
                         return Task::none();
                     }
-                };
+                }
                 Task::perform(sync(daemon.clone(), true), Message::Syncing)
             }
             _ => Task::none(),
@@ -509,7 +509,7 @@ pub fn get_bitcoind_log(log_path: PathBuf) -> impl Stream<Item = Option<String>>
                 Err(e) => {
                     log::error!("Getting bitcoind log file metadata: {}", e);
                 }
-            };
+            }
 
             // Find the latest tip update line in bitcoind's debug.log. BufReader is only
             // used to facilitates searching through the lines.

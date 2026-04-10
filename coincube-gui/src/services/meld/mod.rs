@@ -197,7 +197,7 @@ fn create_subscription(
                                                         log::trace!("[MELD] Exiting subscription, Meld state was dropped");
                                                         break;
                                                     }
-                                                };
+                                                }
                                             } else {
                                                 log::trace!("[MELD] Got event from SSE: {:?}", ev)
                                             }
@@ -217,7 +217,7 @@ fn create_subscription(
                                             break;
                                         }
                                     },
-                                };
+                                }
                             },
                             Err(err) => channel
                                 .send(meld::MeldMessage::SessionError(
@@ -235,8 +235,8 @@ fn create_subscription(
                         ))
                         .await
                         .unwrap(),
-                };
-            };
+                }
+            }
         },
     )
 }

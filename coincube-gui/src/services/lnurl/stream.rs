@@ -201,8 +201,8 @@ fn create_stream(
                             .send(LnurlMessage::StreamError(err.to_string()))
                             .await;
                     }
-                };
-            };
+                }
+            }
         },
     )
 }

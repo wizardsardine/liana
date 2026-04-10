@@ -989,7 +989,7 @@ impl App {
                     menu
                 );
             }
-        };
+        }
 
         self.panels.current = menu.clone();
 
@@ -1888,7 +1888,7 @@ impl App {
                     return panel.update(None, &self.cache, msg);
                 }
             }
-        };
+        }
 
         Task::none()
     }
