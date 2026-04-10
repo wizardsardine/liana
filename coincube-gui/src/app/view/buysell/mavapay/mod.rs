@@ -641,21 +641,6 @@ impl MavapayState {
 
                     *fulfilled_order = Some(order);
                     *stream_order_id = None;
-
-                    // return Some(iced::Task::batch([
-                    //     iced::Task::done(view::Message::ShowSuccess(format!(
-                    //         "Deposit of {} {} was successful",
-                    //         quote.amount_in_target_currency, quote.target_currency,
-                    //     ))),
-                    //     iced::Task::future(async {
-                    //         tokio::time::sleep(std::time::Duration::from_secs(3)).await
-                    //     })
-                    //     .then(|_| {
-                    //         iced::Task::done(view::Message::BuySell(
-                    //             view::BuySellMessage::ResetWidget,
-                    //         ))
-                    //     }),
-                    // ]));
                 }
 
                 #[cfg(debug_assertions)]
