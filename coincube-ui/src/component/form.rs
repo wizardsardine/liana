@@ -2,7 +2,7 @@ use crate::widget::text_input;
 use bitcoin::Denomination;
 use iced::Length;
 
-use crate::{color, component::text, theme, widget::*};
+use crate::{color, component::text, theme, widget::{Column, Container, Element}};
 
 #[derive(Debug, Clone)]
 pub struct Value<T> {
