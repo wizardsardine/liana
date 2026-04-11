@@ -22,7 +22,15 @@ use reqwest::{Error, IntoUrl, Method, RequestBuilder, Response};
 use tokio::sync::RwLock;
 
 use crate::{
-    daemon::{model::*, Daemon, DaemonBackend, DaemonError},
+    daemon::{
+        model::{
+            secp256k1, CreateSpendResult, Fingerprint, GetAddressResult, GetInfoResult,
+            HistoryTransaction, LabelsLoader, ListCoinsEntry, ListCoinsResult,
+            ListRevealedAddressesEntry, ListRevealedAddressesResult, ListSpendEntry,
+            ListSpendResult, ListTransactionsResult, SpendTx, TransactionInfo,
+        },
+        Daemon, DaemonBackend, DaemonError,
+    },
     dir::CoincubeDirectory,
     hw::HardwareWalletConfig,
     services::http::{NotSuccessResponseInfo, ResponseExt},
