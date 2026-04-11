@@ -19,7 +19,10 @@ pub use tooltip::tooltip;
 
 use iced::Length;
 
-use crate::{theme, widget::{Column, Container, Element, Row}};
+use crate::{
+    theme,
+    widget::{Column, Container, Element, Row},
+};
 
 use self::text::Text;
 

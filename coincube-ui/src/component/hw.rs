@@ -1,4 +1,7 @@
-use crate::{color, component::text, icon, image, theme, widget::{Container, Row}};
+use crate::{
+    color, component::text, icon, image, theme,
+    widget::{Container, Row},
+};
 use bitcoin::bip32::{ChildNumber, Fingerprint};
 use iced::{
     alignment::Vertical,

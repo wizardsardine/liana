@@ -3,7 +3,7 @@ use iced::Color;
 use serde::{Deserialize, Serialize};
 
 use crate::color;
-use crate::component::text::{text, P1_SIZE, Text};
+use crate::component::text::{text, Text, P1_SIZE};
 use crate::widget::Row;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

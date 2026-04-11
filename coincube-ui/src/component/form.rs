@@ -1,4 +1,11 @@
-use crate::{color, component::text, theme, widget::{text_input, Column, Container, Element, TextInput}};
+use crate::{
+    color,
+    component::text,
+    theme,
+    widget::{
+        text_input, Column, Container, Element, TextInput,
+    },
+};
 use bitcoin::Denomination;
 use iced::Length;
 
