@@ -1,4 +1,4 @@
-A quick and dirty program to sign Taproot PSBTs with a given xpriv. This reuses the hot signer Rust
+A quick and dirty program to sign Taproot PSBTs with a given xpriv. This reuses the master signer Rust
 code so i don't have to reimplement everything in Python.
 
 Usage:

@@ -71,6 +71,7 @@ fn rescan_warning<'a>() -> Element<'a, Message> {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn vault_overview_view<'a>(
     balance: &'a bitcoin::Amount,
     unconfirmed_balance: &'a bitcoin::Amount,
@@ -82,6 +83,7 @@ pub fn vault_overview_view<'a>(
     processing: bool,
     sync_status: &SyncStatus,
     show_rescan_warning: bool,
+    show_backup_warning: bool,
     bitcoin_unit: BitcoinDisplayUnit,
     node_bitcoind_sync_progress: Option<f64>,
     node_bitcoind_ibd: Option<bool>,
@@ -174,6 +176,7 @@ pub fn vault_overview_view<'a>(
                 ),
         ))
         .push(show_rescan_warning.then_some(rescan_warning()))
+        .push(show_backup_warning.then(crate::app::view::backup_warning_banner))
         .push(match (node_bitcoind_ibd, node_bitcoind_sync_progress) {
             (Some(true), Some(progress)) => Some(
                 Container::new(

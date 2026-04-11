@@ -101,7 +101,7 @@ enum Focus {
     Device(Fingerprint),
     EnterXpub,
     LoadXpubFromFile,
-    GenerateHotKey,
+    GenerateMasterKey,
     EnterSafetyNetToken,
     EnterCosignerToken,
 }
@@ -115,7 +115,7 @@ pub enum SelectKeySourceMessage {
     SelectEnterXpub,
     PasteXpub,
     Xpub(String),
-    SelectGenerateHotKey,
+    SelectGenerateMasterKey,
     FetchFromMasterSigner(ChildNumber),
     SelectEnterSafetyNetToken,
     SelectEnterCosignerToken,
@@ -490,7 +490,7 @@ impl SelectKeySource {
         Task::none()
     }
     fn on_select_generate_hot_key(&mut self) -> Task<Message> {
-        self.focus = Focus::GenerateHotKey;
+        self.focus = Focus::GenerateMasterKey;
         let _ = self.on_next();
         self.processing = true;
         Task::done(Self::route(SelectKeySourceMessage::Account(
@@ -506,7 +506,7 @@ impl SelectKeySource {
             return Task::none();
         }
 
-        self.form_alias.value = "Hot Signer".to_string();
+        self.form_alias.value = "Master Signer".to_string();
         self.form_alias.valid = true;
 
         let derivation_path = derivation_path(self.network, account);
@@ -800,7 +800,7 @@ impl SelectKeySource {
             Focus::Device(fg) => Task::done(Self::route(SelectKeySourceMessage::FetchFromDevice(
                 fg, index,
             ))),
-            Focus::GenerateHotKey => self.on_fetch_from_hotsigner(index),
+            Focus::GenerateMasterKey => self.on_fetch_from_hotsigner(index),
             _ => Task::none(),
         }
     }
@@ -887,7 +887,7 @@ impl SelectKeySource {
             Focus::Device(fg) => Task::done(Self::route(SelectKeySourceMessage::FetchFromDevice(
                 fg, account,
             ))),
-            Focus::GenerateHotKey => Task::done(Self::route(
+            Focus::GenerateMasterKey => Task::done(Self::route(
                 SelectKeySourceMessage::FetchFromMasterSigner(account),
             )),
             _ => Task::none(),
@@ -942,7 +942,7 @@ impl SelectKeySource {
         };
         let fingerprint = match self.focus {
             Focus::Key(fg) | Focus::Device(fg) => fg,
-            Focus::GenerateHotKey => self.master_signer.lock().expect("poisoned").fingerprint(),
+            Focus::GenerateMasterKey => self.master_signer.lock().expect("poisoned").fingerprint(),
             _ => match &self.selected_key {
                 SelectedKey::Existing(fg) => *fg,
                 SelectedKey::New(key) => key.fingerprint,
@@ -1205,7 +1205,7 @@ impl SelectKeySource {
             "Generate hot key stored on this computer",
             Some(subtitle),
             None,
-            Some(|| Self::route(SelectKeySourceMessage::SelectGenerateHotKey)),
+            Some(|| Self::route(SelectKeySourceMessage::SelectGenerateMasterKey)),
         )
     }
     fn widget_paste_xpub(&self) -> Element<Message> {
@@ -1302,7 +1302,7 @@ impl super::DescriptorEditModal for SelectKeySource {
                 SelectKeySourceMessage::SelectEnterXpub => self.on_select_enter_xpub(),
                 SelectKeySourceMessage::PasteXpub => self.on_paste_xpub(),
                 SelectKeySourceMessage::Xpub(xpub) => self.on_update_xpub(xpub),
-                SelectKeySourceMessage::SelectGenerateHotKey => {
+                SelectKeySourceMessage::SelectGenerateMasterKey => {
                     if self.developer_mode {
                         self.on_select_generate_hot_key()
                     } else {

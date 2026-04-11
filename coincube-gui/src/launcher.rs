@@ -177,6 +177,13 @@ impl Launcher {
 
     pub fn stop(&mut self) {}
 
+    /// Set a top-level error message shown on the launcher screen.
+    /// Used by outer state machines (e.g. `gui::tab`) to surface issues
+    /// they detect while handling launcher-originated messages.
+    pub fn set_error(&mut self, msg: impl Into<String>) {
+        self.error = Some(msg.into());
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         if let Some(ceremony) = &self.passkey_ceremony {
             if ceremony.active_webview.is_some() {

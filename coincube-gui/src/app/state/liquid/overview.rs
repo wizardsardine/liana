@@ -129,7 +129,22 @@ impl State for LiquidOverview {
             )
             .map(view::Message::LiquidOverview);
 
-            view::dashboard(menu, cache, send_view)
+            // Prepend a soft "not backed up" warning banner if the current
+            // Cube's master seed hasn't been written down yet. The banner
+            // lives at the state layer (rather than inside the view fn)
+            // because liquid_overview_view is parameterised on
+            // `LiquidOverviewMessage`, not the top-level `Message`.
+            let content: Element<view::Message> = if !cache.current_cube_backed_up {
+                Column::new()
+                    .spacing(20)
+                    .push(view::backup_warning_banner())
+                    .push(send_view)
+                    .into()
+            } else {
+                send_view
+            };
+
+            view::dashboard(menu, cache, content)
         }
     }
 

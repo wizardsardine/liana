@@ -603,7 +603,7 @@ pub fn master_signer<'a, T: 'a, F: Display>(
             .push(Space::new().width(Length::Fixed(20.0)))
             .push(if !can_sign {
                 Some(text::text(
-                    "This hot signer is not part of this spending path.",
+                    "This master signer is not part of this spending path.",
                 ))
             } else {
                 None

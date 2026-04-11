@@ -824,7 +824,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_define_descriptor_use_hotkey() {
+    async fn test_define_descriptor_use_masterkey() {
         let mut ctx = Context::new(
             Network::Signet,
             CoincubeDirectory::new(PathBuf::from_str("/").unwrap()),
@@ -847,7 +847,7 @@ mod tests {
         sandbox.check(|step| assert!(step.modal.is_some()));
         sandbox
             .update(SelectKeySource::route(
-                key::SelectKeySourceMessage::SelectGenerateHotKey,
+                key::SelectKeySourceMessage::SelectGenerateMasterKey,
             ))
             .await;
         sandbox
@@ -971,7 +971,7 @@ mod tests {
             assert!(ctx.hw_is_used);
         });
 
-        // Now edit primary key to use hot signer instead of Specter device
+        // Now edit primary key to use master signer instead of Specter device
         sandbox
             .update(Message::DefineDescriptor(message::DefineDescriptor::Path(
                 0,
@@ -981,12 +981,12 @@ mod tests {
         sandbox.check(|step| assert!(step.modal.is_some()));
         sandbox
             .update(SelectKeySource::route(
-                key::SelectKeySourceMessage::SelectGenerateHotKey,
+                key::SelectKeySourceMessage::SelectGenerateMasterKey,
             ))
             .await;
         sandbox
             .update(SelectKeySource::route(key::SelectKeySourceMessage::Alias(
-                "hot signer key".to_string(),
+                "master signer key".to_string(),
             )))
             .await;
         sandbox

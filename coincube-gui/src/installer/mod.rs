@@ -546,7 +546,7 @@ pub async fn install_local_wallet(
             )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
-        info!("Hot signer mnemonic stored");
+        info!("Master signer mnemonic stored");
     }
 
     if let Some(signer) = &ctx.recovered_signer {
@@ -628,7 +628,7 @@ pub async fn create_remote_wallet(
             )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
-        info!("Hot signer mnemonic stored");
+        info!("Master signer mnemonic stored");
     }
 
     if let Some(signer) = &ctx.recovered_signer {

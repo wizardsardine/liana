@@ -216,7 +216,7 @@ impl std::fmt::Display for WalletError {
         match self {
             Self::WrongWalletLoaded => write!(f, "Wrong wallet was loaded"),
             Self::Settings(e) => write!(f, "Failed to load settings: {}", e),
-            Self::MasterSigner(e) => write!(f, "Failed to load hot signer: {}", e),
+            Self::MasterSigner(e) => write!(f, "Failed to load master signer: {}", e),
             Self::BorderWallet(e) => write!(f, "Border wallet signing failed: {}", e),
         }
     }

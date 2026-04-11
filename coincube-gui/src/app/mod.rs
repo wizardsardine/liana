@@ -681,6 +681,7 @@ impl App {
             has_vault: false,
             bitcoin_unit,
             cube_name: cube_settings.name.clone(),
+            current_cube_backed_up: cube_settings.backed_up,
             ..Default::default()
         };
 
@@ -1325,6 +1326,11 @@ impl App {
                     {
                         self.cache.bitcoin_unit = cube.unit_setting.display_unit;
                         self.cube_settings.fiat_price = cube.fiat_price.clone();
+                        // Keep the "backed up" banner state in sync with
+                        // whatever was persisted — the backup flow saves
+                        // cube.backed_up = true via this same path.
+                        self.cache.current_cube_backed_up = cube.backed_up;
+                        self.cube_settings.backed_up = cube.backed_up;
 
                         // Clear cached fiat display price if disabled.
                         // Note: btc_usd_price is NOT cleared — it's needed for
@@ -1844,6 +1850,21 @@ impl App {
                     return p2p.update(self.daemon.clone(), &self.cache, msg);
                 }
             }
+
+            // Intercept the mnemonic backup completion so the "not backed up"
+            // warning banners on the Vault/Liquid home screens disappear
+            // immediately. The inner panel handler still runs (it transitions
+            // the backup flow to the Completed screen).
+            msg @ Message::View(view::Message::Settings(
+                view::SettingsMessage::BackupMasterSeedUpdated,
+            )) => {
+                self.cache.current_cube_backed_up = true;
+                self.cube_settings.backed_up = true;
+                if let Some(panel) = self.panels.current_mut() {
+                    return panel.update(self.daemon.clone(), &self.cache, msg);
+                }
+            }
+
             msg => {
                 if let (Some(daemon), Some(panel)) =
                     (self.daemon.clone(), self.panels.current_mut())

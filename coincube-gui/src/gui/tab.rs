@@ -185,22 +185,40 @@ impl Tab {
                 }
                 launcher::Message::Run(datadir_path, cfg, network, cube) => {
                     if cube.is_passkey_cube() {
-                        // Passkey Cube: start passkey authentication ceremony.
-                        // The launcher will open a webview, get the PRF output,
-                        // derive the master signer, and then load the app.
-                        // For now, this is a TODO — we need to add a
-                        // PasskeyAuth state to the launcher that holds the
-                        // config/network/cube and waits for the ceremony result.
-                        // As an interim step, load the app directly (the signer
-                        // won't be available until the ceremony page is integrated).
-                        tracing::info!(
-                            "Passkey Cube detected — passkey auth flow not yet wired for Cube open"
+                        // Passkey Cubes don't have an encrypted mnemonic on
+                        // disk — their master seed is re-derived from the
+                        // WebAuthn PRF output on every open. That path isn't
+                        // wired up yet (blocked on macOS code signing +
+                        // associated-domains entitlement), so the only way
+                        // to actually open a passkey Cube right now is via
+                        // the mnemonic recovery flow.
+                        //
+                        // Refuse to open, surface a clear error to the user,
+                        // and stay on the launcher. This prevents falling
+                        // through to the PinEntry state and crashing on the
+                        // (missing) mnemonic load.
+                        tracing::warn!(
+                            "Refusing to open passkey Cube '{}' — passkey auth flow is not \
+                             wired up. The user must restore from their mnemonic backup.",
+                            cube.name
                         );
-                        // Fall through to PIN entry for now (passkey cubes
-                        // don't have a PIN, so this will auto-pass)
+                        let msg = if crate::feature_flags::PASSKEY_ENABLED {
+                            "This Cube was created with a passkey. Passkey authentication \
+                             on Cube open is not yet implemented. Restore from your mnemonic \
+                             backup to access this Cube."
+                                .to_string()
+                        } else {
+                            "This Cube was created with a passkey, but the passkey feature \
+                             is currently disabled. Restore from your mnemonic backup to \
+                             access this Cube, or re-enable COINCUBE_ENABLE_PASSKEY in your \
+                             environment."
+                                .to_string()
+                        };
+                        l.set_error(msg);
+                        return Task::none();
                     }
 
-                    // PIN entry (or auto-pass for passkey cubes without a PIN)
+                    // PIN entry
                     let wallet_settings = cube.vault_wallet_id.as_ref().and_then(|vault_id| {
                         let network_dir = datadir_path.network_directory(network);
                         app::settings::Settings::from_file(&network_dir)
@@ -1068,6 +1086,7 @@ pub fn create_app_with_remote_backend(
             connect_authenticated: false,
             has_vault: true,
             cube_name: cube_settings.name.clone(),
+            current_cube_backed_up: cube_settings.backed_up,
             has_p2p: false, // Set later by App::new based on mnemonic availability
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
             btc_usd_price: None,

@@ -16,7 +16,7 @@ const ENABLE_COSIGNER_KEYS: bool = false;
 pub enum KeySource {
     /// A hardware signing device with the given kind and version.
     Device(DeviceKind, Option<Version>),
-    /// A hot signer on the user's computer.
+    /// Master signer on the user's computer.
     MasterSigner,
     /// A manually inserted xpub.
     Manual,
@@ -99,7 +99,7 @@ impl KeySource {
 pub enum KeySourceKind {
     /// A hardware signing device.
     Device,
-    /// A hot signer.
+    /// Master signer.
     MasterSigner,
     /// A manually inserted xpub.
     Manual,
