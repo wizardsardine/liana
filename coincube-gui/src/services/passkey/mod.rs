@@ -136,6 +136,12 @@ pub struct PasskeyCeremonyChannel {
     receiver: mpsc::Receiver<String>,
 }
 
+impl Default for PasskeyCeremonyChannel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PasskeyCeremonyChannel {
     pub fn new() -> Self {
         let (sender, receiver) = mpsc::channel();
@@ -173,6 +179,7 @@ impl PasskeyCeremony {
             mode,
             webview_manager: iced_wry::IcedWebviewManager::new(),
             active_webview: None,
+            #[allow(clippy::arc_with_non_send_sync)]
             channel: Arc::new(PasskeyCeremonyChannel::new()),
         }
     }

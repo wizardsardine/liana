@@ -95,10 +95,13 @@ mod tests {
     /// test will fail — that's a useful signal that the flag is active.
     #[test]
     fn passkey_disabled_by_default() {
-        assert!(
-            !PASSKEY_ENABLED,
-            "PASSKEY_ENABLED is compiled in as true; set COINCUBE_ENABLE_PASSKEY=0 \
-             in .env (or remove the entry) to match the expected default."
-        );
+        #[allow(clippy::assertions_on_constants)]
+        {
+            assert!(
+                !PASSKEY_ENABLED,
+                "PASSKEY_ENABLED is compiled in as true; set COINCUBE_ENABLE_PASSKEY=0 \
+                 in .env (or remove the entry) to match the expected default."
+            );
+        }
     }
 }

@@ -71,7 +71,6 @@ fn rescan_warning<'a>() -> Element<'a, Message> {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub fn vault_overview_view<'a>(
     balance: &'a bitcoin::Amount,
     unconfirmed_balance: &'a bitcoin::Amount,

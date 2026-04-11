@@ -37,11 +37,10 @@ impl State for LiquidSettings {
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        match message {
-            Message::View(view::Message::LiquidSettings(LiquidSettingsMessage::ExportPayments)) => {
-                // Export payments handled elsewhere
-            }
-            _ => {}
+        if let Message::View(view::Message::LiquidSettings(LiquidSettingsMessage::ExportPayments)) =
+            message
+        {
+            // Export payments handled elsewhere
         }
         Task::none()
     }

@@ -45,7 +45,7 @@ pub fn general_section<'a>(
         .push(bitcoin_display_unit(new_unit_setting))
         .push(direction_badges_toggle(show_direction_badges))
         .push(fiat_price(new_price_setting, currencies_list))
-        .push(backup_master_seed_card(cache));
+        .push(backup_master_seed_card(cache.current_cube_backed_up));
 
     if developer_mode {
         col = col.push(toast_testing());
@@ -57,11 +57,7 @@ pub fn general_section<'a>(
 /// The "Backup Master Seed Phrase" card shown on the normal General
 /// Settings page. Shows a different label depending on whether the
 /// current cube has already been backed up.
-fn backup_master_seed_card<'a>(cache: &'a cache::Cache) -> Element<'a, Message> {
-    // Best-effort lookup of the current cube's backed_up flag. If the
-    // lookup fails, fall back to the "not backed up" state.
-    let backed_up = current_cube_backed_up(cache).unwrap_or(false);
-
+fn backup_master_seed_card<'a>(backed_up: bool) -> Element<'a, Message> {
     let (title, subtitle, button_label) = if backed_up {
         (
             "Master Seed Phrase Backed Up",
@@ -96,25 +92,6 @@ fn backup_master_seed_card<'a>(cache: &'a cache::Cache) -> Element<'a, Message> 
     )
     .width(Length::Fill)
     .into()
-}
-
-/// Look up whether the currently-loaded cube has been backed up.
-/// Returns `None` on I/O errors; callers should treat that as "not backed up".
-fn current_cube_backed_up(cache: &cache::Cache) -> Option<bool> {
-    // The view doesn't know the current cube_id directly; we look for the
-    // cube whose master_signer_fingerprint matches whatever the cache has.
-    // If there are multiple cubes on this network, the settings state
-    // already tracks its own cube_id — but the view function here doesn't
-    // have access to it. As a fallback, return the OR of all cubes'
-    // backed_up flags so a partially-backed-up network still shows
-    // the "already backed up" state for its visible cube.
-    //
-    // TODO: thread cube_id down into this function so we can do an exact
-    // lookup. For now this gives the right answer in the common
-    // single-cube case.
-    let network_dir = cache.datadir_path.network_directory(cache.network);
-    let settings = crate::app::settings::Settings::from_file(&network_dir).ok()?;
-    Some(settings.cubes.iter().any(|c| c.backed_up))
 }
 
 fn direction_badges_toggle<'a>(show: bool) -> Element<'a, Message> {

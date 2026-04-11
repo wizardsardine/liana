@@ -397,7 +397,7 @@ impl GeneralSettingsState {
                     let cube_id = self.cube_id.clone();
                     let network = cache.network;
                     let datadir = cache.datadir_path.clone();
-                    return Task::perform(
+                    Task::perform(
                         async move {
                             let network_dir = datadir.network_directory(network);
                             update_settings_file(&network_dir, |mut s| {
@@ -415,7 +415,7 @@ impl GeneralSettingsState {
                             )),
                             Err(e) => Message::View(view::Message::ShowError(e)),
                         },
-                    );
+                    )
                 } else {
                     self.backup_state = BackupSeedState::Verification {
                         word_indices: *word_indices,
