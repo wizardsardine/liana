@@ -5,10 +5,10 @@ use coincube_ui::{
     component::{
         button,
         quote_display::{self, Quote, QuoteDisplayProps},
-        text::*,
+        text::{h3, p1_regular, text},
     },
     icon, theme,
-    widget::*,
+    widget::{Column, Container, Element, Row},
 };
 
 use crate::app::settings::CubeSettings;
