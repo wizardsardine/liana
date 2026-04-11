@@ -46,22 +46,37 @@ pub fn lnurl_subscription(
     )
 }
 
+/// Resolve a configurable base URL with the following precedence:
+/// 1. Runtime `std::env::var(name)` — picked up from the shell environment or
+///    the `.env` loaded in `main()` at startup. Change and restart; no rebuild.
+/// 2. Compile-time `option_env!(name)` — values baked in by `build.rs` from
+///    `.env` at the time the binary was built. Still works for release builds
+///    started from a working directory that has no `.env`.
+/// 3. Hardcoded fallback (`debug_default` for debug builds, required env var
+///    for release builds which would have failed `env!()` at build time).
+fn resolve_url(name: &str, compile_time: Option<&'static str>, debug_default: &str) -> String {
+    if let Ok(v) = std::env::var(name) {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    if let Some(v) = compile_time {
+        return v.to_string();
+    }
+    debug_default.to_string()
+}
+
 fn create_stream(
     data: &LnurlStreamData,
 ) -> impl iced::futures::Stream<Item = LnurlMessage> + 'static {
-    #[cfg(debug_assertions)]
-    let events_base_url = "https://dev-events.coincube.io";
-    #[cfg(not(debug_assertions))]
-    let events_base_url = env!("EVENTS_API_URL");
-
-    #[cfg(debug_assertions)]
-    let api_base_url: &'static str =
-        option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io");
-    #[cfg(not(debug_assertions))]
-    let api_base_url: &'static str = env!("COINCUBE_API_URL");
+    let api_base_url = resolve_url(
+        "COINCUBE_API_URL",
+        option_env!("COINCUBE_API_URL"),
+        "https://dev-api.coincube.io",
+    );
 
     let auth = format!("Bearer {}", data.token);
-    let sse_url = format!("{}/api/v1/lnurl/stream", events_base_url);
+    let sse_url = format!("{}/api/v1/lnurl/stream", api_base_url);
     let breez_client = data.breez_client.clone();
     let retries = data.retries;
 
@@ -111,8 +126,42 @@ fn create_stream(
                     .connect_timeout(std::time::Duration::from_secs(10))
                     .build()
                     .unwrap_or_else(|_| reqwest::Client::new());
+
+                // Debug builds only: log the exact request as a curl command so
+                // it can be reproduced from a terminal. This includes the JWT
+                // in plaintext, which is why it is gated to debug_assertions.
+                #[cfg(debug_assertions)]
+                {
+                    log::warn!(
+                        "[LNURL] DEBUG curl reproduction: curl -i -N -H 'Accept: text/event-stream' -H 'Authorization: {}' '{}'",
+                        auth_header,
+                        request.url()
+                    );
+                }
+
                 match sse_client.execute(request).await {
                     Ok(res) => {
+                        // `execute` returns Ok for any HTTP response, including
+                        // 4xx/5xx. Don't declare the stream "connected" until
+                        // we've actually seen a 2xx — otherwise a 404 produces
+                        // two misleading log lines ("connected" followed by
+                        // "failed to get event source").
+                        let status = res.status();
+                        if !status.is_success() {
+                            log::warn!(
+                                "[LNURL] SSE endpoint returned non-success status: {} (url: {})",
+                                status,
+                                sse_url
+                            );
+                            tokio::time::sleep(backoff).await;
+                            let _ = channel
+                                .send(LnurlMessage::StreamError(format!(
+                                    "SSE endpoint returned {}",
+                                    status
+                                )))
+                                .await;
+                            return;
+                        }
                         log::info!("[LNURL] SSE stream connected");
                         let _ = channel.send(LnurlMessage::StreamConnected).await;
 
@@ -146,7 +195,7 @@ fn create_stream(
                                                             &mut channel,
                                                             &breez_client,
                                                             &http,
-                                                            api_base_url,
+                                                            &api_base_url,
                                                             &auth_header,
                                                             req_event,
                                                         )

@@ -654,33 +654,36 @@ impl Tab {
                     breez_client,
                 },
             ) => {
-                match breez_client {
-                    Ok(breez) => {
-                        match create_app_with_remote_backend(
-                            wallet_settings,
-                            backend_client,
-                            wallet,
-                            coins,
-                            datadir.clone(),
-                            network,
-                            config,
-                            breez,
-                        ) {
-                            Ok((app, command)) => {
-                                self.state = State::App(app);
-                                command.map(Message::Run)
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to create app with remote backend: {}", e);
-                                let (launcher, command) = Launcher::new(datadir, Some(network));
-                                self.state = State::Launcher(launcher);
-                                command.map(Message::Launch)
-                            }
-                        }
+                // The Vault is independent of Liquid: any Breez load failure
+                // should fall back to a disconnected client so the rest of the
+                // app continues to work. The user will see Liquid features
+                // surface their own errors on demand.
+                let breez = match breez_client {
+                    Ok(breez) => breez,
+                    Err(e) => {
+                        tracing::warn!(
+                            "BreezClient unavailable for remote backend, continuing in disconnected mode: {}",
+                            e
+                        );
+                        Arc::new(app::breez::BreezClient::disconnected(network))
+                    }
+                };
+                match create_app_with_remote_backend(
+                    wallet_settings,
+                    backend_client,
+                    wallet,
+                    coins,
+                    datadir.clone(),
+                    network,
+                    config,
+                    breez,
+                ) {
+                    Ok((app, command)) => {
+                        self.state = State::App(app);
+                        command.map(Message::Run)
                     }
                     Err(e) => {
-                        // Failed to load BreezClient - return to launcher with error
-                        tracing::error!("Failed to load BreezClient for remote backend: {}", e);
+                        tracing::error!("Failed to create app with remote backend: {}", e);
                         let (launcher, command) = Launcher::new(datadir, Some(network));
                         self.state = State::Launcher(launcher);
                         command.map(Message::Launch)
@@ -700,85 +703,53 @@ impl Tab {
                     backup,
                 },
             ) => {
-                match breez_client {
-                    Ok(breez) => {
-                        // BreezClient loaded successfully, now route based on Vault existence
-                        if let Some(wallet_settings) = wallet_settings {
-                            if wallet_settings.remote_backend_auth.is_some() {
-                                // Remote backend: Pass pre-loaded BreezClient to Login
-                                let (login, command) = login::CoincubeLiteLogin::new(
-                                    datadir.clone(),
-                                    network,
-                                    wallet_settings.clone(),
-                                    Some(breez), // Pass pre-loaded BreezClient
-                                );
-                                self.state = State::Login(login);
-                                command.map(Message::Login)
-                            } else {
-                                // Local wallet: Pass pre-loaded BreezClient to Loader
-                                let (loader, command) = Loader::new(
-                                    datadir.clone(),
-                                    config.clone(),
-                                    network,
-                                    internal_bitcoind.clone(),
-                                    backup.clone(),
-                                    Some(wallet_settings.clone()),
-                                    cube,
-                                    Some(breez), // Pass pre-loaded BreezClient
-                                );
-                                self.state = State::Loader(loader);
-                                command.map(Message::Load)
-                            }
-                        } else {
-                            // No Vault - create App directly with BreezClient
-                            let (app, command) =
-                                App::new_without_wallet(breez, config, datadir, network, cube);
-                            self.state = State::App(app);
-                            command.map(Message::Run)
-                        }
-                    }
+                // The Vault is independent of Liquid: any Breez load failure
+                // (NetworkNotSupported, transient connection errors, SDK
+                // throttling, etc.) should fall back to a disconnected client
+                // so the user can still access their Vault. Liquid features
+                // will surface their own errors on demand.
+                let breez = match breez_client {
+                    Ok(breez) => breez,
                     Err(app::breez::BreezError::NetworkNotSupported(_)) => {
-                        // Liquid wallet is not supported on this network — create a
-                        // disconnected client so the rest of the app continues normally.
-                        let breez = Arc::new(app::breez::BreezClient::disconnected(network));
-                        if let Some(wallet_settings) = wallet_settings {
-                            if wallet_settings.remote_backend_auth.is_some() {
-                                let (login, command) = login::CoincubeLiteLogin::new(
-                                    datadir.clone(),
-                                    network,
-                                    wallet_settings.clone(),
-                                    Some(breez),
-                                );
-                                self.state = State::Login(login);
-                                command.map(Message::Login)
-                            } else {
-                                let (loader, command) = Loader::new(
-                                    datadir.clone(),
-                                    config.clone(),
-                                    network,
-                                    internal_bitcoind.clone(),
-                                    backup.clone(),
-                                    Some(wallet_settings.clone()),
-                                    cube,
-                                    Some(breez),
-                                );
-                                self.state = State::Loader(loader);
-                                command.map(Message::Load)
-                            }
-                        } else {
-                            let (app, command) =
-                                App::new_without_wallet(breez, config, datadir, network, cube);
-                            self.state = State::App(app);
-                            command.map(Message::Run)
-                        }
+                        Arc::new(app::breez::BreezClient::disconnected(network))
                     }
                     Err(e) => {
-                        tracing::error!("Failed to load BreezClient after PIN: {}", e);
-                        // BreezClient failed to load - return to launcher
-                        let (launcher, command) = Launcher::new(datadir.clone(), Some(network));
-                        self.state = State::Launcher(launcher);
-                        command.map(Message::Launch)
+                        tracing::warn!(
+                            "BreezClient unavailable after PIN, continuing in disconnected mode: {}",
+                            e
+                        );
+                        Arc::new(app::breez::BreezClient::disconnected(network))
                     }
+                };
+                if let Some(wallet_settings) = wallet_settings {
+                    if wallet_settings.remote_backend_auth.is_some() {
+                        let (login, command) = login::CoincubeLiteLogin::new(
+                            datadir.clone(),
+                            network,
+                            wallet_settings.clone(),
+                            Some(breez),
+                        );
+                        self.state = State::Login(login);
+                        command.map(Message::Login)
+                    } else {
+                        let (loader, command) = Loader::new(
+                            datadir.clone(),
+                            config.clone(),
+                            network,
+                            internal_bitcoind.clone(),
+                            backup.clone(),
+                            Some(wallet_settings.clone()),
+                            cube,
+                            Some(breez),
+                        );
+                        self.state = State::Loader(loader);
+                        command.map(Message::Load)
+                    }
+                } else {
+                    let (app, command) =
+                        App::new_without_wallet(breez, config, datadir, network, cube);
+                    self.state = State::App(app);
+                    command.map(Message::Run)
                 }
             }
             _ => Task::none(),

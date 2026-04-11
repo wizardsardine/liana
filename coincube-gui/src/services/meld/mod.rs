@@ -122,9 +122,9 @@ fn create_subscription(
     use reqwest_sse::EventSource;
 
     #[cfg(debug_assertions)]
-    let base_url = "https://dev-events.coincube.io";
+    let base_url = option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io");
     #[cfg(not(debug_assertions))]
-    let base_url = env!("EVENTS_API_URL");
+    let base_url = env!("COINCUBE_API_URL");
 
     let (token, retries) = data;
 

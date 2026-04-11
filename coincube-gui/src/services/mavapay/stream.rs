@@ -24,9 +24,9 @@ pub fn transaction_stream(
     data: &(String, String),
 ) -> impl iced::futures::Stream<Item = MavapayMessage> + 'static {
     #[cfg(debug_assertions)]
-    let base_url = "https://dev-events.coincube.io";
+    let base_url = option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io");
     #[cfg(not(debug_assertions))]
-    let base_url = env!("EVENTS_API_URL");
+    let base_url = env!("COINCUBE_API_URL");
 
     let (order_id, user_jwt) = data;
     let auth = format!("Bearer {}", user_jwt);

@@ -17,7 +17,6 @@ env:
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
   BREEZ_API_KEY: ${{ github.event_name == 'push' && secrets.BREEZ_API_KEY || 'DUMMY_BREEZ_API_KEY' }}
   COINCUBE_API_URL: ${{ vars.COINCUBE_API_URL }}
-  EVENTS_API_URL: ${{ vars.EVENTS_API_URL }}
 
 jobs:
   release:

@@ -9,7 +9,7 @@ use iced::futures::{SinkExt, Stream};
 use iced::stream::channel;
 use iced::{time, Alignment, Length, Subscription, Task};
 use tokio::runtime::Handle;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use coincube_core::miniscript::bitcoin;
 use iced::widget::image;
@@ -280,6 +280,7 @@ impl Loader {
             }
             Err(e) => match e {
                 Error::Config(_) => {
+                    error!("Loader: config error during connect: {}", e);
                     self.step = Step::Error(Box::new(e));
                     self.set_quote_context("error");
                 }
@@ -309,6 +310,7 @@ impl Loader {
                     );
                 }
                 _ => {
+                    error!("Loader: unexpected error during connect: {}", e);
                     self.step = Step::Error(Box::new(e));
                     self.set_quote_context("error");
                 }
@@ -338,6 +340,7 @@ impl Loader {
                 self.maybe_skip_syncing(daemon, info)
             }
             Err(e) => {
+                error!("Loader: start_bitcoind_and_daemon failed: {}", e);
                 self.step = Step::Error(Box::new(e));
                 self.set_quote_context("error");
                 Task::none()
@@ -375,6 +378,7 @@ impl Loader {
                         }
                     }
                     Err(e) => {
+                        error!("Loader: sync poll failed: {}", e);
                         self.step = Step::Error(Box::new(e.into()));
                         self.set_quote_context("error");
                         return Task::none();
@@ -442,6 +446,7 @@ impl Loader {
                 Task::none()
             }
             Message::Synced(Err(e)) => {
+                error!("Loader: load_application failed: {}", e);
                 self.step = Step::Error(Box::new(e));
                 self.set_quote_context("error");
                 Task::none()
@@ -702,42 +707,47 @@ pub fn view<'a>(
                 )
                 .push(p2_regular(bitcoind_logs).style(theme::text::secondary)),
         ),
-        Step::Error(error) => cover(
-            Some(("Error while starting the internal daemon", error)),
-            Column::new()
-                .spacing(20)
-                .width(Length::Fill)
-                .align_x(Alignment::Center)
-                .push(quote_display::display(&QuoteDisplayProps::new(
-                    "error",
-                    quote,
-                    image_handle,
-                )))
-                .push(
-                    if matches!(
-                        error.as_ref(),
-                        Error::Daemon(DaemonError::Start(StartupError::Bitcoind(_)))
-                    ) {
-                        text("Coincube failed to start, please check if bitcoind is running")
-                    } else {
-                        text("Coincube failed to start")
-                    },
-                )
-                .push(
-                    Row::new()
-                        .spacing(10)
-                        .push(
-                            button::secondary(None, "Back")
-                                .width(Length::Fixed(200.0))
-                                .on_press(ViewMessage::SwitchNetwork),
-                        )
-                        .push(
-                            button::secondary(None, "Retry")
-                                .width(Length::Fixed(200.0))
-                                .on_press(ViewMessage::Retry),
-                        ),
-                ),
-        ),
+        Step::Error(error) => {
+            let headline = match error.as_ref() {
+                Error::Daemon(DaemonError::Start(StartupError::Bitcoind(_))) => {
+                    "Coincube failed to start, please check if bitcoind is running"
+                }
+                Error::Daemon(DaemonError::Start(StartupError::Esplora(_))) => {
+                    "Coincube failed to start: the Esplora chain backend is unreachable"
+                }
+                Error::Daemon(DaemonError::Start(StartupError::Electrum(_))) => {
+                    "Coincube failed to start: the Electrum chain backend is unreachable"
+                }
+                _ => "Coincube failed to start",
+            };
+            cover(
+                Some(("Error while starting the internal daemon", error)),
+                Column::new()
+                    .spacing(20)
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center)
+                    .push(quote_display::display(&QuoteDisplayProps::new(
+                        "error",
+                        quote,
+                        image_handle,
+                    )))
+                    .push(text(headline))
+                    .push(
+                        Row::new()
+                            .spacing(10)
+                            .push(
+                                button::secondary(None, "Back")
+                                    .width(Length::Fixed(200.0))
+                                    .on_press(ViewMessage::SwitchNetwork),
+                            )
+                            .push(
+                                button::secondary(None, "Retry")
+                                    .width(Length::Fixed(200.0))
+                                    .on_press(ViewMessage::Retry),
+                            ),
+                    ),
+            )
+        }
     }
 }
 
