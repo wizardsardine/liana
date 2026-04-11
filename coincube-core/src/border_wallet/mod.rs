@@ -217,11 +217,23 @@ pub fn sign_psbt_with_border_wallet(
     Ok((actual_fingerprint, signed_psbt))
 }
 
-/// The standard derivation path for Border Wallet signers.
+/// The default derivation path for Border Wallet signers.
 ///
-/// Uses BIP-48 multisig path with script type 2 (Taproot):
+/// Uses the BIP-48 native segwit multisig path:
 /// - Mainnet: m/48'/0'/0'/2'
 /// - Testnet/Signet: m/48'/1'/0'/2'
+///
+/// Per BIP-48, script type `2'` is **P2WSH** (native segwit multisig).
+/// COINCUBE currently re-uses this same path for both P2WSH and Taproot
+/// multisig vaults, because BIP-48 does not define a Taproot multisig
+/// script type and there is no consensus standard for one. A proposed
+/// extension using `3'` for Taproot multisig
+/// ([bitcoin/bips#1473](https://github.com/bitcoin/bips/pull/1473))
+/// was closed without merging in May 2024.
+///
+/// If/when a Taproot multisig path standard emerges, revisit this and
+/// the related helpers in `coincube-gui/src/utils/mod.rs` and
+/// `coincube-gui/src/installer/step/descriptor/editor/key.rs`.
 pub fn default_derivation_path(network: Network) -> bip32::DerivationPath {
     let coin_type = match network {
         Network::Bitcoin => 0,
