@@ -721,7 +721,7 @@ pub fn view<'a>(
                 _ => "Coincube failed to start",
             };
             cover(
-                Some(("Error while starting the internal daemon", error)),
+                Some(("Error while starting Coincube", error)),
                 Column::new()
                     .spacing(20)
                     .width(Length::Fill)

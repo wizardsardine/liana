@@ -24,18 +24,14 @@ impl BreezConfig {
     }
 
     pub fn sdk_config(&self) -> breez::Config {
-        // Base URL for Coincube-hosted Esplora; honors COINCUBE_API_URL at build
-        // time (debug falls back to dev-api).
-        #[cfg(debug_assertions)]
-        let coincube_base =
-            option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io");
-        #[cfg(not(debug_assertions))]
-        let coincube_base = env!("COINCUBE_API_URL");
+        // Base URL for Coincube-hosted Esplora; resolved via the shared helper so
+        // runtime `.env` overrides apply consistently with the REST/SSE clients.
+        let coincube_base = crate::services::coincube_api_base_url();
 
         let liquid_explorer_url = match self.network {
             bitcoin::Network::Bitcoin => format!("{}/api/v1/esplora/liquid/mainnet", coincube_base),
             bitcoin::Network::Testnet => {
-                format!("{}/api/v1/esplora/bitcoin/testnet", coincube_base)
+                format!("{}/api/v1/esplora/liquid/testnet", coincube_base)
             }
             bitcoin::Network::Signet => "https://blockstream.info/liquidtestnet/api".to_string(),
             bitcoin::Network::Regtest | bitcoin::Network::Testnet4 => {

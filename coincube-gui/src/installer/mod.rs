@@ -14,10 +14,7 @@ pub(crate) fn connect_url(network: bitcoin::Network) -> String {
         bitcoin::Network::Testnet4 => "bitcoin/testnet4",
         _ => "bitcoin/regtest",
     };
-    #[cfg(debug_assertions)]
-    let base = "https://dev-api.coincube.io";
-    #[cfg(not(debug_assertions))]
-    let base = env!("COINCUBE_API_URL");
+    let base = crate::services::coincube_api_base_url();
     format!("{}/api/v1/esplora/{}", base, network_path)
 }
 
