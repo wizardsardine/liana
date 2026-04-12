@@ -9,6 +9,7 @@ pub mod state;
 pub mod view;
 pub mod wallet;
 
+use std::collections::VecDeque;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
@@ -574,10 +575,11 @@ pub struct App {
     received_celebration_amount: String,
     received_celebration_quote: coincube_ui::component::quote_display::Quote,
     received_celebration_image: iced::widget::image::Handle,
-    /// tx_id of the most recent incoming payment we've already toasted for in
+    /// tx_ids of recent incoming payments we've already toasted for in
     /// PaymentWaitingConfirmation. Breez fires this event multiple times for
-    /// the same swap; this dedupes the user-facing notification.
-    last_incoming_waiting_tx_id: Option<String>,
+    /// the same swap; bounded FIFO so concurrent incoming swaps don't evict
+    /// each other and re-toast.
+    toasted_incoming_waiting_tx_ids: VecDeque<String>,
 }
 
 /// Returns true when a `DaemonError` indicates the daemon process is no longer
@@ -712,7 +714,7 @@ impl App {
                     coincube_ui::component::quote_display::image_handle_for_context(
                         "transaction-received",
                     ),
-                last_incoming_waiting_tx_id: None,
+                toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
             },
             cmd,
         )
@@ -786,7 +788,7 @@ impl App {
                     coincube_ui::component::quote_display::image_handle_for_context(
                         "transaction-received",
                     ),
-                last_incoming_waiting_tx_id: None,
+                toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
             },
             cmd,
         )
@@ -1913,10 +1915,15 @@ impl App {
                         // Breez fires this event multiple times for the same swap, so
                         // dedupe by tx_id to avoid stacking duplicate toasts.
                         if matches!(details.payment_type, PaymentType::Receive)
-                            && details.tx_id.is_some()
-                            && self.last_incoming_waiting_tx_id != details.tx_id
+                            && details.tx_id.as_ref().is_some_and(|id| {
+                                !self.toasted_incoming_waiting_tx_ids.contains(id)
+                            })
                         {
-                            self.last_incoming_waiting_tx_id = details.tx_id.clone();
+                            let tx_id = details.tx_id.clone().unwrap();
+                            if self.toasted_incoming_waiting_tx_ids.len() == 16 {
+                                self.toasted_incoming_waiting_tx_ids.pop_front();
+                            }
+                            self.toasted_incoming_waiting_tx_ids.push_back(tx_id);
                             use coincube_ui::component::amount::DisplayAmount;
                             let amount = bitcoin::Amount::from_sat(details.amount_sat)
                                 .to_formatted_string_with_unit(self.cache.bitcoin_unit);
