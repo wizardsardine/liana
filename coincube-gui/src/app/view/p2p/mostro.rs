@@ -681,11 +681,11 @@ fn derive_trade_keys(mnemonic: &str, trade_index: i64) -> Result<Keys, String> {
         mnemonic,
         None,
         Some(account),
+        Some(0),
         Some(
             u32::try_from(trade_index)
                 .map_err(|_| format!("trade_index {trade_index} exceeds u32::MAX"))?,
         ),
-        Some(0),
     )
     .map_err(|e| format!("Failed to derive trade keys: {e}"))
 }
@@ -818,9 +818,31 @@ async fn send_mostro_message(
     let rumor = EventBuilder::text_note(content_json).build(trade_keys.public_key());
 
     // Gift wrap uses master_keys for the seal layer, so Mostro can link
-    // all trades from the same user (enables protocol-level restore)
-    let gift_wrap_event = EventBuilder::gift_wrap(&master_keys, &mostro_pubkey, rumor, [])
+    // all trades from the same user (enables protocol-level restore).
+    // We construct the gift wrap manually (instead of EventBuilder::gift_wrap)
+    // so we can add NIP-13 Proof-of-Work, which Mostro requires.
+    let seal = EventBuilder::seal(&master_keys, &mostro_pubkey, rumor)
         .await
+        .map_err(|e| format!("Failed to create seal: {e}"))?
+        .sign(&master_keys)
+        .await
+        .map_err(|e| format!("Failed to sign seal: {e}"))?;
+
+    let ephemeral_keys = Keys::generate();
+    let encrypted_seal = nip44::encrypt(
+        ephemeral_keys.secret_key(),
+        &mostro_pubkey,
+        seal.as_json(),
+        nip44::Version::default(),
+    )
+    .map_err(|e| format!("Failed to encrypt seal: {e}"))?;
+
+    // Mostro info advertises pow=6; use 8 for headroom
+    let gift_wrap_event = EventBuilder::new(nostr_sdk::Kind::GiftWrap, encrypted_seal)
+        .tag(Tag::public_key(mostro_pubkey))
+        .custom_created_at(Timestamp::tweaked(nip59::RANGE_RANDOM_TIMESTAMP_TWEAK))
+        .pow(8)
+        .sign_with_keys(&ephemeral_keys)
         .map_err(|e| format!("Failed to create gift wrap: {e}"))?;
 
     // Connect to relays
@@ -834,13 +856,19 @@ async fn send_mostro_message(
     client.connect().await;
     client.wait_for_connection(Duration::from_secs(10)).await;
 
-    // Fetch Mostro instance info (used for contextual error messages)
-    let limits = fetch_mostro_info(&client, mostro_pubkey).await;
+    // Fail fast if no relay connected
+    if !has_connected_relay(&client).await {
+        return Err(
+            "Failed to connect to any Mostro relay — check your internet connection".to_string(),
+        );
+    }
 
-    // Subscribe BEFORE sending to avoid missing the response
+    // Subscribe BEFORE sending to avoid missing the response.
+    // Listen on both trade_keys and master_keys because Mostro may address
+    // its gift-wrap response to either key.
     let mut notifications = client.notifications();
     let sub_filter = Filter::new()
-        .pubkey(trade_keys.public_key())
+        .pubkeys([trade_keys.public_key(), master_keys.public_key()])
         .kind(nostr_sdk::Kind::GiftWrap)
         .limit(0);
     let opts =
@@ -851,17 +879,49 @@ async fn send_mostro_message(
         .map_err(|e| format!("Failed to subscribe: {e}"))?;
 
     // Send the gift wrap event
-    client
+    let send_output = client
         .send_event(&gift_wrap_event)
         .await
         .map_err(|e| format!("Failed to send message: {e}"))?;
 
-    // Wait for response with 15s timeout
-    let response_event = tokio::time::timeout(Duration::from_secs(15), async {
+    if send_output.success.is_empty() {
+        let failed_info: Vec<String> = send_output
+            .failed
+            .iter()
+            .map(|(url, reason)| format!("{url}: {reason}"))
+            .collect();
+        return Err(format!(
+            "Message not delivered — no relay accepted the event. {}",
+            failed_info.join("; ")
+        ));
+    }
+
+    tracing::debug!(
+        "Gift wrap sent to {} relay(s), waiting for Mostro response",
+        send_output.success.len()
+    );
+
+    // Fetch Mostro instance info concurrently while waiting for the response.
+    // This provides contextual error messages but must not block the response path.
+    let info_client = client.clone();
+    let info_pk = mostro_pubkey;
+    let limits_handle = tokio::spawn(async move { fetch_mostro_info(&info_client, info_pk).await });
+
+    // Wait for response with 30s timeout.
+    // Try decrypting each GiftWrap with trade_keys then master_keys; skip mismatches.
+    let response_unwrapped = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             match notifications.recv().await {
-                Ok(RelayPoolNotification::Event { event, .. }) => {
-                    return Ok(*event);
+                Ok(RelayPoolNotification::Event { event, .. })
+                    if event.kind == nostr_sdk::Kind::GiftWrap =>
+                {
+                    if let Ok(unwrapped) = nip59::extract_rumor(&trade_keys, &event).await {
+                        return Ok(unwrapped);
+                    }
+                    if let Ok(unwrapped) = nip59::extract_rumor(&master_keys, &event).await {
+                        return Ok(unwrapped);
+                    }
+                    // Not for us — skip
                 }
                 Ok(_) => continue,
                 Err(e) => {
@@ -871,15 +931,16 @@ async fn send_mostro_message(
         }
     })
     .await
-    .map_err(|_| "Timeout waiting for Mostro response (15s)".to_string())?
+    .map_err(|_| {
+        "Timeout waiting for Mostro response (30s) — Mostro may be unreachable or busy".to_string()
+    })?
     .map_err(|e| format!("Error waiting for response: {e}"))?;
+
+    let limits = limits_handle.await.unwrap_or_default();
 
     let _ = client.disconnect().await;
 
-    // Unwrap gift wrap response
-    let unwrapped = nip59::extract_rumor(&trade_keys, &response_event)
-        .await
-        .map_err(|e| format!("Failed to unwrap response: {e}"))?;
+    let unwrapped = response_unwrapped;
 
     if unwrapped.rumor.pubkey != mostro_pubkey {
         return Err(format!(
