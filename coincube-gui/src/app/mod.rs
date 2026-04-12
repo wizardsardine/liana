@@ -1855,16 +1855,20 @@ impl App {
 
             // Intercept the mnemonic backup completion so the "not backed up"
             // warning banners on the Vault/Liquid home screens disappear
-            // immediately. The inner panel handler still runs (it transitions
-            // the backup flow to the Completed screen).
+            // immediately. Route the message directly to the global settings
+            // panel (rather than `current_mut()`) so the backup flow still
+            // transitions to Completed and scrubs `backup_mnemonic` even if
+            // the user navigated away from Settings before the async write
+            // resolved.
             msg @ Message::View(view::Message::Settings(
                 view::SettingsMessage::BackupMasterSeedUpdated,
             )) => {
                 self.cache.current_cube_backed_up = true;
                 self.cube_settings.backed_up = true;
-                if let Some(panel) = self.panels.current_mut() {
-                    return panel.update(self.daemon.clone(), &self.cache, msg);
-                }
+                return self
+                    .panels
+                    .global_settings
+                    .update(self.daemon.clone(), &self.cache, msg);
             }
 
             msg => {
