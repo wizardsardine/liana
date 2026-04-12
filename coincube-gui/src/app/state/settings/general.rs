@@ -735,6 +735,7 @@ impl State for GeneralSettingsState {
                 // the Completed screen. Clear the transient PIN input too.
                 self.backup_state = BackupSeedState::Completed;
                 self.backup_pin.clear();
+                self.backup_mnemonic = None;
                 Task::none()
             }
             _ => Task::none(),

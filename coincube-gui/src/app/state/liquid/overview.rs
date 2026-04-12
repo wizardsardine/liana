@@ -134,15 +134,16 @@ impl State for LiquidOverview {
             // lives at the state layer (rather than inside the view fn)
             // because liquid_overview_view is parameterised on
             // `LiquidOverviewMessage`, not the top-level `Message`.
-            let content: Element<view::Message> = if !cache.current_cube_backed_up && !cache.current_cube_is_passkey {
-                Column::new()
-                    .spacing(20)
-                    .push(view::backup_warning_banner())
-                    .push(send_view)
-                    .into()
-            } else {
-                send_view
-            };
+            let content: Element<view::Message> =
+                if !cache.current_cube_backed_up && !cache.current_cube_is_passkey {
+                    Column::new()
+                        .spacing(20)
+                        .push(view::backup_warning_banner())
+                        .push(send_view)
+                        .into()
+                } else {
+                    send_view
+                };
 
             view::dashboard(menu, cache, content)
         }
