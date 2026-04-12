@@ -113,6 +113,29 @@ fn create_stream(
                     .unwrap_or_else(|_| reqwest::Client::new());
                 match sse_client.execute(request).await {
                     Ok(res) => {
+                        let status = res.status();
+                        if status == reqwest::StatusCode::UNAUTHORIZED {
+                            log::warn!("[LNURL] SSE stream returned 401 Unauthorized");
+                            tokio::time::sleep(backoff).await;
+                            let _ = channel
+                                .send(LnurlMessage::StreamError(
+                                    "Unauthorized – token may have expired".to_string(),
+                                ))
+                                .await;
+                            return;
+                        }
+                        if !status.is_success() {
+                            log::error!("[LNURL] SSE stream returned {}", status);
+                            tokio::time::sleep(backoff).await;
+                            let _ = channel
+                                .send(LnurlMessage::StreamError(format!(
+                                    "Unexpected status: {}",
+                                    status
+                                )))
+                                .await;
+                            return;
+                        }
+
                         log::info!("[LNURL] SSE stream connected");
                         let _ = channel.send(LnurlMessage::StreamConnected).await;
 
