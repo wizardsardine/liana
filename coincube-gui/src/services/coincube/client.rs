@@ -13,7 +13,7 @@ const _: () = {
 #[derive(Debug, Clone)]
 pub struct CoincubeClient {
     pub client: Client,
-    pub base_url: &'static str,
+    pub base_url: String,
     token: Option<String>,
 }
 
@@ -25,10 +25,7 @@ impl Default for CoincubeClient {
 
 impl CoincubeClient {
     pub fn new() -> Self {
-        #[cfg(debug_assertions)]
-        let base_url = option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io");
-        #[cfg(not(debug_assertions))]
-        let base_url = env!("COINCUBE_API_URL");
+        let base_url = crate::services::coincube_api_base_url();
 
         log::info!(
             "Coincube Base URL: {}, Release = {}",

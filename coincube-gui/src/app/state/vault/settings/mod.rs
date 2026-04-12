@@ -255,12 +255,12 @@ impl State for ImportExportSettingsState {
                     );
                 } else if let Some(modal) = self.modal.as_mut() {
                     return modal.update(m);
-                };
+                }
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ImportExport(m))) => {
                 if let Some(modal) = self.modal.as_mut() {
                     return modal.update(m);
-                };
+                }
             }
             Message::View(view::Message::Settings(
                 view::SettingsMessage::ExportEncryptedDescriptor,

@@ -150,7 +150,7 @@ impl MavapayState {
                             Err(err) => {
                                 log::error!("[COINCUBE] Unable to save quote: {:?}", err)
                             }
-                        };
+                        }
 
                         Ok(quote)
                     },
@@ -280,7 +280,7 @@ impl MavapayState {
                                     "Mavapay Quote created without `order-id`".to_string(),
                                 ),
                             )));
-                        };
+                        }
                     }
 
                     msg => log::warn!("[MAVAPAY] Message Ignored {:?}", msg),
@@ -344,7 +344,7 @@ impl MavapayState {
                                 "Unable to fetch banks from API".to_string(),
                             ),
                         )));
-                    };
+                    }
                 }
                 MavapayMessage::GetLiquidWalletBalance => {
                     let client = self.breez_client.clone();
@@ -512,7 +512,7 @@ impl MavapayState {
                                 "Mavapay Quote created without `order-id`".to_string(),
                             ),
                         )));
-                    };
+                    }
                 }
                 _ => {}
             },

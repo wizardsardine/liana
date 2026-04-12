@@ -456,7 +456,7 @@ impl Step for DefineDescriptor {
                     return modal.update(hws, message);
                 }
             }
-        };
+        }
         Task::none()
     }
 

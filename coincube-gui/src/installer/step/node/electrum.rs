@@ -49,8 +49,8 @@ impl DefineElectrum {
                     }
                 },
                 message::DefineElectrum::ValidDomainChanged(v) => self.validate_domain = v,
-            };
-        };
+            }
+        }
         Task::none()
     }
 

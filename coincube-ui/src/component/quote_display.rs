@@ -7,7 +7,8 @@ use rand::seq::SliceRandom;
 use serde::Deserialize;
 
 use crate::component::text::{CAPTION_SIZE, P2_SIZE};
-use crate::{color, font, theme, widget::*};
+use crate::widget::{Column, Container};
+use crate::{color, font, theme};
 
 // ---------------------------------------------------------------------------
 // Quote data types

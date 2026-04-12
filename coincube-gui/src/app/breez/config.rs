@@ -24,18 +24,31 @@ impl BreezConfig {
     }
 
     pub fn sdk_config(&self) -> breez::Config {
-        // Allow overriding Esplora URLs via environment variables
+        // Base URL for Coincube-hosted Esplora; resolved via the shared helper so
+        // runtime `.env` overrides apply consistently with the REST/SSE clients.
+        let coincube_base = crate::services::coincube_api_base_url();
+
         let liquid_explorer_url = match self.network {
-            bitcoin::Network::Bitcoin => "https://api.coincube.io/api/v1/esplora/liquid/mainnet",
-            bitcoin::Network::Testnet => "https://api.coincube.io/api/v1/esplora/bitcoin/testnet",
-            bitcoin::Network::Signet => "https://blockstream.info/liquidtestnet/api",
-            bitcoin::Network::Regtest | bitcoin::Network::Testnet4 => "http://localhost:4003/api",
+            bitcoin::Network::Bitcoin => format!("{}/api/v1/esplora/liquid/mainnet", coincube_base),
+            bitcoin::Network::Testnet => {
+                format!("{}/api/v1/esplora/liquid/testnet", coincube_base)
+            }
+            bitcoin::Network::Signet => "https://blockstream.info/liquidtestnet/api".to_string(),
+            bitcoin::Network::Regtest | bitcoin::Network::Testnet4 => {
+                "http://localhost:4003/api".to_string()
+            }
         };
         let bitcoin_explorer_url = match self.network {
-            bitcoin::Network::Bitcoin => "https://api.coincube.io/api/v1/esplora/bitcoin/mainnet",
-            bitcoin::Network::Testnet => "https://api.coincube.io/api/v1/esplora/bitcoin/testnet",
-            bitcoin::Network::Signet => "https://blockstream.info/signet/api",
-            bitcoin::Network::Regtest | bitcoin::Network::Testnet4 => "http://localhost:4002/api",
+            bitcoin::Network::Bitcoin => {
+                format!("{}/api/v1/esplora/bitcoin/mainnet", coincube_base)
+            }
+            bitcoin::Network::Testnet => {
+                format!("{}/api/v1/esplora/bitcoin/testnet", coincube_base)
+            }
+            bitcoin::Network::Signet => "https://blockstream.info/signet/api".to_string(),
+            bitcoin::Network::Regtest | bitcoin::Network::Testnet4 => {
+                "http://localhost:4002/api".to_string()
+            }
         };
 
         breez::Config {

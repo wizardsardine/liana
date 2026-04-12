@@ -388,7 +388,7 @@ impl DaemonControl {
                         db_conn.set_receive_index(i, &self.secp);
                     }
                     Err(_) => return Err(CommandError::InvalidDerivationIndex),
-                };
+                }
             }
         }
 
@@ -404,7 +404,7 @@ impl DaemonControl {
                         db_conn.set_change_index(i, &self.secp);
                     }
                     Err(_) => return Err(CommandError::InvalidDerivationIndex),
-                };
+                }
             }
         }
 

@@ -2703,7 +2703,7 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
                 path.path().to_string_lossy()
             ));
         }
-    };
+    }
 
     let mut daemon_config_path = path.clone().path().to_path_buf();
     daemon_config_path.push("daemon.toml");

@@ -384,7 +384,7 @@ impl DecryptModal {
                         }
                     }
                 }
-            };
+            }
         }
         self.cant_fetch = new_cant_fetch;
 

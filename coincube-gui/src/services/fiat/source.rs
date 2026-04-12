@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use super::api::{GetPriceResult, ListCurrenciesResult, PriceApiError};
 use super::currency::Currency;
+use crate::services::coincube_api_base_url;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum PriceSource {
@@ -57,7 +58,8 @@ impl PriceSource {
     pub fn get_price_url(&self, currency: Currency) -> String {
         match self {
             Self::Coincube => format!(
-                "https://api.coincube.io/api/v1/exchange-rates/price/{}",
+                "{}/api/v1/exchange-rates/price/{}",
+                coincube_api_base_url(),
                 currency
             ),
             Self::CoinGecko => "https://api.coingecko.com/api/v3/exchange_rates".to_string(),
@@ -69,7 +71,10 @@ impl PriceSource {
     pub fn list_currencies_url(&self) -> String {
         match self {
             Self::Coincube => {
-                "https://api.coincube.io/api/v1/exchange-rates/currencies".to_string()
+                format!(
+                    "{}/api/v1/exchange-rates/currencies",
+                    coincube_api_base_url()
+                )
             }
             Self::CoinGecko => "https://api.coingecko.com/api/v3/exchange_rates".to_string(),
             Self::MempoolSpace => "https://mempool.space/api/v1/prices".to_string(),

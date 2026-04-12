@@ -14,10 +14,7 @@ pub(crate) fn connect_url(network: bitcoin::Network) -> String {
         bitcoin::Network::Testnet4 => "bitcoin/testnet4",
         _ => "bitcoin/regtest",
     };
-    #[cfg(debug_assertions)]
-    let base = "https://dev-api.coincube.io";
-    #[cfg(not(debug_assertions))]
-    let base = env!("COINCUBE_API_URL");
+    let base = crate::services::coincube_api_base_url();
     format!("{}/api/v1/esplora/{}", base, network_path)
 }
 
@@ -372,7 +369,7 @@ impl Installer {
                         "Successfully cleaned network directory at '{}'.",
                         network_directory.path().to_string_lossy()
                     );
-                };
+                }
                 self.steps
                     .get_mut(self.current)
                     .expect("There is always a step")
@@ -721,7 +718,7 @@ pub async fn create_remote_wallet(
         tracing::error!("Failed to update Liana-Connect cache: {}", e);
     } else {
         info!("Liana-Connect cache updated");
-    };
+    }
 
     Ok(wallet_settings)
 }
@@ -815,7 +812,7 @@ pub async fn import_remote_wallet(
         tracing::error!("Failed to update Liana-Connect cache: {}", e);
     } else {
         info!("Liana-Connect cache updated");
-    };
+    }
 
     Ok(wallet_settings)
 }

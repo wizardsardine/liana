@@ -209,7 +209,7 @@ fn verify_hash(bytes: &[u8]) -> bool {
 pub fn install_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
     if !verify_hash(bytes) {
         return Err(InstallBitcoindError::HashMismatch);
-    };
+    }
     unpack_bitcoind(install_dir, bytes)
 }
 
@@ -358,8 +358,8 @@ impl Step for SelectBitcoindTypeStep {
                     self.install_node = false;
                     return Task::perform(async {}, |_| Message::Next);
                 }
-            };
-        };
+            }
+        }
         Task::none()
     }
 
@@ -528,8 +528,8 @@ impl DefineBitcoind {
                 message::DefineBitcoind::RpcAuthTypeSelected(auth_type) => {
                     self.selected_auth_type = auth_type;
                 }
-            };
-        };
+            }
+        }
         Task::none()
     }
 
@@ -624,7 +624,7 @@ impl Step for InternalBitcoindStep {
                 self.exe_path = Some(exe_path)
             } else if self.exe_download.is_none() {
                 self.exe_download = Some(Download::new());
-            };
+            }
         }
         if self.network != ctx.bitcoin_config.network {
             self.internal_bitcoind_config = None;
@@ -726,7 +726,7 @@ impl Step for InternalBitcoindStep {
                     )) {
                         self.error = Some(e.to_string());
                         return Task::none();
-                    };
+                    }
                     self.error = None;
                     self.internal_bitcoind_config = Some(conf);
                     self.bitcoind_config = Some(bitcoind_config);
@@ -795,7 +795,7 @@ impl Step for InternalBitcoindStep {
                             StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()),
                         ));
                         return Task::none();
-                    };
+                    }
                     let bitcoind_config = self
                         .bitcoind_config
                         .as_ref()
@@ -816,10 +816,10 @@ impl Step for InternalBitcoindStep {
                             self.started = Some(Ok(()));
                             self.internal_bitcoind = Some(bitcoind);
                         }
-                    };
+                    }
                 }
-            };
-        };
+            }
+        }
         Task::none()
     }
 

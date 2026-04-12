@@ -1,6 +1,7 @@
 use iced::{widget::tooltip, Length};
 
-use crate::{component::text, icon, image, theme, widget::*};
+use crate::widget::Container;
+use crate::{component::text, icon, image, theme};
 
 pub fn badge<T>(icon: crate::widget::Text<'static>) -> Container<'static, T> {
     Container::new(icon.width(Length::Fixed(20.0)))
