@@ -7,7 +7,6 @@ use iced::Task;
 use rand::seq::SliceRandom;
 use zeroize::Zeroizing;
 
-use crate::app::breez::BreezClient;
 use crate::app::cache::Cache;
 use crate::app::error::Error;
 use crate::app::menu::Menu;
@@ -170,11 +169,6 @@ pub struct GeneralSettingsState {
     /// flow completion / cancellation. `Zeroizing` ensures the heap
     /// memory is scrubbed on drop.
     pub backup_mnemonic: Option<Zeroizing<Vec<String>>>,
-    /// Legacy field retained for API compatibility. No longer used by
-    /// the backup flow — kept so we don't break call sites that still
-    /// invoke `with_breez_client()`. Safe to remove once those are cleaned up.
-    #[allow(dead_code)]
-    breez_client: Option<Arc<BreezClient>>,
 }
 
 impl From<GeneralSettingsState> for Box<dyn State> {
@@ -205,16 +199,7 @@ impl GeneralSettingsState {
             backup_state: BackupSeedState::None,
             backup_pin: PinInput::new(),
             backup_mnemonic: None,
-            breez_client: None,
         }
-    }
-
-    /// Set the Breez client. Retained for API compatibility only; the
-    /// backup flow no longer uses this (it loads the mnemonic via PIN
-    /// decryption from the datadir instead).
-    pub fn with_breez_client(mut self, client: Arc<BreezClient>) -> Self {
-        self.breez_client = Some(client);
-        self
     }
 
     /// Look up this Cube in the settings file on disk.
