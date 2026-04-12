@@ -2032,23 +2032,21 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        // Global celebration overlay takes precedence over the normal view
-        if self.show_received_celebration {
+        let view = if self.show_received_celebration {
+            // Global celebration overlay takes precedence over the normal panel view
             let celebration = coincube_ui::component::received_celebration_page(
                 &self.received_celebration_amount,
                 &self.received_celebration_quote,
                 &self.received_celebration_image,
                 view::Message::DismissReceivedCelebration,
             );
-            return view::dashboard(&self.panels.current, &self.cache, celebration)
-                .map(Message::View);
-        }
-
-        let view = self
-            .panels
-            .current()
-            .unwrap_or(&self.panels.global_home)
-            .view(&self.panels.current, &self.cache);
+            view::dashboard(&self.panels.current, &self.cache, celebration)
+        } else {
+            self.panels
+                .current()
+                .unwrap_or(&self.panels.global_home)
+                .view(&self.panels.current, &self.cache)
+        };
 
         let content = if self.cache.network != bitcoin::Network::Bitcoin {
             iced::widget::column![network_banner(self.cache.network), view.map(Message::View)]
