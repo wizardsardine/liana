@@ -20,15 +20,27 @@ pub mod sideshift;
 /// 3. Hardcoded `https://dev-api.coincube.io` as a debug fallback. Release
 ///    builds require the env var at build time via `env!`, so they never
 ///    reach step 3.
+///
+/// Any trailing slashes are trimmed so callers can safely use
+/// `format!("{}/api/v1/...", base)` without producing double-slash paths.
 pub fn coincube_api_base_url() -> String {
-    if let Ok(v) = std::env::var("COINCUBE_API_URL") {
+    let raw: String = if let Ok(v) = std::env::var("COINCUBE_API_URL") {
         if !v.is_empty() {
-            return v;
+            v
+        } else if let Some(v) = option_env!("COINCUBE_API_URL") {
+            v.to_string()
+        } else {
+            default_base_url()
         }
-    }
-    if let Some(v) = option_env!("COINCUBE_API_URL") {
-        return v.to_string();
-    }
+    } else if let Some(v) = option_env!("COINCUBE_API_URL") {
+        v.to_string()
+    } else {
+        default_base_url()
+    };
+    raw.trim_end_matches('/').to_string()
+}
+
+fn default_base_url() -> String {
     #[cfg(debug_assertions)]
     {
         "https://dev-api.coincube.io".to_string()

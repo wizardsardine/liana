@@ -25,11 +25,7 @@ impl Default for CoincubeClient {
 
 impl CoincubeClient {
     pub fn new() -> Self {
-        // Trim trailing slashes so `format!("{}/api/...", base_url)` always
-        // produces a single-slash path, regardless of how the env var was set.
-        let base_url = crate::services::coincube_api_base_url()
-            .trim_end_matches('/')
-            .to_string();
+        let base_url = crate::services::coincube_api_base_url();
 
         log::info!(
             "Coincube Base URL: {}, Release = {}",
