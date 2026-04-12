@@ -1,4 +1,9 @@
-use crate::{color, component::text::text, icon, theme, widget::*};
+use crate::{
+    color,
+    component::text::text,
+    icon, theme,
+    widget::{Container, Element, Row, Text},
+};
 
 pub fn modal<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T> {
     Container::new(content)
