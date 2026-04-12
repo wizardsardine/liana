@@ -283,7 +283,7 @@ impl NativePasskeyCeremony {
             // Build the requests array. We need NSArray<ASAuthorizationRequest>.
             // The registration request is a subclass of ASAuthorizationRequest,
             // so we cast through the superclass relationship.
-            let request_super: &objc2_authentication_services::ASAuthorizationRequest = &**request;
+            let request_super: &objc2_authentication_services::ASAuthorizationRequest = &request;
             let requests_array = NSArray::from_slice(&[request_super]);
 
             let controller = ASAuthorizationController::initWithAuthorizationRequests(
