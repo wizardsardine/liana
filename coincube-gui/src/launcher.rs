@@ -522,12 +522,12 @@ impl Launcher {
                         let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
                         let cube_name = self.create_cube_name.value.trim().to_string();
                         let credential_id = registration.credential_id.clone();
-                        let prf_output: [u8; 32] = *registration.prf_output;
+                        let prf_output = registration.prf_output;
 
                         Task::perform(
                             async move {
                                 let master_signer =
-                                    MasterSigner::from_prf_output(network, &prf_output).map_err(
+                                    MasterSigner::from_prf_output(network, &*prf_output).map_err(
                                         |e| format!("Failed to derive master signer: {}", e),
                                     )?;
 
@@ -626,14 +626,12 @@ impl Launcher {
                             &base64::engine::general_purpose::STANDARD,
                             &credential_id,
                         );
-                        let prf_bytes: [u8; 32] = *prf_output;
-
                         Task::perform(
                             async move {
-                                let master_signer = MasterSigner::from_prf_output(
-                                    network, &prf_bytes,
-                                )
-                                .map_err(|e| format!("Failed to derive master signer: {}", e))?;
+                                let master_signer =
+                                    MasterSigner::from_prf_output(network, &*prf_output).map_err(
+                                        |e| format!("Failed to derive master signer: {}", e),
+                                    )?;
 
                                 let secp =
                                     coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();

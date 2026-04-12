@@ -518,6 +518,64 @@ pub fn completed_view() -> Element<'static, Message> {
         .into()
 }
 
+/// Shown for passkey-derived Cubes. The mnemonic can be re-derived from
+/// the WebAuthn PRF output, but passkey re-authentication isn't wired up
+/// yet. Tell the user what's going on and how to proceed.
+pub fn passkey_pending_view() -> Element<'static, Message> {
+    Column::new()
+        .spacing(20)
+        .width(Length::Fill)
+        .push(header("Backup via Passkey"))
+        .push(Space::new().height(Length::Fixed(20.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(icon::lock_icon().size(100).color(color::ORANGE))
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(16.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    Container::new(
+                        text(
+                            "This Cube uses a passkey-derived master key. \
+                             To display your 12-word recovery phrase we need to \
+                             re-authenticate with your passkey — this feature is \
+                             coming soon. In the meantime, make sure you keep \
+                             access to the device or security key that holds \
+                             your passkey.",
+                        )
+                        .size(18)
+                        .align_x(iced::alignment::Horizontal::Center),
+                    )
+                    .width(Length::Fixed(600.0))
+                    .align_x(iced::alignment::Horizontal::Center),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(24.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    ui_button::primary(None, "Back to Settings")
+                        .on_press(wrap(BackupWalletMessage::PreviousStep))
+                        .padding([8, 16])
+                        .width(Length::Fixed(300.0)),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .into()
+}
+
 /// Fallback — shouldn't be visible in the normal flow but useful for
 /// debugging state transitions.
 pub fn dispatch<'a>(
@@ -546,5 +604,6 @@ pub fn dispatch<'a>(
             error.as_deref(),
         )),
         BackupSeedState::Completed => Some(completed_view()),
+        BackupSeedState::PasskeyPending => Some(passkey_pending_view()),
     }
 }

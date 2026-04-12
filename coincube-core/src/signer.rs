@@ -174,17 +174,16 @@ impl MasterSigner {
 
     /// Create a MasterSigner from a 32-byte WebAuthn PRF extension output.
     ///
-    /// The PRF output is SHA-256 hashed and the first 16 bytes are used as BIP39
-    /// entropy, producing a deterministic 12-word mnemonic. The same PRF output
-    /// always yields the same mnemonic and master key.
+    /// The first 16 bytes of the PRF output are used directly as BIP39 entropy,
+    /// producing a deterministic 12-word mnemonic. This mirrors [`Self::generate`],
+    /// which also takes the first 16 bytes of 32 random bytes. The same PRF
+    /// output always yields the same mnemonic and master key.
     pub fn from_prf_output(
         network: bitcoin::Network,
         prf_output: &[u8; 32],
     ) -> Result<Self, SignerError> {
-        use bitcoin::hashes::{sha256, Hash};
-        let hash = sha256::Hash::hash(prf_output);
-        let mnemonic = bip39::Mnemonic::from_entropy(&hash.to_byte_array()[..16])
-            .map_err(SignerError::Mnemonic)?;
+        let mnemonic =
+            bip39::Mnemonic::from_entropy(&prf_output[..16]).map_err(SignerError::Mnemonic)?;
         Self::from_mnemonic(network, mnemonic)
     }
 

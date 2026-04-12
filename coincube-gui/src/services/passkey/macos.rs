@@ -29,7 +29,9 @@ use objc2_authentication_services::{
 // we use the runtime NSObject as the superclass and skip importing
 // objc2_foundation::NSObject entirely.
 use objc2::runtime::NSObject;
-use objc2_foundation::{NSArray, NSData, NSError, NSObjectProtocol, NSString};
+use objc2_foundation::{
+    NSArray, NSData, NSError, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
+};
 
 use rand::RngCore;
 use zeroize::Zeroizing;
@@ -110,29 +112,52 @@ define_class!(
                 use objc2::class;
                 use objc2::runtime::AnyObject;
 
+                let mut window: *mut AnyObject = std::ptr::null_mut();
+
                 let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
-                if app.is_null() {
-                    panic!("NSApplication.sharedApplication returned nil");
+                if !app.is_null() {
+                    window = msg_send![app, keyWindow];
+                    if window.is_null() {
+                        window = msg_send![app, mainWindow];
+                    }
+                    if window.is_null() {
+                        let windows: *mut AnyObject = msg_send![app, windows];
+                        if !windows.is_null() {
+                            window = msg_send![windows, firstObject];
+                        }
+                    }
+                } else {
+                    tracing::warn!(
+                        "NSApplication.sharedApplication returned nil; \
+                         passkey presentation will use a fallback hidden window"
+                    );
                 }
 
-                let mut window: *mut AnyObject = msg_send![app, keyWindow];
                 if window.is_null() {
-                    window = msg_send![app, mainWindow];
-                }
-                if window.is_null() {
-                    let windows: *mut AnyObject = msg_send![app, windows];
-                    if !windows.is_null() {
-                        window = msg_send![windows, firstObject];
+                    if !app.is_null() {
+                        tracing::warn!(
+                            "No NSWindow available for passkey presentation; \
+                             creating a fallback hidden window"
+                        );
                     }
-                }
-                if window.is_null() {
-                    panic!("No NSWindow available for passkey presentation");
+                    // Fallback: create a minimal hidden NSWindow so the
+                    // authorization controller has a valid presentation anchor.
+                    let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0));
+                    let alloc: *mut AnyObject = msg_send![class!(NSWindow), alloc];
+                    window = msg_send![
+                        alloc,
+                        initWithContentRect: rect,
+                        styleMask: 0u64,  // NSWindowStyleMaskBorderless
+                        backing: 2u64,    // NSBackingStoreBuffered
+                        defer: true,
+                    ];
                 }
 
                 // Retain the window and return as Retained<RuntimeNSObject>
                 // (which is what ASPresentationAnchor aliases to).
                 let _: () = msg_send![window, retain];
-                Retained::from_raw(window as *mut NSObject).expect("Failed to retain NSWindow")
+                Retained::from_raw(window as *mut NSObject)
+                    .expect("Failed to obtain or create NSWindow for passkey presentation")
             }
         }
     }

@@ -51,6 +51,10 @@ pub enum BackupSeedState {
     },
     /// Backup complete — cube.backed_up is now true.
     Completed,
+    /// Passkey re-authentication is required to derive the mnemonic, but the
+    /// passkey auth ceremony is not yet wired up.  Show an informational
+    /// screen explaining how to back up once passkey auth is available.
+    PasskeyPending,
 }
 
 /// Generate 3 random unique word indices from 1 to mnemonic_len.
@@ -233,6 +237,17 @@ impl GeneralSettingsState {
 
         match msg {
             BackupWalletMessage::Start => {
+                // Passkey-backed cubes derive their mnemonic from the WebAuthn
+                // PRF output — there is no encrypted mnemonic on disk and no
+                // PIN.  Once passkey re-authentication is implemented we will
+                // re-derive the mnemonic here; until then, show a helpful
+                // holding screen.
+                if let Some(cube) = self.lookup_cube(cache) {
+                    if cube.is_passkey_cube() {
+                        self.backup_state = BackupSeedState::PasskeyPending;
+                        return Task::none();
+                    }
+                }
                 // Always re-prompt for PIN before showing anything sensitive.
                 self.backup_pin = PinInput::new();
                 self.backup_mnemonic = None;
@@ -267,13 +282,6 @@ impl GeneralSettingsState {
                     };
                     return Task::none();
                 };
-                if !cube.verify_pin(&pin) {
-                    self.backup_pin.clear();
-                    self.backup_state = BackupSeedState::PinEntry {
-                        error: Some("Incorrect PIN. Please try again.".to_string()),
-                    };
-                    return Task::none();
-                }
                 let Some(fingerprint) = cube.master_signer_fingerprint else {
                     self.backup_state = BackupSeedState::PinEntry {
                         error: Some("This Cube has no master signer.".to_string()),
@@ -281,13 +289,33 @@ impl GeneralSettingsState {
                     return Task::none();
                 };
 
-                // Load + decrypt the mnemonic using the verified PIN.
-                match load_mnemonic_words(
-                    cache.datadir_path.path(),
-                    cache.network,
-                    fingerprint,
-                    &pin,
-                ) {
+                let datadir = cache.datadir_path.path().to_path_buf();
+                let network = cache.network;
+
+                // Run Argon2id PIN verification + mnemonic decryption off
+                // the UI thread to avoid blocking the event loop.
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            if !cube.verify_pin(&pin) {
+                                return Err("Incorrect PIN. Please try again.".to_string());
+                            }
+                            load_mnemonic_words(&datadir, network, fingerprint, &pin)
+                        })
+                        .await
+                        .map_err(|e| format!("PIN verification task failed: {}", e))?
+                    },
+                    |res| {
+                        Message::View(view::Message::Settings(
+                            view::SettingsMessage::BackupMasterSeed(
+                                view::BackupWalletMessage::PinVerified(res),
+                            ),
+                        ))
+                    },
+                )
+            }
+            BackupWalletMessage::PinVerified(result) => {
+                match result {
                     Ok(words) => {
                         self.backup_pin.clear();
                         self.backup_mnemonic = Some(Zeroizing::new(words));
@@ -295,9 +323,7 @@ impl GeneralSettingsState {
                     }
                     Err(e) => {
                         self.backup_pin.clear();
-                        self.backup_state = BackupSeedState::PinEntry {
-                            error: Some(format!("Failed to load mnemonic: {}", e)),
-                        };
+                        self.backup_state = BackupSeedState::PinEntry { error: Some(e) };
                     }
                 }
                 Task::none()
@@ -347,6 +373,7 @@ impl GeneralSettingsState {
                         self.backup_mnemonic = None;
                         BackupSeedState::None
                     }
+                    BackupSeedState::PasskeyPending => BackupSeedState::None,
                     BackupSeedState::None => BackupSeedState::None,
                 };
                 Task::none()

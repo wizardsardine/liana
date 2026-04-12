@@ -728,6 +728,9 @@ impl Modal for SignModal {
                 }
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::SelectMasterSigner)) => {
+                if let Some(fingerprint) = self.wallet.signer.as_ref().map(|s| s.fingerprint()) {
+                    self.signing.insert(fingerprint);
+                }
                 return Task::perform(
                     sign_psbt_with_master_signer(self.wallet.clone(), tx.psbt.clone()),
                     |(fg, res)| Message::Signed(fg, res),

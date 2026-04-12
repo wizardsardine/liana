@@ -1087,6 +1087,7 @@ pub fn create_app_with_remote_backend(
             has_vault: true,
             cube_name: cube_settings.name.clone(),
             current_cube_backed_up: cube_settings.backed_up,
+            current_cube_is_passkey: cube_settings.is_passkey_cube(),
             has_p2p: false, // Set later by App::new based on mnemonic availability
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
             btc_usd_price: None,

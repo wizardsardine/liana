@@ -55,6 +55,9 @@ pub struct Cache {
     /// Cube. Drives the soft "not backed up" warning banners on the Vault
     /// and Liquid home screens. Mirrors `CubeSettings::backed_up`.
     pub current_cube_backed_up: bool,
+    /// Whether the current Cube uses a passkey-derived master key (no PIN,
+    /// no stored encrypted mnemonic). Used to hide the seed-backup UI.
+    pub current_cube_is_passkey: bool,
     /// Whether the P2P panel is available (requires a valid mnemonic)
     pub has_p2p: bool,
     /// Current theme mode (dark/light) — used for theme-aware widget rendering
@@ -90,6 +93,7 @@ impl std::default::Default for Cache {
             has_vault: false,
             cube_name: String::new(),
             current_cube_backed_up: false,
+            current_cube_is_passkey: false,
             has_p2p: false,
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
             btc_usd_price: None,

@@ -605,7 +605,7 @@ pub enum LiquidSettingsMessage {
     ExportPayments,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum BackupWalletMessage {
     ToggleBackupIntroCheck,
     Start,
@@ -621,6 +621,34 @@ pub enum BackupWalletMessage {
     PinInput(crate::pin_input::Message),
     /// User submits the PIN to unlock the mnemonic.
     VerifyPin,
+    /// Async result of PIN verification + mnemonic decryption.
+    PinVerified(Result<Vec<String>, String>),
+}
+
+// Manual Debug impl to redact mnemonic words and PIN data from logs.
+impl std::fmt::Debug for BackupWalletMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ToggleBackupIntroCheck => write!(f, "ToggleBackupIntroCheck"),
+            Self::Start => write!(f, "Start"),
+            Self::NextStep => write!(f, "NextStep"),
+            Self::PreviousStep => write!(f, "PreviousStep"),
+            Self::VerifyPhrase => write!(f, "VerifyPhrase"),
+            Self::Complete => write!(f, "Complete"),
+            Self::WordInput { index, .. } => f
+                .debug_struct("WordInput")
+                .field("index", index)
+                .field("input", &"<redacted>")
+                .finish(),
+            Self::PinInput(_) => f.debug_tuple("PinInput").field(&"<redacted>").finish(),
+            Self::VerifyPin => write!(f, "VerifyPin"),
+            Self::PinVerified(Ok(_)) => write!(f, "PinVerified(Ok(<redacted>))"),
+            Self::PinVerified(Err(e)) => f
+                .debug_tuple("PinVerified")
+                .field(&Err::<(), _>(e))
+                .finish(),
+        }
+    }
 }
 
 impl From<FiatMessage> for Message {

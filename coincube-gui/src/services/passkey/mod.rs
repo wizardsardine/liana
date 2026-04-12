@@ -65,6 +65,10 @@ pub struct PasskeyAuthentication {
 }
 
 /// Parsed IPC message from the ceremony page.
+///
+/// `prf_output` is sent by the ceremony page as a JSON array of byte values
+/// (e.g. `[0,1,2,...,31]`). Exact 32-byte length is validated after
+/// deserialization before converting into `Zeroizing<[u8; 32]>`.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(tag = "type")]
 enum CeremonyIpcMessage {
@@ -233,6 +237,7 @@ impl PasskeyCeremony {
                 credential_id,
                 prf_output,
             } => {
+                let prf_output = Zeroizing::new(prf_output);
                 if prf_output.len() != 32 {
                     Err(PasskeyError::InvalidPrfOutput)
                 } else {
@@ -245,6 +250,7 @@ impl PasskeyCeremony {
                 }
             }
             CeremonyIpcMessage::AuthenticateSuccess { prf_output } => {
+                let prf_output = Zeroizing::new(prf_output);
                 if prf_output.len() != 32 {
                     Err(PasskeyError::InvalidPrfOutput)
                 } else {

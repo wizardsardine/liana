@@ -1330,6 +1330,7 @@ impl App {
                         // whatever was persisted — the backup flow saves
                         // cube.backed_up = true via this same path.
                         self.cache.current_cube_backed_up = cube.backed_up;
+                        self.cache.current_cube_is_passkey = cube.is_passkey_cube();
                         self.cube_settings.backed_up = cube.backed_up;
 
                         // Clear cached fiat display price if disabled.
