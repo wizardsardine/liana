@@ -157,8 +157,8 @@ pub fn transaction_stream(
                             .send(MavapayMessage::StreamError(err.to_string()))
                             .await;
                     }
-                };
-            };
+                }
+            }
         },
     )
 }

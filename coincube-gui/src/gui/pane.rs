@@ -161,7 +161,7 @@ impl Pane {
             Message::View(ViewMessage::SplitTab(_)) => {}
             // handled at the GUI level
             Message::View(ViewMessage::ToggleTheme) => {}
-        };
+        }
 
         Task::none()
     }

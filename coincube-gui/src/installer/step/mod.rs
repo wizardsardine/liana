@@ -199,7 +199,7 @@ impl Step for Final {
                 self.warning = None;
             }
             _ => {}
-        };
+        }
         Task::none()
     }
 

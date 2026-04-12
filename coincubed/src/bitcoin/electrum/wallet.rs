@@ -264,7 +264,7 @@ impl BdkWallet {
                     ChainPosition::Confirmed(anchor) => {
                         spend_block = Some(block_info_from_anchor(anchor));
                     }
-                };
+                }
             }
             let coin = crate::bitcoin::Coin {
                 outpoint,

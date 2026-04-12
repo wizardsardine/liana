@@ -419,7 +419,7 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                     .send(HardwareWalletMessage::Error(e.to_string()))
                     .await;
                 continue;
-            };
+            }
             api
         } else {
             match ledger::HidApi::new() {

@@ -384,7 +384,7 @@ impl State for VaultOverview {
                 }
             }
             _ => {}
-        };
+        }
         Task::none()
     }
 

@@ -105,7 +105,7 @@ impl From<Result<(), iced::font::Error>> for Message {
 async fn ctrl_c() -> Result<(), ()> {
     if let Err(e) = tokio::signal::ctrl_c().await {
         error!("{}", e);
-    };
+    }
     info!("Signal received, exiting");
     Ok(())
 }
@@ -390,7 +390,7 @@ impl GUI {
                         )
                         .map(move |msg| Message::Pane(p, msg)),
                     );
-                };
+                }
 
                 Task::batch(tasks)
             }

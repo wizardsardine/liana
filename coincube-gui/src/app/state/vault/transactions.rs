@@ -317,7 +317,7 @@ impl State for VaultTransactionsPanel {
                     VaultTransactionsModal::None => Task::none(),
                 };
             }
-        };
+        }
         Task::none()
     }
 

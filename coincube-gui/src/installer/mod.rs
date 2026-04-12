@@ -372,7 +372,7 @@ impl Installer {
                         "Successfully cleaned network directory at '{}'.",
                         network_directory.path().to_string_lossy()
                     );
-                };
+                }
                 self.steps
                     .get_mut(self.current)
                     .expect("There is always a step")
@@ -721,7 +721,7 @@ pub async fn create_remote_wallet(
         tracing::error!("Failed to update Liana-Connect cache: {}", e);
     } else {
         info!("Liana-Connect cache updated");
-    };
+    }
 
     Ok(wallet_settings)
 }
@@ -815,7 +815,7 @@ pub async fn import_remote_wallet(
         tracing::error!("Failed to update Liana-Connect cache: {}", e);
     } else {
         info!("Liana-Connect cache updated");
-    };
+    }
 
     Ok(wallet_settings)
 }

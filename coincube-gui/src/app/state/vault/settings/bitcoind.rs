@@ -713,7 +713,7 @@ impl State for BitcoindSettingsState {
                 }
             }
             _ => {}
-        };
+        }
         Task::none()
     }
 
@@ -1098,7 +1098,7 @@ impl BitcoindSettings {
                 }
             }
             view::SettingsEditMessage::Clipboard(text) => return clipboard::write(text),
-        };
+        }
         Task::none()
     }
 
@@ -1215,7 +1215,7 @@ impl ElectrumSettings {
                 }
             }
             _ => {}
-        };
+        }
         Task::none()
     }
 
@@ -1369,7 +1369,7 @@ impl RescanSetting {
                 );
             }
             _ => {}
-        };
+        }
         Task::none()
     }
 

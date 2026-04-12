@@ -216,7 +216,7 @@ fn sell_input_form<'a>(
                 validation_message = Some("Select a recipient bank");
             } else if bank_account_name.is_none() {
                 validation_message = Some("Verify your bank account details to continue");
-            };
+            }
 
             widget::column![
                 text::h3("Setup Bank Details (Nigeria)"),
@@ -289,7 +289,7 @@ fn sell_input_form<'a>(
                 validation_message = Some("Select the recipient's bank");
             } else if name.is_empty() {
                 validation_message = Some("Set the recipient's legal name");
-            };
+            }
 
             widget::column![
                 text::h3("Setup Bank Details (South Africa)"),
@@ -336,7 +336,7 @@ fn sell_input_form<'a>(
                 validation_message = Some("Set the recipient's legal name");
             } else if phone_number.is_empty() {
                 validation_message = Some("Set the recipient's phone number");
-            };
+            }
 
             widget::column![
                 text::h3("Setup Mobile Money Details (Kenya-MPESA)"),
