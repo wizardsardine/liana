@@ -1,5 +1,7 @@
 use crate::{
-    color, component::text::text, icon, theme,
+    color,
+    component::text::text,
+    icon, theme,
     widget::{Container, Element, Row, Text},
 };
 
