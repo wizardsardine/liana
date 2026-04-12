@@ -47,6 +47,9 @@ pub enum BackupSeedState {
         word_indices: [usize; 3],
         word_inputs: [String; 3],
         error: Option<String>,
+        /// True while the async settings.json write is in flight after a
+        /// successful verification. Suppresses duplicate Verify clicks.
+        saving: bool,
     },
     /// Backup complete — cube.backed_up is now true.
     Completed,
@@ -330,6 +333,7 @@ impl GeneralSettingsState {
                                 word_indices,
                                 word_inputs: [String::new(), String::new(), String::new()],
                                 error: None,
+                                saving: false,
                             },
                             None => {
                                 tracing::error!("Mnemonic unavailable or has fewer than 3 words");
@@ -368,8 +372,13 @@ impl GeneralSettingsState {
                     word_indices,
                     word_inputs,
                     error,
+                    saving,
                 } = &self.backup_state
                 {
+                    // Ignore edits while the async save is in flight.
+                    if *saving {
+                        return Task::none();
+                    }
                     let mut new_inputs = word_inputs.clone();
                     if let Some(pos) = word_indices.iter().position(|&i| i == index as usize) {
                         new_inputs[pos] = input;
@@ -378,6 +387,7 @@ impl GeneralSettingsState {
                         word_indices: *word_indices,
                         word_inputs: new_inputs,
                         error: error.clone(),
+                        saving: false,
                     };
                 }
                 Task::none()
@@ -386,11 +396,16 @@ impl GeneralSettingsState {
                 let BackupSeedState::Verification {
                     word_indices,
                     word_inputs,
+                    saving,
                     ..
                 } = &self.backup_state
                 else {
                     return Task::none();
                 };
+                // Ignore duplicate clicks while the async save is in flight.
+                if *saving {
+                    return Task::none();
+                }
                 let Some(mnemonic) = &self.backup_mnemonic else {
                     return Task::none();
                 };
@@ -403,9 +418,20 @@ impl GeneralSettingsState {
                 });
 
                 if all_correct {
-                    // Verification passed — persist `backed_up = true` to
-                    // settings.json. Completion is handled by the async
-                    // BackupMasterSeedUpdated message.
+                    // Verification passed — mark the state as saving so the
+                    // Verify button is disabled, then persist
+                    // `backed_up = true` to settings.json. The async result is
+                    // handled by `BackupSaveResult` below: success transitions
+                    // to Completed via `BackupMasterSeedUpdated`, failure
+                    // restores the verification screen with an error message.
+                    let word_indices = *word_indices;
+                    let word_inputs = word_inputs.clone();
+                    self.backup_state = BackupSeedState::Verification {
+                        word_indices,
+                        word_inputs,
+                        error: None,
+                        saving: true,
+                    };
                     let cube_id = self.cube_id.clone();
                     let network = cache.network;
                     let datadir = cache.datadir_path.clone();
@@ -421,11 +447,12 @@ impl GeneralSettingsState {
                             .await
                             .map_err(|e| format!("Failed to update settings: {}", e))
                         },
-                        |res: Result<(), String>| match res {
-                            Ok(()) => Message::View(view::Message::Settings(
-                                view::SettingsMessage::BackupMasterSeedUpdated,
-                            )),
-                            Err(e) => Message::View(view::Message::ShowError(e)),
+                        |res: Result<(), String>| {
+                            Message::View(view::Message::Settings(
+                                view::SettingsMessage::BackupMasterSeed(
+                                    view::BackupWalletMessage::BackupSaveResult(res),
+                                ),
+                            ))
                         },
                     )
                 } else {
@@ -435,8 +462,38 @@ impl GeneralSettingsState {
                         error: Some(
                             "The words you entered don't match. Please try again.".to_string(),
                         ),
+                        saving: false,
                     };
                     Task::none()
+                }
+            }
+            BackupWalletMessage::BackupSaveResult(res) => {
+                // The async settings.json write completed. On success, fan out
+                // `BackupMasterSeedUpdated` so the App-level interceptor can
+                // refresh `cache.current_cube_backed_up` and the global
+                // settings panel transitions to Completed (which clears the
+                // mnemonic). On failure, restore the verification screen with
+                // an inline error and surface a top-level toast.
+                match res {
+                    Ok(()) => Task::done(Message::View(view::Message::Settings(
+                        view::SettingsMessage::BackupMasterSeedUpdated,
+                    ))),
+                    Err(e) => {
+                        if let BackupSeedState::Verification {
+                            word_indices,
+                            word_inputs,
+                            ..
+                        } = &self.backup_state
+                        {
+                            self.backup_state = BackupSeedState::Verification {
+                                word_indices: *word_indices,
+                                word_inputs: word_inputs.clone(),
+                                error: Some(format!("Failed to save backup status: {}", e)),
+                                saving: false,
+                            };
+                        }
+                        Task::done(Message::View(view::Message::ShowError(e)))
+                    }
                 }
             }
             BackupWalletMessage::Complete => {

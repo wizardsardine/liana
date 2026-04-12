@@ -354,6 +354,7 @@ pub fn verification_view<'a>(
     word_indices: &'a [usize; 3],
     word_inputs: &'a [String; 3],
     error: Option<&'a str>,
+    saving: bool,
 ) -> Element<'a, Message> {
     let all_filled = word_inputs.iter().all(|w| !w.is_empty());
 
@@ -455,10 +456,11 @@ pub fn verification_view<'a>(
                     .width(Length::Fixed(150.0)),
             )
             .push({
-                let btn = ui_button::primary(None, "Verify")
+                let label = if saving { "Saving…" } else { "Verify" };
+                let btn = ui_button::primary(None, label)
                     .padding([8, 16])
                     .width(Length::Fixed(300.0));
-                if all_filled {
+                if all_filled && !saving {
                     btn.on_press(wrap(BackupWalletMessage::VerifyPhrase))
                 } else {
                     btn
@@ -598,10 +600,12 @@ pub fn dispatch<'a>(
             word_indices,
             word_inputs,
             error,
+            saving,
         } => Some(verification_view(
             word_indices,
             word_inputs,
             error.as_deref(),
+            *saving,
         )),
         BackupSeedState::Completed => Some(completed_view()),
         BackupSeedState::PasskeyPending => Some(passkey_pending_view()),

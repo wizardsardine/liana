@@ -621,6 +621,9 @@ pub enum BackupWalletMessage {
     VerifyPin,
     /// Async result of PIN verification + mnemonic decryption.
     PinVerified(Result<Vec<String>, String>),
+    /// Async result of persisting `backed_up = true` to settings.json after
+    /// the user successfully completed the verification step.
+    BackupSaveResult(Result<(), String>),
 }
 
 // Manual Debug impl to redact mnemonic words and PIN data from logs.
@@ -645,6 +648,7 @@ impl std::fmt::Debug for BackupWalletMessage {
                 .debug_tuple("PinVerified")
                 .field(&Err::<(), _>(e))
                 .finish(),
+            Self::BackupSaveResult(res) => f.debug_tuple("BackupSaveResult").field(res).finish(),
         }
     }
 }
