@@ -49,19 +49,10 @@ pub fn lnurl_subscription(
 fn create_stream(
     data: &LnurlStreamData,
 ) -> impl iced::futures::Stream<Item = LnurlMessage> + 'static {
-    #[cfg(debug_assertions)]
-    let events_base_url = "https://dev-events.coincube.io";
-    #[cfg(not(debug_assertions))]
-    let events_base_url = env!("EVENTS_API_URL");
-
-    #[cfg(debug_assertions)]
-    let api_base_url: &'static str =
-        option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io");
-    #[cfg(not(debug_assertions))]
-    let api_base_url: &'static str = env!("COINCUBE_API_URL");
+    let api_base_url = crate::services::coincube_api_base_url();
 
     let auth = format!("Bearer {}", data.token);
-    let sse_url = format!("{}/api/v1/lnurl/stream", events_base_url);
+    let sse_url = format!("{}/api/v1/lnurl/stream", api_base_url);
     let breez_client = data.breez_client.clone();
     let retries = data.retries;
 
@@ -111,8 +102,42 @@ fn create_stream(
                     .connect_timeout(std::time::Duration::from_secs(10))
                     .build()
                     .unwrap_or_else(|_| reqwest::Client::new());
+
+                // Debug builds only: log a curl template for the request so it
+                // can be reproduced from a terminal. The Authorization header
+                // is redacted — replace `<REDACTED_AUTH>` with the real bearer
+                // value before running the command.
+                #[cfg(debug_assertions)]
+                {
+                    log::warn!(
+                        "[LNURL] DEBUG curl reproduction: curl -i -N -H 'Accept: text/event-stream' -H 'Authorization: <REDACTED_AUTH>' '{}'",
+                        request.url()
+                    );
+                }
+
                 match sse_client.execute(request).await {
                     Ok(res) => {
+                        // `execute` returns Ok for any HTTP response, including
+                        // 4xx/5xx. Don't declare the stream "connected" until
+                        // we've actually seen a 2xx — otherwise a 404 produces
+                        // two misleading log lines ("connected" followed by
+                        // "failed to get event source").
+                        let status = res.status();
+                        if !status.is_success() {
+                            log::warn!(
+                                "[LNURL] SSE endpoint returned non-success status: {} (url: {})",
+                                status,
+                                sse_url
+                            );
+                            tokio::time::sleep(backoff).await;
+                            let _ = channel
+                                .send(LnurlMessage::StreamError(format!(
+                                    "SSE endpoint returned {}",
+                                    status
+                                )))
+                                .await;
+                            return;
+                        }
                         log::info!("[LNURL] SSE stream connected");
                         let _ = channel.send(LnurlMessage::StreamConnected).await;
 
@@ -146,7 +171,7 @@ fn create_stream(
                                                             &mut channel,
                                                             &breez_client,
                                                             &http,
-                                                            api_base_url,
+                                                            &api_base_url,
                                                             &auth_header,
                                                             req_event,
                                                         )
