@@ -600,8 +600,6 @@ pub enum ReceiveMethod {
 
 #[derive(Debug, Clone)]
 pub enum LiquidSettingsMessage {
-    BackupWallet(BackupWalletMessage),
-    SettingsUpdated,
     ExportPayments,
 }
 

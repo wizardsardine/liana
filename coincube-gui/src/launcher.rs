@@ -527,7 +527,7 @@ impl Launcher {
                         Task::perform(
                             async move {
                                 let master_signer =
-                                    MasterSigner::from_prf_output(network, &*prf_output).map_err(
+                                    MasterSigner::from_prf_output(network, &prf_output).map_err(
                                         |e| format!("Failed to derive master signer: {}", e),
                                     )?;
 
@@ -629,7 +629,7 @@ impl Launcher {
                         Task::perform(
                             async move {
                                 let master_signer =
-                                    MasterSigner::from_prf_output(network, &*prf_output).map_err(
+                                    MasterSigner::from_prf_output(network, &prf_output).map_err(
                                         |e| format!("Failed to derive master signer: {}", e),
                                     )?;
 

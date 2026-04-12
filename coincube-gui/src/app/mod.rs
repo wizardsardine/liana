@@ -682,6 +682,7 @@ impl App {
             bitcoin_unit,
             cube_name: cube_settings.name.clone(),
             current_cube_backed_up: cube_settings.backed_up,
+            current_cube_is_passkey: cube_settings.is_passkey_cube(),
             ..Default::default()
         };
 
