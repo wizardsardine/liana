@@ -1,7 +1,12 @@
 use crate::services::{coincube::CoincubeError, http::ResponseExt};
 use reqwest::Method;
 
-use super::api::*;
+#[cfg(debug_assertions)]
+use super::api::SimulatePayInRequest;
+use super::api::{
+    GetOrderResponse, GetPriceResponse, GetQuoteRequest, GetQuoteResponse, GetTransactionsResponse,
+    MavapayApiResult, MavapayBanks, MavapayCurrency, NgnCustomerDetails,
+};
 use super::stream::transaction_stream;
 use super::MavapayMessage;
 
@@ -90,36 +95,20 @@ impl<'client> MavapayClient<'client> {
         }
     }
 
-    pub async fn get_order(&self, order_id: &str) -> MavapayApiResult<GetOrderResponse> {
+    pub async fn get_order(&self, order_id: &str) -> Result<GetOrderResponse, CoincubeError> {
         let url = format!("{}/api/v1/mavapay/orders/{}", self.0.base_url, order_id);
-        let res: Result<_, CoincubeError> = async {
-            let response = self.0.client.request(Method::GET, &url).send().await?;
+        let response = self.0.client.request(Method::GET, &url).send().await?;
 
-            let response = response.check_success().await?;
-            Ok(response.json().await?)
-        }
-        .await;
-
-        match res {
-            Ok(res) => res,
-            Err(err) => err.into(),
-        }
+        let response = response.check_success().await?;
+        Ok(response.json().await?)
     }
 
-    pub async fn get_transactions(&self) -> MavapayApiResult<GetTransactionsResponse> {
+    pub async fn get_transactions(&self) -> Result<GetTransactionsResponse, CoincubeError> {
         let url = format!("{}/api/v1/mavapay/transactions", self.0.base_url);
-        let res: Result<_, CoincubeError> = async {
-            let response = self.0.client.request(Method::GET, &url).send().await?;
+        let response = self.0.client.request(Method::GET, &url).send().await?;
 
-            let response = response.check_success().await?;
-            Ok(response.json().await?)
-        }
-        .await;
-
-        match res {
-            Ok(res) => res,
-            Err(err) => err.into(),
-        }
+        let response = response.check_success().await?;
+        Ok(response.json().await?)
     }
 
     #[cfg(debug_assertions)]

@@ -179,7 +179,7 @@ impl Step for ShareXpubs {
                 }
             }
             _ => {}
-        };
+        }
         Task::none()
     }
 

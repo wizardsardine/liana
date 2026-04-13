@@ -276,7 +276,7 @@ impl State for VaultReceivePanel {
                         self.warning = Some(e);
                         return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
-                };
+                }
                 Task::none()
             }
             Message::View(view::Message::Next) => {

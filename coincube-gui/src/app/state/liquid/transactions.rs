@@ -5,8 +5,9 @@ use breez_sdk_liquid::model::{PaymentDetails, RefundRequest};
 use breez_sdk_liquid::prelude::{Payment, RefundableSwap};
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::component::form;
+use coincube_ui::component::quote_display::{self, Quote};
 use coincube_ui::widget::*;
-use iced::Task;
+use iced::{widget::image, Task};
 
 use crate::app::breez::assets::usdt_asset_id;
 use crate::app::view::FeeratePriority;
@@ -36,6 +37,8 @@ pub struct LiquidTransactions {
     fee_estimator: FeeEstimator,
     refunding: bool,
     asset_filter: AssetFilter,
+    empty_state_quote: Quote,
+    empty_state_image_handle: image::Handle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +50,8 @@ pub enum AssetFilter {
 
 impl LiquidTransactions {
     pub fn new(breez_client: Arc<BreezClient>) -> Self {
+        let empty_state_quote = quote_display::random_quote("empty-wallet");
+        let empty_state_image_handle = quote_display::image_handle_for_context("empty-wallet");
         Self {
             breez_client,
             payments: Vec::new(),
@@ -61,6 +66,8 @@ impl LiquidTransactions {
             fee_estimator: FeeEstimator::new(),
             refunding: false,
             asset_filter: AssetFilter::All,
+            empty_state_quote,
+            empty_state_image_handle,
         }
     }
 
@@ -151,6 +158,8 @@ impl State for LiquidTransactions {
                     usdt_asset_id(self.breez_client.network()).unwrap_or(""),
                     self.asset_filter,
                     cache.show_direction_badges,
+                    &self.empty_state_quote,
+                    &self.empty_state_image_handle,
                 ),
             )
         };

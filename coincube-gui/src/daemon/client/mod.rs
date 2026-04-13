@@ -8,7 +8,7 @@ use coincubed::commands::{GetLabelsBip329Result, UpdateDerivIndexesResult};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{error, info};
+use tracing::{debug, info};
 
 pub mod error;
 pub mod jsonrpc;
@@ -51,7 +51,11 @@ impl<C: Client> Coincubed<C> {
     ) -> Result<U, DaemonError> {
         info!("{}", method);
         self.client.request(method, input).map_err(|e| {
-            error!("method {} failed: {:?}", method, e);
+            // Logged at debug because the loader's initial external-daemon
+            // probe is expected to fail with NotFound/ConnectionRefused on the
+            // socket path, and the error is returned to callers who log it at
+            // the appropriate severity when it is genuinely unexpected.
+            debug!("method {} failed: {:?}", method, e);
             e.into()
         })
     }

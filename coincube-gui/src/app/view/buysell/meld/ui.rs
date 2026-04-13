@@ -117,7 +117,7 @@ pub(crate) fn input_form_ux<'a>(
             }
         }
         Ok(_) => validation_messages.push("Now how did you manage to input that?".into()),
-    };
+    }
 
     let amount_input = widget::text_input(&limits.currency_code, amount)
         .on_input(|am| {

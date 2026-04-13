@@ -10,6 +10,16 @@ use coincube_ui::{component::form, widget::*};
 use iced::Task;
 
 use super::sideshift_send::SideshiftSendFlow;
+
+/// Map SDK prepare errors to user-friendly messages.
+fn friendly_prepare_error(e: &impl std::fmt::Display) -> String {
+    let msg = e.to_string();
+    if msg.contains("not enough funds") || msg.contains("InsufficientFunds") {
+        "Minimum spendable amount not met. Try adding more funds.".to_string()
+    } else {
+        format!("Failed to prepare payment: {}", msg)
+    }
+}
 use crate::app::breez::assets::{
     asset_kind_for_id, format_usdt_display, lbtc_asset_id, parse_asset_to_minor_units,
     usdt_asset_id, AssetKind, USDT_PRECISION,
@@ -178,6 +188,17 @@ pub struct LiquidSend {
     prepare_response: Option<breez_sdk_liquid::prelude::PrepareSendResponse>,
     prepare_onchain_response: Option<breez_sdk_liquid::prelude::PreparePayOnchainResponse>,
     is_sending: bool,
+    /// User preference for paying fees in the asset (USDt) vs L-BTC.
+    /// `true` = pay fees in USDt, `false` = pay fees in L-BTC.
+    /// Only relevant for same-asset USDt sends.
+    pay_fees_with_asset: bool,
+    /// Whether a SendMax prepare call is in flight.
+    max_loading: bool,
+    /// Whether the current amount was set via "Send Max" for L-BTC (use Drain).
+    is_drain: bool,
+    /// Quote and image handle for the "Transaction complete" screen.
+    sent_quote: coincube_ui::component::quote_display::Quote,
+    sent_image_handle: iced::widget::image::Handle,
 }
 
 impl LiquidSend {
@@ -211,6 +232,13 @@ impl LiquidSend {
             prepare_response: None,
             prepare_onchain_response: None,
             is_sending: false,
+            pay_fees_with_asset: true,
+            max_loading: false,
+            is_drain: false,
+            sent_quote: coincube_ui::component::quote_display::random_quote("transaction-sent"),
+            sent_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
+                "transaction-sent",
+            ),
         }
     }
 
@@ -220,6 +248,14 @@ impl LiquidSend {
 
     pub fn btc_balance(&self) -> Amount {
         self.btc_balance
+    }
+
+    pub fn pay_fees_with_asset(&self) -> bool {
+        self.pay_fees_with_asset
+    }
+
+    pub fn max_loading(&self) -> bool {
+        self.max_loading
     }
 
     pub fn send_asset(&self) -> SendAsset {
@@ -400,6 +436,10 @@ impl State for LiquidSend {
                     self.breez_client.network(),
                     breez_sdk_liquid::bitcoin::Network::Bitcoin
                 ),
+                pay_fees_with_asset: self.pay_fees_with_asset,
+                max_loading: self.max_loading,
+                sent_quote: &self.sent_quote,
+                sent_image_handle: &self.sent_image_handle,
             })
         }
     }
@@ -460,6 +500,7 @@ impl State for LiquidSend {
                     self.uri_asset = None;
                     self.error = None;
                     self.sideshift_flow = None;
+                    self.is_drain = false;
                     return self.load_balance();
                 }
                 view::LiquidSendMessage::InputEdited(value) => {
@@ -570,6 +611,7 @@ impl State for LiquidSend {
                                 )
                             }
                             InputType::Bolt11 { invoice } => {
+                                self.is_drain = false;
                                 if let Some(amt) = invoice.amount_msat {
                                     if let Ok(amount) = Amount::from_str_in(
                                         &amt.to_string(),
@@ -632,6 +674,7 @@ impl State for LiquidSend {
                             }
 
                             InputType::LiquidAddress { address } => {
+                                self.is_drain = false;
                                 if self.to_asset == SendAsset::Usdt {
                                     if let Some(amount) = address.amount {
                                         let amount_str = format!("{}", amount);
@@ -952,6 +995,7 @@ impl State for LiquidSend {
                         modal: Modal::AmountInput,
                     } = &mut self.flow_state
                     {
+                        self.is_drain = false;
                         self.amount_input.value = v.clone();
 
                         if v.is_empty() {
@@ -1183,6 +1227,7 @@ impl State for LiquidSend {
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatDone) => {
+                    self.is_drain = false;
                     let is_cross_asset = self.from_asset != self.to_asset;
                     if let LiquidSendFlowState::Main {
                         modal:
@@ -1273,6 +1318,7 @@ impl State for LiquidSend {
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::Done) => {
+                    self.error = None;
                     if let LiquidSendFlowState::Main {
                         modal: Modal::AmountInput,
                     } = &self.flow_state
@@ -1348,9 +1394,8 @@ impl State for LiquidSend {
                                             ))
                                         }
                                         Err(e) => Message::View(view::Message::LiquidSend(
-                                            view::LiquidSendMessage::Error(format!(
-                                                "Failed to prepare payment: {}",
-                                                e
+                                            view::LiquidSendMessage::Error(friendly_prepare_error(
+                                                &e,
                                             )),
                                         )),
                                     },
@@ -1429,18 +1474,22 @@ impl State for LiquidSend {
                             let breez_client = self.breez_client.clone();
                             let breez_clone = self.breez_client.clone();
                             let amount_sat = self.amount.to_sat();
+                            let is_drain = self.is_drain;
 
                             let lightning_send = Task::perform(
                                 async move {
+                                    let pay_amount = if is_drain {
+                                        breez_sdk_liquid::prelude::PayAmount::Drain
+                                    } else {
+                                        breez_sdk_liquid::prelude::PayAmount::Bitcoin {
+                                            receiver_amount_sat: amount_sat,
+                                        }
+                                    };
                                     breez_client
                                         .prepare_send_payment(
                                             &breez_sdk_liquid::prelude::PrepareSendRequest {
                                                 destination,
-                                                amount: Some(
-                                                    breez_sdk_liquid::prelude::PayAmount::Bitcoin {
-                                                        receiver_amount_sat: amount_sat,
-                                                    },
-                                                ),
+                                                amount: Some(pay_amount),
                                                 disable_mrh: None,
                                                 payment_timeout_sec: None,
                                             },
@@ -1466,13 +1515,17 @@ impl State for LiquidSend {
 
                             let onchain_send = Task::perform(
                                 async move {
+                                    let pay_amount = if is_drain {
+                                        breez_sdk_liquid::prelude::PayAmount::Drain
+                                    } else {
+                                        breez_sdk_liquid::prelude::PayAmount::Bitcoin {
+                                            receiver_amount_sat: amount_sat,
+                                        }
+                                    };
                                     breez_clone
                                         .prepare_pay_onchain(
                                             &breez_sdk_liquid::prelude::PreparePayOnchainRequest {
-                                                amount:
-                                                    breez_sdk_liquid::prelude::PayAmount::Bitcoin {
-                                                        receiver_amount_sat: amount_sat,
-                                                    },
+                                                amount: pay_amount,
                                                 fee_rate_sat_per_vbyte: None,
                                             },
                                         )
@@ -1504,6 +1557,19 @@ impl State for LiquidSend {
                     }
                 }
                 view::LiquidSendMessage::PrepareResponseReceived(prepare_response) => {
+                    // If the preferred fee method is unavailable, fall back to the
+                    // other one automatically.
+                    if !self.pay_fees_with_asset
+                        && prepare_response.fees_sat.is_none()
+                        && prepare_response.estimated_asset_fees.is_some()
+                    {
+                        self.pay_fees_with_asset = true;
+                    } else if self.pay_fees_with_asset
+                        && prepare_response.estimated_asset_fees.is_none()
+                        && prepare_response.fees_sat.is_some()
+                    {
+                        self.pay_fees_with_asset = false;
+                    }
                     self.prepare_response = Some(prepare_response.clone());
                     self.flow_state = LiquidSendFlowState::FinalCheck;
                 }
@@ -1595,7 +1661,215 @@ impl State for LiquidSend {
                             self.amount = Amount::ZERO;
                             self.usdt_amount_input = form::Value::default();
                             self.amount_input = form::Value::default();
+                            self.is_drain = false;
                         }
+                    }
+                }
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::ToggleFeeAsset) => {
+                    if let LiquidSendFlowState::Main {
+                        modal: Modal::AmountInput,
+                    } = &self.flow_state
+                    {
+                        self.pay_fees_with_asset = !self.pay_fees_with_asset;
+                        self.error = None;
+                    }
+                }
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::SendMax) => {
+                    if let LiquidSendFlowState::Main {
+                        modal: Modal::AmountInput,
+                    } = &self.flow_state
+                    {
+                        self.error = None;
+                        if self.from_asset != self.to_asset {
+                            // Cross-asset swap: max depends on a SideSwap quote
+                            // which we don't have yet. Skip SendMax.
+                            self.error = Some(
+                                "Max send is not available for cross-asset swaps. Please enter an amount manually."
+                                    .to_string(),
+                            );
+                        } else if self.to_asset == SendAsset::Usdt {
+                            if !self.pay_fees_with_asset {
+                                // Fees paid in L-BTC — full USDt balance can be sent
+                                let display = format_usdt_display(self.usdt_balance);
+                                self.usdt_amount_input.value = display;
+                                self.usdt_amount_input.valid = true;
+                                self.usdt_amount_input.warning = None;
+                            } else if let Some(InputType::LiquidAddress { address }) =
+                                &self.input_type
+                            {
+                                // Fees paid in USDt — prepare with a small probe amount
+                                // to learn the asset fee, then subtract it from balance.
+                                let destination = address.address.clone();
+                                let network = self.breez_client.network();
+                                if let Some(to_asset_id) = usdt_asset_id(network) {
+                                    let breez_client = self.breez_client.clone();
+                                    let to_asset_id = to_asset_id.to_string();
+                                    // Use a small probe amount (0.01 USDt = 1_000_000 base units)
+                                    // just to discover the fee.
+                                    let probe_amount = 1_000_000_u64;
+                                    self.max_loading = true;
+                                    return Task::perform(
+                                        async move {
+                                            breez_client
+                                                .prepare_send_asset(
+                                                    destination,
+                                                    &to_asset_id,
+                                                    probe_amount,
+                                                    USDT_PRECISION,
+                                                    None,
+                                                )
+                                                .await
+                                                .map_err(|e| e.to_string())
+                                        },
+                                        |result| {
+                                            Message::View(view::Message::LiquidSend(
+                                                view::LiquidSendMessage::SendMaxPrepared(result),
+                                            ))
+                                        },
+                                    );
+                                }
+                            }
+                        } else if let Some(input_type) = &self.input_type {
+                            // L-BTC send: use Drain to let SDK calculate max minus fees
+                            if let InputType::BitcoinAddress { .. } = input_type {
+                                // On-chain sends use prepare_pay_onchain (different swap path)
+                                let breez_client = self.breez_client.clone();
+                                let btc_balance = self.btc_balance;
+                                self.max_loading = true;
+                                return Task::perform(
+                                    async move {
+                                        let onchain_resp = breez_client
+                                            .prepare_pay_onchain(
+                                                &breez_sdk_liquid::prelude::PreparePayOnchainRequest {
+                                                    amount: breez_sdk_liquid::prelude::PayAmount::Drain,
+                                                    fee_rate_sat_per_vbyte: None,
+                                                },
+                                            )
+                                            .await
+                                            .map_err(|e| e.to_string())?;
+                                        // Calculate max sendable: balance - total fees
+                                        let max_sat = btc_balance
+                                            .to_sat()
+                                            .saturating_sub(onchain_resp.total_fees_sat);
+                                        Ok::<u64, String>(max_sat)
+                                    },
+                                    |result| match result {
+                                        Ok(max_sat) => Message::View(view::Message::LiquidSend(
+                                            view::LiquidSendMessage::SendMaxOnChainResult(max_sat),
+                                        )),
+                                        Err(e) => Message::View(view::Message::LiquidSend(
+                                            view::LiquidSendMessage::Error(format!(
+                                                "Failed to estimate max: {e}"
+                                            )),
+                                        )),
+                                    },
+                                );
+                            }
+
+                            let destination = match input_type {
+                                InputType::Bolt11 { invoice } => invoice.bolt11.clone(),
+                                InputType::Bolt12Offer { offer, .. } => offer.offer.clone(),
+                                InputType::LiquidAddress { address } => address.address.clone(),
+                                _ => return Task::none(),
+                            };
+                            let breez_client = self.breez_client.clone();
+                            self.max_loading = true;
+                            return Task::perform(
+                                async move {
+                                    breez_client
+                                        .prepare_send_payment(
+                                            &breez_sdk_liquid::prelude::PrepareSendRequest {
+                                                destination,
+                                                amount: Some(
+                                                    breez_sdk_liquid::prelude::PayAmount::Drain,
+                                                ),
+                                                disable_mrh: None,
+                                                payment_timeout_sec: None,
+                                            },
+                                        )
+                                        .await
+                                        .map_err(|e| e.to_string())
+                                },
+                                |result| {
+                                    Message::View(view::Message::LiquidSend(
+                                        view::LiquidSendMessage::SendMaxPrepared(result),
+                                    ))
+                                },
+                            );
+                        }
+                    }
+                }
+                view::LiquidSendMessage::SendMaxPrepared(result) => {
+                    self.max_loading = false;
+                    match result {
+                        Ok(prepare_response) => {
+                            if self.to_asset == SendAsset::Usdt {
+                                // USDt with asset fees: subtract fee from balance
+                                if let Some(asset_fee) = prepare_response.estimated_asset_fees {
+                                    let fee_base =
+                                        (asset_fee * 10_u64.pow(USDT_PRECISION as u32) as f64)
+                                            .ceil() as u64;
+                                    let max_amount = self.usdt_balance.saturating_sub(fee_base);
+                                    if max_amount == 0 {
+                                        self.error =
+                                            Some("Balance too low to cover fees".to_string());
+                                    } else {
+                                        let display = format_usdt_display(max_amount);
+                                        self.usdt_amount_input.value = display;
+                                        self.usdt_amount_input.valid = true;
+                                        self.usdt_amount_input.warning = None;
+                                    }
+                                } else {
+                                    // No asset fee — use full balance
+                                    let display = format_usdt_display(self.usdt_balance);
+                                    self.usdt_amount_input.value = display;
+                                    self.usdt_amount_input.valid = true;
+                                    self.usdt_amount_input.warning = None;
+                                }
+                            } else {
+                                // L-BTC drain: SDK returns the max sendable amount
+                                // via fees_sat; calculate balance - fees
+                                let fees = prepare_response.fees_sat.unwrap_or(0);
+                                let max_sat = self.btc_balance.to_sat().saturating_sub(fees);
+                                if max_sat == 0 {
+                                    self.error = Some("Balance too low to cover fees".to_string());
+                                } else {
+                                    let max_amount = Amount::from_sat(max_sat);
+                                    self.amount = max_amount;
+                                    self.amount_input.value =
+                                        if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                            max_amount.to_btc().to_string()
+                                        } else {
+                                            max_sat.to_string()
+                                        };
+                                    self.amount_input.valid = true;
+                                    self.amount_input.warning = None;
+                                    self.is_drain = true;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            self.error = Some(format!("Failed to estimate max: {}", e));
+                        }
+                    }
+                }
+                view::LiquidSendMessage::SendMaxOnChainResult(max_sat) => {
+                    self.max_loading = false;
+                    let max_sat = *max_sat;
+                    if max_sat == 0 {
+                        self.error = Some("Balance too low to cover fees".to_string());
+                    } else {
+                        let max_amount = Amount::from_sat(max_sat);
+                        self.amount = max_amount;
+                        self.amount_input.value =
+                            if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                max_amount.to_btc().to_string()
+                            } else {
+                                max_sat.to_string()
+                            };
+                        self.amount_input.valid = true;
+                        self.amount_input.warning = None;
+                        self.is_drain = true;
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::UsdtAmountEdited(v)) => {
@@ -1636,6 +1910,7 @@ impl State for LiquidSend {
                     self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
                     self.error = None;
                     self.amount = Amount::ZERO;
+                    self.is_drain = false;
                     self.lightning_limits = None;
                     self.description = None;
                     self.comment = None;
@@ -1663,12 +1938,14 @@ impl State for LiquidSend {
                             let breez_client = self.breez_client.clone();
                             let comment = self.comment.clone();
                             // Cross-asset swaps cannot use asset fees per SDK constraint.
-                            // Only same-asset USDt sends can pay fees in USDt.
+                            // For same-asset USDt sends, respect the user's fee preference.
                             let is_cross_asset = self.from_asset != self.to_asset;
                             let use_asset_fees = if is_cross_asset {
                                 false
+                            } else if matches!(self.to_asset, SendAsset::Usdt) {
+                                self.pay_fees_with_asset
                             } else {
-                                matches!(self.to_asset, SendAsset::Usdt)
+                                false
                             };
 
                             return Task::perform(
@@ -1739,6 +2016,14 @@ impl State for LiquidSend {
                     self.flow_state = LiquidSendFlowState::Sent;
                     self.prepare_response = None;
                     self.is_sending = false;
+                    self.is_drain = false;
+                    // Fresh quote for the success screen
+                    self.sent_quote =
+                        coincube_ui::component::quote_display::random_quote("transaction-sent");
+                    self.sent_image_handle =
+                        coincube_ui::component::quote_display::image_handle_for_context(
+                            "transaction-sent",
+                        );
                     let breez_client = self.breez_client.clone();
                     return Task::perform(async move { breez_client.sync().await }, |result| {
                         match result {
@@ -1772,6 +2057,7 @@ impl State for LiquidSend {
                     self.lightning_limits = None;
                     self.prepare_response = None;
                     self.is_sending = false;
+                    self.is_drain = false;
                     self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
                 }
                 view::LiquidSendMessage::LightningLimitsFetched { min_sat, max_sat } => {

@@ -9,6 +9,7 @@ pub mod state;
 pub mod view;
 pub mod wallet;
 
+use std::collections::VecDeque;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
@@ -87,6 +88,24 @@ struct Panels {
 }
 
 impl Panels {
+    /// Read the cube's fiat currency preference from the settings file.
+    fn default_fiat_currency(
+        datadir: &CoincubeDirectory,
+        network: bitcoin::Network,
+        cube_id: &str,
+    ) -> Option<String> {
+        let network_dir = datadir.network_directory(network);
+        settings::Settings::from_file(&network_dir)
+            .ok()
+            .and_then(|s| {
+                s.cubes
+                    .iter()
+                    .find(|c| c.id == cube_id)
+                    .and_then(|c| c.fiat_price.as_ref())
+                    .map(|fp| fp.currency.to_string())
+            })
+    }
+
     fn new_without_vault(
         breez_client: Arc<BreezClient>,
         wallet: Option<Arc<Wallet>>,
@@ -98,6 +117,8 @@ impl Panels {
     ) -> Panels {
         // NO VAULT - All vault panels are None, but Liquid panels always work
         // The UI layer prevents navigation to vault panels when has_vault=false
+
+        let default_fiat_currency = Self::default_fiat_currency(datadir, network, &cube_id);
 
         Self {
             current: Menu::Home,
@@ -164,9 +185,9 @@ impl Panels {
                 .liquid_signer()
                 .map(|s| s.lock().expect("signer lock").mnemonic_str())
             {
-                Some(mnemonic) if !mnemonic.is_empty() => {
-                    Some(crate::app::view::p2p::P2PPanel::new(None, mnemonic))
-                }
+                Some(mnemonic) if !mnemonic.is_empty() => Some(
+                    crate::app::view::p2p::P2PPanel::new(None, mnemonic, default_fiat_currency),
+                ),
                 _ => {
                     log::warn!("P2P panel disabled: no mnemonic available from liquid signer");
                     None
@@ -196,6 +217,9 @@ impl Panels {
                 .map(|nt| nt == NodeType::Bitcoind)
                 // We don't know the node type for external coincubed so assume it's bitcoind.
                 .unwrap_or(true);
+
+        let default_fiat_currency = Self::default_fiat_currency(&data_dir, cache.network, &cube_id);
+
         Self {
             current: Menu::Home,
             vault_expanded: false,
@@ -307,7 +331,11 @@ impl Panels {
                 .map(|s| s.lock().expect("signer lock").mnemonic_str())
             {
                 Some(mnemonic) if !mnemonic.is_empty() => {
-                    Some(crate::app::view::p2p::P2PPanel::new(Some(wallet), mnemonic))
+                    Some(crate::app::view::p2p::P2PPanel::new(
+                        Some(wallet),
+                        mnemonic,
+                        default_fiat_currency,
+                    ))
                 }
                 _ => {
                     log::warn!("P2P panel disabled: no mnemonic available from liquid signer");
@@ -494,18 +522,35 @@ impl Panels {
             Menu::Settings(_) => Some(&mut self.global_settings as &mut dyn State),
         }
     }
+
+    /// Returns the refresh message for the currently visible liquid-related panel, if any.
+    /// Used to avoid refreshing all liquid panels when only one is visible.
+    /// When `exclude_home` is true, skips the Home panel (useful when the caller
+    /// already sends a separate RefreshLiquidBalance message).
+    fn active_liquid_refresh(&self, exclude_home: bool) -> Option<Message> {
+        match &self.current {
+            Menu::Home if !exclude_home => Some(Message::View(view::Message::Home(
+                view::HomeMessage::RefreshLiquidBalance,
+            ))),
+            Menu::Liquid(sub) => match sub {
+                crate::app::menu::LiquidSubMenu::Overview => Some(Message::View(
+                    view::Message::LiquidOverview(view::LiquidOverviewMessage::RefreshRequested),
+                )),
+                crate::app::menu::LiquidSubMenu::Send => Some(Message::View(
+                    view::Message::LiquidSend(view::LiquidSendMessage::RefreshRequested),
+                )),
+                crate::app::menu::LiquidSubMenu::Receive => Some(Message::View(
+                    view::Message::LiquidReceive(view::LiquidReceiveMessage::RefreshRequested),
+                )),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
 }
 
 /// Interval between bitcoind sync progress polls (in seconds).
 const BITCOIND_SYNC_POLL_INTERVAL: Duration = Duration::from_secs(10);
-
-/// Convert a bitcoin::Network to the API network string ("mainnet" or "testnet").
-fn network_api_string(network: bitcoin::Network) -> String {
-    match network {
-        bitcoin::Network::Bitcoin => "mainnet".to_string(),
-        _ => "testnet".to_string(),
-    }
-}
 
 pub struct App {
     cache: Cache,
@@ -524,6 +569,17 @@ pub struct App {
     bitcoind_sync_probe_in_progress: bool,
     /// Retry counter for LNURL SSE reconnection (same pattern as Meld).
     lnurl_sse_retries: usize,
+    /// Global "payment received" celebration overlay — shown for incoming
+    /// Liquid payments (e.g. LNURL) regardless of which panel is active.
+    show_received_celebration: bool,
+    received_celebration_amount: String,
+    received_celebration_quote: coincube_ui::component::quote_display::Quote,
+    received_celebration_image: iced::widget::image::Handle,
+    /// tx_ids of recent incoming payments we've already toasted for in
+    /// PaymentWaitingConfirmation. Breez fires this event multiple times for
+    /// the same swap; bounded FIFO so concurrent incoming swaps don't evict
+    /// each other and re-toast.
+    toasted_incoming_waiting_tx_ids: VecDeque<String>,
 }
 
 /// Returns true when a `DaemonError` indicates the daemon process is no longer
@@ -617,7 +673,7 @@ impl App {
             restored_from_backup,
             cube_settings.id.clone(),
             cube_settings.name.clone(),
-            network_api_string(cache.network),
+            settings::network_to_api_string(cache.network),
         );
         let mut tasks = vec![];
         if let Some(vault_overview) = panels.vault_overview.as_mut() {
@@ -649,6 +705,16 @@ impl App {
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
                 lnurl_sse_retries: 0,
+                show_received_celebration: false,
+                received_celebration_amount: String::new(),
+                received_celebration_quote: coincube_ui::component::quote_display::random_quote(
+                    "transaction-received",
+                ),
+                received_celebration_image:
+                    coincube_ui::component::quote_display::image_handle_for_context(
+                        "transaction-received",
+                    ),
+                toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
             },
             cmd,
         )
@@ -693,7 +759,7 @@ impl App {
             network,
             cube_settings.id.clone(),
             cube_settings.name.clone(),
-            network_api_string(network),
+            settings::network_to_api_string(network),
         );
         let mut cache = cache;
         cache.has_p2p = panels.p2p.is_some();
@@ -715,6 +781,16 @@ impl App {
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
                 lnurl_sse_retries: 0,
+                show_received_celebration: false,
+                received_celebration_amount: String::new(),
+                received_celebration_quote: coincube_ui::component::quote_display::random_quote(
+                    "transaction-received",
+                ),
+                received_celebration_image:
+                    coincube_ui::component::quote_display::image_handle_for_context(
+                        "transaction-received",
+                    ),
+                toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
             },
             cmd,
         )
@@ -928,6 +1004,14 @@ impl App {
                         ),
                     ));
                 }
+                // Load Contacts data on demand
+                if matches!(submenu, menu::ConnectSubMenu::Contacts)
+                    && self.panels.connect.account.is_authenticated()
+                {
+                    let contacts_task = self.panels.connect.account.reload_contacts();
+                    self.panels.current = menu;
+                    return contacts_task;
+                }
             }
             menu::Menu::Liquid(_submenu) => {
                 // Liquid transaction preselection is handled via PreselectPayment message
@@ -939,7 +1023,7 @@ impl App {
                     menu
                 );
             }
-        };
+        }
 
         self.panels.current = menu.clone();
 
@@ -1663,6 +1747,9 @@ impl App {
                     });
                 return task;
             }
+            Message::View(view::Message::DismissReceivedCelebration) => {
+                self.show_received_celebration = false;
+            }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     tracing::error!("Error opening '{}': {}", url, e);
@@ -1746,40 +1833,53 @@ impl App {
                             )))
                         });
 
-                        return Task::batch(vec![
-                            Task::done(Message::Tick),
-                            Task::done(Message::View(view::Message::LiquidSend(
-                                view::LiquidSendMessage::RefreshRequested,
-                            ))),
-                            Task::done(Message::View(view::Message::LiquidOverview(
-                                view::LiquidOverviewMessage::RefreshRequested,
-                            ))),
+                        // Refresh only the active liquid panel + home balance.
+                        // Inactive panels refresh when navigated to via reload().
+                        let mut tasks = vec![
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
                             ))),
                             home_task.unwrap_or_else(Task::none),
-                        ]);
+                        ];
+                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
+                            tasks.push(Task::done(msg));
+                        }
+                        return Task::batch(tasks);
                     }
                     SdkEvent::PaymentSucceeded { details } => {
+                        // Show global celebration for incoming payments
+                        if matches!(details.payment_type, PaymentType::Receive) {
+                            use coincube_ui::component::amount::DisplayAmount;
+                            self.received_celebration_amount =
+                                bitcoin::Amount::from_sat(details.amount_sat)
+                                    .to_formatted_string_with_unit(self.cache.bitcoin_unit);
+                            self.received_celebration_quote =
+                                coincube_ui::component::quote_display::random_quote(
+                                    "transaction-received",
+                                );
+                            self.received_celebration_image =
+                                coincube_ui::component::quote_display::image_handle_for_context(
+                                    "transaction-received",
+                                );
+                            self.show_received_celebration = true;
+                        }
+
                         let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::LiquidToVaultSucceeded(Some(swap_id)),
                             )))
                         });
 
-                        return Task::batch(vec![
-                            Task::done(Message::Tick),
-                            Task::done(Message::View(view::Message::LiquidSend(
-                                view::LiquidSendMessage::RefreshRequested,
-                            ))),
-                            Task::done(Message::View(view::Message::LiquidOverview(
-                                view::LiquidOverviewMessage::RefreshRequested,
-                            ))),
+                        let mut tasks = vec![
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
                             ))),
                             home_task.unwrap_or_else(Task::none),
-                        ]);
+                        ];
+                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
+                            tasks.push(Task::done(msg));
+                        }
+                        return Task::batch(tasks);
                     }
                     SdkEvent::PaymentFailed { details } => {
                         let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
@@ -1788,19 +1888,16 @@ impl App {
                             )))
                         });
 
-                        return Task::batch(vec![
-                            Task::done(Message::Tick),
-                            Task::done(Message::View(view::Message::LiquidSend(
-                                view::LiquidSendMessage::RefreshRequested,
-                            ))),
-                            Task::done(Message::View(view::Message::LiquidOverview(
-                                view::LiquidOverviewMessage::RefreshRequested,
-                            ))),
+                        let mut tasks = vec![
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
                             ))),
                             home_task.unwrap_or_else(Task::none),
-                        ]);
+                        ];
+                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
+                            tasks.push(Task::done(msg));
+                        }
+                        return Task::batch(tasks);
                     }
                     SdkEvent::PaymentWaitingConfirmation { details } => {
                         let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
@@ -1809,34 +1906,53 @@ impl App {
                             )))
                         });
 
-                        return Task::batch(vec![
-                            Task::done(Message::Tick),
-                            Task::done(Message::View(view::Message::LiquidSend(
-                                view::LiquidSendMessage::RefreshRequested,
-                            ))),
-                            Task::done(Message::View(view::Message::LiquidOverview(
-                                view::LiquidOverviewMessage::RefreshRequested,
-                            ))),
+                        let mut tasks = vec![
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
                             ))),
                             home_task.unwrap_or_else(Task::none),
-                        ]);
+                        ];
+                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
+                            tasks.push(Task::done(msg));
+                        }
+
+                        // Notify the user that an incoming Lightning payment is
+                        // mid-swap to L-BTC. The swap can take a couple of minutes,
+                        // so without this toast the wait between PaymentWaitingConfirmation
+                        // and PaymentSucceeded looks like nothing is happening.
+                        // Breez fires this event multiple times for the same swap, so
+                        // dedupe by tx_id to avoid stacking duplicate toasts.
+                        if matches!(details.payment_type, PaymentType::Receive)
+                            && details.tx_id.as_ref().is_some_and(|id| {
+                                !self.toasted_incoming_waiting_tx_ids.contains(id)
+                            })
+                        {
+                            let tx_id = details.tx_id.clone().unwrap();
+                            if self.toasted_incoming_waiting_tx_ids.len() == 16 {
+                                self.toasted_incoming_waiting_tx_ids.pop_front();
+                            }
+                            self.toasted_incoming_waiting_tx_ids.push_back(tx_id);
+                            use coincube_ui::component::amount::DisplayAmount;
+                            let amount = bitcoin::Amount::from_sat(details.amount_sat)
+                                .to_formatted_string_with_unit(self.cache.bitcoin_unit);
+                            tasks.push(Task::done(Message::View(view::Message::ShowToast(
+                                log::Level::Info,
+                                format!(
+                                    "Incoming payment of {} — swapping to L-BTC, awaiting confirmation",
+                                    amount
+                                ),
+                            ))));
+                        }
+
+                        return Task::batch(tasks);
                     }
                     SdkEvent::Synced => {
-                        // Payment state changed - trigger cache update
-                        return Task::batch(vec![
-                            Task::done(Message::Tick),
-                            Task::done(Message::View(view::Message::LiquidSend(
-                                view::LiquidSendMessage::RefreshRequested,
-                            ))),
-                            Task::done(Message::View(view::Message::LiquidOverview(
-                                view::LiquidOverviewMessage::RefreshRequested,
-                            ))),
-                            Task::done(Message::View(view::Message::Home(
-                                view::HomeMessage::RefreshLiquidBalance,
-                            ))),
-                        ]);
+                        // SDK completed an internal sync — refresh only the
+                        // active liquid panel to avoid redundant info() calls.
+                        // Inactive panels refresh when navigated to via reload().
+                        if let Some(msg) = self.panels.active_liquid_refresh(false) {
+                            return Task::done(msg);
+                        }
                     }
                     _ => {
                         // Other events - just log
@@ -1880,7 +1996,7 @@ impl App {
                     return panel.update(None, &self.cache, msg);
                 }
             }
-        };
+        }
 
         Task::none()
     }
@@ -1950,11 +2066,21 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let view = self
-            .panels
-            .current()
-            .unwrap_or(&self.panels.global_home)
-            .view(&self.panels.current, &self.cache);
+        let view = if self.show_received_celebration {
+            // Global celebration overlay takes precedence over the normal panel view
+            let celebration = coincube_ui::component::received_celebration_page(
+                &self.received_celebration_amount,
+                &self.received_celebration_quote,
+                &self.received_celebration_image,
+                view::Message::DismissReceivedCelebration,
+            );
+            view::dashboard(&self.panels.current, &self.cache, celebration)
+        } else {
+            self.panels
+                .current()
+                .unwrap_or(&self.panels.global_home)
+                .view(&self.panels.current, &self.cache)
+        };
 
         let content = if self.cache.network != bitcoin::Network::Bitcoin {
             iced::widget::column![network_banner(self.cache.network), view.map(Message::View)]

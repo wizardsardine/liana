@@ -188,6 +188,7 @@ pub enum CoincubeConnectMsg {
     OtpVerified(Result<String, String>),
     ResendOtp,
     OtpResent(Result<(), String>),
+    Skip,
 }
 
 #[derive(Debug, Clone)]

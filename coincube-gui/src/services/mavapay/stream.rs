@@ -23,10 +23,7 @@ pub struct TransactionUpdate {
 pub fn transaction_stream(
     data: &(String, String),
 ) -> impl iced::futures::Stream<Item = MavapayMessage> + 'static {
-    #[cfg(debug_assertions)]
-    let base_url = "https://dev-events.coincube.io";
-    #[cfg(not(debug_assertions))]
-    let base_url = env!("EVENTS_API_URL");
+    let base_url = crate::services::coincube_api_base_url();
 
     let (order_id, user_jwt) = data;
     let auth = format!("Bearer {}", user_jwt);
@@ -88,36 +85,44 @@ pub fn transaction_stream(
                                     }
                                     futures::future::Either::Right((event, _)) => match event {
                                         Ok(Some(ev)) => {
-                                            if ev.event_type == "transactionUpdate" {
-                                                match serde_json::from_str::<TransactionUpdate>(
-                                                    &ev.data,
-                                                ) {
-                                                    Ok(update) if update.order_id == order_id => {
-                                                        log::info!(
-                                                        "[MAVAPAY] Update for order {}: status={:?}",
-                                                        update.order_id,
-                                                        update.status
-                                                    );
-                                                        let _ = channel
-                                                            .send(
-                                                                MavapayMessage::TransactionUpdated(
-                                                                    update,
-                                                                ),
-                                                            )
-                                                            .await;
-                                                    }
-                                                    Ok(_) => continue, // Different order, ignore
-                                                    Err(e) => {
-                                                        log::warn!(
+                                            match ev.event_type.as_str() {
+                                                "transactionUpdate" => {
+                                                    match serde_json::from_str::<TransactionUpdate>(
+                                                        &ev.data,
+                                                    ) {
+                                                        Ok(update)
+                                                            if update.order_id == order_id =>
+                                                        {
+                                                            log::info!(
+                                                                "[MAVAPAY] Update for order {}: status={:?}",
+                                                                update.order_id,
+                                                                update.status
+                                                            );
+
+                                                            let _ = channel
+                                                                .send(
+                                                                    MavapayMessage::TransactionUpdated(
+                                                                        update,
+                                                                    ),
+                                                                )
+                                                                .await;
+                                                        }
+                                                        Ok(_) => continue, // Different order, ignore
+                                                        Err(e) => {
+                                                            log::warn!(
                                                             "[MAVAPAY] Failed to parse update: {}",
                                                             e
                                                         );
-                                                        break;
+                                                            break;
+                                                        }
                                                     }
                                                 }
-                                            } else {
-                                                continue;
-                                            };
+                                                "connected" | "ping" => continue,
+                                                _type => {
+                                                    log::warn!("[MAVAPAY] Ignored event: {:?}", ev);
+                                                    continue;
+                                                }
+                                            }
                                         }
                                         Ok(None) => {
                                             log::info!("[MAVAPAY] EventSource exiting safely");
@@ -149,8 +154,8 @@ pub fn transaction_stream(
                             .send(MavapayMessage::StreamError(err.to_string()))
                             .await;
                     }
-                };
-            };
+                }
+            }
         },
     )
 }

@@ -848,6 +848,25 @@ pub fn sidebar<'a>(
             .width(Length::Fill)
         };
 
+        let connect_contacts_button = if matches!(menu, Menu::Connect(ConnectSubMenu::Contacts)) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(person_icon()), "Contacts")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(person_icon()), "Contacts")
+                    .on_press(Message::Menu(Menu::Connect(ConnectSubMenu::Contacts)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
         let connect_invites_button = if matches!(menu, Menu::Connect(ConnectSubMenu::Invites)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
@@ -870,6 +889,7 @@ pub fn sidebar<'a>(
         menu_column = menu_column
             .push(connect_ln_address_button)
             .push(connect_avatar_button)
+            .push(connect_contacts_button)
             .push(connect_invites_button);
     }
 

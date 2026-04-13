@@ -352,7 +352,7 @@ impl Step for RegisterDescriptor {
                 self.done = done;
             }
             _ => {}
-        };
+        }
         Task::none()
     }
     fn skip(&self, ctx: &Context) -> bool {
@@ -443,7 +443,7 @@ impl Step for BackupDescriptor {
                 if let Some(modal) = self.modal.as_mut() {
                     let task: Task<Message> = modal.update(m);
                     return task;
-                };
+                }
             }
             Message::BackupDescriptor => {
                 if let (None, Some(ctx)) = (&self.modal, self.context.as_ref()) {

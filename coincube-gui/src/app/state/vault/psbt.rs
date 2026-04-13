@@ -286,7 +286,7 @@ impl PsbtState {
                     return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
                 }
             }
-        };
+        }
         Task::none()
     }
 
@@ -853,7 +853,7 @@ impl Modal for SignModal {
                 }
             },
             _ => {}
-        };
+        }
 
         // Use global toast overlay instead of local toast
         Task::none()

@@ -88,7 +88,7 @@ impl LabelsEdited {
                 }
             },
             _ => {}
-        };
+        }
         Ok(Task::none())
     }
 }

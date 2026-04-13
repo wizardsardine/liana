@@ -1,6 +1,7 @@
 use super::text::text;
 use crate::font::MEDIUM;
-use crate::{theme, widget::*};
+use crate::theme;
+use crate::widget::{Button, Container, Text};
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{button, container, row};
 

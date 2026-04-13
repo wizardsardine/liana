@@ -28,6 +28,13 @@ impl Client {
     /// Create a new client and verify connectivity by fetching the current tip height.
     pub fn new(config: &crate::config::EsploraConfig) -> Result<Self, Error> {
         let mut builder = esplora_client::Builder::new(&config.addr).timeout(REQUEST_TIMEOUT_SECS);
+        // The blocking esplora client uses `minreq` underneath, which has no
+        // content-encoding support. If the server returns gzip/brotli-compressed
+        // bodies (common for /address/:addr/txs and other large responses),
+        // minreq tries to read the raw bytes as UTF-8 and fails with
+        // `InvalidUtf8InResponse`. Force the server to send uncompressed
+        // responses to avoid this.
+        builder = builder.header("Accept-Encoding", "identity");
         if let Some(token) = &config.token {
             builder = builder.header("Authorization", &format!("Bearer {}", token));
         }

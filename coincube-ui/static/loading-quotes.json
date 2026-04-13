@@ -1,0 +1,729 @@
+{
+  "_meta": {
+    "description": "Loading screen quotes for COINCUBE desktop and mobile apps. Displayed below Kage animations during loading, syncing, transaction, and other app states.",
+    "usage": "Serve randomly within the matching context. Short quotes for brief states; medium quotes for longer screens. Every context has at least 3 quotes.",
+    "total": 76,
+    "categories": {
+      "booth": "Jeff Booth — Author of The Price of Tomorrow, Bitcoin advocate",
+      "ammous": "Saifedean Ammous — Author of The Bitcoin Standard",
+      "szabo": "Nick Szabo — Computer scientist, smart contracts pioneer",
+      "finney": "Hal Finney — Cryptographer, first Bitcoin transaction recipient",
+      "back": "Adam Back — Inventor of Hashcash, Blockstream CEO",
+      "satoshi": "Satoshi Nakamoto — Bitcoin whitepaper, forum posts, emails (2008–2010)",
+      "hayek": "Friedrich A. Hayek — Nobel laureate, Austrian School economist",
+      "mises": "Ludwig von Mises — Austrian School economist, monetary theorist",
+      "rothbard": "Murray N. Rothbard — Austrian School economist, libertarian theorist",
+      "hoppe": "Hans-Hermann Hoppe — Austrian School economist, political philosopher",
+      "scripture": "Holy Bible, New King James Version (NKJV)"
+    },
+    "contexts": {
+      "loading": "Chain verification, general loading, block sync",
+      "syncing": "Longer sync operations, catching up with the chain",
+      "first-launch": "Onboarding, first time opening the app",
+      "empty-wallet": "No balance, no transactions yet",
+      "transaction-sent": "After a send transaction is broadcast",
+      "transaction-received": "After receiving funds",
+      "transaction-confirm": "Waiting for confirmations",
+      "backup-reminder": "Seed phrase backup, key management prompts",
+      "error": "Failed transaction, network error, blocked path",
+      "idle": "Dashboard ambient, no active task",
+      "balance-update": "Balance has changed, new data loaded"
+    }
+  },
+  "quotes": [
+    {
+      "id": "booth-01",
+      "text": "Technology is deflationary, and deflation is abundance. Bitcoin is the first money that aligns with this truth.",
+      "author": "Jeff Booth",
+      "source": "The Price of Tomorrow, 2020",
+      "category": "booth",
+      "length": "short",
+      "contexts": ["loading", "syncing", "first-launch"]
+    },
+    {
+      "id": "booth-02",
+      "text": "In a world of infinite money printing, Bitcoin is the exit.",
+      "author": "Jeff Booth",
+      "source": "Interview, 2021",
+      "category": "booth",
+      "length": "short",
+      "contexts": ["first-launch", "idle"]
+    },
+    {
+      "id": "booth-03",
+      "text": "You don't change the existing system. You build a new one that makes the old one obsolete.",
+      "author": "Jeff Booth",
+      "source": "The Price of Tomorrow, 2020",
+      "category": "booth",
+      "length": "short",
+      "contexts": ["loading", "idle", "first-launch"]
+    },
+    {
+      "id": "booth-04",
+      "text": "Bitcoin fixes the money. Fixed money fixes the world.",
+      "author": "Jeff Booth",
+      "source": "Interview, 2022",
+      "category": "booth",
+      "length": "short",
+      "contexts": ["idle", "balance-update", "syncing"]
+    },
+
+    {
+      "id": "ammous-01",
+      "text": "Bitcoin is the hardest money ever invented: growth in its value cannot possibly increase its supply.",
+      "author": "Saifedean Ammous",
+      "source": "The Bitcoin Standard, 2018",
+      "category": "ammous",
+      "length": "short",
+      "contexts": ["loading", "syncing", "first-launch"]
+    },
+    {
+      "id": "ammous-02",
+      "text": "Sound money is a prerequisite for individual freedom and honest commerce.",
+      "author": "Saifedean Ammous",
+      "source": "The Bitcoin Standard, 2018",
+      "category": "ammous",
+      "length": "short",
+      "contexts": ["first-launch", "idle"]
+    },
+    {
+      "id": "ammous-03",
+      "text": "The len­gth of time an asset has held value is the single most important indicator that it will continue to hold value.",
+      "author": "Saifedean Ammous",
+      "source": "The Bitcoin Standard, 2018",
+      "category": "ammous",
+      "length": "short",
+      "contexts": ["loading", "idle", "balance-update"]
+    },
+    {
+      "id": "ammous-04",
+      "text": "Bitcoin can be best understood as distributed software that allows for transfer of value using a currency protected from unexpected inflation without relying on trusted third parties.",
+      "author": "Saifedean Ammous",
+      "source": "The Bitcoin Standard, 2018",
+      "category": "ammous",
+      "length": "medium",
+      "contexts": ["loading", "syncing"]
+    },
+
+    {
+      "id": "szabo-01",
+      "text": "Trusted third parties are security holes.",
+      "author": "Nick Szabo",
+      "source": "Trusted Third Parties Are Security Holes, 2001",
+      "category": "szabo",
+      "length": "short",
+      "contexts": ["loading", "syncing", "first-launch", "backup-reminder"]
+    },
+    {
+      "id": "szabo-02",
+      "text": "If clams can be money, furs can be money, gold can be money, and so on – if money is not just coins or notes issued by a government under legal tender laws, but rather can be a wide variety of objects – then just what is money anyway? ",
+      "author": "Nick Szabo",
+      "source": "Shelling Out, 2002",
+      "category": "szabo",
+      "length": "short",
+      "contexts": ["idle", "balance-update", "transaction-received"]
+    },
+    {
+      "id": "szabo-03",
+      "text": "A very unforgeable costly commodity provides money whose supply is unaffected by the lending cycle.",
+      "author": "Nick Szabo",
+      "source": "Bit Gold, 2005",
+      "category": "szabo",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "szabo-04",
+      "text": "The problem is that our monetary system depends on trust — trust that a long and growing list of institutions won't abuse the power they wield.",
+      "author": "Nick Szabo",
+      "source": "Bit Gold, 2008",
+      "category": "szabo",
+      "length": "medium",
+      "contexts": ["loading", "syncing", "first-launch"]
+    },
+
+    {
+      "id": "finney-01",
+      "text": "Running Bitcoin.",
+      "author": "Hal Finney",
+      "source": "First tweet about Bitcoin, 2009",
+      "category": "finney",
+      "length": "short",
+      "contexts": ["loading", "syncing", "first-launch"]
+    },
+    {
+      "id": "finney-02",
+      "text": "I see Bitcoin as ultimately becoming a reserve currency for banks.",
+      "author": "Hal Finney",
+      "source": "BitcoinTalk forum, 2010",
+      "category": "finney",
+      "length": "short",
+      "contexts": ["idle", "loading"]
+    },
+    {
+      "id": "finney-03",
+      "text": "It seemed so obvious to me. Here we are, faced with the problems of loss of privacy, creeping computerization, massive databases. Crypto is the answer.",
+      "author": "Hal Finney",
+      "source": "Cypherpunks mailing list, 1992",
+      "category": "finney",
+      "length": "medium",
+      "contexts": ["first-launch", "backup-reminder"]
+    },
+    {
+      "id": "finney-04",
+      "text": "I'd like to die at peace, knowing that the technology I worked on will live on and continue to change the world.",
+      "author": "Hal Finney",
+      "source": "BitcoinTalk forum, 2013",
+      "category": "finney",
+      "length": "short",
+      "contexts": ["idle", "loading"]
+    },
+
+    {
+      "id": "back-01",
+      "text": "Bitcoin is the most important invention in the history of the world since the Internet.",
+      "author": "Adam Back",
+      "source": "Interview, 2015",
+      "category": "back",
+      "length": "short",
+      "contexts": ["first-launch", "idle", "loading"]
+    },
+    {
+      "id": "back-02",
+      "text": "I've been mass-producing hashcash tokens since 1997. But making it decentralized money — that's what Satoshi solved.",
+      "author": "Adam Back",
+      "source": "Interview, 2019",
+      "category": "back",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "back-03",
+      "text": "Not your keys, not your coins.",
+      "author": "Adam Back",
+      "source": "Attributed",
+      "category": "back",
+      "length": "short",
+      "contexts": ["backup-reminder", "first-launch", "transaction-sent"]
+    },
+    {
+      "id": "back-04",
+      "text": "Bitcoin is a technological tour de force.",
+      "author": "Adam Back",
+      "source": "Interview, 2013",
+      "category": "back",
+      "length": "short",
+      "contexts": ["idle", "loading", "syncing", "transaction-received"]
+    },
+
+    {
+      "id": "satoshi-01",
+      "text": "The root problem with conventional currency is all the trust that's required to make it work.",
+      "author": "Satoshi Nakamoto",
+      "source": "P2P Foundation forum post, 2009",
+      "category": "satoshi",
+      "length": "short",
+      "contexts": ["loading", "syncing", "first-launch"]
+    },
+    {
+      "id": "satoshi-02",
+      "text": "The central bank must be trusted not to debase the currency, but the history of fiat currencies is full of breaches of that trust.",
+      "author": "Satoshi Nakamoto",
+      "source": "P2P Foundation forum post, 2009",
+      "category": "satoshi",
+      "length": "medium",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "satoshi-03",
+      "text": "Banks must be trusted to hold our money and transfer it electronically, but they lend it out in waves of credit bubbles with barely a fraction in reserve.",
+      "author": "Satoshi Nakamoto",
+      "source": "P2P Foundation forum post, 2009",
+      "category": "satoshi",
+      "length": "medium",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "satoshi-04",
+      "text": "Lost coins only make everyone else's coins worth slightly more. Think of it as a donation to everyone.",
+      "author": "Satoshi Nakamoto",
+      "source": "BitcoinTalk forum, 2010",
+      "category": "satoshi",
+      "length": "short",
+      "contexts": ["idle", "loading"]
+    },
+    {
+      "id": "satoshi-05",
+      "text": "It's completely decentralized, with no central server or trusted parties, because everything is based on crypto proof instead of trust.",
+      "author": "Satoshi Nakamoto",
+      "source": "P2P Foundation forum post, 2009",
+      "category": "satoshi",
+      "length": "medium",
+      "contexts": ["loading", "syncing", "first-launch"]
+    },
+    {
+      "id": "satoshi-06",
+      "text": "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks.",
+      "author": "Satoshi Nakamoto",
+      "source": "Bitcoin genesis block coinbase, 2009",
+      "category": "satoshi",
+      "length": "short",
+      "contexts": ["loading", "idle"]
+    },
+    {
+      "id": "satoshi-07",
+      "text": "If you don't believe me or don't get it, I don't have time to try to convince you, sorry.",
+      "author": "Satoshi Nakamoto",
+      "source": "BitcoinTalk forum, 2010",
+      "category": "satoshi",
+      "length": "short",
+      "contexts": ["idle", "error"]
+    },
+    {
+      "id": "satoshi-08",
+      "text": "In a few decades when the reward gets too small, the transaction fee will become the main compensation for nodes.",
+      "author": "Satoshi Nakamoto",
+      "source": "BitcoinTalk forum, 2010",
+      "category": "satoshi",
+      "length": "short",
+      "contexts": ["transaction-confirm", "transaction-sent"]
+    },
+    {
+      "id": "satoshi-09",
+      "text": "Instead of the supply changing to keep the value the same, the supply is predetermined and the value changes.",
+      "author": "Satoshi Nakamoto",
+      "source": "P2P Foundation forum post, 2009",
+      "category": "satoshi",
+      "length": "short",
+      "contexts": ["loading", "syncing", "balance-update"]
+    },
+    {
+      "id": "satoshi-10",
+      "text": "I hope it's obvious it was only the centrally controlled nature of those systems that doomed them. I think this is the first time we're trying a decentralized, non-trust-based system.",
+      "author": "Satoshi Nakamoto",
+      "source": "Cryptography mailing list, 2009",
+      "category": "satoshi",
+      "length": "medium",
+      "contexts": ["loading", "first-launch"]
+    },
+    {
+      "id": "satoshi-11",
+      "text": "Coins have to get initially distributed somehow, and a constant rate seems like the best formula.",
+      "author": "Satoshi Nakamoto",
+      "source": "Cryptography mailing list, 2008",
+      "category": "satoshi",
+      "length": "short",
+      "contexts": ["loading", "idle"]
+    },
+    {
+      "id": "satoshi-12",
+      "text": "With e-currency based on cryptographic proof, without the need to trust a third-party middleman, money can be secure and transactions effortless.",
+      "author": "Satoshi Nakamoto",
+      "source": "P2P Foundation forum post, 2009",
+      "category": "satoshi",
+      "length": "medium",
+      "contexts": ["transaction-confirm", "transaction-sent", "first-launch"]
+    },
+
+    {
+      "id": "hayek-01",
+      "text": "I don't believe we shall ever have a good money again before we take the thing out of the hands of government.",
+      "author": "Friedrich A. Hayek",
+      "source": "Interview, 1984",
+      "category": "hayek",
+      "length": "short",
+      "contexts": ["loading", "syncing", "first-launch"]
+    },
+    {
+      "id": "hayek-02",
+      "text": "All we can do is by some sly roundabout way introduce something that they can't stop.",
+      "author": "Friedrich A. Hayek",
+      "source": "Interview, 1984",
+      "category": "hayek",
+      "length": "short",
+      "contexts": ["loading", "idle", "first-launch"]
+    },
+    {
+      "id": "hayek-03",
+      "text": "I do not think it is an exaggeration to say that history is largely a history of inflation, usually inflations engineered by governments for the gain of governments.",
+      "author": "Friedrich A. Hayek",
+      "source": "Choice in Currency, 1976",
+      "category": "hayek",
+      "length": "medium",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "hayek-04",
+      "text": "If we want free enterprise and a market economy to survive, we have no choice but to replace the governmental currency monopoly by free competition between private currencies.",
+      "author": "Friedrich A. Hayek",
+      "source": "Denationalisation of Money, 1976",
+      "category": "hayek",
+      "length": "medium",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "hayek-05",
+      "text": "With the exception only of the period of the gold standard, practically all governments of history have used their exclusive power to issue money to defraud and plunder the people.",
+      "author": "Friedrich A. Hayek",
+      "source": "Choice in Currency, 1976",
+      "category": "hayek",
+      "length": "medium",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "hayek-06",
+      "text": "We shall not grow wiser before we learn that much that we have done was very foolish.",
+      "author": "Friedrich A. Hayek",
+      "source": "The Road to Serfdom, 1944",
+      "category": "hayek",
+      "length": "short",
+      "contexts": ["loading", "idle", "error"]
+    },
+    {
+      "id": "hayek-07",
+      "text": "The curious task of economics is to demonstrate to men how little they really know about what they imagine they can design.",
+      "author": "Friedrich A. Hayek",
+      "source": "The Fatal Conceit, 1988",
+      "category": "hayek",
+      "length": "short",
+      "contexts": ["loading", "idle"]
+    },
+
+    {
+      "id": "mises-01",
+      "text": "It is impossible to grasp the meaning of the idea of sound money if one does not realize that it was devised as an instrument for the protection of civil liberties against despotic inroads on the part of governments.",
+      "author": "Ludwig von Mises",
+      "source": "The Theory of Money and Credit, 1912",
+      "category": "mises",
+      "length": "medium",
+      "contexts": ["loading", "syncing", "first-launch"]
+    },
+    {
+      "id": "mises-02",
+      "text": "The gold standard alone makes the determination of money's purchasing power independent of the ambitions and machinations of governments.",
+      "author": "Ludwig von Mises",
+      "source": "Human Action, 1949",
+      "category": "mises",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "mises-03",
+      "text": "The first thing a genius needs is to breathe free air.",
+      "author": "Ludwig von Mises",
+      "source": "Liberalism, 1927",
+      "category": "mises",
+      "length": "short",
+      "contexts": ["loading", "idle", "first-launch"]
+    },
+    {
+      "id": "mises-04",
+      "text": "All the enemies of the gold standard spurn it precisely because of its main virtue: its incompatibility with a policy of credit expansion.",
+      "author": "Ludwig von Mises",
+      "source": "Human Action, 1949",
+      "category": "mises",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "mises-05",
+      "text": "Government is the only institution that can take a valuable commodity like paper, and make it worthless by applying ink.",
+      "author": "Ludwig von Mises",
+      "source": "Attributed",
+      "category": "mises",
+      "length": "short",
+      "contexts": ["loading", "idle"]
+    },
+    {
+      "id": "mises-06",
+      "text": "A prosperity created by an expansionist monetary and credit policy is illusory and must end in a slump, an economic crisis.",
+      "author": "Ludwig von Mises",
+      "source": "Human Action, 1949",
+      "category": "mises",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "mises-07",
+      "text": "Inflation is not an act of God. Inflation is not a catastrophe of the elements or a disease. Inflation is a policy.",
+      "author": "Ludwig von Mises",
+      "source": "Economic Policy, 1959",
+      "category": "mises",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "mises-08",
+      "text": "The sound-money principle is negative in obstructing the government's propensity to meddle with the currency system.",
+      "author": "Ludwig von Mises",
+      "source": "The Theory of Money and Credit, 1912",
+      "category": "mises",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+
+    {
+      "id": "rothbard-01",
+      "text": "Inflation is a powerful and subtle means for government acquisition of the public's resources, a painless and all the more dangerous form of taxation.",
+      "author": "Murray N. Rothbard",
+      "source": "What Has Government Done to Our Money?, 1963",
+      "category": "rothbard",
+      "length": "medium",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "rothbard-02",
+      "text": "It is impossible for the Federal Reserve to go bankrupt; it holds the legal monopoly of counterfeiting in the entire country.",
+      "author": "Murray N. Rothbard",
+      "source": "The Case Against the Fed, 1994",
+      "category": "rothbard",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "rothbard-03",
+      "text": "If government manages to establish paper tickets as money, then the government becomes free to create money costlessly and at will.",
+      "author": "Murray N. Rothbard",
+      "source": "What Has Government Done to Our Money?, 1963",
+      "category": "rothbard",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "rothbard-04",
+      "text": "Monetary inflation not only raises prices and destroys the value of the currency unit; it also acts as a giant system of expropriation.",
+      "author": "Murray N. Rothbard",
+      "source": "Man, Economy, and State, 1962",
+      "category": "rothbard",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "rothbard-05",
+      "text": "The Federal Reserve, instead of being reviled as a counterfeiter and destroyer, is hailed as the wise governor of our economy.",
+      "author": "Murray N. Rothbard",
+      "source": "The Case Against the Fed, 1994",
+      "category": "rothbard",
+      "length": "short",
+      "contexts": ["loading", "idle"]
+    },
+    {
+      "id": "rothbard-06",
+      "text": "The state has always had a love-hate relationship with counterfeiting: it loves its own, and hates the competition.",
+      "author": "Murray N. Rothbard",
+      "source": "What Has Government Done to Our Money?, 1963",
+      "category": "rothbard",
+      "length": "short",
+      "contexts": ["loading", "idle"]
+    },
+    {
+      "id": "rothbard-07",
+      "text": "Since the Federal Reserve has the unlimited power to print money, it can never go bankrupt. This is the ultimate source of the moral hazard in our banking system.",
+      "author": "Murray N. Rothbard",
+      "source": "The Case Against the Fed, 1994",
+      "category": "rothbard",
+      "length": "medium",
+      "contexts": ["loading", "syncing"]
+    },
+
+    {
+      "id": "hoppe-01",
+      "text": "The monopolization of money and banking is the ultimate pillar on which the modern state rests.",
+      "author": "Hans-Hermann Hoppe",
+      "source": "Democracy: The God That Failed, 2001",
+      "category": "hoppe",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "hoppe-02",
+      "text": "As long as money is tied to a commodity like gold, the amount of money cannot be arbitrarily increased, because it is impossible to increase the physical amount of gold at will.",
+      "author": "Hans-Hermann Hoppe",
+      "source": "Democracy: The God That Failed, 2001",
+      "category": "hoppe",
+      "length": "medium",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "hoppe-03",
+      "text": "More money makes its monopolistic producer and its earliest recipients richer at the expense of making the money's late and latest receivers poorer.",
+      "author": "Hans-Hermann Hoppe",
+      "source": "Democracy: The God That Failed, 2001",
+      "category": "hoppe",
+      "length": "medium",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "hoppe-04",
+      "text": "No one would accept paper money if it were not stamped by the state as legal tender and backed by the state's coercive power.",
+      "author": "Hans-Hermann Hoppe",
+      "source": "A Theory of Socialism and Capitalism, 1989",
+      "category": "hoppe",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "hoppe-05",
+      "text": "Every government tax and regulation and every governmental money manipulation is a violation of property rights.",
+      "author": "Hans-Hermann Hoppe",
+      "source": "The Economics and Ethics of Private Property, 1993",
+      "category": "hoppe",
+      "length": "short",
+      "contexts": ["loading", "idle"]
+    },
+    {
+      "id": "hoppe-06",
+      "text": "All government growth is financed by two means: taxation, and the monopolization and debasement of money.",
+      "author": "Hans-Hermann Hoppe",
+      "source": "Democracy: The God That Failed, 2001",
+      "category": "hoppe",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+
+    {
+      "id": "scripture-01",
+      "text": "Diverse weights and diverse measures, they are both alike, an abomination to the LORD.",
+      "author": "Proverbs 20:10",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "scripture-02",
+      "text": "Diverse weights are an abomination to the LORD, and dishonest scales are not good.",
+      "author": "Proverbs 20:23",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "scripture-03",
+      "text": "Dishonest scales are an abomination to the LORD, but a just weight is His delight.",
+      "author": "Proverbs 11:1",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "short",
+      "contexts": ["loading", "syncing", "transaction-confirm"]
+    },
+    {
+      "id": "scripture-04",
+      "text": "You shall have honest scales, honest weights, an honest ephah, and an honest hin: I am the LORD your God, who brought you out of the land of Egypt.",
+      "author": "Leviticus 19:36",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "medium",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "scripture-05",
+      "text": "You shall not have in your bag differing weights, a heavy and a light. You shall have a perfect and just weight, a perfect and just measure, that your days may be lengthened in the land which the LORD your God is giving you.",
+      "author": "Deuteronomy 25:13, 15",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "medium",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "scripture-06",
+      "text": "Shall I count pure those with the wicked scales, and with the bag of deceitful weights?",
+      "author": "Micah 6:11",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "scripture-07",
+      "text": "Your silver has become dross, your wine mixed with water.",
+      "author": "Isaiah 1:22",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "short",
+      "contexts": ["loading", "syncing"]
+    },
+    {
+      "id": "scripture-08",
+      "text": "The getting of treasures by a lying tongue is a fleeting fantasy of those who seek death.",
+      "author": "Proverbs 21:6",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "short",
+      "contexts": ["loading", "idle"]
+    },
+    {
+      "id": "scripture-09",
+      "text": "But seek first the kingdom of God and His righteousness, and all these things shall be added to you.",
+      "author": "Matthew 6:33",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "short",
+      "contexts": ["empty-wallet", "idle", "first-launch"]
+    },
+    {
+      "id": "scripture-10",
+      "text": "A good man leaves an inheritance to his children's children, but the wealth of the sinner is stored up for the righteous.",
+      "author": "Proverbs 13:22",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "short",
+      "contexts": ["backup-reminder", "idle", "balance-update"]
+    },
+    {
+      "id": "scripture-11",
+      "text": "A prudent man foresees evil and hides himself, but the simple pass on and are punished.",
+      "author": "Proverbs 22:3",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "short",
+      "contexts": ["backup-reminder", "error"]
+    },
+    {
+      "id": "scripture-12",
+      "text": "There is desirable treasure, and oil in the dwelling of the wise, but a foolish man squanders it.",
+      "author": "Proverbs 21:20",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "short",
+      "contexts": ["idle", "balance-update", "backup-reminder"]
+    },
+    {
+      "id": "scripture-13",
+      "text": "Wealth gained by dishonesty will be diminished, but he who gathers by labor will increase.",
+      "author": "Proverbs 13:11",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "short",
+      "contexts": ["transaction-received", "balance-update"]
+    },
+    {
+      "id": "scripture-14",
+      "text": "He who loves silver will not be satisfied with silver; nor he who loves abundance, with increase.",
+      "author": "Ecclesiastes 5:10",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "short",
+      "contexts": ["idle", "empty-wallet"]
+    },
+    {
+      "id": "scripture-15",
+      "text": "The hand of the diligent makes rich.",
+      "author": "Proverbs 10:4",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "short",
+      "contexts": ["empty-wallet", "idle"]
+    },
+    {
+      "id": "scripture-16",
+      "text": "A faithful man will abound with blessings, but he who hastens to be rich will not go unpunished.",
+      "author": "Proverbs 28:20",
+      "source": "NKJV",
+      "category": "scripture",
+      "length": "short",
+      "contexts": ["transaction-confirm", "idle"]
+    }
+  ]
+}

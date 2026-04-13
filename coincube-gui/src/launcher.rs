@@ -6,6 +6,7 @@ use iced::{
 
 use coincube_core::{bip39, miniscript::bitcoin::Network};
 use coincube_ui::{
+    color,
     component::{button, card, network_banner, notification, spinner, text::*},
     icon, image, theme,
     widget::{modal::Modal, Column, Container, Element, Row},
@@ -18,6 +19,9 @@ use crate::pin_input;
 #[cfg(not(target_os = "macos"))]
 use crate::services::passkey::CeremonyMode;
 use crate::services::passkey::{self as passkey_svc, CeremonyOutcome, PasskeyCeremony};
+use crate::services::coincube::{
+    CubeLimitsResponse, CubeResponse, RegisterCubeRequest, UpdateCubeRequest,
+};
 use crate::{
     app::{
         self,
@@ -71,6 +75,14 @@ fn bip39_suggestions(prefix: &str, limit: usize) -> Vec<String> {
         .collect()
 }
 
+/// A cube that exists on the Connect server but has no local data on this machine.
+#[derive(Debug, Clone)]
+pub struct RemoteCube {
+    pub uuid: String,
+    pub name: String,
+    pub network: String, // API string: "mainnet", "testnet", etc.
+}
+
 /// Which section is shown in the launcher's main content area.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LauncherSection {
@@ -78,6 +90,13 @@ pub enum LauncherSection {
     Cubes,
     /// Connect account-level sub-page
     Connect(app::menu::ConnectSubMenu),
+}
+
+/// Context stashed for firing a remote cube update after local rename succeeds.
+struct PendingRemoteRename {
+    cube_id: String,
+    cube_network: Network,
+    new_name: String,
 }
 
 pub struct Launcher {
@@ -114,6 +133,25 @@ pub struct Launcher {
     /// Active native macOS passkey ceremony (uses AuthenticationServices).
     #[cfg(target_os = "macos")]
     native_passkey_ceremony: Option<crate::services::passkey::macos::NativePasskeyCeremony>,
+    /// Whether a Connect session exists in the OS keyring (cached to avoid
+    /// synchronous keyring I/O on every render).
+    has_stored_session: bool,
+    /// Server-authoritative cube limit per network, if fetched from the API.
+    /// Takes precedence over `account_tier.cube_limit()` when set.
+    server_cube_limit: Option<usize>,
+    /// Rename cube modal: (cube index, new name input)
+    rename_cube_modal: Option<(usize, String)>,
+    /// Pending remote rename: stashed after local rename succeeds so the
+    /// `CubeRenamed` handler can fire the API update.
+    pending_remote_rename: Option<PendingRemoteRename>,
+    /// Cubes that exist on the Connect server but not locally on this machine.
+    remote_cubes: Vec<RemoteCube>,
+    /// Modal for deleting a remote-only cube from the Connect server.
+    delete_remote_cube_modal: Option<DeleteRemoteCubeModal>,
+    #[allow(dead_code)]
+    welcome_quote: coincube_ui::component::quote_display::Quote,
+    #[allow(dead_code)]
+    welcome_image_handle: iced::widget::image::Handle,
 }
 
 impl Launcher {
@@ -163,6 +201,15 @@ impl Launcher {
                 passkey_ceremony: None,
                 #[cfg(target_os = "macos")]
                 native_passkey_ceremony: None,
+                has_stored_session: ConnectAccountPanel::has_stored_session(),
+                server_cube_limit: None,
+                rename_cube_modal: None,
+                pending_remote_rename: None,
+                remote_cubes: Vec::new(),
+                delete_remote_cube_modal: None,
+                welcome_quote: coincube_ui::component::quote_display::random_quote("first-launch"),
+                welcome_image_handle:
+                    coincube_ui::component::quote_display::image_handle_for_context("first-launch"),
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
@@ -173,6 +220,31 @@ impl Launcher {
             check_network_datadir(self.datadir_path.network_directory(self.network)),
             Message::Checked,
         )
+    }
+
+    /// Returns the effective per-network cube limit, preferring the
+    /// server-authoritative value when available.
+    fn cube_limit(&self) -> usize {
+        self.server_cube_limit
+            .unwrap_or_else(|| self.account_tier.cube_limit())
+    }
+
+    /// Total cube count (local + remote) for the current network.
+    /// The server limit applies across all devices, so remote-only cubes
+    /// must be included when checking the limit.
+    fn total_cube_count(&self) -> usize {
+        let local_count = if let State::Cubes { cubes, .. } = &self.state {
+            cubes.len()
+        } else {
+            0
+        };
+        let network_str = settings::network_to_api_string(self.network);
+        let remote_count = self
+            .remote_cubes
+            .iter()
+            .filter(|rc| rc.network == network_str)
+            .count();
+        local_count + remote_count
     }
 
     pub fn stop(&mut self) {}
@@ -295,6 +367,11 @@ impl Launcher {
                 let limit = self.account_tier.cube_limit();
                 let at_limit = cube_count >= limit && matches!(self.network, Network::Bitcoin);
                 if at_limit {
+                // Includes remote cubes (on server but not local) since the
+                // limit applies across all devices.
+                let cube_count = self.total_cube_count();
+                let limit = self.cube_limit();
+                if cube_count >= limit {
                     self.error = Some(format!(
                         "Cube limit reached ({}/{}) for the {} plan. \
                          Upgrade your Connect account to create more Cubes.",
@@ -452,7 +529,7 @@ impl Launcher {
             Message::CubeCreated(res) => {
                 self.creating_cube = false;
                 match res {
-                    Ok(_cube) => {
+                    Ok(cube) => {
                         // UUID was consumed successfully — reset it so the next
                         // cube creation starts with a fresh identifier.
                         self.pending_cube_id = None;
@@ -468,7 +545,31 @@ impl Launcher {
                             word.shrink_to_fit();
                         }
                         self.recovery_active_index = None;
-                        self.reload()
+                        let reload_task = self.reload();
+
+                        // If logged in, register the new cube with the Connect API
+                        if let Some(client) = self.connect_account.authenticated_client() {
+                            let cube_id = cube.id.clone();
+                            let cube_network = cube.network;
+                            let req = RegisterCubeRequest {
+                                uuid: cube.id.clone(),
+                                name: cube.name.clone(),
+                                network: cube.api_network_string(),
+                            };
+                            let register_task = Task::perform(
+                                async move {
+                                    client.register_cube(req).await.map_err(|e| e.to_string())
+                                },
+                                move |result| Message::CubeRemoteRegistered {
+                                    cube_id,
+                                    network: cube_network,
+                                    result,
+                                },
+                            );
+                            Task::batch([reload_task, register_task])
+                        } else {
+                            reload_task
+                        }
                     }
                     Err(e) => {
                         // Retain pending_cube_id so a retry reuses the same UUID.
@@ -504,6 +605,47 @@ impl Launcher {
                     // Poll for IPC result
                     if let Some(result) = ceremony.try_recv_result() {
                         return Task::done(Message::PasskeyCeremonyResult(result));
+                    }
+                }
+                Task::none()
+            }
+            Message::CubeRemoteRegistered {
+                cube_id,
+                network,
+                result,
+            } => match result {
+                Ok(resp) => {
+                    log::info!(
+                        "[LAUNCHER] Cube {} registered remotely (server ID: {})",
+                        resp.uuid,
+                        resp.id
+                    );
+                    let network_dir = self.datadir_path.network_directory(network);
+                    Task::perform(
+                        async move {
+                            settings::mark_cube_synced(&network_dir, &cube_id)
+                                .await
+                                .ok();
+                        },
+                        |_| Message::View(ViewMessage::Check),
+                    )
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[LAUNCHER] Failed to register cube {} remotely: {}",
+                        cube_id,
+                        e
+                    );
+                    Task::none()
+                }
+            }
+            Message::CubeLimitsLoaded(result) => {
+                match result {
+                    Ok(limits) => {
+                        self.server_cube_limit = Some(limits.max_allowed);
+                    }
+                    Err(e) => {
+                        log::warn!("[LAUNCHER] Failed to fetch cube limits: {}", e);
                     }
                 }
                 Task::none()
@@ -688,6 +830,117 @@ impl Launcher {
             }
             #[cfg(not(target_os = "macos"))]
             Message::NativePasskeyTick => Task::none(),
+            Message::RemoteCubesLoaded(result) => {
+                match result {
+                    Ok(remote_only) => {
+                        self.remote_cubes = remote_only;
+                    }
+                    Err(e) => {
+                        log::warn!("[LAUNCHER] Failed to fetch remote cubes: {e}");
+                    }
+                }
+                Task::none()
+            }
+            Message::CubeRemoteUpdated {
+                cube_id,
+                network,
+                result,
+            } => match result {
+                Ok(_) => {
+                    log::info!("[LAUNCHER] Cube {} updated remotely", cube_id);
+                    let network_dir = self.datadir_path.network_directory(network);
+                    Task::perform(
+                        async move {
+                            settings::mark_cube_synced(&network_dir, &cube_id)
+                                .await
+                                .ok();
+                        },
+                        |_| Message::View(ViewMessage::Check),
+                    )
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[LAUNCHER] Failed to update cube {} remotely: {}",
+                        cube_id,
+                        e
+                    );
+                    Task::none()
+                }
+            },
+            Message::CubeBackupDeleted(result) => {
+                match &result {
+                    Ok(()) => log::info!("[LAUNCHER] Cube Connect backup deleted"),
+                    Err(e) => log::warn!("[LAUNCHER] Failed to delete cube backup: {}", e),
+                }
+                Task::none()
+            }
+            Message::RemoteCubeDeleted(result) => {
+                match result {
+                    Ok(()) => {
+                        log::info!("[LAUNCHER] Remote cube deleted");
+                        if let Some(modal) = self.delete_remote_cube_modal.take() {
+                            self.remote_cubes.retain(|rc| rc.uuid != modal.cube.uuid);
+                            return self.reload();
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("[LAUNCHER] Failed to delete remote cube: {}", e);
+                        if let Some(modal) = &mut self.delete_remote_cube_modal {
+                            modal.deleting = false;
+                            modal.error = Some(e);
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::CubeRenamed(result) => match result {
+                Ok(()) => {
+                    self.rename_cube_modal = None;
+                    let reload_task = self.reload();
+
+                    // Fire remote update now that local write succeeded
+                    if let Some(pending) = self.pending_remote_rename.take() {
+                        if let Some(client) = self.connect_account.authenticated_client() {
+                            let update_req = UpdateCubeRequest {
+                                name: Some(pending.new_name),
+                                status: None,
+                            };
+                            let cube_uuid = pending.cube_id.clone();
+                            let cube_id = pending.cube_id;
+                            let cube_network = pending.cube_network;
+                            let remote_task = Task::perform(
+                                async move {
+                                    let cubes =
+                                        client.list_cubes().await.map_err(|e| e.to_string())?;
+                                    let server_cube = cubes.iter().find(|c| c.uuid == cube_uuid);
+                                    if let Some(sc) = server_cube {
+                                        let server_id = sc.id.to_string();
+                                        client
+                                            .update_cube(&server_id, update_req)
+                                            .await
+                                            .map_err(|e| e.to_string())
+                                    } else {
+                                        Err("Cube not yet registered remotely".to_string())
+                                    }
+                                },
+                                move |result| Message::CubeRemoteUpdated {
+                                    cube_id,
+                                    network: cube_network,
+                                    result,
+                                },
+                            );
+                            return Task::batch([reload_task, remote_task]);
+                        }
+                    }
+                    reload_task
+                }
+                Err(e) => {
+                    // Clear pending remote rename on local failure
+                    self.pending_remote_rename = None;
+                    self.error = Some(format!("Failed to rename Cube: {}", e));
+                    Task::none()
+                }
+            }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ShowModal(i))) => {
                 if let State::Cubes { cubes, .. } = &self.state {
                     if let Some(cube) = cubes.get(i) {
@@ -731,10 +984,56 @@ impl Launcher {
                             wallet_datadir,
                             wallet_settings,
                             internal_bitcoind,
+                            self.connect_account.is_authenticated(),
                         ));
                     }
                 }
                 Task::none()
+            }
+            Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ShowRemoteModal(uuid))) => {
+                if let Some(rc) = self.remote_cubes.iter().find(|r| r.uuid == uuid) {
+                    self.delete_remote_cube_modal = Some(DeleteRemoteCubeModal {
+                        cube: rc.clone(),
+                        deleting: false,
+                        error: None,
+                    });
+                }
+                Task::none()
+            }
+            Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::CloseRemoteModal)) => {
+                self.delete_remote_cube_modal = None;
+                Task::none()
+            }
+            Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ConfirmRemoteDelete(
+                uuid,
+            ))) => {
+                if let Some(modal) = &mut self.delete_remote_cube_modal {
+                    modal.deleting = true;
+                }
+                if let Some(client) = self.connect_account.authenticated_client() {
+                    Task::perform(
+                        async move {
+                            let cubes = client.list_cubes().await.map_err(|e| e.to_string())?;
+                            let server_cube = cubes.iter().find(|c| c.uuid == uuid);
+                            if let Some(cube) = server_cube {
+                                let server_id = cube.id.to_string();
+                                client
+                                    .delete_cube(&server_id)
+                                    .await
+                                    .map_err(|e| e.to_string())
+                            } else {
+                                Err("Cube not found on server".to_string())
+                            }
+                        },
+                        Message::RemoteCubeDeleted,
+                    )
+                } else {
+                    if let Some(modal) = &mut self.delete_remote_cube_modal {
+                        modal.deleting = false;
+                        modal.error = Some("Not authenticated with Connect".to_string());
+                    }
+                    Task::none()
+                }
             }
             Message::View(ViewMessage::SelectNetwork(network)) => {
                 if !self.developer_mode {
@@ -744,8 +1043,27 @@ impl Launcher {
                     return Task::none();
                 }
                 self.network = network;
+                // Clear stale limit from previous network
+                self.server_cube_limit = None;
                 let network_dir = self.datadir_path.network_directory(self.network);
-                Task::perform(check_network_datadir(network_dir), Message::Checked)
+                let mut tasks: Vec<Task<Message>> = vec![Task::perform(
+                    check_network_datadir(network_dir),
+                    Message::Checked,
+                )];
+                // Re-fetch limits for the new network if authenticated
+                if let Some(client) = self.connect_account.authenticated_client() {
+                    let network_str = settings::network_to_api_string(self.network);
+                    tasks.push(Task::perform(
+                        async move {
+                            client
+                                .get_cube_limits(&network_str)
+                                .await
+                                .map_err(|e| e.to_string())
+                        },
+                        Message::CubeLimitsLoaded,
+                    ));
+                }
+                Task::batch(tasks)
             }
             Message::View(ViewMessage::ToggleDeveloperMode(enabled)) => {
                 let previous_developer_mode = self.developer_mode;
@@ -767,9 +1085,51 @@ impl Launcher {
                 Task::none()
             }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::Deleted)) => {
-                // Close modal and reload cubes - Checked will determine the correct state
+                // Only delete from the Connect API if user opted in
+                let should_delete_remote = self
+                    .delete_cube_modal
+                    .as_ref()
+                    .is_some_and(|m| m.delete_connect_backup);
+
+                let delete_task = if should_delete_remote {
+                    if let Some(client) = self.connect_account.authenticated_client() {
+                        self.delete_cube_modal
+                            .as_ref()
+                            .map(|m| m.cube.id.clone())
+                            .map(|uuid| {
+                                Task::perform(
+                                    async move {
+                                        let cubes =
+                                            client.list_cubes().await.map_err(|e| e.to_string())?;
+                                        let server_cube = cubes.iter().find(|c| c.uuid == uuid);
+                                        if let Some(cube) = server_cube {
+                                            let server_id = cube.id.to_string();
+                                            client
+                                                .delete_cube(&server_id)
+                                                .await
+                                                .map_err(|e| e.to_string())
+                                        } else {
+                                            Ok(())
+                                        }
+                                    },
+                                    Message::CubeBackupDeleted,
+                                )
+                            })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Close modal and reload cubes
                 self.delete_cube_modal = None;
-                self.reload()
+                let reload_task = self.reload();
+                if let Some(delete_task) = delete_task {
+                    Task::batch([reload_task, delete_task])
+                } else {
+                    reload_task
+                }
             }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::CloseModal)) => {
                 self.delete_cube_modal = None;
@@ -786,6 +1146,13 @@ impl Launcher {
                     Task::none()
                 }
                 Ok(state) => {
+                    // Prune remote cubes that now exist locally
+                    if let State::Cubes { cubes, .. } = &state {
+                        let local_ids: std::collections::HashSet<&str> =
+                            cubes.iter().map(|c| c.id.as_str()).collect();
+                        self.remote_cubes
+                            .retain(|rc| !local_ids.contains(rc.uuid.as_str()));
+                    }
                     self.state = state;
                     Task::none()
                 }
@@ -1004,6 +1371,83 @@ impl Launcher {
                         ),
                     );
                 }
+                // Load Contacts data on demand
+                if matches!(
+                    self.active_section,
+                    LauncherSection::Connect(app::menu::ConnectSubMenu::Contacts)
+                ) && self.connect_account.is_authenticated()
+                {
+                    return map_connect_task(self.connect_account.reload_contacts());
+                }
+                Task::none()
+            }
+
+            Message::View(ViewMessage::RenameCube(index)) => {
+                if let State::Cubes { cubes, .. } = &self.state {
+                    if let Some(cube) = cubes.get(index) {
+                        self.rename_cube_modal = Some((index, cube.name.clone()));
+                    }
+                }
+                Task::none()
+            }
+            Message::View(ViewMessage::RenameCubeNameEdited(name)) => {
+                if let Some((_, ref mut input)) = self.rename_cube_modal {
+                    *input = name;
+                }
+                Task::none()
+            }
+            Message::View(ViewMessage::RenameCubeConfirm) => {
+                let Some((index, ref new_name)) = self.rename_cube_modal else {
+                    return Task::none();
+                };
+                let new_name = new_name.trim().to_string();
+                if new_name.is_empty() {
+                    return Task::none();
+                }
+                let Some(cube) = (if let State::Cubes { cubes, .. } = &self.state {
+                    cubes.get(index).cloned()
+                } else {
+                    None
+                }) else {
+                    return Task::none();
+                };
+
+                let network_dir = self.datadir_path.network_directory(cube.network);
+                let cube_id = cube.id.clone();
+                let name_for_settings = new_name.clone();
+
+                // Stash context for remote update — will be consumed in
+                // CubeRenamed handler only if the local write succeeds.
+                if self.connect_account.is_authenticated() {
+                    self.pending_remote_rename = Some(PendingRemoteRename {
+                        cube_id: cube.id.clone(),
+                        cube_network: cube.network,
+                        new_name: new_name.clone(),
+                    });
+                }
+
+                // Update local settings file first; remote update follows
+                // in the CubeRenamed success handler.
+                Task::perform(
+                    async move {
+                        settings::update_settings_file(&network_dir, |mut s| {
+                            if let Some(c) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
+                                c.name = name_for_settings;
+                                // Mark unsynced so catch-up can pick up the
+                                // name change if the remote update fails or
+                                // we're offline.
+                                c.remote_synced = false;
+                            }
+                            Some(s)
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                    },
+                    Message::CubeRenamed,
+                )
+            }
+            Message::View(ViewMessage::RenameCubeCancel) => {
+                self.rename_cube_modal = None;
                 Task::none()
             }
 
@@ -1015,27 +1459,186 @@ impl Launcher {
             Message::View(ViewMessage::ConnectAccount(msg)) => {
                 let was_authenticated = self.connect_account.is_authenticated();
                 let task = map_connect_task(self.connect_account.update_message(msg));
-                // Auto-expand Connect submenu after login
-                if !was_authenticated && self.connect_account.is_authenticated() {
+                let now_authenticated = self.connect_account.is_authenticated();
+                // Update cached keyring state on login/logout transitions
+                if was_authenticated != now_authenticated {
+                    self.has_stored_session = now_authenticated;
+                    if !now_authenticated {
+                        self.server_cube_limit = None;
+                        self.remote_cubes.clear();
+                    }
+                }
+                // Auto-expand Connect submenu and navigate to Cubes after login
+                if !was_authenticated && now_authenticated {
                     self.connect_expanded = true;
+                    self.active_section = LauncherSection::Cubes;
                 }
                 // Sync account tier from the Connect plan data
+                let old_tier = self.account_tier;
                 self.account_tier =
                     self.connect_account
                         .plan
                         .as_ref()
-                        .map_or(AccountTier::default(), |plan| match plan.tier {
+                        .map_or(AccountTier::default(), |plan| match plan.tier() {
                             crate::services::coincube::PlanTier::Free => AccountTier::Free,
                             crate::services::coincube::PlanTier::Pro => AccountTier::Pro,
                             crate::services::coincube::PlanTier::Legacy => AccountTier::Legacy,
                         });
+                // When the plan tier changes (e.g. upgrade), invalidate the
+                // cached server limit so `cube_limit()` uses the new tier
+                // until fresh limits are fetched.
+                if old_tier != self.account_tier {
+                    self.server_cube_limit = None;
+                }
                 if let Err(e) = GlobalSettings::update_account_tier(
                     &GlobalSettings::path(&self.datadir_path),
                     self.account_tier,
                 ) {
                     log::error!("[LAUNCHER] Failed to persist account tier: {e}");
                 }
+
+                // On first login: catch-up sync unsynced cubes + fetch limits
+                if !was_authenticated && now_authenticated {
+                    let mut tasks = vec![task];
+
+                    // Fetch cube limits for the current network from the server
+                    if let Some(limits_client) = self.connect_account.authenticated_client() {
+                        let network_str = settings::network_to_api_string(self.network);
+                        tasks.push(Task::perform(
+                            async move {
+                                limits_client
+                                    .get_cube_limits(&network_str)
+                                    .await
+                                    .map_err(|e| e.to_string())
+                            },
+                            Message::CubeLimitsLoaded,
+                        ));
+                    }
+
+                    // Sync all unsynced cubes across ALL networks with the API.
+                    // Loads settings from each network directory, collects
+                    // unsynced cubes, fetches the server cube list once, then
+                    // for each unsynced local cube either registers (new) or
+                    // updates (already exists but name may have changed).
+                    if let Some(client) = self.connect_account.authenticated_client() {
+                        let datadir = self.datadir_path.clone();
+                        let mut unsynced: Vec<CubeSettings> = Vec::new();
+                        for net in &NETWORKS {
+                            let nd = datadir.network_directory(*net);
+                            if let Ok(s) = settings::Settings::from_file(&nd) {
+                                for cube in s.cubes {
+                                    if !cube.remote_synced {
+                                        unsynced.push(cube);
+                                    }
+                                }
+                            }
+                        }
+                        if !unsynced.is_empty() {
+                            tasks.push(Task::perform(
+                                async move {
+                                    // Fetch all server cubes once — bail if this
+                                    // fails so we don't re-register everything.
+                                    let server_cubes = match client.list_cubes().await {
+                                        Ok(cubes) => cubes,
+                                        Err(e) => {
+                                            log::warn!(
+                                                "[LAUNCHER] Catch-up sync aborted: \
+                                                 failed to list server cubes: {}",
+                                                e
+                                            );
+                                            return;
+                                        }
+                                    };
+
+                                    for cube in &unsynced {
+                                        let server_match =
+                                            server_cubes.iter().find(|sc| sc.uuid == cube.id);
+                                        let ok = match server_match {
+                                            Some(sc) => {
+                                                // Already registered — update if name differs
+                                                if sc.name != cube.name {
+                                                    let req = UpdateCubeRequest {
+                                                        name: Some(cube.name.clone()),
+                                                        status: None,
+                                                    };
+                                                    client
+                                                        .update_cube(&sc.id.to_string(), req)
+                                                        .await
+                                                        .is_ok()
+                                                } else {
+                                                    true
+                                                }
+                                            }
+                                            None => {
+                                                // Not registered — create
+                                                let req = RegisterCubeRequest {
+                                                    uuid: cube.id.clone(),
+                                                    name: cube.name.clone(),
+                                                    network: cube.api_network_string(),
+                                                };
+                                                client.register_cube(req).await.is_ok()
+                                            }
+                                        };
+                                        if ok {
+                                            let nd = datadir.network_directory(cube.network);
+                                            let _ = settings::mark_cube_synced(&nd, &cube.id).await;
+                                        }
+                                    }
+                                },
+                                |_| Message::View(ViewMessage::Check),
+                            ));
+                        }
+                    }
+
+                    // Fetch full server cube list and compare with local cubes
+                    // to identify remote-only cubes. Both the API call and the
+                    // local settings reads run off the UI thread.
+                    if let Some(rc_client) = self.connect_account.authenticated_client() {
+                        let datadir = self.datadir_path.clone();
+                        tasks.push(Task::perform(
+                            async move {
+                                let server_cubes =
+                                    rc_client.list_cubes().await.map_err(|e| e.to_string())?;
+
+                                // Collect local cube UUIDs across all networks
+                                let mut local_uuids = std::collections::HashSet::new();
+                                for net in &NETWORKS {
+                                    let nd = datadir.network_directory(*net);
+                                    if let Ok(s) = settings::Settings::from_file(&nd) {
+                                        for cube in &s.cubes {
+                                            local_uuids.insert(cube.id.clone());
+                                        }
+                                    }
+                                }
+
+                                // Keep only server cubes with no local counterpart
+                                let remote_only: Vec<RemoteCube> = server_cubes
+                                    .into_iter()
+                                    .filter(|sc| !local_uuids.contains(&sc.uuid))
+                                    .map(|sc| RemoteCube {
+                                        uuid: sc.uuid,
+                                        name: sc.name,
+                                        network: sc.network,
+                                    })
+                                    .collect();
+
+                                Ok(remote_only)
+                            },
+                            Message::RemoteCubesLoaded,
+                        ));
+                    }
+
+                    return Task::batch(tasks);
+                }
+
                 task
+            }
+
+            Message::View(ViewMessage::OpenUrl(url)) => {
+                if let Err(e) = open::that_detached(&url) {
+                    log::error!("[LAUNCHER] Error opening '{}': {}", url, e);
+                }
+                Task::none()
             }
 
             _ => {
@@ -1148,11 +1751,22 @@ impl Launcher {
                                             self.passkey_mode,
                                         )
                                     } else {
+                                        let current_net_str =
+                                            settings::network_to_api_string(self.network);
                                         let mut col =
                                             cubes.iter().enumerate().fold(
                                                 Column::new().spacing(20),
                                                 |col, (i, cube)| col.push(cubes_list_item(cube, i)),
                                             );
+                                        // Show remote-only cubes (on server but not local)
+                                        for rc in self
+                                            .remote_cubes
+                                            .iter()
+                                            .filter(|rc| rc.network == current_net_str)
+                                        {
+                                            col = col.push(remote_cube_list_item(rc));
+                                        }
+                                        let total_count = self.total_cube_count();
                                         let at_limit = cubes.len() >= self.account_tier.cube_limit()
                                             && matches!(self.network, Network::Bitcoin);
                                         if at_limit {
@@ -1172,8 +1786,8 @@ impl Launcher {
                                                             p1_regular(format!(
                                                                 "Cube limit reached ({}/{}) on the {} plan. \
                                                                  Upgrade your Connect account to create more.",
-                                                                cubes.len(),
-                                                                self.account_tier.cube_limit(),
+                                                                total_count,
+                                                                self.cube_limit(),
                                                                 self.account_tier.display_name(),
                                                             ))
                                                             .style(theme::text::secondary),
@@ -1197,14 +1811,48 @@ impl Launcher {
                                         col.into()
                                     }
                                 }
-                                State::NoCube | State::Unchecked => create_cube_form(
-                                    &self.create_cube_name,
-                                    &self.create_cube_pin,
-                                    &self.create_cube_pin_confirm,
-                                    &self.error,
-                                    self.creating_cube,
-                                    self.passkey_mode,
-                                ),
+                                State::NoCube | State::Unchecked => {
+                                    let current_net_str =
+                                        settings::network_to_api_string(self.network);
+                                    let remote_for_net: Vec<_> = self
+                                        .remote_cubes
+                                        .iter()
+                                        .filter(|rc| rc.network == current_net_str)
+                                        .collect();
+
+                                    let mut col = Column::new().spacing(20);
+                                    for rc in &remote_for_net {
+                                        col = col.push(remote_cube_list_item(rc));
+                                    }
+
+                                    let total_count = self.total_cube_count();
+                                    let at_limit = total_count >= self.cube_limit();
+                                    if at_limit && !remote_for_net.is_empty() {
+                                        col = col.push(
+                                            Container::new(
+                                                p1_regular(format!(
+                                                    "Cube limit reached ({}/{}) on the {} plan. \
+                                                     Upgrade your Connect account or delete a remote Cube to create one here.",
+                                                    total_count,
+                                                    self.cube_limit(),
+                                                    self.account_tier.display_name(),
+                                                ))
+                                                .style(theme::text::secondary),
+                                            )
+                                            .max_width(500),
+                                        );
+                                    } else {
+                                        col = col.push(create_cube_form(
+                                            &self.create_cube_name,
+                                            &self.create_cube_pin,
+                                            &self.create_cube_pin_confirm,
+                                            &self.error,
+                                            self.creating_cube,
+                                            self.passkey_mode,
+                                        ));
+                                    }
+                                    col.into()
+                                }
                             })
                             .align_x(Alignment::Center),
                     )
@@ -1333,6 +1981,52 @@ impl Launcher {
                     DeleteCubeMessage::CloseModal,
                 ))))
                 .into()
+        } else if let Some(modal) = &self.delete_remote_cube_modal {
+            Modal::new(Container::new(layout).height(Length::Fill), modal.view())
+                .on_blur(if modal.deleting {
+                    None
+                } else {
+                    Some(Message::View(ViewMessage::DeleteCube(
+                        DeleteCubeMessage::CloseRemoteModal,
+                    )))
+                })
+                .into()
+        } else if let Some((_, ref name_input)) = self.rename_cube_modal {
+            use coincube_ui::widget::TextInput;
+            let modal_content = Container::new(
+                Column::new()
+                    .spacing(15)
+                    .padding(20)
+                    .width(Length::Fixed(400.0))
+                    .push(h4_bold("Rename Cube"))
+                    .push(
+                        TextInput::new("Cube Name", name_input)
+                            .on_input(|s| Message::View(ViewMessage::RenameCubeNameEdited(s)))
+                            .padding(10)
+                            .size(16),
+                    )
+                    .push(
+                        Row::new()
+                            .spacing(10)
+                            .push(
+                                button::secondary(Some(icon::cross_icon()), "Cancel")
+                                    .on_press(Message::View(ViewMessage::RenameCubeCancel))
+                                    .width(Length::Fill),
+                            )
+                            .push(if name_input.trim().is_empty() {
+                                button::primary(Some(icon::check_icon()), "Save")
+                                    .width(Length::Fill)
+                            } else {
+                                button::primary(Some(icon::check_icon()), "Save")
+                                    .on_press(Message::View(ViewMessage::RenameCubeConfirm))
+                                    .width(Length::Fill)
+                            }),
+                    ),
+            )
+            .style(theme::card::simple);
+            Modal::new(Container::new(layout).height(Length::Fill), modal_content)
+                .on_blur(Some(Message::View(ViewMessage::RenameCubeCancel)))
+                .into()
         } else {
             layout
         }
@@ -1401,6 +2095,7 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
         use app::menu::ConnectSubMenu;
         let items: &[(&str, ConnectSubMenu)] = &[
             ("Overview", ConnectSubMenu::Overview),
+            ("Contacts", ConnectSubMenu::Contacts),
             ("Plan & Billing", ConnectSubMenu::PlanBilling),
             ("Security", ConnectSubMenu::Security),
             ("Duress", ConnectSubMenu::Duress),
@@ -1503,15 +2198,6 @@ fn create_cube_form<'a>(
                 "A Cube is your account which can contain a Liquid wallet, a Vault wallet and other features.",
             )
             .style(theme::text::secondary),
-        )
-        .push(
-            Container::new(
-                form::Form::new("Cube Name", cube_name, ViewMessage::CubeNameEdited)
-                    .warning("Please enter a name")
-                    .size(20)
-                    .padding(10),
-            )
-            .width(Length::Fill),
         );
 
     // Passkey toggle — hidden entirely when the passkey feature is disabled
@@ -1530,6 +2216,18 @@ fn create_cube_form<'a>(
                 .on_toggle(ViewMessage::TogglePasskeyMode),
         );
     }
+    column = column.push(
+        Container::new(
+            form::Form::new("Cube Name", cube_name, ViewMessage::CubeNameEdited)
+                .warning("Please enter a name")
+                .size(20)
+                .padding(10),
+        )
+        .width(Length::Fill),
+    );
+
+    // PIN setup section (always required)
+    column = column.push(Space::new().height(Length::Fixed(10.0)));
 
     if passkey_mode {
         // Passkey mode: no PIN needed — biometric auth replaces it
@@ -1620,25 +2318,41 @@ fn create_cube_form<'a>(
 }
 
 fn cubes_list_item<'a>(cube: &'a CubeSettings, i: usize) -> Element<'a, ViewMessage> {
+    let sync_indicator = if cube.remote_synced {
+        icon::cloud_check_icon().style(theme::text::success)
+    } else {
+        icon::cloud_slash_icon().style(theme::text::secondary)
+    };
+
     Container::new(
         Row::new()
             .align_y(Alignment::Center)
             .spacing(20)
             .push(
                 Container::new(
-                    Button::new(Column::new().push(p1_bold(&cube.name)).push(
-                        if let Some(vault_id) = &cube.vault_wallet_id {
-                            Some(
-                                p1_regular(format!(
-                                    "Vault: Coincube-{}",
-                                    vault_id.descriptor_checksum
-                                ))
-                                .style(theme::text::secondary),
+                    Button::new(
+                        Column::new()
+                            .push(
+                                Row::new()
+                                    .spacing(8)
+                                    .align_y(Alignment::Center)
+                                    .push(p1_bold(&cube.name))
+                                    .push(sync_indicator),
                             )
-                        } else {
-                            Some(p1_regular("No Vault configured").style(theme::text::secondary))
-                        },
-                    ))
+                            .push(if let Some(vault_id) = &cube.vault_wallet_id {
+                                Some(
+                                    p1_regular(format!(
+                                        "Vault: Coincube-{}",
+                                        vault_id.descriptor_checksum
+                                    ))
+                                    .style(theme::text::secondary),
+                                )
+                            } else {
+                                Some(
+                                    p1_regular("No Vault configured").style(theme::text::secondary),
+                                )
+                            }),
+                    )
                     .on_press(ViewMessage::Run(i))
                     .padding(15)
                     .style(theme::button::container_border)
@@ -1647,10 +2361,52 @@ fn cubes_list_item<'a>(cube: &'a CubeSettings, i: usize) -> Element<'a, ViewMess
                 .style(theme::card::simple),
             )
             .push(
+                Button::new(icon::pencil_icon())
+                    .style(theme::button::secondary)
+                    .padding(10)
+                    .on_press(ViewMessage::RenameCube(i)),
+            )
+            .push(
                 Button::new(icon::trash_icon())
                     .style(theme::button::secondary)
                     .padding(10)
                     .on_press(ViewMessage::DeleteCube(DeleteCubeMessage::ShowModal(i))),
+            ),
+    )
+    .into()
+}
+
+fn remote_cube_list_item<'a>(cube: &'a RemoteCube) -> Element<'a, ViewMessage> {
+    let disabled_style = |_t: &theme::Theme| theme::text::custom(color::GREY_3);
+    Container::new(
+        Row::new()
+            .align_y(Alignment::Center)
+            .spacing(20)
+            .push(
+                Container::new(
+                    Button::new(
+                        Column::new()
+                            .push(p1_bold(&cube.name).style(disabled_style))
+                            .push(p1_regular("On another device").style(disabled_style)),
+                    )
+                    .padding(15)
+                    .style(theme::button::container_border)
+                    .width(Length::Fixed(500.0)),
+                )
+                .style(theme::card::simple),
+            )
+            .push(
+                Button::new(icon::cloud_arrow_down_icon())
+                    .style(theme::button::secondary)
+                    .padding(10),
+            )
+            .push(
+                Button::new(icon::trash_icon())
+                    .style(theme::button::secondary)
+                    .padding(10)
+                    .on_press(ViewMessage::DeleteCube(DeleteCubeMessage::ShowRemoteModal(
+                        cube.uuid.clone(),
+                    ))),
             ),
     )
     .into()
@@ -1846,11 +2602,14 @@ fn has_existing_wallet(data_dir: &CoincubeDirectory, network: Network) -> bool {
 /// Map a `Task<app::message::Message>` (from ConnectAccountPanel) into a
 /// `Task<launcher::Message>` by extracting the ConnectAccountMessage.
 fn map_connect_task(task: Task<app::message::Message>) -> Task<Message> {
-    task.map(|app_msg| {
-        if let app::message::Message::View(app::view::Message::ConnectAccount(acct_msg)) = app_msg {
+    task.map(|app_msg| match app_msg {
+        app::message::Message::View(app::view::Message::ConnectAccount(acct_msg)) => {
             Message::View(ViewMessage::ConnectAccount(acct_msg))
-        } else {
-            // Shouldn't happen — ConnectAccountPanel only emits ConnectAccount messages
+        }
+        app::message::Message::View(app::view::Message::OpenUrl(url)) => {
+            Message::View(ViewMessage::OpenUrl(url))
+        }
+        _ => {
             log::warn!("[LAUNCHER] Unexpected message from ConnectAccountPanel");
             Message::View(ViewMessage::Check)
         }
@@ -1881,6 +2640,28 @@ pub enum Message {
     CancelPasskeyCeremony,
     /// Poll tick for native (macOS) passkey ceremony.
     NativePasskeyTick,
+    /// Result of registering a cube with the remote Connect API.
+    CubeRemoteRegistered {
+        cube_id: String,
+        network: Network,
+        result: Result<CubeResponse, String>,
+    },
+    /// Result of fetching cube limits from the Connect API.
+    CubeLimitsLoaded(Result<CubeLimitsResponse, String>),
+    /// Result of updating a cube on the remote Connect API.
+    CubeRemoteUpdated {
+        cube_id: String,
+        network: Network,
+        result: Result<CubeResponse, String>,
+    },
+    /// Result of deleting a local cube's Connect backup.
+    CubeBackupDeleted(Result<(), String>),
+    /// Result of deleting a remote-only cube from the Connect API.
+    RemoteCubeDeleted(Result<(), String>),
+    /// Result of renaming a cube locally (settings file updated).
+    CubeRenamed(Result<(), String>),
+    /// Remote-only cubes (on server but not local) computed off the UI thread.
+    RemoteCubesLoaded(Result<Vec<RemoteCube>, String>),
 }
 
 #[derive(Debug, Clone)]
@@ -1910,6 +2691,14 @@ pub enum ViewMessage {
     },
     SubmitRecovery,
     CancelRecovery,
+    /// Open the rename modal for a cube at the given index.
+    RenameCube(usize),
+    /// Update the name input in the rename modal.
+    RenameCubeNameEdited(String),
+    /// Confirm the rename and persist it.
+    RenameCubeConfirm,
+    /// Cancel the rename modal.
+    RenameCubeCancel,
     /// Navigate to a launcher section (Cubes or Connect submenu)
     GoToSection(LauncherSection),
     /// Toggle the Connect sidebar section expand/collapse
@@ -1920,16 +2709,23 @@ pub enum ViewMessage {
     ToggleTheme,
     /// Toggle passkey mode for Cube creation (no PIN when enabled).
     TogglePasskeyMode(bool),
+    /// Open a URL in the default browser
+    OpenUrl(String),
 }
 
 #[derive(Debug, Clone)]
 pub enum DeleteCubeMessage {
     ShowModal(usize),
+    ShowRemoteModal(String), // uuid of remote-only cube
     CloseModal,
     Confirm(String), // Cube ID
     DeleteLianaConnect(bool),
+    DeleteConnectBackup(bool),
     Deleted,
     PinInput(pin_input::Message),
+    // Remote-only cube deletion
+    ConfirmRemoteDelete(String), // uuid
+    CloseRemoteModal,
 }
 
 struct DeleteCubeModal {
@@ -1939,11 +2735,83 @@ struct DeleteCubeModal {
     warning: Option<DeleteError>,
     deleted: bool,
     delete_liana_connect: bool,
+    /// Whether to also delete the cube from the Connect API (frees a cube slot).
+    delete_connect_backup: bool,
+    /// Whether the user is authenticated and the cube is synced (backup exists).
+    can_delete_backup: bool,
     user_role: Option<UserRole>,
     // `None` means we were not able to determine whether wallet uses internal bitcoind.
     internal_bitcoind: Option<bool>,
     pin_input: pin_input::PinInput,
     pin_error: Option<String>,
+}
+
+/// Modal for deleting a remote-only cube (exists on server, not locally).
+struct DeleteRemoteCubeModal {
+    cube: RemoteCube,
+    deleting: bool,
+    error: Option<String>,
+}
+
+impl DeleteRemoteCubeModal {
+    fn view(&self) -> Element<Message> {
+        let mut col = Column::new()
+            .spacing(10)
+            .push(Container::new(
+                h4_bold(format!("Delete Remote Cube \"{}\"", self.cube.name))
+                    .style(theme::text::destructive)
+                    .width(Length::Fill),
+            ))
+            .push(text(
+                "This Cube exists on the Connect server but not on this device. \
+                 Deleting it will permanently remove it and free a Cube slot.",
+            ))
+            .push(Row::new())
+            .push(Row::new())
+            .push(text("WARNING: This cannot be undone."))
+            .push(
+                p1_regular(
+                    "If another device still has this Cube locally, \
+                     it will re-sync to Connect the next time it opens, \
+                     consuming a Cube slot again. To permanently free the slot, \
+                     delete the Cube on all devices.",
+                )
+                .style(theme::text::secondary),
+            );
+
+        if let Some(err) = &self.error {
+            col = col
+                .push(notification::warning(err.to_string(), err.to_string()).width(Length::Fill));
+        }
+
+        let mut delete_btn = button::secondary(None, "Delete Remote Cube")
+            .width(Length::Fixed(250.0))
+            .style(theme::button::destructive);
+        if !self.deleting {
+            delete_btn = delete_btn.on_press(ViewMessage::DeleteCube(
+                DeleteCubeMessage::ConfirmRemoteDelete(self.cube.uuid.clone()),
+            ));
+        }
+
+        let mut cancel_btn = button::secondary(None, "Cancel").width(Length::Fixed(120.0));
+        if !self.deleting {
+            cancel_btn =
+                cancel_btn.on_press(ViewMessage::DeleteCube(DeleteCubeMessage::CloseRemoteModal));
+        }
+
+        col = col.push(
+            Container::new(if self.deleting {
+                Row::new().spacing(10).push(text("Deleting..."))
+            } else {
+                Row::new().spacing(10).push(cancel_btn).push(delete_btn)
+            })
+            .align_x(Horizontal::Center)
+            .width(Length::Fill),
+        );
+
+        Into::<Element<ViewMessage>>::into(card::simple(col).width(Length::Fixed(700.0)))
+            .map(Message::View)
+    }
 }
 
 impl DeleteCubeModal {
@@ -1952,7 +2820,9 @@ impl DeleteCubeModal {
         network_directory: NetworkDirectory,
         wallet_settings: Option<WalletSettings>,
         internal_bitcoind: Option<bool>,
+        is_authenticated: bool,
     ) -> Self {
+        let can_delete_backup = is_authenticated && cube.remote_synced;
         let mut modal = Self {
             cube: cube.clone(),
             wallet_settings: wallet_settings.clone(),
@@ -1960,6 +2830,8 @@ impl DeleteCubeModal {
             warning: None,
             deleted: false,
             delete_liana_connect: false,
+            delete_connect_backup: false,
+            can_delete_backup,
             internal_bitcoind,
             user_role: None,
             pin_input: pin_input::PinInput::new(),
@@ -2044,6 +2916,11 @@ impl DeleteCubeModal {
             ))) => {
                 self.delete_liana_connect = delete;
             }
+            Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::DeleteConnectBackup(
+                delete,
+            ))) => {
+                self.delete_connect_backup = delete;
+            }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::PinInput(msg))) => {
                 self.pin_error = None;
                 return self.pin_input.update(msg).map(|m| {
@@ -2111,6 +2988,26 @@ impl DeleteCubeModal {
             .push(help_text_2.map(|t| Row::new().push(p1_regular(t).style(theme::text::secondary))))
             .push(Row::new())
             .push(Row::new().push(text(help_text_3)));
+
+        // Option to also delete the Connect API backup (only when relevant)
+        if self.can_delete_backup {
+            col = col.push(Space::new().height(Length::Fixed(5.0))).push(
+                CheckBox::new(self.delete_connect_backup)
+                    .label("Also delete Connect backup (frees a Cube slot)")
+                    .on_toggle(|checked| {
+                        ViewMessage::DeleteCube(DeleteCubeMessage::DeleteConnectBackup(checked))
+                    }),
+            );
+            if self.delete_connect_backup {
+                col = col.push(
+                    p1_regular(
+                        "The Connect backup will be permanently deleted. \
+                         This frees a Cube slot on your account.",
+                    )
+                    .style(theme::text::warning),
+                );
+            }
+        }
 
         // PIN entry section
         if self.cube.has_pin() {
@@ -2218,7 +3115,7 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
                 path.path().to_string_lossy()
             ));
         }
-    };
+    }
 
     let mut daemon_config_path = path.clone().path().to_path_buf();
     daemon_config_path.push("daemon.toml");

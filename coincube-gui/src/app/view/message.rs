@@ -110,6 +110,7 @@ pub enum Message {
     ToggleConnect,
     P2P(P2PMessage),
     ToggleTheme,
+    DismissReceivedCelebration,
 }
 
 impl Close for Message {
@@ -435,6 +436,8 @@ pub enum LiquidSendMessage {
     PopupMessage(SendPopupMessage),
     PrepareResponseReceived(PrepareSendResponse),
     PrepareOnChainResponseReceived(PreparePayOnchainResponse),
+    SendMaxPrepared(Result<PrepareSendResponse, String>),
+    SendMaxOnChainResult(u64),
     ConfirmSend,
     SendComplete,
     BackToHome,
@@ -475,6 +478,8 @@ pub enum SendPopupMessage {
     Done,
     Close,
     ToggleSendAsset,
+    ToggleFeeAsset,
+    SendMax,
     UsdtAmountEdited(String),
 }
 
@@ -482,6 +487,9 @@ pub enum SendPopupMessage {
 pub enum LiquidReceiveMessage {
     ToggleMethod(ReceiveMethod),
     Copy,
+    ShowQrCode,
+    CloseQrCode,
+    DismissCelebration,
     GenerateAddress,
     AddressGenerated(ReceiveMethod, Result<String, String>),
     AmountInput(String),
@@ -517,6 +525,8 @@ pub enum LiquidReceiveMessage {
     SelectTransaction(usize),
     /// User tapped "View All Transactions".
     History,
+    /// Refresh balance and recent transactions (e.g. after a payment event).
+    RefreshRequested,
 }
 
 /// Network the sender is sending from (receive flow).
@@ -696,6 +706,63 @@ pub enum ConnectAccountMessage {
     VerifiedDevicesLoaded(Vec<crate::services::coincube::VerifiedDevice>, u64),
     LoginActivityLoaded(Vec<crate::services::coincube::LoginActivity>, u64),
     CopyToClipboard(String),
+    Contacts(ContactsMessage),
+    Error(String),
+    // --- Plan & Billing ---
+    FeaturesLoaded(Option<crate::services::coincube::FeaturesResponse>, u64),
+    BillingCycleSelected(crate::services::coincube::BillingCycle),
+    StartCheckout(crate::services::coincube::PlanTier),
+    CheckoutCreated(
+        Result<crate::services::coincube::CheckoutResponse, String>,
+        u64,
+    ),
+    PollChargeStatus,
+    ChargeStatusUpdated(
+        Result<crate::services::coincube::ChargeStatusResponse, (String, bool)>,
+        u64,
+    ),
+    DismissCheckout,
+    OpenCheckoutUrl(String),
+    BillingHistoryLoaded(
+        Result<Vec<crate::services::coincube::BillingHistoryEntry>, String>,
+        u64,
+    ),
+    ToggleBillingHistory,
+}
+
+#[derive(Debug, Clone)]
+pub enum ContactsMessage {
+    /// Contacts list loaded.
+    ContactsLoaded(Vec<crate::services::coincube::Contact>, u64),
+    /// Invites list loaded.
+    InvitesLoaded(Vec<crate::services::coincube::Invite>, u64),
+    /// Navigate to invite form.
+    ShowInviteForm,
+    /// Navigate back to list.
+    BackToList,
+    /// Navigate to contact detail.
+    ShowDetail(u64),
+    /// Email input changed (invite form).
+    InviteEmailChanged(String),
+    /// Role changed (invite form).
+    InviteRoleChanged(crate::services::coincube::ContactRole),
+    /// Submit invite.
+    SubmitInvite,
+    /// Invite created successfully — reload list.
+    InviteCreated,
+    /// Resend a pending invite.
+    ResendInvite(u64),
+    /// Invite resent successfully.
+    InviteResent(u64),
+    /// Revoke a pending invite.
+    RevokeInvite(u64),
+    /// Invite revoked successfully.
+    InviteRevoked(u64),
+    /// Contact detail cubes loaded — includes contact_id and session_generation to guard against stale responses.
+    ContactCubesLoaded(u64, Vec<crate::services::coincube::ContactCube>, u64),
+    /// Contact detail cubes fetch failed — includes contact_id for stale guard.
+    ContactCubesFailed(u64, String),
+    /// Error.
     Error(String),
 }
 
@@ -829,6 +896,10 @@ pub enum P2PMessage {
     ClearForm,
     MostroOrdersReceived(Vec<super::p2p::components::P2POrder>),
     BuySellFilterChanged(super::p2p::components::BuySellFilter),
+    FilterCurrencySelected(String),
+    FilterPaymentMethodToggled(String),
+    FilterMinRatingChanged(f32),
+    FilterMinDaysActiveChanged(u32),
     SelectOrder(String),
     CloseOrderDetail,
     CopyOrderId(String),

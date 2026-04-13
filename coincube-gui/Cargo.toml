@@ -19,7 +19,7 @@ path = "src/main.rs"
 [dependencies]
 async-trait = "0.1"
 async-hwi = "0.0.29"
-breez-sdk-liquid = { git = "https://github.com/breez/breez-sdk-liquid" }
+breez-sdk-liquid = { git = "https://github.com/breez/breez-sdk-liquid", tag = "0.12.2" }
 coincube-core = { path = "../coincube-core" }
 coincubed = { path = "../coincubed", default-features = false, features = [
 	"nonblocking_shutdown",
@@ -102,6 +102,8 @@ encrypted_backup = { version = "0.0.1", default-features = false, features = [
 zeroize = "1"
 chacha20poly1305 = "0.10.1"
 sha2 = "0.11.0"
+
+dotenvy = "0.15.7"
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features = false, features = [
