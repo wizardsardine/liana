@@ -569,10 +569,49 @@ impl BreezClient {
     }
 
     pub async fn list_refundables(&self) -> Result<Vec<breez::RefundableSwap>, BreezError> {
-        self.get_sdk()?
+        let refundables = self
+            .get_sdk()?
             .list_refundables()
             .await
-            .map_err(|e| BreezError::Sdk(e.to_string()))
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+        if !refundables.is_empty() {
+            log::info!(
+                target: "breez_swap",
+                "list_refundables: {} refundable swap(s) discovered",
+                refundables.len()
+            );
+            for r in &refundables {
+                log::info!(
+                    target: "breez_swap",
+                    "  refundable: swap_address={} amount_sat={}",
+                    truncate_addr(&r.swap_address),
+                    r.amount_sat
+                );
+            }
+        }
+        Ok(refundables)
+    }
+
+    /// Fetch the SDK's recommended Bitcoin fee rates (sat/vB).
+    /// Used as a fallback fee source when the local mempool `FeeEstimator`
+    /// is unavailable or errors.
+    pub async fn recommended_fees(&self) -> Result<breez::RecommendedFees, BreezError> {
+        let fees = self
+            .get_sdk()?
+            .recommended_fees()
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+        log::info!(
+            target: "breez_swap",
+            "recommended_fees: fastest={} half_hour={} hour={} economy={} minimum={}",
+            fees.fastest_fee,
+            fees.half_hour_fee,
+            fees.hour_fee,
+            fees.economy_fee,
+            fees.minimum_fee
+        );
+        Ok(fees)
     }
 
     pub async fn fetch_payment_proposed_fees(
@@ -611,10 +650,18 @@ impl BreezClient {
     }
 
     pub async fn fetch_onchain_limits(&self) -> Result<OnchainPaymentLimitsResponse, BreezError> {
-        self.get_sdk()?
+        let limits = self
+            .get_sdk()?
             .fetch_onchain_limits()
             .await
-            .map_err(|e| BreezError::Sdk(e.to_string()))
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+        log::info!(
+            target: "breez_swap",
+            "fetch_onchain_limits: pair=btc-to-lbtc receive_min_sat={} receive_max_sat={}",
+            limits.receive.min_sat,
+            limits.receive.max_sat
+        );
+        Ok(limits)
     }
 
     /// Manually trigger wallet synchronization with the blockchain
@@ -636,10 +683,31 @@ impl BreezClient {
         &self,
         refund_request: breez::RefundRequest,
     ) -> Result<RefundResponse, BreezError> {
-        self.get_sdk()?
-            .refund(&refund_request)
-            .await
-            .map_err(|e| BreezError::Sdk(e.to_string()))
+        log::info!(
+            target: "breez_swap",
+            "refund_onchain_tx: submitting refund swap_address={} refund_address={} fee_rate={}",
+            truncate_addr(&refund_request.swap_address),
+            truncate_addr(&refund_request.refund_address),
+            refund_request.fee_rate_sat_per_vbyte
+        );
+        match self.get_sdk()?.refund(&refund_request).await {
+            Ok(resp) => {
+                log::info!(
+                    target: "breez_swap",
+                    "refund_onchain_tx: success refund_tx_id={}",
+                    truncate_addr(&resp.refund_tx_id)
+                );
+                Ok(resp)
+            }
+            Err(e) => {
+                log::error!(
+                    target: "breez_swap",
+                    "refund_onchain_tx: failed: {}",
+                    e
+                );
+                Err(BreezError::Sdk(e.to_string()))
+            }
+        }
     }
 
     pub fn liquid_signer(&self) -> Option<Arc<Mutex<HotSigner>>> {
@@ -696,6 +764,18 @@ fn make_breez_stream(state: &BreezSubscriptionState) -> impl Stream<Item = breez
     )
 }
 
+/// Privacy-preserving log helper: keeps the first and last 6 chars of an
+/// address-like string (swap addresses, refund addresses, txids) so logs are
+/// debuggable without leaking full on-chain identifiers.
+fn truncate_addr(s: &str) -> String {
+    if s.len() <= 14 {
+        return s.to_string();
+    }
+    let head = &s[..6];
+    let tail = &s[s.len() - 6..];
+    format!("{head}…{tail}")
+}
+
 /// Converts `amount` base-units to an `f64` display value by dividing by `10^precision`.
 ///
 /// Returns `Err(BreezError::Sdk)` if:
@@ -726,5 +806,26 @@ struct BreezEventListener {
 impl breez::EventListener for BreezEventListener {
     async fn on_event(&self, e: breez::SdkEvent) {
         let _ = self.sender.send(e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_addr_short_unchanged() {
+        assert_eq!(truncate_addr("bc1qabc"), "bc1qabc");
+    }
+
+    #[test]
+    fn truncate_addr_long_middle_elided() {
+        let long = "bc1p7gznc2zpn7aq3vqd695eml450d2ls33vw65tvwd77x936jquadnsp7ff6v";
+        assert_eq!(truncate_addr(long), "bc1p7g…p7ff6v");
+    }
+
+    #[test]
+    fn truncate_addr_exactly_14_chars_unchanged() {
+        assert_eq!(truncate_addr("12345678901234"), "12345678901234");
     }
 }

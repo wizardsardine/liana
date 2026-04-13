@@ -71,6 +71,11 @@ pub enum Message {
     RefundFeerateEdited(String),
     RefundFeeratePrioritySelected(FeeratePriority),
     SubmitRefund,
+    /// Pull a fresh native-Bitcoin receive address from the Vault wallet and
+    /// drop it into the refund address input. This routes through the existing
+    /// `daemon.get_new_address()` path so no address-derivation logic is
+    /// duplicated here.
+    GenerateVaultRefundAddress,
     SelectPayment(OutPoint),
     Label(Vec<String>, LabelMessage),
     NextReceiveAddress,

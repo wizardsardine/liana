@@ -1086,12 +1086,22 @@ impl LiquidReceive {
         )
     }
 
+    /// Fetch lightning + onchain receive limits from the SDK.
+    ///
+    /// Onchain limits are fetched eagerly (regardless of which tab is
+    /// currently open) so that when the user switches to the Bitcoin tab they
+    /// immediately see the min/max and the swap-receive warning copy. Without
+    /// this, the limits are fetched lazily on tab open and the warning block
+    /// would flash empty for a moment, or worse, the user could generate an
+    /// address before seeing the constraints.
+    ///
+    /// Lightning limits are cheap and fetched alongside.
     fn fetch_limits(&mut self) -> Task<Message> {
-        if self.lightning_receive_limits.is_none()
-            && matches!(self.receive_method, ReceiveMethod::Lightning)
-        {
+        let mut tasks = Vec::new();
+
+        if self.lightning_receive_limits.is_none() {
             let breez_client = self.breez_client.clone();
-            Task::perform(
+            tasks.push(Task::perform(
                 async move { breez_client.fetch_lightning_limits().await },
                 |response| match response {
                     Ok(limits) => Message::View(view::Message::LiquidReceive(
@@ -1104,12 +1114,12 @@ impl LiquidReceive {
                         LiquidReceiveMessage::Error(error.to_string()),
                     )),
                 },
-            )
-        } else if self.onchain_receive_limits.is_none()
-            && matches!(self.receive_method, ReceiveMethod::OnChain)
-        {
+            ));
+        }
+
+        if self.onchain_receive_limits.is_none() {
             let breez_client = self.breez_client.clone();
-            Task::perform(
+            tasks.push(Task::perform(
                 async move { breez_client.fetch_onchain_limits().await },
                 |response| match response {
                     Ok(limits) => Message::View(view::Message::LiquidReceive(
@@ -1122,9 +1132,13 @@ impl LiquidReceive {
                         LiquidReceiveMessage::Error(error.to_string()),
                     )),
                 },
-            )
-        } else {
+            ));
+        }
+
+        if tasks.is_empty() {
             Task::none()
+        } else {
+            Task::batch(tasks)
         }
     }
 }

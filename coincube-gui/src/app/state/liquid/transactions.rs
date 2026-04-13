@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::Arc;
+use std::time::Instant;
 
 use breez_sdk_liquid::model::{PaymentDetails, RefundRequest};
 use breez_sdk_liquid::prelude::{Payment, RefundableSwap};
@@ -16,6 +18,17 @@ use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::export::{ImportExportMessage, ImportExportState};
 use crate::services::feeestimation::fee_estimation::FeeEstimator;
+
+/// A refund that the user has submitted but for which we have not yet seen the
+/// SDK drop the swap from `list_refundables()`. While an entry exists, the
+/// Transactions view keeps rendering the refundable so the user gets a visible
+/// "Refund broadcasting…" / "Refund broadcast · txid …" confirmation instead
+/// of the card vanishing silently on success.
+#[derive(Debug, Clone)]
+pub struct InFlightRefund {
+    pub refund_txid: Option<String>,
+    pub submitted_at: Instant,
+}
 
 #[derive(Debug)]
 enum LiquidTransactionsModal {
@@ -37,6 +50,12 @@ pub struct LiquidTransactions {
     fee_estimator: FeeEstimator,
     refunding: bool,
     asset_filter: AssetFilter,
+    /// While a fee-priority button is awaiting its async rate fetch, this
+    /// holds which one was pressed so the view can show a "…" spinner on it.
+    pending_fee_priority: Option<FeeratePriority>,
+    /// Refunds submitted by the user that have not yet been dropped from the
+    /// SDK's refundables list. Keyed by swap_address. See `InFlightRefund`.
+    in_flight_refunds: HashMap<String, InFlightRefund>,
     empty_state_quote: Quote,
     empty_state_image_handle: image::Handle,
 }
@@ -66,9 +85,28 @@ impl LiquidTransactions {
             fee_estimator: FeeEstimator::new(),
             refunding: false,
             asset_filter: AssetFilter::All,
+            pending_fee_priority: None,
+            in_flight_refunds: HashMap::new(),
             empty_state_quote,
             empty_state_image_handle,
         }
+    }
+
+    pub fn in_flight_refunds(&self) -> &HashMap<String, InFlightRefund> {
+        &self.in_flight_refunds
+    }
+
+    pub fn pending_fee_priority(&self) -> Option<FeeratePriority> {
+        self.pending_fee_priority
+    }
+
+    #[cfg(test)]
+    pub fn test_reconcile_in_flight(&mut self, refundables: Vec<RefundableSwap>) {
+        let returned: std::collections::HashSet<&String> =
+            refundables.iter().map(|r| &r.swap_address).collect();
+        self.in_flight_refunds
+            .retain(|addr, _| returned.contains(addr));
+        self.refundables = refundables;
     }
 
     pub fn asset_filter(&self) -> AssetFilter {
@@ -142,6 +180,8 @@ impl State for LiquidTransactions {
                     &self.refund_address,
                     &self.refund_feerate,
                     self.refunding,
+                    self.pending_fee_priority,
+                    self.in_flight_refunds.get(&refundable.swap_address),
                 ),
             )
         } else {
@@ -151,6 +191,7 @@ impl State for LiquidTransactions {
                 view::liquid::liquid_transactions_view(
                     &self.payments,
                     &self.refundables,
+                    &self.in_flight_refunds,
                     &self.balance,
                     fiat_converter,
                     self.loading,
@@ -194,7 +235,7 @@ impl State for LiquidTransactions {
 
     fn update(
         &mut self,
-        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
@@ -233,6 +274,16 @@ impl State for LiquidTransactions {
                 Task::done(Message::View(view::Message::ShowError(e.to_string())))
             }
             Message::RefundablesLoaded(Ok(refundables)) => {
+                // Reconcile in-flight refunds with the freshly-fetched list.
+                // A swap leaves `list_refundables` once the SDK observes our
+                // refund tx, so anything tracked locally that is no longer in
+                // the SDK's list is complete and can be dropped from the
+                // "broadcasting" banner. This prevents a stale "Refund
+                // broadcasting…" from sticking around forever.
+                let returned: std::collections::HashSet<&String> =
+                    refundables.iter().map(|r| &r.swap_address).collect();
+                self.in_flight_refunds
+                    .retain(|addr, _| returned.contains(addr));
                 self.refundables = refundables;
                 Task::none()
             }
@@ -368,27 +419,46 @@ impl State for LiquidTransactions {
                 self.refund_feerate.value = feerate;
                 self.refund_feerate.valid = true;
                 self.refund_feerate.warning = None;
+                // Any incoming edit — whether from the user or from a
+                // priority-button async resolution — clears the spinner so
+                // the pressed button stops showing "…".
+                self.pending_fee_priority = None;
                 Task::none()
             }
             Message::View(view::Message::RefundFeeratePrioritySelected(priority)) => {
+                // Record which button was pressed so the view can render a
+                // "…" spinner while the async fee fetch is in flight.
+                self.pending_fee_priority = Some(priority);
                 let fee_estimator = self.fee_estimator.clone();
+                let breez_client = self.breez_client.clone();
                 Task::perform(
                     async move {
-                        let rate: Option<usize> = match priority {
+                        // Primary source: local mempool FeeEstimator. Falls
+                        // through to the SDK's `recommended_fees()` if the
+                        // local estimator errors so we can still populate a
+                        // sensible rate when the user's network is flaky.
+                        let local: Option<usize> = match priority {
                             FeeratePriority::Low => {
-                                let result = fee_estimator.get_low_priority_rate().await;
-                                result.ok()
+                                fee_estimator.get_low_priority_rate().await.ok()
                             }
                             FeeratePriority::Medium => {
-                                let result = fee_estimator.get_mid_priority_rate().await;
-                                result.ok()
+                                fee_estimator.get_mid_priority_rate().await.ok()
                             }
                             FeeratePriority::High => {
-                                let result = fee_estimator.get_high_priority_rate().await;
-                                result.ok()
+                                fee_estimator.get_high_priority_rate().await.ok()
                             }
                         };
-                        rate
+                        if let Some(rate) = local {
+                            return Some(rate);
+                        }
+                        match breez_client.recommended_fees().await {
+                            Ok(fees) => Some(match priority {
+                                FeeratePriority::Low => fees.economy_fee as usize,
+                                FeeratePriority::Medium => fees.half_hour_fee as usize,
+                                FeeratePriority::High => fees.fastest_fee as usize,
+                            }),
+                            Err(_) => None,
+                        }
                     },
                     move |rate: Option<usize>| {
                         if let Some(rate) = rate {
@@ -401,24 +471,62 @@ impl State for LiquidTransactions {
                     },
                 )
             }
+            Message::View(view::Message::GenerateVaultRefundAddress) => {
+                // Reuse the Vault wallet's existing fresh-address derivation
+                // (`daemon.get_new_address()`). This intentionally does NOT
+                // duplicate descriptor logic — the Vault remains the single
+                // source of truth for native BTC addresses in this app.
+                let Some(daemon) = daemon else {
+                    return Task::done(Message::View(view::Message::ShowError(
+                        "Vault is unavailable — cannot generate a refund address.".to_string(),
+                    )));
+                };
+                Task::perform(
+                    async move {
+                        let res: Result<String, String> = daemon
+                            .get_new_address()
+                            .await
+                            .map(|res| res.address.to_string())
+                            .map_err(|e| e.to_string());
+                        res
+                    },
+                    |result| match result {
+                        Ok(addr) => Message::View(view::Message::RefundAddressEdited(addr)),
+                        Err(e) => Message::View(view::Message::ShowError(format!(
+                            "Could not generate Vault refund address: {}",
+                            e
+                        ))),
+                    },
+                )
+            }
             Message::View(view::Message::SubmitRefund) => {
                 if let Some(refundable) = &self.selected_refundable {
                     self.refunding = true;
-                    let breez_client = self.breez_client.clone();
                     let swap_address = refundable.swap_address.clone();
+                    // Optimistically record the in-flight refund so the view
+                    // keeps the card visible with a "broadcasting" banner
+                    // even if the SDK drops the swap from `list_refundables`
+                    // before `RefundCompleted` fires.
+                    self.in_flight_refunds.insert(
+                        swap_address.clone(),
+                        InFlightRefund {
+                            refund_txid: None,
+                            submitted_at: Instant::now(),
+                        },
+                    );
+                    let breez_client = self.breez_client.clone();
                     let refund_address = self.refund_address.value.clone();
                     let fee_rate = self.refund_feerate.value.parse::<u32>().unwrap_or(1);
 
                     Task::perform(
                         async move {
-                            let result = breez_client
+                            breez_client
                                 .refund_onchain_tx(RefundRequest {
-                                    swap_address: swap_address.clone(),
-                                    refund_address: refund_address.clone(),
+                                    swap_address,
+                                    refund_address,
                                     fee_rate_sat_per_vbyte: fee_rate,
                                 })
-                                .await;
-                            result
+                                .await
                         },
                         Message::RefundCompleted,
                     )
@@ -427,15 +535,37 @@ impl State for LiquidTransactions {
                     Task::none()
                 }
             }
-            Message::RefundCompleted(Ok(_response)) => {
+            Message::RefundCompleted(Ok(response)) => {
                 self.refunding = false;
+                let txid = response.refund_tx_id.clone();
+                // Populate the refund_txid on the most recent in-flight entry
+                // that doesn't yet have one. We don't have the swap_address
+                // on the response, so match on the missing txid field.
+                if let Some(entry) = self
+                    .in_flight_refunds
+                    .values_mut()
+                    .find(|r| r.refund_txid.is_none())
+                {
+                    entry.refund_txid = Some(txid.clone());
+                }
                 self.selected_refundable = None;
                 self.refund_address = form::Value::default();
                 self.refund_feerate = form::Value::default();
-                Task::done(Message::View(view::Message::Close))
+                Task::batch(vec![
+                    Task::done(Message::View(view::Message::ShowToast(
+                        log::Level::Info,
+                        format!("Refund broadcast · {}", txid.get(..10).unwrap_or(&txid)),
+                    ))),
+                    Task::done(Message::View(view::Message::Close)),
+                ])
             }
             Message::RefundCompleted(Err(e)) => {
                 self.refunding = false;
+                // Drop any in-flight entry that doesn't have a txid —
+                // submission never reached broadcast, so leaving a stale
+                // "broadcasting" banner up would lie to the user.
+                self.in_flight_refunds
+                    .retain(|_, r| r.refund_txid.is_some());
                 Task::done(Message::View(view::Message::ShowError(format!(
                     "Refund failed: {}",
                     e
@@ -466,5 +596,65 @@ impl State for LiquidTransactions {
                 Message::RefundablesLoaded,
             ),
         ])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::breez::BreezClient;
+    use breez_sdk_liquid::bitcoin::Network;
+
+    fn sample_refundable(addr: &str) -> RefundableSwap {
+        RefundableSwap {
+            swap_address: addr.to_string(),
+            timestamp: 0,
+            amount_sat: 24_869,
+            last_refund_tx_id: None,
+        }
+    }
+
+    fn new_state() -> LiquidTransactions {
+        LiquidTransactions::new(Arc::new(BreezClient::disconnected(Network::Bitcoin)))
+    }
+
+    #[test]
+    fn in_flight_dropped_when_sdk_no_longer_returns_it() {
+        let mut state = new_state();
+        state.in_flight_refunds.insert(
+            "bc1q_gone".to_string(),
+            InFlightRefund {
+                refund_txid: Some("deadbeef".to_string()),
+                submitted_at: Instant::now(),
+            },
+        );
+        state.in_flight_refunds.insert(
+            "bc1q_still".to_string(),
+            InFlightRefund {
+                refund_txid: None,
+                submitted_at: Instant::now(),
+            },
+        );
+
+        // After reconcile: only swaps still returned by the SDK survive.
+        state.test_reconcile_in_flight(vec![sample_refundable("bc1q_still")]);
+
+        assert!(state.in_flight_refunds.contains_key("bc1q_still"));
+        assert!(!state.in_flight_refunds.contains_key("bc1q_gone"));
+        assert_eq!(state.refundables.len(), 1);
+    }
+
+    #[test]
+    fn in_flight_preserved_while_sdk_still_returns_swap() {
+        let mut state = new_state();
+        state.in_flight_refunds.insert(
+            "bc1q_active".to_string(),
+            InFlightRefund {
+                refund_txid: None,
+                submitted_at: Instant::now(),
+            },
+        );
+        state.test_reconcile_in_flight(vec![sample_refundable("bc1q_active")]);
+        assert!(state.in_flight_refunds.contains_key("bc1q_active"));
     }
 }

@@ -1,9 +1,11 @@
 pub mod assets;
 mod client;
 mod config;
+pub mod swap_status;
 
 pub use client::BreezClient;
 pub use config::BreezConfig;
+pub use swap_status::{classify_payment, classify_refundable, BtcSwapReceiveStatus};
 
 // Re-export Breez SDK response types
 pub use breez_sdk_liquid::prelude::{GetInfoResponse, ReceivePaymentResponse, SendPaymentResponse};
