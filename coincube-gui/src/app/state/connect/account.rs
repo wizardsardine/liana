@@ -351,6 +351,7 @@ impl ConnectAccountPanel {
                 self.checkout = None;
                 self.billing_history = None;
                 self.show_billing_history = false;
+                self.selected_billing_cycle = BillingCycle::Monthly;
                 self.contacts_state.clear();
                 self.clear_keyring_session();
                 self.client = CoincubeClient::new();

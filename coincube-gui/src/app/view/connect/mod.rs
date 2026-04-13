@@ -625,8 +625,7 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                 card_col = card_col
                     .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
                     .push(
-                        text::p2_regular(format!("Expires on {}", date_short))
-                            .color(color::GREY_3),
+                        text::p2_regular(format!("Expires on {}", date_short)).color(color::GREY_3),
                     );
             }
         }
