@@ -825,14 +825,14 @@ impl DerivedSinglePathCoincubeDesc {
 mod tests {
     use super::*;
 
-    use crate::signer::HotSigner;
+    use crate::signer::MasterSigner;
     use bitcoin::{hashes::Hash, Sequence};
     use miniscript::bitcoin::bip32::Fingerprint;
 
     fn random_desc_key(
         secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
     ) -> descriptor::DescriptorPublicKey {
-        let signer = HotSigner::generate(bitcoin::Network::Bitcoin).unwrap();
+        let signer = MasterSigner::generate(bitcoin::Network::Bitcoin).unwrap();
         let xpub_str = format!(
             "[{}]{}/<0;1>/*",
             signer.fingerprint(secp),

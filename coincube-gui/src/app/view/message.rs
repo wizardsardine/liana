@@ -157,7 +157,7 @@ pub enum SpendTxMessage {
     Save,
     Confirm,
     Cancel,
-    SelectHotSigner,
+    SelectMasterSigner,
     SelectBorderWallet(Fingerprint),
     BorderWalletRecon(BorderWalletReconMessage),
     EditPsbt,
@@ -226,6 +226,9 @@ pub enum SettingsMessage {
     InstallStats(InstallStatsViewMessage),
     TestToast(log::Level),
     ToggleDirectionBadges(bool),
+    /// Master seed backup flow (moved from Liquid Settings to Cube/General Settings).
+    BackupMasterSeed(BackupWalletMessage),
+    BackupMasterSeedUpdated,
 }
 
 #[derive(Debug, Clone)]
@@ -597,12 +600,10 @@ pub enum ReceiveMethod {
 
 #[derive(Debug, Clone)]
 pub enum LiquidSettingsMessage {
-    BackupWallet(BackupWalletMessage),
-    SettingsUpdated,
     ExportPayments,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum BackupWalletMessage {
     ToggleBackupIntroCheck,
     Start,
@@ -610,7 +611,46 @@ pub enum BackupWalletMessage {
     PreviousStep,
     VerifyPhrase,
     Complete,
-    WordInput { index: u8, input: String },
+    WordInput {
+        index: u8,
+        input: String,
+    },
+    /// Digit entry in the backup-flow PIN re-verification gate.
+    PinInput(crate::pin_input::Message),
+    /// User submits the PIN to unlock the mnemonic.
+    VerifyPin,
+    /// Async result of PIN verification + mnemonic decryption.
+    PinVerified(Result<Vec<String>, String>),
+    /// Async result of persisting `backed_up = true` to settings.json after
+    /// the user successfully completed the verification step.
+    BackupSaveResult(Result<(), String>),
+}
+
+// Manual Debug impl to redact mnemonic words and PIN data from logs.
+impl std::fmt::Debug for BackupWalletMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ToggleBackupIntroCheck => write!(f, "ToggleBackupIntroCheck"),
+            Self::Start => write!(f, "Start"),
+            Self::NextStep => write!(f, "NextStep"),
+            Self::PreviousStep => write!(f, "PreviousStep"),
+            Self::VerifyPhrase => write!(f, "VerifyPhrase"),
+            Self::Complete => write!(f, "Complete"),
+            Self::WordInput { index, .. } => f
+                .debug_struct("WordInput")
+                .field("index", index)
+                .field("input", &"<redacted>")
+                .finish(),
+            Self::PinInput(_) => f.debug_tuple("PinInput").field(&"<redacted>").finish(),
+            Self::VerifyPin => write!(f, "VerifyPin"),
+            Self::PinVerified(Ok(_)) => write!(f, "PinVerified(Ok(<redacted>))"),
+            Self::PinVerified(Err(e)) => f
+                .debug_tuple("PinVerified")
+                .field(&Err::<(), _>(e))
+                .finish(),
+            Self::BackupSaveResult(res) => f.debug_tuple("BackupSaveResult").field(res).finish(),
+        }
+    }
 }
 
 impl From<FiatMessage> for Message {

@@ -14,6 +14,7 @@ use crate::app::view::dashboard;
 use crate::app::view::message::*;
 use crate::services::fiat::{Currency, ALL_PRICE_SOURCES};
 
+#[allow(clippy::too_many_arguments)]
 pub fn general_section<'a>(
     menu: &'a Menu,
     cache: &'a cache::Cache,
@@ -22,19 +23,75 @@ pub fn general_section<'a>(
     currencies_list: &'a [Currency],
     developer_mode: bool,
     show_direction_badges: bool,
+    backup_state: &'a crate::app::state::settings::general::BackupSeedState,
+    backup_pin: &'a crate::pin_input::PinInput,
+    backup_mnemonic: Option<&'a [String]>,
 ) -> Element<'a, Message> {
+    use crate::app::state::settings::general::BackupSeedState;
+
+    // When the backup flow is active, take over the entire settings page
+    // with the wizard view. This matches the UX the old Liquid Settings
+    // backup used and keeps the multi-step flow focused.
+    if !matches!(backup_state, BackupSeedState::None) {
+        if let Some(wizard) = super::backup::dispatch(backup_state, backup_pin, backup_mnemonic) {
+            return dashboard(menu, cache, Column::new().spacing(20).push(wizard));
+        }
+    }
+
+    // Normal settings rendering.
     let mut col = Column::new()
         .spacing(20)
         .push(super::header("General", SettingsMessage::GeneralSection))
         .push(bitcoin_display_unit(new_unit_setting))
         .push(direction_badges_toggle(show_direction_badges))
-        .push(fiat_price(new_price_setting, currencies_list));
+        .push(fiat_price(new_price_setting, currencies_list))
+        .push(backup_master_seed_card(cache.current_cube_backed_up));
 
     if developer_mode {
         col = col.push(toast_testing());
     }
 
     dashboard(menu, cache, col)
+}
+
+/// The "Backup Master Seed Phrase" card shown on the normal General
+/// Settings page. Shows a different label depending on whether the
+/// current cube has already been backed up.
+fn backup_master_seed_card<'a>(backed_up: bool) -> Element<'a, Message> {
+    let (title, subtitle, button_label) = if backed_up {
+        (
+            "Master Seed Phrase Backed Up",
+            "You've already recorded your recovery phrase. You can view it again if needed.",
+            "View Again",
+        )
+    } else {
+        (
+            "Backup Master Seed Phrase",
+            "Write down your 12-word recovery phrase as a backup. This is the only way to recover your Cube if you forget your PIN.",
+            "Start Backup",
+        )
+    };
+
+    card::simple(
+        Row::new()
+            .spacing(20)
+            .align_y(Alignment::Center)
+            .push(
+                Column::new()
+                    .spacing(4)
+                    .push(text(title).bold())
+                    .push(text(subtitle).size(14)),
+            )
+            .push(Space::new().width(Length::Fill))
+            .push(
+                iced::widget::Button::new(text(button_label).bold())
+                    .padding([8, 16])
+                    .style(theme::button::secondary)
+                    .on_press(SettingsMessage::BackupMasterSeed(BackupWalletMessage::Start).into()),
+            ),
+    )
+    .width(Length::Fill)
+    .into()
 }
 
 fn direction_badges_toggle<'a>(show: bool) -> Element<'a, Message> {

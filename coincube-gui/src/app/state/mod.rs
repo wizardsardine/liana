@@ -25,7 +25,7 @@ pub use global_home::GlobalHome;
 pub use liquid::overview::LiquidOverview;
 pub use liquid::receive::LiquidReceive;
 pub use liquid::send::LiquidSend;
-pub use liquid::settings::{BackupWalletState, LiquidSettings, LiquidSettingsFlowState};
+pub use liquid::settings::LiquidSettings;
 pub use liquid::transactions::LiquidTransactions;
 pub use vault::coins::CoinsPanel;
 pub use vault::label::LabelsEdited;

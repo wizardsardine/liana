@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use coincube_core::{bip39, signer::HotSigner};
+use coincube_core::{bip39, signer::MasterSigner};
 use iced::Task;
 
 use coincube_ui::widget::Element;
@@ -136,7 +136,7 @@ impl Step for RecoverMnemonic {
             .filter_map(|(s, valid)| if *valid { Some(s.clone()) } else { None })
             .collect();
 
-        let seed = match HotSigner::from_str(ctx.bitcoin_config.network, &words.join(" ")) {
+        let seed = match MasterSigner::from_str(ctx.bitcoin_config.network, &words.join(" ")) {
             Ok(seed) => seed,
             Err(e) => {
                 self.error = Some(e.to_string());

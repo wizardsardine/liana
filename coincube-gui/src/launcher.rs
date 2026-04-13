@@ -8,12 +8,16 @@ use coincube_core::{bip39, miniscript::bitcoin::Network};
 use coincube_ui::{
     component::{button, card, network_banner, notification, spinner, text::*},
     icon, image, theme,
-    widget::{modal::Modal, CheckBox, Column, Container, Element, Row},
+    widget::{modal::Modal, Column, Container, Element, Row},
 };
 use coincubed::config::ConfigError;
 use tokio::runtime::Handle;
 
+use crate::feature_flags;
 use crate::pin_input;
+#[cfg(not(target_os = "macos"))]
+use crate::services::passkey::CeremonyMode;
+use crate::services::passkey::{self as passkey_svc, CeremonyOutcome, PasskeyCeremony};
 use crate::{
     app::{
         self,
@@ -33,7 +37,7 @@ use crate::{
         login::{connect_with_credentials, BackendState},
     },
 };
-use coincube_core::signer::{HotSigner, MASTER_SEED_LABEL};
+use coincube_core::signer::{MasterSigner, MASTER_SEED_LABEL};
 
 const NETWORKS: [Network; 5] = [
     Network::Bitcoin,
@@ -86,7 +90,6 @@ pub struct Launcher {
     create_cube_name: coincube_ui::component::form::Value<String>,
     create_cube_pin: pin_input::PinInput,
     create_cube_pin_confirm: pin_input::PinInput,
-    recover_liquid_wallet: bool,
     creating_cube: bool,
     /// UUID pre-generated on the first creation attempt and reused on retries
     /// so that each logical cube has a stable client-side identifier.
@@ -104,6 +107,13 @@ pub struct Launcher {
     pub active_section: LauncherSection,
     /// Current theme mode (dark/light) — used for theme-aware rendering
     pub theme_mode: coincube_ui::theme::palette::ThemeMode,
+    /// Whether the user has chosen to create a passkey-derived Cube (no PIN).
+    passkey_mode: bool,
+    /// Active passkey ceremony (webview open, awaiting IPC result).
+    passkey_ceremony: Option<PasskeyCeremony>,
+    /// Active native macOS passkey ceremony (uses AuthenticationServices).
+    #[cfg(target_os = "macos")]
+    native_passkey_ceremony: Option<crate::services::passkey::macos::NativePasskeyCeremony>,
 }
 
 impl Launcher {
@@ -134,7 +144,6 @@ impl Launcher {
                 create_cube_name: coincube_ui::component::form::Value::default(),
                 create_cube_pin: pin_input::PinInput::new(),
                 create_cube_pin_confirm: pin_input::PinInput::new(),
-                recover_liquid_wallet: false,
                 creating_cube: false,
                 pending_cube_id: None,
                 recovery_words: Default::default(),
@@ -147,6 +156,13 @@ impl Launcher {
                 connect_expanded: false,
                 active_section: LauncherSection::Cubes,
                 theme_mode: GlobalSettings::load_theme_mode(&GlobalSettings::path(&datadir_path)),
+                // Default to the feature flag value. When the passkey feature
+                // is disabled (the common case pre-launch), this is always
+                // `false`, forcing the PIN flow.
+                passkey_mode: feature_flags::PASSKEY_ENABLED,
+                passkey_ceremony: None,
+                #[cfg(target_os = "macos")]
+                native_passkey_ceremony: None,
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
@@ -161,7 +177,32 @@ impl Launcher {
 
     pub fn stop(&mut self) {}
 
+    /// Set a top-level error message shown on the launcher screen.
+    /// Used by outer state machines (e.g. `gui::tab`) to surface issues
+    /// they detect while handling launcher-originated messages.
+    pub fn set_error(&mut self, msg: impl Into<String>) {
+        self.error = Some(msg.into());
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
+        if let Some(ceremony) = &self.passkey_ceremony {
+            if ceremony.active_webview.is_some() {
+                return ceremony
+                    .webview_manager
+                    .subscription(std::time::Duration::from_millis(25))
+                    .map(Message::PasskeyWebviewUpdate);
+            }
+        }
+
+        // Native macOS passkey ceremony — poll the channel periodically.
+        #[cfg(target_os = "macos")]
+        {
+            if self.native_passkey_ceremony.is_some() {
+                return iced::time::every(std::time::Duration::from_millis(50))
+                    .map(|_| Message::NativePasskeyTick);
+            }
+        }
+
         Subscription::none()
     }
 
@@ -201,6 +242,8 @@ impl Launcher {
                         self.create_cube_name = coincube_ui::component::form::Value::default();
                         self.create_cube_pin = pin_input::PinInput::new();
                         self.create_cube_pin_confirm = pin_input::PinInput::new();
+                        // Reset to the feature flag default (false when disabled).
+                        self.passkey_mode = feature_flags::PASSKEY_ENABLED;
                         // Clear recovery words when exiting create cube flow
                         for word in &mut self.recovery_words {
                             word.clear();
@@ -229,6 +272,11 @@ impl Launcher {
                     .update(msg)
                     .map(|m| Message::View(ViewMessage::PinConfirmInput(m)))
             }
+            Message::View(ViewMessage::TogglePasskeyMode(enabled)) => {
+                self.passkey_mode = enabled;
+                self.error = None;
+                Task::none()
+            }
             Message::View(ViewMessage::CreateCube) => {
                 if self.creating_cube {
                     return Task::none();
@@ -245,8 +293,7 @@ impl Launcher {
                     0
                 };
                 let limit = self.account_tier.cube_limit();
-                let at_limit = cube_count >= limit
-                    && matches!(self.network, Network::Bitcoin);
+                let at_limit = cube_count >= limit && matches!(self.network, Network::Bitcoin);
                 if at_limit {
                     self.error = Some(format!(
                         "Cube limit reached ({}/{}) for the {} plan. \
@@ -258,97 +305,144 @@ impl Launcher {
                     return Task::none();
                 }
 
-                // Validate PIN (always required)
-                if !self.create_cube_pin.is_complete() {
-                    self.error = Some("Please enter all 4 PIN digits".to_string());
-                    return Task::none();
-                }
-                if !self.create_cube_pin_confirm.is_complete() {
-                    self.error = Some("Please confirm all 4 PIN digits".to_string());
-                    return Task::none();
-                }
-                if self.create_cube_pin.value() != self.create_cube_pin_confirm.value() {
-                    self.error = Some("PIN codes do not match".to_string());
-                    return Task::none();
+                // Defensive guard: even if `self.passkey_mode` somehow became
+                // true while the feature is disabled (stale state, manual
+                // toggle before a hot-reload, etc.), always fall through to
+                // the PIN flow when the compile-time flag is off.
+                let passkey_mode = self.passkey_mode && feature_flags::PASSKEY_ENABLED;
+
+                if !passkey_mode {
+                    // PIN-based flow: validate PIN
+                    if !self.create_cube_pin.is_complete() {
+                        self.error = Some("Please enter all 4 PIN digits".to_string());
+                        return Task::none();
+                    }
+                    if !self.create_cube_pin_confirm.is_complete() {
+                        self.error = Some("Please confirm all 4 PIN digits".to_string());
+                        return Task::none();
+                    }
+                    if self.create_cube_pin.value() != self.create_cube_pin_confirm.value() {
+                        self.error = Some("PIN codes do not match".to_string());
+                        return Task::none();
+                    }
                 }
 
                 self.creating_cube = true;
                 let network = self.network;
                 let cube_name = self.create_cube_name.value.trim().to_string();
-                let pin = self.create_cube_pin.value();
+                let pin = if passkey_mode {
+                    String::new()
+                } else {
+                    self.create_cube_pin.value()
+                };
                 let datadir_path = self.datadir_path.clone();
 
                 // Pre-generate the UUID before the async task so that retries
                 // reuse the same identifier (idempotent creation).
                 let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
 
-                let without_recovery = Task::perform(
-                    async move {
-                        // Generate Liquid wallet HotSigner
-                        let master_signer = HotSigner::generate(network).map_err(|e| {
-                            format!("Failed to generate master seed signer: {}", e)
-                        })?;
-
-                        // Create secp context for fingerprint calculation
-                        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-                        let master_fingerprint = master_signer.fingerprint(&secp);
-
-                        // Store master seed mnemonic (encrypted with PIN)
-                        let network_dir = datadir_path.network_directory(network);
-                        network_dir
-                            .init()
-                            .map_err(|e| format!("Failed to create network directory: {}", e))?;
-
-                        // Use a timestamp for the master seed storage
-                        let timestamp = chrono::Utc::now().timestamp();
-                        let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
-
-                        // Store master seed mnemonic encrypted with PIN (always required)
-                        master_signer
-                            .store_encrypted(
-                                datadir_path.path(),
-                                network,
-                                &secp,
-                                Some((master_checksum, timestamp)),
-                                Some(&pin),
-                            )
-                            .map_err(|e| {
-                                format!("Failed to store master seed mnemonic: {}", e)
+                let without_recovery = if passkey_mode {
+                    // Passkey-based Cube creation.
+                    // On macOS: use the native AuthenticationServices framework
+                    //   (WKWebView doesn't have the entitlement to call WebAuthn).
+                    // On other platforms: fall back to the embedded webview ceremony.
+                    #[cfg(target_os = "macos")]
+                    {
+                        let user_id_bytes = cube_id.as_bytes().to_vec();
+                        match crate::services::passkey::macos::NativePasskeyCeremony::register(
+                            passkey_svc::RP_ID,
+                            &user_id_bytes,
+                            &cube_name,
+                        ) {
+                            Ok(ceremony) => {
+                                self.native_passkey_ceremony = Some(ceremony);
+                                Task::none()
+                            }
+                            Err(e) => {
+                                self.creating_cube = false;
+                                self.error =
+                                    Some(format!("Failed to start passkey ceremony: {}", e));
+                                Task::none()
+                            }
+                        }
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        let user_id = cube_id.to_string();
+                        let ceremony = PasskeyCeremony::new(CeremonyMode::Register {
+                            user_id,
+                            user_name: cube_name,
+                        });
+                        self.passkey_ceremony = Some(ceremony);
+                        // Extract the window ID so we can attach the webview
+                        iced_wry::extract_window_id(None).map(Message::PasskeyWindowId)
+                    }
+                } else {
+                    // PIN-based Cube creation (existing flow)
+                    Task::perform(
+                        async move {
+                            // Generate MasterSigner
+                            let master_signer = MasterSigner::generate(network).map_err(|e| {
+                                format!("Failed to generate master seed signer: {}", e)
                             })?;
 
-                        tracing::info!("Master signer created and stored (encrypted with PIN) with fingerprint: {}", master_fingerprint);
+                            // Create secp context for fingerprint calculation
+                            let secp =
+                                coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+                            let master_fingerprint = master_signer.fingerprint(&secp);
 
-                        // Build Cube settings using the pre-generated, stable UUID.
-                        let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
-                            .with_master_signer(master_fingerprint)
-                            .with_pin(&pin)
-                            .map_err(|e| format!("Failed to hash PIN: {}", e))?;
+                            // Store master seed mnemonic (encrypted with PIN)
+                            let network_dir = datadir_path.network_directory(network);
+                            network_dir.init().map_err(|e| {
+                                format!("Failed to create network directory: {}", e)
+                            })?;
 
-                        // Save Cube settings to settings file.
-                        // Idempotency: if a cube with this UUID was already persisted
-                        // (e.g. a previous attempt succeeded but the message was lost),
-                        // skip the insert and return the existing entry.
-                        settings::update_settings_file(&network_dir, |mut settings| {
-                            if settings.cubes.iter().any(|c| c.id == cube.id) {
-                                return Some(settings);
-                            }
-                            settings.cubes.push(cube.clone());
-                            Some(settings)
-                        })
-                        .await
-                        .map(|_| cube)
-                        .map_err(|e| e.to_string())
-                    },
-                    Message::CubeCreated,
-                );
+                            // Use a timestamp for the master seed storage
+                            let timestamp = chrono::Utc::now().timestamp();
+                            let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
 
-                if self.recover_liquid_wallet {
-                    // Enter recovery flow - show recovery input UI
-                    self.creating_cube = false;
-                    Task::done(Message::StartRecovery)
-                } else {
-                    without_recovery
-                }
+                            // Store master seed mnemonic encrypted with PIN
+                            master_signer
+                                .store_encrypted(
+                                    datadir_path.path(),
+                                    network,
+                                    &secp,
+                                    Some((master_checksum, timestamp)),
+                                    Some(&pin),
+                                )
+                                .map_err(|e| {
+                                    format!("Failed to store master seed mnemonic: {}", e)
+                                })?;
+
+                            tracing::info!(
+                                "Master signer created and stored (encrypted with PIN) \
+                                 with fingerprint: {}",
+                                master_fingerprint
+                            );
+
+                            // Build Cube settings
+                            let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
+                                .with_master_signer(master_fingerprint)
+                                .with_pin(&pin)
+                                .map_err(|e| format!("Failed to hash PIN: {}", e))?;
+
+                            // Save Cube settings
+                            settings::update_settings_file(&network_dir, |mut settings| {
+                                if settings.cubes.iter().any(|c| c.id == cube.id) {
+                                    return Some(settings);
+                                }
+                                settings.cubes.push(cube.clone());
+                                Some(settings)
+                            })
+                            .await
+                            .map(|_| cube)
+                            .map_err(|e| e.to_string())
+                        },
+                        Message::CubeCreated,
+                    )
+                };
+
+                without_recovery
             }
             Message::StartRecovery => {
                 self.state = State::RecoveryInput;
@@ -389,6 +483,211 @@ impl Launcher {
                     }
                 }
             }
+            // --- Passkey ceremony flow ---
+            Message::PasskeyWindowId(window_id) => {
+                if let Some(ceremony) = &mut self.passkey_ceremony {
+                    if !ceremony.create_webview(window_id) {
+                        self.creating_cube = false;
+                        self.passkey_ceremony = None;
+                        self.error = Some(
+                            "Failed to open passkey webview. Check your system's WebView support."
+                                .to_string(),
+                        );
+                    }
+                }
+                Task::none()
+            }
+            Message::PasskeyWebviewUpdate(msg) => {
+                if let Some(ceremony) = &mut self.passkey_ceremony {
+                    ceremony.webview_manager.update(msg);
+
+                    // Poll for IPC result
+                    if let Some(result) = ceremony.try_recv_result() {
+                        return Task::done(Message::PasskeyCeremonyResult(result));
+                    }
+                }
+                Task::none()
+            }
+            Message::PasskeyCeremonyResult(result) => {
+                // Close the ceremony webview
+                if let Some(mut ceremony) = self.passkey_ceremony.take() {
+                    ceremony.close();
+                }
+
+                match result {
+                    Ok(CeremonyOutcome::Registered(registration)) => {
+                        // Derive master signer from PRF output
+                        let network = self.network;
+                        let datadir_path = self.datadir_path.clone();
+                        let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
+                        let cube_name = self.create_cube_name.value.trim().to_string();
+                        let credential_id = registration.credential_id.clone();
+                        let prf_output = registration.prf_output;
+
+                        Task::perform(
+                            async move {
+                                let master_signer =
+                                    MasterSigner::from_prf_output(network, &prf_output).map_err(
+                                        |e| format!("Failed to derive master signer: {}", e),
+                                    )?;
+
+                                let secp =
+                                    coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+                                let master_fingerprint = master_signer.fingerprint(&secp);
+
+                                let network_dir = datadir_path.network_directory(network);
+                                network_dir.init().map_err(|e| {
+                                    format!("Failed to create network directory: {}", e)
+                                })?;
+
+                                // Passkey Cube: no encrypted seed file, no PIN.
+                                let passkey_metadata = settings::PasskeyMetadata {
+                                    credential_id,
+                                    rp_id: passkey_svc::RP_ID.to_string(),
+                                    created_at: chrono::Utc::now().timestamp(),
+                                    label: None,
+                                };
+
+                                let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
+                                    .with_master_signer(master_fingerprint)
+                                    .with_passkey(passkey_metadata);
+
+                                tracing::info!(
+                                    "Passkey Cube created with fingerprint: {} (no seed on disk)",
+                                    master_fingerprint
+                                );
+
+                                settings::update_settings_file(&network_dir, |mut settings| {
+                                    if settings.cubes.iter().any(|c| c.id == cube.id) {
+                                        return Some(settings);
+                                    }
+                                    settings.cubes.push(cube.clone());
+                                    Some(settings)
+                                })
+                                .await
+                                .map(|_| cube)
+                                .map_err(|e| e.to_string())
+                            },
+                            Message::CubeCreated,
+                        )
+                    }
+                    Ok(CeremonyOutcome::Authenticated(_auth)) => {
+                        // Authentication during creation shouldn't happen,
+                        // but handle gracefully.
+                        self.creating_cube = false;
+                        self.error = Some(
+                            "Unexpected authentication response during registration.".to_string(),
+                        );
+                        Task::none()
+                    }
+                    Err(e) => {
+                        self.creating_cube = false;
+                        self.error = Some(e.to_string());
+                        Task::none()
+                    }
+                }
+            }
+            Message::CancelPasskeyCeremony => {
+                if let Some(mut ceremony) = self.passkey_ceremony.take() {
+                    ceremony.close();
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    if let Some(ceremony) = self.native_passkey_ceremony.take() {
+                        ceremony.cancel();
+                    }
+                }
+                self.creating_cube = false;
+                Task::none()
+            }
+            #[cfg(target_os = "macos")]
+            Message::NativePasskeyTick => {
+                use crate::services::passkey::macos::NativeOutcome;
+                let outcome = self
+                    .native_passkey_ceremony
+                    .as_ref()
+                    .and_then(|c| c.try_recv());
+                let Some(outcome) = outcome else {
+                    return Task::none();
+                };
+                // Drop the ceremony now that we have a result.
+                self.native_passkey_ceremony = None;
+
+                match outcome {
+                    NativeOutcome::Registered {
+                        credential_id,
+                        prf_output,
+                    } => {
+                        let network = self.network;
+                        let datadir_path = self.datadir_path.clone();
+                        let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
+                        let cube_name = self.create_cube_name.value.trim().to_string();
+                        let credential_id_b64 = base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            &credential_id,
+                        );
+                        Task::perform(
+                            async move {
+                                let master_signer =
+                                    MasterSigner::from_prf_output(network, &prf_output).map_err(
+                                        |e| format!("Failed to derive master signer: {}", e),
+                                    )?;
+
+                                let secp =
+                                    coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+                                let master_fingerprint = master_signer.fingerprint(&secp);
+
+                                let network_dir = datadir_path.network_directory(network);
+                                network_dir.init().map_err(|e| {
+                                    format!("Failed to create network directory: {}", e)
+                                })?;
+
+                                let passkey_metadata = settings::PasskeyMetadata {
+                                    credential_id: credential_id_b64,
+                                    rp_id: passkey_svc::RP_ID.to_string(),
+                                    created_at: chrono::Utc::now().timestamp(),
+                                    label: None,
+                                };
+
+                                let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
+                                    .with_master_signer(master_fingerprint)
+                                    .with_passkey(passkey_metadata);
+
+                                tracing::info!(
+                                    "Passkey Cube created (native macOS) with fingerprint: {}",
+                                    master_fingerprint
+                                );
+
+                                settings::update_settings_file(&network_dir, |mut settings| {
+                                    if settings.cubes.iter().any(|c| c.id == cube.id) {
+                                        return Some(settings);
+                                    }
+                                    settings.cubes.push(cube.clone());
+                                    Some(settings)
+                                })
+                                .await
+                                .map(|_| cube)
+                                .map_err(|e| e.to_string())
+                            },
+                            Message::CubeCreated,
+                        )
+                    }
+                    NativeOutcome::Authenticated { .. } => {
+                        self.creating_cube = false;
+                        self.error = Some(
+                            "Unexpected authentication response during registration.".to_string(),
+                        );
+                        Task::none()
+                    }
+                    NativeOutcome::Error(e) => {
+                        self.creating_cube = false;
+                        self.error = Some(e);
+                        Task::none()
+                    }
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            Message::NativePasskeyTick => Task::none(),
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ShowModal(i))) => {
                 if let State::Cubes { cubes, .. } = &self.state {
                     if let Some(cube) = cubes.get(i) {
@@ -515,10 +814,7 @@ impl Launcher {
                     Task::none()
                 }
             }
-            Message::View(ViewMessage::ToggleRecoveryCheckBox) => {
-                self.recover_liquid_wallet = !self.recover_liquid_wallet;
-                Task::none()
-            }
+            Message::View(ViewMessage::ToggleRecoveryCheckBox) => Task::none(),
             Message::View(ViewMessage::RecoveryWordInput { index, word }) => {
                 if index < 12 {
                     let normalized = word
@@ -594,8 +890,8 @@ impl Launcher {
 
                         Task::perform(
                             async move {
-                                // Restore Liquid wallet HotSigner from mnemonic
-                                let master_signer = HotSigner::from_mnemonic(network, mnemonic)
+                                // Restore Liquid wallet MasterSigner from mnemonic
+                                let master_signer = MasterSigner::from_mnemonic(network, mnemonic)
                                     .map_err(|e| {
                                         format!("Failed to restore from mnemonic: {}", e)
                                     })?;
@@ -849,7 +1145,7 @@ impl Launcher {
                                             &self.create_cube_pin_confirm,
                                             &self.error,
                                             self.creating_cube,
-                                            self.recover_liquid_wallet,
+                                            self.passkey_mode,
                                         )
                                     } else {
                                         let mut col =
@@ -907,7 +1203,7 @@ impl Launcher {
                                     &self.create_cube_pin_confirm,
                                     &self.error,
                                     self.creating_cube,
-                                    self.recover_liquid_wallet,
+                                    self.passkey_mode,
                                 ),
                             })
                             .align_x(Alignment::Center),
@@ -966,6 +1262,71 @@ impl Launcher {
         } else {
             layout
         };
+        // If passkey ceremony webview is active, overlay it on top
+        let layout = if let Some(ceremony) = &self.passkey_ceremony {
+            if let Some(active) = &ceremony.active_webview {
+                let cancel_btn = button::secondary(None, "Cancel")
+                    .on_press(Message::CancelPasskeyCeremony)
+                    .width(Length::Fixed(150.0));
+
+                let webview_modal = Container::new(
+                    Column::new()
+                        .spacing(15)
+                        .align_x(Alignment::Center)
+                        .push(h4_bold("Passkey Registration"))
+                        .push(
+                            p1_regular("Complete the passkey setup in the window below.")
+                                .style(theme::text::secondary),
+                        )
+                        .push(active.view(Length::Fixed(500.0), Length::Fixed(400.0)))
+                        .push(cancel_btn)
+                        .width(550),
+                )
+                .padding(20)
+                .style(theme::card::modal);
+
+                Modal::new(Container::new(layout).height(Length::Fill), webview_modal)
+                    .on_blur(Some(Message::CancelPasskeyCeremony))
+                    .into()
+            } else {
+                layout
+            }
+        } else {
+            layout
+        };
+
+        // Native macOS passkey ceremony status modal
+        #[cfg(target_os = "macos")]
+        let layout = if self.native_passkey_ceremony.is_some() {
+            let cancel_btn = button::secondary(None, "Cancel")
+                .on_press(Message::CancelPasskeyCeremony)
+                .width(Length::Fixed(150.0));
+
+            let status_modal = Container::new(
+                Column::new()
+                    .spacing(20)
+                    .align_x(Alignment::Center)
+                    .push(h4_bold("Passkey Registration"))
+                    .push(
+                        p1_regular(
+                            "Authenticate with Touch ID to create your passkey.\n\
+                             Look for the system prompt.",
+                        )
+                        .style(theme::text::secondary),
+                    )
+                    .push(cancel_btn)
+                    .width(450),
+            )
+            .padding(30)
+            .style(theme::card::modal);
+
+            Modal::new(Container::new(layout).height(Length::Fill), status_modal)
+                .on_blur(Some(Message::CancelPasskeyCeremony))
+                .into()
+        } else {
+            layout
+        };
+
         if let Some(modal) = &self.delete_cube_modal {
             Modal::new(Container::new(layout).height(Length::Fill), modal.view())
                 .on_blur(Some(Message::View(ViewMessage::DeleteCube(
@@ -1127,7 +1488,7 @@ fn create_cube_form<'a>(
     pin_confirm: &'a pin_input::PinInput,
     error: &'a Option<String>,
     creating_cube: bool,
-    recover_liquid_wallet: bool,
+    passkey_mode: bool,
 ) -> Element<'a, ViewMessage> {
     use coincube_ui::component::form;
     use std::time::Duration;
@@ -1153,18 +1514,50 @@ fn create_cube_form<'a>(
             .width(Length::Fill),
         );
 
-    // PIN setup section (always required)
-    column = column.push(Space::new().height(Length::Fixed(10.0)));
+    // Passkey toggle — hidden entirely when the passkey feature is disabled
+    // via the COINCUBE_ENABLE_PASSKEY env var. The surrounding PIN flow
+    // remains fully functional in that case.
+    if feature_flags::PASSKEY_ENABLED {
+        column = column.push(
+            Toggler::new(passkey_mode)
+                .label(if cfg!(target_os = "macos") {
+                    "Use Passkey (Touch ID)"
+                } else if cfg!(target_os = "windows") {
+                    "Use Passkey (Windows Hello)"
+                } else {
+                    "Use Passkey (Security Key)"
+                })
+                .on_toggle(ViewMessage::TogglePasskeyMode),
+        );
+    }
 
-    let pin_label = p1_regular("Enter PIN:").style(theme::text::secondary);
-    column = column.push(pin_label);
-    column = column.push(pin.view().map(ViewMessage::PinInput));
+    if passkey_mode {
+        // Passkey mode: no PIN needed — biometric auth replaces it
+        let description = if cfg!(target_os = "macos") {
+            "Your Cube will be secured with a passkey. No PIN is needed \u{2014} \
+             you'll use Touch ID to unlock it."
+        } else if cfg!(target_os = "windows") {
+            "Your Cube will be secured with a passkey. No PIN is needed \u{2014} \
+             you'll use Windows Hello to unlock it."
+        } else {
+            "Your Cube will be secured with a passkey. No PIN is needed \u{2014} \
+             you'll use a FIDO2 security key to unlock it."
+        };
+        column = column.push(p1_regular(description).style(theme::text::secondary));
+    } else {
+        // PIN setup section
+        column = column.push(Space::new().height(Length::Fixed(10.0)));
 
-    column = column.push(Space::new().height(Length::Fixed(20.0)));
+        let pin_label = p1_regular("Enter PIN:").style(theme::text::secondary);
+        column = column.push(pin_label);
+        column = column.push(pin.view().map(ViewMessage::PinInput));
 
-    let pin_confirm_label = p1_regular("Confirm PIN:").style(theme::text::secondary);
-    column = column.push(pin_confirm_label);
-    column = column.push(pin_confirm.view().map(ViewMessage::PinConfirmInput));
+        column = column.push(Space::new().height(Length::Fixed(20.0)));
+
+        let pin_confirm_label = p1_regular("Confirm PIN:").style(theme::text::secondary);
+        column = column.push(pin_confirm_label);
+        column = column.push(pin_confirm.view().map(ViewMessage::PinConfirmInput));
+    }
 
     column = column.push(Space::new().height(Length::Fixed(10.0)));
 
@@ -1173,21 +1566,17 @@ fn create_cube_form<'a>(
         column = column.push(p1_regular(err).style(theme::text::error));
     }
 
-    column = column.push(
-        CheckBox::new(recover_liquid_wallet)
-            .label("Recover Liquid Wallet")
-            .on_toggle(|_| ViewMessage::ToggleRecoveryCheckBox)
-            .size(20),
-    );
-
     column = column.push(Space::new().height(Length::Fixed(10.0)));
     // Determine if button should be enabled
-    // PIN is always required, so all PIN fields must be filled
-    let can_create = !creating_cube
-        && cube_name.valid
-        && !cube_name.value.trim().is_empty()
-        && pin.is_complete()
-        && pin_confirm.is_complete();
+    let can_create = if passkey_mode {
+        !creating_cube && cube_name.valid && !cube_name.value.trim().is_empty()
+    } else {
+        !creating_cube
+            && cube_name.valid
+            && !cube_name.value.trim().is_empty()
+            && pin.is_complete()
+            && pin_confirm.is_complete()
+    };
 
     let submit_button = if creating_cube {
         iced::widget::button(
@@ -1482,6 +1871,16 @@ pub enum Message {
     ),
     StartRecovery,
     CubeCreated(Result<CubeSettings, String>),
+    /// Window ID extracted for passkey webview.
+    PasskeyWindowId(iced_wry::ExtractedWindowId),
+    /// Passkey webview manager update.
+    PasskeyWebviewUpdate(iced_wry::IcedWryMessage),
+    /// Passkey ceremony completed (registration or authentication).
+    PasskeyCeremonyResult(Result<CeremonyOutcome, passkey_svc::PasskeyError>),
+    /// Cancel an in-progress passkey ceremony.
+    CancelPasskeyCeremony,
+    /// Poll tick for native (macOS) passkey ceremony.
+    NativePasskeyTick,
 }
 
 #[derive(Debug, Clone)]
@@ -1519,6 +1918,8 @@ pub enum ViewMessage {
     ConnectAccount(ConnectAccountMessage),
     /// Toggle light/dark theme
     ToggleTheme,
+    /// Toggle passkey mode for Cube creation (no PIN when enabled).
+    TogglePasskeyMode(bool),
 }
 
 #[derive(Debug, Clone)]

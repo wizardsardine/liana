@@ -184,8 +184,41 @@ impl Tab {
                     command.map(Message::Install)
                 }
                 launcher::Message::Run(datadir_path, cfg, network, cube) => {
-                    // PIN is always required - determine what to do after PIN verification
-                    // Try to load Vault wallet settings if cube has a vault configured
+                    if cube.is_passkey_cube() {
+                        // Passkey Cubes don't have an encrypted mnemonic on
+                        // disk — their master seed is re-derived from the
+                        // WebAuthn PRF output on every open. That path isn't
+                        // wired up yet (blocked on macOS code signing +
+                        // associated-domains entitlement), so the only way
+                        // to actually open a passkey Cube right now is via
+                        // the mnemonic recovery flow.
+                        //
+                        // Refuse to open, surface a clear error to the user,
+                        // and stay on the launcher. This prevents falling
+                        // through to the PinEntry state and crashing on the
+                        // (missing) mnemonic load.
+                        tracing::warn!(
+                            "Refusing to open passkey Cube '{}' — passkey auth flow is not \
+                             wired up. The user must restore from their mnemonic backup.",
+                            cube.name
+                        );
+                        let msg = if crate::feature_flags::PASSKEY_ENABLED {
+                            "This Cube was created with a passkey. Passkey authentication \
+                             on Cube open is not yet implemented. Restore from your mnemonic \
+                             backup to access this Cube."
+                                .to_string()
+                        } else {
+                            "This Cube was created with a passkey, but the passkey feature \
+                             is currently disabled. Restore from your mnemonic backup to \
+                             access this Cube, or re-enable COINCUBE_ENABLE_PASSKEY in your \
+                             environment."
+                                .to_string()
+                        };
+                        l.set_error(msg);
+                        return Task::none();
+                    }
+
+                    // PIN entry
                     let wallet_settings = cube.vault_wallet_id.as_ref().and_then(|vault_id| {
                         let network_dir = datadir_path.network_directory(network);
                         app::settings::Settings::from_file(&network_dir)
@@ -405,11 +438,9 @@ impl Tab {
                         true, // launched from app (loader is part of app flow)
                         Some(loader.cube_settings.clone()), // pass cube settings for returning
                         loader.breez_client.clone(), // pass breez_client to avoid re-entering PIN
-                        GlobalSettings::load_developer_mode(
-                            &GlobalSettings::path(
-                                &loader.datadir_path,
-                            ),
-                        ),
+                        GlobalSettings::load_developer_mode(&GlobalSettings::path(
+                            &loader.datadir_path,
+                        )),
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
@@ -544,11 +575,9 @@ impl Tab {
                             true,                              // launched from app
                             Some(app.cube_settings().clone()), // pass cube settings for returning
                             Some(app.breez_client()), // pass breez_client to avoid re-entering PIN
-                            GlobalSettings::load_developer_mode(
-                                &GlobalSettings::path(
-                                    app.datadir(),
-                                ),
-                            ),
+                            GlobalSettings::load_developer_mode(&GlobalSettings::path(
+                                app.datadir(),
+                            )),
                         );
                         self.state = State::Installer(install);
                         command.map(Message::Install)
@@ -585,21 +614,20 @@ impl Tab {
                             Task::perform(
                                 async move {
                                     // Load BreezClient for Liquid wallet with PIN
-                                    let breez_result = if let Some(fingerprint) =
-                                        cube.master_signer_fingerprint
-                                    {
-                                        breez::load_breez_client(
-                                            datadir_clone.path(),
-                                            network_val,
-                                            fingerprint,
-                                            &pin,
-                                        )
-                                        .await
-                                    } else {
-                                        Err(breez::BreezError::SignerError(
-                                            "No Liquid wallet configured".to_string(),
-                                        ))
-                                    };
+                                    let breez_result =
+                                        if let Some(fingerprint) = cube.master_signer_fingerprint {
+                                            breez::load_breez_client(
+                                                datadir_clone.path(),
+                                                network_val,
+                                                fingerprint,
+                                                &pin,
+                                            )
+                                            .await
+                                        } else {
+                                            Err(breez::BreezError::SignerError(
+                                                "No Liquid wallet configured".to_string(),
+                                            ))
+                                        };
 
                                     (
                                         config_clone,
@@ -1058,6 +1086,8 @@ pub fn create_app_with_remote_backend(
             connect_authenticated: false,
             has_vault: true,
             cube_name: cube_settings.name.clone(),
+            current_cube_backed_up: cube_settings.backed_up,
+            current_cube_is_passkey: cube_settings.is_passkey_cube(),
             has_p2p: false, // Set later by App::new based on mnemonic availability
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
             btc_usd_price: None,

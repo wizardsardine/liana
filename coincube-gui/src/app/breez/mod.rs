@@ -9,7 +9,7 @@ pub use config::BreezConfig;
 pub use breez_sdk_liquid::prelude::{GetInfoResponse, ReceivePaymentResponse, SendPaymentResponse};
 
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Network};
-use coincube_core::signer::HotSigner;
+use coincube_core::signer::MasterSigner;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -58,7 +58,7 @@ pub async fn load_breez_client(
     }
 
     // Load only the specific signer by fingerprint (more efficient and secure)
-    let liquid_signer = HotSigner::from_datadir_by_fingerprint(
+    let liquid_signer = MasterSigner::from_datadir_by_fingerprint(
         datadir,
         network,
         master_signer_fingerprint,
@@ -69,6 +69,9 @@ pub async fn load_breez_client(
             if io_err.kind() == std::io::ErrorKind::NotFound =>
         {
             BreezError::SignerNotFound(master_signer_fingerprint)
+        }
+        coincube_core::signer::SignerError::SignerNotFound(fingerprint) => {
+            BreezError::SignerNotFound(fingerprint)
         }
         _ => BreezError::SignerError(e.to_string()),
     })?;

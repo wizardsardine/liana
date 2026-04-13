@@ -131,7 +131,7 @@ impl Step for ShareXpubs {
                     return modal.update(msg);
                 }
             }
-            Message::UseHotSigner => {
+            Message::UseMasterSigner => {
                 self.xpubs_signer.select(self.network);
             }
             Message::UserActionDone(done) => {

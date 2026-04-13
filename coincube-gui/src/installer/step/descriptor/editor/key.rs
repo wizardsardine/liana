@@ -101,7 +101,7 @@ enum Focus {
     Device(Fingerprint),
     EnterXpub,
     LoadXpubFromFile,
-    GenerateHotKey,
+    GenerateMasterKey,
     EnterSafetyNetToken,
     EnterCosignerToken,
 }
@@ -115,8 +115,8 @@ pub enum SelectKeySourceMessage {
     SelectEnterXpub,
     PasteXpub,
     Xpub(String),
-    SelectGenerateHotKey,
-    FetchFromHotSigner(ChildNumber),
+    SelectGenerateMasterKey,
+    FetchFromMasterSigner(ChildNumber),
     SelectEnterSafetyNetToken,
     SelectEnterCosignerToken,
     SelectBorderWalletSafetyNet,
@@ -181,7 +181,7 @@ pub struct SelectKeySource {
     accounts: HashMap<Fingerprint, ChildNumber>,
     /// Informations about the actual spending path.
     actual_path: PathData,
-    hot_signer: Arc<Mutex<Signer>>,
+    master_signer: Arc<Mutex<Signer>>,
     developer_mode: bool,
     /// The currently selected key.
     selected_key: SelectedKey,
@@ -211,7 +211,7 @@ impl SelectKeySource {
         actual_path: PathData,
         keys: HashMap<Fingerprint, (Vec<(usize, usize)>, Key)>,
         accounts: HashMap<Fingerprint, ChildNumber>,
-        hot_signer: Arc<Mutex<Signer>>,
+        master_signer: Arc<Mutex<Signer>>,
         developer_mode: bool,
     ) -> Self {
         Self {
@@ -220,7 +220,7 @@ impl SelectKeySource {
             keys,
             accounts,
             actual_path,
-            hot_signer,
+            master_signer,
             developer_mode,
             selected_key: SelectedKey::None,
             step: Step::Select,
@@ -490,7 +490,7 @@ impl SelectKeySource {
         Task::none()
     }
     fn on_select_generate_hot_key(&mut self) -> Task<Message> {
-        self.focus = Focus::GenerateHotKey;
+        self.focus = Focus::GenerateMasterKey;
         let _ = self.on_next();
         self.processing = true;
         Task::done(Self::route(SelectKeySourceMessage::Account(
@@ -499,14 +499,14 @@ impl SelectKeySource {
     }
     fn on_fetch_from_hotsigner(&mut self, account: ChildNumber) -> Task<Message> {
         self.processing = false;
-        let fingerprint = self.hot_signer.lock().unwrap().fingerprint();
+        let fingerprint = self.master_signer.lock().unwrap().fingerprint();
 
         if self.keys.contains_key(&fingerprint) {
             self.selected_key = SelectedKey::Existing(fingerprint);
             return Task::none();
         }
 
-        self.form_alias.value = "Hot Signer".to_string();
+        self.form_alias.value = "Master Signer".to_string();
         self.form_alias.valid = true;
 
         let derivation_path = derivation_path(self.network, account);
@@ -514,7 +514,7 @@ impl SelectKeySource {
             "[{}/{}]{}",
             fingerprint,
             derivation_path.to_string().trim_start_matches("m/"),
-            self.hot_signer
+            self.master_signer
                 .lock()
                 .expect("poisoned")
                 .get_extended_pubkey(&derivation_path)
@@ -522,7 +522,7 @@ impl SelectKeySource {
 
         let key = DescriptorPublicKey::from_str(&key_str).expect("always ok");
         let key = Key {
-            source: KeySource::HotSigner,
+            source: KeySource::MasterSigner,
             name: self.form_alias.value.clone(),
             fingerprint,
             key,
@@ -800,7 +800,7 @@ impl SelectKeySource {
             Focus::Device(fg) => Task::done(Self::route(SelectKeySourceMessage::FetchFromDevice(
                 fg, index,
             ))),
-            Focus::GenerateHotKey => self.on_fetch_from_hotsigner(index),
+            Focus::GenerateMasterKey => self.on_fetch_from_hotsigner(index),
             _ => Task::none(),
         }
     }
@@ -887,8 +887,8 @@ impl SelectKeySource {
             Focus::Device(fg) => Task::done(Self::route(SelectKeySourceMessage::FetchFromDevice(
                 fg, account,
             ))),
-            Focus::GenerateHotKey => Task::done(Self::route(
-                SelectKeySourceMessage::FetchFromHotSigner(account),
+            Focus::GenerateMasterKey => Task::done(Self::route(
+                SelectKeySourceMessage::FetchFromMasterSigner(account),
             )),
             _ => Task::none(),
         }
@@ -942,7 +942,7 @@ impl SelectKeySource {
         };
         let fingerprint = match self.focus {
             Focus::Key(fg) | Focus::Device(fg) => fg,
-            Focus::GenerateHotKey => self.hot_signer.lock().expect("poisoned").fingerprint(),
+            Focus::GenerateMasterKey => self.master_signer.lock().expect("poisoned").fingerprint(),
             _ => match &self.selected_key {
                 SelectedKey::Existing(fg) => *fg,
                 SelectedKey::New(key) => key.fingerprint,
@@ -1063,11 +1063,11 @@ impl SelectKeySource {
             || Self::route(SelectKeySourceMessage::Collapse(false)),
         );
 
-        let hot_signer_fg = self.hot_signer.lock().expect("poisoned").fingerprint();
-        let hot_signer = (self.developer_mode
-            && !self.keys.contains_key(&hot_signer_fg)
+        let master_signer_fg = self.master_signer.lock().expect("poisoned").fingerprint();
+        let master_signer = (self.developer_mode
+            && !self.keys.contains_key(&master_signer_fg)
             && safety_net_token.is_none())
-            .then_some(self.widget_generate_hot_key());
+        .then_some(self.widget_generate_hot_key());
 
         let load_key = safety_net_token.is_none().then_some(self.widget_load_key());
 
@@ -1079,7 +1079,7 @@ impl SelectKeySource {
             col = col
                 .push(load_key)
                 .push(paste_xpub)
-                .push(hot_signer)
+                .push(master_signer)
                 .push(cosigner_token)
                 .push(border_wallet)
                 .push(safety_net_token);
@@ -1157,7 +1157,7 @@ impl SelectKeySource {
         let (source, alias, fg, available) = key;
         let icon = match source {
             KeySource::Device(..) => icon::usb_drive_icon(),
-            KeySource::HotSigner => icon::round_key_icon().color(color::RED),
+            KeySource::MasterSigner => icon::round_key_icon().color(color::RED),
             KeySource::Manual => icon::round_key_icon(),
             KeySource::Token(..) => icon::hdd_icon(),
             KeySource::BorderWallet => icon::round_key_icon(),
@@ -1205,7 +1205,7 @@ impl SelectKeySource {
             "Generate hot key stored on this computer",
             Some(subtitle),
             None,
-            Some(|| Self::route(SelectKeySourceMessage::SelectGenerateHotKey)),
+            Some(|| Self::route(SelectKeySourceMessage::SelectGenerateMasterKey)),
         )
     }
     fn widget_paste_xpub(&self) -> Element<Message> {
@@ -1302,7 +1302,7 @@ impl super::DescriptorEditModal for SelectKeySource {
                 SelectKeySourceMessage::SelectEnterXpub => self.on_select_enter_xpub(),
                 SelectKeySourceMessage::PasteXpub => self.on_paste_xpub(),
                 SelectKeySourceMessage::Xpub(xpub) => self.on_update_xpub(xpub),
-                SelectKeySourceMessage::SelectGenerateHotKey => {
+                SelectKeySourceMessage::SelectGenerateMasterKey => {
                     if self.developer_mode {
                         self.on_select_generate_hot_key()
                     } else {
@@ -1310,7 +1310,7 @@ impl super::DescriptorEditModal for SelectKeySource {
                         Task::none()
                     }
                 }
-                SelectKeySourceMessage::FetchFromHotSigner(account) => {
+                SelectKeySourceMessage::FetchFromMasterSigner(account) => {
                     self.on_fetch_from_hotsigner(account)
                 }
                 SelectKeySourceMessage::SelectEnterCosignerToken => {
