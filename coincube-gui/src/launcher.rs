@@ -9,19 +9,19 @@ use coincube_ui::{
     color,
     component::{button, card, network_banner, notification, spinner, text::*},
     icon, image, theme,
-    widget::{modal::Modal, Column, Container, Element, Row},
+    widget::{modal::Modal, CheckBox, Column, Container, Element, Row},
 };
 use coincubed::config::ConfigError;
 use tokio::runtime::Handle;
 
 use crate::feature_flags;
 use crate::pin_input;
-#[cfg(not(target_os = "macos"))]
-use crate::services::passkey::CeremonyMode;
-use crate::services::passkey::{self as passkey_svc, CeremonyOutcome, PasskeyCeremony};
 use crate::services::coincube::{
     CubeLimitsResponse, CubeResponse, RegisterCubeRequest, UpdateCubeRequest,
 };
+#[cfg(not(target_os = "macos"))]
+use crate::services::passkey::CeremonyMode;
+use crate::services::passkey::{self as passkey_svc, CeremonyOutcome, PasskeyCeremony};
 use crate::{
     app::{
         self,
@@ -359,14 +359,6 @@ impl Launcher {
                 }
 
                 // Enforce per-network Cube limit based on Connect account tier.
-                let cube_count = if let State::Cubes { cubes, .. } = &self.state {
-                    cubes.len()
-                } else {
-                    0
-                };
-                let limit = self.account_tier.cube_limit();
-                let at_limit = cube_count >= limit && matches!(self.network, Network::Bitcoin);
-                if at_limit {
                 // Includes remote cubes (on server but not local) since the
                 // limit applies across all devices.
                 let cube_count = self.total_cube_count();
@@ -638,7 +630,7 @@ impl Launcher {
                     );
                     Task::none()
                 }
-            }
+            },
             Message::CubeLimitsLoaded(result) => {
                 match result {
                     Ok(limits) => {
@@ -940,7 +932,7 @@ impl Launcher {
                     self.error = Some(format!("Failed to rename Cube: {}", e));
                     Task::none()
                 }
-            }
+            },
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ShowModal(i))) => {
                 if let State::Cubes { cubes, .. } = &self.state {
                     if let Some(cube) = cubes.get(i) {

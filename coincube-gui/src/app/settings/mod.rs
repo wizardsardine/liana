@@ -134,7 +134,7 @@ pub struct PasskeyMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 }
-  
+
 /// Mark a cube as synced with the remote Connect API.
 pub async fn mark_cube_synced(
     network_dir: &NetworkDirectory,
