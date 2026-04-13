@@ -41,11 +41,7 @@ use crate::{
         config::Config as GUIConfig,
         wallet::{Wallet, WalletError},
     },
-    daemon::{
-        client, embedded::EmbeddedDaemon,
-        model::GetInfoResult,
-        Daemon, DaemonError,
-    },
+    daemon::{client, embedded::EmbeddedDaemon, model::GetInfoResult, Daemon, DaemonError},
     node::{
         bitcoind::{
             internal_bitcoind_datadir, internal_bitcoind_debug_log_path, Bitcoind,

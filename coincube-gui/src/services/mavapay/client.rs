@@ -1,13 +1,12 @@
 use crate::services::{coincube::CoincubeError, http::ResponseExt};
 use reqwest::Method;
 
-use super::api::{
-    GetOrderResponse, GetPriceResponse, GetQuoteRequest, GetQuoteResponse,
-    GetTransactionsResponse, MavapayApiResult, MavapayBanks, MavapayCurrency,
-    NgnCustomerDetails,
-};
 #[cfg(debug_assertions)]
 use super::api::SimulatePayInRequest;
+use super::api::{
+    GetOrderResponse, GetPriceResponse, GetQuoteRequest, GetQuoteResponse, GetTransactionsResponse,
+    MavapayApiResult, MavapayBanks, MavapayCurrency, NgnCustomerDetails,
+};
 use super::stream::transaction_stream;
 use super::MavapayMessage;
 

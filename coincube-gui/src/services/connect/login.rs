@@ -4,7 +4,10 @@ use iced::{Alignment, Length, Task};
 
 use coincube_core::miniscript::bitcoin::Network;
 use coincube_ui::{
-    component::{button, form, network_banner, notification, text::{h2, text, P1_SIZE}},
+    component::{
+        button, form, network_banner, notification,
+        text::{h2, text, P1_SIZE},
+    },
     icon, theme,
     widget::{Column, Container, Element, Row},
 };
