@@ -333,6 +333,9 @@ impl ConnectAccountPanel {
 
             ConnectAccountMessage::PlanLoaded(plan, gen) => {
                 if gen == self.session_generation && plan.is_some() {
+                    if let Some(cycle) = plan.as_ref().and_then(|p| p.billing_cycle) {
+                        self.selected_billing_cycle = cycle;
+                    }
                     self.plan = plan;
                 }
             }

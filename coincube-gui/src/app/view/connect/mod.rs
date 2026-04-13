@@ -470,6 +470,7 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         .as_ref()
         .map(|p| p.tier())
         .unwrap_or(&PlanTier::Free);
+    let current_cycle = state.plan.as_ref().and_then(|p| p.billing_cycle);
 
     let cycle = state.selected_billing_cycle;
 
@@ -589,7 +590,13 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
 
     for card in cards {
-        let is_current = card.tier == *current_tier;
+        // Paid tiers are "current" only when both tier *and* cycle match the
+        // user's actual plan. Free tier has no cycle, so tier alone suffices.
+        let is_current = card.tier == *current_tier
+            && match current_cycle {
+                Some(cc) => cc == cycle,
+                None => true,
+            };
         let is_upgrade = tier_rank(&card.tier) > tier_rank(current_tier);
         let badge_color = plan_tier_color(&card.tier);
 
@@ -846,17 +853,21 @@ fn checkout_ux<'a>(
 // ── Billing history view ────────────────────────────────────────────────────
 
 fn billing_history_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
+    let back_button = iced::widget::button(
+        Row::new()
+            .push(previous_icon().color(color::GREY_2))
+            .push(iced::widget::Space::new().width(Length::Fixed(5.0)))
+            .push(text::p1_medium("Back").style(theme::text::secondary))
+            .spacing(5)
+            .align_y(Alignment::Center),
+    )
+    .style(theme::button::transparent)
+    .on_press(ConnectAccountMessage::ToggleBillingHistory);
+
     let mut col = Column::new()
-        .push(
-            Row::new()
-                .push(
-                    button::secondary(None, "← Back")
-                        .on_press(ConnectAccountMessage::ToggleBillingHistory),
-                )
-                .push(iced::widget::Space::new().width(Length::Fixed(10.0)))
-                .push(text::h4_bold("Billing History").style(theme::text::primary))
-                .align_y(Alignment::Center),
-        )
+        .push(back_button)
+        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+        .push(text::h4_bold("Billing History").style(theme::text::primary))
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
 
     match &state.billing_history {
