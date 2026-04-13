@@ -614,6 +614,23 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                 card_col.push(text::p2_regular(format!("• {}", feature)).color(color::GREY_3));
         }
 
+        // Expiry line on the user's current paid plan card.
+        if is_current && card.tier != PlanTier::Free {
+            if let Some(renewal) = state.plan.as_ref().and_then(|p| p.renewal_at.as_deref()) {
+                let date_short = if renewal.len() >= 10 {
+                    &renewal[..10]
+                } else {
+                    renewal
+                };
+                card_col = card_col
+                    .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+                    .push(
+                        text::p2_regular(format!("Expires on {}", date_short))
+                            .color(color::GREY_3),
+                    );
+            }
+        }
+
         card_col = card_col
             .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
             .push(if is_current {
