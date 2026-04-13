@@ -117,22 +117,23 @@ fn create_stream(
 
                 match sse_client.execute(request).await {
                     Ok(res) => {
-                        // `execute` returns Ok for any HTTP response, including
-                        // 4xx/5xx. Don't declare the stream "connected" until
-                        // we've actually seen a 2xx — otherwise a 404 produces
-                        // two misleading log lines ("connected" followed by
-                        // "failed to get event source").
                         let status = res.status();
+                        if status == reqwest::StatusCode::UNAUTHORIZED {
+                            log::warn!("[LNURL] SSE stream returned 401 Unauthorized");
+                            tokio::time::sleep(backoff).await;
+                            let _ = channel
+                                .send(LnurlMessage::StreamError(
+                                    "Unauthorized – token may have expired".to_string(),
+                                ))
+                                .await;
+                            return;
+                        }
                         if !status.is_success() {
-                            log::warn!(
-                                "[LNURL] SSE endpoint returned non-success status: {} (url: {})",
-                                status,
-                                sse_url
-                            );
+                            log::error!("[LNURL] SSE stream returned {}", status);
                             tokio::time::sleep(backoff).await;
                             let _ = channel
                                 .send(LnurlMessage::StreamError(format!(
-                                    "SSE endpoint returned {}",
+                                    "Unexpected status: {}",
                                     status
                                 )))
                                 .await;

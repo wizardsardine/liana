@@ -1052,29 +1052,29 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
                             .align_y(Alignment::Center),
                     )
                     .padding(16)
-                    .style(|t| container::Style {
-                        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-                        border: iced::Border {
-                            color: color::ORANGE,
-                            width: 0.5,
-                            radius: 12.0.into(),
-                        },
-                        ..Default::default()
-                    })
                     .width(Length::Fill),
                 )
                 .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
                 .push(
                     text::p2_regular(
                         "Anyone can send you bitcoin using this address. \
-                         It works with any wallet that supports BOLT12 / BIP353.",
+                         BOLT12 / BIP353 payments are received automatically and work if you are offline. \
+                         BOLT11 / LNURL payments require this app to be open and active.",
                     )
                     .color(color::GREY_3),
                 )
                 .padding(20)
                 .spacing(2),
         )
-        .style(card_style)
+        .style(|t| container::Style {
+            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+            border: iced::Border {
+                color: color::ORANGE,
+                width: 0.5,
+                radius: 16.0.into(),
+            },
+            ..Default::default()
+        })
         .width(Length::Fill)
         .into()
     } else {

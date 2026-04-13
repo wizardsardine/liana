@@ -4,7 +4,7 @@ use crate::{
     color,
     component::{collapse, text},
     icon, theme,
-    widget::{Button, Container, Element, Row},
+    widget::{Button, Column, Container, Element, Row},
 };
 use iced::{
     widget::{column, container, row},

@@ -9,6 +9,7 @@ pub mod state;
 pub mod view;
 pub mod wallet;
 
+use std::collections::VecDeque;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
@@ -568,6 +569,17 @@ pub struct App {
     bitcoind_sync_probe_in_progress: bool,
     /// Retry counter for LNURL SSE reconnection (same pattern as Meld).
     lnurl_sse_retries: usize,
+    /// Global "payment received" celebration overlay — shown for incoming
+    /// Liquid payments (e.g. LNURL) regardless of which panel is active.
+    show_received_celebration: bool,
+    received_celebration_amount: String,
+    received_celebration_quote: coincube_ui::component::quote_display::Quote,
+    received_celebration_image: iced::widget::image::Handle,
+    /// tx_ids of recent incoming payments we've already toasted for in
+    /// PaymentWaitingConfirmation. Breez fires this event multiple times for
+    /// the same swap; bounded FIFO so concurrent incoming swaps don't evict
+    /// each other and re-toast.
+    toasted_incoming_waiting_tx_ids: VecDeque<String>,
 }
 
 /// Returns true when a `DaemonError` indicates the daemon process is no longer
@@ -693,6 +705,16 @@ impl App {
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
                 lnurl_sse_retries: 0,
+                show_received_celebration: false,
+                received_celebration_amount: String::new(),
+                received_celebration_quote: coincube_ui::component::quote_display::random_quote(
+                    "transaction-received",
+                ),
+                received_celebration_image:
+                    coincube_ui::component::quote_display::image_handle_for_context(
+                        "transaction-received",
+                    ),
+                toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
             },
             cmd,
         )
@@ -757,6 +779,16 @@ impl App {
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
                 lnurl_sse_retries: 0,
+                show_received_celebration: false,
+                received_celebration_amount: String::new(),
+                received_celebration_quote: coincube_ui::component::quote_display::random_quote(
+                    "transaction-received",
+                ),
+                received_celebration_image:
+                    coincube_ui::component::quote_display::image_handle_for_context(
+                        "transaction-received",
+                    ),
+                toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
             },
             cmd,
         )
@@ -1707,6 +1739,9 @@ impl App {
                     });
                 return task;
             }
+            Message::View(view::Message::DismissReceivedCelebration) => {
+                self.show_received_celebration = false;
+            }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     tracing::error!("Error opening '{}': {}", url, e);
@@ -1804,6 +1839,23 @@ impl App {
                         return Task::batch(tasks);
                     }
                     SdkEvent::PaymentSucceeded { details } => {
+                        // Show global celebration for incoming payments
+                        if matches!(details.payment_type, PaymentType::Receive) {
+                            use coincube_ui::component::amount::DisplayAmount;
+                            self.received_celebration_amount =
+                                bitcoin::Amount::from_sat(details.amount_sat)
+                                    .to_formatted_string_with_unit(self.cache.bitcoin_unit);
+                            self.received_celebration_quote =
+                                coincube_ui::component::quote_display::random_quote(
+                                    "transaction-received",
+                                );
+                            self.received_celebration_image =
+                                coincube_ui::component::quote_display::image_handle_for_context(
+                                    "transaction-received",
+                                );
+                            self.show_received_celebration = true;
+                        }
+
                         let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::LiquidToVaultSucceeded(Some(swap_id)),
@@ -1855,6 +1907,35 @@ impl App {
                         if let Some(msg) = self.panels.active_liquid_refresh(true) {
                             tasks.push(Task::done(msg));
                         }
+
+                        // Notify the user that an incoming Lightning payment is
+                        // mid-swap to L-BTC. The swap can take a couple of minutes,
+                        // so without this toast the wait between PaymentWaitingConfirmation
+                        // and PaymentSucceeded looks like nothing is happening.
+                        // Breez fires this event multiple times for the same swap, so
+                        // dedupe by tx_id to avoid stacking duplicate toasts.
+                        if matches!(details.payment_type, PaymentType::Receive)
+                            && details.tx_id.as_ref().is_some_and(|id| {
+                                !self.toasted_incoming_waiting_tx_ids.contains(id)
+                            })
+                        {
+                            let tx_id = details.tx_id.clone().unwrap();
+                            if self.toasted_incoming_waiting_tx_ids.len() == 16 {
+                                self.toasted_incoming_waiting_tx_ids.pop_front();
+                            }
+                            self.toasted_incoming_waiting_tx_ids.push_back(tx_id);
+                            use coincube_ui::component::amount::DisplayAmount;
+                            let amount = bitcoin::Amount::from_sat(details.amount_sat)
+                                .to_formatted_string_with_unit(self.cache.bitcoin_unit);
+                            tasks.push(Task::done(Message::View(view::Message::ShowToast(
+                                log::Level::Info,
+                                format!(
+                                    "Incoming payment of {} — swapping to L-BTC, awaiting confirmation",
+                                    amount
+                                ),
+                            ))));
+                        }
+
                         return Task::batch(tasks);
                     }
                     SdkEvent::Synced => {
@@ -1958,11 +2039,21 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let view = self
-            .panels
-            .current()
-            .unwrap_or(&self.panels.global_home)
-            .view(&self.panels.current, &self.cache);
+        let view = if self.show_received_celebration {
+            // Global celebration overlay takes precedence over the normal panel view
+            let celebration = coincube_ui::component::received_celebration_page(
+                &self.received_celebration_amount,
+                &self.received_celebration_quote,
+                &self.received_celebration_image,
+                view::Message::DismissReceivedCelebration,
+            );
+            view::dashboard(&self.panels.current, &self.cache, celebration)
+        } else {
+            self.panels
+                .current()
+                .unwrap_or(&self.panels.global_home)
+                .view(&self.panels.current, &self.cache)
+        };
 
         let content = if self.cache.network != bitcoin::Network::Bitcoin {
             iced::widget::column![network_banner(self.cache.network), view.map(Message::View)]
