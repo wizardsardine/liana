@@ -236,10 +236,18 @@ impl BorderWalletWizard {
         // Fallback to random if allow_random_grid_phrase is true or signer is unavailable.
         let result = if !self.allow_random_grid_phrase {
             if let Some(signer) = &self.signer {
-                let signer = signer.lock().expect("poisoned");
-                signer
-                    .derive_grid_recovery_phrase()
-                    .map_err(|e| format!("{:?}", e))
+                match signer.lock() {
+                    Ok(signer) => signer
+                        .derive_grid_recovery_phrase()
+                        .map_err(|e| format!("{:?}", e)),
+                    Err(e) => {
+                        self.error = Some(format!(
+                            "Failed to generate recovery phrase: signer lock poisoned: {}",
+                            e
+                        ));
+                        return Task::none();
+                    }
+                }
             } else {
                 GridRecoveryPhrase::generate().map_err(|e| format!("{:?}", e))
             }

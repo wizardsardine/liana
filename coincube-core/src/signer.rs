@@ -111,6 +111,7 @@ pub const LEGACY_LIQUID_SEED_LABEL: &str = "liquid_";
 pub struct MasterSigner {
     mnemonic: bip39::Mnemonic,
     master_xpriv: bip32::Xpriv,
+    network: bitcoin::Network,
 }
 
 // TODO: instead of copying them here we could have a util module with those helpers.
@@ -160,6 +161,7 @@ impl MasterSigner {
         Ok(Self {
             mnemonic,
             master_xpriv,
+            network,
         })
     }
 
@@ -391,12 +393,7 @@ impl MasterSigner {
     /// Useful when a second owner needs the same key material (e.g., the installer
     /// re-using the cube's master seed as the vault hot-signer in dev mode).
     pub fn try_clone(&self) -> Result<Self, SignerError> {
-        let network = if self.master_xpriv.network == bitcoin::NetworkKind::Main {
-            bitcoin::Network::Bitcoin
-        } else {
-            bitcoin::Network::Testnet
-        };
-        Self::from_mnemonic(network, self.mnemonic.clone())
+        Self::from_mnemonic(self.network, self.mnemonic.clone())
     }
 
     /// Store the mnemonic in a file within the given "data directory".

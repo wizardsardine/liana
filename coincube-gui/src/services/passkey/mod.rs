@@ -13,10 +13,24 @@ use std::sync::{mpsc, Arc};
 use zeroize::Zeroizing;
 
 /// Base URL for the passkey ceremony page.
-const CEREMONY_BASE_URL: &str = "https://coincube.io/passkey";
+///
+/// Configured at build time via `COINCUBE_PASSKEY_CEREMONY_URL` (forwarded by
+/// `build.rs` from `.env`). Defaults to a local dev URL so non-production
+/// builds don't point at a non-existent hosted endpoint. Production deploys
+/// must set this to the actual ceremony page URL.
+pub const CEREMONY_BASE_URL: &str = match option_env!("COINCUBE_PASSKEY_CEREMONY_URL") {
+    Some(v) => v,
+    None => "http://localhost:8080/passkey",
+};
 
 /// Relying Party ID — must match the ceremony page's domain.
-pub const RP_ID: &str = "coincube.io";
+///
+/// Configured at build time via `COINCUBE_PASSKEY_RP_ID`. Production deploys
+/// must set this to the actual domain hosting the ceremony page.
+pub const RP_ID: &str = match option_env!("COINCUBE_PASSKEY_RP_ID") {
+    Some(v) => v,
+    None => "localhost",
+};
 
 /// Errors that can occur during a passkey ceremony.
 #[derive(Debug, Clone)]

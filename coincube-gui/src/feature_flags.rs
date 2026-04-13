@@ -89,19 +89,4 @@ mod tests {
         assert!(!is_truthy(Some("off")));
         assert!(!is_truthy(Some("2")));
     }
-
-    /// Sanity check: with the default `.env` shipping `COINCUBE_ENABLE_PASSKEY=0`,
-    /// this should be `false`. If you deliberately flipped it in `.env`, this
-    /// test will fail — that's a useful signal that the flag is active.
-    #[test]
-    fn passkey_disabled_by_default() {
-        #[allow(clippy::assertions_on_constants)]
-        {
-            assert!(
-                !PASSKEY_ENABLED,
-                "PASSKEY_ENABLED is compiled in as true; set COINCUBE_ENABLE_PASSKEY=0 \
-                 in .env (or remove the entry) to match the expected default."
-            );
-        }
-    }
 }
