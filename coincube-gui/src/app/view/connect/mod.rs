@@ -470,6 +470,7 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         .as_ref()
         .map(|p| p.tier())
         .unwrap_or(&PlanTier::Free);
+    let current_cycle = state.plan.as_ref().and_then(|p| p.billing_cycle);
 
     let cycle = state.selected_billing_cycle;
 
@@ -589,7 +590,13 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
 
     for card in cards {
-        let is_current = card.tier == *current_tier;
+        // Paid tiers are "current" only when both tier *and* cycle match the
+        // user's actual plan. Free tier has no cycle, so tier alone suffices.
+        let is_current = card.tier == *current_tier
+            && match current_cycle {
+                Some(cc) => cc == cycle,
+                None => true,
+            };
         let is_upgrade = tier_rank(&card.tier) > tier_rank(current_tier);
         let badge_color = plan_tier_color(&card.tier);
 
@@ -605,6 +612,22 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         for feature in card.features {
             card_col =
                 card_col.push(text::p2_regular(format!("• {}", feature)).color(color::GREY_3));
+        }
+
+        // Expiry line on the user's current paid plan card.
+        if is_current && card.tier != PlanTier::Free {
+            if let Some(renewal) = state.plan.as_ref().and_then(|p| p.renewal_at.as_deref()) {
+                let date_short = if renewal.len() >= 10 {
+                    &renewal[..10]
+                } else {
+                    renewal
+                };
+                card_col = card_col
+                    .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+                    .push(
+                        text::p2_regular(format!("Expires on {}", date_short)).color(color::GREY_3),
+                    );
+            }
         }
 
         card_col = card_col
@@ -846,17 +869,21 @@ fn checkout_ux<'a>(
 // ── Billing history view ────────────────────────────────────────────────────
 
 fn billing_history_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
+    let back_button = iced::widget::button(
+        Row::new()
+            .push(previous_icon().color(color::GREY_2))
+            .push(iced::widget::Space::new().width(Length::Fixed(5.0)))
+            .push(text::p1_medium("Back").style(theme::text::secondary))
+            .spacing(5)
+            .align_y(Alignment::Center),
+    )
+    .style(theme::button::transparent)
+    .on_press(ConnectAccountMessage::ToggleBillingHistory);
+
     let mut col = Column::new()
-        .push(
-            Row::new()
-                .push(
-                    button::secondary(None, "← Back")
-                        .on_press(ConnectAccountMessage::ToggleBillingHistory),
-                )
-                .push(iced::widget::Space::new().width(Length::Fixed(10.0)))
-                .push(text::h4_bold("Billing History").style(theme::text::primary))
-                .align_y(Alignment::Center),
-        )
+        .push(back_button)
+        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+        .push(text::h4_bold("Billing History").style(theme::text::primary))
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
 
     match &state.billing_history {

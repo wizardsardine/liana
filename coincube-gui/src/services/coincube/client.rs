@@ -214,7 +214,8 @@ impl CoincubeClient {
         let url = format!("{}/api/v1/connect/plan", self.base_url);
         let res = self.client.get(&url).send().await?;
         let res = res.check_success().await?;
-        Ok(res.json().await?)
+        let resp: ApiResponse<ConnectPlan> = res.json().await?;
+        Ok(resp.data)
     }
 
     /// GET /api/v1/connect/features (public — no auth required)
@@ -222,7 +223,8 @@ impl CoincubeClient {
         let url = format!("{}/api/v1/connect/features", self.base_url);
         let res = self.client.get(&url).send().await?;
         let res = res.check_success().await?;
-        Ok(res.json().await?)
+        let resp: ApiResponse<FeaturesResponse> = res.json().await?;
+        Ok(resp.data)
     }
 
     /// POST /api/v1/connect/checkout (authenticated)
@@ -233,7 +235,8 @@ impl CoincubeClient {
         let url = format!("{}/api/v1/connect/checkout", self.base_url);
         let res = self.client.post(&url).json(&req).send().await?;
         let res = res.check_success().await?;
-        Ok(res.json().await?)
+        let resp: ApiResponse<CheckoutResponse> = res.json().await?;
+        Ok(resp.data)
     }
 
     /// GET /api/v1/connect/checkout/{chargeId} (authenticated)
@@ -244,7 +247,8 @@ impl CoincubeClient {
         let url = format!("{}/api/v1/connect/checkout/{}", self.base_url, charge_id);
         let res = self.client.get(&url).send().await?;
         let res = res.check_success().await?;
-        Ok(res.json().await?)
+        let resp: ApiResponse<ChargeStatusResponse> = res.json().await?;
+        Ok(resp.data)
     }
 
     /// GET /api/v1/connect/billing/history (authenticated)
@@ -252,7 +256,8 @@ impl CoincubeClient {
         let url = format!("{}/api/v1/connect/billing/history", self.base_url);
         let res = self.client.get(&url).send().await?;
         let res = res.check_success().await?;
-        Ok(res.json().await?)
+        let resp: ApiResponse<Vec<BillingHistoryEntry>> = res.json().await?;
+        Ok(resp.data)
     }
 
     pub async fn get_verified_devices(&self) -> Result<Vec<VerifiedDevice>, CoincubeError> {

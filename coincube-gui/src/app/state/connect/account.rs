@@ -333,6 +333,9 @@ impl ConnectAccountPanel {
 
             ConnectAccountMessage::PlanLoaded(plan, gen) => {
                 if gen == self.session_generation && plan.is_some() {
+                    if let Some(cycle) = plan.as_ref().and_then(|p| p.billing_cycle) {
+                        self.selected_billing_cycle = cycle;
+                    }
                     self.plan = plan;
                 }
             }
@@ -348,6 +351,7 @@ impl ConnectAccountPanel {
                 self.checkout = None;
                 self.billing_history = None;
                 self.show_billing_history = false;
+                self.selected_billing_cycle = BillingCycle::Monthly;
                 self.contacts_state.clear();
                 self.clear_keyring_session();
                 self.client = CoincubeClient::new();
