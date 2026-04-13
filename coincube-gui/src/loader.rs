@@ -18,10 +18,10 @@ use coincube_ui::{
     component::{
         button, notification,
         quote_display::{self, Quote, QuoteDisplayProps, QuoteProvider},
-        text::*,
+        text::{p2_regular, text},
     },
     theme,
-    widget::*,
+    widget::{Column, Container, Element, Row},
 };
 use coincubed::{
     config::{BitcoinBackend, BitcoindRpcAuth, Config, ConfigError},
@@ -41,7 +41,7 @@ use crate::{
         config::Config as GUIConfig,
         wallet::{Wallet, WalletError},
     },
-    daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
+    daemon::{client, embedded::EmbeddedDaemon, model::GetInfoResult, Daemon, DaemonError},
     node::{
         bitcoind::{
             internal_bitcoind_datadir, internal_bitcoind_debug_log_path, Bitcoind,
