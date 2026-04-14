@@ -77,6 +77,13 @@ pub enum Message {
     Export(ImportExportMessage),
     PaymentsLoaded(Result<Vec<breez_sdk_liquid::prelude::Payment>, BreezError>),
     RefundablesLoaded(Result<Vec<breez_sdk_liquid::prelude::RefundableSwap>, BreezError>),
+    /// Result of a debounced background poll started by
+    /// `App::refresh_refundables_task`. Distinct from `RefundablesLoaded`
+    /// (which is produced by manual panel reloads) so that only poll
+    /// responses touch the App's debounce/in-flight tracking. A reload
+    /// response racing ahead of a poll must not clear the in-flight flag,
+    /// or a second concurrent `list_refundables()` could be launched.
+    RefundablesPolled(Result<Vec<breez_sdk_liquid::prelude::RefundableSwap>, BreezError>),
     RefundCompleted(Result<breez_sdk_liquid::model::RefundResponse, BreezError>),
     BreezInfo(Result<breez_sdk_liquid::prelude::GetInfoResponse, BreezError>),
     BreezEvent(breez_sdk_liquid::prelude::SdkEvent),

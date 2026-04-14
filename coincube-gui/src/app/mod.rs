@@ -1265,8 +1265,10 @@ impl App {
 
     /// Kick off a background `list_refundables()` poll, debounced so that
     /// SDK events (which can fire several times a second during sync) don't
-    /// hammer the SDK. Result is routed back to `Message::RefundablesLoaded`,
-    /// which `LiquidTransactions::update()` already handles.
+    /// hammer the SDK. Result comes back as `Message::RefundablesPolled` —
+    /// a variant distinct from `RefundablesLoaded` (which manual panel
+    /// reloads produce) so that only poll responses touch the App's
+    /// debounce and in-flight fields.
     ///
     /// The Transactions panel itself fetches refundables on every reload()
     /// too — this debounced helper covers the case where the user is sitting
@@ -1292,7 +1294,7 @@ impl App {
         let client = self.breez_client.clone();
         Task::perform(
             async move { client.list_refundables().await },
-            Message::RefundablesLoaded,
+            Message::RefundablesPolled,
         )
     }
 
@@ -2064,16 +2066,27 @@ impl App {
             // handlers above) land on the correct panel even when the user is
             // sitting on a different screen. Otherwise the result would be
             // dropped into whatever panel happens to be current.
-            msg @ Message::RefundablesLoaded(_) | msg @ Message::RefundCompleted(_) => {
-                if let Message::RefundablesLoaded(result) = &msg {
-                    // Clear the in-flight guard regardless of outcome, but
-                    // only advance the debounce timestamp on success so a
-                    // failed poll doesn't suppress retries for 30s.
-                    self.refundables_fetch_in_flight = false;
-                    if result.is_ok() {
-                        self.last_refundables_fetch = Some(std::time::Instant::now());
-                    }
+            Message::RefundablesPolled(result) => {
+                // Poll response: clear the in-flight guard regardless of
+                // outcome, but only advance the debounce timestamp on
+                // success so a failed poll doesn't suppress retries for 30s.
+                // We intentionally *don't* touch these fields for a manual
+                // reload response — see the `RefundablesLoaded` arm below.
+                self.refundables_fetch_in_flight = false;
+                if result.is_ok() {
+                    self.last_refundables_fetch = Some(std::time::Instant::now());
                 }
+                // Forward the payload to LiquidTransactions through the
+                // panel's regular handler. The panel's reconciliation logic
+                // is origin-agnostic, so a poll result is converted to a
+                // `RefundablesLoaded` for it.
+                return self.panels.liquid_transactions.update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    Message::RefundablesLoaded(result),
+                );
+            }
+            msg @ Message::RefundablesLoaded(_) | msg @ Message::RefundCompleted(_) => {
                 return self.panels.liquid_transactions.update(
                     self.daemon.clone(),
                     &self.cache,

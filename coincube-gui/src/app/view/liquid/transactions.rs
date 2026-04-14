@@ -24,12 +24,52 @@ use iced::{
 use coincube_ui::image::asset_network_logo;
 
 use crate::app::breez::assets::{format_usdt_display, USDT_PRECISION};
+use crate::app::breez::swap_status::{classify_payment, BtcSwapReceiveStatus};
 use crate::app::menu::Menu;
 use crate::app::state::liquid::transactions::{AssetFilter, InFlightRefund};
 use crate::app::view::message::{FeeratePriority, Message};
 use crate::app::view::FiatAmountConverter;
 use crate::export::ImportExportMessage;
 use crate::utils::{format_time_ago, format_timestamp};
+
+/// Styled status cell for the payment detail card. For BTC onchain swap
+/// payments this routes through `classify_payment`, which gives us the full
+/// Boltz lifecycle (including the `Failed` → `Refundable` upgrade when the SDK
+/// still lists the swap as refundable and the `Pending` → `PendingConfirmation`
+/// vs `PendingSwapCompletion` split once the lockup tx is seen). Direct Liquid
+/// and Lightning payments fall back to raw SDK labels, because swap-specific
+/// mappings like "Complete Send → Refunded" don't apply to them.
+fn payment_status_text(
+    payment: &Payment,
+    refundable_swap_addresses: &[String],
+) -> Element<'static, Message> {
+    if matches!(payment.details, PaymentDetails::Bitcoin { .. }) {
+        let status = classify_payment(payment, refundable_swap_addresses);
+        let style = match status {
+            BtcSwapReceiveStatus::Completed | BtcSwapReceiveStatus::Refunded => {
+                theme::text::success
+            }
+            BtcSwapReceiveStatus::Failed | BtcSwapReceiveStatus::Refundable => {
+                theme::text::destructive
+            }
+            _ => theme::text::secondary,
+        };
+        return text(status.label()).style(style).into();
+    }
+
+    match payment.status {
+        PaymentState::Complete => text("Complete").style(theme::text::success).into(),
+        PaymentState::Pending => text("Pending").style(theme::text::secondary).into(),
+        PaymentState::Created => text("Created").style(theme::text::secondary).into(),
+        PaymentState::Failed => text("Failed").style(theme::text::destructive).into(),
+        PaymentState::TimedOut => text("Timed Out").style(theme::text::destructive).into(),
+        PaymentState::Refundable => text("Refundable").style(theme::text::destructive).into(),
+        PaymentState::RefundPending => text("Refund Pending").style(theme::text::secondary).into(),
+        PaymentState::WaitingFeeAcceptance => text("Waiting Fee Acceptance")
+            .style(theme::text::secondary)
+            .into(),
+    }
+}
 
 /// Truncate a long on-chain address / txid like `bc1p7g…7ff6v` so it fits
 /// inside a card without overflowing. Used for display only.
@@ -341,6 +381,7 @@ pub fn transaction_detail_view<'a>(
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     usdt_id: &str,
+    refundable_swap_addresses: &[String],
 ) -> Element<'a, Message> {
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
     let usdt_str = usdt_amount_str(payment, usdt_id);
@@ -474,34 +515,11 @@ pub fn transaction_detail_view<'a>(
                                     .width(Length::FillPortion(1))
                                     .push(text("Status").bold()),
                             )
-                            .push(Column::new().width(Length::FillPortion(2)).push(
-                                match payment.status {
-                                    PaymentState::Complete => {
-                                        text("Complete").style(theme::text::success)
-                                    }
-                                    PaymentState::Pending => {
-                                        text("Pending").style(theme::text::secondary)
-                                    }
-                                    PaymentState::Created => {
-                                        text("Created").style(theme::text::secondary)
-                                    }
-                                    PaymentState::Failed => {
-                                        text("Failed").style(theme::text::destructive)
-                                    }
-                                    PaymentState::TimedOut => {
-                                        text("Timed Out").style(theme::text::destructive)
-                                    }
-                                    PaymentState::Refundable => {
-                                        text("Refundable").style(theme::text::destructive)
-                                    }
-                                    PaymentState::RefundPending => {
-                                        text("Refund Pending").style(theme::text::secondary)
-                                    }
-                                    PaymentState::WaitingFeeAcceptance => {
-                                        text("Waiting Fee Acceptance").style(theme::text::secondary)
-                                    }
-                                },
-                            ))
+                            .push(
+                                Column::new()
+                                    .width(Length::FillPortion(2))
+                                    .push(payment_status_text(payment, refundable_swap_addresses)),
+                            )
                             .spacing(20),
                     )
                     .push(
@@ -620,34 +638,11 @@ pub fn transaction_detail_view<'a>(
                                 .width(Length::FillPortion(1))
                                 .push(text("Status").bold()),
                         )
-                        .push(Column::new().width(Length::FillPortion(2)).push(
-                            match payment.status {
-                                PaymentState::Complete => {
-                                    text("Complete").style(theme::text::success)
-                                }
-                                PaymentState::Pending => {
-                                    text("Pending").style(theme::text::secondary)
-                                }
-                                PaymentState::Created => {
-                                    text("Created").style(theme::text::secondary)
-                                }
-                                PaymentState::Failed => {
-                                    text("Failed").style(theme::text::destructive)
-                                }
-                                PaymentState::TimedOut => {
-                                    text("Timed Out").style(theme::text::destructive)
-                                }
-                                PaymentState::Refundable => {
-                                    text("Refundable").style(theme::text::destructive)
-                                }
-                                PaymentState::RefundPending => {
-                                    text("Refund Pending").style(theme::text::secondary)
-                                }
-                                PaymentState::WaitingFeeAcceptance => {
-                                    text("Waiting Fee Acceptance").style(theme::text::secondary)
-                                }
-                            },
-                        ))
+                        .push(
+                            Column::new()
+                                .width(Length::FillPortion(2))
+                                .push(payment_status_text(payment, refundable_swap_addresses)),
+                        )
                         .spacing(20),
                 )
                 .push(
