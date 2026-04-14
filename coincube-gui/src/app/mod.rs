@@ -586,6 +586,10 @@ pub struct App {
     /// freshly-refundable swap surfaces without user action but long enough to
     /// avoid noisy churn.
     last_refundables_fetch: Option<std::time::Instant>,
+    /// True while a `refresh_refundables_task()` poll is awaiting its result.
+    /// Prevents duplicate concurrent SDK calls when several BreezEvents arrive
+    /// in quick succession. Cleared in the `RefundablesLoaded` handler.
+    refundables_fetch_in_flight: bool,
 }
 
 /// Returns true when a `DaemonError` indicates the daemon process is no longer
@@ -722,6 +726,7 @@ impl App {
                     ),
                 toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
                 last_refundables_fetch: None,
+                refundables_fetch_in_flight: false,
             },
             cmd,
         )
@@ -797,6 +802,7 @@ impl App {
                     ),
                 toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
                 last_refundables_fetch: None,
+                refundables_fetch_in_flight: false,
             },
             cmd,
         )
@@ -1268,13 +1274,21 @@ impl App {
     /// still see it the next time they navigate or glance at the app.
     fn refresh_refundables_task(&mut self) -> Task<Message> {
         const DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(30);
-        let now = std::time::Instant::now();
+        // Skip if a previous fetch is still in flight — otherwise a burst of
+        // BreezEvents would launch several concurrent `list_refundables()`
+        // calls before any of them returned.
+        if self.refundables_fetch_in_flight {
+            return Task::none();
+        }
+        // Debounce against the timestamp of the last *successful* fetch. On
+        // failure we leave `last_refundables_fetch` unchanged so the next
+        // event can retry immediately instead of being suppressed for 30s.
         if let Some(prev) = self.last_refundables_fetch {
-            if now.duration_since(prev) < DEBOUNCE {
+            if std::time::Instant::now().duration_since(prev) < DEBOUNCE {
                 return Task::none();
             }
         }
-        self.last_refundables_fetch = Some(now);
+        self.refundables_fetch_in_flight = true;
         let client = self.breez_client.clone();
         Task::perform(
             async move { client.list_refundables().await },
@@ -2050,7 +2064,16 @@ impl App {
             // handlers above) land on the correct panel even when the user is
             // sitting on a different screen. Otherwise the result would be
             // dropped into whatever panel happens to be current.
-            msg @ Message::RefundablesLoaded(_) => {
+            msg @ Message::RefundablesLoaded(_) | msg @ Message::RefundCompleted(_) => {
+                if let Message::RefundablesLoaded(result) = &msg {
+                    // Clear the in-flight guard regardless of outcome, but
+                    // only advance the debounce timestamp on success so a
+                    // failed poll doesn't suppress retries for 30s.
+                    self.refundables_fetch_in_flight = false;
+                    if result.is_ok() {
+                        self.last_refundables_fetch = Some(std::time::Instant::now());
+                    }
+                }
                 return self.panels.liquid_transactions.update(
                     self.daemon.clone(),
                     &self.cache,

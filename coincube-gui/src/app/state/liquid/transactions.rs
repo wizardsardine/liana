@@ -30,6 +30,13 @@ pub struct InFlightRefund {
     pub submitted_at: Instant,
 }
 
+/// How long an optimistic in-flight refund (no txid yet) is preserved across
+/// `RefundablesLoaded` reconciliation even when the SDK no longer returns the
+/// swap. Covers the race where a background poll completes between our
+/// `refund_onchain_tx` broadcast and the corresponding `RefundCompleted`
+/// message.
+const IN_FLIGHT_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
+
 #[derive(Debug)]
 enum LiquidTransactionsModal {
     None,
@@ -100,13 +107,28 @@ impl LiquidTransactions {
         self.pending_fee_priority
     }
 
-    #[cfg(test)]
-    pub fn test_reconcile_in_flight(&mut self, refundables: Vec<RefundableSwap>) {
+    fn reconcile_in_flight(&mut self, refundables: Vec<RefundableSwap>) {
         let returned: std::collections::HashSet<&String> =
             refundables.iter().map(|r| &r.swap_address).collect();
-        self.in_flight_refunds
-            .retain(|addr, _| returned.contains(addr));
+        let now = Instant::now();
+        self.in_flight_refunds.retain(|addr, entry| {
+            if returned.contains(addr) {
+                return true;
+            }
+            // Swap is no longer listed by the SDK. Normally that means the
+            // refund broadcast propagated and the swap can be dropped. But
+            // an optimistic entry (refund_txid == None) that's still within
+            // the grace window may simply be waiting for `RefundCompleted`
+            // to land — don't erase it yet, or the "Refund broadcasting…"
+            // banner would disappear before the user sees it.
+            entry.refund_txid.is_none() && now.duration_since(entry.submitted_at) < IN_FLIGHT_GRACE
+        });
         self.refundables = refundables;
+    }
+
+    #[cfg(test)]
+    pub fn test_reconcile_in_flight(&mut self, refundables: Vec<RefundableSwap>) {
+        self.reconcile_in_flight(refundables);
     }
 
     pub fn asset_filter(&self) -> AssetFilter {
@@ -277,14 +299,9 @@ impl State for LiquidTransactions {
                 // Reconcile in-flight refunds with the freshly-fetched list.
                 // A swap leaves `list_refundables` once the SDK observes our
                 // refund tx, so anything tracked locally that is no longer in
-                // the SDK's list is complete and can be dropped from the
-                // "broadcasting" banner. This prevents a stale "Refund
-                // broadcasting…" from sticking around forever.
-                let returned: std::collections::HashSet<&String> =
-                    refundables.iter().map(|r| &r.swap_address).collect();
-                self.in_flight_refunds
-                    .retain(|addr, _| returned.contains(addr));
-                self.refundables = refundables;
+                // the SDK's list and has an observed broadcast (or has
+                // exceeded the grace window) can be dropped.
+                self.reconcile_in_flight(refundables);
                 Task::none()
             }
             Message::RefundablesLoaded(Err(e)) => {
@@ -300,6 +317,7 @@ impl State for LiquidTransactions {
                 self.selected_payment = None;
                 self.refund_address = form::Value::default();
                 self.refund_feerate = form::Value::default();
+                self.pending_fee_priority = None;
                 Task::none()
             }
             Message::View(view::Message::Reload) => self.reload(None, None),
@@ -309,6 +327,7 @@ impl State for LiquidTransactions {
                 self.modal = LiquidTransactionsModal::None;
                 self.refund_address = form::Value::default();
                 self.refund_feerate = form::Value::default();
+                self.pending_fee_priority = None;
                 Task::none()
             }
             Message::View(view::Message::PreselectPayment(payment)) => {
@@ -425,6 +444,15 @@ impl State for LiquidTransactions {
                 self.pending_fee_priority = None;
                 Task::none()
             }
+            Message::View(view::Message::RefundFeeratePriorityFailed(err)) => {
+                // Async fee fetch failed — clear the spinner so the pressed
+                // button becomes interactive again, then surface the error.
+                // ShowError is intercepted by App::update into a toast and
+                // never reaches here, so we must clear the spinner ourselves
+                // before forwarding.
+                self.pending_fee_priority = None;
+                Task::done(Message::View(view::Message::ShowError(err)))
+            }
             Message::View(view::Message::RefundFeeratePrioritySelected(priority)) => {
                 // Record which button was pressed so the view can render a
                 // "…" spinner while the async fee fetch is in flight.
@@ -464,7 +492,7 @@ impl State for LiquidTransactions {
                         if let Some(rate) = rate {
                             Message::View(view::Message::RefundFeerateEdited(rate.to_string()))
                         } else {
-                            Message::View(view::Message::ShowError(
+                            Message::View(view::Message::RefundFeeratePriorityFailed(
                                 "Failed to fetch fee rate".to_string(),
                             ))
                         }

@@ -70,6 +70,7 @@ pub enum Message {
     RefundAddressValidated(bool),
     RefundFeerateEdited(String),
     RefundFeeratePrioritySelected(FeeratePriority),
+    RefundFeeratePriorityFailed(String),
     SubmitRefund,
     /// Pull a fresh native-Bitcoin receive address from the Vault wallet and
     /// drop it into the refund address input. This routes through the existing
