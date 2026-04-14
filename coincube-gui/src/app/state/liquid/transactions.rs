@@ -341,6 +341,11 @@ impl State for LiquidTransactions {
                 self.refund_address = form::Value::default();
                 self.refund_feerate = form::Value::default();
                 self.pending_fee_priority = None;
+                // Drop any in-flight Vault address lookup from a previous
+                // refundable. Without this, switching from Refundable A to
+                // Refundable B while A's `get_new_address()` is still in
+                // flight would silently drop A's address into B's form.
+                self.pending_vault_refund_id = None;
                 Task::none()
             }
             Message::View(view::Message::Reload) => self.reload(None, None),
@@ -351,6 +356,10 @@ impl State for LiquidTransactions {
                 self.refund_address = form::Value::default();
                 self.refund_feerate = form::Value::default();
                 self.pending_fee_priority = None;
+                // Drop any in-flight Vault address lookup — the refundable
+                // detail screen is being torn down, so a late response must
+                // not reappear in a subsequently-opened refundable.
+                self.pending_vault_refund_id = None;
                 Task::none()
             }
             Message::View(view::Message::PreselectPayment(payment)) => {
