@@ -767,13 +767,12 @@ fn make_breez_stream(state: &BreezSubscriptionState) -> impl Stream<Item = breez
 /// Privacy-preserving log helper: keeps the first and last 6 chars of an
 /// address-like string (swap addresses, refund addresses, txids) so logs are
 /// debuggable without leaking full on-chain identifiers.
+///
+/// Thin wrapper over the shared `crate::utils::truncate_middle` so the log
+/// helper and UI rendering always agree on the boundary where a string is
+/// short enough to leave alone.
 fn truncate_addr(s: &str) -> String {
-    if s.len() <= 14 {
-        return s.to_string();
-    }
-    let head = &s[..6];
-    let tail = &s[s.len() - 6..];
-    format!("{head}…{tail}")
+    crate::utils::truncate_middle(s, 6, 6)
 }
 
 /// Converts `amount` base-units to an `f64` display value by dividing by `10^precision`.

@@ -63,6 +63,15 @@ pub struct LiquidTransactions {
     /// Refunds submitted by the user that have not yet been dropped from the
     /// SDK's refundables list. Keyed by swap_address. See `InFlightRefund`.
     in_flight_refunds: HashMap<String, InFlightRefund>,
+    /// Monotonically-increasing token issued each time the user taps
+    /// "Use Vault address". The task that calls `daemon.get_new_address()`
+    /// captures the token and replies with `VaultRefundAddressResolved`;
+    /// if `pending_vault_refund_id` has since moved on (because the user
+    /// typed their own address or clicked the button again), the late
+    /// response is discarded. Without this, a slow daemon could overwrite
+    /// the user's freshly-typed input with a stale Vault address.
+    next_vault_refund_id: u64,
+    pending_vault_refund_id: Option<u64>,
     empty_state_quote: Quote,
     empty_state_image_handle: image::Handle,
 }
@@ -94,17 +103,11 @@ impl LiquidTransactions {
             asset_filter: AssetFilter::All,
             pending_fee_priority: None,
             in_flight_refunds: HashMap::new(),
+            next_vault_refund_id: 0,
+            pending_vault_refund_id: None,
             empty_state_quote,
             empty_state_image_handle,
         }
-    }
-
-    pub fn in_flight_refunds(&self) -> &HashMap<String, InFlightRefund> {
-        &self.in_flight_refunds
-    }
-
-    pub fn pending_fee_priority(&self) -> Option<FeeratePriority> {
-        self.pending_fee_priority
     }
 
     fn reconcile_in_flight(&mut self, mut refundables: Vec<RefundableSwap>) {
@@ -429,6 +432,14 @@ impl State for LiquidTransactions {
                 Task::none()
             }
             Message::View(view::Message::RefundAddressEdited(address)) => {
+                // Any incoming edit — whether typed by the user or delivered
+                // from a matching `VaultRefundAddressResolved` — means the
+                // address input now holds a value we consider authoritative.
+                // Clearing the pending Vault request id here causes any
+                // still-in-flight `get_new_address()` call to be discarded
+                // when it eventually lands, so a slow daemon can't clobber
+                // what the user is actively typing.
+                self.pending_vault_refund_id = None;
                 self.refund_address.value = address;
                 let breez_client = self.breez_client.clone();
                 let addr = self.refund_address.value.clone();
@@ -543,23 +554,45 @@ impl State for LiquidTransactions {
                         "Vault is unavailable — cannot generate a refund address.".to_string(),
                     )));
                 };
+                // Issue a fresh token so that late responses from earlier
+                // clicks — or responses that arrive after the user has
+                // started typing their own address — can be identified and
+                // dropped by `VaultRefundAddressResolved`.
+                self.next_vault_refund_id = self.next_vault_refund_id.wrapping_add(1);
+                let request_id = self.next_vault_refund_id;
+                self.pending_vault_refund_id = Some(request_id);
                 Task::perform(
                     async move {
-                        let res: Result<String, String> = daemon
+                        daemon
                             .get_new_address()
                             .await
                             .map(|res| res.address.to_string())
-                            .map_err(|e| e.to_string());
-                        res
+                            .map_err(|e| e.to_string())
                     },
-                    |result| match result {
-                        Ok(addr) => Message::View(view::Message::RefundAddressEdited(addr)),
-                        Err(e) => Message::View(view::Message::ShowError(format!(
-                            "Could not generate Vault refund address: {}",
-                            e
-                        ))),
+                    move |result| {
+                        Message::View(view::Message::VaultRefundAddressResolved(
+                            request_id, result,
+                        ))
                     },
                 )
+            }
+            Message::View(view::Message::VaultRefundAddressResolved(request_id, result)) => {
+                // Stale response guard: ignore anything that isn't tagged
+                // with the id currently in `pending_vault_refund_id`. This
+                // covers both the "user typed their own address" case
+                // (handler cleared the pending id) and the "user clicked
+                // again" case (handler bumped the id).
+                if self.pending_vault_refund_id != Some(request_id) {
+                    return Task::none();
+                }
+                self.pending_vault_refund_id = None;
+                match result {
+                    Ok(addr) => Task::done(Message::View(view::Message::RefundAddressEdited(addr))),
+                    Err(e) => Task::done(Message::View(view::Message::ShowError(format!(
+                        "Could not generate Vault refund address: {}",
+                        e
+                    )))),
+                }
             }
             Message::View(view::Message::SubmitRefund) => {
                 if let Some(refundable) = &self.selected_refundable {

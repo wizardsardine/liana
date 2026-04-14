@@ -83,6 +83,12 @@ pub enum Message {
     /// `daemon.get_new_address()` path so no address-derivation logic is
     /// duplicated here.
     GenerateVaultRefundAddress,
+    /// Result of the async `daemon.get_new_address()` call spawned by
+    /// `GenerateVaultRefundAddress`. Carries the request id so the handler
+    /// can ignore stale responses — e.g. when the user typed their own
+    /// address (clearing the pending id) before the Vault lookup returned,
+    /// or clicked the button twice. `Ok` = address, `Err` = error message.
+    VaultRefundAddressResolved(u64, Result<String, String>),
     SelectPayment(OutPoint),
     Label(Vec<String>, LabelMessage),
     NextReceiveAddress,

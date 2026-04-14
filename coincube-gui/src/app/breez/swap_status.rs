@@ -60,7 +60,7 @@ impl BtcSwapReceiveStatus {
             Self::Refundable => "Refundable",
             Self::Refunding => "Refund broadcasting",
             Self::Refunded => "Refunded",
-            Self::Completed => "Received",
+            Self::Completed => "Completed",
             Self::Failed => "Failed",
         }
     }

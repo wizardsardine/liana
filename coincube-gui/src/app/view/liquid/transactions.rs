@@ -30,7 +30,7 @@ use crate::app::state::liquid::transactions::{AssetFilter, InFlightRefund};
 use crate::app::view::message::{FeeratePriority, Message};
 use crate::app::view::FiatAmountConverter;
 use crate::export::ImportExportMessage;
-use crate::utils::{format_time_ago, format_timestamp};
+use crate::utils::{format_time_ago, format_timestamp, truncate_middle};
 
 /// Styled status cell for the payment detail card. For BTC onchain swap
 /// payments this routes through `classify_payment`, which gives us the full
@@ -69,15 +69,6 @@ fn payment_status_text(
             .style(theme::text::secondary)
             .into(),
     }
-}
-
-/// Truncate a long on-chain address / txid like `bc1p7g…7ff6v` so it fits
-/// inside a card without overflowing. Used for display only.
-fn truncate_middle(s: &str, prefix_len: usize, suffix_len: usize) -> String {
-    if s.len() <= prefix_len + suffix_len + 3 {
-        return s.to_string();
-    }
-    format!("{}…{}", &s[..prefix_len], &s[s.len() - suffix_len..])
 }
 
 /// Returns `Some(formatted_usdt_string)` when the payment is a USDt asset payment.
@@ -926,17 +917,6 @@ fn detail_back_button() -> Element<'static, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn truncate_middle_short_string_unchanged() {
-        assert_eq!(truncate_middle("short", 6, 6), "short");
-    }
-
-    #[test]
-    fn truncate_middle_elides_center() {
-        let long = "bc1p7gznc2zpn7aq3vqd695eml450d2ls33vw65tvwd77x936jquadnsp7ff6v";
-        assert_eq!(truncate_middle(long, 6, 6), "bc1p7g…p7ff6v");
-    }
 
     #[test]
     fn refundables_gated_out_of_usdt_filter() {

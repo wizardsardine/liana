@@ -52,6 +52,7 @@ use crate::{
         bitcoind::{internal_bitcoind_datadir, internal_bitcoind_debug_log_path, Bitcoind},
         NodeType,
     },
+    utils::truncate_middle,
 };
 
 use self::state::settings::SettingsState as GeneralSettingsState;
@@ -1947,7 +1948,7 @@ impl App {
                         log::info!(
                             target: "breez_swap",
                             "SdkEvent::PaymentRefundable tx_id={:?}",
-                            details.tx_id
+                            details.tx_id.as_deref().map(|t| truncate_middle(t, 6, 6))
                         );
                         let mut tasks = Vec::new();
                         if let Some(msg) = self.panels.active_liquid_refresh(true) {
@@ -1960,7 +1961,7 @@ impl App {
                         log::info!(
                             target: "breez_swap",
                             "SdkEvent::PaymentRefundPending tx_id={:?}",
-                            details.tx_id
+                            details.tx_id.as_deref().map(|t| truncate_middle(t, 6, 6))
                         );
                         let mut tasks = Vec::new();
                         if let Some(msg) = self.panels.active_liquid_refresh(true) {
@@ -1973,7 +1974,7 @@ impl App {
                         log::info!(
                             target: "breez_swap",
                             "SdkEvent::PaymentRefunded tx_id={:?}",
-                            details.tx_id
+                            details.tx_id.as_deref().map(|t| truncate_middle(t, 6, 6))
                         );
                         let mut tasks = vec![Task::done(Message::View(view::Message::Home(
                             view::HomeMessage::RefreshLiquidBalance,
@@ -2072,18 +2073,36 @@ impl App {
                 // We intentionally *don't* touch these fields for a manual
                 // reload response — see the `RefundablesLoaded` arm below.
                 self.refundables_fetch_in_flight = false;
-                if result.is_ok() {
-                    self.last_refundables_fetch = Some(std::time::Instant::now());
+                match result {
+                    Ok(refundables) => {
+                        self.last_refundables_fetch = Some(std::time::Instant::now());
+                        // Forward the payload to LiquidTransactions through
+                        // the panel's regular handler. The panel's
+                        // reconciliation logic is origin-agnostic, so a poll
+                        // result is converted to a `RefundablesLoaded` for
+                        // it.
+                        return self.panels.liquid_transactions.update(
+                            self.daemon.clone(),
+                            &self.cache,
+                            Message::RefundablesLoaded(Ok(refundables)),
+                        );
+                    }
+                    Err(e) => {
+                        // Swallow: this is a background debounce poll the
+                        // user didn't initiate. Surfacing it as a global
+                        // ShowError toast — which is what
+                        // `RefundablesLoaded(Err)` in LiquidTransactions
+                        // does — would interrupt whichever panel the user
+                        // is currently viewing with an error they have no
+                        // context for. Log locally and let the next poll
+                        // (or a manual reload) retry.
+                        log::warn!(
+                            target: "breez_swap",
+                            "background refundables poll failed: {}",
+                            e
+                        );
+                    }
                 }
-                // Forward the payload to LiquidTransactions through the
-                // panel's regular handler. The panel's reconciliation logic
-                // is origin-agnostic, so a poll result is converted to a
-                // `RefundablesLoaded` for it.
-                return self.panels.liquid_transactions.update(
-                    self.daemon.clone(),
-                    &self.cache,
-                    Message::RefundablesLoaded(result),
-                );
             }
             msg @ Message::RefundablesLoaded(_) | msg @ Message::RefundCompleted { .. } => {
                 return self.panels.liquid_transactions.update(
