@@ -84,7 +84,15 @@ pub enum Message {
     /// response racing ahead of a poll must not clear the in-flight flag,
     /// or a second concurrent `list_refundables()` could be launched.
     RefundablesPolled(Result<Vec<breez_sdk_liquid::prelude::RefundableSwap>, BreezError>),
-    RefundCompleted(Result<breez_sdk_liquid::model::RefundResponse, BreezError>),
+    /// Result of a user-initiated `refund_onchain_tx` call. The `swap_address`
+    /// is carried alongside the response so the handler can look up the exact
+    /// `in_flight_refunds` entry that originated this refund — necessary when
+    /// more than one refund is in flight, since the SDK response itself does
+    /// not identify the originating swap.
+    RefundCompleted {
+        swap_address: String,
+        result: Result<breez_sdk_liquid::model::RefundResponse, BreezError>,
+    },
     BreezInfo(Result<breez_sdk_liquid::prelude::GetInfoResponse, BreezError>),
     BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
     SettingsSaved,

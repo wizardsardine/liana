@@ -579,6 +579,7 @@ impl State for LiquidTransactions {
                     let breez_client = self.breez_client.clone();
                     let refund_address = self.refund_address.value.clone();
                     let fee_rate = self.refund_feerate.value.parse::<u32>().unwrap_or(1);
+                    let swap_address_for_msg = swap_address.clone();
 
                     Task::perform(
                         async move {
@@ -590,24 +591,28 @@ impl State for LiquidTransactions {
                                 })
                                 .await
                         },
-                        Message::RefundCompleted,
+                        move |result| Message::RefundCompleted {
+                            swap_address: swap_address_for_msg.clone(),
+                            result,
+                        },
                     )
                 } else {
                     log::error!(target: "refund_debug", "SubmitRefund called but no refundable selected");
                     Task::none()
                 }
             }
-            Message::RefundCompleted(Ok(response)) => {
+            Message::RefundCompleted {
+                swap_address,
+                result: Ok(response),
+            } => {
                 self.refunding = false;
                 let txid = response.refund_tx_id.clone();
-                // Populate the refund_txid on the most recent in-flight entry
-                // that doesn't yet have one. We don't have the swap_address
-                // on the response, so match on the missing txid field.
-                if let Some(entry) = self
-                    .in_flight_refunds
-                    .values_mut()
-                    .find(|r| r.refund_txid.is_none())
-                {
+                // Populate the refund_txid on the exact in-flight entry that
+                // originated this refund. Looking up by swap_address is
+                // deterministic even with multiple concurrent refunds — the
+                // prior `values_mut().find(...)` approach was racy because
+                // HashMap iteration order is unspecified.
+                if let Some(entry) = self.in_flight_refunds.get_mut(&swap_address) {
                     entry.refund_txid = Some(txid.clone());
                 }
                 self.selected_refundable = None;
@@ -624,13 +629,20 @@ impl State for LiquidTransactions {
                     format!("Refund broadcast · {}", txid.get(..10).unwrap_or(&txid)),
                 )))
             }
-            Message::RefundCompleted(Err(e)) => {
+            Message::RefundCompleted {
+                swap_address,
+                result: Err(e),
+            } => {
                 self.refunding = false;
-                // Drop any in-flight entry that doesn't have a txid —
-                // submission never reached broadcast, so leaving a stale
-                // "broadcasting" banner up would lie to the user.
-                self.in_flight_refunds
-                    .retain(|_, r| r.refund_txid.is_some());
+                // Drop the in-flight entry for exactly this swap if it never
+                // reached broadcast (txid still None). Leaving it up would
+                // show a stale "broadcasting" banner for a refund that
+                // failed. Other in-flight refunds are untouched.
+                if let Some(entry) = self.in_flight_refunds.get(&swap_address) {
+                    if entry.refund_txid.is_none() {
+                        self.in_flight_refunds.remove(&swap_address);
+                    }
+                }
                 Task::done(Message::View(view::Message::ShowError(format!(
                     "Refund failed: {}",
                     e

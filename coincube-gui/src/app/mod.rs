@@ -2041,11 +2041,10 @@ impl App {
                         }
                         // Debounced refundables poll — picks up older expired
                         // swaps that didn't emit an explicit refundable event
-                        // while the app was offline.
+                        // while the app was offline. Always enqueued, so this
+                        // arm unconditionally returns.
                         tasks.push(self.refresh_refundables_task());
-                        if !tasks.is_empty() {
-                            return Task::batch(tasks);
-                        }
+                        return Task::batch(tasks);
                     }
                     _ => {
                         // Other events - just log
@@ -2086,7 +2085,7 @@ impl App {
                     Message::RefundablesLoaded(result),
                 );
             }
-            msg @ Message::RefundablesLoaded(_) | msg @ Message::RefundCompleted(_) => {
+            msg @ Message::RefundablesLoaded(_) | msg @ Message::RefundCompleted { .. } => {
                 return self.panels.liquid_transactions.update(
                     self.daemon.clone(),
                     &self.cache,
