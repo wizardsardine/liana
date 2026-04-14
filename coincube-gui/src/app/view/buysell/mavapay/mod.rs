@@ -1,7 +1,7 @@
 pub mod ui;
 
 use crate::app::{
-    breez::BreezClient,
+    breez_liquid::BreezClient,
     view::{self, buysell::panel},
 };
 

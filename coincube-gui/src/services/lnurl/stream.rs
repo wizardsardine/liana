@@ -4,7 +4,7 @@ use std::sync::Arc;
 use iced::futures::{self, SinkExt, TryStreamExt};
 use reqwest_sse::EventSource as _;
 
-use crate::app::breez::BreezClient;
+use crate::app::breez_liquid::BreezClient;
 
 use super::{InvoiceRequestEvent, InvoiceResponse, LnurlMessage};
 

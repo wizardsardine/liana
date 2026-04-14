@@ -11,7 +11,7 @@ use coincubed::commands::ListCoinsResult;
 
 use crate::{
     app::{
-        self, breez,
+        self, breez_liquid,
         cache::{Cache, DaemonCache},
         settings::{update_settings_file, WalletId, WalletSettings},
         wallet::Wallet,
@@ -64,10 +64,10 @@ pub enum Message {
         datadir: CoincubeDirectory,
         network: bitcoin::Network,
         config: app::Config,
-        breez_client: Result<Arc<app::breez::BreezClient>, app::breez::BreezError>,
+        breez_client: Result<Arc<app::breez_liquid::BreezClient>, app::breez_liquid::BreezError>,
     },
     BreezClientLoadedAfterPin {
-        breez_client: Result<Arc<app::breez::BreezClient>, app::breez::BreezError>,
+        breez_client: Result<Arc<app::breez_liquid::BreezClient>, app::breez_liquid::BreezError>,
         config: app::Config,
         datadir: CoincubeDirectory,
         network: bitcoin::Network,
@@ -268,7 +268,7 @@ impl Tab {
                         datadir: l.datadir.clone(),
                         network: l.network,
                         config,
-                        breez_client: Err(breez::BreezError::SignerError(
+                        breez_client: Err(breez_liquid::BreezError::SignerError(
                             "BreezClient missing - should have been pre-loaded after PIN entry. \
                              Liquid wallet is encrypted and cannot be loaded without PIN."
                                 .to_string(),
@@ -576,7 +576,7 @@ impl Tab {
                                     let breez_result = if let Some(fingerprint) =
                                         cube.liquid_wallet_signer_fingerprint
                                     {
-                                        breez::load_breez_client(
+                                        breez_liquid::load_breez_client(
                                             datadir_clone.path(),
                                             network_val,
                                             fingerprint,
@@ -584,7 +584,7 @@ impl Tab {
                                         )
                                         .await
                                     } else {
-                                        Err(breez::BreezError::SignerError(
+                                        Err(breez_liquid::BreezError::SignerError(
                                             "No Liquid wallet configured".to_string(),
                                         ))
                                     };
@@ -665,7 +665,7 @@ impl Tab {
                             "BreezClient unavailable for remote backend, continuing in disconnected mode: {}",
                             e
                         );
-                        Arc::new(app::breez::BreezClient::disconnected(network))
+                        Arc::new(app::breez_liquid::BreezClient::disconnected(network))
                     }
                 };
                 match create_app_with_remote_backend(
@@ -710,15 +710,15 @@ impl Tab {
                 // will surface their own errors on demand.
                 let breez = match breez_client {
                     Ok(breez) => breez,
-                    Err(app::breez::BreezError::NetworkNotSupported(_)) => {
-                        Arc::new(app::breez::BreezClient::disconnected(network))
+                    Err(app::breez_liquid::BreezError::NetworkNotSupported(_)) => {
+                        Arc::new(app::breez_liquid::BreezClient::disconnected(network))
                     }
                     Err(e) => {
                         tracing::warn!(
                             "BreezClient unavailable after PIN, continuing in disconnected mode: {}",
                             e
                         );
-                        Arc::new(app::breez::BreezClient::disconnected(network))
+                        Arc::new(app::breez_liquid::BreezClient::disconnected(network))
                     }
                 };
                 if let Some(wallet_settings) = wallet_settings {
@@ -907,7 +907,7 @@ pub fn create_app_with_remote_backend(
     coincube_dir: CoincubeDirectory,
     network: bitcoin::Network,
     config: app::Config,
-    breez_client: Arc<app::breez::BreezClient>,
+    breez_client: Arc<app::breez_liquid::BreezClient>,
 ) -> Result<(app::App, iced::Task<app::Message>), String> {
     // If someone modified the wallet_alias on Liana-Connect,
     // then the new alias is imported and stored in the settings file.

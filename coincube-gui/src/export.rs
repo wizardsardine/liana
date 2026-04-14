@@ -274,7 +274,7 @@ pub struct Export {
     pub sender: Option<UnboundedSender<Progress>>,
     pub handle: Option<Arc<Mutex<JoinHandle<()>>>>,
     pub daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-    pub breez_client: Option<Arc<crate::app::breez::BreezClient>>,
+    pub breez_client: Option<Arc<crate::app::breez_liquid::BreezClient>>,
     pub path: Box<PathBuf>,
     pub export_type: ImportExportType,
 }
@@ -282,7 +282,7 @@ pub struct Export {
 impl Export {
     pub fn new(
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-        breez_client: Option<Arc<crate::app::breez::BreezClient>>,
+        breez_client: Option<Arc<crate::app::breez_liquid::BreezClient>>,
         path: Box<PathBuf>,
         export_type: ImportExportType,
     ) -> Self {
@@ -303,7 +303,7 @@ impl Export {
         sender: UnboundedSender<Progress>,
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         path: PathBuf,
-        breez_client: Option<Arc<crate::app::breez::BreezClient>>,
+        breez_client: Option<Arc<crate::app::breez_liquid::BreezClient>>,
     ) {
         if let Err(e) = match export_type {
             ImportExportType::Transactions => export_transactions(&sender, daemon, path).await,
@@ -385,7 +385,7 @@ impl Export {
 /// Subscription identity is based on `export_type` discriminant and `path`.
 pub struct ExportSubscriptionData {
     pub daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-    pub breez_client: Option<Arc<crate::app::breez::BreezClient>>,
+    pub breez_client: Option<Arc<crate::app::breez_liquid::BreezClient>>,
     pub path: PathBuf,
     pub export_type: ImportExportType,
 }
@@ -410,7 +410,7 @@ pub fn make_export_stream(data: &ExportSubscriptionData) -> impl Stream<Item = P
 
 pub fn export_subscription(
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-    breez_client: Option<Arc<crate::app::breez::BreezClient>>,
+    breez_client: Option<Arc<crate::app::breez_liquid::BreezClient>>,
     path: PathBuf,
     export_type: ImportExportType,
 ) -> impl Stream<Item = Progress> {
@@ -613,14 +613,14 @@ pub async fn export_transactions(
 
 pub async fn export_liquid_payments(
     sender: &UnboundedSender<Progress>,
-    breez_client: Arc<crate::app::breez::BreezClient>,
+    breez_client: Arc<crate::app::breez_liquid::BreezClient>,
     path: PathBuf,
 ) -> Result<(), Error> {
     use breez_sdk_liquid::model::PaymentDetails;
     use breez_sdk_liquid::prelude::PaymentType;
     use chrono::DateTime;
 
-    use crate::app::breez::assets::usdt_asset_id;
+    use crate::app::breez_liquid::assets::usdt_asset_id;
 
     let usdt_id = usdt_asset_id(breez_client.network()).unwrap_or("");
 

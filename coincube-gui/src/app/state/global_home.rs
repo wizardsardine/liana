@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use super::vault::psbt::SignModal;
 use super::{Cache, Menu, State};
-use crate::app::breez::BreezClient;
+use crate::app::breez_liquid::BreezClient;
 use crate::app::state::vault::label::LabelsEdited;
 use crate::app::state::vault::receive::ShowQrCodeModal;
 use crate::app::view::global_home::{
@@ -1106,7 +1106,7 @@ impl GlobalHome {
     }
 
     fn load_pending_sends(&self) -> Task<Message> {
-        use crate::app::breez::assets::{asset_kind_for_id, AssetKind, USDT_PRECISION};
+        use crate::app::breez_liquid::assets::{asset_kind_for_id, AssetKind, USDT_PRECISION};
         let breez_client = self.breez_client.clone();
         let network = self.network;
         Task::perform(
@@ -1188,7 +1188,7 @@ impl GlobalHome {
     }
 
     fn load_usdt_balance(&self) -> Task<Message> {
-        use crate::app::breez::assets::{asset_kind_for_id, AssetKind};
+        use crate::app::breez_liquid::assets::{asset_kind_for_id, AssetKind};
         let breez_client = self.breez_client.clone();
         let network = self.network;
         Task::perform(

@@ -1,4 +1,4 @@
-pub mod breez;
+pub mod breez_liquid;
 pub mod cache;
 pub mod config;
 pub mod error;
@@ -38,7 +38,7 @@ use wallet::{sync_status, SyncStatus};
 
 use crate::{
     app::{
-        breez::BreezClient,
+        breez_liquid::BreezClient,
         cache::{Cache, DaemonCache},
         error::Error,
         menu::{MarketplaceSubMenu, Menu},

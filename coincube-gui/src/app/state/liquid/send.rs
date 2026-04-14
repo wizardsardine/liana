@@ -20,7 +20,7 @@ fn friendly_prepare_error(e: &impl std::fmt::Display) -> String {
         format!("Failed to prepare payment: {}", msg)
     }
 }
-use crate::app::breez::assets::{
+use crate::app::breez_liquid::assets::{
     asset_kind_for_id, format_usdt_display, lbtc_asset_id, parse_asset_to_minor_units,
     usdt_asset_id, AssetKind, USDT_PRECISION,
 };
@@ -28,7 +28,7 @@ use crate::app::menu::{LiquidSubMenu, Menu};
 use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::state::{redirect, State};
 use crate::app::view::SendPopupMessage;
-use crate::app::{breez::BreezClient, cache::Cache};
+use crate::app::{breez_liquid::BreezClient, cache::Cache};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::utils::format_time_ago;
@@ -1448,7 +1448,7 @@ impl State for LiquidSend {
                                                 destination,
                                                 &to_asset_id,
                                                 amount_sat,
-                                                crate::app::breez::assets::LBTC_PRECISION,
+                                                crate::app::breez_liquid::assets::LBTC_PRECISION,
                                                 Some(&from_asset_id),
                                             )
                                             .await

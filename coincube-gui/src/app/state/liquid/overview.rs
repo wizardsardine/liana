@@ -7,10 +7,10 @@ use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::widget::*;
 use iced::Task;
 
-use crate::app::breez::assets::usdt_asset_id;
+use crate::app::breez_liquid::assets::usdt_asset_id;
 use crate::app::menu::{LiquidSubMenu, Menu};
 use crate::app::state::{redirect, State};
-use crate::app::{breez::BreezClient, cache::Cache};
+use crate::app::{breez_liquid::BreezClient, cache::Cache};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::utils::format_time_ago;
@@ -206,7 +206,7 @@ impl State for LiquidOverview {
                     self.recent_payments = recent.clone();
 
                     let usdt_id =
-                        crate::app::breez::assets::usdt_asset_id(self.breez_client.network())
+                        crate::app::breez_liquid::assets::usdt_asset_id(self.breez_client.network())
                             .unwrap_or("");
 
                     if !recent.is_empty() {
@@ -236,7 +236,7 @@ impl State for LiquidOverview {
                                         Amount::from_sat(
                                             (info.amount
                                                 * 10_f64.powi(
-                                                    crate::app::breez::assets::USDT_PRECISION
+                                                    crate::app::breez_liquid::assets::USDT_PRECISION
                                                         as i32,
                                                 ))
                                             .round()
@@ -263,7 +263,7 @@ impl State for LiquidOverview {
                                         "USDt Transfer".to_owned(),
                                         Some(format!(
                                             "{} USDt",
-                                            crate::app::breez::assets::format_usdt_display(
+                                            crate::app::breez_liquid::assets::format_usdt_display(
                                                 amount.to_sat()
                                             )
                                         )),

@@ -10,7 +10,7 @@ use coincubed::config::Config as DaemonConfig;
 
 use crate::{
     app::{
-        breez::BreezError,
+        breez_liquid::BreezError,
         cache::{DaemonCache, FiatPrice},
         error::Error,
         view,

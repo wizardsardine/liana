@@ -29,7 +29,7 @@ use coincubed::{
 };
 
 use crate::app;
-use crate::app::breez::BreezClient;
+use crate::app::breez_liquid::BreezClient;
 use crate::app::cache::DaemonCache;
 use crate::app::settings::{CubeSettings, WalletSettings};
 use crate::backup::Backup;

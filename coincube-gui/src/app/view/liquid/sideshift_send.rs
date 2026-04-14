@@ -11,7 +11,7 @@ use iced::{
     Alignment, Length,
 };
 
-use crate::app::breez::assets::format_usdt_display;
+use crate::app::breez_liquid::assets::format_usdt_display;
 use crate::app::state::liquid::sideshift_send::SendPhase;
 use crate::app::view::liquid::RecentTransaction;
 use crate::app::view::{SideshiftSendMessage, SideshiftShiftType};

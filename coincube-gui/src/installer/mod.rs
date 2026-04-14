@@ -93,7 +93,7 @@ pub struct Installer {
     pub cube_settings: Option<crate::app::settings::CubeSettings>,
 
     /// Pre-loaded BreezClient when launched from app (avoids re-entering PIN)
-    pub breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
+    pub breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
 }
 
 impl Installer {
@@ -134,7 +134,7 @@ impl Installer {
         user_flow: UserFlow,
         launched_from_app: bool,
         cube_settings: Option<crate::app::settings::CubeSettings>,
-        breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
+        breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
     ) -> (Installer, Task<Message>) {
         let signer = Arc::new(Mutex::new(Signer::generate(network).unwrap()));
         let context = Context::new(

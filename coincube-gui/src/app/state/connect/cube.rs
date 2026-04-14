@@ -5,7 +5,7 @@ use iced::task::Handle as TaskHandle;
 
 use crate::{
     app::{
-        breez::BreezClient,
+        breez_liquid::BreezClient,
         message::Message,
         view::{self, ConnectCubeMessage},
     },

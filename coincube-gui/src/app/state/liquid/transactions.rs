@@ -9,9 +9,9 @@ use coincube_ui::component::quote_display::{self, Quote};
 use coincube_ui::widget::*;
 use iced::{widget::image, Task};
 
-use crate::app::breez::assets::usdt_asset_id;
+use crate::app::breez_liquid::assets::usdt_asset_id;
 use crate::app::view::FeeratePriority;
-use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
+use crate::app::{breez_liquid::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::export::{ImportExportMessage, ImportExportState};

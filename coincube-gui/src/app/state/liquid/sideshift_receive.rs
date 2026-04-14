@@ -4,8 +4,8 @@ use std::time::Duration;
 use coincube_ui::widget::*;
 use iced::{clipboard, widget::qr_code, Subscription, Task};
 
-use crate::app::breez::assets::usdt_asset_id;
-use crate::app::breez::BreezClient;
+use crate::app::breez_liquid::assets::usdt_asset_id;
+use crate::app::breez_liquid::BreezClient;
 use crate::app::cache::Cache;
 use crate::app::menu::Menu;
 use crate::app::message::Message;

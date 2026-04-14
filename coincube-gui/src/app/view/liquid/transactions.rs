@@ -21,7 +21,7 @@ use iced::{
 
 use coincube_ui::image::asset_network_logo;
 
-use crate::app::breez::assets::{format_usdt_display, USDT_PRECISION};
+use crate::app::breez_liquid::assets::{format_usdt_display, USDT_PRECISION};
 use crate::app::menu::Menu;
 use crate::app::state::liquid::transactions::AssetFilter;
 use crate::app::view::message::{FeeratePriority, Message};

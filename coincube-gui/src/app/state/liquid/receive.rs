@@ -10,7 +10,7 @@ use coincube_ui::widget::*;
 use iced::{clipboard, widget::qr_code, Subscription, Task};
 
 use super::sideshift_receive::SideshiftReceiveFlow;
-use crate::app::breez::assets::{
+use crate::app::breez_liquid::assets::{
     format_usdt_display, parse_asset_to_minor_units, usdt_asset_id, USDT_PRECISION,
 };
 use crate::app::menu::LiquidSubMenu;
@@ -18,7 +18,7 @@ use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::state::liquid::send::SendAsset;
 use crate::app::state::redirect;
 use crate::app::view::{LiquidReceiveMessage, ReceiveMethod, SenderNetwork};
-use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
+use crate::app::{breez_liquid::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::utils::format_time_ago;

@@ -15,7 +15,7 @@ use iced::{
 };
 use iced_anim::AnimationBuilder;
 
-use crate::app::breez::assets::format_usdt_display;
+use crate::app::breez_liquid::assets::format_usdt_display;
 use crate::app::{
     menu::Menu,
     view::{vault::receive::address_card, FiatAmountConverter},

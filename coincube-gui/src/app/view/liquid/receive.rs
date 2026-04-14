@@ -23,7 +23,7 @@ use iced::{
 use coincube_ui::image::asset_network_logo;
 
 use crate::app::{
-    breez::assets::{format_usdt_display, parse_asset_to_minor_units, USDT_PRECISION},
+    breez_liquid::assets::{format_usdt_display, parse_asset_to_minor_units, USDT_PRECISION},
     settings::unit::BitcoinDisplayUnit,
     state::liquid::send::SendAsset,
     view::{liquid::RecentTransaction, LiquidReceiveMessage, ReceiveMethod, SenderNetwork},

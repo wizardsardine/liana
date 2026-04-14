@@ -17,7 +17,7 @@ use iced::{
     Alignment, Background, Length,
 };
 
-use crate::app::breez::assets::format_usdt_display;
+use crate::app::breez_liquid::assets::format_usdt_display;
 use crate::app::view::{liquid::RecentTransaction, FiatAmountConverter, LiquidOverviewMessage};
 
 #[allow(clippy::too_many_arguments)]

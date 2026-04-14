@@ -20,7 +20,7 @@ use iced::{
     Alignment, Background, Length,
 };
 
-use crate::app::breez::assets::{format_usdt_display, AssetKind};
+use crate::app::breez_liquid::assets::{format_usdt_display, AssetKind};
 use crate::app::menu::Menu;
 use crate::app::state::liquid::send::{LiquidSendFlowState, Modal, ReceiveNetwork, SendAsset};
 use crate::app::view::{
@@ -1505,7 +1505,7 @@ pub fn final_check_page<'a>(
         if let Some(asset_fee) = usdt_asset_fees {
             // Fees paid in USDt — convert f64 to base units for consistent formatting
             let fee_base = (asset_fee
-                * 10_u64.pow(crate::app::breez::assets::USDT_PRECISION as u32) as f64)
+                * 10_u64.pow(crate::app::breez_liquid::assets::USDT_PRECISION as u32) as f64)
                 .ceil() as u64;
             details_box = details_box.push(
                 Row::new()
@@ -1514,7 +1514,7 @@ pub fn final_check_page<'a>(
                     .push(
                         text(format!(
                             "{} USDt",
-                            crate::app::breez::assets::format_usdt_display(fee_base)
+                            crate::app::breez_liquid::assets::format_usdt_display(fee_base)
                         ))
                         .size(16)
                         .bold(),

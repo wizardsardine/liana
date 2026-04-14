@@ -110,7 +110,7 @@ pub fn asset_kind_for_id(asset_id: &str, network: Network) -> Option<AssetKind> 
 /// decimal places.
 ///
 /// ```
-/// use coincube_gui::app::breez::assets::format_asset_amount;
+/// use coincube_gui::app::breez_liquid::assets::format_asset_amount;
 /// assert_eq!(format_asset_amount(100_000_000, 8), "1.00000000");
 /// assert_eq!(format_asset_amount(50_000_000, 8), "0.50000000");
 /// ```
@@ -157,7 +157,7 @@ pub fn format_usdt_display(amount: u64) -> String {
 /// `scale`. Returns `None` for malformed or empty inputs. Zero values return `Some(0)`.
 ///
 /// ```
-/// use coincube_gui::app::breez::assets::parse_asset_to_minor_units;
+/// use coincube_gui::app::breez_liquid::assets::parse_asset_to_minor_units;
 /// assert_eq!(parse_asset_to_minor_units("1.50", 8), Some(150_000_000));
 /// assert_eq!(parse_asset_to_minor_units("1e2",  8), None);   // scientific notation rejected
 /// assert_eq!(parse_asset_to_minor_units("0.0",  8), Some(0)); // zero yields Some(0)

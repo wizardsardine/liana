@@ -6,7 +6,7 @@ use rand::seq::SliceRandom;
 
 use crate::app::settings::{update_settings_file, Settings};
 use crate::app::view::LiquidSettingsMessage;
-use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
+use crate::app::{breez_liquid::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::dir::CoincubeDirectory;
