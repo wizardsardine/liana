@@ -114,6 +114,7 @@ impl State for LiquidOverview {
                     fiat_converter,
                     cache.bitcoin_unit,
                     usdt_asset_id(self.breez_client.network()).unwrap_or(""),
+                    &[],
                 ),
             )
         } else {
