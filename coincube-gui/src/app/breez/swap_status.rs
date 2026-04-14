@@ -128,7 +128,10 @@ pub fn classify_payment(p: &Payment, refundable_swap_addresses: &[String]) -> Bt
             PaymentType::Send => {
                 let is_refund_leg = matches!(
                     &p.details,
-                    PaymentDetails::Bitcoin { refund_tx_id: Some(_), .. }
+                    PaymentDetails::Bitcoin {
+                        refund_tx_id: Some(_),
+                        ..
+                    }
                 );
                 if is_refund_leg {
                     BtcSwapReceiveStatus::Refunded
