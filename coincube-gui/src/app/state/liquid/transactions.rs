@@ -182,6 +182,7 @@ impl State for LiquidTransactions {
                     self.refunding,
                     self.pending_fee_priority,
                     self.in_flight_refunds.get(&refundable.swap_address),
+                    cache.has_vault,
                 ),
             )
         } else {

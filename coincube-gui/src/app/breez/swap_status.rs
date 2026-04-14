@@ -80,7 +80,12 @@ impl BtcSwapReceiveStatus {
 ///   callers pass `refundable_swap_addresses` to resolve it.
 /// - `TimedOut` → `Failed`
 /// - `Complete` (receive) → `Completed`
-/// - `Complete` (send on same swap — the refund leg) → `Refunded`
+/// - `Complete` (send, `refund_tx_id` set — the refund leg) → `Refunded`
+/// - `Complete` (send, no `refund_tx_id` — an L-BTC→BTC chain swap send,
+///   which shares `PaymentDetails::Bitcoin` but is NOT a receive swap) →
+///   `Completed`. This enum is scoped to the receive path, so the best we
+///   can report for a successful outgoing chain swap is "completed" rather
+///   than misreporting it as a refund.
 ///
 /// `refundable_swap_addresses` is the set of `swap_address` strings currently
 /// returned by `BreezClient::list_refundables()`. Pass an empty slice when
@@ -115,9 +120,22 @@ pub fn classify_payment(p: &Payment, refundable_swap_addresses: &[String]) -> Bt
         PaymentState::TimedOut => BtcSwapReceiveStatus::Failed,
         PaymentState::Complete => match p.payment_type {
             PaymentType::Receive => BtcSwapReceiveStatus::Completed,
-            // A Complete send on a BTC swap details means the refund leg has
-            // confirmed on chain.
-            PaymentType::Send => BtcSwapReceiveStatus::Refunded,
+            // A Complete send with `refund_tx_id` set is the refund leg of a
+            // failed BTC→L-BTC receive swap. A Complete send *without* a
+            // refund txid is an L-BTC→BTC chain swap send (a different swap
+            // direction that happens to share PaymentDetails::Bitcoin) — it
+            // is a successful outgoing payment, not a refund.
+            PaymentType::Send => {
+                let is_refund_leg = matches!(
+                    &p.details,
+                    PaymentDetails::Bitcoin { refund_tx_id: Some(_), .. }
+                );
+                if is_refund_leg {
+                    BtcSwapReceiveStatus::Refunded
+                } else {
+                    BtcSwapReceiveStatus::Completed
+                }
+            }
         },
     }
 }
@@ -135,6 +153,15 @@ mod tests {
     use breez_sdk_liquid::prelude::{Payment, PaymentDetails, PaymentState, PaymentType};
 
     fn btc_payment(status: PaymentState, ptype: PaymentType, lockup: Option<String>) -> Payment {
+        btc_payment_with_refund(status, ptype, lockup, None)
+    }
+
+    fn btc_payment_with_refund(
+        status: PaymentState,
+        ptype: PaymentType,
+        lockup: Option<String>,
+        refund_tx_id: Option<String>,
+    ) -> Payment {
         Payment {
             destination: Some("bc1qtest".into()),
             tx_id: None,
@@ -154,7 +181,7 @@ mod tests {
                 bitcoin_expiration_blockheight: 0,
                 lockup_tx_id: lockup,
                 claim_tx_id: None,
-                refund_tx_id: None,
+                refund_tx_id,
                 refund_tx_amount_sat: None,
             },
         }
@@ -232,9 +259,24 @@ mod tests {
     }
 
     #[test]
-    fn complete_send_on_btc_swap_is_refunded() {
-        let p = btc_payment(PaymentState::Complete, PaymentType::Send, None);
+    fn complete_send_with_refund_tx_is_refunded() {
+        // The refund leg of a failed BTC→L-BTC receive swap.
+        let p = btc_payment_with_refund(
+            PaymentState::Complete,
+            PaymentType::Send,
+            None,
+            Some("refund-txid".into()),
+        );
         assert_eq!(classify_payment(&p, &[]), BtcSwapReceiveStatus::Refunded);
+    }
+
+    #[test]
+    fn complete_send_without_refund_tx_is_completed() {
+        // Regression: an L-BTC→BTC chain swap send also uses
+        // PaymentDetails::Bitcoin + PaymentType::Send, but is NOT a refund.
+        // Previously classify_payment reported it as Refunded.
+        let p = btc_payment(PaymentState::Complete, PaymentType::Send, None);
+        assert_eq!(classify_payment(&p, &[]), BtcSwapReceiveStatus::Completed);
     }
 
     #[test]

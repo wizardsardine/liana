@@ -727,6 +727,7 @@ pub fn refundable_detail_view<'a>(
     refunding: bool,
     pending_fee_priority: Option<FeeratePriority>,
     in_flight: Option<&'a InFlightRefund>,
+    has_vault: bool,
 ) -> Element<'a, Message> {
     let btc_amount = Amount::from_sat(refundable.amount_sat);
 
@@ -872,13 +873,13 @@ pub fn refundable_detail_view<'a>(
                             .size(14)
                             .padding(12),
                         )
-                        .push(
+                        .push_maybe(has_vault.then(|| {
                             Row::new().spacing(8).push(
                                 button::transparent_border(None, "Use Vault address")
                                     .on_press(Message::GenerateVaultRefundAddress)
                                     .padding([6, 14]),
-                            ),
-                        ),
+                            )
+                        })),
                 )
                 .push(
                     Column::new()
