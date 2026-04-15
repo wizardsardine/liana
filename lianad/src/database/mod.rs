@@ -206,14 +206,8 @@ pub trait DatabaseConnection {
     /// Save Receiver Session
     fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32, bip21: &str) -> i64;
 
-    /// Get bip21 for a receiver session by derivation index
-    fn get_payjoin_receiver_bip21(&mut self, derivation_index: u32) -> Option<String>;
-
-    /// Update bip21 for a receiver session
-    fn update_payjoin_receiver_bip21(&mut self, derivation_index: u32, bip21: &str);
-
     /// Get active payjoin sessions with their derivation indexes
-    fn get_active_payjoin_sessions(&mut self) -> Vec<(SessionId, u32)>;
+    fn get_active_payjoin_receiver_sessions(&mut self) -> Vec<(SessionId, u32)>;
 
     /// Get receiver session id from txid -- this will return the session id if the txid is a proposed payjoin txid or the original txid
     fn get_payjoin_receiver_session_id_from_txid(
@@ -475,16 +469,8 @@ impl DatabaseConnection for SqliteConn {
         self.save_new_payjoin_receiver_session(derivation_index, bip21)
     }
 
-    fn get_payjoin_receiver_bip21(&mut self, derivation_index: u32) -> Option<String> {
-        self.get_payjoin_receiver_bip21(derivation_index)
-    }
-
-    fn update_payjoin_receiver_bip21(&mut self, derivation_index: u32, bip21: &str) {
-        self.update_payjoin_receiver_bip21(derivation_index, bip21)
-    }
-
-    fn get_active_payjoin_sessions(&mut self) -> Vec<(SessionId, u32)> {
-        self.get_active_payjoin_sessions()
+    fn get_active_payjoin_receiver_sessions(&mut self) -> Vec<(SessionId, u32)> {
+        self.get_active_payjoin_receiver_sessions()
     }
 
     fn get_all_active_receiver_session_ids(&mut self) -> Vec<SessionId> {

@@ -494,7 +494,7 @@ impl SqliteConn {
                     .consensus_encode(&mut buf)
                     .expect("Outpoint must encode");
                 let affected = db_tx.execute(
-                    "INSERT OR IGNORE INTO payjoin_outpoints (outpoint, added_at) \
+                    "INSERT OR IGNORE INTO payjoin_outpoints (outpoint, created_at) \
                         VALUES (?1, ?2)",
                     rusqlite::params![buf, curr_timestamp()],
                 )?;
@@ -1118,7 +1118,7 @@ impl SqliteConn {
         &mut self,
         txid: &bitcoin::Txid,
     ) -> Option<SessionId> {
-        let sessions = self.get_active_payjoin_sessions();
+        let sessions = self.get_active_payjoin_receiver_sessions();
         let txid_bytes = txid[..].to_vec();
         for (session_id, _) in sessions {
             let events = self.load_receiver_session_events(&session_id);
@@ -1154,26 +1154,8 @@ impl SqliteConn {
         id
     }
 
-    /// Get bip21 for a receiver session by derivation index
-    pub fn get_payjoin_receiver_bip21(&mut self, derivation_index: u32) -> Option<String> {
-        db_query(
-            &mut self.conn,
-            "SELECT receive_address FROM addresses WHERE derivation_index = ?1",
-            rusqlite::params![derivation_index],
-            |row| row.get(0),
-        )
-        .expect("Db must not fail")
-        .into_iter()
-        .next()
-    }
-
-    /// Update bip21 for a receiver session (no-op, kept for API compatibility)
-    pub fn update_payjoin_receiver_bip21(&mut self, _derivation_index: u32, _bip21: &str) {
-        // bip21 is now computed on-the-fly, no-op
-    }
-
     /// Get all active receiver session ids with their derivation indexes
-    pub fn get_active_payjoin_sessions(&mut self) -> Vec<(SessionId, u32)> {
+    pub fn get_active_payjoin_receiver_sessions(&mut self) -> Vec<(SessionId, u32)> {
         db_query(
             &mut self.conn,
             "SELECT id, derivation_index FROM payjoin_receivers WHERE completed_at IS NULL AND derivation_index IS NOT NULL",

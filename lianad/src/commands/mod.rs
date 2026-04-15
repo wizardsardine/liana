@@ -430,13 +430,10 @@ impl DaemonControl {
 
         let bip21 = session.pj_uri().to_string();
 
-        let mut db_conn = self.db.connection();
-        db_conn.update_payjoin_receiver_bip21(new_index.into(), &bip21);
-
         Ok(GetAddressResult::new(address, new_index, Some(bip21)))
     }
 
-    /// Get Payjoin URI (BIP21) and its sender/receiver status by txid
+    /// Get receiver session and its sender/receiver status by txid
     pub fn get_payjoin_info(&self, txid: &bitcoin::Txid) -> Result<PayjoinStatus, CommandError> {
         let mut db_conn = self.db.connection();
         log::debug!("Getting payjoin info for txid: {:?}", txid);
@@ -452,16 +449,10 @@ impl DaemonControl {
     }
 
     /// Get all active payjoin receiver sessions with their derivation indexes
-    pub fn get_active_payjoin_sessions(&self) -> Result<Vec<u32>, CommandError> {
+    pub fn get_active_payjoin_receiver_sessions(&self) -> Result<Vec<u32>, CommandError> {
         let mut db_conn = self.db.connection();
-        let sessions = db_conn.get_active_payjoin_sessions();
+        let sessions = db_conn.get_active_payjoin_receiver_sessions();
         Ok(sessions.into_iter().map(|(_, idx)| idx).collect())
-    }
-
-    /// Get payjoin BIP21 URI for a specific derivation index
-    pub fn get_payjoin_bip21(&self, derivation_index: u32) -> Result<Option<String>, CommandError> {
-        let mut db_conn = self.db.connection();
-        Ok(db_conn.get_payjoin_receiver_bip21(derivation_index))
     }
 
     /// Update derivation indexes

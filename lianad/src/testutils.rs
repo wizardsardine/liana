@@ -583,7 +583,7 @@ impl DatabaseConnection for DummyDatabase {
         false
     }
 
-    fn get_active_payjoin_sessions(&mut self) -> Vec<(SessionId, u32)> {
+    fn get_active_payjoin_receiver_sessions(&mut self) -> Vec<(SessionId, u32)> {
         Vec::new()
     }
 
@@ -611,35 +611,6 @@ impl DatabaseConnection for DummyDatabase {
         db.payjoin_sessions_by_derivation
             .insert(derivation_index, session_id);
         session_id
-    }
-
-    fn get_payjoin_receiver_bip21(&mut self, derivation_index: u32) -> Option<String> {
-        self.db
-            .read()
-            .unwrap()
-            .payjoin_sessions_by_derivation
-            .get(&derivation_index)
-            .and_then(|session_id| {
-                self.db
-                    .read()
-                    .unwrap()
-                    .payjoin_receiver_sessions
-                    .get(session_id)
-                    .map(|(_, bip21, _)| bip21.clone())
-            })
-    }
-
-    fn update_payjoin_receiver_bip21(&mut self, derivation_index: u32, bip21: &str) {
-        let mut db = self.db.write().unwrap();
-        if let Some(session_id) = db
-            .payjoin_sessions_by_derivation
-            .get(&derivation_index)
-            .copied()
-        {
-            if let Some(session) = db.payjoin_receiver_sessions.get_mut(&session_id) {
-                session.1 = bip21.to_string();
-            }
-        }
     }
 
     fn get_all_active_receiver_session_ids(&mut self) -> Vec<SessionId> {
