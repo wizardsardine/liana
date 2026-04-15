@@ -1,8 +1,7 @@
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use breez_sdk_liquid::model::{PaymentDetails, RefundRequest};
-use breez_sdk_liquid::prelude::{Payment, RefundableSwap};
+use breez_sdk_liquid::model::RefundRequest;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::component::form;
 use coincube_ui::component::quote_display::{self, Quote};
@@ -11,7 +10,11 @@ use iced::{widget::image, Task};
 
 use crate::app::breez_liquid::assets::usdt_asset_id;
 use crate::app::view::FeeratePriority;
-use crate::app::{breez_liquid::BreezClient, cache::Cache, menu::Menu, state::State};
+use crate::app::wallets::{
+    DomainPayment, DomainPaymentDetails, DomainPaymentDirection, DomainRefundableSwap,
+    LiquidBackend,
+};
+use crate::app::{cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::export::{ImportExportMessage, ImportExportState};
@@ -24,11 +27,11 @@ enum LiquidTransactionsModal {
 }
 
 pub struct LiquidTransactions {
-    breez_client: Arc<BreezClient>,
-    payments: Vec<Payment>,
-    refundables: Vec<RefundableSwap>,
-    selected_payment: Option<Payment>,
-    selected_refundable: Option<RefundableSwap>,
+    breez_client: Arc<LiquidBackend>,
+    payments: Vec<DomainPayment>,
+    refundables: Vec<DomainRefundableSwap>,
+    selected_payment: Option<DomainPayment>,
+    selected_refundable: Option<DomainRefundableSwap>,
     loading: bool,
     balance: Amount,
     modal: LiquidTransactionsModal,
@@ -49,7 +52,7 @@ pub enum AssetFilter {
 }
 
 impl LiquidTransactions {
-    pub fn new(breez_client: Arc<BreezClient>) -> Self {
+    pub fn new(breez_client: Arc<LiquidBackend>) -> Self {
         let empty_state_quote = quote_display::random_quote("empty-wallet");
         let empty_state_image_handle = quote_display::image_handle_for_context("empty-wallet");
         Self {
@@ -75,20 +78,16 @@ impl LiquidTransactions {
         self.asset_filter
     }
 
-    pub fn preselect(&mut self, payment: Payment) {
+    pub fn preselect(&mut self, payment: DomainPayment) {
         self.selected_payment = Some(payment);
     }
 
     fn calculate_balance(&self) -> Amount {
-        use breez_sdk_liquid::prelude::PaymentType;
         let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
         let mut balance: i64 = 0;
 
         for payment in &self.payments {
-            let is_usdt = matches!(
-                &payment.details,
-                PaymentDetails::Liquid { asset_id, .. } if !usdt_id.is_empty() && asset_id == usdt_id
-            );
+            let is_usdt = is_usdt_payment(&payment.details, usdt_id);
 
             match self.asset_filter {
                 AssetFilter::UsdtOnly if !is_usdt => continue,
@@ -103,11 +102,11 @@ impl LiquidTransactions {
                 _ => {}
             }
 
-            match payment.payment_type {
-                PaymentType::Receive => {
+            match payment.direction {
+                DomainPaymentDirection::Receive => {
                     balance += payment.amount_sat as i64;
                 }
-                PaymentType::Send => {
+                DomainPaymentDirection::Send => {
                     balance -= payment.amount_sat as i64;
                 }
             }
@@ -115,6 +114,15 @@ impl LiquidTransactions {
 
         Amount::from_sat(balance.max(0) as u64)
     }
+}
+
+/// `true` if the payment carries the configured USDt asset id.
+fn is_usdt_payment(details: &DomainPaymentDetails, usdt_id: &str) -> bool {
+    matches!(
+        details,
+        DomainPaymentDetails::LiquidAsset { asset_id, .. }
+            if !usdt_id.is_empty() && asset_id == usdt_id
+    )
 }
 
 impl State for LiquidTransactions {
@@ -205,23 +213,11 @@ impl State for LiquidTransactions {
                 self.payments = match self.asset_filter {
                     AssetFilter::UsdtOnly => payments
                         .into_iter()
-                        .filter(|p| {
-                            matches!(
-                                &p.details,
-                                PaymentDetails::Liquid { asset_id, .. }
-                                    if asset_id == usdt_id
-                            )
-                        })
+                        .filter(|p| is_usdt_payment(&p.details, usdt_id))
                         .collect(),
                     AssetFilter::LbtcOnly => payments
                         .into_iter()
-                        .filter(|p| {
-                            !matches!(
-                                &p.details,
-                                PaymentDetails::Liquid { asset_id, .. }
-                                    if asset_id == usdt_id
-                            )
-                        })
+                        .filter(|p| !is_usdt_payment(&p.details, usdt_id))
                         .collect(),
                     AssetFilter::All => payments,
                 };
@@ -296,7 +292,7 @@ impl State for LiquidTransactions {
                 self.modal = LiquidTransactionsModal::Export {
                     state: ImportExportState::Started,
                 };
-                let breez_client = self.breez_client.clone();
+                let breez_client = self.breez_client.client().clone();
                 Task::perform(
                     async move {
                         crate::export::export_liquid_payments(

@@ -153,8 +153,34 @@ pub struct CubeSettings {
     /// Optional security PIN (stored as Argon2id hash with salt in PHC format)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security_pin_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub liquid_wallet_signer_fingerprint: Option<Fingerprint>,
+    /// Fingerprint of the [`HotSigner`] whose mnemonic drives both the
+    /// Liquid and Spark wallets for this cube. Both Breez SDKs derive
+    /// their wallet keys at different BIP-32 paths from the same seed,
+    /// so reusing one HotSigner is safe and keeps the "one mnemonic,
+    /// one PIN, one backup" UX intact. When `None`, neither Breez
+    /// wallet is configured and the `WalletRegistry` loads with
+    /// Liquid unavailable and `spark = None`.
+    ///
+    /// Serde `alias` lets us transparently deserialize cubes written
+    /// before the pre-Phase-8 rename (when this field was named
+    /// `liquid_wallet_signer_fingerprint`). The alias can be removed
+    /// once every in-the-wild cube has been re-saved at least once
+    /// under the new name.
+    ///
+    /// [`HotSigner`]: coincube_core::signer::HotSigner
+    /// [`WalletRegistry`]: crate::app::wallets::WalletRegistry
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "liquid_wallet_signer_fingerprint"
+    )]
+    pub breez_wallet_signer_fingerprint: Option<Fingerprint>,
+    /// Which backend should fulfill incoming Lightning Address invoices
+    /// for this cube. Starts as `Liquid` (backwards-compatible default
+    /// for existing cubes); Phase 5 flips the default to `Spark` and
+    /// adds a per-cube override in Settings.
+    #[serde(default)]
+    pub default_lightning_backend: crate::app::wallets::WalletKind,
     /// Bitcoin display unit preference for this cube
     #[serde(default)]
     pub unit_setting: unit::UnitSetting,
@@ -185,7 +211,8 @@ impl CubeSettings {
             created_at: chrono::Utc::now().timestamp(),
             vault_wallet_id: None,
             security_pin_hash: None,
-            liquid_wallet_signer_fingerprint: None,
+            breez_wallet_signer_fingerprint: None,
+            default_lightning_backend: crate::app::wallets::WalletKind::default(),
             backed_up: false,
             mfa_done: false,
             remote_synced: false,
@@ -204,8 +231,8 @@ impl CubeSettings {
         self
     }
 
-    pub fn with_liquid_signer(mut self, fingerprint: Fingerprint) -> Self {
-        self.liquid_wallet_signer_fingerprint = Some(fingerprint);
+    pub fn with_breez_signer(mut self, fingerprint: Fingerprint) -> Self {
+        self.breez_wallet_signer_fingerprint = Some(fingerprint);
         self
     }
 

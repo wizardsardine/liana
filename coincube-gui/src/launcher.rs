@@ -353,15 +353,15 @@ impl Launcher {
                 let without_recovery = Task::perform(
                     async move {
                         // Generate Liquid wallet HotSigner
-                        let liquid_signer = HotSigner::generate(network).map_err(|e| {
-                            format!("Failed to generate Liquid wallet signer: {}", e)
+                        let breez_signer = HotSigner::generate(network).map_err(|e| {
+                            format!("Failed to generate Breez wallet signer: {}", e)
                         })?;
 
                         // Create secp context for fingerprint calculation
                         let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-                        let liquid_fingerprint = liquid_signer.fingerprint(&secp);
+                        let breez_key_fingerprint = breez_signer.fingerprint(&secp);
 
-                        // Store Liquid wallet mnemonic (encrypted with PIN if provided)
+                        // Store Breez wallet mnemonic (shared by Liquid + Spark) (encrypted with PIN if provided)
                         let network_dir = datadir_path.network_directory(network);
                         network_dir
                             .init()
@@ -369,26 +369,31 @@ impl Launcher {
 
                         // Use a timestamp for the Liquid wallet storage
                         let timestamp = chrono::Utc::now().timestamp();
-                        let liquid_checksum = format!("liquid_{}", timestamp);
+                        let breez_checksum = format!("breez_{}", timestamp);
 
-                        // Store Liquid wallet mnemonic encrypted with PIN (always required)
-                        liquid_signer
+                        // Store Breez wallet mnemonic (shared by Liquid + Spark) encrypted with PIN (always required)
+                        breez_signer
                             .store_encrypted(
                                 datadir_path.path(),
                                 network,
                                 &secp,
-                                Some((liquid_checksum, timestamp)),
+                                Some((breez_checksum, timestamp)),
                                 Some(&pin),
                             )
                             .map_err(|e| {
-                                format!("Failed to store Liquid wallet mnemonic: {}", e)
+                                format!("Failed to store Breez wallet mnemonic: {}", e)
                             })?;
 
-                        tracing::info!("Liquid wallet signer created and stored (encrypted with PIN) with fingerprint: {}", liquid_fingerprint);
+                        tracing::info!("Breez wallet signer created and stored (encrypted with PIN) with fingerprint: {}", breez_key_fingerprint);
 
                         // Build Cube settings using the pre-generated, stable UUID.
                         let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
-                            .with_liquid_signer(liquid_fingerprint)
+                            // One HotSigner drives both Breez SDKs:
+                            // Liquid + Spark derive wallet keys from
+                            // the same seed at different BIP-32 paths,
+                            // so one mnemonic / PIN / backup covers
+                            // everything.
+                            .with_breez_signer(breez_key_fingerprint)
                             .with_pin(&pin)
                             .map_err(|e| format!("Failed to hash PIN: {}", e))?;
 
@@ -953,7 +958,7 @@ impl Launcher {
                         Task::perform(
                             async move {
                                 // Restore Liquid wallet HotSigner from mnemonic
-                                let liquid_signer = HotSigner::from_mnemonic(network, mnemonic)
+                                let breez_signer = HotSigner::from_mnemonic(network, mnemonic)
                                     .map_err(|e| {
                                         format!("Failed to restore from mnemonic: {}", e)
                                     })?;
@@ -961,9 +966,9 @@ impl Launcher {
                                 // Create secp context for fingerprint calculation
                                 let secp =
                                     coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-                                let liquid_fingerprint = liquid_signer.fingerprint(&secp);
+                                let breez_key_fingerprint = breez_signer.fingerprint(&secp);
 
-                                // Store Liquid wallet mnemonic (encrypted with PIN if provided)
+                                // Store Breez wallet mnemonic (shared by Liquid + Spark) (encrypted with PIN if provided)
                                 let network_dir = datadir_path.network_directory(network);
                                 network_dir.init().map_err(|e| {
                                     format!("Failed to create network directory: {}", e)
@@ -971,26 +976,29 @@ impl Launcher {
 
                                 // Use a timestamp for the Liquid wallet storage
                                 let timestamp = chrono::Utc::now().timestamp();
-                                let liquid_checksum = format!("liquid_{}", timestamp);
+                                let breez_checksum = format!("breez_{}", timestamp);
 
-                                // Store Liquid wallet mnemonic encrypted with PIN (always required)
-                                liquid_signer
+                                // Store Breez wallet mnemonic (shared by Liquid + Spark) encrypted with PIN (always required)
+                                breez_signer
                                     .store_encrypted(
                                         datadir_path.path(),
                                         network,
                                         &secp,
-                                        Some((liquid_checksum, timestamp)),
+                                        Some((breez_checksum, timestamp)),
                                         Some(&pin),
                                     )
                                     .map_err(|e| {
-                                        format!("Failed to store Liquid wallet mnemonic: {}", e)
+                                        format!("Failed to store Breez wallet mnemonic: {}", e)
                                     })?;
 
-                                tracing::info!("Liquid wallet signer created and stored (encrypted with PIN) with fingerprint: {}", liquid_fingerprint);
+                                tracing::info!("Breez wallet signer created and stored (encrypted with PIN) with fingerprint: {}", breez_key_fingerprint);
 
                                 // Build Cube settings using the pre-generated, stable UUID.
                                 let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
-                                    .with_liquid_signer(liquid_fingerprint)
+                                    // One HotSigner drives both Breez
+                                    // SDKs — see the without_recovery
+                                    // path above for the rationale.
+                                    .with_breez_signer(breez_key_fingerprint)
                                     .with_pin(&pin)
                                     .map_err(|e| format!("Failed to hash PIN: {}", e))?;
 

@@ -1,7 +1,9 @@
-use breez_sdk_liquid::model::{PaymentDetails, PaymentState};
-use breez_sdk_liquid::prelude::{Payment, PaymentType, RefundableSwap};
 use coincube_core::miniscript::bitcoin::Amount;
 use iced::widget::image;
+
+use crate::app::wallets::{
+    DomainPayment, DomainPaymentDetails, DomainPaymentStatus, DomainRefundableSwap,
+};
 
 use coincube_ui::{
     component::{
@@ -21,7 +23,7 @@ use iced::{
 
 use coincube_ui::image::asset_network_logo;
 
-use crate::app::breez_liquid::assets::{format_usdt_display, USDT_PRECISION};
+use crate::app::breez_liquid::assets::format_usdt_display;
 use crate::app::menu::Menu;
 use crate::app::state::liquid::transactions::AssetFilter;
 use crate::app::view::message::{FeeratePriority, Message};
@@ -30,22 +32,19 @@ use crate::export::ImportExportMessage;
 use crate::utils::{format_time_ago, format_timestamp};
 
 /// Returns `Some(formatted_usdt_string)` when the payment is a USDt asset payment.
-fn usdt_amount_str(payment: &Payment, usdt_id: &str) -> Option<String> {
-    if let PaymentDetails::Liquid {
+fn usdt_amount_str(payment: &DomainPayment, usdt_id: &str) -> Option<String> {
+    if let DomainPaymentDetails::LiquidAsset {
         asset_id,
         asset_info,
         ..
     } = &payment.details
     {
         if !usdt_id.is_empty() && asset_id == usdt_id {
-            let display = if let Some(info) = asset_info {
-                format_usdt_display(
-                    (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64
-                )
-            } else {
-                format_usdt_display(payment.amount_sat)
-            };
-            return Some(format!("{} USDt", display));
+            let minor = asset_info
+                .as_ref()
+                .map(|i| i.amount_minor)
+                .unwrap_or(payment.amount_sat);
+            return Some(format!("{} USDt", format_usdt_display(minor)));
         }
     }
     None
@@ -53,8 +52,8 @@ fn usdt_amount_str(payment: &Payment, usdt_id: &str) -> Option<String> {
 
 #[allow(clippy::too_many_arguments)]
 pub fn liquid_transactions_view<'a>(
-    payments: &'a [Payment],
-    refundables: &'a [RefundableSwap],
+    payments: &'a [DomainPayment],
+    refundables: &'a [DomainRefundableSwap],
     _balance: &'a Amount,
     fiat_converter: Option<FiatAmountConverter>,
     _loading: bool,
@@ -189,39 +188,21 @@ pub fn liquid_transactions_view<'a>(
 
 fn transaction_row<'a>(
     i: usize,
-    payment: &'a Payment,
+    payment: &'a DomainPayment,
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     usdt_id: &str,
     show_direction_badges: bool,
 ) -> Element<'a, Message> {
-    let is_receive = matches!(payment.payment_type, PaymentType::Receive);
+    let is_receive = payment.is_incoming();
     let usdt_str = usdt_amount_str(payment, usdt_id);
 
     // Extract description — label USDt payments explicitly
     let is_usdt = usdt_str.is_some();
-    let description: &str = if is_usdt {
-        "USDt Transfer"
+    let description: String = if is_usdt {
+        "USDt Transfer".to_owned()
     } else {
-        match &payment.details {
-            PaymentDetails::Lightning {
-                payer_note,
-                description,
-                ..
-            } => payer_note
-                .as_ref()
-                .filter(|s| !s.is_empty())
-                .unwrap_or(description),
-            PaymentDetails::Liquid {
-                payer_note,
-                description,
-                ..
-            } => payer_note
-                .as_ref()
-                .filter(|s| !s.is_empty())
-                .unwrap_or(description),
-            PaymentDetails::Bitcoin { description, .. } => description,
-        }
+        payment.details.description().to_owned()
     };
 
     let time_ago = format_time_ago(payment.timestamp.into());
@@ -237,15 +218,17 @@ fn transaction_row<'a>(
         asset_network_logo("usdt", "liquid", 40.0)
     } else {
         match &payment.details {
-            PaymentDetails::Lightning { .. } => asset_network_logo("btc", "lightning", 40.0),
-            PaymentDetails::Liquid { .. } => asset_network_logo("lbtc", "liquid", 40.0),
-            PaymentDetails::Bitcoin { .. } => asset_network_logo("btc", "bitcoin", 40.0),
+            DomainPaymentDetails::Lightning { .. } => asset_network_logo("btc", "lightning", 40.0),
+            DomainPaymentDetails::LiquidAsset { .. } => asset_network_logo("lbtc", "liquid", 40.0),
+            DomainPaymentDetails::OnChainBitcoin { .. } => {
+                asset_network_logo("btc", "bitcoin", 40.0)
+            }
         }
     };
 
     if let Some(ref usdt_display) = usdt_str {
         let item = TransactionListItem::new(direction, &Amount::ZERO, bitcoin_unit)
-            .with_label(description.to_string())
+            .with_label(description.clone())
             .with_time_ago(time_ago)
             .with_custom_icon(combo_icon)
             .with_show_direction_badge(show_direction_badges)
@@ -259,7 +242,7 @@ fn transaction_row<'a>(
     }
 
     let mut item = TransactionListItem::new(direction, &btc_amount, bitcoin_unit)
-        .with_label(description.to_string())
+        .with_label(description)
         .with_time_ago(time_ago)
         .with_custom_icon(combo_icon)
         .with_show_direction_badge(show_direction_badges);
@@ -276,7 +259,7 @@ fn transaction_row<'a>(
 
 fn refundable_row<'a>(
     i: usize,
-    refundable: &'a RefundableSwap,
+    refundable: &'a DomainRefundableSwap,
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     show_direction_badges: bool,
@@ -303,12 +286,12 @@ fn refundable_row<'a>(
 }
 
 pub fn transaction_detail_view<'a>(
-    payment: &'a Payment,
+    payment: &'a DomainPayment,
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     usdt_id: &str,
 ) -> Element<'a, Message> {
-    let is_receive = matches!(payment.payment_type, PaymentType::Receive);
+    let is_receive = payment.is_incoming();
     let usdt_str = usdt_amount_str(payment, usdt_id);
     let btc_amount = Amount::from_sat(payment.amount_sat);
     let fees_sat = Amount::from_sat(payment.fees_sat);
@@ -323,28 +306,10 @@ pub fn transaction_detail_view<'a>(
         format_timestamp(payment.timestamp as u64).unwrap_or_else(|| "Unknown".to_string());
 
     // Extract description — label USDt payments explicitly
-    let description: &str = if usdt_str.is_some() {
-        "USDt Transfer"
+    let description: String = if usdt_str.is_some() {
+        "USDt Transfer".to_owned()
     } else {
-        match &payment.details {
-            PaymentDetails::Lightning {
-                payer_note,
-                description,
-                ..
-            } => payer_note
-                .as_ref()
-                .filter(|s| !s.is_empty())
-                .unwrap_or(description),
-            PaymentDetails::Liquid {
-                payer_note,
-                description,
-                ..
-            } => payer_note
-                .as_ref()
-                .filter(|s| !s.is_empty())
-                .unwrap_or(description),
-            PaymentDetails::Bitcoin { description, .. } => description,
-        }
+        payment.details.description().to_owned()
     };
 
     let title = if is_receive {
@@ -355,14 +320,14 @@ pub fn transaction_detail_view<'a>(
 
     // Helper: combo icon for detail view based on payment type
     let make_detail_icon =
-        |is_usdt: bool, details: &PaymentDetails| -> (&'static str, &'static str) {
+        |is_usdt: bool, details: &DomainPaymentDetails| -> (&'static str, &'static str) {
             if is_usdt {
                 ("usdt", "liquid")
             } else {
                 match details {
-                    PaymentDetails::Lightning { .. } => ("btc", "lightning"),
-                    PaymentDetails::Liquid { .. } => ("lbtc", "liquid"),
-                    PaymentDetails::Bitcoin { .. } => ("btc", "bitcoin"),
+                    DomainPaymentDetails::Lightning { .. } => ("btc", "lightning"),
+                    DomainPaymentDetails::LiquidAsset { .. } => ("lbtc", "liquid"),
+                    DomainPaymentDetails::OnChainBitcoin { .. } => ("btc", "bitcoin"),
                 }
             }
         };
@@ -370,15 +335,10 @@ pub fn transaction_detail_view<'a>(
     if let Some(ref usdt_display) = usdt_str {
         // USDt detail view: show USDt amount + L-BTC fees
         let usdt_num = match &payment.details {
-            PaymentDetails::Liquid { asset_info, .. } => {
-                if let Some(info) = asset_info {
-                    format_usdt_display(
-                        (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64
-                    )
-                } else {
-                    format_usdt_display(payment.amount_sat)
-                }
-            }
+            DomainPaymentDetails::LiquidAsset { asset_info, .. } => asset_info
+                .as_ref()
+                .map(|i| format_usdt_display(i.amount_minor))
+                .unwrap_or_else(|| format_usdt_display(payment.amount_sat)),
             _ => format_usdt_display(payment.amount_sat),
         };
         let amount_row = if is_receive {
@@ -442,28 +402,28 @@ pub fn transaction_detail_view<'a>(
                             )
                             .push(Column::new().width(Length::FillPortion(2)).push(
                                 match payment.status {
-                                    PaymentState::Complete => {
+                                    DomainPaymentStatus::Complete => {
                                         text("Complete").style(theme::text::success)
                                     }
-                                    PaymentState::Pending => {
+                                    DomainPaymentStatus::Pending => {
                                         text("Pending").style(theme::text::secondary)
                                     }
-                                    PaymentState::Created => {
+                                    DomainPaymentStatus::Created => {
                                         text("Created").style(theme::text::secondary)
                                     }
-                                    PaymentState::Failed => {
+                                    DomainPaymentStatus::Failed => {
                                         text("Failed").style(theme::text::destructive)
                                     }
-                                    PaymentState::TimedOut => {
+                                    DomainPaymentStatus::TimedOut => {
                                         text("Timed Out").style(theme::text::destructive)
                                     }
-                                    PaymentState::Refundable => {
+                                    DomainPaymentStatus::Refundable => {
                                         text("Refundable").style(theme::text::destructive)
                                     }
-                                    PaymentState::RefundPending => {
+                                    DomainPaymentStatus::RefundPending => {
                                         text("Refund Pending").style(theme::text::secondary)
                                     }
-                                    PaymentState::WaitingFeeAcceptance => {
+                                    DomainPaymentStatus::WaitingFeeAcceptance => {
                                         text("Waiting Fee Acceptance").style(theme::text::secondary)
                                     }
                                 },
@@ -588,28 +548,28 @@ pub fn transaction_detail_view<'a>(
                         )
                         .push(Column::new().width(Length::FillPortion(2)).push(
                             match payment.status {
-                                PaymentState::Complete => {
+                                DomainPaymentStatus::Complete => {
                                     text("Complete").style(theme::text::success)
                                 }
-                                PaymentState::Pending => {
+                                DomainPaymentStatus::Pending => {
                                     text("Pending").style(theme::text::secondary)
                                 }
-                                PaymentState::Created => {
+                                DomainPaymentStatus::Created => {
                                     text("Created").style(theme::text::secondary)
                                 }
-                                PaymentState::Failed => {
+                                DomainPaymentStatus::Failed => {
                                     text("Failed").style(theme::text::destructive)
                                 }
-                                PaymentState::TimedOut => {
+                                DomainPaymentStatus::TimedOut => {
                                     text("Timed Out").style(theme::text::destructive)
                                 }
-                                PaymentState::Refundable => {
+                                DomainPaymentStatus::Refundable => {
                                     text("Refundable").style(theme::text::destructive)
                                 }
-                                PaymentState::RefundPending => {
+                                DomainPaymentStatus::RefundPending => {
                                     text("Refund Pending").style(theme::text::secondary)
                                 }
-                                PaymentState::WaitingFeeAcceptance => {
+                                DomainPaymentStatus::WaitingFeeAcceptance => {
                                     text("Waiting Fee Acceptance").style(theme::text::secondary)
                                 }
                             },
@@ -650,7 +610,7 @@ pub fn transaction_detail_view<'a>(
 }
 
 pub fn refundable_detail_view<'a>(
-    refundable: &'a RefundableSwap,
+    refundable: &'a DomainRefundableSwap,
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     refund_address: &'a form::Value<String>,

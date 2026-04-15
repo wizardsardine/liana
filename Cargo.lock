@@ -1600,6 +1600,7 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "coincube-core",
+ "coincube-spark-protocol",
  "coincube-ui",
  "coincubed",
  "dirs",
@@ -1638,6 +1639,14 @@ dependencies = [
  "winresource",
  "zeroize",
  "zip",
+]
+
+[[package]]
+name = "coincube-spark-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

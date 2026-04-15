@@ -1,5 +1,6 @@
-use breez_sdk_liquid::model::{PaymentDetails, PaymentState};
 use coincube_core::miniscript::bitcoin::Amount;
+
+use crate::app::wallets::{DomainPaymentDetails, DomainPaymentStatus};
 use coincube_ui::{
     color,
     component::{
@@ -40,7 +41,7 @@ pub fn liquid_overview_view<'a>(
     let pending_outgoing_sats: u64 = recent_transaction
         .iter()
         .filter(|t| {
-            !t.is_incoming && t.usdt_display.is_none() && matches!(t.status, PaymentState::Pending)
+            !t.is_incoming && t.usdt_display.is_none() && matches!(t.status, DomainPaymentStatus::Pending)
         })
         .map(|t| (t.amount + t.fees_sat).to_sat())
         .sum();
@@ -48,7 +49,7 @@ pub fn liquid_overview_view<'a>(
     let pending_incoming_sats: u64 = recent_transaction
         .iter()
         .filter(|t| {
-            t.is_incoming && t.usdt_display.is_none() && matches!(t.status, PaymentState::Pending)
+            t.is_incoming && t.usdt_display.is_none() && matches!(t.status, DomainPaymentStatus::Pending)
         })
         .map(|t| t.amount.to_sat())
         .sum();
@@ -250,13 +251,13 @@ pub fn liquid_overview_view<'a>(
                 coincube_ui::image::asset_network_logo("usdt", "liquid", 40.0)
             } else {
                 match &tx.details {
-                    PaymentDetails::Lightning { .. } => {
+                    DomainPaymentDetails::Lightning { .. } => {
                         coincube_ui::image::asset_network_logo("btc", "lightning", 40.0)
                     }
-                    PaymentDetails::Liquid { .. } => {
+                    DomainPaymentDetails::LiquidAsset { .. } => {
                         coincube_ui::image::asset_network_logo("lbtc", "liquid", 40.0)
                     }
-                    PaymentDetails::Bitcoin { .. } => {
+                    DomainPaymentDetails::OnChainBitcoin { .. } => {
                         coincube_ui::image::asset_network_logo("btc", "bitcoin", 40.0)
                     }
                 }
@@ -286,7 +287,7 @@ pub fn liquid_overview_view<'a>(
                 }
             }
 
-            if matches!(tx.status, PaymentState::Pending) {
+            if matches!(tx.status, DomainPaymentStatus::Pending) {
                 let (bg, fg) = (color::GREY_3, color::BLACK);
                 let pending_badge = Container::new(
                     Row::new()

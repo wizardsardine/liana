@@ -6,7 +6,8 @@ use rand::seq::SliceRandom;
 
 use crate::app::settings::{update_settings_file, Settings};
 use crate::app::view::LiquidSettingsMessage;
-use crate::app::{breez_liquid::BreezClient, cache::Cache, menu::Menu, state::State};
+use crate::app::wallets::LiquidBackend;
+use crate::app::{cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::dir::CoincubeDirectory;
@@ -31,7 +32,7 @@ pub enum LiquidSettingsFlowState {
 
 /// LiquidSettings is a placeholder panel for the Liquid Settings page
 pub struct LiquidSettings {
-    breez_client: Arc<BreezClient>,
+    breez_client: Arc<LiquidBackend>,
     flow_state: LiquidSettingsFlowState,
 }
 
@@ -48,7 +49,7 @@ fn generate_random_word_indices(mnemonic_len: usize) -> Option<[usize; 3]> {
 }
 
 impl LiquidSettings {
-    pub fn new(breez_client: Arc<BreezClient>) -> Self {
+    pub fn new(breez_client: Arc<LiquidBackend>) -> Self {
         let backed_up = fetch_main_menu_state(breez_client.clone());
         Self {
             breez_client,
@@ -246,7 +247,7 @@ impl State for LiquidSettings {
                                 let network_dir = dir.network_directory(breez_client.network());
                                 update_settings_file(&network_dir, |mut settings| {
                                     if let Some(cube) = settings.cubes.iter_mut().find(|cube| {
-                                        cube.liquid_wallet_signer_fingerprint.as_ref()
+                                        cube.breez_wallet_signer_fingerprint.as_ref()
                                             == Some(&fingerprint)
                                     }) {
                                         cube.backed_up = true;
@@ -294,7 +295,7 @@ impl State for LiquidSettings {
 
 /// Fetches the main menu state (backed_up) from settings file.
 /// Uses spawn_blocking to avoid blocking the async runtime if file I/O hangs.
-fn fetch_main_menu_state(breez_client: Arc<BreezClient>) -> bool {
+fn fetch_main_menu_state(breez_client: Arc<LiquidBackend>) -> bool {
     // Run blocking I/O in a blocking context to prevent hanging the async runtime
     tokio::task::block_in_place(|| {
         let mut backed_up = false;
@@ -313,7 +314,7 @@ fn fetch_main_menu_state(breez_client: Arc<BreezClient>) -> bool {
                 match Settings::from_file(&network_dir) {
                     Ok(settings) => {
                         let cube = settings.cubes.into_iter().find(|cube| {
-                            cube.liquid_wallet_signer_fingerprint.as_ref() == Some(&fingerprint)
+                            cube.breez_wallet_signer_fingerprint.as_ref() == Some(&fingerprint)
                         });
                         if let Some(cube) = cube {
                             backed_up = cube.backed_up;

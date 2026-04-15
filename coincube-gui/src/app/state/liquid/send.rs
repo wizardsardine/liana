@@ -2,8 +2,6 @@ use std::convert::TryInto;
 use std::sync::Arc;
 use std::time::Duration;
 
-use breez_sdk_liquid::model::PaymentDetails;
-use breez_sdk_liquid::prelude::Payment;
 use breez_sdk_liquid::InputType;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{component::form, widget::*};
@@ -28,7 +26,8 @@ use crate::app::menu::{LiquidSubMenu, Menu};
 use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::state::{redirect, State};
 use crate::app::view::SendPopupMessage;
-use crate::app::{breez_liquid::BreezClient, cache::Cache};
+use crate::app::wallets::{DomainPayment, DomainPaymentDetails, LiquidBackend};
+use crate::app::cache::Cache;
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::utils::format_time_ago;
@@ -149,7 +148,7 @@ pub enum LiquidSendFlowState {
 
 /// LiquidSend manages the send interface for all Liquid wallet assets.
 pub struct LiquidSend {
-    breez_client: Arc<BreezClient>,
+    breez_client: Arc<LiquidBackend>,
     sideshift_flow: Option<SideshiftSendFlow>,
     btc_balance: Amount,
     usdt_balance: u64,
@@ -173,8 +172,8 @@ pub struct LiquidSend {
     /// Whether the "They Receive" picker modal is open.
     receive_picker_open: bool,
     recent_transaction: Vec<view::liquid::RecentTransaction>,
-    recent_payments: Vec<Payment>,
-    selected_payment: Option<Payment>,
+    recent_payments: Vec<DomainPayment>,
+    selected_payment: Option<DomainPayment>,
     input: form::Value<String>,
     input_type: Option<InputType>,
     lightning_limits: Option<(u64, u64)>, // (min_sats, max_sats)
@@ -202,7 +201,7 @@ pub struct LiquidSend {
 }
 
 impl LiquidSend {
-    pub fn new(breez_client: Arc<BreezClient>) -> Self {
+    pub fn new(breez_client: Arc<LiquidBackend>) -> Self {
         Self {
             breez_client,
             sideshift_flow: None,
@@ -285,7 +284,7 @@ impl LiquidSend {
         )
     }
 
-    pub fn breez_client(&self) -> &Arc<BreezClient> {
+    pub fn breez_client(&self) -> &Arc<LiquidBackend> {
         &self.breez_client
     }
 
@@ -335,12 +334,13 @@ impl LiquidSend {
                 };
 
                 let all_payments = payments.unwrap_or_default();
-                let payments: Vec<_> = all_payments
+                let payments: Vec<DomainPayment> = all_payments
                     .into_iter()
                     .filter(|p| {
                         let is_usdt = matches!(
                             &p.details,
-                            PaymentDetails::Liquid { asset_id, .. } if asset_id == usdt_id
+                            DomainPaymentDetails::LiquidAsset { asset_id, .. }
+                                if asset_id == usdt_id
                         );
                         if usdt_only {
                             is_usdt
@@ -780,24 +780,27 @@ impl State for LiquidSend {
                     if !recent_payment.is_empty() {
                         let fiat_converter: Option<view::FiatAmountConverter> =
                             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+                        let usdt_id =
+                            usdt_asset_id(self.breez_client.network()).unwrap_or("");
                         let txns = recent_payment
                             .iter()
                             .map(|payment| {
                                 let status = payment.status;
                                 let time_ago = format_time_ago(payment.timestamp.into());
-                                let is_usdt_payment = matches!(
-                                    &payment.details,
-                                    PaymentDetails::Liquid { asset_id, .. }
-                                        if asset_id == usdt_asset_id(self.breez_client.network()).unwrap_or("")
-                                );
-                                let amount = if is_usdt_payment {
-                                    if let PaymentDetails::Liquid { asset_info: Some(ref ai), .. } = &payment.details {
-                                        Amount::from_sat((ai.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64)
-                                    } else {
-                                        Amount::from_sat(payment.amount_sat)
+                                let usdt_amount_minor = match &payment.details {
+                                    DomainPaymentDetails::LiquidAsset {
+                                        asset_id,
+                                        asset_info,
+                                        ..
+                                    } if !usdt_id.is_empty() && asset_id == usdt_id => {
+                                        asset_info.as_ref().map(|i| i.amount_minor)
                                     }
-                                } else {
-                                    Amount::from_sat(payment.amount_sat)
+                                    _ => None,
+                                };
+                                let is_usdt_payment = usdt_amount_minor.is_some();
+                                let amount = match usdt_amount_minor {
+                                    Some(minor) => Amount::from_sat(minor),
+                                    None => Amount::from_sat(payment.amount_sat),
                                 };
                                 let fiat_amount = if is_usdt_payment {
                                     None
@@ -807,30 +810,30 @@ impl State for LiquidSend {
                                         .map(|c: &view::FiatAmountConverter| c.convert(amount))
                                 };
 
-                                let desc: &str = match &payment.details {
-                                    PaymentDetails::Lightning { payer_note, description, .. } => payer_note
-                                        .as_ref()
-                                        .filter(|s| !s.is_empty())
-                                        .unwrap_or(description),
-                                    PaymentDetails::Liquid { payer_note, description, .. } => {
-                                        let fallback = if is_usdt_payment && description.is_empty() {
+                                // Description: prefer payer_note, then fall back to the
+                                // invoice description. For empty USDt Liquid payments, show
+                                // "USDt Transfer" as a friendly default.
+                                let desc: String = match &payment.details {
+                                    DomainPaymentDetails::LiquidAsset {
+                                        payer_note,
+                                        description,
+                                        ..
+                                    } if is_usdt_payment => {
+                                        let fallback = if description.is_empty() {
                                             "USDt Transfer"
                                         } else {
                                             description.as_str()
                                         };
                                         payer_note
-                                            .as_ref()
+                                            .as_deref()
                                             .filter(|s| !s.is_empty())
-                                            .map(|s| s.as_str())
                                             .unwrap_or(fallback)
+                                            .to_owned()
                                     }
-                                    PaymentDetails::Bitcoin { description, .. } => description,
+                                    _ => payment.details.description().to_owned(),
                                 };
 
-                                let is_incoming = matches!(
-                                    payment.payment_type,
-                                    breez_sdk_liquid::prelude::PaymentType::Receive
-                                );
+                                let is_incoming = payment.is_incoming();
 
                                 let fees_sat = Amount::from_sat(payment.fees_sat);
 
@@ -845,7 +848,7 @@ impl State for LiquidSend {
                                 };
 
                                 view::liquid::RecentTransaction {
-                                    description: desc.to_owned(),
+                                    description: desc,
                                     time_ago,
                                     amount,
                                     fiat_amount,

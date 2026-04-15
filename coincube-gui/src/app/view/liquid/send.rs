@@ -1,7 +1,4 @@
-use breez_sdk_liquid::{
-    model::{PaymentDetails, PaymentState},
-    InputType,
-};
+use breez_sdk_liquid::InputType;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     color,
@@ -21,6 +18,7 @@ use iced::{
 };
 
 use crate::app::breez_liquid::assets::{format_usdt_display, AssetKind};
+use crate::app::wallets::{DomainPaymentDetails, DomainPaymentStatus};
 use crate::app::menu::Menu;
 use crate::app::state::liquid::send::{LiquidSendFlowState, Modal, ReceiveNetwork, SendAsset};
 use crate::app::view::{
@@ -485,14 +483,20 @@ pub fn liquid_send_view<'a>(
 
             // Determine combo icon from payment details
             let tx_icon = match &tx.details {
-                PaymentDetails::Lightning { .. } => asset_network_logo("btc", "lightning", 40.0),
-                PaymentDetails::Liquid { asset_id, .. }
+                DomainPaymentDetails::Lightning { .. } => {
+                    asset_network_logo("btc", "lightning", 40.0)
+                }
+                DomainPaymentDetails::LiquidAsset { asset_id, .. }
                     if !usdt_asset_id.is_empty() && asset_id == usdt_asset_id =>
                 {
                     asset_network_logo("usdt", "liquid", 40.0)
                 }
-                PaymentDetails::Liquid { .. } => asset_network_logo("lbtc", "liquid", 40.0),
-                PaymentDetails::Bitcoin { .. } => asset_network_logo("btc", "bitcoin", 40.0),
+                DomainPaymentDetails::LiquidAsset { .. } => {
+                    asset_network_logo("lbtc", "liquid", 40.0)
+                }
+                DomainPaymentDetails::OnChainBitcoin { .. } => {
+                    asset_network_logo("btc", "bitcoin", 40.0)
+                }
             };
 
             let mut item = TransactionListItem::new(direction, &display_amount, bitcoin_unit)
@@ -505,7 +509,7 @@ pub fn liquid_send_view<'a>(
                 item = item.with_amount_override(usdt_str.clone());
             }
 
-            if matches!(tx.status, PaymentState::Pending) {
+            if matches!(tx.status, DomainPaymentStatus::Pending) {
                 let (bg, fg) = (color::GREY_3, color::BLACK);
                 let pending_badge = Container::new(
                     Row::new()
@@ -792,8 +796,8 @@ pub struct RecentTransaction {
     pub fees_sat: Amount,
     pub fiat_amount: Option<FiatAmount>,
     pub is_incoming: bool,
-    pub status: PaymentState,
-    pub details: PaymentDetails,
+    pub status: DomainPaymentStatus,
+    pub details: DomainPaymentDetails,
     /// When set, the transaction displays this string instead of the BTC amount (e.g. "5.00 USDt").
     pub usdt_display: Option<String>,
 }

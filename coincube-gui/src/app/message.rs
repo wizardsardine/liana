@@ -75,11 +75,17 @@ pub enum Message {
     BroadcastModal(Result<HashSet<Txid>, Error>),
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
     Export(ImportExportMessage),
-    PaymentsLoaded(Result<Vec<breez_sdk_liquid::prelude::Payment>, BreezError>),
-    RefundablesLoaded(Result<Vec<breez_sdk_liquid::prelude::RefundableSwap>, BreezError>),
+    PaymentsLoaded(Result<Vec<crate::app::wallets::DomainPayment>, BreezError>),
+    RefundablesLoaded(Result<Vec<crate::app::wallets::DomainRefundableSwap>, BreezError>),
     RefundCompleted(Result<breez_sdk_liquid::model::RefundResponse, BreezError>),
     BreezInfo(Result<breez_sdk_liquid::prelude::GetInfoResponse, BreezError>),
     BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
+    /// Forwarded from the [`coincube-spark-bridge`] subprocess via
+    /// `SparkBackend::event_subscription`. Wrapped in the
+    /// [`crate::app::breez_spark::SparkClientEvent`] newtype so the
+    /// app-level message doesn't depend on `coincube_spark_protocol`
+    /// directly.
+    SparkEvent(crate::app::breez_spark::SparkClientEvent),
     SettingsSaved,
     SettingsSaveFailed(Error),
     /// Store the Bitcoind handle produced by configure_and_start_internal_bitcoind so

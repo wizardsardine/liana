@@ -7,8 +7,9 @@ use breez_sdk_liquid::model::{
     PayOnchainRequest, PaymentDetails, PaymentType, PreparePayOnchainRequest,
     PreparePayOnchainResponse,
 };
-use breez_sdk_liquid::prelude::PaymentState;
 use coincube_core::miniscript::bitcoin::{bip32::ChildNumber, Address, Amount};
+
+use crate::app::wallets::{DomainPaymentDetails, DomainPaymentStatus};
 use coincube_ui::component::amount::BitcoinDisplayUnit;
 use coincube_ui::component::form;
 use coincube_ui::widget::*;
@@ -17,7 +18,7 @@ use std::time::Duration;
 
 use super::vault::psbt::SignModal;
 use super::{Cache, Menu, State};
-use crate::app::breez_liquid::BreezClient;
+use crate::app::wallets::LiquidBackend;
 use crate::app::state::vault::label::LabelsEdited;
 use crate::app::state::vault::receive::ShowQrCodeModal;
 use crate::app::view::global_home::{
@@ -67,7 +68,7 @@ impl Labelled for ReceiveAddressInfo {
 
 #[derive(Debug)]
 pub struct GlobalHome {
-    breez_client: Arc<BreezClient>,
+    breez_client: Arc<LiquidBackend>,
     liquid_balance: Amount,
     usdt_balance: u64,
     usdt_balance_error: bool,
@@ -103,7 +104,7 @@ pub struct GlobalHome {
 impl GlobalHome {
     pub fn new(
         wallet: Arc<Wallet>,
-        breez_client: Arc<BreezClient>,
+        breez_client: Arc<LiquidBackend>,
         datadir_path: CoincubeDirectory,
         network: coincube_core::miniscript::bitcoin::Network,
         cube_id: String,
@@ -144,7 +145,7 @@ impl GlobalHome {
     }
 
     pub fn new_without_wallet(
-        breez_client: Arc<BreezClient>,
+        breez_client: Arc<LiquidBackend>,
         datadir_path: CoincubeDirectory,
         network: coincube_core::miniscript::bitcoin::Network,
         cube_id: String,
@@ -1106,7 +1107,7 @@ impl GlobalHome {
     }
 
     fn load_pending_sends(&self) -> Task<Message> {
-        use crate::app::breez_liquid::assets::{asset_kind_for_id, AssetKind, USDT_PRECISION};
+        use crate::app::breez_liquid::assets::{asset_kind_for_id, AssetKind};
         let breez_client = self.breez_client.clone();
         let network = self.network;
         Task::perform(
@@ -1118,15 +1119,12 @@ impl GlobalHome {
                         let mut liquid_receive_sats: u64 = 0;
                         let mut usdt_receive_sats: u64 = 0;
                         for payment in &payments {
-                            if !matches!(payment.status, PaymentState::Pending) {
+                            if !matches!(payment.status, DomainPaymentStatus::Pending) {
                                 continue;
                             }
-                            let is_send = matches!(
-                                payment.payment_type,
-                                breez_sdk_liquid::prelude::PaymentType::Send
-                            );
+                            let is_send = !payment.is_incoming();
                             match &payment.details {
-                                PaymentDetails::Liquid {
+                                DomainPaymentDetails::LiquidAsset {
                                     asset_id,
                                     asset_info,
                                     ..
@@ -1135,11 +1133,7 @@ impl GlobalHome {
                                     {
                                         let minor = asset_info
                                             .as_ref()
-                                            .map(|ai| {
-                                                (ai.amount * 10_f64.powi(USDT_PRECISION as i32))
-                                                    .round()
-                                                    as u64
-                                            })
+                                            .map(|ai| ai.amount_minor)
                                             .unwrap_or(payment.amount_sat);
                                         if is_send {
                                             usdt_send_sats = usdt_send_sats.saturating_add(minor);
@@ -1288,15 +1282,19 @@ impl GlobalHome {
 
                 if let Some(payment) = payments.and_then(|ps| {
                     ps.into_iter().find(|payment| {
-                        matches!(payment.payment_type, PaymentType::Send)
-                            && matches!(
-                                &payment.details,
-                                PaymentDetails::Bitcoin { swap_id, .. } if swap_id == &pending.swap_id
-                            )
+                        if payment.is_incoming() {
+                            return false;
+                        }
+                        match &payment.details {
+                            DomainPaymentDetails::OnChainBitcoin {
+                                swap_id: Some(id), ..
+                            } => id == &pending.swap_id,
+                            _ => false,
+                        }
                     })
                 }) {
                     stage = match payment.status {
-                        PaymentState::Complete => {
+                        DomainPaymentStatus::Complete => {
                             let cube_id_for_clear = cube_id.clone();
                             let _ = settings::update_settings_file(&network_dir, move |mut current| {
                                     if let Some(cube) = current
@@ -1311,20 +1309,20 @@ impl GlobalHome {
                                 .await;
                             return None;
                         }
-                        PaymentState::Pending | PaymentState::WaitingFeeAcceptance => {
+                        DomainPaymentStatus::Pending | DomainPaymentStatus::WaitingFeeAcceptance => {
                             match payment.details {
-                                PaymentDetails::Bitcoin {
+                                DomainPaymentDetails::OnChainBitcoin {
                                     claim_tx_id: Some(_),
                                     ..
                                 } => IncomingTransferStage::SendingToVault,
                                 _ => IncomingTransferStage::SwappingLbtcToBtc,
                             }
                         }
-                        PaymentState::Created => IncomingTransferStage::TransferInitiated,
-                        PaymentState::Failed
-                        | PaymentState::TimedOut
-                        | PaymentState::Refundable
-                        | PaymentState::RefundPending => {
+                        DomainPaymentStatus::Created => IncomingTransferStage::TransferInitiated,
+                        DomainPaymentStatus::Failed
+                        | DomainPaymentStatus::TimedOut
+                        | DomainPaymentStatus::Refundable
+                        | DomainPaymentStatus::RefundPending => {
                             let cube_id_for_clear = cube_id.clone();
                             let _ = settings::update_settings_file(&network_dir, move |mut current| {
                                     if let Some(cube) = current

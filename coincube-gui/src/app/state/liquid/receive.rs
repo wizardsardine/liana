@@ -2,8 +2,6 @@ use std::convert::TryInto;
 use std::sync::Arc;
 use std::time::Duration;
 
-use breez_sdk_liquid::model::PaymentDetails;
-use breez_sdk_liquid::prelude::{Payment, PaymentState};
 use coincube_core::miniscript::bitcoin::{Amount, Denomination};
 use coincube_ui::component::form;
 use coincube_ui::widget::*;
@@ -18,13 +16,31 @@ use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::state::liquid::send::SendAsset;
 use crate::app::state::redirect;
 use crate::app::view::{LiquidReceiveMessage, ReceiveMethod, SenderNetwork};
-use crate::app::{breez_liquid::BreezClient, cache::Cache, menu::Menu, state::State};
+use crate::app::wallets::{
+    DomainPayment, DomainPaymentDetails, DomainPaymentStatus, LiquidBackend,
+};
+
+/// Return the base-unit USDt amount carried by `details`, if the payment is a
+/// Liquid payment for the given `usdt_id`.
+fn usdt_amount_minor(details: &DomainPaymentDetails, usdt_id: &str) -> Option<u64> {
+    match details {
+        DomainPaymentDetails::LiquidAsset {
+            asset_id,
+            asset_info,
+            ..
+        } if !usdt_id.is_empty() && asset_id == usdt_id => {
+            asset_info.as_ref().map(|i| i.amount_minor)
+        }
+        _ => None,
+    }
+}
+use crate::app::{cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::utils::format_time_ago;
 
 pub struct LiquidReceive {
-    breez_client: Arc<BreezClient>,
+    breez_client: Arc<LiquidBackend>,
     receive_method: ReceiveMethod,
     sideshift_flow: Option<SideshiftReceiveFlow>,
     /// Asset the user wants to receive into their wallet.
@@ -53,7 +69,7 @@ pub struct LiquidReceive {
     btc_balance: Amount,
     usdt_balance: u64,
     recent_transaction: Vec<view::liquid::RecentTransaction>,
-    recent_payments: Vec<Payment>,
+    recent_payments: Vec<DomainPayment>,
     show_qr_modal: bool,
     /// Show the "Payment received!" celebration screen.
     show_received_celebration: bool,
@@ -63,8 +79,8 @@ pub struct LiquidReceive {
 }
 
 impl LiquidReceive {
-    /// Returns a clone of the inner `Arc<BreezClient>`.
-    pub fn breez_client_arc(&self) -> Arc<BreezClient> {
+    /// Returns a clone of the inner `Arc<LiquidBackend>`.
+    pub fn breez_client_arc(&self) -> Arc<LiquidBackend> {
         self.breez_client.clone()
     }
 
@@ -84,7 +100,7 @@ impl LiquidReceive {
         self.sender_picker_open
     }
 
-    pub fn new(breez_client: Arc<BreezClient>) -> Self {
+    pub fn new(breez_client: Arc<LiquidBackend>) -> Self {
         Self {
             breez_client,
             receive_method: ReceiveMethod::Lightning,
@@ -125,7 +141,7 @@ impl LiquidReceive {
     }
 
     async fn generate_lightning_invoice(
-        client: Arc<BreezClient>,
+        client: Arc<LiquidBackend>,
         amount: Amount,
         description: Option<String>,
     ) -> Result<String, String> {
@@ -137,7 +153,7 @@ impl LiquidReceive {
         Ok(response.destination)
     }
 
-    async fn generate_onchain_address(client: Arc<BreezClient>) -> Result<String, String> {
+    async fn generate_onchain_address(client: Arc<LiquidBackend>) -> Result<String, String> {
         let response = client
             .receive_onchain(None)
             .await
@@ -146,7 +162,7 @@ impl LiquidReceive {
         Ok(response.destination)
     }
 
-    async fn generate_liquid_address(client: Arc<BreezClient>) -> Result<String, String> {
+    async fn generate_liquid_address(client: Arc<LiquidBackend>) -> Result<String, String> {
         let response = client.receive_liquid().await.map_err(|e| e.to_string())?;
 
         Ok(response.destination)
@@ -597,14 +613,10 @@ impl State for LiquidReceive {
                     let receive_usdt = self.receive_asset == SendAsset::Usdt;
 
                     // Filter payments by receive asset, matching Send behavior
-                    let filtered: Vec<Payment> = recent_payment
+                    let filtered: Vec<DomainPayment> = recent_payment
                         .into_iter()
                         .filter(|p| {
-                            let is_usdt = matches!(
-                                &p.details,
-                                PaymentDetails::Liquid { asset_id, .. }
-                                    if !usdt_id.is_empty() && asset_id == usdt_id
-                            );
+                            let is_usdt = usdt_amount_minor(&p.details, usdt_id).is_some();
                             if receive_usdt {
                                 is_usdt
                             } else {
@@ -623,30 +635,14 @@ impl State for LiquidReceive {
                             if Some(&payment.tx_id) == prev_head_tx_id {
                                 break;
                             }
-                            let is_receive = matches!(
-                                payment.payment_type,
-                                breez_sdk_liquid::prelude::PaymentType::Receive
-                            );
-                            if is_receive && matches!(payment.status, PaymentState::Complete) {
-                                let usdt_id_str =
-                                    usdt_asset_id(self.breez_client.network()).unwrap_or("");
-                                let is_usdt = matches!(
-                                    &payment.details,
-                                    PaymentDetails::Liquid { asset_id, .. }
-                                        if !usdt_id_str.is_empty() && asset_id == usdt_id_str
-                                );
-                                self.received_amount_display = if is_usdt {
-                                    let usdt_base = if let PaymentDetails::Liquid {
-                                        asset_info: Some(ref info),
-                                        ..
-                                    } = &payment.details
-                                    {
-                                        (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round()
-                                            as u64
-                                    } else {
-                                        payment.amount_sat
-                                    };
-                                    format!("{} USDt", format_usdt_display(usdt_base))
+                            let is_receive = payment.is_incoming();
+                            if is_receive
+                                && matches!(payment.status, DomainPaymentStatus::Complete)
+                            {
+                                let usdt_amount =
+                                    usdt_amount_minor(&payment.details, usdt_id);
+                                self.received_amount_display = if let Some(minor) = usdt_amount {
+                                    format!("{} USDt", format_usdt_display(minor))
                                 } else {
                                     use coincube_ui::component::amount::DisplayAmount;
                                     Amount::from_sat(payment.amount_sat)
@@ -675,27 +671,12 @@ impl State for LiquidReceive {
                         .map(|payment| {
                             let status = payment.status;
                             let time_ago = format_time_ago(payment.timestamp.into());
-                            let is_usdt = matches!(
-                                &payment.details,
-                                PaymentDetails::Liquid { asset_id, .. }
-                                    if !usdt_id.is_empty() && asset_id == usdt_id
-                            );
+                            let usdt_amount = usdt_amount_minor(&payment.details, usdt_id);
+                            let is_usdt = usdt_amount.is_some();
 
-                            let amount = if is_usdt {
-                                if let PaymentDetails::Liquid {
-                                    asset_info: Some(ref info),
-                                    ..
-                                } = &payment.details
-                                {
-                                    Amount::from_sat(
-                                        (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round()
-                                            as u64,
-                                    )
-                                } else {
-                                    Amount::from_sat(payment.amount_sat)
-                                }
-                            } else {
-                                Amount::from_sat(payment.amount_sat)
+                            let amount = match usdt_amount {
+                                Some(minor) => Amount::from_sat(minor),
+                                None => Amount::from_sat(payment.amount_sat),
                             };
 
                             // Only compute fiat for BTC rows; USDt has its own display.
@@ -707,50 +688,16 @@ impl State for LiquidReceive {
                                     .map(|c: &view::FiatAmountConverter| c.convert(amount))
                             };
 
-                            let (desc, usdt_display) = if is_usdt {
-                                let display = if let PaymentDetails::Liquid {
-                                    asset_info: Some(info),
-                                    ..
-                                } = &payment.details
-                                {
-                                    format_usdt_display(
-                                        (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round()
-                                            as u64,
-                                    )
-                                } else {
-                                    format_usdt_display(payment.amount_sat)
-                                };
+                            let (desc, usdt_display) = if let Some(minor) = usdt_amount {
                                 (
                                     "USDt Transfer".to_owned(),
-                                    Some(format!("{} USDt", display)),
+                                    Some(format!("{} USDt", format_usdt_display(minor))),
                                 )
                             } else {
-                                let d: &str = match &payment.details {
-                                    PaymentDetails::Lightning {
-                                        payer_note,
-                                        description,
-                                        ..
-                                    } => payer_note
-                                        .as_ref()
-                                        .filter(|s| !s.is_empty())
-                                        .unwrap_or(description),
-                                    PaymentDetails::Liquid {
-                                        payer_note,
-                                        description,
-                                        ..
-                                    } => payer_note
-                                        .as_ref()
-                                        .filter(|s| !s.is_empty())
-                                        .unwrap_or(description),
-                                    PaymentDetails::Bitcoin { description, .. } => description,
-                                };
-                                (d.to_owned(), None)
+                                (payment.details.description().to_owned(), None)
                             };
 
-                            let is_incoming = matches!(
-                                payment.payment_type,
-                                breez_sdk_liquid::prelude::PaymentType::Receive
-                            );
+                            let is_incoming = payment.is_incoming();
                             let details = payment.details.clone();
                             let fees_sat = Amount::from_sat(payment.fees_sat);
                             view::liquid::RecentTransaction {
