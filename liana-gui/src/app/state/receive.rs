@@ -393,7 +393,7 @@ impl State for ReceivePanel {
             Task::perform(
                 async move {
                     daemon2
-                        .get_active_payjoin_sessions()
+                        .get_active_payjoin_receiver_sessions()
                         .await
                         .map_err(|e| e.into())
                 },
