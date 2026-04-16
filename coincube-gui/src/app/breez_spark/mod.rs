@@ -50,10 +50,11 @@ pub async fn load_spark_client(
     spark_signer_fingerprint: Fingerprint,
     password: &str,
 ) -> Result<Arc<SparkClient>, SparkLoadError> {
-    // Only mainnet and regtest are supported by the Spark SDK — testnet,
-    // testnet4 and signet are skipped here the same way as Liquid.
+    // Only mainnet is supported — the bridge rejects non-mainnet at
+    // init time anyway, so fail fast here rather than waiting for
+    // the handshake to error out.
     match network {
-        Network::Bitcoin | Network::Regtest => {}
+        Network::Bitcoin => {}
         _ => return Err(SparkLoadError::NetworkNotSupported(network)),
     }
 
@@ -78,9 +79,12 @@ pub async fn load_spark_client(
     // scrubbed after the bridge has accepted it.
     let mnemonic: Zeroizing<String> = Zeroizing::new(signer.mnemonic_str());
 
-    // Build the Spark storage dir under the cube's Spark subfolder so
-    // it doesn't collide with Liquid's sqlite file.
-    let storage_dir = datadir.join("spark");
+    // Namespace the Spark SDK storage by fingerprint so multiple cubes
+    // on the same install each get their own database. Without this,
+    // two cubes sharing a datadir would read each other's wallet state.
+    let storage_dir = datadir
+        .join("spark")
+        .join(spark_signer_fingerprint.to_string());
     if let Err(e) = std::fs::create_dir_all(&storage_dir) {
         return Err(SparkLoadError::Config(format!(
             "failed to create Spark storage dir {}: {}",

@@ -74,19 +74,24 @@ impl State for LightningSettingsState {
             return Task::perform(
                 async move {
                     let network_dir = datadir.network_directory(network);
+                    let mut cube_found = false;
                     update_settings_file(&network_dir, |mut settings| {
                         if let Some(entry) = settings.cubes.iter_mut().find(|c| c.id == cube_id) {
                             entry.default_lightning_backend = kind;
-                        } else {
-                            tracing::error!(
-                                "Cube not found (id={}) — cannot save default_lightning_backend",
-                                cube_id
-                            );
+                            cube_found = true;
                         }
                         Some(settings)
                     })
                     .await
-                    .map_err(|e| e.to_string())
+                    .map_err(|e| e.to_string())?;
+                    if cube_found {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "Cube not found (id={}) — cannot save default_lightning_backend",
+                            cube_id
+                        ))
+                    }
                 },
                 |result| match result {
                     Ok(()) => Message::SettingsSaved,

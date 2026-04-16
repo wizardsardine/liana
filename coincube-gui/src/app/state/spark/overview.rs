@@ -28,12 +28,11 @@ use crate::app::wallets::{DomainPaymentStatus, SparkBackend};
 use crate::daemon::Daemon;
 use crate::utils::format_time_ago;
 
-/// Loaded info + timestamp snapshot. `None` while the first `reload()`
-/// is in flight or if the bridge returned an error.
+/// Loaded info snapshot. `None` while the first `reload()` is in
+/// flight or if the bridge returned an error.
 #[derive(Debug, Clone)]
 pub struct SparkBalanceSnapshot {
     pub balance_sats: u64,
-    pub identity_pubkey: String,
 }
 
 pub struct SparkOverview {
@@ -158,17 +157,8 @@ impl State for SparkOverview {
                 } => {
                     self.loading = false;
                     self.error = None;
-                    // Keep identity pubkey from the existing snapshot
-                    // if present (get_info doesn't re-fetch it across
-                    // reloads when nothing else changed).
-                    let identity_pubkey = self
-                        .snapshot
-                        .as_ref()
-                        .map(|s| s.identity_pubkey.clone())
-                        .unwrap_or_default();
                     self.snapshot = Some(SparkBalanceSnapshot {
                         balance_sats: balance.to_sat(),
-                        identity_pubkey,
                     });
 
                     let fiat_converter: Option<FiatAmountConverter> =

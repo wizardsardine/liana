@@ -1134,12 +1134,10 @@ impl GlobalHome {
                 Err(e) => {
                     tracing::warn!("Home: spark get_info failed: {}", e);
                     // Soft-fail: leave the card showing whatever the
-                    // last successful fetch returned. No hard error
-                    // because the Spark card is non-essential to the
-                    // rest of the home page.
-                    Message::View(view::Message::Home(HomeMessage::SparkBalanceUpdated(
-                        Amount::ZERO,
-                    )))
+                    // last successful fetch returned by not emitting a
+                    // balance update at all. CacheUpdated is a no-op
+                    // ping that doesn't touch the Spark balance.
+                    Message::CacheUpdated
                 }
             },
         ))

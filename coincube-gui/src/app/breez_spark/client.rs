@@ -567,17 +567,19 @@ impl SparkClient {
     }
 }
 
-impl Drop for SparkClient {
+// Drop is implemented on `SparkClientInner` (not `SparkClient`)
+// because `SparkClient` is `Clone` — panels and subscription
+// descriptors create short-lived clones that are discarded
+// frequently. If Drop were on `SparkClient`, every clone drop
+// would kill the bridge. Putting it on the inner struct behind
+// `Arc` means it fires exactly once, when the last strong
+// reference is released.
+impl Drop for SparkClientInner {
     fn drop(&mut self) {
-        // `closed` is the single synchronization point — the first
-        // `SparkClient` clone to drop with `closed == false` sends
-        // the shutdown request; every subsequent drop is a no-op.
-        // `kill_on_drop(true)` on the Command ensures the child dies
-        // even if the graceful path is lost.
-        if self.inner.closed.swap(true, Ordering::SeqCst) {
+        if self.closed.swap(true, Ordering::SeqCst) {
             return;
         }
-        let _ = self.inner.request_tx.send(Request {
+        let _ = self.request_tx.send(Request {
             id: u64::MAX,
             method: Method::Shutdown,
         });

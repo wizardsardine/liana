@@ -50,11 +50,10 @@ impl SparkConfig {
 
 /// The compile-time API key value — reads `BREEZ_API_KEY`.
 ///
-/// This is a free function rather than a `const` so a future refactor can
-/// swap it to runtime lookup if we ever decide to un-bake the key from
-/// the binary.
+/// Uses `env!` so a missing key is a hard compile error, matching
+/// the Liquid config at [`crate::app::breez_liquid::config`].
 fn api_key_from_env() -> String {
-    option_env!("BREEZ_API_KEY").unwrap_or("").to_string()
+    env!("BREEZ_API_KEY").to_string()
 }
 
 #[derive(Debug, Clone)]

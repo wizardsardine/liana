@@ -80,8 +80,12 @@ impl SparkSettingsView {
             return Column::new().spacing(20).push(heading).push(body).into();
         }
 
-        let stable_balance_card =
-            stable_balance_card(self.stable_balance_active, self.stable_balance_saving, true);
+        let bridge_reachable = matches!(self.status, SparkSettingsStatus::Connected);
+        let stable_balance_card = stable_balance_card(
+            self.stable_balance_active,
+            self.stable_balance_saving,
+            bridge_reachable,
+        );
         let bridge_status_card = bridge_status_card(&self.status);
 
         Column::new()

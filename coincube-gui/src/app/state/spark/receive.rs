@@ -253,9 +253,19 @@ impl State for SparkReceive {
                 // Encode the QR eagerly so the view renderer doesn't
                 // re-encode on every frame.
                 self.qr_data = qr_code::Data::new(&ok.payment_request).ok();
-                // Phase 4f: capture the BOLT11 string so PaymentReceived
-                // events can correlate against THIS invoice.
-                self.displayed_invoice = Some(ok.payment_request.clone());
+                // Only capture the payment request for BOLT11 — it's
+                // the correlation key used by PaymentReceived to match
+                // the event's bolt11 field against the displayed
+                // invoice. For on-chain receives the payment_request
+                // is a Bitcoin address (no bolt11 on the event), so
+                // displayed_invoice stays None and the (None, _) =>
+                // true arm in the correlation check auto-advances on
+                // any incoming payment while the address is on screen.
+                self.displayed_invoice = if self.method == SparkReceiveMethod::Bolt11 {
+                    Some(ok.payment_request.clone())
+                } else {
+                    None
+                };
                 self.phase = SparkReceivePhase::Generated(ok);
                 Task::none()
             }

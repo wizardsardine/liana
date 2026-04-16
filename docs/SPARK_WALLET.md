@@ -10,7 +10,7 @@ Spark ships **mainnet only**. The Breez Spark SDK (v0.13.1) does not publish a r
 
 The Spark SDK's dependency graph (`rusqlite`, `tokio_with_wasm`, `frost_secp256k1_tr`, Spark tree primitives) is incompatible with the Breez Liquid SDK's dep graph at the `links = "sqlite3"` level. Instead of forking and patching the two SDKs to coexist in a single binary, COINCUBE runs Spark in a sibling process and talks to it over a minimal JSON-RPC protocol.
 
-```
+```text
 ┌──────────────┐         stdin/stdout           ┌──────────────────────┐
 │ coincube-gui │ ◄──────── JSON-RPC ──────────► │ coincube-spark-bridge │
 │   (iced UI)  │                                │  (breez-sdk-spark)    │
@@ -34,7 +34,7 @@ The Spark SDK's dependency graph (`rusqlite`, `tokio_with_wasm`, `frost_secp256k
 
 ### Bridge lifecycle
 
-- The gui spawns the bridge lazily when the cube has a `spark_wallet_signer_fingerprint` set. If the spawn fails (binary missing, handshake error) the `WalletRegistry` holds `spark = None`, and all Spark panels render an "unavailable" stub.
+- The gui spawns the bridge lazily when the cube has a `breez_wallet_signer_fingerprint` set (a single HotSigner shared by both the Liquid and Spark SDKs). If the spawn fails (binary missing, handshake error) the `WalletRegistry` holds `spark = None`, and all Spark panels render an "unavailable" stub.
 - The bridge binary is located via the `COINCUBE_SPARK_BRIDGE_PATH` env var, or falls back to `coincube-spark-bridge` sitting alongside the main `coincube` binary in the same directory.
 - Shutdown is cooperative: the gui sends a `Shutdown` method on app exit; the bridge drops its SDK handle and closes stdio.
 
@@ -47,7 +47,7 @@ A cleaner alternative — Breez Spark's `ExternalSigner` trait, which lets the S
 ## Setting up a Spark wallet
 
 1. **Create a cube** the usual way.
-2. **Configure a Spark signer** on that cube. The signer is an independent slot from the Liquid signer in `CubeSettings` (`spark_wallet_signer_fingerprint`, parallel to `liquid_wallet_signer_fingerprint`) — they can point at different HotSigners or the same one.
+2. **The Spark wallet is provisioned automatically.** Both the Liquid and Spark SDKs share a single HotSigner (`CubeSettings::breez_wallet_signer_fingerprint`). New cubes set this at creation time; existing cubes are migrated on first unlock (the Liquid fingerprint is copied into the consolidated field via a serde alias). No separate "Spark signer" setup step is needed.
 3. **Set `BREEZ_API_KEY`** in the environment (or `.env`). A single Breez API key covers both the Liquid and Spark SDKs.
 4. **Restart the cube.** The first launch spawns the bridge subprocess, runs `init`, and unlocks the Spark wallet for the session.
 
@@ -71,7 +71,7 @@ Spark uses a deposit-address model: the user sends BTC to a static address, the 
 
 ### Lightning Address routing (Phase 5)
 
-`@coincube.io` Lightning Addresses are fulfilled by whichever backend the cube's `default_lightning_backend` setting prefers. New cubes default to Spark; users can flip to Liquid in **Spark → Settings → Default Lightning backend**.
+`@coincube.io` Lightning Addresses are fulfilled by whichever backend the cube's `default_lightning_backend` setting prefers. New cubes default to Spark; users can flip to Liquid in **Settings → Lightning**.
 
 Because Spark SDK 0.13.1's `ReceivePaymentMethod::Bolt11Invoice` only accepts a plain `description` (not a `description_hash`), the coincube-api sends the raw LNURL metadata preimage in each invoice-request event. Spark mints the invoice with that preimage as its `d` tag — the payer's wallet recomputes `SHA256(description)` and compares it against the `descriptionHash` the callback advertised. They match by construction because the API produces both from the same source.
 
@@ -79,7 +79,7 @@ NIP-57 zap requests frequently exceed BOLT11's 639-byte description cap. The str
 
 ### Stable Balance (Phase 6)
 
-The Spark SDK's built-in Stable Balance feature is exposed as a single **Stable Balance** toggle in Spark → Settings. Turning it on activates the SDK's automatic conversion of excess sats into a USD-pegged token internally; the user continues to see a single Bitcoin balance that stays stable against fiat. Turning it off unpegs and returns to a pure BTC balance.
+The Spark SDK's built-in Stable Balance feature is exposed as a single **Stable Balance** toggle in **Spark → Settings**. Turning it on activates the SDK's automatic conversion of excess sats into a USD-pegged token internally; the user continues to see a single Bitcoin balance that stays stable against fiat. Turning it off unpegs and returns to a pure BTC balance. The toggle is disabled when the bridge is unreachable (the bridge-status card on the same page shows the connection state).
 
 Implementation detail hidden from the UI: the SDK uses the USDB stable token (`btkn1xgrvjwey5ngcagvap2dzzvsy4uk8ua9x69k82dwvt5e7ef9drm9qztux87` on mainnet) under the label `"USDB"`. This label never surfaces in the gui — the panel always calls it "Stable Balance". The Overview panel shows a small "Stable" badge next to the balance line when the feature is active.
 
@@ -87,7 +87,7 @@ Implementation detail hidden from the UI: the SDK uses the USDB stable token (`b
 
 - **"Spark bridge unavailable" in every Spark panel** — the bridge subprocess either failed to spawn (binary not found at `COINCUBE_SPARK_BRIDGE_PATH` or next to `coincube`) or crashed during handshake. Check stderr from `coincube-spark-bridge` for the root cause.
 - **"Stable Balance is not configured" errors from `set_stable_balance`** — the bridge's `mainnet_config` always wires up `stable_balance_config` with the USDB token, so this should never fire in a release build. If it does, the bridge got started without the token constant — rebuild and re-deploy.
-- **Incoming Lightning Address payments land on Liquid, not Spark** — either the cube's `default_lightning_backend` is still set to Liquid (check `Spark → Settings`), the bridge is down for this cube (check for an "unavailable" badge), the API hasn't been updated to send the `description` field over SSE yet, or the payer is sending a NIP-57 zap (description exceeds 639 bytes → automatic fallback).
+- **Incoming Lightning Address payments land on Liquid, not Spark** — either the cube's `default_lightning_backend` is still set to Liquid (check **Settings → Lightning**), the bridge is down for this cube (check the bridge-status card in **Spark → Settings**), the API hasn't been updated to send the `description` field over SSE yet, or the payer is sending a NIP-57 zap (description exceeds 639 bytes → automatic fallback).
 - **Lost Spark balance after restarting the cube** — `storage_dir` may have moved between restarts. The SDK stores its local database there; pointing at a different directory on the next launch looks like an empty wallet until the SDK re-syncs. Ensure the `datadir` passed to `load_spark_client` is stable per cube.
 
 ## Testing
