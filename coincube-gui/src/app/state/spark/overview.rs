@@ -134,9 +134,9 @@ impl State for SparkOverview {
                 )),
                 Err(e) => {
                     tracing::warn!("spark overview get_user_settings failed: {}", e);
-                    Message::View(view::Message::SparkOverview(
-                        view::SparkOverviewMessage::StableBalanceLoaded(false),
-                    ))
+                    // Preserve previous stable_balance_active state on
+                    // transient failures — do not emit StableBalanceLoaded.
+                    Message::Tick
                 }
             },
         );

@@ -148,7 +148,7 @@ impl SparkClient {
 
         let closed: ClosedFlag = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-        spawn_writer_task(stdin, request_rx);
+        spawn_writer_task(stdin, request_rx, Arc::clone(&pending), Arc::clone(&closed));
         spawn_reader_task(
             stdout,
             Arc::clone(&pending),
@@ -652,6 +652,8 @@ fn resolve_bridge_path() -> Result<PathBuf, SparkClientError> {
 fn spawn_writer_task(
     mut stdin: tokio::process::ChildStdin,
     mut request_rx: mpsc::UnboundedReceiver<Request>,
+    pending: PendingMap,
+    closed: ClosedFlag,
 ) {
     tokio::spawn(async move {
         while let Some(request) = request_rx.recv().await {
@@ -660,19 +662,38 @@ fn spawn_writer_task(
                 Ok(s) => s,
                 Err(e) => {
                     error!("failed to serialize Spark bridge request: {}", e);
-                    continue;
+                    break;
                 }
             };
             if stdin.write_all(line.as_bytes()).await.is_err()
                 || stdin.write_all(b"\n").await.is_err()
                 || stdin.flush().await.is_err()
             {
-                warn!("Spark bridge writer: stdin closed, draining remaining requests");
+                warn!("Spark bridge writer: stdin closed");
                 break;
             }
         }
-        // Channel closed or stdin broken — task exits; rx is dropped
-        // implicitly, unblocking any pending recv() in the client.
+
+        // Mark client as closed and drain pending requests so callers
+        // fail fast instead of waiting for the full timeout.
+        closed.store(true, Ordering::SeqCst);
+        let mut map = pending.lock().await;
+        if !map.is_empty() {
+            warn!(
+                "Spark bridge writer exited with {} pending request(s) — failing them",
+                map.len()
+            );
+            for (id, sender) in map.drain() {
+                let _ = sender.send(Response {
+                    id,
+                    result: ResponseResult::Err(ErrorPayload {
+                        kind: ErrorKind::NotConnected,
+                        message: "Spark bridge writer failed — stdin broken or serialization error"
+                            .to_string(),
+                    }),
+                });
+            }
+        }
     });
 }
 
