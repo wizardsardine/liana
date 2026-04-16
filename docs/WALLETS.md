@@ -4,7 +4,7 @@ COINCUBE ships three wallets today: a multisig Bitcoin **Vault**, a **Liquid** w
 
 ## Layout
 
-```
+```text
 coincube-gui/src/app/
 ├── wallets/                   ← domain types + registry
 │   ├── mod.rs                 pub-use surface

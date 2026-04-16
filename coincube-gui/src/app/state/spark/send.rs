@@ -126,14 +126,12 @@ impl State for SparkSend {
             }
             SparkSendMessage::PrepareRequested => {
                 let Some(backend) = self.backend.clone() else {
-                    self.phase = SparkSendPhase::Error(
-                        "Spark backend is not available.".to_string(),
-                    );
+                    self.phase =
+                        SparkSendPhase::Error("Spark backend is not available.".to_string());
                     return Task::none();
                 };
                 if self.destination_input.trim().is_empty() {
-                    self.phase =
-                        SparkSendPhase::Error("Enter a destination first.".to_string());
+                    self.phase = SparkSendPhase::Error("Enter a destination first.".to_string());
                     return Task::none();
                 }
                 let amount_sat = if self.amount_input.trim().is_empty() {
@@ -184,9 +182,8 @@ impl State for SparkSend {
                     return Task::none();
                 };
                 let Some(backend) = self.backend.clone() else {
-                    self.phase = SparkSendPhase::Error(
-                        "Spark backend is not available.".to_string(),
-                    );
+                    self.phase =
+                        SparkSendPhase::Error("Spark backend is not available.".to_string());
                     return Task::none();
                 };
                 let handle = prepare.handle.clone();
@@ -255,9 +252,7 @@ async fn resolve_and_prepare(
             // catches the obvious mistakes (zero, way too high) with
             // a clear message instead of a cryptic SDK error.
             let min = parsed.lnurl_min_sendable_sat.unwrap_or(0);
-            let max = parsed
-                .lnurl_max_sendable_sat
-                .unwrap_or(u64::MAX);
+            let max = parsed.lnurl_max_sendable_sat.unwrap_or(u64::MAX);
             if amount < min || amount > max {
                 return Err(format!(
                     "This LNURL server accepts payments between {} and {} sats; \
@@ -270,11 +265,11 @@ async fn resolve_and_prepare(
                 .await
                 .map_err(|e| format!("prepare_lnurl_pay failed: {e}"))
         }
-        ParseInputKind::Bolt11Invoice
-        | ParseInputKind::BitcoinAddress
-        | ParseInputKind::Other => backend
-            .prepare_send(input, amount_sat)
-            .await
-            .map_err(|e| format!("prepare_send failed: {e}")),
+        ParseInputKind::Bolt11Invoice | ParseInputKind::BitcoinAddress | ParseInputKind::Other => {
+            backend
+                .prepare_send(input, amount_sat)
+                .await
+                .map_err(|e| format!("prepare_send failed: {e}"))
+        }
     }
 }

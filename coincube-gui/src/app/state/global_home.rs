@@ -18,13 +18,13 @@ use std::time::Duration;
 
 use super::vault::psbt::SignModal;
 use super::{Cache, Menu, State};
-use crate::app::wallets::LiquidBackend;
 use crate::app::state::vault::label::LabelsEdited;
 use crate::app::state::vault::receive::ShowQrCodeModal;
 use crate::app::view::global_home::{
     GlobalViewConfig, HomeView, IncomingTransferStage, PendingIncomingTransfer, TransferDirection,
 };
 use crate::app::view::HomeMessage;
+use crate::app::wallets::{LiquidBackend, SparkBackend};
 use crate::app::{message::Message, settings, view, wallet::Wallet};
 use crate::daemon::model::{CreateSpendResult, LabelItem, Labelled, SpendTx};
 use crate::daemon::Daemon;
@@ -69,7 +69,16 @@ impl Labelled for ReceiveAddressInfo {
 #[derive(Debug)]
 pub struct GlobalHome {
     breez_client: Arc<LiquidBackend>,
+    /// Optional Spark backend handle. `None` when the cube has no
+    /// Spark signer or the bridge subprocess failed to spawn — the
+    /// Home page simply hides the Spark card in that case.
+    spark_backend: Option<Arc<SparkBackend>>,
     liquid_balance: Amount,
+    /// Spark wallet balance in sats, refreshed by
+    /// [`load_balance`]. `Amount::ZERO` while the first
+    /// `get_info` RPC is in flight, or forever when no Spark
+    /// backend is wired up for this cube.
+    spark_balance: Amount,
     usdt_balance: u64,
     usdt_balance_error: bool,
     wallet: Option<Arc<Wallet>>,
@@ -105,6 +114,7 @@ impl GlobalHome {
     pub fn new(
         wallet: Arc<Wallet>,
         breez_client: Arc<LiquidBackend>,
+        spark_backend: Option<Arc<SparkBackend>>,
         datadir_path: CoincubeDirectory,
         network: coincube_core::miniscript::bitcoin::Network,
         cube_id: String,
@@ -112,9 +122,11 @@ impl GlobalHome {
         Self {
             wallet: Some(wallet),
             liquid_balance: Amount::ZERO,
+            spark_balance: Amount::ZERO,
             usdt_balance: 0,
             usdt_balance_error: false,
             breez_client,
+            spark_backend,
             balance_masked: false,
             transfer_direction: None,
             current_view: HomeView::default(),
@@ -146,6 +158,7 @@ impl GlobalHome {
 
     pub fn new_without_wallet(
         breez_client: Arc<LiquidBackend>,
+        spark_backend: Option<Arc<SparkBackend>>,
         datadir_path: CoincubeDirectory,
         network: coincube_core::miniscript::bitcoin::Network,
         cube_id: String,
@@ -153,9 +166,11 @@ impl GlobalHome {
         Self {
             wallet: None,
             liquid_balance: Amount::from_sat(0),
+            spark_balance: Amount::ZERO,
             usdt_balance: 0,
             usdt_balance_error: false,
             breez_client,
+            spark_backend,
             balance_masked: false,
             transfer_direction: None,
             current_view: HomeView::default(),
@@ -226,6 +241,7 @@ impl State for GlobalHome {
             cache,
             view::global_home::global_home_view(GlobalViewConfig {
                 liquid_balance,
+                spark_balance: self.spark_balance,
                 usdt_balance,
                 usdt_balance_error,
                 vault_balance,
@@ -331,6 +347,18 @@ impl State for GlobalHome {
                                 view::LiquidReceiveMessage::SetReceiveAsset(asset),
                             ))),
                         ])
+                    }
+                    HomeMessage::SendSparkBtc => {
+                        use crate::app::menu::SparkSubMenu;
+                        crate::app::state::redirect(Menu::Spark(SparkSubMenu::Send))
+                    }
+                    HomeMessage::ReceiveSparkBtc => {
+                        use crate::app::menu::SparkSubMenu;
+                        crate::app::state::redirect(Menu::Spark(SparkSubMenu::Receive))
+                    }
+                    HomeMessage::SparkBalanceUpdated(balance) => {
+                        self.spark_balance = balance;
+                        Task::none()
                     }
                     HomeMessage::ToggleBalanceMask => {
                         self.balance_masked = !self.balance_masked;
@@ -1065,12 +1093,16 @@ impl State for GlobalHome {
         wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.wallet = wallet;
-        Task::batch(vec![
+        let mut tasks = vec![
             self.load_liquid_balance(),
             self.load_usdt_balance(),
             self.load_pending_sends(),
             self.restore_pending_liquid_to_vault_transfer(),
-        ])
+        ];
+        if let Some(spark) = self.load_spark_balance() {
+            tasks.push(spark);
+        }
+        Task::batch(tasks)
     }
 }
 
@@ -1086,6 +1118,31 @@ impl GlobalHome {
             (Some(_), None) => false,
             _ => false,
         }
+    }
+
+    /// Fetch the Spark wallet balance via `get_info` on the bridge.
+    /// Returns `None` when no Spark backend is wired up for the cube
+    /// so the caller can skip scheduling the task entirely.
+    fn load_spark_balance(&self) -> Option<Task<Message>> {
+        let backend = self.spark_backend.clone()?;
+        Some(Task::perform(
+            async move { backend.get_info().await },
+            |result| match result {
+                Ok(info) => Message::View(view::Message::Home(HomeMessage::SparkBalanceUpdated(
+                    Amount::from_sat(info.balance_sats),
+                ))),
+                Err(e) => {
+                    tracing::warn!("Home: spark get_info failed: {}", e);
+                    // Soft-fail: leave the card showing whatever the
+                    // last successful fetch returned. No hard error
+                    // because the Spark card is non-essential to the
+                    // rest of the home page.
+                    Message::View(view::Message::Home(HomeMessage::SparkBalanceUpdated(
+                        Amount::ZERO,
+                    )))
+                }
+            },
+        ))
     }
 
     fn load_liquid_balance(&self) -> Task<Message> {
@@ -1296,11 +1353,10 @@ impl GlobalHome {
                     stage = match payment.status {
                         DomainPaymentStatus::Complete => {
                             let cube_id_for_clear = cube_id.clone();
-                            let _ = settings::update_settings_file(&network_dir, move |mut current| {
-                                    if let Some(cube) = current
-                                        .cubes
-                                        .iter_mut()
-                                        .find(|c| c.id == cube_id_for_clear)
+                            let _ =
+                                settings::update_settings_file(&network_dir, move |mut current| {
+                                    if let Some(cube) =
+                                        current.cubes.iter_mut().find(|c| c.id == cube_id_for_clear)
                                     {
                                         cube.pending_liquid_to_vault_transfer = None;
                                     }
@@ -1309,26 +1365,24 @@ impl GlobalHome {
                                 .await;
                             return None;
                         }
-                        DomainPaymentStatus::Pending | DomainPaymentStatus::WaitingFeeAcceptance => {
-                            match payment.details {
-                                DomainPaymentDetails::OnChainBitcoin {
-                                    claim_tx_id: Some(_),
-                                    ..
-                                } => IncomingTransferStage::SendingToVault,
-                                _ => IncomingTransferStage::SwappingLbtcToBtc,
-                            }
-                        }
+                        DomainPaymentStatus::Pending
+                        | DomainPaymentStatus::WaitingFeeAcceptance => match payment.details {
+                            DomainPaymentDetails::OnChainBitcoin {
+                                claim_tx_id: Some(_),
+                                ..
+                            } => IncomingTransferStage::SendingToVault,
+                            _ => IncomingTransferStage::SwappingLbtcToBtc,
+                        },
                         DomainPaymentStatus::Created => IncomingTransferStage::TransferInitiated,
                         DomainPaymentStatus::Failed
                         | DomainPaymentStatus::TimedOut
                         | DomainPaymentStatus::Refundable
                         | DomainPaymentStatus::RefundPending => {
                             let cube_id_for_clear = cube_id.clone();
-                            let _ = settings::update_settings_file(&network_dir, move |mut current| {
-                                    if let Some(cube) = current
-                                        .cubes
-                                        .iter_mut()
-                                        .find(|c| c.id == cube_id_for_clear)
+                            let _ =
+                                settings::update_settings_file(&network_dir, move |mut current| {
+                                    if let Some(cube) =
+                                        current.cubes.iter_mut().find(|c| c.id == cube_id_for_clear)
                                     {
                                         cube.pending_liquid_to_vault_transfer = None;
                                     }

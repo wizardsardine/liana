@@ -71,26 +71,24 @@ pub struct SparkClient {
     inner: Arc<SparkClientInner>,
 }
 
+/// Shared flag: `true` once the client is shut down (explicitly or
+/// via bridge crash). Shared between `SparkClientInner` and
+/// `spawn_reader_task` so the reader can mark the client dead when
+/// stdout closes unexpectedly.
+type ClosedFlag = Arc<std::sync::atomic::AtomicBool>;
+
 struct SparkClientInner {
     next_id: AtomicU64,
     request_tx: mpsc::UnboundedSender<Request>,
     pending: PendingMap,
     /// Broadcast channel into which the reader task pushes every
-    /// [`Event`] frame received from the bridge. Panels subscribe via
-    /// [`SparkClient::subscribe_events`] — each subscriber gets its
-    /// own independent receiver, so the same event can fan out to
-    /// Receive + Transactions + any future listener without stepping
-    /// on each other's cursor.
-    ///
-    /// Buffer size is 64 (plenty for a wallet's event rate). If a
-    /// subscriber lags far enough, `broadcast::Receiver::recv` returns
-    /// `Err(RecvError::Lagged)` — the iced subscription stream below
-    /// logs and resumes so a slow panel can't wedge the channel.
+    /// [`Event`] frame received from the bridge.
     event_tx: broadcast::Sender<Event>,
     child: Mutex<Option<Child>>,
-    /// True once `shutdown()` was called or the client was dropped —
+    /// True once `shutdown()` was called, the client was dropped, or
+    /// the reader task detected that the bridge subprocess exited —
     /// further requests short-circuit with [`SparkClientError::BridgeUnavailable`].
-    closed: std::sync::atomic::AtomicBool,
+    closed: ClosedFlag,
 }
 
 impl std::fmt::Debug for SparkClient {
@@ -110,8 +108,7 @@ impl SparkClient {
     pub async fn connect(config: SparkConfig, mnemonic: &str) -> Result<Self, SparkClientError> {
         if config.api_key.is_empty() {
             return Err(SparkClientError::Config(
-                "Spark SDK API key is empty — set BREEZ_SPARK_API_KEY or BREEZ_API_KEY at build time"
-                    .to_string(),
+                "Spark SDK API key is empty — set BREEZ_API_KEY at build time".to_string(),
             ));
         }
 
@@ -149,8 +146,15 @@ impl SparkClient {
         // minutes of headroom even if a subscriber is paused.
         let (event_tx, _) = broadcast::channel::<Event>(64);
 
+        let closed: ClosedFlag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
         spawn_writer_task(stdin, request_rx);
-        spawn_reader_task(stdout, Arc::clone(&pending), event_tx.clone());
+        spawn_reader_task(
+            stdout,
+            Arc::clone(&pending),
+            event_tx.clone(),
+            Arc::clone(&closed),
+        );
         spawn_stderr_task(stderr);
 
         let inner = Arc::new(SparkClientInner {
@@ -159,7 +163,7 @@ impl SparkClient {
             pending,
             event_tx,
             child: Mutex::new(Some(child)),
-            closed: std::sync::atomic::AtomicBool::new(false),
+            closed,
         });
         let client = Self { inner };
 
@@ -181,10 +185,7 @@ impl SparkClient {
                 .to_string(),
         };
 
-        match client
-            .request(Method::Init(init_params))
-            .await?
-        {
+        match client.request(Method::Init(init_params)).await? {
             OkPayload::Init {} => Ok(client),
             other => Err(SparkClientError::Protocol(format!(
                 "init returned unexpected payload: {:?}",
@@ -480,21 +481,14 @@ impl SparkClient {
     /// Gracefully shut down the bridge subprocess. After this returns
     /// the client is no longer usable.
     pub async fn shutdown(&self) -> Result<(), SparkClientError> {
-        if self
-            .inner
-            .closed
-            .swap(true, Ordering::SeqCst)
-        {
+        if self.inner.closed.swap(true, Ordering::SeqCst) {
             return Ok(());
         }
 
         // Best-effort: send Shutdown and wait up to 5s for the child
         // to exit, otherwise kill it.
-        let shutdown_result = tokio::time::timeout(
-            Duration::from_secs(5),
-            self.request(Method::Shutdown),
-        )
-        .await;
+        let shutdown_result =
+            tokio::time::timeout(Duration::from_secs(5), self.request(Method::Shutdown)).await;
         match shutdown_result {
             Ok(Ok(_)) => {}
             Ok(Err(e)) => warn!("Spark bridge shutdown RPC failed: {}", e),
@@ -522,11 +516,11 @@ impl SparkClient {
     /// and awaits the oneshot. Any error response is translated into
     /// [`SparkClientError::BridgeError`].
     async fn request(&self, method: Method) -> Result<OkPayload, SparkClientError> {
-        if self
-            .inner
-            .closed
-            .load(Ordering::SeqCst)
-        {
+        // Allow Shutdown through even after closed is set — shutdown()
+        // flips the flag first to block new RPCs, then sends the
+        // Shutdown request itself. Every other method is rejected once
+        // closed is true.
+        if !matches!(method, Method::Shutdown) && self.inner.closed.load(Ordering::SeqCst) {
             return Err(SparkClientError::BridgeUnavailable(
                 "Spark client has been shut down".to_string(),
             ));
@@ -575,25 +569,18 @@ impl SparkClient {
 
 impl Drop for SparkClient {
     fn drop(&mut self) {
-        // Only the last `Arc` clone triggers real shutdown — checking
-        // strong_count here is cheap and avoids spamming shutdowns when
-        // panels clone the handle around.
-        if Arc::strong_count(&self.inner) > 1 {
-            return;
-        }
+        // `closed` is the single synchronization point — the first
+        // `SparkClient` clone to drop with `closed == false` sends
+        // the shutdown request; every subsequent drop is a no-op.
+        // `kill_on_drop(true)` on the Command ensures the child dies
+        // even if the graceful path is lost.
         if self.inner.closed.swap(true, Ordering::SeqCst) {
             return;
         }
-        // Fire-and-forget: the writer task will drain the shutdown
-        // request if it's still alive, and `kill_on_drop(true)` on the
-        // Command ensures the child dies if the graceful path fails.
-        let _ = self
-            .inner
-            .request_tx
-            .send(Request {
-                id: u64::MAX,
-                method: Method::Shutdown,
-            });
+        let _ = self.inner.request_tx.send(Request {
+            id: u64::MAX,
+            method: Method::Shutdown,
+        });
     }
 }
 
@@ -691,6 +678,7 @@ fn spawn_reader_task(
     stdout: tokio::process::ChildStdout,
     pending: PendingMap,
     event_tx: broadcast::Sender<Event>,
+    closed: ClosedFlag,
 ) {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
@@ -719,12 +707,6 @@ fn spawn_reader_task(
                             }
                         }
                         Frame::Event(event) => {
-                            // `broadcast::Sender::send` returns Err only
-                            // when there are zero active receivers.
-                            // That's fine in Phase 4d — if no panel has
-                            // subscribed yet, the event is dropped
-                            // on the floor. Log at debug so smoke
-                            // tests can observe the flow.
                             debug!("Spark bridge event: {:?}", event);
                             let _ = event_tx.send(event);
                         }
@@ -741,6 +723,29 @@ fn spawn_reader_task(
                     warn!("Spark bridge stdout read error: {}", e);
                     break;
                 }
+            }
+        }
+
+        // Bridge is gone — mark the client as closed so new RPCs
+        // fail immediately, then drain any in-flight requests so
+        // callers don't hang for the full 30s timeout.
+        closed.store(true, Ordering::SeqCst);
+        let mut map = pending.lock().await;
+        if !map.is_empty() {
+            warn!(
+                "Spark bridge reader exited with {} pending request(s) — failing them",
+                map.len()
+            );
+            for (id, sender) in map.drain() {
+                let _ = sender.send(Response {
+                    id,
+                    result: coincube_spark_protocol::ResponseResult::Err(
+                        coincube_spark_protocol::ErrorPayload {
+                            kind: ErrorKind::NotConnected,
+                            message: "Spark bridge subprocess exited unexpectedly".to_string(),
+                        },
+                    ),
+                });
             }
         }
     });
@@ -766,10 +771,7 @@ pub enum SparkClientError {
     /// Bridge subprocess couldn't be started or died unexpectedly.
     BridgeUnavailable(String),
     /// Bridge returned an error response for a request.
-    BridgeError {
-        kind: ErrorKind,
-        message: String,
-    },
+    BridgeError { kind: ErrorKind, message: String },
     /// JSON-RPC framing error (malformed response, unexpected payload).
     Protocol(String),
 }

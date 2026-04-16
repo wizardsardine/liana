@@ -50,10 +50,7 @@ impl WalletRegistry {
         }
     }
 
-    pub fn with_spark(
-        liquid: Arc<LiquidBackend>,
-        spark: Option<Arc<SparkBackend>>,
-    ) -> Self {
+    pub fn with_spark(liquid: Arc<LiquidBackend>, spark: Option<Arc<SparkBackend>>) -> Self {
         Self { liquid, spark }
     }
 

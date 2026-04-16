@@ -6,10 +6,10 @@ use coincube_ui::widget::*;
 use iced::Task;
 
 use crate::app::breez_liquid::assets::usdt_asset_id;
+use crate::app::cache::Cache;
 use crate::app::menu::{LiquidSubMenu, Menu};
 use crate::app::state::{redirect, State};
 use crate::app::wallets::{DomainPayment, DomainPaymentDetails, LiquidBackend};
-use crate::app::cache::Cache;
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::utils::format_time_ago;

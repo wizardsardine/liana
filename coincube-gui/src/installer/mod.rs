@@ -94,6 +94,11 @@ pub struct Installer {
 
     /// Pre-loaded BreezClient when launched from app (avoids re-entering PIN)
     pub breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+
+    /// Pre-loaded SparkBackend when launched from app — preserved
+    /// across the vault-setup round-trip so the Spark bridge
+    /// subprocess isn't killed and re-spawned.
+    pub spark_backend: Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
 }
 
 impl Installer {
@@ -135,6 +140,7 @@ impl Installer {
         launched_from_app: bool,
         cube_settings: Option<crate::app::settings::CubeSettings>,
         breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+        spark_backend: Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
     ) -> (Installer, Task<Message>) {
         let signer = Arc::new(Mutex::new(Signer::generate(network).unwrap()));
         let context = Context::new(
@@ -161,6 +167,7 @@ impl Installer {
             launched_from_app,
             cube_settings,
             breez_client,
+            spark_backend,
             steps: match user_flow {
                 UserFlow::CreateWallet => vec![
                     ChooseDescriptorTemplate::default().into(),

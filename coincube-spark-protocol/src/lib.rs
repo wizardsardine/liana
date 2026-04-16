@@ -294,10 +294,24 @@ pub struct PaymentSummary {
     pub id: String,
     /// Amount in satoshis (direction-signed).
     pub amount_sat: i64,
+    /// Fees paid in satoshis (non-signed).
+    #[serde(default)]
+    pub fees_sat: u64,
     /// Unix timestamp in seconds.
     pub timestamp: u64,
     pub status: String,
     pub direction: String,
+    /// Payment method: `lightning`, `spark`, `deposit`, `withdraw`,
+    /// `token`, or `unknown`. Mirrors [`PaymentMethod`] on the SDK
+    /// side. The gui uses this to pick the right asset icon for
+    /// each transaction row in the Overview list.
+    #[serde(default)]
+    pub method: String,
+    /// Optional human description extracted from the payment details
+    /// (invoice memo for Lightning, etc.). Empty for on-chain /
+    /// Spark-native transfers.
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// High-level classification of a user-supplied destination string,

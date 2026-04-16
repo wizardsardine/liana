@@ -185,7 +185,7 @@ impl Tab {
                         }
                     }
                     let (install, command) =
-                        Installer::new(datadir, network, None, init, false, None, None);
+                        Installer::new(datadir, network, None, init, false, None, None, None);
                     self.state = State::Installer(install);
                     command.map(Message::Install)
                 }
@@ -236,6 +236,7 @@ impl Tab {
                         false,
                         None,
                         None, // No breez_client from login screen
+                        None, // No spark_backend from login screen
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
@@ -366,7 +367,7 @@ impl Tab {
 
                             let (app, command) = app::App::new_without_wallet(
                                 breez.clone(),
-                                None, // Spark backend — Phase 4 wires the runtime spawn
+                                i.spark_backend.clone(),
                                 cfg,
                                 i.datadir.clone(),
                                 network,
@@ -412,6 +413,7 @@ impl Tab {
                         true, // launched from app (loader is part of app flow)
                         Some(loader.cube_settings.clone()), // pass cube settings for returning
                         loader.breez_client.clone(), // pass breez_client to avoid re-entering PIN
+                        None, // spark_backend not available from loader path
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
@@ -550,6 +552,7 @@ impl Tab {
                             true,                              // launched from app
                             Some(app.cube_settings().clone()), // pass cube settings for returning
                             Some(app.breez_client()), // pass breez_client to avoid re-entering PIN
+                            app.spark_backend(),      // preserve Spark bridge across vault setup
                         );
                         self.state = State::Installer(install);
                         command.map(Message::Install)
@@ -596,21 +599,20 @@ impl Tab {
                                     let breez_signer_fingerprint =
                                         cube.breez_wallet_signer_fingerprint;
 
-                                    let breez_result = if let Some(fingerprint) =
-                                        breez_signer_fingerprint
-                                    {
-                                        breez_liquid::load_breez_client(
-                                            datadir_clone.path(),
-                                            network_val,
-                                            fingerprint,
-                                            &pin,
-                                        )
-                                        .await
-                                    } else {
-                                        Err(breez_liquid::BreezError::SignerError(
-                                            "No Liquid wallet configured".to_string(),
-                                        ))
-                                    };
+                                    let breez_result =
+                                        if let Some(fingerprint) = breez_signer_fingerprint {
+                                            breez_liquid::load_breez_client(
+                                                datadir_clone.path(),
+                                                network_val,
+                                                fingerprint,
+                                                &pin,
+                                            )
+                                            .await
+                                        } else {
+                                            Err(breez_liquid::BreezError::SignerError(
+                                                "No Liquid wallet configured".to_string(),
+                                            ))
+                                        };
 
                                     // Load Spark backend alongside Liquid. Failures
                                     // here are non-fatal — we log + return None so
@@ -620,32 +622,31 @@ impl Tab {
                                     // (coincube-spark-bridge), performs the init
                                     // handshake with the cube's mnemonic, and
                                     // returns an Arc<SparkClient> on success.
-                                    let spark_backend = if let Some(fingerprint) =
-                                        breez_signer_fingerprint
-                                    {
-                                        match app::breez_spark::load_spark_client(
-                                            datadir_clone.path(),
-                                            network_val,
-                                            fingerprint,
-                                            &pin,
-                                        )
-                                        .await
-                                        {
-                                            Ok(client) => Some(Arc::new(
-                                                app::wallets::SparkBackend::new(client),
-                                            )),
-                                            Err(e) => {
-                                                tracing::warn!(
-                                                    "Spark bridge unavailable, continuing \
+                                    let spark_backend =
+                                        if let Some(fingerprint) = breez_signer_fingerprint {
+                                            match app::breez_spark::load_spark_client(
+                                                datadir_clone.path(),
+                                                network_val,
+                                                fingerprint,
+                                                &pin,
+                                            )
+                                            .await
+                                            {
+                                                Ok(client) => Some(Arc::new(
+                                                    app::wallets::SparkBackend::new(client),
+                                                )),
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        "Spark bridge unavailable, continuing \
                                                      without Spark: {}",
-                                                    e
-                                                );
-                                                None
+                                                        e
+                                                    );
+                                                    None
+                                                }
                                             }
-                                        }
-                                    } else {
-                                        None
-                                    };
+                                        } else {
+                                            None
+                                        };
 
                                     (
                                         config_clone,

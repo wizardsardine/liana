@@ -22,12 +22,12 @@ use crate::app::breez_liquid::assets::{
     asset_kind_for_id, format_usdt_display, lbtc_asset_id, parse_asset_to_minor_units,
     usdt_asset_id, AssetKind, USDT_PRECISION,
 };
+use crate::app::cache::Cache;
 use crate::app::menu::{LiquidSubMenu, Menu};
 use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::state::{redirect, State};
 use crate::app::view::SendPopupMessage;
 use crate::app::wallets::{DomainPayment, DomainPaymentDetails, LiquidBackend};
-use crate::app::cache::Cache;
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::utils::format_time_ago;
@@ -780,8 +780,7 @@ impl State for LiquidSend {
                     if !recent_payment.is_empty() {
                         let fiat_converter: Option<view::FiatAmountConverter> =
                             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
-                        let usdt_id =
-                            usdt_asset_id(self.breez_client.network()).unwrap_or("");
+                        let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
                         let txns = recent_payment
                             .iter()
                             .map(|payment| {
@@ -839,10 +838,7 @@ impl State for LiquidSend {
 
                                 let details = payment.details.clone();
                                 let usdt_display = if is_usdt_payment {
-                                    Some(format!(
-                                        "{} USDt",
-                                        format_usdt_display(amount.to_sat())
-                                    ))
+                                    Some(format!("{} USDt", format_usdt_display(amount.to_sat())))
                                 } else {
                                     None
                                 };

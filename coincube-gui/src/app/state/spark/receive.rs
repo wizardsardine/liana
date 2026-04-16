@@ -67,9 +67,7 @@ pub enum SparkReceivePhase {
     /// the edge case where multiple channels settle at once, but
     /// it's the simplest MVP. Phase 4e can correlate via the
     /// payment's bolt11 field when we plumb richer event payloads.
-    Received {
-        amount_sat: i64,
-    },
+    Received { amount_sat: i64 },
     /// RPC failed — user-visible error.
     Error(String),
 }
@@ -205,9 +203,8 @@ impl State for SparkReceive {
             }
             SparkReceiveMessage::GenerateRequested => {
                 let Some(backend) = self.backend.clone() else {
-                    self.phase = SparkReceivePhase::Error(
-                        "Spark backend is not available.".to_string(),
-                    );
+                    self.phase =
+                        SparkReceivePhase::Error("Spark backend is not available.".to_string());
                     return Task::none();
                 };
                 self.phase = SparkReceivePhase::Generating;
@@ -228,9 +225,7 @@ impl State for SparkReceive {
                         };
                         let description = self.description_input.clone();
                         Task::perform(
-                            async move {
-                                backend.receive_bolt11(amount_sat, description, None).await
-                            },
+                            async move { backend.receive_bolt11(amount_sat, description, None).await },
                             |result| match result {
                                 Ok(ok) => Message::View(crate::app::view::Message::SparkReceive(
                                     SparkReceiveMessage::GenerateSucceeded(ok),
@@ -278,15 +273,19 @@ impl State for SparkReceive {
                     return Task::none();
                 }
 
-                // Phase 4f BOLT11 correlation. If we have a displayed
-                // invoice AND the event carries a BOLT11, only advance
-                // when they match exactly. If either side is absent
-                // (on-chain receive, Spark-native payment, etc.),
-                // fall back to the Phase 4d behavior of advancing on
-                // any incoming payment.
+                // BOLT11 correlation: when we're displaying a
+                // specific invoice, only advance if the event's
+                // bolt11 field matches it exactly. When the event
+                // doesn't carry a bolt11 (Spark-native / on-chain)
+                // but we DO have a displayed invoice, ignore the
+                // event — it's unrelated. The only case where we
+                // advance unconditionally is when displayed_invoice
+                // is None (on-chain receive flow, where no BOLT11
+                // correlation is possible).
                 let matches_invoice = match (&self.displayed_invoice, &bolt11) {
                     (Some(displayed), Some(event_bolt11)) => displayed == event_bolt11,
-                    _ => true,
+                    (Some(_), None) => false,
+                    (None, _) => true,
                 };
                 if !matches_invoice {
                     return Task::none();
@@ -342,9 +341,7 @@ impl State for SparkReceive {
                 self.claim_error = Some(err);
                 Task::none()
             }
-            SparkReceiveMessage::DepositsChanged => {
-                fetch_deposits_task(self.backend.clone())
-            }
+            SparkReceiveMessage::DepositsChanged => fetch_deposits_task(self.backend.clone()),
             SparkReceiveMessage::Reset => {
                 self.qr_data = None;
                 self.displayed_invoice = None;

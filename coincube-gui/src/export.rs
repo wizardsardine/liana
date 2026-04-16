@@ -611,6 +611,81 @@ pub async fn export_transactions(
     Ok(())
 }
 
+/// Export the Spark wallet's payment history as CSV.
+///
+/// Spark has exactly one asset (BTC), no swap lifecycle, and a
+/// simpler payment shape than Liquid, so the columns differ from
+/// [`export_liquid_payments`]:
+///
+/// `Date,PaymentType,Method,Description,Amount (sats),Fees (sats),Net (sats)`
+///
+/// - `PaymentType`: `SEND` / `RECEIVE`
+/// - `Method`: `Lightning` / `On-chain` / `Spark`
+/// - `Description`: invoice memo (Lightning) or empty
+/// - `Net`: signed total — negative for sends (amount + fees),
+///   positive for receives
+pub async fn export_spark_payments(
+    sender: &UnboundedSender<Progress>,
+    spark_backend: Arc<crate::app::wallets::SparkBackend>,
+    path: PathBuf,
+) -> Result<(), Error> {
+    use chrono::DateTime;
+
+    let mut file = open_file_write(&path).await?;
+
+    let header = "Date,PaymentType,Method,Description,Amount (sats),Fees (sats),Net (sats)\n";
+    file.write_all(header.as_bytes())?;
+
+    let list = spark_backend
+        .list_payments(None)
+        .await
+        .map_err(|e| Error::Daemon(e.to_string()))?;
+
+    for payment in list.payments {
+        let date_time = DateTime::from_timestamp(payment.timestamp as i64, 0)
+            .or_else(|| DateTime::from_timestamp_millis(payment.timestamp as i64))
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+            .unwrap_or_default();
+
+        let is_send = payment.direction.eq_ignore_ascii_case("Send");
+        let payment_type = if is_send { "SEND" } else { "RECEIVE" };
+
+        let method_label = match payment.method.to_lowercase().as_str() {
+            "lightning" => "Lightning",
+            "deposit" | "withdraw" => "On-chain",
+            "spark" => "Spark",
+            "token" => "Token",
+            _ => "Unknown",
+        };
+
+        // CSV-quote the description to handle commas, quotes, and
+        // newlines inside invoice memos safely.
+        let description = payment
+            .description
+            .as_deref()
+            .map(|d| format!("\"{}\"", d.replace('"', "\"\"")))
+            .unwrap_or_default();
+
+        let amount_sats = payment.amount_sat.unsigned_abs();
+        let fees_sats = payment.fees_sat;
+        let net_sats: i64 = if is_send {
+            -((amount_sats + fees_sats) as i64)
+        } else {
+            amount_sats as i64
+        };
+
+        let line = format!(
+            "{},{},{},{},{},{},{}\n",
+            date_time, payment_type, method_label, description, amount_sats, fees_sats, net_sats
+        );
+        file.write_all(line.as_bytes())?;
+    }
+
+    send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Ended);
+    Ok(())
+}
+
 pub async fn export_liquid_payments(
     sender: &UnboundedSender<Progress>,
     breez_client: Arc<crate::app::breez_liquid::BreezClient>,
@@ -661,19 +736,18 @@ pub async fn export_liquid_payments(
                 asset_id,
                 asset_info,
                 ..
-            } if asset_id == usdt_id => asset_info.as_ref().map(|info| {
-                info.amount_minor as f64 / 10_f64.powi(info.precision as i32)
-            }),
+            } if asset_id == usdt_id => asset_info
+                .as_ref()
+                .map(|info| info.amount_minor as f64 / 10_f64.powi(info.precision as i32)),
             _ => None,
         };
 
-        let line = if usdt_amount_float.is_some() || matches!(
-            &payment.details,
-            DomainPaymentDetails::LiquidAsset { asset_id, .. } if asset_id == usdt_id
-        ) {
-            let usdt_amount = usdt_amount_float
-                .map(|v| v.to_string())
-                .unwrap_or_default();
+        let line = if usdt_amount_float.is_some()
+            || matches!(
+                &payment.details,
+                DomainPaymentDetails::LiquidAsset { asset_id, .. } if asset_id == usdt_id
+            ) {
+            let usdt_amount = usdt_amount_float.map(|v| v.to_string()).unwrap_or_default();
             let net = match (usdt_amount_float, is_send) {
                 (Some(v), true) => format!("-{}", v),
                 (Some(v), false) => v.to_string(),

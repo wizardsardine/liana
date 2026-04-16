@@ -56,10 +56,7 @@ pub enum DomainPaymentStatus {
 impl DomainPaymentStatus {
     /// `true` for states that show as destructive (red) in the UI.
     pub fn is_destructive(self) -> bool {
-        matches!(
-            self,
-            Self::Failed | Self::TimedOut | Self::Refundable
-        )
+        matches!(self, Self::Failed | Self::TimedOut | Self::Refundable)
     }
 
     /// `true` for in-flight states that should not contribute to confirmed balance.

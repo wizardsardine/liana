@@ -48,7 +48,7 @@ A cleaner alternative — Breez Spark's `ExternalSigner` trait, which lets the S
 
 1. **Create a cube** the usual way.
 2. **Configure a Spark signer** on that cube. The signer is an independent slot from the Liquid signer in `CubeSettings` (`spark_wallet_signer_fingerprint`, parallel to `liquid_wallet_signer_fingerprint`) — they can point at different HotSigners or the same one.
-3. **Set `BREEZ_API_KEY`** in the environment (or `.env`). A single Breez API key currently covers both the Liquid and Spark SDKs. If that assumption breaks at integration time, split into `BREEZ_LIQUID_API_KEY` / `BREEZ_SPARK_API_KEY` in the config layer.
+3. **Set `BREEZ_API_KEY`** in the environment (or `.env`). A single Breez API key covers both the Liquid and Spark SDKs.
 4. **Restart the cube.** The first launch spawns the bridge subprocess, runs `init`, and unlocks the Spark wallet for the session.
 
 When you open the cube, the sidebar shows the **Spark** submenu above the **Liquid** submenu. Spark hosts Overview, Send, Receive, Transactions, and Settings panels.

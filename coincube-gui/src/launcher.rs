@@ -380,9 +380,7 @@ impl Launcher {
                                 Some((breez_checksum, timestamp)),
                                 Some(&pin),
                             )
-                            .map_err(|e| {
-                                format!("Failed to store Breez wallet mnemonic: {}", e)
-                            })?;
+                            .map_err(|e| format!("Failed to store Breez wallet mnemonic: {}", e))?;
 
                         tracing::info!("Breez wallet signer created and stored (encrypted with PIN) with fingerprint: {}", breez_key_fingerprint);
 

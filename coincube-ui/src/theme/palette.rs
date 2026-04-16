@@ -56,6 +56,14 @@ pub struct Buttons {
     pub menu: Button,
     pub tab: Button,
     pub link: Button,
+    /// Orange-on-transparent outline button: transparent background
+    /// with orange text + orange border in the idle state, flipping
+    /// to a solid `DARK_ORANGE` fill with black text on hover /
+    /// press. Used for the secondary "Receive" chip on wallet cards
+    /// and similar orange-outline shapes throughout the app — the
+    /// hover flip matches the `hover:bg-orange-dark` behavior of the
+    /// coincube.io landing page.
+    pub orange_outline: Button,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -219,6 +227,10 @@ impl std::default::Default for Palette {
                 error: color::RED,
             },
             buttons: Buttons {
+                // Primary: ORANGE on idle, DARK_ORANGE on hover/press.
+                // Mirrors the `bg-orange hover:bg-orange-dark` pattern
+                // on the coincube.io landing page so the app and the
+                // website feel like the same product.
                 primary: Button {
                     active: ButtonPalette {
                         background: color::ORANGE,
@@ -226,14 +238,14 @@ impl std::default::Default for Palette {
                         border: Some(color::ORANGE),
                     },
                     hovered: ButtonPalette {
-                        background: color::ORANGE,
+                        background: color::DARK_ORANGE,
                         text: color::LIGHT_BLACK,
-                        border: Some(color::ORANGE),
+                        border: Some(color::DARK_ORANGE),
                     },
                     pressed: Some(ButtonPalette {
-                        background: color::ORANGE,
+                        background: color::DARK_ORANGE,
                         text: color::LIGHT_BLACK,
-                        border: Some(color::ORANGE),
+                        border: Some(color::DARK_ORANGE),
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::GREY_6,
@@ -437,6 +449,28 @@ impl std::default::Default for Palette {
                         background: color::TRANSPARENT,
                         text: color::GREY_2,
                         border: color::TRANSPARENT.into(),
+                    }),
+                },
+                orange_outline: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::ORANGE,
+                        border: Some(color::ORANGE),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::DARK_ORANGE,
+                        text: color::LIGHT_BLACK,
+                        border: Some(color::DARK_ORANGE),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::DARK_ORANGE,
+                        text: color::LIGHT_BLACK,
+                        border: Some(color::DARK_ORANGE),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: Some(color::TRANSPARENT_ORANGE),
                     }),
                 },
             },
@@ -889,6 +923,28 @@ impl Palette {
                         background: color::TRANSPARENT,
                         text: color::GREY_3,
                         border: color::TRANSPARENT.into(),
+                    }),
+                },
+                orange_outline: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::ORANGE,
+                        border: Some(color::ORANGE),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::DARK_ORANGE,
+                        text: color::BLACK,
+                        border: Some(color::DARK_ORANGE),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::DARK_ORANGE,
+                        text: color::BLACK,
+                        border: Some(color::DARK_ORANGE),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_3,
+                        border: Some(color::TRANSPARENT_ORANGE),
                     }),
                 },
             },

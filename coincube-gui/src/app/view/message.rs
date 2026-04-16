@@ -226,6 +226,12 @@ pub enum SettingsMessage {
     WalletAliasEdited(String),
     Save,
     GeneralSection,
+    /// Navigate to the app-level Lightning preferences page.
+    LightningSection,
+    /// User picked a new default Lightning backend on the
+    /// Settings → Lightning page. The state panel persists the
+    /// choice and re-reads it on `SettingsSaved`.
+    DefaultLightningBackendChanged(crate::app::wallets::WalletKind),
     DisplayUnitChanged(BitcoinDisplayUnit),
     Fiat(FiatMessage),
     NodeSettings(NodeSettingsMessage),
@@ -796,10 +802,17 @@ pub enum AvatarMessage {
 
 #[derive(Debug, Clone)]
 pub enum HomeMessage {
-    /// Navigate to Send with asset preset.
+    /// Navigate to Liquid Send with asset preset.
     SendAsset(crate::app::state::liquid::send::SendAsset),
-    /// Navigate to Receive with asset preset.
+    /// Navigate to Liquid Receive with asset preset.
     ReceiveAsset(crate::app::state::liquid::send::SendAsset),
+    /// Navigate to Spark Send.
+    SendSparkBtc,
+    /// Navigate to Spark Receive.
+    ReceiveSparkBtc,
+    /// Bridge returned a fresh Spark balance (used by the Home
+    /// page's periodic balance refresh).
+    SparkBalanceUpdated(Amount),
     ToggleBalanceMask,
     SelectTransferDirection(TransferDirection),
     AmountEdited(String),

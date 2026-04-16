@@ -10,7 +10,7 @@
 //! - Default: run as a subprocess speaking [`coincube_spark_protocol::Frame`]
 //!   messages on stdin/stdout. Parent process drives the lifecycle.
 //! - `--smoke-test`: connect to Spark mainnet using env vars
-//!   (`BREEZ_SPARK_API_KEY`, `COINCUBE_SPARK_MNEMONIC`,
+//!   (`BREEZ_API_KEY`, `COINCUBE_SPARK_MNEMONIC`,
 //!   `COINCUBE_SPARK_STORAGE_DIR`), fetch info + list payments, print to
 //!   stdout, and exit. Intended as the Phase 2 standalone harness.
 
@@ -30,7 +30,7 @@ struct Cli {
     /// Run a one-shot connect + info + list-payments round trip against
     /// mainnet using env configuration, print the result, and exit.
     ///
-    /// Required env vars: `BREEZ_SPARK_API_KEY`, `COINCUBE_SPARK_MNEMONIC`,
+    /// Required env vars: `BREEZ_API_KEY`, `COINCUBE_SPARK_MNEMONIC`,
     /// `COINCUBE_SPARK_STORAGE_DIR`.
     #[arg(long)]
     smoke_test: bool,
@@ -66,8 +66,8 @@ mod smoke_test {
     use crate::sdk_adapter::{self, SdkHandle};
 
     pub async fn run() -> anyhow::Result<()> {
-        let api_key = env::var("BREEZ_SPARK_API_KEY")
-            .map_err(|_| anyhow::anyhow!("BREEZ_SPARK_API_KEY must be set for --smoke-test"))?;
+        let api_key = env::var("BREEZ_API_KEY")
+            .map_err(|_| anyhow::anyhow!("BREEZ_API_KEY must be set for --smoke-test"))?;
         let mnemonic = env::var("COINCUBE_SPARK_MNEMONIC").map_err(|_| {
             anyhow::anyhow!("COINCUBE_SPARK_MNEMONIC must be set for --smoke-test")
         })?;

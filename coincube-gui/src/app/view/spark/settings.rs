@@ -5,14 +5,19 @@
 //!   clear on/off status line and a toggle button. Disabled while
 //!   the bridge is unavailable or an `update_user_settings` RPC
 //!   is in flight.
-//! - A "Default Lightning backend" picker card with Spark/Liquid
-//!   chips. Controls which backend fulfills incoming LN Address
-//!   invoices for this cube.
-//! - A read-only diagnostics card (identity pubkey, balance,
-//!   network) fed by the bridge's `get_info` RPC.
+//! - A small "Bridge status" diagnostic card showing whether the
+//!   Spark bridge subprocess is reachable (`get_info` round-trip
+//!   successful on the last reload).
+//!
+//! The Default Lightning backend picker lives on the app-level
+//! **Settings → Lightning** page, not here. The balance, identity
+//! pubkey, and network read-outs moved elsewhere too: balance is
+//! already in the Overview/Send panels, the network lives in
+//! **Settings → General**, and the identity pubkey wasn't actually
+//! useful to surface.
 
-use coincube_core::miniscript::bitcoin::Network;
 use coincube_ui::{
+    color,
     component::{
         button,
         text::{h2, h4_bold, p1_regular, p2_regular},
@@ -23,29 +28,26 @@ use coincube_ui::{
 use iced::widget::Space;
 use iced::{Alignment, Length};
 
-use crate::app::state::spark::settings::SparkSettingsSnapshot;
 use crate::app::view::{Message, SparkSettingsMessage};
-use crate::app::wallets::WalletKind;
 
+/// Coarse status the panel knows about. Only "Unavailable" needs
+/// its own rendering branch; the other variants all render the
+/// same content (Stable Balance card + bridge status card) and
+/// differ only in what the bridge-status card says.
 #[derive(Debug, Clone)]
 pub enum SparkSettingsStatus {
+    /// No Spark signer or the bridge subprocess failed to spawn.
     Unavailable,
+    /// First `get_info` round-trip still in flight.
     Loading,
+    /// Last `get_info` call failed.
     Error(String),
-    Loaded(SparkSettingsSnapshot),
+    /// Last `get_info` call succeeded — bridge is reachable.
+    Connected,
 }
 
 pub struct SparkSettingsView {
     pub status: SparkSettingsStatus,
-    pub network: Network,
-    /// Current `default_lightning_backend` preference, read from
-    /// `Cache`. The picker reflects this value and fires a
-    /// `DefaultLightningBackendChanged` message on click.
-    pub default_lightning_backend: WalletKind,
-    /// Whether the Spark backend is actually available for this cube.
-    /// Drives whether the "Spark" chip is enabled — if the bridge is
-    /// down the user shouldn't be able to pick it as the default.
-    pub spark_available: bool,
     /// Phase 6: Stable Balance on/off. `None` means the first
     /// `get_user_settings` RPC hasn't returned yet — the toggle
     /// renders as "Loading…" in that state.
@@ -59,18 +61,9 @@ pub struct SparkSettingsView {
 impl SparkSettingsView {
     pub fn render<'a>(self) -> Element<'a, Message> {
         let heading = Container::new(h2("Spark — Settings"));
-        let picker = lightning_backend_picker(
-            self.default_lightning_backend,
-            self.spark_available,
-        );
-        let stable_balance_card = stable_balance_card(
-            self.stable_balance_active,
-            self.stable_balance_saving,
-            self.spark_available,
-        );
 
-        let body: Element<'_, Message> = match self.status {
-            SparkSettingsStatus::Unavailable => Column::new()
+        if matches!(self.status, SparkSettingsStatus::Unavailable) {
+            let body = Column::new()
                 .spacing(10)
                 .push(p1_regular(
                     "Spark is not configured for this cube, or the bridge \
@@ -83,38 +76,19 @@ impl SparkSettingsView {
                      see why the spawn failed — the bridge binary must be \
                      locatable via COINCUBE_SPARK_BRIDGE_PATH or sit \
                      alongside the main coincube binary.",
-                ))
-                .into(),
-            SparkSettingsStatus::Loading => Column::new()
-                .push(p1_regular("Fetching wallet info from the Spark bridge…"))
-                .into(),
-            SparkSettingsStatus::Error(err) => Column::new()
-                .spacing(10)
-                .push(p1_regular("Spark bridge error"))
-                .push(p2_regular(err))
-                .into(),
-            SparkSettingsStatus::Loaded(snapshot) => Column::new()
-                .spacing(14)
-                .push(setting_row(
-                    "Balance",
-                    format!("{} sats", snapshot.balance_sats),
-                ))
-                .push(setting_row(
-                    "Identity pubkey",
-                    snapshot.identity_pubkey,
-                ))
-                .push(setting_row("Network", format_network(self.network)))
-                .push(Space::new().height(Length::Fixed(12.0)))
-                .push(diagnostic_note())
-                .into(),
-        };
+                ));
+            return Column::new().spacing(20).push(heading).push(body).into();
+        }
+
+        let stable_balance_card =
+            stable_balance_card(self.stable_balance_active, self.stable_balance_saving, true);
+        let bridge_status_card = bridge_status_card(&self.status);
 
         Column::new()
             .spacing(20)
             .push(heading)
             .push(stable_balance_card)
-            .push(picker)
-            .push(body)
+            .push(bridge_status_card)
             .into()
     }
 }
@@ -131,9 +105,6 @@ fn stable_balance_card<'a>(
         (Some(false), true) => p2_regular("Stable Balance is OFF").into(),
     };
 
-    // Target state for the button: if currently ON, pressing turns
-    // it OFF, and vice versa. When we don't know yet (loading) or
-    // saving is in flight, press is disabled.
     let can_toggle = spark_available && active.is_some() && !saving;
     let target = active.unwrap_or(false);
     let (button_label, next_state) = if target {
@@ -178,108 +149,66 @@ fn stable_balance_card<'a>(
     .into()
 }
 
-fn lightning_backend_picker<'a>(
-    current: WalletKind,
-    spark_available: bool,
-) -> Element<'a, Message> {
-    let spark_btn = if current == WalletKind::Spark {
-        button::primary(None, "Spark")
-    } else {
-        button::transparent_border(None, "Spark")
+/// Small live diagnostic card — shows whether the Spark bridge
+/// subprocess is reachable. Green check for a healthy round-trip,
+/// red X for an error, a neutral dot while loading.
+fn bridge_status_card<'a>(status: &SparkSettingsStatus) -> Element<'a, Message> {
+    let (indicator_char, indicator_color, headline, detail): (
+        &'static str,
+        iced::Color,
+        &'static str,
+        String,
+    ) = match status {
+        SparkSettingsStatus::Loading => (
+            "●",
+            color::GREY_3,
+            "Checking bridge…",
+            "Waiting for the first get_info round-trip.".to_string(),
+        ),
+        SparkSettingsStatus::Connected => (
+            "✓",
+            color::GREEN,
+            "Connected",
+            "The Spark bridge subprocess is reachable and \
+             responding to JSON-RPC requests over stdio."
+                .to_string(),
+        ),
+        SparkSettingsStatus::Error(err) => (
+            "✗",
+            color::RED,
+            "Disconnected",
+            format!(
+                "The last get_info call failed. Restarting the cube \
+                 re-spawns the bridge. Error: {}",
+                err
+            ),
+        ),
+        SparkSettingsStatus::Unavailable => (
+            "✗",
+            color::RED,
+            "Unavailable",
+            "No Spark signer configured, or the bridge subprocess \
+             failed to spawn."
+                .to_string(),
+        ),
     };
-    let spark_btn = spark_btn.width(Length::Fixed(140.0));
-    let spark_btn: Element<'_, Message> = if spark_available {
-        spark_btn
-            .on_press(Message::SparkSettings(
-                SparkSettingsMessage::DefaultLightningBackendChanged(WalletKind::Spark),
-            ))
-            .into()
-    } else {
-        // No bridge — disable the chip so the user can't select a
-        // backend that isn't wired up for this cube.
-        spark_btn.on_press_maybe(None).into()
-    };
-
-    let liquid_btn = if current == WalletKind::Liquid {
-        button::primary(None, "Liquid")
-    } else {
-        button::transparent_border(None, "Liquid")
-    };
-    let liquid_btn: Element<'_, Message> = liquid_btn
-        .width(Length::Fixed(140.0))
-        .on_press(Message::SparkSettings(
-            SparkSettingsMessage::DefaultLightningBackendChanged(WalletKind::Liquid),
-        ))
-        .into();
 
     Container::new(
         Column::new()
-            .spacing(10)
-            .push(h4_bold("Default Lightning backend"))
-            .push(p2_regular(
-                "Chooses which wallet fulfills incoming Lightning \
-                 Address invoices for this cube. Spark is the default \
-                 when available; Liquid is the fallback and handles \
-                 NIP-57 zaps (whose description is too long for \
-                 Spark's invoice description field).",
-            ))
+            .spacing(8)
+            .push(h4_bold("Bridge status"))
             .push(
                 Row::new()
-                    .spacing(12)
+                    .spacing(8)
                     .align_y(Alignment::Center)
-                    .push(spark_btn)
-                    .push(liquid_btn),
-            ),
-    )
-    .padding(12)
-    .style(theme::card::simple)
-    .into()
-}
-
-fn setting_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
-    Container::new(
-        Row::new()
-            .spacing(20)
-            .align_y(Alignment::Start)
-            .push(
-                Column::new()
-                    .width(Length::FillPortion(1))
-                    .push(h4_bold(label)),
+                    .push(iced::widget::text(indicator_char).size(18).style(
+                        move |_: &theme::Theme| iced::widget::text::Style {
+                            color: Some(indicator_color),
+                        },
+                    ))
+                    .push(p1_regular(headline)),
             )
-            .push(
-                Column::new()
-                    .width(Length::FillPortion(3))
-                    .push(p1_regular(value)),
-            ),
-    )
-    .padding(12)
-    .style(theme::card::simple)
-    .into()
-}
-
-fn format_network(network: Network) -> String {
-    // We only currently support Bitcoin + Regtest on the Spark side
-    // (see the network check in breez_spark::config). Render the
-    // mainnet label as "Mainnet" instead of "bitcoin" for readability.
-    match network {
-        Network::Bitcoin => "Mainnet".to_string(),
-        Network::Regtest => "Regtest".to_string(),
-        other => format!("{}", other),
-    }
-}
-
-fn diagnostic_note<'a>() -> Element<'a, Message> {
-    Container::new(
-        Column::new()
-            .spacing(6)
-            .push(h4_bold("Diagnostics"))
-            .push(p2_regular(
-                "The Spark SDK runs in a sibling process (coincube-spark-bridge) \
-                 and talks to the gui over JSON-RPC on stdio. Restarting the \
-                 cube re-spawns the bridge. Advanced controls (Stable Balance \
-                 toggle, signer rotation, manual reconnect) land in a later \
-                 phase.",
-            )),
+            .push(p2_regular(detail)),
     )
     .padding(12)
     .style(theme::card::simple)

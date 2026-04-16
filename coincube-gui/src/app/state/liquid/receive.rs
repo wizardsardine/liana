@@ -636,11 +636,9 @@ impl State for LiquidReceive {
                                 break;
                             }
                             let is_receive = payment.is_incoming();
-                            if is_receive
-                                && matches!(payment.status, DomainPaymentStatus::Complete)
+                            if is_receive && matches!(payment.status, DomainPaymentStatus::Complete)
                             {
-                                let usdt_amount =
-                                    usdt_amount_minor(&payment.details, usdt_id);
+                                let usdt_amount = usdt_amount_minor(&payment.details, usdt_id);
                                 self.received_amount_display = if let Some(minor) = usdt_amount {
                                     format!("{} USDt", format_usdt_display(minor))
                                 } else {

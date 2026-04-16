@@ -80,6 +80,10 @@ pub enum VaultSubMenu {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsSubMenu {
     General,
+    /// App-level Lightning preferences — currently a single card
+    /// picking which backend fulfills incoming Lightning Address
+    /// invoices for this cube.
+    Lightning,
     About,
 }
 

@@ -315,22 +315,37 @@ async fn handle_invoice_request(
 
     // Decide which backend mints the invoice. Spark only runs when
     // all preconditions hold: explicit preference, bridge available,
-    // API sent a description preimage, and the preimage fits the
-    // BOLT11 description cap. Any missing precondition drops to
-    // Liquid, which is always available and commits via hash.
+    // API sent a description preimage, the preimage fits the BOLT11
+    // description cap, AND SHA256(description) matches the
+    // description_hash the API advertised to the payer. The hash
+    // check prevents a divergence between the invoice's `d` tag and
+    // what the payer's wallet expects — if they differ, the payer
+    // rejects the invoice.
     let use_spark = matches!(preferred, WalletKind::Spark)
         && spark_backend.is_some()
-        && event
-            .description
-            .as_deref()
-            .is_some_and(|d| d.len() <= BOLT11_MAX_DESCRIPTION_BYTES);
+        && event.description.as_deref().is_some_and(|d| {
+            if d.len() > BOLT11_MAX_DESCRIPTION_BYTES {
+                return false;
+            }
+            use sha2::{Digest, Sha256};
+            let hash = Sha256::digest(d.as_bytes());
+            let hash_hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
+            if hash_hex != event.description_hash {
+                log::warn!(
+                    "[LNURL] description hash mismatch for request {}: \
+                     expected {}, got {} — falling back to Liquid",
+                    request_id,
+                    event.description_hash,
+                    hash_hex,
+                );
+                return false;
+            }
+            true
+        });
 
     let invoice_result = if use_spark {
         let spark = spark_backend.expect("checked above");
-        let description = event
-            .description
-            .clone()
-            .expect("checked above");
+        let description = event.description.clone().expect("checked above");
         log::info!(
             "[LNURL] Routing request {} via Spark (desc_len={})",
             request_id,
@@ -352,7 +367,6 @@ async fn handle_invoice_request(
 
     match invoice_result {
         Ok(payment_request) => {
-
             log::info!(
                 "[LNURL] Invoice generated for request {}: {}...",
                 request_id,

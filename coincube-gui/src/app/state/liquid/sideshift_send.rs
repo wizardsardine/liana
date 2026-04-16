@@ -5,11 +5,11 @@ use coincube_ui::widget::*;
 use iced::{clipboard, Subscription, Task};
 
 use crate::app::breez_liquid::assets::{parse_asset_to_minor_units, usdt_asset_id, USDT_PRECISION};
-use crate::app::wallets::LiquidBackend;
 use crate::app::cache::Cache;
 use crate::app::menu::Menu;
 use crate::app::message::Message;
 use crate::app::view;
+use crate::app::wallets::LiquidBackend;
 use crate::services::coincube::CoincubeClient;
 use crate::services::sideshift::{
     ShiftQuote, ShiftResponse, ShiftStatusKind, SideshiftClient, SideshiftNetwork,

@@ -18,12 +18,12 @@ use iced::{
 };
 
 use crate::app::breez_liquid::assets::{format_usdt_display, AssetKind};
-use crate::app::wallets::{DomainPaymentDetails, DomainPaymentStatus};
 use crate::app::menu::Menu;
 use crate::app::state::liquid::send::{LiquidSendFlowState, Modal, ReceiveNetwork, SendAsset};
 use crate::app::view::{
     self, vault::fiat::FiatAmount, FiatAmountConverter, LiquidSendMessage, Message,
 };
+use crate::app::wallets::{DomainPaymentDetails, DomainPaymentStatus};
 use crate::{app::cache::Cache, loading::loading_indicator};
 use coincube_ui::image::asset_network_logo;
 

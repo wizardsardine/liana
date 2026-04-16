@@ -7,8 +7,8 @@
 //! accompanying standalone workspace.
 //!
 //! Public API:
-//! - [`config::SparkConfig`]: reads `BREEZ_SPARK_API_KEY` (or falls back
-//!   to `BREEZ_API_KEY`) from env at build time.
+//! - [`config::SparkConfig`]: reads `BREEZ_API_KEY` from env at build
+//!   time (same key covers both Liquid and Spark).
 //! - [`assets::SparkAsset`]: placeholder asset registry — BTC and
 //!   Lightning only for now.
 //! - [`client::SparkClient`]: cloneable subprocess handle, async

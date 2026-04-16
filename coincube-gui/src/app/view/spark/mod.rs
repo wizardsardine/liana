@@ -13,7 +13,7 @@ pub mod send;
 pub mod settings;
 pub mod transactions;
 
-pub use overview::{SparkOverviewView, SparkStatus};
+pub use overview::{SparkOverviewView, SparkPaymentMethod, SparkRecentTransaction, SparkStatus};
 pub use receive::SparkReceiveView;
 pub use send::SparkSendView;
 pub use settings::{SparkSettingsStatus, SparkSettingsView};
@@ -22,50 +22,61 @@ pub use transactions::{SparkTransactionsStatus, SparkTransactionsView};
 /// View-level messages for the Spark Overview panel.
 #[derive(Debug, Clone)]
 pub enum SparkOverviewMessage {
-    /// Bridge returned `get_info` success — carries a snapshot.
-    DataLoaded(crate::app::state::spark::overview::SparkBalanceSnapshot),
-    /// Bridge returned an error response for `get_info`.
+    /// Bridge returned `get_info` + `list_payments` success.
+    DataLoaded {
+        balance: coincube_core::miniscript::bitcoin::Amount,
+        recent_payments: Vec<coincube_spark_protocol::PaymentSummary>,
+    },
+    /// Bridge returned an error response.
     Error(String),
     /// Phase 6: bridge returned the current Stable Balance flag,
     /// fetched alongside `get_info` in `reload`. Drives the
     /// "Stable" badge next to the balance line.
     StableBalanceLoaded(bool),
+    /// Sidebar / card actions that navigate to sibling Spark panels.
+    SendBtc,
+    ReceiveBtc,
+    History,
+    SelectTransaction(usize),
 }
 
-/// View-level messages for the Phase 4b Spark Transactions panel.
+/// View-level messages for the Spark Transactions panel.
 #[derive(Debug, Clone)]
 pub enum SparkTransactionsMessage {
     /// Bridge returned `list_payments` success — carries the page.
     DataLoaded(Vec<coincube_spark_protocol::PaymentSummary>),
     /// Bridge returned an error response for `list_payments`.
     Error(String),
+    /// User clicked a row. Today this just no-ops — a Spark
+    /// transaction-detail pane is a future polish pass, so a click
+    /// stays on the list rather than navigating away.
+    Select(usize),
+    /// Empty-state navigation: "Send sats" button.
+    SendBtc,
+    /// Empty-state navigation: "Receive sats" button.
+    ReceiveBtc,
 }
 
-/// View-level messages for the Phase 4b Spark Settings panel.
+/// View-level messages for the Spark Settings panel.
 #[derive(Debug, Clone)]
 pub enum SparkSettingsMessage {
-    /// Bridge returned `get_info` success — carries a snapshot used
-    /// for the read-only diagnostics view.
-    DataLoaded(crate::app::state::spark::settings::SparkSettingsSnapshot),
-    /// Bridge returned an error response.
-    Error(String),
-    /// Phase 5: user clicked a radio in the "Default Lightning backend"
-    /// picker. The state panel persists the new value to the cube
-    /// settings file and emits `Message::SettingsSaved` on success.
-    DefaultLightningBackendChanged(crate::app::wallets::WalletKind),
-    /// Phase 5: the background save task finished. Carries an error
-    /// string if persistence failed, else `None`.
-    DefaultLightningBackendSaved(Option<String>),
-    /// Phase 6: bridge returned the current Stable Balance + private
-    /// mode state. Fired from the panel's `reload` task so the view
-    /// can reflect whatever the SDK persisted across restarts.
+    /// Bridge `get_info` reload succeeded — the subprocess is
+    /// reachable and the SDK is past init. Drives the "Bridge
+    /// status" card on the Settings page.
+    BridgeReachable,
+    /// Bridge `get_info` reload failed. Carries the error string
+    /// for the diagnostic card.
+    BridgeError(String),
+    /// Bridge returned the current Stable Balance + private mode
+    /// state. Fired from the panel's `reload` task so the view can
+    /// reflect whatever the SDK persisted across restarts.
     UserSettingsLoaded(coincube_spark_protocol::GetUserSettingsOk),
-    /// Phase 6: the user flipped the Stable Balance toggle — fires a
+    /// The user flipped the Stable Balance toggle — fires a
     /// `set_stable_balance` RPC on the bridge.
     StableBalanceToggled(bool),
-    /// Phase 6: `set_stable_balance` RPC finished. `Ok(enabled)`
-    /// carries the new state so the view can update immediately
-    /// without re-fetching; `Err` surfaces the SDK error.
+    /// `set_stable_balance` RPC finished. `Ok(enabled)` carries the
+    /// new state so the view can update immediately without
+    /// re-fetching; `Err` surfaces the SDK error.
     StableBalanceSaved(Result<bool, String>),
 }
 

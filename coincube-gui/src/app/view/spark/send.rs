@@ -52,9 +52,9 @@ impl<'a> SparkSendView<'a> {
             self.destination_input,
         )
         .on_input(|v| {
-            Message::SparkSend(
-                crate::app::view::SparkSendMessage::DestinationInputChanged(v),
-            )
+            Message::SparkSend(crate::app::view::SparkSendMessage::DestinationInputChanged(
+                v,
+            ))
         })
         .padding(10);
 
@@ -62,9 +62,7 @@ impl<'a> SparkSendView<'a> {
             "Amount in sats (optional for invoices with amount)",
             self.amount_input,
         )
-        .on_input(|v| {
-            Message::SparkSend(crate::app::view::SparkSendMessage::AmountInputChanged(v))
-        })
+        .on_input(|v| Message::SparkSend(crate::app::view::SparkSendMessage::AmountInputChanged(v)))
         .padding(10);
 
         let input_card = Container::new(
@@ -109,11 +107,9 @@ fn phase_body<'a>(phase: &SparkSendPhase) -> Element<'a, Message> {
         .style(theme::card::simple)
         .into(),
 
-        SparkSendPhase::Preparing => Container::new(
-            Column::new()
-                .spacing(10)
-                .push(p1_regular("Preparing send… asking the Spark bridge for a fee quote.")),
-        )
+        SparkSendPhase::Preparing => Container::new(Column::new().spacing(10).push(p1_regular(
+            "Preparing send… asking the Spark bridge for a fee quote.",
+        )))
         .padding(16)
         .style(theme::card::simple)
         .into(),
@@ -135,9 +131,7 @@ fn phase_body<'a>(phase: &SparkSendPhase) -> Element<'a, Message> {
                         .spacing(10)
                         .push(
                             button::primary(None, "Confirm and send")
-                                .on_press(Message::SparkSend(
-                                    SparkSendMessage::ConfirmRequested,
-                                ))
+                                .on_press(Message::SparkSend(SparkSendMessage::ConfirmRequested))
                                 .width(Length::Fixed(200.0)),
                         )
                         .push(
@@ -151,11 +145,9 @@ fn phase_body<'a>(phase: &SparkSendPhase) -> Element<'a, Message> {
         .style(theme::card::simple)
         .into(),
 
-        SparkSendPhase::Sending => Container::new(
-            Column::new()
-                .spacing(10)
-                .push(p1_regular("Sending… waiting for the Spark SDK to settle the payment.")),
-        )
+        SparkSendPhase::Sending => Container::new(Column::new().spacing(10).push(p1_regular(
+            "Sending… waiting for the Spark SDK to settle the payment.",
+        )))
         .padding(16)
         .style(theme::card::simple)
         .into(),

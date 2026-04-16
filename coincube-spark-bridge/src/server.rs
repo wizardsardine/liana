@@ -63,24 +63,21 @@ pub async fn run() -> anyhow::Result<()> {
     let state = Arc::new(ServerState::new(tx.clone()));
 
     // Phase 4f: background sweep that evicts pending-prepare entries
-    // older than `PREPARE_TTL`. Both pending maps share the same
-    // policy. The task lives for the bridge process lifetime; it
-    // exits when the ServerState's strong count drops to 1 (i.e.
-    // only the sweep task itself holds it, which only happens after
-    // `run()` returns and the dispatcher state has been dropped).
-    let sweep_state = Arc::clone(&state);
+    // older than `PREPARE_TTL`. Uses a Weak reference so the sweep
+    // task doesn't keep ServerState (and its event_tx sender) alive
+    // after the main read loop exits — that would prevent the writer
+    // task from observing channel closure and cause a deadlock at
+    // shutdown.
+    let sweep_weak = Arc::downgrade(&state);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(PREPARE_SWEEP_INTERVAL);
-        // Skip the immediate first tick — wait one full interval so
-        // the sweep doesn't fire during the init handshake.
         tick.tick().await;
         loop {
             tick.tick().await;
-            // Stop sweeping once the dispatcher state is gone.
-            if Arc::strong_count(&sweep_state) <= 1 {
+            let Some(s) = sweep_weak.upgrade() else {
                 break;
-            }
-            sweep_expired_prepares(&sweep_state).await;
+            };
+            sweep_expired_prepares(&s).await;
         }
     });
     let writer_task = tokio::spawn(async move {
@@ -144,8 +141,13 @@ pub async fn run() -> anyhow::Result<()> {
         });
     }
 
-    // Drop the writer sender so the writer task drains and exits.
+    // Drop ALL senders so the writer task's `rx.recv()` returns None
+    // and it can exit cleanly. `state.event_tx` is a clone of the
+    // same channel — if we only drop `tx` but keep `state` alive,
+    // the writer hangs forever waiting for a message that will never
+    // come.
     drop(tx);
+    drop(state);
     let _ = writer_task.await;
     Ok(())
 }
@@ -413,12 +415,19 @@ async fn handle_list_payments(
 /// yet — later phases can replace these with typed variants as the UI
 /// starts branching on them.
 fn payment_to_summary(p: breez_sdk_spark::Payment) -> PaymentSummary {
+    let description = match &p.details {
+        Some(PaymentDetails::Lightning { description, .. }) => description.clone(),
+        _ => None,
+    };
     PaymentSummary {
         id: p.id,
-        amount_sat: p.amount as i64,
+        amount_sat: clamp_u128_to_u64(p.amount) as i64,
+        fees_sat: clamp_u128_to_u64(p.fees),
         timestamp: p.timestamp,
         status: format!("{:?}", p.status),
         direction: format!("{:?}", p.payment_type),
+        method: format!("{}", p.method),
+        description,
     }
 }
 

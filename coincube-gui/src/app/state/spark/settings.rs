@@ -1,46 +1,40 @@
 //! Spark Settings panel.
 //!
-//! Renders:
-//! - Read-only diagnostics from the bridge's `get_info` RPC
-//!   (balance, identity pubkey, network).
-//! - A "Default Lightning backend" picker (Phase 5) — selects the
-//!   backend that fulfills incoming `@coincube.io` Lightning
-//!   Address invoices. Persists to the cube's settings file and
-//!   triggers `Message::SettingsSaved` so the rest of the app
-//!   picks up the new value.
+//! Two cards:
 //! - A "Stable Balance" toggle (Phase 6) — enables or disables the
 //!   Spark SDK's USD-pegged balance feature via
 //!   `update_user_settings(stable_balance_active_label)`.
+//! - A "Bridge status" diagnostic card that shows whether the last
+//!   `get_info` round-trip to the `coincube-spark-bridge` subprocess
+//!   succeeded.
 //!
-//! Signer rotation and a "bridge health / reconnect" control remain
-//! future work.
+//! Everything else the old Phase 4b panel surfaced — balance,
+//! identity pubkey, network display, Default Lightning backend
+//! picker — moved elsewhere:
+//! - Balance is already rendered in Spark → Overview / Send.
+//! - Network lives in **Settings → General**.
+//! - Default Lightning backend lives in **Settings → Lightning**.
+//! - Identity pubkey was dropped entirely (not actionable for
+//!   end users).
 
 use std::sync::Arc;
 
+use coincube_spark_protocol::GetUserSettingsOk;
 use coincube_ui::widget::Element;
-use coincube_spark_protocol::{GetInfoOk, GetUserSettingsOk};
 use iced::Task;
 
 use crate::app::cache::Cache;
 use crate::app::menu::Menu;
 use crate::app::message::Message;
 use crate::app::state::State;
-use crate::app::view::spark::SparkSettingsView;
+use crate::app::view::spark::{SparkSettingsStatus, SparkSettingsView};
 use crate::app::wallets::SparkBackend;
 
-/// What [`SparkSettings::reload`] produces when the bridge answers.
-#[derive(Debug, Clone)]
-pub struct SparkSettingsSnapshot {
-    pub balance_sats: u64,
-    pub identity_pubkey: String,
-}
-
-/// Phase 4b Spark Settings panel.
 pub struct SparkSettings {
     backend: Option<Arc<SparkBackend>>,
-    snapshot: Option<SparkSettingsSnapshot>,
-    error: Option<String>,
-    loading: bool,
+    /// Coarse bridge-reachability state. Reflects whatever the most
+    /// recent `get_info` call returned.
+    status: SparkSettingsStatus,
     /// Phase 6: latest Stable Balance state read from the bridge.
     /// `None` until the first `get_user_settings` round-trip
     /// completes; the view renders the toggle in a "loading"
@@ -55,11 +49,14 @@ pub struct SparkSettings {
 
 impl SparkSettings {
     pub fn new(backend: Option<Arc<SparkBackend>>) -> Self {
+        let status = if backend.is_some() {
+            SparkSettingsStatus::Loading
+        } else {
+            SparkSettingsStatus::Unavailable
+        };
         Self {
             backend,
-            snapshot: None,
-            error: None,
-            loading: false,
+            status,
             stable_balance_active: None,
             stable_balance_saving: false,
         }
@@ -72,26 +69,11 @@ impl State for SparkSettings {
         menu: &'a Menu,
         cache: &'a Cache,
     ) -> Element<'a, crate::app::view::Message> {
-        let status = if self.backend.is_none() {
-            crate::app::view::spark::SparkSettingsStatus::Unavailable
-        } else if self.loading && self.snapshot.is_none() {
-            crate::app::view::spark::SparkSettingsStatus::Loading
-        } else if let Some(snapshot) = &self.snapshot {
-            crate::app::view::spark::SparkSettingsStatus::Loaded(snapshot.clone())
-        } else if let Some(err) = &self.error {
-            crate::app::view::spark::SparkSettingsStatus::Error(err.clone())
-        } else {
-            crate::app::view::spark::SparkSettingsStatus::Loading
-        };
-
         crate::app::view::dashboard(
             menu,
             cache,
             SparkSettingsView {
-                status,
-                network: cache.network,
-                default_lightning_backend: cache.default_lightning_backend,
-                spark_available: self.backend.is_some(),
+                status: self.status.clone(),
                 stable_balance_active: self.stable_balance_active,
                 stable_balance_saving: self.stable_balance_saving,
             }
@@ -105,24 +87,25 @@ impl State for SparkSettings {
         _wallet: Option<Arc<crate::app::wallet::Wallet>>,
     ) -> Task<Message> {
         let Some(backend) = self.backend.clone() else {
+            self.status = SparkSettingsStatus::Unavailable;
             return Task::none();
         };
-        self.loading = true;
-        self.error = None;
+        self.status = SparkSettingsStatus::Loading;
+        // `get_info` is the liveness probe: a success means the bridge
+        // subprocess is up and the SDK is past init. `get_user_settings`
+        // is fetched in parallel so the Stable Balance toggle reflects
+        // the real SDK state.
         let info_task = Task::perform(
             {
                 let backend = backend.clone();
                 async move { backend.get_info().await }
             },
-            |result: Result<GetInfoOk, _>| match result {
-                Ok(info) => Message::View(crate::app::view::Message::SparkSettings(
-                    crate::app::view::SparkSettingsMessage::DataLoaded(SparkSettingsSnapshot {
-                        balance_sats: info.balance_sats,
-                        identity_pubkey: info.identity_pubkey,
-                    }),
+            |result| match result {
+                Ok(_) => Message::View(crate::app::view::Message::SparkSettings(
+                    crate::app::view::SparkSettingsMessage::BridgeReachable,
                 )),
                 Err(e) => Message::View(crate::app::view::Message::SparkSettings(
-                    crate::app::view::SparkSettingsMessage::Error(e.to_string()),
+                    crate::app::view::SparkSettingsMessage::BridgeError(e.to_string()),
                 )),
             },
         );
@@ -134,9 +117,6 @@ impl State for SparkSettings {
                 )),
                 Err(e) => {
                     tracing::warn!("get_user_settings failed: {}", e);
-                    // Swallow into a no-op — the Stable Balance
-                    // toggle just stays in its "loading" state
-                    // and the rest of the panel still works.
                     Message::View(crate::app::view::Message::SparkSettings(
                         crate::app::view::SparkSettingsMessage::UserSettingsLoaded(
                             GetUserSettingsOk {
@@ -154,64 +134,16 @@ impl State for SparkSettings {
     fn update(
         &mut self,
         _daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
-        cache: &Cache,
+        _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
         if let Message::View(crate::app::view::Message::SparkSettings(msg)) = message {
             match msg {
-                crate::app::view::SparkSettingsMessage::DataLoaded(snapshot) => {
-                    self.loading = false;
-                    self.snapshot = Some(snapshot);
-                    self.error = None;
+                crate::app::view::SparkSettingsMessage::BridgeReachable => {
+                    self.status = SparkSettingsStatus::Connected;
                 }
-                crate::app::view::SparkSettingsMessage::Error(err) => {
-                    self.loading = false;
-                    self.error = Some(err);
-                }
-                crate::app::view::SparkSettingsMessage::DefaultLightningBackendChanged(kind) => {
-                    // Persist asynchronously. On success, emit
-                    // SettingsSaved so App reloads cube_settings
-                    // and cache from disk.
-                    let datadir = cache.datadir_path.clone();
-                    let network = cache.network;
-                    let cube_id = cache.cube_id.clone();
-                    return Task::perform(
-                        async move {
-                            use crate::app::settings::update_settings_file;
-                            let network_dir = datadir.network_directory(network);
-                            update_settings_file(&network_dir, |mut settings| {
-                                if let Some(cube) =
-                                    settings.cubes.iter_mut().find(|c| c.id == cube_id)
-                                {
-                                    cube.default_lightning_backend = kind;
-                                } else {
-                                    tracing::error!(
-                                        "Cube not found (id={}) — cannot save default_lightning_backend",
-                                        cube_id
-                                    );
-                                }
-                                Some(settings)
-                            })
-                            .await
-                            .map_err(|e| e.to_string())
-                        },
-                        |result| match result {
-                            Ok(()) => Message::SettingsSaved,
-                            Err(err) => Message::View(
-                                crate::app::view::Message::SparkSettings(
-                                    crate::app::view::SparkSettingsMessage::DefaultLightningBackendSaved(
-                                        Some(err),
-                                    ),
-                                ),
-                            ),
-                        },
-                    );
-                }
-                crate::app::view::SparkSettingsMessage::DefaultLightningBackendSaved(err) => {
-                    if let Some(err) = err {
-                        tracing::warn!("Failed to persist default_lightning_backend: {}", err);
-                        self.error = Some(err);
-                    }
+                crate::app::view::SparkSettingsMessage::BridgeError(err) => {
+                    self.status = SparkSettingsStatus::Error(err);
                 }
                 crate::app::view::SparkSettingsMessage::UserSettingsLoaded(settings) => {
                     self.stable_balance_active = Some(settings.stable_balance_active);
@@ -228,20 +160,16 @@ impl State for SparkSettings {
                     return Task::perform(
                         async move { backend.set_stable_balance(enabled).await },
                         move |result| match result {
-                            Ok(()) => Message::View(
-                                crate::app::view::Message::SparkSettings(
-                                    crate::app::view::SparkSettingsMessage::StableBalanceSaved(
-                                        Ok(enabled),
-                                    ),
-                                ),
-                            ),
-                            Err(e) => Message::View(
-                                crate::app::view::Message::SparkSettings(
-                                    crate::app::view::SparkSettingsMessage::StableBalanceSaved(
-                                        Err(e.to_string()),
-                                    ),
-                                ),
-                            ),
+                            Ok(()) => Message::View(crate::app::view::Message::SparkSettings(
+                                crate::app::view::SparkSettingsMessage::StableBalanceSaved(Ok(
+                                    enabled,
+                                )),
+                            )),
+                            Err(e) => Message::View(crate::app::view::Message::SparkSettings(
+                                crate::app::view::SparkSettingsMessage::StableBalanceSaved(Err(
+                                    e.to_string()
+                                )),
+                            )),
                         },
                     );
                 }
@@ -253,13 +181,10 @@ impl State for SparkSettings {
                         }
                         Err(err) => {
                             tracing::warn!("set_stable_balance failed: {}", err);
-                            // Revert optimistic update by flipping
-                            // back to the previous state (whatever
-                            // value is not the attempted one).
                             if let Some(current) = self.stable_balance_active {
                                 self.stable_balance_active = Some(!current);
                             }
-                            self.error = Some(err);
+                            self.status = SparkSettingsStatus::Error(err);
                         }
                     }
                 }

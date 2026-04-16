@@ -41,7 +41,9 @@ pub fn liquid_overview_view<'a>(
     let pending_outgoing_sats: u64 = recent_transaction
         .iter()
         .filter(|t| {
-            !t.is_incoming && t.usdt_display.is_none() && matches!(t.status, DomainPaymentStatus::Pending)
+            !t.is_incoming
+                && t.usdt_display.is_none()
+                && matches!(t.status, DomainPaymentStatus::Pending)
         })
         .map(|t| (t.amount + t.fees_sat).to_sat())
         .sum();
@@ -49,7 +51,9 @@ pub fn liquid_overview_view<'a>(
     let pending_incoming_sats: u64 = recent_transaction
         .iter()
         .filter(|t| {
-            t.is_incoming && t.usdt_display.is_none() && matches!(t.status, DomainPaymentStatus::Pending)
+            t.is_incoming
+                && t.usdt_display.is_none()
+                && matches!(t.status, DomainPaymentStatus::Pending)
         })
         .map(|t| t.amount.to_sat())
         .sum();
@@ -153,23 +157,9 @@ pub fn liquid_overview_view<'a>(
                 .width(Length::Fixed(90.0)),
         )
         .push(
-            iced_button(
-                Container::new(text("Receive").size(13))
-                    .padding([6, 12])
-                    .center_x(Length::Fill),
-            )
-            .on_press(LiquidOverviewMessage::ReceiveLbtc)
-            .width(Length::Fixed(90.0))
-            .style(|_, _| iced::widget::button::Style {
-                background: Some(Background::Color(iced::Color::TRANSPARENT)),
-                text_color: color::ORANGE,
-                border: iced::Border {
-                    color: color::ORANGE,
-                    width: 1.0,
-                    radius: 25.0.into(),
-                },
-                ..Default::default()
-            }),
+            button::orange_outline(None, "Receive")
+                .on_press(LiquidOverviewMessage::ReceiveLbtc)
+                .width(Length::Fixed(90.0)),
         );
 
     // USDt asset row
@@ -195,23 +185,9 @@ pub fn liquid_overview_view<'a>(
                 .width(Length::Fixed(90.0)),
         )
         .push(
-            iced_button(
-                Container::new(text("Receive").size(13))
-                    .padding([6, 12])
-                    .center_x(Length::Fill),
-            )
-            .on_press(LiquidOverviewMessage::ReceiveUsdt)
-            .width(Length::Fixed(90.0))
-            .style(|_, _| iced::widget::button::Style {
-                background: Some(Background::Color(iced::Color::TRANSPARENT)),
-                text_color: color::ORANGE,
-                border: iced::Border {
-                    color: color::ORANGE,
-                    width: 1.0,
-                    radius: 25.0.into(),
-                },
-                ..Default::default()
-            }),
+            button::orange_outline(None, "Receive")
+                .on_press(LiquidOverviewMessage::ReceiveUsdt)
+                .width(Length::Fixed(90.0)),
         );
 
     let portfolio_card = Container::new(

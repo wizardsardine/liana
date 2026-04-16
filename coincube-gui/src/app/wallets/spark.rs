@@ -81,7 +81,9 @@ impl SparkBackend {
         amount_sat: u64,
         comment: Option<String>,
     ) -> Result<PrepareSendOk, SparkClientError> {
-        self.client.prepare_lnurl_pay(input, amount_sat, comment).await
+        self.client
+            .prepare_lnurl_pay(input, amount_sat, comment)
+            .await
     }
 
     /// Phase 4c: execute a previously-prepared send.

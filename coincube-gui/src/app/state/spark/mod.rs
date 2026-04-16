@@ -14,5 +14,5 @@ pub mod transactions;
 pub use overview::SparkOverview;
 pub use receive::{SparkReceive, SparkReceiveMethod, SparkReceivePhase};
 pub use send::{SparkSend, SparkSendPhase};
-pub use settings::{SparkSettings, SparkSettingsSnapshot};
+pub use settings::SparkSettings;
 pub use transactions::SparkTransactions;

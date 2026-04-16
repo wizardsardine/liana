@@ -15,7 +15,7 @@ use coincube_ui::{
     widget::{Column, Container, Element, Row},
 };
 use iced::{
-    widget::{qr_code, text_input, Space, QRCode},
+    widget::{qr_code, text_input, QRCode, Space},
     Alignment, Length,
 };
 
@@ -61,23 +61,20 @@ impl<'a> SparkReceiveView<'a> {
 
         // ── Method picker ─────────────────────────────────────────────
         let method_picker = Container::new(
-            Column::new()
-                .spacing(10)
-                .push(h4_bold("Method"))
-                .push(
-                    Row::new()
-                        .spacing(10)
-                        .push(method_chip(
-                            "Lightning (BOLT11)",
-                            self.method == SparkReceiveMethod::Bolt11,
-                            SparkReceiveMethod::Bolt11,
-                        ))
-                        .push(method_chip(
-                            "On-chain Bitcoin",
-                            self.method == SparkReceiveMethod::OnchainBitcoin,
-                            SparkReceiveMethod::OnchainBitcoin,
-                        )),
-                ),
+            Column::new().spacing(10).push(h4_bold("Method")).push(
+                Row::new()
+                    .spacing(10)
+                    .push(method_chip(
+                        "Lightning (BOLT11)",
+                        self.method == SparkReceiveMethod::Bolt11,
+                        SparkReceiveMethod::Bolt11,
+                    ))
+                    .push(method_chip(
+                        "On-chain Bitcoin",
+                        self.method == SparkReceiveMethod::OnchainBitcoin,
+                        SparkReceiveMethod::OnchainBitcoin,
+                    )),
+            ),
         )
         .padding(16)
         .style(theme::card::simple);
@@ -194,7 +191,11 @@ fn deposit_row<'a>(
 
     let amount_label = format!("{} sats", deposit.amount_sat);
     let txid_short = if deposit.txid.len() > 16 {
-        format!("{}…{}", &deposit.txid[..8], &deposit.txid[deposit.txid.len() - 8..])
+        format!(
+            "{}…{}",
+            &deposit.txid[..8],
+            &deposit.txid[deposit.txid.len() - 8..]
+        )
     } else {
         deposit.txid.clone()
     };
@@ -298,27 +299,21 @@ fn phase_body<'a>(
 
     match phase {
         SparkReceivePhase::Idle => Container::new(
-            Column::new()
-                .spacing(10)
-                .push(
-                    button::primary(None, "Generate")
-                        .on_press(Message::SparkReceive(
-                            SparkReceiveMessage::GenerateRequested,
-                        ))
-                        .width(Length::Fixed(160.0)),
-                ),
+            Column::new().spacing(10).push(
+                button::primary(None, "Generate")
+                    .on_press(Message::SparkReceive(
+                        SparkReceiveMessage::GenerateRequested,
+                    ))
+                    .width(Length::Fixed(160.0)),
+            ),
         )
         .padding(16)
         .style(theme::card::simple)
         .into(),
 
-        SparkReceivePhase::Generating => Container::new(
-            Column::new()
-                .spacing(10)
-                .push(p1_regular(
-                    "Generating… asking the Spark bridge for a payment request.",
-                )),
-        )
+        SparkReceivePhase::Generating => Container::new(Column::new().spacing(10).push(
+            p1_regular("Generating… asking the Spark bridge for a payment request."),
+        ))
         .padding(16)
         .style(theme::card::simple)
         .into(),
@@ -359,9 +354,7 @@ fn phase_body<'a>(
                             )
                             .push(
                                 button::transparent_border(None, "Generate another")
-                                    .on_press(Message::SparkReceive(
-                                        SparkReceiveMessage::Reset,
-                                    ))
+                                    .on_press(Message::SparkReceive(SparkReceiveMessage::Reset))
                                     .width(Length::Fixed(180.0)),
                             ),
                     )

@@ -1,30 +1,50 @@
 //! View renderer for [`crate::app::state::spark::transactions::SparkTransactions`].
 //!
-//! Renders one of four states:
-//! - [`SparkTransactionsStatus::Unavailable`] — no backend wired.
-//! - [`SparkTransactionsStatus::Loading`] — first fetch in flight.
-//! - [`SparkTransactionsStatus::Error`] — bridge returned an error.
-//! - [`SparkTransactionsStatus::Loaded`] — list populated (possibly empty).
+//! Mirrors [`crate::app::view::liquid::transactions::liquid_transactions_view`]
+//! almost exactly:
+//! - Header row with the "Transactions" title.
+//! - Transaction list using the shared `TransactionListItem` widget so
+//!   rows look identical to the Liquid panel.
+//! - Empty state with a Kage quote card and Send/Receive shortcut
+//!   buttons.
 //!
-//! Row layout: [direction arrow] [amount] [time ago] [status pill].
-//! Intentionally minimal — the real `TransactionListItem` widget used by
-//! the Liquid panel expects domain types we haven't mapped for Spark
-//! yet, so Phase 4b uses a straightforward row builder.
+//! Differences from Liquid:
+//! - No asset filter tabs (Spark holds only BTC; there's nothing to
+//!   toggle between).
+//! - No "Refundable Transactions" section (Spark has no boltz-style
+//!   swap refunds).
+//! - No "Export" button in the header yet — CSV export is currently
+//!   Liquid-specific and a Spark export path is a future follow-up.
 
-use coincube_ui::{
-    color,
-    component::text::{h2, p1_regular, p2_regular},
-    theme,
-    widget::{Column, Container, Element, Row},
-};
+use coincube_core::miniscript::bitcoin::Amount;
 use coincube_spark_protocol::PaymentSummary;
-use iced::widget::{scrollable, Space};
-use iced::{Alignment, Length};
+use iced::widget::image;
 
-use crate::app::view::Message;
-use crate::utils::format_time_ago;
+use crate::export::ImportExportMessage;
+use coincube_ui::{
+    component::{
+        amount::BitcoinDisplayUnit,
+        button,
+        quote_display::{self, Quote, QuoteDisplayProps},
+        text::*,
+        transaction::{TransactionDirection, TransactionListItem},
+    },
+    icon,
+    image::asset_network_logo,
+    theme,
+    widget::*,
+};
+use iced::{
+    widget::{Column, Container, Row, Space},
+    Alignment, Length,
+};
 
-/// Tri-state status the Transactions panel can be in.
+use crate::app::menu::{Menu, SparkSubMenu};
+use crate::app::view::message::Message;
+use crate::app::view::spark::{SparkPaymentMethod, SparkRecentTransaction};
+use crate::app::view::FiatAmountConverter;
+
+/// Tri-state the panel can be in while the bridge talks.
 #[derive(Debug, Clone)]
 pub enum SparkTransactionsStatus {
     Unavailable,
@@ -33,95 +53,167 @@ pub enum SparkTransactionsStatus {
     Loaded(Vec<PaymentSummary>),
 }
 
-/// View wrapper that renders the Transactions panel.
-pub struct SparkTransactionsView {
+/// View wrapper for the Spark Transactions panel.
+pub struct SparkTransactionsView<'a> {
     pub status: SparkTransactionsStatus,
+    pub recent_transactions: &'a [SparkRecentTransaction],
+    pub fiat_converter: Option<FiatAmountConverter>,
+    pub bitcoin_unit: BitcoinDisplayUnit,
+    pub show_direction_badges: bool,
+    pub empty_state_quote: &'a Quote,
+    pub empty_state_image_handle: &'a image::Handle,
 }
 
-impl SparkTransactionsView {
-    pub fn render<'a>(self) -> Element<'a, Message> {
-        let heading = Container::new(h2("Spark — Transactions"));
+impl<'a> SparkTransactionsView<'a> {
+    pub fn render(self) -> Element<'a, Message> {
+        let mut content = Column::new().spacing(20).width(Length::Fill);
 
-        let body: Element<'_, Message> = match self.status {
-            SparkTransactionsStatus::Unavailable => Column::new()
-                .push(p1_regular(
+        content = content.push(
+            Row::new()
+                .push(Container::new(h3("Transactions").bold()))
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    button::secondary(Some(icon::backup_icon()), "Export")
+                        .on_press(ImportExportMessage::Open.into()),
+                ),
+        );
+
+        match self.status {
+            SparkTransactionsStatus::Unavailable => {
+                content = content.push(Column::new().spacing(10).push(p1_regular(
                     "Spark is not configured for this cube. Set up a Spark \
-                     signer to see your payment history here.",
-                ))
-                .into(),
-            SparkTransactionsStatus::Loading => Column::new()
-                .push(p1_regular("Loading payment history from the Spark bridge…"))
-                .into(),
-            SparkTransactionsStatus::Error(err) => Column::new()
-                .spacing(10)
-                .push(p1_regular("Failed to load payment history"))
-                .push(p2_regular(err))
-                .into(),
-            SparkTransactionsStatus::Loaded(payments) if payments.is_empty() => Column::new()
-                .push(p1_regular(
-                    "No payments yet. Incoming and outgoing payments will \
-                     appear here once the Send / Receive panels land.",
-                ))
-                .into(),
-            SparkTransactionsStatus::Loaded(payments) => {
-                let mut list = Column::new().spacing(8);
-                for payment in &payments {
-                    list = list.push(payment_row(payment));
-                }
-                scrollable(list).height(Length::Fill).into()
+                             signer to see your payment history here.",
+                )));
+                return content.into();
             }
-        };
+            SparkTransactionsStatus::Loading => {
+                content = content.push(
+                    Column::new()
+                        .push(p1_regular("Loading payment history from the Spark bridge…")),
+                );
+                return content.into();
+            }
+            SparkTransactionsStatus::Error(err) => {
+                content = content.push(
+                    Column::new()
+                        .spacing(10)
+                        .push(p1_regular("Failed to load payment history"))
+                        .push(p2_regular(err)),
+                );
+                return content.into();
+            }
+            SparkTransactionsStatus::Loaded(_) => {}
+        }
 
-        Column::new()
-            .spacing(20)
-            .push(heading)
-            .push(body)
-            .into()
+        if self.recent_transactions.is_empty() {
+            // Same empty-state layout as Liquid, minus the Liquid copy.
+            content = content.push(
+                Column::new()
+                    .spacing(20)
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center)
+                    .push(Space::new().height(Length::Fixed(40.0)))
+                    .push(quote_display::display(&QuoteDisplayProps::new(
+                        "empty-wallet",
+                        self.empty_state_quote,
+                        self.empty_state_image_handle,
+                    )))
+                    .push(Space::new().height(Length::Fixed(10.0)))
+                    .push(
+                        text(
+                            "Your Spark wallet is ready. Once you send or receive\nfunds, they'll show up here.",
+                        )
+                        .size(16)
+                        .style(theme::text::secondary)
+                        .wrapping(iced::widget::text::Wrapping::Word)
+                        .align_x(iced::alignment::Horizontal::Center),
+                    )
+                    .push(
+                        Row::new()
+                            .spacing(15)
+                            .push(
+                                button::primary(None, "Send sats")
+                                    .on_press(Message::Menu(Menu::Spark(SparkSubMenu::Send)))
+                                    .padding(15)
+                                    .width(Length::Fixed(150.0)),
+                            )
+                            .push(
+                                button::transparent_border(None, "Receive sats")
+                                    .on_press(Message::Menu(Menu::Spark(SparkSubMenu::Receive)))
+                                    .padding(15)
+                                    .width(Length::Fixed(150.0)),
+                            ),
+                    ),
+            );
+            return content.into();
+        }
+
+        content = content.push(self.recent_transactions.iter().enumerate().fold(
+            Column::new().spacing(10),
+            |col, (i, tx)| {
+                col.push(transaction_row(
+                    i,
+                    tx,
+                    self.fiat_converter,
+                    self.bitcoin_unit,
+                    self.show_direction_badges,
+                ))
+            },
+        ));
+
+        content.into()
     }
 }
 
-fn payment_row<'a>(payment: &PaymentSummary) -> Element<'a, Message> {
-    let is_receive = payment.direction.eq_ignore_ascii_case("Receive");
-    let arrow = if is_receive { "↓" } else { "↑" };
-    let amount_str = if is_receive {
-        format!("+{} sats", payment.amount_sat.unsigned_abs())
+fn transaction_row<'a>(
+    i: usize,
+    tx: &'a SparkRecentTransaction,
+    fiat_converter: Option<FiatAmountConverter>,
+    bitcoin_unit: BitcoinDisplayUnit,
+    show_direction_badges: bool,
+) -> Element<'a, Message> {
+    let direction = if tx.is_incoming {
+        TransactionDirection::Incoming
     } else {
-        format!("-{} sats", payment.amount_sat.unsigned_abs())
-    };
-    let time_ago = format_time_ago(payment.timestamp as i64);
-
-    // Use the fg color directly via `.color(...)` so the pill reads as
-    // a quick at-a-glance status without needing a custom theme token.
-    let status_color = if payment.status.eq_ignore_ascii_case("Completed")
-        || payment.status.eq_ignore_ascii_case("Complete")
-    {
-        color::GREEN
-    } else if payment.status.eq_ignore_ascii_case("Failed")
-        || payment.status.eq_ignore_ascii_case("TimedOut")
-    {
-        color::RED
-    } else {
-        color::GREY_3
+        TransactionDirection::Outgoing
     };
 
-    Container::new(
-        Row::new()
-            .spacing(12)
-            .align_y(Alignment::Center)
-            .push(p1_regular(arrow))
-            .push(
-                Column::new()
-                    .spacing(4)
-                    .push(p1_regular(amount_str))
-                    .push(p2_regular(time_ago).style(theme::text::secondary)),
-            )
-            .push(Space::new().width(Length::Fill))
-            .push(
-                p2_regular(payment.status.clone())
-                    .style(move |_| iced::widget::text::Style { color: Some(status_color) }),
-            ),
-    )
-    .padding(12)
-    .style(theme::card::simple)
+    let combo_icon: Element<'_, Message> = match tx.method {
+        SparkPaymentMethod::Lightning => asset_network_logo("btc", "lightning", 40.0),
+        SparkPaymentMethod::OnChainBitcoin => asset_network_logo("btc", "bitcoin", 40.0),
+        SparkPaymentMethod::Spark => asset_network_logo("btc", "spark", 40.0),
+    };
+
+    // Outgoing amount includes fees so the headline figure matches what
+    // actually left the wallet. Incoming shows the net credit.
+    let display_amount = if tx.is_incoming {
+        tx.amount
+    } else {
+        tx.amount + tx.fees_sat
+    };
+
+    let mut item = TransactionListItem::new(direction, &display_amount, bitcoin_unit)
+        .with_label(tx.description.clone())
+        .with_time_ago(tx.time_ago.clone())
+        .with_custom_icon(combo_icon)
+        .with_show_direction_badge(show_direction_badges);
+
+    if let Some(fiat_amount) = fiat_converter.map(|converter| {
+        let fiat = converter.convert(display_amount);
+        format!("~{} {}", fiat.to_rounded_string(), fiat.currency())
+    }) {
+        item = item.with_fiat_amount(fiat_amount);
+    }
+
+    // Phase 7 fallback: clicking a row currently just no-ops via the
+    // panel's message handler. A detail pane can land later.
+    let _ = i;
+    item.view(Message::SparkTransactions(
+        crate::app::view::spark::SparkTransactionsMessage::Select(i),
+    ))
     .into()
 }
+
+// `Amount` is kept in scope for future use (e.g. the detail pane).
+#[allow(dead_code)]
+fn _keep_amount_in_scope(_: Amount) {}

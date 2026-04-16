@@ -2,13 +2,12 @@
 //!
 //! Mirrors the pattern used by [`crate::app::breez_liquid::config`]:
 //! the API key is baked into the binary via `env!(...)` so the packaged
-//! app doesn't need a runtime `.env` to connect. Override the value by
-//! setting `BREEZ_SPARK_API_KEY` (or `BREEZ_API_KEY`, which is the
-//! fallback — the same issued Breez key currently covers both the Liquid
-//! and Spark SDKs) before running `cargo build`.
+//! app doesn't need a runtime `.env` to connect. Set `BREEZ_API_KEY`
+//! before running `cargo build` — a single Breez key covers both the
+//! Liquid and Spark SDKs.
 
-use coincube_spark_protocol::Network as ProtocolNetwork;
 use coincube_core::miniscript::bitcoin;
+use coincube_spark_protocol::Network as ProtocolNetwork;
 
 /// Resolved Spark configuration for a cube.
 ///
@@ -49,21 +48,13 @@ impl SparkConfig {
     }
 }
 
-/// The compile-time API key value — prefers `BREEZ_SPARK_API_KEY` over
-/// the shared `BREEZ_API_KEY`.
+/// The compile-time API key value — reads `BREEZ_API_KEY`.
 ///
 /// This is a free function rather than a `const` so a future refactor can
 /// swap it to runtime lookup if we ever decide to un-bake the key from
 /// the binary.
 fn api_key_from_env() -> String {
-    // `option_env!` is a compile-time lookup, so these unwraps happen at
-    // build time — no runtime branch cost. If neither is set the baked
-    // string will be empty, which `SparkClient::connect` will reject
-    // with a clear error at handshake time.
-    option_env!("BREEZ_SPARK_API_KEY")
-        .or(option_env!("BREEZ_API_KEY"))
-        .unwrap_or("")
-        .to_string()
+    option_env!("BREEZ_API_KEY").unwrap_or("").to_string()
 }
 
 #[derive(Debug, Clone)]

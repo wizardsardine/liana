@@ -1,7 +1,6 @@
 pub mod breez_liquid;
 pub mod breez_spark;
 pub mod cache;
-pub mod wallets;
 pub mod config;
 pub mod error;
 pub mod menu;
@@ -10,6 +9,7 @@ pub mod settings;
 pub mod state;
 pub mod view;
 pub mod wallet;
+pub mod wallets;
 
 use std::collections::VecDeque;
 use std::fs::OpenOptions;
@@ -42,12 +42,12 @@ use crate::{
     app::{
         breez_liquid::BreezClient,
         cache::{Cache, DaemonCache},
-        wallets::LiquidBackend,
         error::Error,
         menu::{MarketplaceSubMenu, Menu},
         message::FiatMessage,
         settings::WalletId,
         wallet::Wallet,
+        wallets::LiquidBackend,
     },
     daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend, DaemonError},
     dir::CoincubeDirectory,
@@ -157,6 +157,7 @@ impl Panels {
                 GlobalHome::new(
                     w.clone(),
                     liquid_backend.clone(),
+                    spark_backend.clone(),
                     datadir.clone(),
                     network,
                     cube_id.clone(),
@@ -164,6 +165,7 @@ impl Panels {
             } else {
                 GlobalHome::new_without_wallet(
                     liquid_backend.clone(),
+                    spark_backend.clone(),
                     datadir.clone(),
                     network,
                     cube_id.clone(),
@@ -263,6 +265,7 @@ impl Panels {
             global_home: GlobalHome::new(
                 wallet.clone(),
                 liquid_backend.clone(),
+                spark_backend.clone(),
                 data_dir.clone(),
                 cache.network,
                 cube_id.clone(),
@@ -483,9 +486,7 @@ impl Panels {
                     Some(&self.spark_overview as &dyn State)
                 }
                 crate::app::menu::SparkSubMenu::Send => Some(&self.spark_send as &dyn State),
-                crate::app::menu::SparkSubMenu::Receive => {
-                    Some(&self.spark_receive as &dyn State)
-                }
+                crate::app::menu::SparkSubMenu::Receive => Some(&self.spark_receive as &dyn State),
                 crate::app::menu::SparkSubMenu::Transactions(_) => {
                     Some(&self.spark_transactions as &dyn State)
                 }
@@ -913,6 +914,10 @@ impl App {
         self.breez_client.clone()
     }
 
+    pub fn spark_backend(&self) -> Option<Arc<crate::app::wallets::SparkBackend>> {
+        self.wallet_registry.spark().cloned()
+    }
+
     pub fn wallet(&self) -> Option<&Wallet> {
         self.wallet.as_ref().map(|w| w.as_ref())
     }
@@ -1147,8 +1152,7 @@ impl App {
         // pointer inside the backend, so reconnecting produces a fresh
         // subscription instead of stale wiring.
         if let Some(spark_backend) = self.wallet_registry.spark() {
-            subscriptions
-                .push(spark_backend.event_subscription().map(Message::SparkEvent));
+            subscriptions.push(spark_backend.event_subscription().map(Message::SparkEvent));
         }
 
         // Only create tick subscription if we have a vault (daemon exists)
@@ -1931,14 +1935,9 @@ impl App {
                         // Phase 4f: forward the BOLT11 field so the
                         // Receive panel can correlate against its
                         // currently displayed invoice.
-                        tasks.push(Task::done(Message::View(
-                            view::Message::SparkReceive(
-                                view::SparkReceiveMessage::PaymentReceived {
-                                    amount_sat,
-                                    bolt11,
-                                },
-                            ),
-                        )));
+                        tasks.push(Task::done(Message::View(view::Message::SparkReceive(
+                            view::SparkReceiveMessage::PaymentReceived { amount_sat, bolt11 },
+                        ))));
                     }
                     SparkEvent::DepositsChanged => {
                         // Phase 4f: refresh the Receive panel's
