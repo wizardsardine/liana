@@ -77,6 +77,19 @@ fn payment_status_text(
     }
 }
 
+/// Best-effort description for a USDt payment: prefer payer_note, then
+/// invoice description, then fall back to "USDt Transfer".  Mirrors the
+/// logic in `send.rs` so the transactions list and the send-confirmation
+/// screen show the same label.
+fn usdt_description(payment: &DomainPayment) -> String {
+    let desc = payment.details.description();
+    if desc.is_empty() {
+        "USDt Transfer".to_owned()
+    } else {
+        desc.to_owned()
+    }
+}
+
 /// Returns `Some(formatted_usdt_string)` when the payment is a USDt asset payment.
 fn usdt_amount_str(payment: &DomainPayment, usdt_id: &str) -> Option<String> {
     if let DomainPaymentDetails::LiquidAsset {
@@ -250,10 +263,10 @@ fn transaction_row<'a>(
     let is_receive = payment.is_incoming();
     let usdt_str = usdt_amount_str(payment, usdt_id);
 
-    // Extract description — label USDt payments explicitly
+    // Extract description — prefer payer_note/description, fall back to "USDt Transfer"
     let is_usdt = usdt_str.is_some();
     let description: String = if is_usdt {
-        "USDt Transfer".to_owned()
+        usdt_description(payment)
     } else {
         payment.details.description().to_owned()
     };
@@ -375,9 +388,9 @@ pub fn transaction_detail_view<'a>(
     let date_text =
         format_timestamp(payment.timestamp as u64).unwrap_or_else(|| "Unknown".to_string());
 
-    // Extract description — label USDt payments explicitly
+    // Extract description — prefer payer_note/description, fall back to "USDt Transfer"
     let description: String = if usdt_str.is_some() {
-        "USDt Transfer".to_owned()
+        usdt_description(payment)
     } else {
         payment.details.description().to_owned()
     };

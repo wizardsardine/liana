@@ -19,10 +19,11 @@ use super::{InvoiceRequestEvent, InvoiceResponse, LnurlMessage};
 const BOLT11_MAX_DESCRIPTION_BYTES: usize = 639;
 
 /// Wrapper around the data needed for the LNURL SSE subscription.
-/// Implements `Hash` based only on `token` and `retries` so that
-/// Iced re-creates the subscription when those change (reconnect on
-/// disconnect), while the backend Arcs are passed through without
-/// affecting identity.
+/// Implements `Hash` based on `token`, `retries`, and `preferred` so
+/// that Iced re-creates the subscription when any of those change
+/// (reconnect on disconnect, or re-route when the user switches their
+/// Lightning backend preference), while the backend Arcs are passed
+/// through without affecting identity.
 ///
 /// Phase 5: both backends are held so `handle_invoice_request` can
 /// route per-request based on the cube's `default_lightning_backend`
@@ -39,6 +40,7 @@ impl Hash for LnurlStreamData {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.token.hash(state);
         self.retries.hash(state);
+        self.preferred.hash(state);
     }
 }
 
