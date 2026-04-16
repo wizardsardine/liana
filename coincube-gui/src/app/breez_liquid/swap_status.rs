@@ -92,7 +92,10 @@ impl BtcSwapReceiveStatus {
 /// `refundable_swap_addresses` is the set of `swap_address` strings currently
 /// returned by `BreezClient::list_refundables()`. Pass an empty slice when
 /// that context is unavailable (the classifier will fall back to `Failed`).
-pub fn classify_payment(p: &DomainPayment, refundable_swap_addresses: &[String]) -> BtcSwapReceiveStatus {
+pub fn classify_payment(
+    p: &DomainPayment,
+    refundable_swap_addresses: &[String],
+) -> BtcSwapReceiveStatus {
     let bitcoin_addr = match &p.details {
         DomainPaymentDetails::OnChainBitcoin {
             bitcoin_address,
@@ -196,7 +199,11 @@ mod tests {
 
     #[test]
     fn created_maps_to_awaiting_deposit() {
-        let p = btc_payment(DomainPaymentStatus::Created, DomainPaymentDirection::Receive, None);
+        let p = btc_payment(
+            DomainPaymentStatus::Created,
+            DomainPaymentDirection::Receive,
+            None,
+        );
         assert_eq!(
             classify_payment(&p, &[]),
             BtcSwapReceiveStatus::AwaitingDeposit
@@ -205,7 +212,11 @@ mod tests {
 
     #[test]
     fn pending_without_lockup_is_pending_confirmation() {
-        let p = btc_payment(DomainPaymentStatus::Pending, DomainPaymentDirection::Receive, None);
+        let p = btc_payment(
+            DomainPaymentStatus::Pending,
+            DomainPaymentDirection::Receive,
+            None,
+        );
         assert_eq!(
             classify_payment(&p, &[]),
             BtcSwapReceiveStatus::PendingConfirmation
@@ -227,19 +238,31 @@ mod tests {
 
     #[test]
     fn refundable_state_is_refundable() {
-        let p = btc_payment(DomainPaymentStatus::Refundable, DomainPaymentDirection::Receive, None);
+        let p = btc_payment(
+            DomainPaymentStatus::Refundable,
+            DomainPaymentDirection::Receive,
+            None,
+        );
         assert_eq!(classify_payment(&p, &[]), BtcSwapReceiveStatus::Refundable);
     }
 
     #[test]
     fn refund_pending_is_refunding() {
-        let p = btc_payment(DomainPaymentStatus::RefundPending, DomainPaymentDirection::Send, None);
+        let p = btc_payment(
+            DomainPaymentStatus::RefundPending,
+            DomainPaymentDirection::Send,
+            None,
+        );
         assert_eq!(classify_payment(&p, &[]), BtcSwapReceiveStatus::Refunding);
     }
 
     #[test]
     fn failed_with_refundable_address_upgrades_to_refundable() {
-        let p = btc_payment(DomainPaymentStatus::Failed, DomainPaymentDirection::Receive, None);
+        let p = btc_payment(
+            DomainPaymentStatus::Failed,
+            DomainPaymentDirection::Receive,
+            None,
+        );
         let refundables = vec!["bc1qtest".to_string()];
         assert_eq!(
             classify_payment(&p, &refundables),
@@ -249,19 +272,31 @@ mod tests {
 
     #[test]
     fn failed_without_refundable_address_is_failed() {
-        let p = btc_payment(DomainPaymentStatus::Failed, DomainPaymentDirection::Receive, None);
+        let p = btc_payment(
+            DomainPaymentStatus::Failed,
+            DomainPaymentDirection::Receive,
+            None,
+        );
         assert_eq!(classify_payment(&p, &[]), BtcSwapReceiveStatus::Failed);
     }
 
     #[test]
     fn timed_out_is_failed() {
-        let p = btc_payment(DomainPaymentStatus::TimedOut, DomainPaymentDirection::Receive, None);
+        let p = btc_payment(
+            DomainPaymentStatus::TimedOut,
+            DomainPaymentDirection::Receive,
+            None,
+        );
         assert_eq!(classify_payment(&p, &[]), BtcSwapReceiveStatus::Failed);
     }
 
     #[test]
     fn complete_receive_is_completed() {
-        let p = btc_payment(DomainPaymentStatus::Complete, DomainPaymentDirection::Receive, None);
+        let p = btc_payment(
+            DomainPaymentStatus::Complete,
+            DomainPaymentDirection::Receive,
+            None,
+        );
         assert_eq!(classify_payment(&p, &[]), BtcSwapReceiveStatus::Completed);
     }
 
@@ -282,7 +317,11 @@ mod tests {
         // Regression: an L-BTC→BTC chain swap send also uses
         // DomainPaymentDetails::OnChainBitcoin + Send direction, but is NOT a refund.
         // Previously classify_payment reported it as Refunded.
-        let p = btc_payment(DomainPaymentStatus::Complete, DomainPaymentDirection::Send, None);
+        let p = btc_payment(
+            DomainPaymentStatus::Complete,
+            DomainPaymentDirection::Send,
+            None,
+        );
         assert_eq!(classify_payment(&p, &[]), BtcSwapReceiveStatus::Completed);
     }
 

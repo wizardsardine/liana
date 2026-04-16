@@ -25,7 +25,7 @@ use iced::{
 
 use coincube_ui::image::asset_network_logo;
 
-use crate::app::breez_liquid::assets::{format_usdt_display};
+use crate::app::breez_liquid::assets::format_usdt_display;
 use crate::app::breez_liquid::swap_status::{classify_payment, BtcSwapReceiveStatus};
 use crate::app::menu::Menu;
 use crate::app::state::liquid::transactions::{AssetFilter, InFlightRefund};
@@ -65,8 +65,12 @@ fn payment_status_text(
         DomainPaymentStatus::Created => text("Created").style(theme::text::secondary).into(),
         DomainPaymentStatus::Failed => text("Failed").style(theme::text::destructive).into(),
         DomainPaymentStatus::TimedOut => text("Timed Out").style(theme::text::destructive).into(),
-        DomainPaymentStatus::Refundable => text("Refundable").style(theme::text::destructive).into(),
-        DomainPaymentStatus::RefundPending => text("Refund Pending").style(theme::text::secondary).into(),
+        DomainPaymentStatus::Refundable => {
+            text("Refundable").style(theme::text::destructive).into()
+        }
+        DomainPaymentStatus::RefundPending => {
+            text("Refund Pending").style(theme::text::secondary).into()
+        }
         DomainPaymentStatus::WaitingFeeAcceptance => text("Waiting Fee Acceptance")
             .style(theme::text::secondary)
             .into(),

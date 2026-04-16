@@ -714,7 +714,10 @@ fn spawn_reader_task(
                     let frame: Frame = match serde_json::from_str(&line) {
                         Ok(f) => f,
                         Err(e) => {
-                            error!("Spark bridge protocol error — unparseable line: {} ({})", line, e);
+                            error!(
+                                "Spark bridge protocol error — unparseable line: {} ({})",
+                                line, e
+                            );
                             break;
                         }
                     };
