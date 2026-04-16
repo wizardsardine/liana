@@ -50,11 +50,11 @@ pub async fn load_spark_client(
     spark_signer_fingerprint: Fingerprint,
     password: &str,
 ) -> Result<Arc<SparkClient>, SparkLoadError> {
-    // Only mainnet is supported — the bridge rejects non-mainnet at
-    // init time anyway, so fail fast here rather than waiting for
-    // the handshake to error out.
+    // Only mainnet and regtest are supported — reject unsupported
+    // networks early rather than waiting for the bridge handshake
+    // to error out.
     match network {
-        Network::Bitcoin => {}
+        Network::Bitcoin | Network::Regtest => {}
         _ => return Err(SparkLoadError::NetworkNotSupported(network)),
     }
 
