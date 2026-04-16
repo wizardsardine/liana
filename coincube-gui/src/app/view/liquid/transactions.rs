@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use coincube_core::miniscript::bitcoin::Amount;
 use iced::widget::image;
 
@@ -17,19 +19,59 @@ use coincube_ui::{
     widget::*,
 };
 use iced::{
-    widget::{Column, Container, Row, Space},
+    widget::{scrollable, Column, Container, Row, Space},
     Alignment, Length,
 };
 
 use coincube_ui::image::asset_network_logo;
 
-use crate::app::breez_liquid::assets::format_usdt_display;
+use crate::app::breez_liquid::assets::{format_usdt_display};
+use crate::app::breez_liquid::swap_status::{classify_payment, BtcSwapReceiveStatus};
 use crate::app::menu::Menu;
-use crate::app::state::liquid::transactions::AssetFilter;
+use crate::app::state::liquid::transactions::{AssetFilter, InFlightRefund};
 use crate::app::view::message::{FeeratePriority, Message};
 use crate::app::view::FiatAmountConverter;
 use crate::export::ImportExportMessage;
-use crate::utils::{format_time_ago, format_timestamp};
+use crate::utils::{format_time_ago, format_timestamp, truncate_middle};
+
+/// Styled status cell for the payment detail card. For BTC onchain swap
+/// payments this routes through `classify_payment`, which gives us the full
+/// Boltz lifecycle (including the `Failed` → `Refundable` upgrade when the SDK
+/// still lists the swap as refundable and the `Pending` → `PendingConfirmation`
+/// vs `PendingSwapCompletion` split once the lockup tx is seen). Direct Liquid
+/// and Lightning payments fall back to raw SDK labels, because swap-specific
+/// mappings like "Complete Send → Refunded" don't apply to them.
+fn payment_status_text(
+    payment: &DomainPayment,
+    refundable_swap_addresses: &[String],
+) -> Element<'static, Message> {
+    if matches!(payment.details, DomainPaymentDetails::OnChainBitcoin { .. }) {
+        let status = classify_payment(payment, refundable_swap_addresses);
+        let style = match status {
+            BtcSwapReceiveStatus::Completed | BtcSwapReceiveStatus::Refunded => {
+                theme::text::success
+            }
+            BtcSwapReceiveStatus::Failed | BtcSwapReceiveStatus::Refundable => {
+                theme::text::destructive
+            }
+            _ => theme::text::secondary,
+        };
+        return text(status.label()).style(style).into();
+    }
+
+    match payment.status {
+        DomainPaymentStatus::Complete => text("Complete").style(theme::text::success).into(),
+        DomainPaymentStatus::Pending => text("Pending").style(theme::text::secondary).into(),
+        DomainPaymentStatus::Created => text("Created").style(theme::text::secondary).into(),
+        DomainPaymentStatus::Failed => text("Failed").style(theme::text::destructive).into(),
+        DomainPaymentStatus::TimedOut => text("Timed Out").style(theme::text::destructive).into(),
+        DomainPaymentStatus::Refundable => text("Refundable").style(theme::text::destructive).into(),
+        DomainPaymentStatus::RefundPending => text("Refund Pending").style(theme::text::secondary).into(),
+        DomainPaymentStatus::WaitingFeeAcceptance => text("Waiting Fee Acceptance")
+            .style(theme::text::secondary)
+            .into(),
+    }
+}
 
 /// Returns `Some(formatted_usdt_string)` when the payment is a USDt asset payment.
 fn usdt_amount_str(payment: &DomainPayment, usdt_id: &str) -> Option<String> {
@@ -54,6 +96,7 @@ fn usdt_amount_str(payment: &DomainPayment, usdt_id: &str) -> Option<String> {
 pub fn liquid_transactions_view<'a>(
     payments: &'a [DomainPayment],
     refundables: &'a [DomainRefundableSwap],
+    in_flight_refunds: &'a HashMap<String, InFlightRefund>,
     _balance: &'a Amount,
     fiat_converter: Option<FiatAmountConverter>,
     _loading: bool,
@@ -162,7 +205,12 @@ pub fn liquid_transactions_view<'a>(
         );
     }
 
-    if !refundables.is_empty() {
+    // Refundables are always BTC → L-BTC swap refunds, so they only belong
+    // under the "All" and "L-BTC" filters. Previously they leaked into the
+    // USDt tab — fixed here.
+    let show_refundables =
+        !refundables.is_empty() && matches!(asset_filter, AssetFilter::All | AssetFilter::LbtcOnly);
+    if show_refundables {
         content = content.push(
             Column::new()
                 .spacing(10)
@@ -174,6 +222,7 @@ pub fn liquid_transactions_view<'a>(
                         col.push(refundable_row(
                             i,
                             refundable,
+                            in_flight_refunds.get(&refundable.swap_address),
                             fiat_converter,
                             bitcoin_unit,
                             show_direction_badges,
@@ -260,6 +309,7 @@ fn transaction_row<'a>(
 fn refundable_row<'a>(
     i: usize,
     refundable: &'a DomainRefundableSwap,
+    in_flight: Option<&'a InFlightRefund>,
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     show_direction_badges: bool,
@@ -269,8 +319,23 @@ fn refundable_row<'a>(
 
     let direction = TransactionDirection::Incoming;
 
+    // If we have an in-flight refund for this swap, reflect that in the row
+    // label so the user can tell at a glance that their submission is being
+    // broadcast. Previously the card either disappeared or looked identical
+    // to "not yet refunded".
+    let label = match in_flight {
+        Some(InFlightRefund {
+            refund_txid: Some(txid),
+            ..
+        }) => {
+            format!("Refund broadcast · {}", truncate_middle(txid, 6, 6))
+        }
+        Some(_) => "Refund broadcasting…".to_string(),
+        None => "Refundable Swap".to_string(),
+    };
+
     let mut item = TransactionListItem::new(direction, &btc_amount, bitcoin_unit)
-        .with_label("Refundable Swap".to_string())
+        .with_label(label)
         .with_time_ago(time_ago)
         .with_custom_icon(asset_network_logo("lbtc", "liquid", 40.0))
         .with_show_direction_badge(show_direction_badges);
@@ -290,6 +355,7 @@ pub fn transaction_detail_view<'a>(
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     usdt_id: &str,
+    refundable_swap_addresses: &[String],
 ) -> Element<'a, Message> {
     let is_receive = payment.is_incoming();
     let usdt_str = usdt_amount_str(payment, usdt_id);
@@ -400,34 +466,11 @@ pub fn transaction_detail_view<'a>(
                                     .width(Length::FillPortion(1))
                                     .push(text("Status").bold()),
                             )
-                            .push(Column::new().width(Length::FillPortion(2)).push(
-                                match payment.status {
-                                    DomainPaymentStatus::Complete => {
-                                        text("Complete").style(theme::text::success)
-                                    }
-                                    DomainPaymentStatus::Pending => {
-                                        text("Pending").style(theme::text::secondary)
-                                    }
-                                    DomainPaymentStatus::Created => {
-                                        text("Created").style(theme::text::secondary)
-                                    }
-                                    DomainPaymentStatus::Failed => {
-                                        text("Failed").style(theme::text::destructive)
-                                    }
-                                    DomainPaymentStatus::TimedOut => {
-                                        text("Timed Out").style(theme::text::destructive)
-                                    }
-                                    DomainPaymentStatus::Refundable => {
-                                        text("Refundable").style(theme::text::destructive)
-                                    }
-                                    DomainPaymentStatus::RefundPending => {
-                                        text("Refund Pending").style(theme::text::secondary)
-                                    }
-                                    DomainPaymentStatus::WaitingFeeAcceptance => {
-                                        text("Waiting Fee Acceptance").style(theme::text::secondary)
-                                    }
-                                },
-                            ))
+                            .push(
+                                Column::new()
+                                    .width(Length::FillPortion(2))
+                                    .push(payment_status_text(payment, refundable_swap_addresses)),
+                            )
                             .spacing(20),
                     )
                     .push(
@@ -546,34 +589,11 @@ pub fn transaction_detail_view<'a>(
                                 .width(Length::FillPortion(1))
                                 .push(text("Status").bold()),
                         )
-                        .push(Column::new().width(Length::FillPortion(2)).push(
-                            match payment.status {
-                                DomainPaymentStatus::Complete => {
-                                    text("Complete").style(theme::text::success)
-                                }
-                                DomainPaymentStatus::Pending => {
-                                    text("Pending").style(theme::text::secondary)
-                                }
-                                DomainPaymentStatus::Created => {
-                                    text("Created").style(theme::text::secondary)
-                                }
-                                DomainPaymentStatus::Failed => {
-                                    text("Failed").style(theme::text::destructive)
-                                }
-                                DomainPaymentStatus::TimedOut => {
-                                    text("Timed Out").style(theme::text::destructive)
-                                }
-                                DomainPaymentStatus::Refundable => {
-                                    text("Refundable").style(theme::text::destructive)
-                                }
-                                DomainPaymentStatus::RefundPending => {
-                                    text("Refund Pending").style(theme::text::secondary)
-                                }
-                                DomainPaymentStatus::WaitingFeeAcceptance => {
-                                    text("Waiting Fee Acceptance").style(theme::text::secondary)
-                                }
-                            },
-                        ))
+                        .push(
+                            Column::new()
+                                .width(Length::FillPortion(2))
+                                .push(payment_status_text(payment, refundable_swap_addresses)),
+                        )
                         .spacing(20),
                 )
                 .push(
@@ -609,6 +629,41 @@ pub fn transaction_detail_view<'a>(
         .into()
 }
 
+/// Low/Medium/High fee priority buttons. While an async fee fetch is in
+/// flight for a given priority, that button renders with a "…" label and is
+/// disabled, so the user can tell something is happening — before this, the
+/// buttons silently triggered a slow mempool fetch and the user was left
+/// wondering if they had actually been clicked.
+fn fee_priority_buttons(pending: Option<FeeratePriority>) -> Element<'static, Message> {
+    fn one(
+        label: &'static str,
+        priority: FeeratePriority,
+        width: f32,
+        pending: Option<FeeratePriority>,
+    ) -> Element<'static, Message> {
+        if pending == Some(priority) {
+            // Pending: show "…" and no on_press so the button is visually
+            // disabled while the async fee fetch resolves.
+            button::secondary(None, "…")
+                .width(Length::Fixed(width))
+                .into()
+        } else {
+            button::secondary(None, label)
+                .on_press(Message::RefundFeeratePrioritySelected(priority))
+                .width(Length::Fixed(width))
+                .into()
+        }
+    }
+
+    Row::new()
+        .spacing(5)
+        .push(one("Low", FeeratePriority::Low, 80.0, pending))
+        .push(one("Medium", FeeratePriority::Medium, 100.0, pending))
+        .push(one("High", FeeratePriority::High, 80.0, pending))
+        .into()
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn refundable_detail_view<'a>(
     refundable: &'a DomainRefundableSwap,
     fiat_converter: Option<FiatAmountConverter>,
@@ -616,6 +671,9 @@ pub fn refundable_detail_view<'a>(
     refund_address: &'a form::Value<String>,
     refund_feerate: &'a form::Value<String>,
     refunding: bool,
+    pending_fee_priority: Option<FeeratePriority>,
+    in_flight: Option<&'a InFlightRefund>,
+    has_vault: bool,
 ) -> Element<'a, Message> {
     let btc_amount = Amount::from_sat(refundable.amount_sat);
 
@@ -626,16 +684,24 @@ pub fn refundable_detail_view<'a>(
         && !refund_address.value.trim().is_empty()
         && refund_feerate.valid
         && !refund_feerate.value.trim().is_empty()
-        && refund_feerate.value.parse::<u32>().is_ok();
+        && refund_feerate.value.parse::<u32>().is_ok()
+        && in_flight.is_none();
+
+    let header_status = match in_flight {
+        Some(InFlightRefund {
+            refund_txid: Some(txid),
+            ..
+        }) => {
+            format!("Refund broadcast · {}", truncate_middle(txid, 6, 6))
+        }
+        Some(_) => "Refund broadcasting…".to_string(),
+        None => "This swap can be refunded".to_string(),
+    };
 
     Column::new()
         .spacing(20)
         .push(Container::new(h3("Refundable Swap")).width(Length::Fill))
-        .push(
-            Column::new()
-                .push(p1_regular("This swap can be refunded"))
-                .spacing(10),
-        )
+        .push(Column::new().push(p1_regular(header_status)).spacing(10))
         .push(
             Column::new().spacing(20).push(
                 Column::new()
@@ -682,7 +748,40 @@ pub fn refundable_detail_view<'a>(
                         .push(
                             Column::new()
                                 .width(Length::FillPortion(2))
-                                .push(text(&refundable.swap_address)),
+                                // Long taproot swap addresses overflow the
+                                // card otherwise. Show a middle-truncated
+                                // preview with a copy button so the user can
+                                // still grab the full address.
+                                .push(
+                                    Row::new()
+                                        .align_y(Alignment::Center)
+                                        .spacing(8)
+                                        .push(Container::new(
+                                            scrollable(
+                                                text(truncate_middle(
+                                                    &refundable.swap_address,
+                                                    10,
+                                                    10,
+                                                ))
+                                                .size(14),
+                                            )
+                                            .direction(scrollable::Direction::Horizontal(
+                                                scrollable::Scrollbar::new()
+                                                    .width(2)
+                                                    .scroller_width(2),
+                                            )),
+                                        ))
+                                        .push(
+                                            iced::widget::button(
+                                                icon::clipboard_icon()
+                                                    .style(theme::text::secondary),
+                                            )
+                                            .on_press(Message::Clipboard(
+                                                refundable.swap_address.clone(),
+                                            ))
+                                            .style(theme::button::transparent_border),
+                                        ),
+                                ),
                         )
                         .spacing(20),
                 )
@@ -719,7 +818,14 @@ pub fn refundable_detail_view<'a>(
                             )
                             .size(14)
                             .padding(12),
-                        ),
+                        )
+                        .push_maybe(has_vault.then(|| {
+                            Row::new().spacing(8).push(
+                                button::transparent_border(None, "Use Vault address")
+                                    .on_press(Message::GenerateVaultRefundAddress)
+                                    .padding([6, 14]),
+                            )
+                        })),
                 )
                 .push(
                     Column::new()
@@ -737,31 +843,7 @@ pub fn refundable_detail_view<'a>(
                                     .size(14)
                                     .padding(12),
                                 )
-                                .push(
-                                    Row::new()
-                                        .spacing(5)
-                                        .push(
-                                            button::secondary(None, "Low")
-                                                .on_press(Message::RefundFeeratePrioritySelected(
-                                                    FeeratePriority::Low,
-                                                ))
-                                                .width(Length::Fixed(80.0)),
-                                        )
-                                        .push(
-                                            button::secondary(None, "Medium")
-                                                .on_press(Message::RefundFeeratePrioritySelected(
-                                                    FeeratePriority::Medium,
-                                                ))
-                                                .width(Length::Fixed(100.0)),
-                                        )
-                                        .push(
-                                            button::secondary(None, "High")
-                                                .on_press(Message::RefundFeeratePrioritySelected(
-                                                    FeeratePriority::High,
-                                                ))
-                                                .width(Length::Fixed(80.0)),
-                                        ),
-                                ),
+                                .push(fee_priority_buttons(pending_fee_priority)),
                         ),
                 )
                 .push(
@@ -790,4 +872,28 @@ fn detail_back_button() -> Element<'static, Message> {
     .on_press(Message::Close)
     .style(theme::button::transparent)
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refundables_gated_out_of_usdt_filter() {
+        // Contract guard: refundables are BTC→L-BTC swap refunds, so they
+        // should only surface under All / L-BTC. Regression from prior bug
+        // where they appeared under the USDt tab.
+        for (filter, expected) in [
+            (AssetFilter::All, true),
+            (AssetFilter::LbtcOnly, true),
+            (AssetFilter::UsdtOnly, false),
+        ] {
+            let show = matches!(filter, AssetFilter::All | AssetFilter::LbtcOnly);
+            assert_eq!(
+                show, expected,
+                "refundables visibility for filter {:?}",
+                filter
+            );
+        }
+    }
 }

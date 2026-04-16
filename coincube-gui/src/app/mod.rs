@@ -55,6 +55,7 @@ use crate::{
         bitcoind::{internal_bitcoind_datadir, internal_bitcoind_debug_log_path, Bitcoind},
         NodeType,
     },
+    utils::truncate_middle,
 };
 
 use self::state::settings::SettingsState as GeneralSettingsState;
@@ -662,6 +663,16 @@ pub struct App {
     /// the same swap; bounded FIFO so concurrent incoming swaps don't evict
     /// each other and re-toast.
     toasted_incoming_waiting_tx_ids: VecDeque<String>,
+    /// Debounces event-driven `list_refundables()` polls. Breez fires `Synced`
+    /// and payment events frequently; without a debounce window the GUI would
+    /// hammer the SDK several times a minute. 30s is short enough that a
+    /// freshly-refundable swap surfaces without user action but long enough to
+    /// avoid noisy churn.
+    last_refundables_fetch: Option<std::time::Instant>,
+    /// True while a `refresh_refundables_task()` poll is awaiting its result.
+    /// Prevents duplicate concurrent SDK calls when several BreezEvents arrive
+    /// in quick succession. Cleared in the `RefundablesLoaded` handler.
+    refundables_fetch_in_flight: bool,
 }
 
 /// Returns true when a `DaemonError` indicates the daemon process is no longer
@@ -805,6 +816,8 @@ impl App {
                         "transaction-received",
                     ),
                 toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
+                last_refundables_fetch: None,
+                refundables_fetch_in_flight: false,
             },
             cmd,
         )
@@ -889,6 +902,8 @@ impl App {
                         "transaction-received",
                     ),
                 toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
+                last_refundables_fetch: None,
+                refundables_fetch_in_flight: false,
             },
             cmd,
         )
@@ -1364,6 +1379,47 @@ impl App {
         }
 
         Task::batch(tasks)
+    }
+
+    /// Kick off a background `list_refundables()` poll, debounced so that
+    /// SDK events (which can fire several times a second during sync) don't
+    /// hammer the SDK. Result comes back as `Message::RefundablesPolled` —
+    /// a variant distinct from `RefundablesLoaded` (which manual panel
+    /// reloads produce) so that only poll responses touch the App's
+    /// debounce and in-flight fields.
+    ///
+    /// The Transactions panel itself fetches refundables on every reload()
+    /// too — this debounced helper covers the case where the user is sitting
+    /// on a non-Transactions screen while a swap becomes refundable, so they
+    /// still see it the next time they navigate or glance at the app.
+    fn refresh_refundables_task(&mut self) -> Task<Message> {
+        const DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(30);
+        // Skip if a previous fetch is still in flight — otherwise a burst of
+        // BreezEvents would launch several concurrent `list_refundables()`
+        // calls before any of them returned.
+        if self.refundables_fetch_in_flight {
+            return Task::none();
+        }
+        // Debounce against the timestamp of the last *successful* fetch. On
+        // failure we leave `last_refundables_fetch` unchanged so the next
+        // event can retry immediately instead of being suppressed for 30s.
+        if let Some(prev) = self.last_refundables_fetch {
+            if std::time::Instant::now().duration_since(prev) < DEBOUNCE {
+                return Task::none();
+            }
+        }
+        self.refundables_fetch_in_flight = true;
+        let client = self.breez_client.clone();
+        Task::perform(
+            async move {
+                client.list_refundables().await.map(|v| {
+                    v.into_iter()
+                        .map(crate::app::wallets::DomainRefundableSwap::from)
+                        .collect()
+                })
+            },
+            Message::RefundablesPolled,
+        )
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -2088,6 +2144,50 @@ impl App {
                         if let Some(msg) = self.panels.active_liquid_refresh(true) {
                             tasks.push(Task::done(msg));
                         }
+                        // A failed BTC→L-BTC swap may have become refundable — let the
+                        // transactions panel know so the user sees the Refund CTA.
+                        tasks.push(self.refresh_refundables_task());
+                        return Task::batch(tasks);
+                    }
+                    SdkEvent::PaymentRefundable { details } => {
+                        log::info!(
+                            target: "breez_swap",
+                            "SdkEvent::PaymentRefundable tx_id={:?}",
+                            details.tx_id.as_deref().map(|t| truncate_middle(t, 6, 6))
+                        );
+                        let mut tasks = Vec::new();
+                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
+                            tasks.push(Task::done(msg));
+                        }
+                        tasks.push(self.refresh_refundables_task());
+                        return Task::batch(tasks);
+                    }
+                    SdkEvent::PaymentRefundPending { details } => {
+                        log::info!(
+                            target: "breez_swap",
+                            "SdkEvent::PaymentRefundPending tx_id={:?}",
+                            details.tx_id.as_deref().map(|t| truncate_middle(t, 6, 6))
+                        );
+                        let mut tasks = Vec::new();
+                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
+                            tasks.push(Task::done(msg));
+                        }
+                        tasks.push(self.refresh_refundables_task());
+                        return Task::batch(tasks);
+                    }
+                    SdkEvent::PaymentRefunded { details } => {
+                        log::info!(
+                            target: "breez_swap",
+                            "SdkEvent::PaymentRefunded tx_id={:?}",
+                            details.tx_id.as_deref().map(|t| truncate_middle(t, 6, 6))
+                        );
+                        let mut tasks = vec![Task::done(Message::View(view::Message::Home(
+                            view::HomeMessage::RefreshLiquidBalance,
+                        )))];
+                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
+                            tasks.push(Task::done(msg));
+                        }
+                        tasks.push(self.refresh_refundables_task());
                         return Task::batch(tasks);
                     }
                     SdkEvent::PaymentWaitingConfirmation { details } => {
@@ -2141,9 +2241,16 @@ impl App {
                         // SDK completed an internal sync — refresh only the
                         // active liquid panel to avoid redundant info() calls.
                         // Inactive panels refresh when navigated to via reload().
+                        let mut tasks = Vec::new();
                         if let Some(msg) = self.panels.active_liquid_refresh(false) {
-                            return Task::done(msg);
+                            tasks.push(Task::done(msg));
                         }
+                        // Debounced refundables poll — picks up older expired
+                        // swaps that didn't emit an explicit refundable event
+                        // while the app was offline. Always enqueued, so this
+                        // arm unconditionally returns.
+                        tasks.push(self.refresh_refundables_task());
+                        return Task::batch(tasks);
                     }
                     _ => {
                         // Other events - just log
@@ -2158,6 +2265,56 @@ impl App {
                 if let Some(p2p) = self.panels.p2p.as_mut() {
                     return p2p.update(self.daemon.clone(), &self.cache, msg);
                 }
+            }
+            // Route refundables updates directly to LiquidTransactions so that
+            // event-driven `list_refundables()` polls (fired from `BreezEvent`
+            // handlers above) land on the correct panel even when the user is
+            // sitting on a different screen. Otherwise the result would be
+            // dropped into whatever panel happens to be current.
+            Message::RefundablesPolled(result) => {
+                // Poll response: clear the in-flight guard regardless of
+                // outcome, but only advance the debounce timestamp on
+                // success so a failed poll doesn't suppress retries for 30s.
+                // We intentionally *don't* touch these fields for a manual
+                // reload response — see the `RefundablesLoaded` arm below.
+                self.refundables_fetch_in_flight = false;
+                match result {
+                    Ok(refundables) => {
+                        self.last_refundables_fetch = Some(std::time::Instant::now());
+                        // Forward the payload to LiquidTransactions through
+                        // the panel's regular handler. The panel's
+                        // reconciliation logic is origin-agnostic, so a poll
+                        // result is converted to a `RefundablesLoaded` for
+                        // it.
+                        return self.panels.liquid_transactions.update(
+                            self.daemon.clone(),
+                            &self.cache,
+                            Message::RefundablesLoaded(Ok(refundables)),
+                        );
+                    }
+                    Err(e) => {
+                        // Swallow: this is a background debounce poll the
+                        // user didn't initiate. Surfacing it as a global
+                        // ShowError toast — which is what
+                        // `RefundablesLoaded(Err)` in LiquidTransactions
+                        // does — would interrupt whichever panel the user
+                        // is currently viewing with an error they have no
+                        // context for. Log locally and let the next poll
+                        // (or a manual reload) retry.
+                        log::warn!(
+                            target: "breez_swap",
+                            "background refundables poll failed: {}",
+                            e
+                        );
+                    }
+                }
+            }
+            msg @ Message::RefundablesLoaded(_) | msg @ Message::RefundCompleted { .. } => {
+                return self.panels.liquid_transactions.update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    msg,
+                );
             }
             msg => {
                 if let (Some(daemon), Some(panel)) =

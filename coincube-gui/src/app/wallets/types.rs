@@ -98,9 +98,16 @@ pub enum DomainPaymentDetails {
     },
     /// A swap to or from the Bitcoin chain (Liquid backend: boltz-style swap).
     OnChainBitcoin {
-        description: String,
         swap_id: Option<String>,
+        bitcoin_address: Option<String>,
+        description: String,
+        auto_accepted_fees: bool,
+        liquid_expiration_blockheight: u32,
+        bitcoin_expiration_blockheight: u32,
+        lockup_tx_id: Option<String>,
         claim_tx_id: Option<String>,
+        refund_tx_id: Option<String>,
+        refund_tx_amount_sat: Option<u64>,
     },
 }
 
@@ -219,14 +226,27 @@ fn map_liquid_details(details: LiquidPaymentDetails) -> DomainPaymentDetails {
             }
         }
         LiquidPaymentDetails::Bitcoin {
-            description,
             swap_id,
-            claim_tx_id,
-            ..
-        } => DomainPaymentDetails::OnChainBitcoin {
+            bitcoin_address,
             description,
-            swap_id: Some(swap_id),
+            auto_accepted_fees,
+            liquid_expiration_blockheight,
+            bitcoin_expiration_blockheight,
+            lockup_tx_id,
             claim_tx_id,
+            refund_tx_id,
+            refund_tx_amount_sat,
+        } => DomainPaymentDetails::OnChainBitcoin {
+            swap_id: Some(swap_id),
+            bitcoin_address: Some(bitcoin_address),
+            description,
+            auto_accepted_fees,
+            liquid_expiration_blockheight,
+            bitcoin_expiration_blockheight,
+            lockup_tx_id,
+            claim_tx_id,
+            refund_tx_id,
+            refund_tx_amount_sat,
         },
     }
 }

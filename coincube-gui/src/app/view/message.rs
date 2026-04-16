@@ -71,7 +71,25 @@ pub enum Message {
     RefundAddressValidated(bool),
     RefundFeerateEdited(String),
     RefundFeeratePrioritySelected(FeeratePriority),
+    RefundFeeratePriorityFailed(String),
+    /// Result of the async fee-rate fetch spawned by
+    /// `RefundFeeratePrioritySelected`. Carries the originating priority so
+    /// the handler can ignore stale responses — e.g. when the user typed a
+    /// custom feerate or picked a different priority before this one
+    /// returned. `Some(rate)` = success, `None` = fetch failed.
+    RefundFeeratePriorityResolved(FeeratePriority, Option<usize>),
     SubmitRefund,
+    /// Pull a fresh native-Bitcoin receive address from the Vault wallet and
+    /// drop it into the refund address input. This routes through the existing
+    /// `daemon.get_new_address()` path so no address-derivation logic is
+    /// duplicated here.
+    GenerateVaultRefundAddress,
+    /// Result of the async `daemon.get_new_address()` call spawned by
+    /// `GenerateVaultRefundAddress`. Carries the request id so the handler
+    /// can ignore stale responses — e.g. when the user typed their own
+    /// address (clearing the pending id) before the Vault lookup returned,
+    /// or clicked the button twice. `Ok` = address, `Err` = error message.
+    VaultRefundAddressResolved(u64, Result<String, String>),
     SelectPayment(OutPoint),
     Label(Vec<String>, LabelMessage),
     NextReceiveAddress,

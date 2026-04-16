@@ -1,6 +1,7 @@
 pub mod assets;
 mod client;
 mod config;
+pub mod swap_status;
 
 pub use client::BreezClient;
 pub use config::BreezConfig;
