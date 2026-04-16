@@ -89,6 +89,7 @@ pub enum SpendTxMessage {
     Next,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum SettingsMessage {
     EditBitcoindSettings,

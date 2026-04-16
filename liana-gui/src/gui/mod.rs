@@ -65,6 +65,7 @@ pub enum Key {
     Tab(bool),
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum Message<M>
 where
@@ -617,7 +618,7 @@ where
         Subscription::batch(vec)
     }
 
-    pub fn view(&self) -> Element<Message<M>> {
+    pub fn view(&self) -> Element<'_, Message<M>> {
         if self.panes.len() == 1 {
             if let Some((&id, pane)) = self.panes.iter().nth(0) {
                 return Column::new()

@@ -32,6 +32,7 @@ use crate::{
     services::connect::client::backend::WALLET_ALIAS_MAXIMUM_LENGTH,
 };
 
+#[allow(clippy::large_enum_variant)]
 enum Modal {
     None,
     RegisterWallet(RegisterWalletModal),
@@ -343,7 +344,7 @@ impl RegisterWalletModal {
 }
 
 impl RegisterWalletModal {
-    pub fn view(&self) -> Element<view::Message> {
+    pub fn view(&self) -> Element<'_, view::Message> {
         view::settings::register_wallet_modal(
             self.warning.as_ref(),
             &self.hws.list,

@@ -41,7 +41,7 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
     };
 
     let msg = if let Some(error) = error {
-        format!("{}", error)
+        format!("{error}")
     } else {
         match state {
             ImportExportState::Init => "".to_string(),

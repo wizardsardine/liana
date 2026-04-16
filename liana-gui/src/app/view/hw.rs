@@ -14,7 +14,7 @@ pub fn hw_list_view(
     signed: bool,
     signing: bool,
     can_sign: bool,
-) -> Element<Message> {
+) -> Element<'_, Message> {
     let mut bttn = Button::new(match hw {
         HardwareWallet::Supported {
             kind,
@@ -90,7 +90,7 @@ pub fn hw_list_view_for_registration(
     chosen: bool,
     processing: bool,
     registered: bool,
-) -> Element<Message> {
+) -> Element<'_, Message> {
     let mut bttn = Button::new(match hw {
         HardwareWallet::Supported {
             kind,
@@ -149,7 +149,7 @@ pub fn hw_list_view_verify_address(
     i: usize,
     hw: &HardwareWallet,
     chosen: bool,
-) -> Element<Message> {
+) -> Element<'_, Message> {
     let (content, selectable) = match hw {
         HardwareWallet::Supported {
             kind,

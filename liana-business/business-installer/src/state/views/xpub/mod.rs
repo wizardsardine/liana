@@ -213,7 +213,7 @@ pub fn validate_xpub_format(xpub_str: &str) -> Result<DescriptorPublicKey, Strin
 
     // Try to parse as DescriptorPublicKey
     DescriptorPublicKey::from_str(trimmed)
-        .map_err(|e| format!("Invalid extended public key format: {}", e))
+        .map_err(|e| format!("Invalid extended public key format: {e}"))
 }
 
 /// Check if a descriptor public key matches the expected network
@@ -249,7 +249,7 @@ pub fn validate_xpub(xpub_str: &str, network: Network) -> Result<DescriptorPubli
 
     if !check_key_network(&key, network) {
         let expected = network.to_string();
-        return Err(format!("Extended public key is not valid for {}", expected));
+        return Err(format!("Extended public key is not valid for {expected}"));
     }
 
     Ok(key)
@@ -278,7 +278,7 @@ mod tests {
         assert!(validate_xpub_format(valid_xpub).is_ok());
 
         // Valid with whitespace
-        let with_whitespace = format!("  {}  ", valid_xpub);
+        let with_whitespace = format!("  {valid_xpub}  ");
         assert!(validate_xpub_format(&with_whitespace).is_ok());
     }
 

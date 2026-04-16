@@ -229,8 +229,8 @@ impl std::fmt::Display for WalletError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::WrongWalletLoaded => write!(f, "Wrong wallet was loaded"),
-            Self::Settings(e) => write!(f, "Failed to load settings: {}", e),
-            Self::HotSigner(e) => write!(f, "Failed to load hot signer: {}", e),
+            Self::Settings(e) => write!(f, "Failed to load settings: {e}"),
+            Self::HotSigner(e) => write!(f, "Failed to load hot signer: {e}"),
         }
     }
 }

@@ -76,7 +76,7 @@ fn get_service_config_blocking(network: Network) -> Result<ServiceConfig, reqwes
 
     let api_url = auth_api_url(network);
     let client = reqwest::blocking::Client::new();
-    let url = format!("{}/v1/desktop", api_url);
+    let url = format!("{api_url}/v1/desktop");
 
     debug!("get_service_config_blocking: fetching from {}", url);
     let response = client.get(&url).send()?;
@@ -364,10 +364,7 @@ impl Client {
 
         // Fetch config BEFORE entering async context
         // (reqwest::blocking cannot be used inside tokio runtime)
-        let config = match get_service_config_blocking(network) {
-            Ok(cfg) => Some(cfg),
-            Err(_) => None,
-        };
+        let config = get_service_config_blocking(network).ok();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -869,7 +866,7 @@ fn wss_thread(
     let url = if url.starts_with("ws://") || url.starts_with("wss://") {
         url
     } else {
-        format!("wss://{}", url)
+        format!("wss://{url}")
     };
 
     tracing::debug!("wss_thread: connecting to {}", url);
@@ -1121,7 +1118,7 @@ fn handle_wss_message(
     n_waker: &SharedWaker,
 ) -> Result<(), String> {
     let (response, request_id) = Response::from_ws_message(msg)
-        .map_err(|e| format!("Failed to convert WSS message: {}", e))?;
+        .map_err(|e| format!("Failed to convert WSS message: {e}"))?;
     let request_id = request_id.and_then(|s| Uuid::try_parse(&s).ok());
 
     // Unknown or unparseable message — already logged in protocol layer.
@@ -1201,8 +1198,7 @@ fn handle_wss_message(
             if !matches_response_type(&response, expected) {
                 tracing::error!("Response {response:?} do not match request {request:?}");
                 return Err(format!(
-                    "Response type mismatch for {req_id}: expected {:?}, got {:?}",
-                    expected, response
+                    "Response type mismatch for {req_id}: expected {expected:?}, got {response:?}"
                 ));
             }
             // Remove from cache on successful match
@@ -1954,8 +1950,8 @@ impl DummyServer {
         self.shutdown_sender = Some(shutdown_sender);
 
         let handle = thread::spawn(move || {
-            let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
-                .expect("Failed to bind to address");
+            let listener =
+                TcpListener::bind(format!("127.0.0.1:{port}")).expect("Failed to bind to address");
             listener.set_nonblocking(false).unwrap();
 
             // Accept one connection
@@ -2634,7 +2630,7 @@ mod tests {
             let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
             let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
-            let url = format!("ws://127.0.0.1:{}", port);
+            let url = format!("ws://127.0.0.1:{port}");
             let (sender, receiver) = channel::unbounded();
             client.connect_ws(url, 1, sender);
 
@@ -2665,9 +2661,7 @@ mod tests {
 
             assert!(
                 connected_notified || is_connected,
-                "Client should have connected (notification: {}, state: {})",
-                connected_notified,
-                is_connected
+                "Client should have connected (notification: {connected_notified}, state: {is_connected})",
             );
 
             client.close();
@@ -2703,7 +2697,7 @@ mod tests {
             let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
             let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
-            let url = format!("ws://127.0.0.1:{}", port);
+            let url = format!("ws://127.0.0.1:{port}");
             let (sender, receiver) = channel::unbounded();
             client.connect_ws(url, 1, sender);
 
@@ -2771,7 +2765,7 @@ mod tests {
             let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
             let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
-            let url = format!("ws://127.0.0.1:{}", port);
+            let url = format!("ws://127.0.0.1:{port}");
             let (sender, receiver) = channel::unbounded();
             client.connect_ws(url, 1, sender);
 
@@ -2840,7 +2834,7 @@ mod tests {
             let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
             let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
-            let url = format!("ws://127.0.0.1:{}", port);
+            let url = format!("ws://127.0.0.1:{port}");
             let (sender, receiver) = channel::unbounded();
             client.connect_ws(url, 1, sender);
 
@@ -2909,7 +2903,7 @@ mod tests {
             let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
             let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
-            let url = format!("ws://127.0.0.1:{}", port);
+            let url = format!("ws://127.0.0.1:{port}");
             let (sender, receiver) = channel::unbounded();
             client.connect_ws(url, 1, sender);
 
@@ -2961,7 +2955,7 @@ mod tests {
             let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
             let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
-            let url = format!("ws://127.0.0.1:{}", port);
+            let url = format!("ws://127.0.0.1:{port}");
             let (sender, receiver) = channel::unbounded();
             client.connect_ws(url, 1, sender);
 
@@ -3036,7 +3030,7 @@ mod tests {
             let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
             let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
-            let url = format!("ws://127.0.0.1:{}", port);
+            let url = format!("ws://127.0.0.1:{port}");
             let (sender, receiver) = channel::unbounded();
             client.connect_ws(url, 1, sender);
 

@@ -120,27 +120,25 @@ impl BitcoindError {
 impl std::fmt::Display for BitcoindError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            BitcoindError::CookieFile(e) => write!(f, "Reading bitcoind cookie file: {}", e),
-            BitcoindError::Server(ref e) => write!(f, "Bitcoind RPC server error: {}", e),
+            BitcoindError::CookieFile(e) => write!(f, "Reading bitcoind cookie file: {e}"),
+            BitcoindError::Server(ref e) => write!(f, "Bitcoind RPC server error: {e}"),
             BitcoindError::BatchMissingResponse => write!(
                 f,
                 "Bitcoind server replied without enough responses to our batched request"
             ),
             BitcoindError::Wallet(path, e) => {
-                write!(f, "Watchonly wallet (path: {}) error: {}", path, e)
+                write!(f, "Watchonly wallet (path: {path}) error: {e}")
             }
             BitcoindError::InvalidVersion(v) => {
                 write!(
                     f,
-                    "Invalid bitcoind version '{}', minimum supported is '{}' and minimum supported if using Taproot is '{}'.",
-                    v, MIN_BITCOIND_VERSION, MIN_TAPROOT_BITCOIND_VERSION
+                    "Invalid bitcoind version '{v}', minimum supported is '{MIN_BITCOIND_VERSION}' and minimum supported if using Taproot is '{MIN_TAPROOT_BITCOIND_VERSION}'.",
                 )
             }
             BitcoindError::NetworkMismatch(conf_net, bitcoind_net) => {
                 write!(
                     f,
-                    "Network mismatch. We are supposed to run on '{}' but bitcoind is on '{}'.",
-                    conf_net, bitcoind_net
+                    "Network mismatch. We are supposed to run on '{conf_net}' but bitcoind is on '{bitcoind_net}'.",
                 )
             }
             BitcoindError::StartRescan => {
@@ -186,15 +184,14 @@ impl std::fmt::Display for WalletError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             WalletError::Creating(s) => {
-                write!(f, "Error creating watchonly wallet: {}", s)
+                write!(f, "Error creating watchonly wallet: {s}")
             }
             WalletError::ImportingDescriptor(s) => write!(
                 f,
-                "Error importing descriptor. Response from bitcoind: '{}'",
-                s
+                "Error importing descriptor. Response from bitcoind: '{s}'",
             ),
             WalletError::Loading(s) => {
-                write!(f, "Error when loading watchonly wallet: '{}'.", s)
+                write!(f, "Error when loading watchonly wallet: '{s}'.")
             }
             WalletError::MissingOrTooManyWallet => {
                 write!(

@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 pub mod cache;
 pub mod config;
 pub mod menu;
@@ -442,14 +444,13 @@ impl<S: SettingsTrait> App<S> {
                             match daemon.get_fiat_rates().await {
                                 Ok(rates) => {
                                     tracing::trace!("Fiat: got rates from backend: {:?}", rates);
-                                    let key = format!("BTC{}", currency);
+                                    let key = format!("BTC{currency}");
                                     let res = rates
                                         .get(&key)
                                         .copied()
                                         .ok_or_else(|| {
                                             PriceApiError::CannotParseData(format!(
-                                                "No rate for {}",
-                                                key
+                                                "No rate for {key}"
                                             ))
                                         })
                                         .map(|value| GetPriceResult {
@@ -598,7 +599,7 @@ impl<S: SettingsTrait> App<S> {
             })
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let content = self.panels.current().view(&self.cache).map(Message::View);
         if self.cache.network != bitcoin::Network::Bitcoin {
             Column::with_children(vec![network_banner(self.cache.network).into(), content]).into()

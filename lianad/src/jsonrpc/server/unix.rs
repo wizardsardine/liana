@@ -149,7 +149,7 @@ pub fn rpcserver_loop(
 
         let handler_id = connections_counter.load(atomic::Ordering::Relaxed);
         thread::Builder::new()
-            .name(format!("liana-jsonrpc-{}", handler_id))
+            .name(format!("liana-jsonrpc-{handler_id}"))
             .spawn({
                 let control = daemon_control.clone();
                 let counter = connections_counter.clone();

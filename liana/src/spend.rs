@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use crate::descriptors;
 
 use std::{
@@ -50,6 +52,7 @@ pub enum InsaneFeeInfo {
     TooHighFeerate(u64),
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpendCreationError {
     InvalidFeerate(/* sats/vb */ u64),
@@ -63,8 +66,8 @@ pub enum SpendCreationError {
 impl fmt::Display for SpendCreationError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::InvalidFeerate(sats_vb) => write!(f, "Invalid feerate: {} sats/vb.", sats_vb),
-            Self::InvalidOutputValue(amount) => write!(f, "Invalid output value '{}'.", amount),
+            Self::InvalidFeerate(sats_vb) => write!(f, "Invalid feerate: {sats_vb} sats/vb."),
+            Self::InvalidOutputValue(amount) => write!(f, "Invalid output value '{amount}'."),
             Self::InsaneFees(info) => write!(
                 f,
                 "We assume transactions with a fee larger than {} or a feerate larger than {} sats/vb are a mistake. \
@@ -73,19 +76,18 @@ impl fmt::Display for SpendCreationError {
                 MAX_FEERATE,
                 match info {
                     InsaneFeeInfo::NegativeFee => "would have a negative fee".to_string(),
-                    InsaneFeeInfo::TooHighFee(f) => format!("{} sats in fees", f),
+                    InsaneFeeInfo::TooHighFee(f) => format!("{f} sats in fees"),
                     InsaneFeeInfo::InvalidFeerate => "would have an invalid feerate".to_string(),
-                    InsaneFeeInfo::TooHighFeerate(r) => format!("has a feerate of {} sats/vb", r),
+                    InsaneFeeInfo::TooHighFeerate(r) => format!("has a feerate of {r} sats/vb"),
                 },
             ),
             Self::FetchingTransaction(op) => {
-                write!(f, "Could not fetch transaction for coin {}", op)
+                write!(f, "Could not fetch transaction for coin {op}")
             }
-            Self::CoinSelection(e) => write!(f, "Coin selection error: '{}'", e),
+            Self::CoinSelection(e) => write!(f, "Coin selection error: '{e}'"),
             Self::SanityCheckFailure(psbt) => write!(
                 f,
-                "BUG! Please report this. Failed sanity checks for PSBT '{}'.",
-                psbt
+                "BUG! Please report this. Failed sanity checks for PSBT '{psbt}'.",
             ),
         }
     }

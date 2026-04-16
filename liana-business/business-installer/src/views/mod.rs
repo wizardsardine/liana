@@ -60,7 +60,7 @@ pub fn format_last_edit_info(
                 }
             })
             .unwrap_or_else(|| "Unknown".to_string());
-        format!("Edited by {} {}", editor_name, relative_time)
+        format!("Edited by {editor_name} {relative_time}")
     })
 }
 

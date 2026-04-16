@@ -226,7 +226,7 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
 /// Format account for display (e.g., "Account #0")
 fn format_account(account: ChildNumber) -> String {
     let index = account.to_string().replace("'", "");
-    format!("Account #{}", index)
+    format!("Account #{index}")
 }
 
 /// Render the Hardware Wallet section (Select step only)

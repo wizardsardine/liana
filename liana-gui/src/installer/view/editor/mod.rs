@@ -184,7 +184,7 @@ pub fn defined_key<'a>(
                     .push(
                         Row::new()
                             .spacing(10)
-                            .push(p1_regular(format!("{}", title)).style(theme::text::secondary))
+                            .push(p1_regular(format!("{title}")).style(theme::text::secondary))
                             .push(p1_bold(alias)),
                     )
                     .push_maybe(warning.map(|w| p2_regular(w).style(theme::text::error))),
@@ -475,7 +475,7 @@ mod threshsold_input {
             }
         }
 
-        fn view(&self, _state: &Self::State) -> Element<Self::Event> {
+        fn view(&self, _state: &Self::State) -> Element<'_, Self::Event> {
             let button = |label, on_press| {
                 Button::new(label)
                     .style(theme::button::transparent)

@@ -548,9 +548,9 @@ impl From<bitcoin::OutPoint> for LabelItem {
 impl Display for LabelItem {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            LabelItem::Address(a) => write!(f, "{}", a),
-            LabelItem::Txid(a) => write!(f, "{}", a),
-            LabelItem::OutPoint(a) => write!(f, "{}", a),
+            LabelItem::Address(a) => write!(f, "{a}"),
+            LabelItem::Txid(a) => write!(f, "{a}"),
+            LabelItem::OutPoint(a) => write!(f, "{a}"),
         }
     }
 }

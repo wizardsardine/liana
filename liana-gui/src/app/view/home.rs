@@ -261,7 +261,7 @@ fn event_list_view(event: &Payment) -> Element<'_, Message> {
         Some(p1_regular(label))
     } else {
         event.address_label.as_ref().map(|label| {
-            p1_regular(format!("address label: {}", label)).style(theme::text::secondary)
+            p1_regular(format!("address label: {label}")).style(theme::text::secondary)
         })
     };
     if event.kind == PaymentKind::Incoming {
@@ -385,7 +385,7 @@ pub fn payment_view<'a>(
                         Row::new()
                             .width(Length::Fill)
                             .push(Container::new(text("Date:").bold()).width(Length::Fill))
-                            .push(Container::new(text(format!("{}", date))).width(Length::Shrink))
+                            .push(Container::new(text(format!("{date}"))).width(Length::Shrink))
                     }))
                     .push(
                         Row::new()

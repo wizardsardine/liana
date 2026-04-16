@@ -153,7 +153,7 @@ pub fn about_view() -> Element<'static, Msg> {
             .push(
                 Row::new()
                     .push(Space::with_width(Length::Fill))
-                    .push(text(format!("liana-business v{}", VERSION))),
+                    .push(text(format!("liana-business v{VERSION}"))),
             ),
     );
 

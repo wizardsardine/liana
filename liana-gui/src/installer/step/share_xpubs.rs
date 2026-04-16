@@ -64,7 +64,7 @@ impl SignerXpubs {
         )];
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         view::signer_xpubs(&self.xpubs, &self.words, self.did_backup)
     }
 }

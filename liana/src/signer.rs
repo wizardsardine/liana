@@ -37,10 +37,10 @@ pub enum SignerError {
 impl fmt::Display for SignerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Randomness(s) => write!(f, "Error related to getting randomness: {}", s),
-            Self::Mnemonic(s) => write!(f, "Error when working with mnemonics: {}", s),
-            Self::Bip32(e) => write!(f, "BIP32 error: {}", e),
-            Self::MnemonicStorage(e) => write!(f, "BIP39 mnemonic storage error: {}", e),
+            Self::Randomness(s) => write!(f, "Error related to getting randomness: {s}"),
+            Self::Mnemonic(s) => write!(f, "Error when working with mnemonics: {s}"),
+            Self::Bip32(e) => write!(f, "BIP32 error: {e}"),
+            Self::MnemonicStorage(e) => write!(f, "BIP39 mnemonic storage error: {e}"),
             Self::InsanePsbt => write!(f, "Information contained in the PSBT is wrong."),
             Self::IncompletePsbt => write!(
                 f,

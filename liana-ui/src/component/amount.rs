@@ -59,7 +59,7 @@ pub fn format_f64_as_string(
     sep_decimals: bool,
 ) -> String {
     // Format with the requested number of decimals.
-    let amount = format!("{:.*}", num_decimals, value);
+    let amount = format!("{value:.num_decimals$}");
 
     // Split into integer and fractional parts.
     let (integer, fraction) = match amount.split_once('.') {

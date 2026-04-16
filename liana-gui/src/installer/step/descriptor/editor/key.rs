@@ -105,6 +105,7 @@ enum Focus {
     EnterCosignerToken,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum SelectKeySourceMessage {
     SelectDevice(Fingerprint),
@@ -898,7 +899,7 @@ impl SelectKeySource {
             HwState,
             bool, /* support taproot */
         )>,
-    ) -> Element<Message> {
+    ) -> Element<'_, Message> {
         let only_safety_net = self.actual_path.token_kind.contains(&KeyKind::SafetyNet)
             && self.actual_path.token_kind.len() == 1;
 
@@ -928,7 +929,7 @@ impl SelectKeySource {
         let cont = Container::new(column).padding(15).style(theme::card::modal);
         cont.into()
     }
-    fn details_view(&self) -> Element<Message> {
+    fn details_view(&self) -> Element<'_, Message> {
         let apply = match (
             &self.selected_key,
             !self.processing && self.form_alias.valid && !self.form_alias.value.is_empty(),
@@ -991,7 +992,7 @@ impl SelectKeySource {
             None,
         )
     }
-    fn view_no_devices(&self) -> Element<Message> {
+    fn view_no_devices(&self) -> Element<'_, Message> {
         column![
             icon::usb_icon().size(100),
             p1_regular("Plug in a hardware device ...")
@@ -1008,7 +1009,7 @@ impl SelectKeySource {
             HwState,
             bool, /* support taproot */
         )>,
-    ) -> Element<Message> {
+    ) -> Element<'_, Message> {
         let mut col = column![p1_bold("Detected hardware")]
             .spacing(5)
             .width(modal::BTN_W);
@@ -1024,7 +1025,7 @@ impl SelectKeySource {
         }
         col.into()
     }
-    fn view_keys(&self) -> Element<Message> {
+    fn view_keys(&self) -> Element<'_, Message> {
         let keys = self.already_used_keys();
         let mut col = column![p1_bold("Already used sources")].spacing(5);
         for key in keys {
@@ -1038,7 +1039,7 @@ impl SelectKeySource {
     fn cosigner_enabled(&self) -> bool {
         self.actual_path.token_kind.contains(&KeyKind::Cosigner)
     }
-    fn view_other_options(&self) -> Element<Message> {
+    fn view_other_options(&self) -> Element<'_, Message> {
         let safety_net_token = self
             .safety_net_enabled()
             .then_some(self.widget_paste_safety_net_token());
@@ -1088,7 +1089,7 @@ impl SelectKeySource {
             HwState,
             bool, /* support taproot */
         ),
-    ) -> Element<Message> {
+    ) -> Element<'_, Message> {
         let alias = device.0.clone();
         let fg = device.1;
         let state = &device.2;
@@ -1150,7 +1151,7 @@ impl SelectKeySource {
             Fingerprint,
             bool, /* available */
         ),
-    ) -> Element<Message> {
+    ) -> Element<'_, Message> {
         let (source, alias, fg, available) = key;
         let icon = match source {
             KeySource::Device(..) => icon::usb_drive_icon(),
@@ -1167,7 +1168,7 @@ impl SelectKeySource {
         } else {
             (!available).then_some("Key already used in this path".to_string())
         };
-        let fg_str = format!("#{}", fg);
+        let fg_str = format!("#{fg}");
         let on_press = message
             .is_none()
             .then_some(move || Self::route(SelectKeySourceMessage::SelectKey(fg)));
@@ -1181,7 +1182,7 @@ impl SelectKeySource {
             on_press,
         )
     }
-    fn widget_load_key(&self) -> Element<Message> {
+    fn widget_load_key(&self) -> Element<'_, Message> {
         modal::button_entry(
             Some(icon::import_icon()),
             "Import extended public key file",
@@ -1190,7 +1191,7 @@ impl SelectKeySource {
             Some(|| Self::route(SelectKeySourceMessage::SelectLoadXpub)),
         )
     }
-    fn widget_generate_hot_key(&self) -> Element<Message> {
+    fn widget_generate_hot_key(&self) -> Element<'_, Message> {
         modal::button_entry(
             Some(icon::round_key_icon().color(color::RED)),
             "Generate hot key stored on this computer",
@@ -1199,7 +1200,7 @@ impl SelectKeySource {
             Some(|| Self::route(SelectKeySourceMessage::SelectGenerateHotKey)),
         )
     }
-    fn widget_paste_xpub(&self) -> Element<Message> {
+    fn widget_paste_xpub(&self) -> Element<'_, Message> {
         collapsible_input_button(
             self.focus == Focus::EnterXpub,
             Some(icon::paste_icon()),
@@ -1211,7 +1212,7 @@ impl SelectKeySource {
             || Self::route(SelectKeySourceMessage::SelectEnterXpub),
         )
     }
-    fn widget_paste_safety_net_token(&self) -> Element<Message> {
+    fn widget_paste_safety_net_token(&self) -> Element<'_, Message> {
         collapsible_input_button(
             self.focus == Focus::EnterSafetyNetToken,
             Some(icon::enter_box_icon()),
@@ -1223,7 +1224,7 @@ impl SelectKeySource {
             || Self::route(SelectKeySourceMessage::SelectEnterSafetyNetToken),
         )
     }
-    fn widget_paste_cosigner_token(&self) -> Element<Message> {
+    fn widget_paste_cosigner_token(&self) -> Element<'_, Message> {
         collapsible_input_button(
             self.focus == Focus::EnterCosignerToken,
             Some(icon::enter_box_icon()),

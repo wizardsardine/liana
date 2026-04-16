@@ -13,6 +13,7 @@ use crate::{
 
 pub const BACKUP_NETWORK_NOT_MATCH: &str = "Backup network do not match the selected network!";
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum ImportDescriptorModal {
     None,

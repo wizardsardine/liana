@@ -27,8 +27,7 @@ impl<'de> Deserialize<'de> for KeyKind {
             "safetynet" => Ok(KeyKind::SafetyNet),
             "cosigner" => Ok(KeyKind::Cosigner),
             s => Err(de::Error::custom(format!(
-                "invalid value for KeyKind: '{}'",
-                s
+                "invalid value for KeyKind: '{s}'",
             ))),
         }
     }
@@ -52,8 +51,7 @@ impl<'de> Deserialize<'de> for KeyStatus {
             "fetched" => Ok(KeyStatus::Fetched),
             "redeemed" => Ok(KeyStatus::Redeemed),
             s => Err(de::Error::custom(format!(
-                "invalid value for KeyStatus: '{}'",
-                s
+                "invalid value for KeyStatus: '{s}'",
             ))),
         }
     }

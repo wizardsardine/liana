@@ -100,6 +100,7 @@ impl Debug for DecryptModal {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum Decrypt {
     Fetched(Fingerprint, String /* name */),

@@ -224,9 +224,9 @@ impl From<RpcError> for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::Json(ref e) => write!(f, "JSON decode error: {}", e),
-            Error::Io(ref e) => write!(f, "IO error response: {}", e),
-            Error::Rpc(ref r) => write!(f, "RPC error response: {:?}", r),
+            Error::Json(ref e) => write!(f, "JSON decode error: {e}"),
+            Error::Io(ref e) => write!(f, "IO error response: {e}"),
+            Error::Rpc(ref r) => write!(f, "RPC error response: {r:?}"),
             Error::NoErrorOrResult => write!(f, "Malformed RPC response"),
             Error::NonceMismatch => write!(f, "Nonce of response did not match nonce of request"),
             Error::VersionMismatch => write!(f, "`jsonrpc` field set to non-\"2.0\""),
@@ -247,13 +247,11 @@ impl error::Error for Error {
 impl From<Error> for super::DaemonError {
     fn from(e: Error) -> super::DaemonError {
         match e {
-            Error::Io(e) => super::DaemonError::RpcSocket(Some(e.kind()), format!("io: {:?}", e)),
-            Error::Json(e) => super::DaemonError::RpcSocket(None, format!("json decode: {}", e)),
-            Error::NonceMismatch => {
-                super::DaemonError::RpcSocket(None, format!("transport: {}", e))
-            }
+            Error::Io(e) => super::DaemonError::RpcSocket(Some(e.kind()), format!("io: {e:?}")),
+            Error::Json(e) => super::DaemonError::RpcSocket(None, format!("json decode: {e}")),
+            Error::NonceMismatch => super::DaemonError::RpcSocket(None, format!("transport: {e}")),
             Error::VersionMismatch => {
-                super::DaemonError::RpcSocket(None, format!("transport: {}", e))
+                super::DaemonError::RpcSocket(None, format!("transport: {e}"))
             }
             Error::NoErrorOrResult => super::DaemonError::NoAnswer,
             Error::NotSupported => super::DaemonError::ClientNotSupported,

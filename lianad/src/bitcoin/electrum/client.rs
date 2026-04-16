@@ -39,7 +39,7 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Error::Server(e) => write!(f, "Electrum error: '{}'.", e),
+            Error::Server(e) => write!(f, "Electrum error: '{e}'."),
             Error::TipChanged(expected, actual) => write!(
                 f,
                 "Electrum error: Expected tip '{}' but actual tip was {}.",

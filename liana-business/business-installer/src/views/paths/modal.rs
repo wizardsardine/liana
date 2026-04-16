@@ -84,7 +84,7 @@ pub fn edit_path_modal_view<'a>(
         for (key_id, key) in state.app.keys.iter() {
             let is_selected = modal_state.selected_key_ids.contains(key_id);
             let name = if key.alias.is_empty() {
-                format!("Key {}", key_id)
+                format!("Key {key_id}")
             } else {
                 key.alias.clone()
             };
@@ -92,7 +92,7 @@ pub fn edit_path_modal_view<'a>(
             let label = if identity_str.is_empty() {
                 name
             } else {
-                format!("{} ({})", name, identity_str)
+                format!("{name} ({identity_str})")
             };
             col = col.push(
                 checkbox(label, is_selected)
@@ -122,7 +122,7 @@ pub fn edit_path_modal_view<'a>(
 
     // Threshold row (only shown when 2+ keys are selected)
     let threshold_row: Option<Element<'_, Msg>> = threshold_enabled.then_some({
-        let threshold_label_text = format!("Threshold (1-{}):", selected_count);
+        let threshold_label_text = format!("Threshold (1-{selected_count}):");
         let threshold_label: Element<'_, Msg> = text::p1_medium(threshold_label_text)
             .style(theme::text::primary)
             .into();

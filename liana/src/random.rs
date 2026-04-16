@@ -16,9 +16,9 @@ pub enum RandomnessError {
 impl fmt::Display for RandomnessError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Hardware(s) => write!(f, "Error when getting randomness from hardware: {}", s),
-            Self::Os(s) => write!(f, "Error when getting randomness from the OS: {}", s),
-            Self::ContextualInfo(s) => write!(f, "Error when getting contextual info: {}", s),
+            Self::Hardware(s) => write!(f, "Error when getting randomness from hardware: {s}"),
+            Self::Os(s) => write!(f, "Error when getting randomness from the OS: {s}"),
+            Self::ContextualInfo(s) => write!(f, "Error when getting contextual info: {s}"),
         }
     }
 }

@@ -35,7 +35,7 @@ pub fn parse_args(
         .unwrap_or("liana");
 
     if args.len() > 1 && (args[1] == "--version" || args[1] == "-v") {
-        eprintln!("{}", version);
+        eprintln!("{version}");
         process::exit(0);
     }
 
@@ -49,7 +49,7 @@ pub fn parse_args(
                 } else {
                     ""
                 };
-                format!("    --{:<15} Use {} network{}", name, name, default_marker)
+                format!("    --{name:<15} Use {name} network{default_marker}")
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -78,7 +78,7 @@ Options:
         } else if arg.starts_with("--") && arg != "--datadir" {
             let network = Network::from_str(arg.trim_start_matches("--"))?;
             if !available_networks.contains(&network) {
-                return Err(format!("network {} is not available", network).into());
+                return Err(format!("network {network} is not available").into());
             }
             res.push(Arg::Network(network));
         }

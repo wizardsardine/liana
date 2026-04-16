@@ -52,6 +52,7 @@ pub trait Modal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message>;
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum PsbtModal {
     Save(SaveModal),
     Sign(SignModal),
@@ -642,7 +643,7 @@ async fn sign_psbt_with_hot_signer(
     if let Some(signer) = &wallet.signer {
         let res = signer
             .sign_psbt(psbt)
-            .map_err(|e| WalletError::HotSigner(format!("Hot signer failed to sign psbt: {}", e)))
+            .map_err(|e| WalletError::HotSigner(format!("Hot signer failed to sign psbt: {e}")))
             .map_err(|e| e.into());
         (signer.fingerprint(), res)
     } else {

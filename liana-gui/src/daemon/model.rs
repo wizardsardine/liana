@@ -20,11 +20,7 @@ pub type Coin = ListCoinsEntry;
 
 pub fn remaining_sequence(coin: &Coin, blockheight: u32, timelock: u16) -> u32 {
     if let Some(coin_blockheight) = coin.block_height {
-        if blockheight > coin_blockheight as u32 + timelock as u32 {
-            0
-        } else {
-            coin_blockheight as u32 + timelock as u32 - blockheight
-        }
+        (coin_blockheight as u32 + timelock as u32).saturating_sub(blockheight)
     } else {
         timelock as u32
     }

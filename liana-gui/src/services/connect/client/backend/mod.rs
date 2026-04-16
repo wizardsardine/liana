@@ -58,7 +58,7 @@ fn request<U: IntoUrl>(
 ) -> RequestBuilder {
     let req = http
         .request(method, url)
-        .header("Authorization", format!("Bearer {}", access_token))
+        .header("Authorization", format!("Bearer {access_token}"))
         .header("Content-Type", "application/json")
         .header("Liana-Version", crate::VERSION)
         .header("User-Agent", user_agent);
@@ -90,7 +90,7 @@ impl BackendClient {
         let response = request(
             &http,
             Method::GET,
-            format!("{}/v1/me", url),
+            format!("{url}/v1/me"),
             &credentials.access_token,
             auth_client.user_agent(),
         )
@@ -261,20 +261,16 @@ impl BackendClient {
                     ledger_hmac.fingerprint == cfg.fingerprint && ledger_hmac.hmac == cfg.token
                 })
             {
-                self.exec_request(
-                    Method::PATCH,
-                    &format!("/v1/wallets/{}", wallet_uuid),
-                    |r| {
-                        r.json(&api::payload::UpdateWallet {
-                            alias: None,
-                            ledger_hmac: Some(api::payload::UpdateLedgerHmac {
-                                fingerprint: cfg.fingerprint.to_string(),
-                                hmac: cfg.token.clone(),
-                            }),
-                            fingerprint_aliases: None,
-                        })
-                    },
-                )
+                self.exec_request(Method::PATCH, &format!("/v1/wallets/{wallet_uuid}"), |r| {
+                    r.json(&api::payload::UpdateWallet {
+                        alias: None,
+                        ledger_hmac: Some(api::payload::UpdateLedgerHmac {
+                            fingerprint: cfg.fingerprint.to_string(),
+                            hmac: cfg.token.clone(),
+                        }),
+                        fingerprint_aliases: None,
+                    })
+                })
                 .await?;
             }
         }
@@ -304,17 +300,13 @@ impl BackendClient {
             };
 
         if fingerprint_aliases.is_some() || wallet_alias.is_some() {
-            self.exec_request(
-                Method::PATCH,
-                &format!("/v1/wallets/{}", wallet_uuid),
-                |r| {
-                    r.json(&api::payload::UpdateWallet {
-                        alias: wallet_alias,
-                        ledger_hmac: None,
-                        fingerprint_aliases,
-                    })
-                },
-            )
+            self.exec_request(Method::PATCH, &format!("/v1/wallets/{wallet_uuid}"), |r| {
+                r.json(&api::payload::UpdateWallet {
+                    alias: wallet_alias,
+                    ledger_hmac: None,
+                    fingerprint_aliases,
+                })
+            })
             .await?;
         }
 
@@ -327,7 +319,7 @@ impl BackendClient {
     ) -> Result<api::WalletInvitation, DaemonError> {
         self.request(
             Method::GET,
-            &format!("/v1/invitations/{}", invitation_id),
+            &format!("/v1/invitations/{invitation_id}"),
             |r| r,
         )
         .await
@@ -336,7 +328,7 @@ impl BackendClient {
     pub async fn accept_wallet_invitation(&self, invitation_id: &str) -> Result<(), DaemonError> {
         self.exec_request(
             Method::POST,
-            &format!("/v1/invitations/{}/accept", invitation_id),
+            &format!("/v1/invitations/{invitation_id}/accept"),
             |r| r,
         )
         .await
@@ -584,8 +576,7 @@ impl Daemon for BackendWalletClient {
                             DaemonError::Http(http_status, serde_json::Value::String(error))
                         } else {
                             DaemonError::Unexpected(format!(
-                                "Cannot update Liana-connect cache: {}",
-                                e
+                                "Cannot update Liana-connect cache: {e}"
                             ))
                         }
                     })?;
@@ -900,7 +891,7 @@ impl Daemon for BackendWalletClient {
             .find(|tx| tx.txid == *txid)
             .ok_or(DaemonError::Http(
                 Some(404),
-                serde_json::Value::String(format!("psbt not found with txid: {}", txid)),
+                serde_json::Value::String(format!("psbt not found with txid: {txid}")),
             ))?;
 
         self.inner
@@ -1183,7 +1174,7 @@ fn history_tx_from_api(value: api::Transaction, network: Network) -> HistoryTran
     let mut changes_indexes = Vec::new();
     let txid = value.raw.compute_txid().to_string();
     for (index, output) in value.outputs.iter().enumerate() {
-        labels.insert(format!("{}:{}", txid, index), output.label.clone());
+        labels.insert(format!("{txid}:{index}"), output.label.clone());
         if let Some(address) = &output.address {
             labels.insert(address.to_string(), output.address_label.clone());
         }
@@ -1239,7 +1230,7 @@ fn spend_tx_from_api(
     let mut changes_indexes = Vec::new();
     let txid = value.raw.unsigned_tx.compute_txid().to_string();
     for (index, output) in value.outputs.iter().enumerate() {
-        labels.insert(format!("{}:{}", txid, index), output.label.clone());
+        labels.insert(format!("{txid}:{index}"), output.label.clone());
         if let Some(address) = &output.address {
             labels.insert(address.to_string(), output.address_label.clone());
         }

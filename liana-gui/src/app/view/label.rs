@@ -47,7 +47,7 @@ pub fn label_editing(
     labelled: Vec<String>,
     label: &form::Value<String>,
     size: u16,
-) -> Element<view::Message> {
+) -> Element<'_, view::Message> {
     let e: Element<view::LabelMessage> = Container::new(
         row!(
             form::Form::new("Label", label, view::LabelMessage::Edited)
@@ -72,7 +72,7 @@ pub fn label_non_editable(
     labelled: Vec<String>,
     label: Option<&String>,
     size: u16,
-) -> Element<view::Message> {
+) -> Element<'_, view::Message> {
     let label_text = label.map(|s| s.as_str()).unwrap_or("(External Output)");
 
     let e: Element<view::LabelMessage> = Container::new(

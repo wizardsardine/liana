@@ -437,7 +437,7 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
             match specter::SerialTransport::enumerate_potential_ports() {
                 Ok(ports) => {
                     for port in ports {
-                        let id = format!("specter-{}", port);
+                        let id = format!("specter-{port}");
                         if state.connected_supported_hws.contains(&id) {
                             still.push(id);
                         } else {
@@ -477,7 +477,7 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
             match jade::SerialTransport::enumerate_potential_ports() {
                 Ok(ports) => {
                     for port in ports {
-                        let id = format!("jade-{}", port);
+                        let id = format!("jade-{port}");
                         if state.connected_supported_hws.contains(&id) {
                             still.push(id);
                         } else {

@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
@@ -1056,7 +1058,7 @@ impl Recipient {
         i: usize,
         is_max_selected: bool,
         fiat_converter: Option<&view::FiatAmountConverter>,
-    ) -> Element<view::CreateSpendMessage> {
+    ) -> Element<'_, view::CreateSpendMessage> {
         let mut fiat_form_value = self.fiat_amount.as_ref();
 
         // If we have a fiat converter, check if it has changed since the last time we set

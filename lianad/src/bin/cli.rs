@@ -85,7 +85,7 @@ fn rpc_request(method: String, params: Vec<String>) -> Json {
 
 fn socket_file(conf_file: Option<PathBuf>) -> PathBuf {
     let config = Config::from_file(conf_file).unwrap_or_else(|e| {
-        eprintln!("Error getting config: {}", e);
+        eprintln!("Error getting config: {e}");
         process::exit(1);
     });
     let data_dir = config
@@ -117,7 +117,7 @@ fn main() {
     let mut raw_response = vec![0; 256];
 
     let mut socket = UnixStream::connect(&socket_file).unwrap_or_else(|e| {
-        eprintln!("Could not connect to {:?}: '{}'", socket_file, e);
+        eprintln!("Could not connect to {socket_file:?}: '{e}'");
         process::exit(1);
     });
     socket
@@ -147,17 +147,14 @@ fn main() {
             Ok(response) => {
                 if response.get("id") == request.get("id") {
                     if raw {
-                        print!("{}", response);
+                        print!("{response}");
                     } else if let Some(r) = response.get("result") {
                         println!("{:#}", serde_json::json!({ "result": r }));
                     } else if let Some(e) = response.get("error") {
                         println!("{:#}", serde_json::json!({ "error": e }));
                     } else {
-                        log::warn!(
-                            "lianad response doesn't contain result or error: '{}'",
-                            response
-                        );
-                        println!("{:#}", response);
+                        log::warn!("lianad response doesn't contain result or error: '{response}'",);
+                        println!("{response:#}");
                     }
                     return;
                 }

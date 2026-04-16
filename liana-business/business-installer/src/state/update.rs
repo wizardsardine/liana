@@ -253,7 +253,8 @@ impl State {
 
     /// Delete a cached account (remove from UI and cache)
     fn on_account_select_delete(&mut self, email: String) {
-        self.backend.clear_invalid_tokens(&[email.clone()]);
+        self.backend
+            .clear_invalid_tokens(std::slice::from_ref(&email));
         self.views
             .login
             .account_select
@@ -1042,7 +1043,8 @@ impl State {
 
         // Clear the failed token from cache
         if !failed_email.is_empty() {
-            self.backend.clear_invalid_tokens(&[failed_email.clone()]);
+            self.backend
+                .clear_invalid_tokens(std::slice::from_ref(&failed_email));
         }
 
         // Remove the failed account from the current list
@@ -1055,10 +1057,7 @@ impl State {
         // Show warning modal
         self.on_warning_show_modal(
             "Connection Failed",
-            format!(
-                "Failed to connect with account {}. The session may have expired.",
-                failed_email
-            ),
+            format!("Failed to connect with account {failed_email}. The session may have expired."),
         );
 
         // Decide next state based on remaining accounts
@@ -1131,7 +1130,8 @@ impl State {
 
         // Clear the failed token from cache
         if !failed_email.is_empty() {
-            self.backend.clear_invalid_tokens(&[failed_email.clone()]);
+            self.backend
+                .clear_invalid_tokens(std::slice::from_ref(&failed_email));
         }
 
         // Remove the failed account from the current list
@@ -1403,7 +1403,7 @@ impl State {
                             .keys
                             .get(&key_id)
                             .map(|k| k.alias.clone())
-                            .unwrap_or_else(|| format!("Key {}", key_id));
+                            .unwrap_or_else(|| format!("Key {key_id}"));
                         deleted_keys.push((key_id, key_alias));
                     }
                 }
@@ -1427,8 +1427,7 @@ impl State {
                         conflict_type: ConflictType::KeyInPathDeleted,
                         title: "Key Removed".to_string(),
                         message: format!(
-                            "\"{}\" was deleted by another user and has been removed from your path selection.",
-                            first_key_alias
+                            "\"{first_key_alias}\" was deleted by another user and has been removed from your path selection."
                         ),
                     });
                     return;
@@ -1505,7 +1504,6 @@ impl State {
                             title: "Path Modified".to_string(),
                             message: "This recovery path was modified by another user. Would you like to reload the server version or keep your changes?".to_string(),
                         });
-                        return;
                     }
                 }
             }
@@ -1844,7 +1842,7 @@ impl State {
                                 .to_string();
                             Ok((xpub, filename))
                         }
-                        Err(e) => Err(format!("Failed to read file: {}", e)),
+                        Err(e) => Err(format!("Failed to read file: {e}")),
                     }
                 } else {
                     // User cancelled - return empty error to do nothing

@@ -122,8 +122,7 @@ pub fn create_fresh_db(
             .derive(index.into(), secp)
             .address(options.bitcoind_network);
         query += &format!(
-            "INSERT INTO addresses (receive_address, change_address, derivation_index) VALUES (\"{}\", \"{}\", {});\n",
-            receive_address, change_address, index
+            "INSERT INTO addresses (receive_address, change_address, derivation_index) VALUES (\"{receive_address}\", \"{change_address}\", {index});\n",
         );
     }
 

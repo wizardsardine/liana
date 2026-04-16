@@ -152,7 +152,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         .spacing(10)
         .align_x(Alignment::Center)
         .padding(20)
-        .push(text::h2(format!("{} - Set Keys", wallet_name)))
+        .push(text::h2(format!("{wallet_name} - Set Keys")))
         .push(Space::with_height(10))
         .push(instruction);
 

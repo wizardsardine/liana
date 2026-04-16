@@ -115,7 +115,7 @@ where
         Subscription::none()
     }
 
-    fn view(&self) -> Element<Message>;
+    fn view(&self) -> Element<'_, Message>;
 
     fn stop(&mut self);
 
@@ -374,7 +374,7 @@ impl LianaInstaller {
         (current, total - 1)
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let content = self
             .steps
             .get(self.current)
@@ -473,7 +473,7 @@ impl Installer<'_, Message> for LianaInstaller {
         <LianaInstaller>::subscription(self)
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         <LianaInstaller>::view(self)
     }
 
@@ -524,10 +524,9 @@ pub fn daemon_check(cfg: lianad::config::Config) -> Result<(), Error> {
     match lianad::DaemonHandle::start_default(cfg, false) {
         Ok(daemon) => daemon
             .stop()
-            .map_err(|e| Error::Unexpected(format!("Failed to stop Liana daemon: {}", e))),
+            .map_err(|e| Error::Unexpected(format!("Failed to stop Liana daemon: {e}"))),
         Err(e) => Err(Error::Unexpected(format!(
-            "Failed to start Liana daemon: {}",
-            e
+            "Failed to start Liana daemon: {e}"
         ))),
     }
 }
@@ -549,7 +548,7 @@ pub async fn install_local_wallet(
         .network_directory(ctx.bitcoin_config.network);
     network_datadir
         .init()
-        .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
+        .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {e}")))?;
 
     let descriptor = ctx
         .descriptor
@@ -586,7 +585,7 @@ pub async fn install_local_wallet(
 
     // Step needed because of ValueAfterTable error in the toml serialize implementation.
     let daemon_config = toml::Value::try_from(&cfg)
-        .map_err(|e| Error::Unexpected(format!("Failed to serialize daemon config: {}", e)))?;
+        .map_err(|e| Error::Unexpected(format!("Failed to serialize daemon config: {e}")))?;
 
     // create lianad configuration file
     create_and_write_file(
@@ -615,7 +614,7 @@ pub async fn install_local_wallet(
                     .timestamp
                     .expect("Every new wallet have now a timestamp"),
             )
-            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
+            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {e}")))?;
 
         info!("Hot signer mnemonic stored");
     }
@@ -630,7 +629,7 @@ pub async fn install_local_wallet(
                     .timestamp
                     .expect("Every new wallet have now a timestamp"),
             )
-            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
+            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {e}")))?;
 
         info!("Recovered signer mnemonic stored");
     }
@@ -647,7 +646,7 @@ pub async fn install_local_wallet(
                 // Installer started a bitcoind, it is expected that gui will start it on startup
                 ctx.internal_bitcoind.is_some(),
             ))
-            .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
+            .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {e}")))?
             .as_bytes(),
         )?;
         info!("Gui configuration file created");
@@ -675,7 +674,7 @@ pub async fn create_remote_wallet(
     let network_datadir = ctx.liana_directory.network_directory(ctx.network);
     network_datadir
         .init()
-        .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
+        .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {e}")))?;
 
     let descriptor = ctx
         .descriptor
@@ -697,7 +696,7 @@ pub async fn create_remote_wallet(
                     .timestamp
                     .expect("Every new wallet have now a timestamp"),
             )
-            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
+            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {e}")))?;
 
         info!("Hot signer mnemonic stored");
     }
@@ -712,7 +711,7 @@ pub async fn create_remote_wallet(
                     .timestamp
                     .expect("Every new wallet have now a timestamp"),
             )
-            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
+            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {e}")))?;
 
         info!("Recovered signer mnemonic stored");
     }
@@ -726,7 +725,7 @@ pub async fn create_remote_wallet(
         create_and_write_file(
             &gui_config_path,
             toml::to_string(&gui_config::Config::new(false))
-                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
+                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {e}")))?
                 .as_bytes(),
         )?;
         info!("Gui configuration file created");
@@ -842,7 +841,7 @@ pub async fn import_remote_wallet(
                     .timestamp
                     .expect("Every new wallet have now a timestamp"),
             )
-            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
+            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {e}")))?;
 
         info!("Recovered signer mnemonic stored");
     }
@@ -850,7 +849,7 @@ pub async fn import_remote_wallet(
     let network_datadir = ctx.liana_directory.network_directory(ctx.network);
     network_datadir
         .init()
-        .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
+        .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {e}")))?;
 
     backend
         .update_wallet_metadata(Some(ctx.wallet_alias.clone()), &HashMap::new(), &[])
@@ -895,7 +894,7 @@ pub async fn import_remote_wallet(
         create_and_write_file(
             &gui_config_path,
             toml::to_string(&gui_config::Config::new(false))
-                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
+                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {e}")))?
                 .as_bytes(),
         )?;
         info!("Gui configuration file created");
@@ -941,7 +940,7 @@ pub fn extract_daemon_config(ctx: &Context, settings: &WalletSettings) -> Result
         .path()
         .to_path_buf()
         .canonicalize()
-        .map_err(|e| Error::Unexpected(format!("Failed to canonicalize datadir path: {}", e)))?;
+        .map_err(|e| Error::Unexpected(format!("Failed to canonicalize datadir path: {e}")))?;
     let bitcoin_backend = if let Some(BitcoinBackend::Bitcoind(BitcoindConfig {
         rpc_auth: BitcoindRpcAuth::CookieFile(cookie_path),
         addr,
@@ -951,7 +950,7 @@ pub fn extract_daemon_config(ctx: &Context, settings: &WalletSettings) -> Result
         // We already checked in the installer that bitcoind is running.
         let cookie_path = cookie_path
             .canonicalize()
-            .map_err(|e| Error::Unexpected(format!("Failed to canonicalize cookie path: {}", e)))?;
+            .map_err(|e| Error::Unexpected(format!("Failed to canonicalize cookie path: {e}")))?;
         Some(BitcoinBackend::Bitcoind(BitcoindConfig {
             rpc_auth: BitcoindRpcAuth::CookieFile(cookie_path),
             addr: *addr,
@@ -1028,19 +1027,19 @@ impl From<SettingsError> for Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Auth(e) => write!(f, "Authentication error: {}", e),
-            Self::Backend(e) => write!(f, "Remote backend error: {}", e),
-            Self::Services(e) => write!(f, "Services error: {}", e),
-            Self::Settings(e) => write!(f, "Settings file error: {}", e),
-            Self::Bitcoind(e) => write!(f, "Failed to ping bitcoind: {}", e),
-            Self::Electrum(e) => write!(f, "Failed to ping Electrum: {}", e),
-            Self::CannotCreateDatadir(e) => write!(f, "Failed to create datadir: {}", e),
-            Self::CannotGetAvailablePort(e) => write!(f, "Failed to get available port: {}", e),
-            Self::CannotWriteToFile(e) => write!(f, "Failed to write to file: {}", e),
-            Self::CannotCreateFile(e) => write!(f, "Failed to create file: {}", e),
-            Self::Unexpected(e) => write!(f, "Unexpected: {}", e),
-            Self::HardwareWallet(e) => write!(f, "Hardware Wallet: {}", e),
-            Self::Backup(e) => write!(f, "Backup: {:?}", e),
+            Self::Auth(e) => write!(f, "Authentication error: {e}"),
+            Self::Backend(e) => write!(f, "Remote backend error: {e}"),
+            Self::Services(e) => write!(f, "Services error: {e}"),
+            Self::Settings(e) => write!(f, "Settings file error: {e}"),
+            Self::Bitcoind(e) => write!(f, "Failed to ping bitcoind: {e}"),
+            Self::Electrum(e) => write!(f, "Failed to ping Electrum: {e}"),
+            Self::CannotCreateDatadir(e) => write!(f, "Failed to create datadir: {e}"),
+            Self::CannotGetAvailablePort(e) => write!(f, "Failed to get available port: {e}"),
+            Self::CannotWriteToFile(e) => write!(f, "Failed to write to file: {e}"),
+            Self::CannotCreateFile(e) => write!(f, "Failed to create file: {e}"),
+            Self::Unexpected(e) => write!(f, "Unexpected: {e}"),
+            Self::HardwareWallet(e) => write!(f, "Hardware Wallet: {e}"),
+            Self::Backup(e) => write!(f, "Backup: {e:?}"),
         }
     }
 }

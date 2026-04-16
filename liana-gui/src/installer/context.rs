@@ -14,6 +14,7 @@ use async_hwi::DeviceKind;
 use liana::{descriptors::LianaDescriptor, miniscript::bitcoin};
 use lianad::config::{BitcoinBackend, BitcoinConfig};
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum RemoteBackend {
     Undefined,

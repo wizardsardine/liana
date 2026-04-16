@@ -90,7 +90,7 @@ pub fn internal_bitcoind_exe_path(
     bitcoind_version: &str,
 ) -> PathBuf {
     internal_bitcoind_directory(liana_datadir)
-        .join(format!("bitcoin-{}", bitcoind_version))
+        .join(format!("bitcoin-{bitcoind_version}"))
         .join("bin")
         .join(if cfg!(target_os = "windows") {
             "bitcoind.exe"
@@ -249,16 +249,16 @@ pub enum InternalBitcoindConfigError {
 impl std::fmt::Display for InternalBitcoindConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::KeyNotFound(e) => write!(f, "Config file does not contain expected key: {}", e),
-            Self::CouldNotParseValue(e) => write!(f, "Value could not be parsed: {}", e),
-            Self::UnexpectedSection(e) => write!(f, "Unexpected section in file: {}", e),
+            Self::KeyNotFound(e) => write!(f, "Config file does not contain expected key: {e}"),
+            Self::CouldNotParseValue(e) => write!(f, "Value could not be parsed: {e}"),
+            Self::UnexpectedSection(e) => write!(f, "Unexpected section in file: {e}"),
             Self::TooManyElements(section) => {
-                write!(f, "Section in file contains too many elements: {}", section)
+                write!(f, "Section in file contains too many elements: {section}")
             }
             Self::FileNotFound => write!(f, "File not found"),
-            Self::ReadingFile(e) => write!(f, "Error while reading file: {}", e),
-            Self::WritingFile(e) => write!(f, "Error while writing file: {}", e),
-            Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
+            Self::ReadingFile(e) => write!(f, "Error while reading file: {e}"),
+            Self::WritingFile(e) => write!(f, "Error while writing file: {e}"),
+            Self::Unexpected(e) => write!(f, "Unexpected error: {e}"),
         }
     }
 }
@@ -387,18 +387,18 @@ impl std::fmt::Display for StartInternalBitcoindError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::Lock(e) => {
-                write!(f, "lock file error: {}", e)
+                write!(f, "lock file error: {e}")
             }
             Self::CommandError(e) => {
-                write!(f, "Command to start bitcoind returned an error: {}", e)
+                write!(f, "Command to start bitcoind returned an error: {e}")
             }
             Self::CouldNotCanonicalizeDataDir(e) => {
-                write!(f, "Failed to canonicalize datadir: {}", e)
+                write!(f, "Failed to canonicalize datadir: {e}")
             }
-            Self::BitcoinDError(e) => write!(f, "bitcoind connection check failed: {}", e),
+            Self::BitcoinDError(e) => write!(f, "bitcoind connection check failed: {e}"),
             Self::ExecutableNotFound => write!(f, "bitcoind executable not found."),
             Self::ProcessExited(status) => {
-                write!(f, "bitcoind process exited with status '{}'.", status)
+                write!(f, "bitcoind process exited with status '{status}'.")
             }
         }
     }
@@ -421,7 +421,7 @@ impl Bitcoind {
             return Ok(Bitcoind {
                 config,
                 lock: LockFile::create(liana_datadir.bitcoind_directory(), network)
-                    .map_err(|e| StartInternalBitcoindError::Lock(format!("{:?}", e)))?,
+                    .map_err(|e| StartInternalBitcoindError::Lock(format!("{e:?}")))?,
             });
         }
         let bitcoind_datadir = internal_bitcoind_datadir(liana_datadir);
@@ -504,7 +504,7 @@ impl Bitcoind {
                     return Ok(Self {
                         config,
                         lock: LockFile::create(liana_datadir.bitcoind_directory(), network)
-                            .map_err(|e| StartInternalBitcoindError::Lock(format!("{:?}", e)))?,
+                            .map_err(|e| StartInternalBitcoindError::Lock(format!("{e:?}")))?,
                     });
                 }
                 Err(lianad::BitcoindError::CookieFile(_)) => {

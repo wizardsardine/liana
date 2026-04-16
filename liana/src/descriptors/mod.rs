@@ -42,9 +42,9 @@ pub enum LianaDescError {
 impl std::fmt::Display for LianaDescError {
     fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Miniscript(e) => write!(f, "Miniscript error: '{}'.", e),
-            Self::DescKey(e) => write!(f, "{}", e),
-            Self::Policy(e) => write!(f, "{}", e),
+            Self::Miniscript(e) => write!(f, "Miniscript error: '{e}'."),
+            Self::DescKey(e) => write!(f, "{e}"),
+            Self::Policy(e) => write!(f, "{e}"),
             Self::InsanePsbt => write!(f, "Analyzed PSBT is empty or malformed."),
             Self::InconsistentPsbt => write!(f, "Analyzed PSBT is inconsistent across inputs."),
         }
@@ -614,7 +614,7 @@ impl LianaDescriptor {
     /// - If there is two recovery paths, and the PSBT's first input nSequence isn't set to unlock
     ///   any of them, prune all but the primary path's bip32 derivations.
     /// - If there is two recovery paths, and the PSBT's first input nSequence is set to unlock the
-    ///     first one, prune all but the first recovery path's bip32 derivations.
+    ///   first one, prune all but the first recovery path's bip32 derivations.
     /// - Etc..
     pub fn prune_bip32_derivs_last_avail(&self, psbt: Psbt) -> Result<Psbt, LianaDescError> {
         let spend_info = self.partial_spend_info(&psbt)?;

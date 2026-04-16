@@ -65,7 +65,7 @@ impl DefineElectrum {
         false
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         view::define_electrum(&self.address, self.validate_domain)
     }
 

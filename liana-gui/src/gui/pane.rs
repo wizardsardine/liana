@@ -11,6 +11,7 @@ use crate::{
 
 use super::tab;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum Message<M>
 where
@@ -173,7 +174,7 @@ where
         self.tabs.iter_mut().for_each(|t| t.stop());
     }
 
-    pub fn tabs_menu_view(&self) -> Element<Message<M>> {
+    pub fn tabs_menu_view(&self) -> Element<'_, Message<M>> {
         let mut menu = Row::new().spacing(3);
         let tabs_len = self.tabs.len();
         for (i, tab) in self.tabs.iter().enumerate() {
@@ -226,7 +227,7 @@ where
         Into::<Element<ViewMessage>>::into(menu.wrap()).map(Message::View)
     }
 
-    pub fn view(&self) -> Element<Message<M>> {
+    pub fn view(&self) -> Element<'_, Message<M>> {
         Container::new(if let Some(t) = self.tabs.get(self.focused_tab) {
             let id = t.id;
             t.view().map(move |msg| Message::Tab(id, msg))

@@ -125,12 +125,11 @@ impl LianaSettings {
         std::fs::read(path)
             .map_err(|e| match e.kind() {
                 std::io::ErrorKind::NotFound => SettingsError::NotFound,
-                _ => SettingsError::ReadingFile(format!("Reading settings file: {}", e)),
+                _ => SettingsError::ReadingFile(format!("Reading settings file: {e}")),
             })
             .and_then(|file_content| {
-                serde_json::from_slice::<LianaSettings>(&file_content).map_err(|e| {
-                    SettingsError::ReadingFile(format!("Parsing settings file: {}", e))
-                })
+                serde_json::from_slice::<LianaSettings>(&file_content)
+                    .map_err(|e| SettingsError::ReadingFile(format!("Parsing settings file: {e}")))
             })
     }
 }
@@ -195,16 +194,16 @@ where
         .truncate(false)
         .open(&path)
         .await
-        .map_err(|e| SettingsError::ReadingFile(format!("Opening file: {}", e)))?
+        .map_err(|e| SettingsError::ReadingFile(format!("Opening file: {e}")))?
         .lock_write()
         .await
-        .map_err(|e| SettingsError::ReadingFile(format!("Locking file: {:?}", e)))?;
+        .map_err(|e| SettingsError::ReadingFile(format!("Locking file: {e:?}")))?;
 
     let settings: S = if file_exists {
         let mut file_content = Vec::new();
         file.read_to_end(&mut file_content)
             .await
-            .map_err(|e| SettingsError::ReadingFile(format!("Reading file content: {}", e)))?;
+            .map_err(|e| SettingsError::ReadingFile(format!("Reading file content: {e}")))?;
 
         serde_json::from_slice::<S>(&file_content)
             .map_err(|e| SettingsError::ReadingFile(e.to_string()))?
@@ -222,11 +221,11 @@ where
     }
 
     let content = serde_json::to_vec_pretty(&settings)
-        .map_err(|e| SettingsError::WritingFile(format!("Failed to serialize settings: {}", e)))?;
+        .map_err(|e| SettingsError::WritingFile(format!("Failed to serialize settings: {e}")))?;
 
-    file.seek(SeekFrom::Start(0)).await.map_err(|e| {
-        SettingsError::WritingFile(format!("Failed to seek to start of file: {}", e))
-    })?;
+    file.seek(SeekFrom::Start(0))
+        .await
+        .map_err(|e| SettingsError::WritingFile(format!("Failed to seek to start of file: {e}")))?;
 
     file.write_all(&content).await.map_err(|e| {
         tracing::warn!("failed to write to file: {:?}", e);
@@ -236,7 +235,7 @@ where
     file.inner_mut()
         .set_len(content.len() as u64)
         .await
-        .map_err(|e| SettingsError::WritingFile(format!("Failed to truncate file: {}", e)))?;
+        .map_err(|e| SettingsError::WritingFile(format!("Failed to truncate file: {e}")))?;
 
     Ok(())
 }
@@ -554,10 +553,10 @@ impl std::fmt::Display for SettingsError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::NotFound => write!(f, "Settings file not found"),
-            Self::ReadingFile(e) => write!(f, "Error while reading file: {}", e),
-            Self::DeletingFile(e) => write!(f, "Error while deleting file: {}", e),
-            Self::WritingFile(e) => write!(f, "Error while writing file: {}", e),
-            Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
+            Self::ReadingFile(e) => write!(f, "Error while reading file: {e}"),
+            Self::DeletingFile(e) => write!(f, "Error while deleting file: {e}"),
+            Self::WritingFile(e) => write!(f, "Error while writing file: {e}"),
+            Self::Unexpected(e) => write!(f, "Unexpected error: {e}"),
         }
     }
 }
