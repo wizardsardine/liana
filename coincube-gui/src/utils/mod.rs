@@ -79,3 +79,44 @@ pub fn format_time_ago(timestamp: i64) -> String {
         format!("{} day{} ago", days, if days == 1 { "" } else { "s" })
     }
 }
+
+/// Middle-elide an address or txid for display/logging:
+/// `bc1p7g…p7ff6v`. Keeps the first `prefix_len` and last `suffix_len`
+/// characters joined by a `…`. Strings short enough that elision would not
+/// actually shorten them (i.e. `len <= prefix_len + suffix_len + 3`, where
+/// 3 accounts for the ellipsis + sentinel overhead) are returned unchanged.
+///
+/// This is the single shared implementation used by both UI rendering
+/// (`view::liquid::transactions`) and privacy-preserving logging
+/// (`app::breez::client`). Keeping one threshold here prevents a 15-char
+/// string from being rendered differently in the two call sites.
+pub fn truncate_middle(s: &str, prefix_len: usize, suffix_len: usize) -> String {
+    if s.len() <= prefix_len + suffix_len + 3 {
+        return s.to_string();
+    }
+    format!("{}…{}", &s[..prefix_len], &s[s.len() - suffix_len..])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_middle_short_unchanged() {
+        assert_eq!(truncate_middle("short", 6, 6), "short");
+    }
+
+    #[test]
+    fn truncate_middle_elides_center() {
+        let long = "bc1p7gznc2zpn7aq3vqd695eml450d2ls33vw65tvwd77x936jquadnsp7ff6v";
+        assert_eq!(truncate_middle(long, 6, 6), "bc1p7g…p7ff6v");
+    }
+
+    #[test]
+    fn truncate_middle_boundary_15_chars_unchanged() {
+        // Regression guard: both prior impls disagreed on a 15-char input.
+        // The shared impl must treat it consistently — unchanged, because
+        // truncating to 6…6 = 13 chars is not a meaningful shortening.
+        assert_eq!(truncate_middle("123456789012345", 6, 6), "123456789012345");
+    }
+}

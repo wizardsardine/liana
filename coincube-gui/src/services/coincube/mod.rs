@@ -243,6 +243,9 @@ pub struct ConnectPlan {
     pub status: PlanStatus,
     pub renewal_at: Option<String>,
     pub entitlements: PlanEntitlements,
+    /// Billing cycle of the current plan. `None` for free tier (no charge).
+    #[serde(default)]
+    pub billing_cycle: Option<BillingCycle>,
 }
 
 impl ConnectPlan {
