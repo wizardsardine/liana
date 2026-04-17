@@ -185,8 +185,9 @@ impl Tab {
                             );
                         }
                     }
-                    let (install, command) =
-                        Installer::new(datadir, network, None, init, false, None, None, None, false);
+                    let (install, command) = Installer::new(
+                        datadir, network, None, init, false, None, None, None, false,
+                    );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
                 }
@@ -631,8 +632,7 @@ impl Tab {
                                 async move {
                                     // Both Breez SDKs (Liquid + Spark) load
                                     // from the same master seed fingerprint.
-                                    let breez_signer_fingerprint =
-                                        cube.master_signer_fingerprint;
+                                    let breez_signer_fingerprint = cube.master_signer_fingerprint;
 
                                     let breez_result =
                                         if let Some(fingerprint) = breez_signer_fingerprint {

@@ -2218,7 +2218,7 @@ fn create_cube_form<'a>(
         .width(Length::Fill),
     );
 
-    // PIN setup section (always required)
+    // PIN or passkey info section
     column = column.push(Space::new().height(Length::Fixed(10.0)));
 
     if passkey_mode {
