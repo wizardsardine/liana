@@ -12,14 +12,30 @@ use crate::{
 const ENABLE_COSIGNER_KEYS: bool = false;
 
 /// Identifies the owner of a Keychain key — either the current user
-/// or one of their contacts.
+/// or one of their contacts.  Carries `primary_owner_id` on every
+/// variant so duplicate-owner checks are self-contained and don't
+/// depend on the fetched key lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeychainKeyOwner {
-    SelfUser,
+    SelfUser {
+        primary_owner_id: u64,
+    },
     Contact {
+        primary_owner_id: u64,
         contact_id: u64,
         contact_email: String,
     },
+}
+
+impl KeychainKeyOwner {
+    pub fn primary_owner_id(&self) -> u64 {
+        match self {
+            Self::SelfUser { primary_owner_id } => *primary_owner_id,
+            Self::Contact {
+                primary_owner_id, ..
+            } => *primary_owner_id,
+        }
+    }
 }
 
 /// The source of a descriptor public key.

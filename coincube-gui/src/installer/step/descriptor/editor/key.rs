@@ -960,18 +960,22 @@ impl SelectKeySource {
                 let mut contact_keys = Vec::new();
 
                 for key in raw_keys {
-                    if key.primary_owner_id == current_user_id {
+                    let owner_id = key.primary_owner_id;
+                    if owner_id == current_user_id {
                         my_keys.push(ResolvedCubeKey {
                             raw: key,
-                            owner: KeychainKeyOwner::SelfUser,
+                            owner: KeychainKeyOwner::SelfUser {
+                                primary_owner_id: owner_id,
+                            },
                         });
                     } else if let Some(contact) = contacts.iter().find(|c| {
-                        c.contact_user_id == key.primary_owner_id
+                        c.contact_user_id == owner_id
                             && c.role == crate::services::coincube::ContactRole::Keyholder
                     }) {
                         contact_keys.push(ResolvedCubeKey {
                             raw: key,
                             owner: KeychainKeyOwner::Contact {
+                                primary_owner_id: owner_id,
                                 contact_id: contact.id,
                                 contact_email: contact.contact_user.email.clone(),
                             },
@@ -1061,32 +1065,13 @@ impl SelectKeySource {
     }
 
     /// Check if a key's owner already has a key placed in this vault.
+    /// Self-contained: reads `primary_owner_id` directly from the
+    /// `KeychainKeyOwner` stored on each placed key, so it works
+    /// regardless of the fetched key list state.
     fn is_owner_already_placed(&self, primary_owner_id: u64) -> bool {
         self.keys.values().any(|(_, k)| {
             if let KeySource::KeychainKey { owner, .. } = &k.source {
-                match owner {
-                    KeychainKeyOwner::SelfUser => {
-                        // Check if any placed key is owned by self and the
-                        // incoming key is also self
-                        // We need the current user's ID — compare via the
-                        // my_keychain_keys list
-                        self.my_keychain_keys
-                            .iter()
-                            .any(|mk| mk.raw.primary_owner_id == primary_owner_id)
-                    }
-                    KeychainKeyOwner::Contact { contact_id, .. } => {
-                        // Check if any contact key is from the same contact
-                        self.contact_keychain_keys.iter().any(|ck| {
-                            ck.raw.primary_owner_id == primary_owner_id
-                                && matches!(
-                                    &ck.owner,
-                                    KeychainKeyOwner::Contact {
-                                        contact_id: cid, ..
-                                    } if *cid == *contact_id
-                                )
-                        })
-                    }
-                }
+                owner.primary_owner_id() == primary_owner_id
             } else {
                 false
             }

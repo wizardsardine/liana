@@ -187,6 +187,7 @@ impl Tab {
                     }
                     let (install, command) = Installer::new(
                         datadir, network, None, init, false, None, None, None, false,
+                        None, // No coincube_client from launcher
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
