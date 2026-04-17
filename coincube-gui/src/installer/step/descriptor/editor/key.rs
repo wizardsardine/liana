@@ -1039,19 +1039,22 @@ impl SelectKeySource {
             return Task::none();
         }
 
-        let key = Key {
-            source: KeySource::KeychainKey {
-                owner: resolved.owner,
-                key_id: resolved.raw.id,
+        if self.keys.contains_key(&fingerprint) {
+            self.selected_key = SelectedKey::Existing(fingerprint);
+        } else {
+            let key = Key {
+                source: KeySource::KeychainKey {
+                    owner: resolved.owner,
+                    key_id: resolved.raw.id,
+                    name: resolved.raw.name.clone(),
+                },
                 name: resolved.raw.name.clone(),
-            },
-            name: resolved.raw.name.clone(),
-            fingerprint,
-            key: descriptor_key,
-            account: None,
-        };
-
-        self.selected_key = SelectedKey::New(Box::new(key));
+                fingerprint,
+                key: descriptor_key,
+                account: None,
+            };
+            self.selected_key = SelectedKey::New(Box::new(key));
+        }
         self.form_alias.value = resolved.raw.name;
         self.form_alias.valid = true;
         self.focus = Focus::None;
@@ -1142,15 +1145,16 @@ impl SelectKeySource {
             return col.into();
         }
 
-        // Group keys by owner
-        let mut seen_contacts: HashMap<u64, Vec<&ResolvedCubeKey>> = HashMap::new();
+        // Group keys by owner (BTreeMap for stable render order)
+        let mut seen_contacts: std::collections::BTreeMap<u64, Vec<&ResolvedCubeKey>> =
+            std::collections::BTreeMap::new();
         for rk in &self.contact_keychain_keys {
             seen_contacts
                 .entry(rk.raw.primary_owner_id)
                 .or_default()
                 .push(rk);
         }
-        for (_, keys) in &seen_contacts {
+        for keys in seen_contacts.values() {
             if let Some(first) = keys.first() {
                 let contact_label = match &first.owner {
                     KeychainKeyOwner::Contact { contact_email, .. } => {
