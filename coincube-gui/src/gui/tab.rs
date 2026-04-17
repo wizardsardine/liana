@@ -185,8 +185,9 @@ impl Tab {
                             );
                         }
                     }
-                    let (install, command) =
-                        Installer::new(datadir, network, None, init, false, None, None, None, false);
+                    let (install, command) = Installer::new(
+                        datadir, network, None, init, false, None, None, None, false, None,
+                    );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
                 }
@@ -272,6 +273,7 @@ impl Tab {
                         None, // No breez_client from login screen
                         None, // No spark_backend from login screen
                         false,
+                        None, // No coincube_client from login screen
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
@@ -452,6 +454,7 @@ impl Tab {
                         GlobalSettings::load_developer_mode(&GlobalSettings::path(
                             &loader.datadir_path,
                         )),
+                        None, // No coincube_client from loader path
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
@@ -594,6 +597,7 @@ impl Tab {
                             GlobalSettings::load_developer_mode(&GlobalSettings::path(
                                 app.datadir(),
                             )),
+                            app.authenticated_coincube_client(), // authenticated API client for Keychain keys
                         );
                         self.state = State::Installer(install);
                         command.map(Message::Install)
@@ -631,8 +635,7 @@ impl Tab {
                                 async move {
                                     // Both Breez SDKs (Liquid + Spark) load
                                     // from the same master seed fingerprint.
-                                    let breez_signer_fingerprint =
-                                        cube.master_signer_fingerprint;
+                                    let breez_signer_fingerprint = cube.master_signer_fingerprint;
 
                                     let breez_result =
                                         if let Some(fingerprint) = breez_signer_fingerprint {

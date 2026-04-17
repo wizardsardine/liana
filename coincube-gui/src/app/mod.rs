@@ -935,6 +935,14 @@ impl App {
         self.wallet_registry.spark().cloned()
     }
 
+    /// Returns a clone of the authenticated coincube-api client (with JWT set),
+    /// or `None` if the user has not logged in yet.
+    pub fn authenticated_coincube_client(
+        &self,
+    ) -> Option<crate::services::coincube::CoincubeClient> {
+        self.panels.connect.account.authenticated_client()
+    }
+
     pub fn wallet(&self) -> Option<&Wallet> {
         self.wallet.as_ref().map(|w| w.as_ref())
     }

@@ -72,7 +72,7 @@ fn backup_master_seed_card<'a>(backed_up: bool) -> Element<'a, Message> {
             "Start Backup",
         )
     };
-        card::simple(
+    card::simple(
         Row::new()
             .spacing(20)
             .align_y(Alignment::Center)
