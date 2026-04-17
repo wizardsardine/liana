@@ -72,7 +72,6 @@ pub const VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION_MAJOR"),
     ".",
     env!("CARGO_PKG_VERSION_MINOR"),
-    "-rc1"
 );
 
 #[derive(Debug)]
