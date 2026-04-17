@@ -89,9 +89,7 @@ impl VaultOverview {
             last_reload: Instant::now(),
             show_received_celebration: false,
             received_amount_display: String::new(),
-            received_quote: coincube_ui::component::quote_display::random_quote(
-                "bitcoin-receive",
-            ),
+            received_quote: coincube_ui::component::quote_display::random_quote("bitcoin-receive"),
             received_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
                 "bitcoin-receive",
             ),
@@ -135,7 +133,6 @@ impl State for VaultOverview {
                     self.processing,
                     &self.sync_status,
                     self.show_rescan_warning,
-                    !cache.current_cube_backed_up && !cache.current_cube_is_passkey,
                     cache.bitcoin_unit,
                     cache.node_bitcoind_sync_progress,
                     cache.node_bitcoind_ibd,

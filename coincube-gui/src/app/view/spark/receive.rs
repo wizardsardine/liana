@@ -41,6 +41,7 @@ pub struct SparkReceiveView<'a> {
     /// Phase 4f: transient error from the most recent claim attempt.
     pub claim_error: Option<&'a str>,
     pub received_amount_display: &'a str,
+    pub received_celebration_context: &'a str,
     pub received_quote: &'a coincube_ui::component::quote_display::Quote,
     pub received_image_handle: &'a iced::widget::image::Handle,
 }
@@ -63,7 +64,7 @@ impl<'a> SparkReceiveView<'a> {
         // ── Full-screen celebration for received payments ─────────────
         if matches!(self.phase, SparkReceivePhase::Received { .. }) {
             return coincube_ui::component::received_celebration_page(
-                "lightning-receive",
+                self.received_celebration_context,
                 self.received_amount_display,
                 self.received_quote,
                 self.received_image_handle,

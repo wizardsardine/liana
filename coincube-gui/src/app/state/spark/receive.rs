@@ -111,6 +111,8 @@ pub struct SparkReceive {
     pub displayed_invoice: Option<String>,
     /// Formatted amount string for the celebration screen.
     received_amount_display: String,
+    /// Quote context key for the celebration screen (e.g. "lightning-receive").
+    received_celebration_context: String,
     /// Quote and image handle for the celebration screen.
     received_quote: coincube_ui::component::quote_display::Quote,
     received_image_handle: iced::widget::image::Handle,
@@ -130,6 +132,7 @@ impl SparkReceive {
             claim_error: None,
             displayed_invoice: None,
             received_amount_display: String::new(),
+            received_celebration_context: "lightning-receive".to_string(),
             received_quote: coincube_ui::component::quote_display::random_quote(
                 "lightning-receive",
             ),
@@ -165,6 +168,7 @@ impl State for SparkReceive {
                 claiming: self.claiming.as_ref(),
                 claim_error: self.claim_error.as_deref(),
                 received_amount_display: &self.received_amount_display,
+                received_celebration_context: &self.received_celebration_context,
                 received_quote: &self.received_quote,
                 received_image_handle: &self.received_image_handle,
             }
@@ -298,18 +302,26 @@ impl State for SparkReceive {
                     return Task::none();
                 }
 
-                // BOLT11 correlation: when we're displaying a
-                // specific invoice, only advance if the event's
-                // bolt11 field matches it exactly. When the event
-                // doesn't carry a bolt11 (Spark-native / on-chain)
-                // but we DO have a displayed invoice, ignore the
-                // event — it's unrelated. The only case where we
-                // advance unconditionally is when displayed_invoice
-                // is None (on-chain receive flow, where no BOLT11
-                // correlation is possible).
+                // Only incoming payments (positive amount) should
+                // trigger the celebration. Outgoing events with
+                // negative amounts are skipped.
+                let is_incoming = amount_sat > 0;
+                if !is_incoming {
+                    return Task::none();
+                }
+
+                // BOLT11 correlation: if we're displaying a specific
+                // invoice and the event carries a bolt11, require an
+                // exact match. If the event doesn't carry a bolt11
+                // (Spark-native, or SDK didn't populate the field),
+                // fall back to advancing on any incoming payment —
+                // the panel is in Generated state with the user
+                // actively waiting for a payment.
                 let matches_invoice = match (&self.displayed_invoice, &bolt11) {
-                    (Some(displayed), Some(event_bolt11)) => displayed == event_bolt11,
-                    (Some(_), None) => false,
+                    (Some(displayed), Some(event_bolt11)) => {
+                        displayed.eq_ignore_ascii_case(event_bolt11)
+                    }
+                    (Some(_), None) => true,
                     (None, _) => true,
                 };
                 if !matches_invoice {
@@ -318,16 +330,15 @@ impl State for SparkReceive {
 
                 self.qr_data = None;
                 self.displayed_invoice = None;
-                self.received_amount_display =
-                    format!("+{} sats", amount_sat.unsigned_abs());
+                self.received_amount_display = format!("+{} sats", amount_sat.unsigned_abs());
                 // Pick celebration image based on receive method.
                 let context = if self.method == SparkReceiveMethod::Bolt11 {
                     "lightning-receive"
                 } else {
                     "spark-receive"
                 };
-                self.received_quote =
-                    coincube_ui::component::quote_display::random_quote(context);
+                self.received_celebration_context = context.to_string();
+                self.received_quote = coincube_ui::component::quote_display::random_quote(context);
                 self.received_image_handle =
                     coincube_ui::component::quote_display::image_handle_for_context(context);
                 self.phase = SparkReceivePhase::Received { amount_sat };

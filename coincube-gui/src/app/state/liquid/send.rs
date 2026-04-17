@@ -2045,8 +2045,7 @@ impl State for LiquidSend {
                         "liquid-send"
                     };
                     self.sent_celebration_context = context.to_string();
-                    self.sent_quote =
-                        coincube_ui::component::quote_display::random_quote(context);
+                    self.sent_quote = coincube_ui::component::quote_display::random_quote(context);
                     self.sent_image_handle =
                         coincube_ui::component::quote_display::image_handle_for_context(context);
                     let breez_client = self.breez_client.clone();

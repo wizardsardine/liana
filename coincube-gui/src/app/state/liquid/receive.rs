@@ -649,17 +649,16 @@ impl State for LiquidReceive {
                                     Amount::from_sat(payment.amount_sat)
                                         .to_formatted_string_with_unit(cache.bitcoin_unit)
                                 };
-                                let context =
-                                    if usdt_amount.is_some() {
-                                        "note-receive"
-                                    } else {
-                                        match &payment.details {
-                                            DomainPaymentDetails::Lightning { .. } => {
-                                                "lightning-receive"
-                                            }
-                                            _ => "liquid-receive",
+                                let context = if usdt_amount.is_some() {
+                                    "note-receive"
+                                } else {
+                                    match &payment.details {
+                                        DomainPaymentDetails::Lightning { .. } => {
+                                            "lightning-receive"
                                         }
-                                    };
+                                        _ => "liquid-receive",
+                                    }
+                                };
                                 self.received_celebration_context = context.to_string();
                                 self.received_quote =
                                     coincube_ui::component::quote_display::random_quote(context);

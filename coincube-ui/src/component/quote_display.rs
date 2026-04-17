@@ -63,8 +63,7 @@ const IMG_KAGE_NOTE_RECEIVE: &[u8] =
 const IMG_KAGE_SPARK_SEND: &[u8] = include_bytes!("../../static/images/kage/kage-spark-send.png");
 const IMG_KAGE_SPARK_RECEIVE: &[u8] =
     include_bytes!("../../static/images/kage/kage-spark-receive.png");
-const IMG_KAGE_LIQUID_SEND: &[u8] =
-    include_bytes!("../../static/images/kage/kage-liquid-send.png");
+const IMG_KAGE_LIQUID_SEND: &[u8] = include_bytes!("../../static/images/kage/kage-liquid-send.png");
 const IMG_KAGE_LIQUID_RECEIVE: &[u8] =
     include_bytes!("../../static/images/kage/kage-liquid-receive.png");
 const IMG_KAGE_BITCOIN_SEND: &[u8] =

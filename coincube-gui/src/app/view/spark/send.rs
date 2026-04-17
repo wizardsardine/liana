@@ -28,6 +28,7 @@ pub struct SparkSendView<'a> {
     pub amount_input: &'a str,
     pub phase: &'a SparkSendPhase,
     pub sent_amount_display: &'a str,
+    pub sent_celebration_context: &'a str,
     pub sent_quote: &'a coincube_ui::component::quote_display::Quote,
     pub sent_image_handle: &'a iced::widget::image::Handle,
 }
@@ -50,7 +51,7 @@ impl<'a> SparkSendView<'a> {
         // ── Full-screen celebration for successful sends ─────────────
         if matches!(self.phase, SparkSendPhase::Sent(_)) {
             return coincube_ui::component::sent_celebration_page(
-                "lightning-send",
+                self.sent_celebration_context,
                 self.sent_amount_display,
                 self.sent_quote,
                 self.sent_image_handle,

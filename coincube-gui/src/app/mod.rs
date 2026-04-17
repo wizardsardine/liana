@@ -1954,6 +1954,9 @@ impl App {
             Message::View(view::Message::DismissReceivedCelebration) => {
                 self.show_received_celebration = false;
             }
+            Message::View(view::Message::DismissBackupWarning) => {
+                self.cache.backup_warning_dismissed = true;
+            }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     tracing::error!("Error opening '{}': {}", url, e);
