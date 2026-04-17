@@ -10,7 +10,7 @@ use coincube_core::{
         secp256k1::{All, Secp256k1},
         Amount,
     },
-    signer::HotSigner,
+    signer::MasterSigner,
 };
 use std::{
     str::FromStr,
@@ -21,15 +21,15 @@ use iced::futures::{SinkExt, Stream};
 
 use super::{BreezConfig, BreezError};
 
-/// Wrapper around HotSigner that implements Breez SDK's Signer trait
+/// Wrapper around MasterSigner that implements Breez SDK's Signer trait
 /// Based on SdkSigner from breez-sdk-liquid
-struct HotSignerAdapter {
-    signer: Arc<Mutex<HotSigner>>,
+struct MasterSignerAdapter {
+    signer: Arc<Mutex<MasterSigner>>,
     secp: Secp256k1<All>,
 }
 
-impl HotSignerAdapter {
-    fn new(signer: Arc<Mutex<HotSigner>>) -> Self {
+impl MasterSignerAdapter {
+    fn new(signer: Arc<Mutex<MasterSigner>>) -> Self {
         Self {
             signer,
             secp: Secp256k1::new(),
@@ -37,7 +37,7 @@ impl HotSignerAdapter {
     }
 }
 
-impl breez::Signer for HotSignerAdapter {
+impl breez::Signer for MasterSignerAdapter {
     fn sign_ecdsa(
         &self,
         msg: Vec<u8>,
@@ -169,7 +169,7 @@ impl breez::Signer for HotSignerAdapter {
 #[derive(Clone)]
 pub struct BreezClient {
     sdk: Option<Arc<breez::LiquidSdk>>,
-    signer: Option<Arc<Mutex<HotSigner>>>,
+    signer: Option<Arc<Mutex<MasterSigner>>>,
     network: Network,
 }
 
@@ -177,7 +177,7 @@ impl std::fmt::Debug for BreezClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BreezClient")
             .field("sdk", &self.sdk.as_ref().map(|_| "<LiquidSdk>"))
-            .field("signer", &self.signer.as_ref().map(|_| "<HotSigner>"))
+            .field("signer", &self.signer.as_ref().map(|_| "<MasterSigner>"))
             .field("network", &self.network)
             .finish()
     }
@@ -201,12 +201,12 @@ impl BreezClient {
             .ok_or(BreezError::NetworkNotSupported(self.network))
     }
 
-    /// Connect to Breez SDK using an external signer (HotSigner)
+    /// Connect to Breez SDK using an external signer (MasterSigner)
     pub async fn connect_with_signer(
         cfg: BreezConfig,
-        signer: Arc<Mutex<HotSigner>>,
+        signer: Arc<Mutex<MasterSigner>>,
     ) -> Result<Self, BreezError> {
-        let signer_adapter = HotSignerAdapter::new(signer.clone());
+        let signer_adapter = MasterSignerAdapter::new(signer.clone());
 
         let request = breez::ConnectWithSignerRequest {
             config: cfg.sdk_config(),
@@ -710,7 +710,7 @@ impl BreezClient {
         }
     }
 
-    pub fn liquid_signer(&self) -> Option<Arc<Mutex<HotSigner>>> {
+    pub fn liquid_signer(&self) -> Option<Arc<Mutex<MasterSigner>>> {
         self.signer.clone()
     }
 

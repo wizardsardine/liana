@@ -121,6 +121,42 @@ zip = { version = "0.6", default-features = false, features = [
 	"deflate",
 ] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# objc2 0.6 has the PRF extension bindings (added with macOS 14 support).
+# This coexists with the 0.5 version pulled in by iced/winit/wry — we're
+# careful not to pass types between the two versions.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+	"NSData",
+	"NSString",
+	"NSError",
+	"NSObject",
+	"NSArray",
+	"NSDictionary",
+] }
+objc2-authentication-services = { version = "0.3", features = [
+	"ASFoundation",
+	"ASAuthorization",
+	"ASAuthorizationController",
+	"ASAuthorizationRequest",
+	"ASAuthorizationCredential",
+	"ASAuthorizationPlatformPublicKeyCredentialProvider",
+	"ASAuthorizationPlatformPublicKeyCredentialRegistrationRequest",
+	"ASAuthorizationPlatformPublicKeyCredentialRegistration",
+	"ASAuthorizationPlatformPublicKeyCredentialAssertionRequest",
+	"ASAuthorizationPlatformPublicKeyCredentialAssertion",
+	"ASAuthorizationPublicKeyCredentialRegistration",
+	"ASAuthorizationPublicKeyCredentialAssertion",
+	"ASAuthorizationPublicKeyCredentialRegistrationRequest",
+	"ASAuthorizationPublicKeyCredentialAssertionRequest",
+	"ASAuthorizationPublicKeyCredentialPRFRegistrationInput",
+	"ASAuthorizationPublicKeyCredentialPRFAssertionInput",
+	"ASAuthorizationPublicKeyCredentialPRFAssertionOutput",
+	"ASAuthorizationPublicKeyCredentialPRFRegistrationOutput",
+	"ASPublicKeyCredential",
+	"ASAuthorizationPublicKeyCredentialDescriptor",
+] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 tar = { version = "0.4", default-features = false }

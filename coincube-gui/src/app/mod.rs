@@ -856,6 +856,8 @@ impl App {
             has_vault: false,
             bitcoin_unit,
             cube_name: cube_settings.name.clone(),
+            current_cube_backed_up: cube_settings.backed_up,
+            current_cube_is_passkey: cube_settings.is_passkey_cube(),
             cube_id: cube_settings.id.clone(),
             default_lightning_backend: cube_settings.default_lightning_backend,
             ..Default::default()
@@ -1582,6 +1584,12 @@ impl App {
                     {
                         self.cache.bitcoin_unit = cube.unit_setting.display_unit;
                         self.cube_settings.fiat_price = cube.fiat_price.clone();
+                        // Keep the "backed up" banner state in sync with
+                        // whatever was persisted — the backup flow saves
+                        // cube.backed_up = true via this same path.
+                        self.cache.current_cube_backed_up = cube.backed_up;
+                        self.cache.current_cube_is_passkey = cube.is_passkey_cube();
+                        self.cube_settings.backed_up = cube.backed_up;
                         self.cube_settings.default_lightning_backend =
                             cube.default_lightning_backend;
                         self.cache.default_lightning_backend = cube.default_lightning_backend;
@@ -2266,6 +2274,25 @@ impl App {
                     return p2p.update(self.daemon.clone(), &self.cache, msg);
                 }
             }
+
+            // Intercept the mnemonic backup completion so the "not backed up"
+            // warning banners on the Vault/Liquid home screens disappear
+            // immediately. Route the message directly to the global settings
+            // panel (rather than `current_mut()`) so the backup flow still
+            // transitions to Completed and scrubs `backup_mnemonic` even if
+            // the user navigated away from Settings before the async write
+            // resolved.
+            msg @ Message::View(view::Message::Settings(
+                view::SettingsMessage::BackupMasterSeedUpdated,
+            )) => {
+                self.cache.current_cube_backed_up = true;
+                self.cube_settings.backed_up = true;
+                return self
+                    .panels
+                    .global_settings
+                    .update(self.daemon.clone(), &self.cache, msg);
+            }
+
             // Route refundables updates directly to LiquidTransactions so that
             // event-driven `list_refundables()` polls (fired from `BreezEvent`
             // handlers above) land on the correct panel even when the user is

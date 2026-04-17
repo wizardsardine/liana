@@ -60,6 +60,35 @@ pub fn balance_header_card<'a, Msg: 'a>(content: impl Into<Element<'a, Msg>>) ->
         .into()
 }
 
+/// A soft "master seed not backed up" warning banner, shown on the Vault
+/// and Liquid home screens when `cache.current_cube_backed_up` is false.
+///
+/// Tapping the banner routes the user to General Settings where the backup
+/// flow lives. This is informational, not blocking — users can dismiss it
+/// by completing the backup.
+pub fn backup_warning_banner<'a>() -> Element<'a, Message> {
+    container(
+        row![
+            coincube_ui::icon::warning_icon().style(theme::text::warning),
+            text::p1_regular(
+                "Your master seed phrase is not backed up. \
+                 Back it up now to avoid losing access to your Cube."
+            )
+            .style(theme::text::warning),
+            Space::new().width(Length::Fill),
+            button::secondary(None, "Back Up Now").on_press(Message::Menu(Menu::Settings(
+                crate::app::menu::SettingsSubMenu::General,
+            ))),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center),
+    )
+    .padding(15)
+    .width(Length::Fill)
+    .style(theme::notification::warning)
+    .into()
+}
+
 fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
     Container::new(Space::new().width(Length::Fixed(5.0)))
         .height(Length::Fixed(50.0))

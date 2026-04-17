@@ -47,7 +47,7 @@ pub enum Message {
     Close,
     Reload,
     Select(usize),
-    UseHotSigner,
+    UseMasterSigner,
     Installed(settings::WalletId, Result<settings::WalletSettings, Error>),
     CreateTaprootDescriptor(bool),
     SelectDescriptorTemplate(context::DescriptorTemplate),

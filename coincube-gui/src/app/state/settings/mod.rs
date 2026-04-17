@@ -1,5 +1,5 @@
 mod about;
-mod general;
+pub mod general;
 mod install_stats;
 mod lightning;
 

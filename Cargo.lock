@@ -1621,6 +1621,9 @@ dependencies = [
  "log",
  "mostro-core",
  "nostr-sdk 0.43.0",
+ "objc2 0.6.4",
+ "objc2-authentication-services",
+ "objc2-foundation 0.3.2",
  "open",
  "rand 0.8.5",
  "reqwest 0.12.18",
@@ -6057,6 +6060,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-authentication-services"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee6d6f7dab884a28adaec1012eb3889257a49cc145724e35f93ece2d209f8b25"
+dependencies = [
+ "bitflags 2.11.0",
+ "block2 0.6.2",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "objc2-security",
+]
+
+[[package]]
 name = "objc2-cloud-kit"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6296,6 +6314,16 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
+]
+
+[[package]]
+name = "objc2-security"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "709fe137109bd1e8b5a99390f77a7d8b2961dafc1a1c5db8f2e60329ad6d895a"
+dependencies = [
+ "objc2 0.6.4",
+ "objc2-core-foundation",
 ]
 
 [[package]]

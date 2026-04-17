@@ -34,20 +34,20 @@ The Spark SDK's dependency graph (`rusqlite`, `tokio_with_wasm`, `frost_secp256k
 
 ### Bridge lifecycle
 
-- The gui spawns the bridge lazily when the cube has a `breez_wallet_signer_fingerprint` set (a single HotSigner shared by both the Liquid and Spark SDKs). If the spawn fails (binary missing, handshake error) the `WalletRegistry` holds `spark = None`, and all Spark panels render an "unavailable" stub.
+- The gui spawns the bridge lazily when the cube has a `master_signer_fingerprint` set (a single MasterSigner shared by all wallets). If the spawn fails (binary missing, handshake error) the `WalletRegistry` holds `spark = None`, and all Spark panels render an "unavailable" stub.
 - The bridge binary is located via the `COINCUBE_SPARK_BRIDGE_PATH` env var, or falls back to `coincube-spark-bridge` sitting alongside the main `coincube` binary in the same directory.
 - Shutdown is cooperative: the gui sends a `Shutdown` method on app exit; the bridge drops its SDK handle and closes stdio.
 
 ### Seed handoff (Phase 3 compromise)
 
-The gui decrypts the `HotSigner` mnemonic on PIN entry and hands it to the bridge as part of the `Init` request. Seed stays in memory for the session lifetime inside the bridge process. The architectural win is that the mnemonic lives in a separate address space from the gui's HotSigner on Unix, but on a single-user desktop a local attacker who can read one process's memory can usually read the other too.
+The gui decrypts the `MasterSigner` mnemonic on PIN entry and hands it to the bridge as part of the `Init` request. Seed stays in memory for the session lifetime inside the bridge process. The architectural win is that the mnemonic lives in a separate address space from the gui's MasterSigner on Unix, but on a single-user desktop a local attacker who can read one process's memory can usually read the other too.
 
-A cleaner alternative — Breez Spark's `ExternalSigner` trait, which lets the SDK call back into the gui for every signing operation — exists as of spark-sdk 0.13.1. We're not using it yet because 11 of the 20 trait methods are Spark-specific (FROST round-2/aggregate, Shamir secret splitting, Spark tree node derivation) that `HotSigner` can't answer today without pulling `spark_wallet` / `frost_secp256k1_tr` directly into the gui crate — exactly the dep-graph collision the subprocess architecture exists to avoid. Migrating to `ExternalSigner` is tracked as a deferred follow-up; see the integration plan at `/.claude/plans/crystalline-booping-wadler.md` §"Deferred follow-up: external signer migration".
+A cleaner alternative — Breez Spark's `ExternalSigner` trait, which lets the SDK call back into the gui for every signing operation — exists as of spark-sdk 0.13.1. We're not using it yet because 11 of the 20 trait methods are Spark-specific (FROST round-2/aggregate, Shamir secret splitting, Spark tree node derivation) that `MasterSigner` can't answer today without pulling `spark_wallet` / `frost_secp256k1_tr` directly into the gui crate — exactly the dep-graph collision the subprocess architecture exists to avoid. Migrating to `ExternalSigner` is tracked as a deferred follow-up; see the integration plan at `/.claude/plans/crystalline-booping-wadler.md` §"Deferred follow-up: external signer migration".
 
 ## Setting up a Spark wallet
 
 1. **Create a cube** the usual way.
-2. **The Spark wallet is provisioned automatically.** Both the Liquid and Spark SDKs share a single HotSigner (`CubeSettings::breez_wallet_signer_fingerprint`). New cubes set this at creation time; existing cubes are migrated on first unlock (the Liquid fingerprint is copied into the consolidated field via a serde alias). No separate "Spark signer" setup step is needed.
+2. **The Spark wallet is provisioned automatically.** Both the Liquid and Spark SDKs share a single MasterSigner (`CubeSettings::master_signer_fingerprint`). New cubes set this at creation time; existing cubes are migrated on first unlock (legacy field names are mapped via serde aliases). No separate "Spark signer" setup step is needed.
 3. **Set `BREEZ_API_KEY`** in the environment (or `.env`). A single Breez API key covers both the Liquid and Spark SDKs.
 4. **Restart the cube.** The first launch spawns the bridge subprocess, runs `init`, and unlocks the Spark wallet for the session.
 

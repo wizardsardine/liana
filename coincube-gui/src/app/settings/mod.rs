@@ -118,6 +118,23 @@ where
     Ok(())
 }
 
+/// Metadata for a passkey-derived master key (stored in CubeSettings).
+///
+/// All fields are non-secret: the credential_id is a public identifier and the
+/// rp_id is the relying party domain. The actual PRF output (secret) is never stored.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PasskeyMetadata {
+    /// Base64-encoded WebAuthn credential ID
+    pub credential_id: String,
+    /// Relying Party ID used during registration (e.g., "coincube.io")
+    pub rp_id: String,
+    /// Unix timestamp when the passkey was registered
+    pub created_at: i64,
+    /// Human-readable label (e.g., "MacBook iCloud Keychain")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
 /// Mark a cube as synced with the remote Connect API.
 pub async fn mark_cube_synced(
     network_dir: &NetworkDirectory,
@@ -153,28 +170,16 @@ pub struct CubeSettings {
     /// Optional security PIN (stored as Argon2id hash with salt in PHC format)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security_pin_hash: Option<String>,
-    /// Fingerprint of the [`HotSigner`] whose mnemonic drives both the
-    /// Liquid and Spark wallets for this cube. Both Breez SDKs derive
-    /// their wallet keys at different BIP-32 paths from the same seed,
-    /// so reusing one HotSigner is safe and keeps the "one mnemonic,
-    /// one PIN, one backup" UX intact. When `None`, neither Breez
-    /// wallet is configured and the `WalletRegistry` loads with
-    /// Liquid unavailable and `spark = None`.
-    ///
-    /// Serde `alias` lets us transparently deserialize cubes written
-    /// before the pre-Phase-8 rename (when this field was named
-    /// `liquid_wallet_signer_fingerprint`). The alias can be removed
-    /// once every in-the-wild cube has been re-saved at least once
-    /// under the new name.
-    ///
-    /// [`HotSigner`]: coincube_core::signer::HotSigner
-    /// [`WalletRegistry`]: crate::app::wallets::WalletRegistry
+    /// Fingerprint of this Cube's master seed MasterSigner.
+    /// All wallets (Vault, Liquid, Spark) derive from this single seed.
+    /// The serde aliases keep existing settings.json files readable without migration.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        alias = "liquid_wallet_signer_fingerprint"
+        alias = "liquid_wallet_signer_fingerprint",
+        alias = "breez_wallet_signer_fingerprint"
     )]
-    pub breez_wallet_signer_fingerprint: Option<Fingerprint>,
+    pub master_signer_fingerprint: Option<Fingerprint>,
     /// Which backend should fulfill incoming Lightning Address invoices
     /// for this cube. Starts as `Liquid` (backwards-compatible default
     /// for existing cubes); Phase 5 flips the default to `Spark` and
@@ -190,6 +195,13 @@ pub struct CubeSettings {
     /// Persisted pending Liquid -> Vault transfer, used to restore UX state across app restarts
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_liquid_to_vault_transfer: Option<PendingLiquidToVaultTransfer>,
+    /// Passkey metadata for passkey-derived master keys (None for random-generated keys)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passkey_metadata: Option<PasskeyMetadata>,
+    /// When true, the Border Wallet wizard uses a random GridRecoveryPhrase instead
+    /// of deriving it from the master seed via BIP-85. Defaults to false (use derived).
+    #[serde(default)]
+    pub allow_random_grid_phrase: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -211,7 +223,7 @@ impl CubeSettings {
             created_at: chrono::Utc::now().timestamp(),
             vault_wallet_id: None,
             security_pin_hash: None,
-            breez_wallet_signer_fingerprint: None,
+            master_signer_fingerprint: None,
             default_lightning_backend: crate::app::wallets::WalletKind::default(),
             backed_up: false,
             mfa_done: false,
@@ -219,6 +231,8 @@ impl CubeSettings {
             unit_setting: unit::UnitSetting::default(),
             fiat_price: Some(fiat::PriceSetting::default()), // Initialize with default (enabled: true)
             pending_liquid_to_vault_transfer: None,
+            passkey_metadata: None,
+            allow_random_grid_phrase: false,
         }
     }
 
@@ -231,9 +245,19 @@ impl CubeSettings {
         self
     }
 
-    pub fn with_breez_signer(mut self, fingerprint: Fingerprint) -> Self {
-        self.breez_wallet_signer_fingerprint = Some(fingerprint);
+    pub fn with_master_signer(mut self, fingerprint: Fingerprint) -> Self {
+        self.master_signer_fingerprint = Some(fingerprint);
         self
+    }
+
+    pub fn with_passkey(mut self, metadata: PasskeyMetadata) -> Self {
+        self.passkey_metadata = Some(metadata);
+        self
+    }
+
+    /// Whether this Cube uses a passkey-derived master key (no PIN, no stored seed).
+    pub fn is_passkey_cube(&self) -> bool {
+        self.passkey_metadata.is_some()
     }
 
     pub fn with_pin(mut self, pin: &str) -> Result<Self, Box<dyn std::error::Error>> {
@@ -1181,5 +1205,27 @@ mod test {
         assert!(cube.verify_pin("1234"));
         assert!(cube.verify_pin("0000"));
         assert!(cube.verify_pin("9999"));
+    }
+
+    #[test]
+    fn test_cube_settings_alias_backward_compat() {
+        use super::CubeSettings;
+
+        let json = r#"{
+            "id": "00000000-0000-0000-0000-000000000001",
+            "name": "My Cube",
+            "network": "bitcoin",
+            "backed_up": false,
+            "mfa_done": false,
+            "created_at": 0,
+            "liquid_wallet_signer_fingerprint": "aabbccdd"
+        }"#;
+
+        let cube: CubeSettings = serde_json::from_str(json).expect("alias must deserialise");
+        assert_eq!(
+            cube.master_signer_fingerprint.map(|f| f.to_string()),
+            Some("aabbccdd".to_string()),
+            "serde alias should map old field name to master_signer_fingerprint"
+        );
     }
 }

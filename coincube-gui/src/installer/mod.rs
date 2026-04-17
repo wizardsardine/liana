@@ -99,6 +99,7 @@ pub struct Installer {
     /// across the vault-setup round-trip so the Spark bridge
     /// subprocess isn't killed and re-spawned.
     pub spark_backend: Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
+    pub developer_mode: bool,
 }
 
 impl Installer {
@@ -142,8 +143,32 @@ impl Installer {
         cube_settings: Option<crate::app::settings::CubeSettings>,
         breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
         spark_backend: Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
+        mut developer_mode: bool,
     ) -> (Installer, Task<Message>) {
-        let signer = Arc::new(Mutex::new(Signer::generate(network).unwrap()));
+        let signer = if developer_mode {
+            let master_signer = breez_client
+                .as_ref()
+                .and_then(|bc| bc.liquid_signer())
+                .and_then(|arc_hs| {
+                    arc_hs
+                        .lock()
+                        .ok()
+                        .and_then(|hs_guard| hs_guard.try_clone().ok())
+                        .map(|hs| Arc::new(Mutex::new(Signer::new(hs))))
+                });
+            if let Some(ms) = master_signer {
+                ms
+            } else {
+                tracing::warn!(
+                    "developer_mode=true but master signer unavailable; \
+                     downgrading to normal mode"
+                );
+                developer_mode = false;
+                Arc::new(Mutex::new(Signer::generate(network).unwrap()))
+            }
+        } else {
+            Arc::new(Mutex::new(Signer::generate(network).unwrap()))
+        };
         let context = Context::new(
             network,
             destination_path.clone(),
@@ -173,7 +198,7 @@ impl Installer {
                 UserFlow::CreateWallet => vec![
                     ChooseDescriptorTemplate::default().into(),
                     DescriptorTemplateDescription::default().into(),
-                    DefineDescriptor::new(network, signer.clone()).into(),
+                    DefineDescriptor::new(network, signer.clone(), developer_mode).into(),
                     BackupMnemonic::new(signer.clone()).into(),
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::new_create_wallet().into(),
@@ -203,6 +228,7 @@ impl Installer {
             },
             context,
             signer,
+            developer_mode,
         };
         // skip the step according to the current context.
         installer.skip_steps();
@@ -524,7 +550,7 @@ pub async fn install_local_wallet(
             )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
-        info!("Hot signer mnemonic stored");
+        info!("Master signer mnemonic stored");
     }
 
     if let Some(signer) = &ctx.recovered_signer {
@@ -606,7 +632,7 @@ pub async fn create_remote_wallet(
             )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
-        info!("Hot signer mnemonic stored");
+        info!("Master signer mnemonic stored");
     }
 
     if let Some(signer) = &ctx.recovered_signer {

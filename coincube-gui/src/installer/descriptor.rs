@@ -16,8 +16,8 @@ const ENABLE_COSIGNER_KEYS: bool = false;
 pub enum KeySource {
     /// A hardware signing device with the given kind and version.
     Device(DeviceKind, Option<Version>),
-    /// A hot signer on the user's computer.
-    HotSigner,
+    /// Master signer on the user's computer.
+    MasterSigner,
     /// A manually inserted xpub.
     Manual,
     /// A token for a key with the given kind.
@@ -62,7 +62,7 @@ impl KeySource {
     pub fn kind(&self) -> KeySourceKind {
         match self {
             Self::Device(_, _) => KeySourceKind::Device,
-            Self::HotSigner => KeySourceKind::HotSigner,
+            Self::MasterSigner => KeySourceKind::MasterSigner,
             Self::Manual => KeySourceKind::Manual,
             Self::Token(kind, _) => KeySourceKind::Token(*kind),
             Self::BorderWallet => KeySourceKind::BorderWallet,
@@ -99,8 +99,8 @@ impl KeySource {
 pub enum KeySourceKind {
     /// A hardware signing device.
     Device,
-    /// A hot signer.
-    HotSigner,
+    /// Master signer.
+    MasterSigner,
     /// A manually inserted xpub.
     Manual,
     /// A token for a key with the given kind.

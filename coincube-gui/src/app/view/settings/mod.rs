@@ -1,4 +1,5 @@
 pub mod about;
+pub mod backup;
 pub mod general;
 pub mod install_stats;
 pub mod lightning;

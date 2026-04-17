@@ -10,7 +10,7 @@ pub use config::BreezConfig;
 pub use breez_sdk_liquid::prelude::{GetInfoResponse, ReceivePaymentResponse, SendPaymentResponse};
 
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Network};
-use coincube_core::signer::HotSigner;
+use coincube_core::signer::MasterSigner;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -41,13 +41,13 @@ impl std::fmt::Display for BreezError {
 
 impl std::error::Error for BreezError {}
 
-/// Load BreezClient from datadir using the Liquid wallet signer fingerprint.
+/// Load BreezClient from datadir using the master signer fingerprint.
 /// Returns `Err(BreezError::NetworkNotSupported)` for non-mainnet/retest networks so
 /// the caller can create a disconnected `BreezClient` instead of an error.
 pub async fn load_breez_client(
     datadir: &Path,
     network: Network,
-    liquid_signer_fingerprint: Fingerprint,
+    master_signer_fingerprint: Fingerprint,
     password: &str,
 ) -> Result<Arc<BreezClient>, BreezError> {
     // Breez SDK (Liquid) supports mainnet and regtest.  Testnet, Testnet4 and
@@ -59,17 +59,20 @@ pub async fn load_breez_client(
     }
 
     // Load only the specific signer by fingerprint (more efficient and secure)
-    let liquid_signer = HotSigner::from_datadir_by_fingerprint(
+    let liquid_signer = MasterSigner::from_datadir_by_fingerprint(
         datadir,
         network,
-        liquid_signer_fingerprint,
+        master_signer_fingerprint,
         Some(password),
     )
     .map_err(|e| match e {
         coincube_core::signer::SignerError::MnemonicStorage(io_err)
             if io_err.kind() == std::io::ErrorKind::NotFound =>
         {
-            BreezError::SignerNotFound(liquid_signer_fingerprint)
+            BreezError::SignerNotFound(master_signer_fingerprint)
+        }
+        coincube_core::signer::SignerError::SignerNotFound(fingerprint) => {
+            BreezError::SignerNotFound(fingerprint)
         }
         _ => BreezError::SignerError(e.to_string()),
     })?;

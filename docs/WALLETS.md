@@ -56,7 +56,7 @@ pub struct WalletRegistry {
 ```
 
 - `liquid` is always present — the Liquid SDK is in-process and initialized at cube unlock.
-- `spark` is `Some` only when the cube has a `spark_wallet_signer_fingerprint` **and** the bridge subprocess spawned successfully. Panels that need Spark gate their UI on `WalletRegistry::spark().is_some()`.
+- `spark` is `Some` only when the cube has a `master_signer_fingerprint` **and** the bridge subprocess spawned successfully. Panels that need Spark gate their UI on `WalletRegistry::spark().is_some()`.
 
 The registry is also the single place the app decides which backend handles which payment type. Today it exposes one routing method:
 
@@ -72,7 +72,7 @@ When future routing decisions arise (BOLT12 → Liquid, cross-chain → SideShif
 
 The Liquid and Spark wrapper crates deliberately don't share a `WalletBackend` trait:
 
-- **Liquid** (`breez_liquid/`) is sync/local — `BreezClient` holds `Arc<LiquidSdk>` directly, implements the `breez_sdk_liquid::Signer` trait through a `HotSignerAdapter` so the mnemonic never leaves the HotSigner, and exposes a rich set of methods including swap refunds, L-BTC/USDt asset handling, and LNURL fulfillment via `receive_lnurl_invoice(amount_sat, description_hash)`.
+- **Liquid** (`breez_liquid/`) is sync/local — `BreezClient` holds `Arc<LiquidSdk>` directly, implements the `breez_sdk_liquid::Signer` trait through a `MasterSignerAdapter` so the mnemonic never leaves the MasterSigner, and exposes a rich set of methods including swap refunds, L-BTC/USDt asset handling, and LNURL fulfillment via `receive_lnurl_invoice(amount_sat, description_hash)`.
 - **Spark** (`breez_spark/`) is async/IPC — `SparkClient` spawns a sibling binary and JSON-RPCs over stdio. Cheap operations round-trip in a few ms; expensive ones live in the bridge. The bridge holds the mnemonic in its own address space.
 
 A premature trait would paper over those differences. Instead, `WalletRegistry` is the enum-dispatch site: callers that need "a backend" branch on `WalletKind` and pick a concrete handle, and the domain types in `wallets/types.rs` carry the shared UI-facing shape. Extract a trait only when a **third** backend appears and you can see the common surface empirically — not before.
@@ -81,8 +81,7 @@ A premature trait would paper over those differences. Instead, `WalletRegistry` 
 
 Per-cube settings live in `coincube-gui/src/app/settings/mod.rs::CubeSettings`. Spark-relevant fields:
 
-- `liquid_wallet_signer_fingerprint: Option<Fingerprint>` — identifies the HotSigner that drives the Liquid wallet.
-- `spark_wallet_signer_fingerprint: Option<Fingerprint>` — independent slot for the Spark wallet. Can point at the same HotSigner as Liquid or a different one.
+- `master_signer_fingerprint: Option<Fingerprint>` — identifies the MasterSigner that drives all wallets (Vault, Liquid, Spark). All wallet backends derive keys from this single master seed at different BIP-32 paths.
 - `default_lightning_backend: WalletKind` — cube-level override for which backend fulfills incoming Lightning Address invoices. Serde default is `Spark` post-Phase-5.
 
 The `Cache` struct mirrors `default_lightning_backend` and `cube_id` so panels can read them without threading `CubeSettings` through the `State::update(daemon, cache, message)` signature. The authoritative copy lives on `App::cube_settings` and is re-read from disk on `Message::SettingsSaved`.
@@ -107,7 +106,7 @@ If you're wiring up e.g. `breez-sdk-greenlight` or a Nostr Wallet Connect client
 5. **Extend `WalletRegistry`** with a new field + getter + routing-method updates.
 6. **Add a Menu variant** in `app/menu.rs` (`Menu::<Name>(<Name>SubMenu)`) and sidebar buttons in `app/view/mod.rs`.
 7. **Create parallel `state/<name>/` and `view/<name>/`** trees with Overview / Send / Receive / Transactions / Settings panels. Copy the Spark panels as a starting point — they're the most abstracted of the three today.
-8. **Add config fields** to `CubeSettings` (`<name>_wallet_signer_fingerprint`) and the corresponding `Cache` mirror if panels need it.
+8. **Derive keys from the master seed.** The new wallet should use `master_signer_fingerprint` to load the shared `MasterSigner` and derive wallet-specific keys at a dedicated BIP-32 path. Do not add a separate signer fingerprint field — all wallets share one master seed. Add any wallet-specific config (e.g., storage path, feature toggles) to `CubeSettings` and the corresponding `Cache` mirror if panels need it.
 9. **Wire events** into `App::subscription` and `App::update` under a new `Message::<Name>Event` variant.
 10. **Update routing rules** in `WalletRegistry::route_*` methods so the new backend participates where appropriate.
 11. **Update docs** — add a `docs/<NAME>_WALLET.md` mirroring [SPARK_WALLET.md](./SPARK_WALLET.md), and extend this file's Layout section.

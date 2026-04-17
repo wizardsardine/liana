@@ -57,6 +57,7 @@ pub struct DefineDescriptor {
 
     modal: Option<Box<dyn DescriptorEditModal>>,
     signer: Arc<Mutex<Signer>>,
+    developer_mode: bool,
 
     keys: HashMap<Fingerprint, Key>,
     paths: Vec<Path>,
@@ -67,13 +68,14 @@ pub struct DefineDescriptor {
 }
 
 impl DefineDescriptor {
-    pub fn new(network: Network, signer: Arc<Mutex<Signer>>) -> Self {
+    pub fn new(network: Network, signer: Arc<Mutex<Signer>>, developer_mode: bool) -> Self {
         Self {
             network,
             use_taproot: false,
             modal: None,
 
             signer,
+            developer_mode,
             error: None,
             keys: HashMap::new(),
             descriptor_template: DescriptorTemplate::default(),
@@ -213,6 +215,7 @@ impl DefineDescriptor {
             keys,
             self.accounts.clone(),
             self.signer.clone(),
+            self.developer_mode,
         )
     }
 }
@@ -247,8 +250,12 @@ impl Step for DefineDescriptor {
             Message::DefineDescriptor(message::DefineDescriptor::OpenBorderWalletWizard(
                 coordinates,
             )) => {
-                let modal =
-                    border_wallet_wizard::BorderWalletWizard::new(self.network, coordinates);
+                let modal = border_wallet_wizard::BorderWalletWizard::new(
+                    self.network,
+                    coordinates,
+                    self.signer.clone(),
+                    false, // Default: use master-derived grid phrase
+                );
                 self.modal = Some(Box::new(modal));
             }
             Message::DefineDescriptor(message::DefineDescriptor::KeysEdited(coordinates, key)) => {
@@ -817,7 +824,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_define_descriptor_use_hotkey() {
+    async fn test_define_descriptor_use_masterkey() {
         let mut ctx = Context::new(
             Network::Signet,
             CoincubeDirectory::new(PathBuf::from_str("/").unwrap()),
@@ -825,7 +832,8 @@ mod tests {
         );
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
             Network::Signet,
-            Arc::new(Mutex::new(Signer::generate(Network::Bitcoin).unwrap())),
+            Arc::new(Mutex::new(Signer::generate(Network::Signet).unwrap())),
+            true,
         ));
         sandbox.load(&ctx).await;
 
@@ -839,12 +847,12 @@ mod tests {
         sandbox.check(|step| assert!(step.modal.is_some()));
         sandbox
             .update(SelectKeySource::route(
-                key::SelectKeySourceMessage::SelectGenerateHotKey,
+                key::SelectKeySourceMessage::SelectGenerateMasterKey,
             ))
             .await;
         sandbox
             .update(SelectKeySource::route(key::SelectKeySourceMessage::Alias(
-                "hot_signer_key".to_string(),
+                "master_signer_key".to_string(),
             )))
             .await;
         sandbox
@@ -908,6 +916,7 @@ mod tests {
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
             Network::Testnet,
             Arc::new(Mutex::new(Signer::generate(Network::Testnet).unwrap())),
+            true, // developer_mode=true: test exercises the hot-signer path
         ));
         sandbox.load(&ctx).await;
 
@@ -962,7 +971,7 @@ mod tests {
             assert!(ctx.hw_is_used);
         });
 
-        // Now edit primary key to use hot signer instead of Specter device
+        // Now edit primary key to use master signer instead of Specter device
         sandbox
             .update(Message::DefineDescriptor(message::DefineDescriptor::Path(
                 0,
@@ -972,12 +981,12 @@ mod tests {
         sandbox.check(|step| assert!(step.modal.is_some()));
         sandbox
             .update(SelectKeySource::route(
-                key::SelectKeySourceMessage::SelectGenerateHotKey,
+                key::SelectKeySourceMessage::SelectGenerateMasterKey,
             ))
             .await;
         sandbox
             .update(SelectKeySource::route(key::SelectKeySourceMessage::Alias(
-                "hot signer key".to_string(),
+                "master signer key".to_string(),
             )))
             .await;
         sandbox

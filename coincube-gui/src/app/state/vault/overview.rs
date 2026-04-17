@@ -134,6 +134,7 @@ impl State for VaultOverview {
                     self.processing,
                     &self.sync_status,
                     self.show_rescan_warning,
+                    !cache.current_cube_backed_up && !cache.current_cube_is_passkey,
                     cache.bitcoin_unit,
                     cache.node_bitcoind_sync_progress,
                     cache.node_bitcoind_ibd,

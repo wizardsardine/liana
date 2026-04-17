@@ -727,9 +727,12 @@ impl Modal for SignModal {
                     );
                 }
             }
-            Message::View(view::Message::Spend(view::SpendTxMessage::SelectHotSigner)) => {
+            Message::View(view::Message::Spend(view::SpendTxMessage::SelectMasterSigner)) => {
+                if let Some(fingerprint) = self.wallet.signer.as_ref().map(|s| s.fingerprint()) {
+                    self.signing.insert(fingerprint);
+                }
                 return Task::perform(
-                    sign_psbt_with_hot_signer(self.wallet.clone(), tx.psbt.clone()),
+                    sign_psbt_with_master_signer(self.wallet.clone(), tx.psbt.clone()),
                     |(fg, res)| Message::Signed(fg, res),
                 );
             }
@@ -914,20 +917,22 @@ fn merge_signatures(psbt: &mut Psbt, signed_psbt: &Psbt) {
     }
 }
 
-async fn sign_psbt_with_hot_signer(
+async fn sign_psbt_with_master_signer(
     wallet: Arc<Wallet>,
     psbt: Psbt,
 ) -> (Fingerprint, Result<Psbt, Error>) {
     if let Some(signer) = &wallet.signer {
         let res = signer
             .sign_psbt(psbt)
-            .map_err(|e| WalletError::HotSigner(format!("Hot signer failed to sign psbt: {}", e)))
+            .map_err(|e| {
+                WalletError::MasterSigner(format!("Master signer failed to sign psbt: {}", e))
+            })
             .map_err(|e| e.into());
         (signer.fingerprint(), res)
     } else {
         (
             Fingerprint::default(),
-            Err(WalletError::HotSigner("Hot signer not loaded".to_string()).into()),
+            Err(WalletError::MasterSigner("Master signer not loaded".to_string()).into()),
         )
     }
 }

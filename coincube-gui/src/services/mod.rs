@@ -9,6 +9,7 @@ pub mod coincube;
 pub mod lnurl;
 pub mod mavapay;
 pub mod meld;
+pub mod passkey;
 pub mod sideshift;
 
 /// Resolves the Coincube API base URL with this precedence:

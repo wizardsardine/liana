@@ -400,7 +400,7 @@ pub fn signer_xpubs<'a>(
                             .width(Length::Fill),
                     ),
                 )
-                .on_press(Message::UseHotSigner)
+                .on_press(Message::UseMasterSigner)
                 .padding(10)
                 .style(theme::button::secondary)
                 .width(Length::Fill),

@@ -14,7 +14,7 @@
 //! - [`client::SparkClient`]: cloneable subprocess handle, async
 //!   methods for `get_info` / `list_payments` / `shutdown`.
 //! - [`load_spark_client`]: convenience loader that reads the cube's
-//!   Spark [`HotSigner`] from disk, unlocks it with the user PIN,
+//!   Spark [`MasterSigner`] from disk, unlocks it with the user PIN,
 //!   builds a [`SparkConfig`], and hands the mnemonic to the bridge.
 
 pub mod assets;
@@ -29,14 +29,14 @@ use std::path::Path;
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Network};
-use coincube_core::signer::HotSigner;
+use coincube_core::signer::MasterSigner;
 use zeroize::Zeroizing;
 
 /// Load the Spark backend from the cube's datadir + fingerprint + PIN.
 ///
 /// Mirrors [`crate::app::breez_liquid::load_breez_client`]. The Spark
 /// SDK needs the raw mnemonic on `connect`, so this function:
-/// 1. loads the [`HotSigner`] from disk by fingerprint;
+/// 1. loads the [`MasterSigner`] from disk by fingerprint;
 /// 2. decrypts its mnemonic with the supplied PIN;
 /// 3. passes the mnemonic to the bridge subprocess via stdin;
 /// 4. drops the mnemonic string (zeroized) as soon as the bridge
@@ -60,7 +60,7 @@ pub async fn load_spark_client(
 
     // Load the specific signer by fingerprint, decrypting the mnemonic
     // with the PIN.
-    let signer = HotSigner::from_datadir_by_fingerprint(
+    let signer = MasterSigner::from_datadir_by_fingerprint(
         datadir,
         network,
         spark_signer_fingerprint,
