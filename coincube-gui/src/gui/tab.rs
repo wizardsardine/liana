@@ -186,7 +186,7 @@ impl Tab {
                         }
                     }
                     let (install, command) = Installer::new(
-                        datadir, network, None, init, false, None, None, None, false, None,
+                        datadir, network, None, init, false, None, None, None, false,
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)

@@ -769,6 +769,7 @@ impl MasterSigner {
     /// BIP32 encoding of those keys (xpubs, tpubs, ..) but does not affect any data (whether it is
     /// the keys or the mnemonics).
     pub fn set_network(&mut self, network: bitcoin::Network) {
+        self.network = network;
         self.master_xpriv.network = network.into();
     }
 }

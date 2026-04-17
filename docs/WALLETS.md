@@ -56,7 +56,7 @@ pub struct WalletRegistry {
 ```
 
 - `liquid` is always present — the Liquid SDK is in-process and initialized at cube unlock.
-- `spark` is `Some` only when the cube has a `spark_wallet_signer_fingerprint` **and** the bridge subprocess spawned successfully. Panels that need Spark gate their UI on `WalletRegistry::spark().is_some()`.
+- `spark` is `Some` only when the cube has a `master_signer_fingerprint` **and** the bridge subprocess spawned successfully. Panels that need Spark gate their UI on `WalletRegistry::spark().is_some()`.
 
 The registry is also the single place the app decides which backend handles which payment type. Today it exposes one routing method:
 
@@ -106,7 +106,7 @@ If you're wiring up e.g. `breez-sdk-greenlight` or a Nostr Wallet Connect client
 5. **Extend `WalletRegistry`** with a new field + getter + routing-method updates.
 6. **Add a Menu variant** in `app/menu.rs` (`Menu::<Name>(<Name>SubMenu)`) and sidebar buttons in `app/view/mod.rs`.
 7. **Create parallel `state/<name>/` and `view/<name>/`** trees with Overview / Send / Receive / Transactions / Settings panels. Copy the Spark panels as a starting point — they're the most abstracted of the three today.
-8. **Add config fields** to `CubeSettings` (`<name>_wallet_signer_fingerprint`) and the corresponding `Cache` mirror if panels need it.
+8. **Derive keys from the master seed.** The new wallet should use `master_signer_fingerprint` to load the shared `MasterSigner` and derive wallet-specific keys at a dedicated BIP-32 path. Do not add a separate signer fingerprint field — all wallets share one master seed. Add any wallet-specific config (e.g., storage path, feature toggles) to `CubeSettings` and the corresponding `Cache` mirror if panels need it.
 9. **Wire events** into `App::subscription` and `App::update` under a new `Message::<Name>Event` variant.
 10. **Update routing rules** in `WalletRegistry::route_*` methods so the new backend participates where appropriate.
 11. **Update docs** — add a `docs/<NAME>_WALLET.md` mirroring [SPARK_WALLET.md](./SPARK_WALLET.md), and extend this file's Layout section.
