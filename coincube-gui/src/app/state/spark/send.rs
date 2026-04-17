@@ -63,6 +63,14 @@ pub struct SparkSend {
     /// Amount override for amountless invoices / on-chain sends, in sats.
     pub amount_input: String,
     phase: SparkSendPhase,
+    /// The send method from the last `PrepareSucceeded` — used to pick the
+    /// correct celebration image ("Bolt11Invoice", "BitcoinAddress", etc.).
+    last_send_method: String,
+    /// Formatted amount string for the celebration screen.
+    sent_amount_display: String,
+    /// Quote and image handle for the celebration screen.
+    sent_quote: coincube_ui::component::quote_display::Quote,
+    sent_image_handle: iced::widget::image::Handle,
 }
 
 impl SparkSend {
@@ -72,6 +80,12 @@ impl SparkSend {
             destination_input: String::new(),
             amount_input: String::new(),
             phase: SparkSendPhase::Idle,
+            last_send_method: String::new(),
+            sent_amount_display: String::new(),
+            sent_quote: coincube_ui::component::quote_display::random_quote("lightning-send"),
+            sent_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
+                "lightning-send",
+            ),
         }
     }
 
@@ -95,6 +109,9 @@ impl State for SparkSend {
                 destination_input: &self.destination_input,
                 amount_input: &self.amount_input,
                 phase: &self.phase,
+                sent_amount_display: &self.sent_amount_display,
+                sent_quote: &self.sent_quote,
+                sent_image_handle: &self.sent_image_handle,
             }
             .render(),
         )
@@ -170,6 +187,7 @@ impl State for SparkSend {
                 )
             }
             SparkSendMessage::PrepareSucceeded(ok) => {
+                self.last_send_method = ok.method.clone();
                 self.phase = SparkSendPhase::Prepared(ok);
                 Task::none()
             }
@@ -201,10 +219,22 @@ impl State for SparkSend {
                 )
             }
             SparkSendMessage::SendSucceeded(ok) => {
+                self.sent_amount_display = format!("{} sats", ok.amount_sat);
                 self.phase = SparkSendPhase::Sent(ok);
                 // Clear the inputs so a follow-up send doesn't re-use them.
                 self.destination_input.clear();
                 self.amount_input.clear();
+                // Pick celebration image based on send method.
+                let context =
+                    if self.last_send_method == "Bolt11Invoice" || self.last_send_method.contains("Lnurl") {
+                        "lightning-send"
+                    } else {
+                        "spark-send"
+                    };
+                self.sent_quote =
+                    coincube_ui::component::quote_display::random_quote(context);
+                self.sent_image_handle =
+                    coincube_ui::component::quote_display::image_handle_for_context(context);
                 Task::none()
             }
             SparkSendMessage::SendFailed(err) => {

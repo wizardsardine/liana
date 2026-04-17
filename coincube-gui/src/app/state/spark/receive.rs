@@ -109,6 +109,11 @@ pub struct SparkReceive {
     /// incoming payment. `None` while in idle / error / received
     /// phases.
     pub displayed_invoice: Option<String>,
+    /// Formatted amount string for the celebration screen.
+    received_amount_display: String,
+    /// Quote and image handle for the celebration screen.
+    received_quote: coincube_ui::component::quote_display::Quote,
+    received_image_handle: iced::widget::image::Handle,
 }
 
 impl SparkReceive {
@@ -124,6 +129,13 @@ impl SparkReceive {
             claiming: None,
             claim_error: None,
             displayed_invoice: None,
+            received_amount_display: String::new(),
+            received_quote: coincube_ui::component::quote_display::random_quote(
+                "lightning-receive",
+            ),
+            received_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
+                "lightning-receive",
+            ),
         }
     }
 
@@ -152,6 +164,9 @@ impl State for SparkReceive {
                 pending_deposits: &self.pending_deposits,
                 claiming: self.claiming.as_ref(),
                 claim_error: self.claim_error.as_deref(),
+                received_amount_display: &self.received_amount_display,
+                received_quote: &self.received_quote,
+                received_image_handle: &self.received_image_handle,
             }
             .render(),
         )
@@ -303,6 +318,18 @@ impl State for SparkReceive {
 
                 self.qr_data = None;
                 self.displayed_invoice = None;
+                self.received_amount_display =
+                    format!("+{} sats", amount_sat.unsigned_abs());
+                // Pick celebration image based on receive method.
+                let context = if self.method == SparkReceiveMethod::Bolt11 {
+                    "lightning-receive"
+                } else {
+                    "spark-receive"
+                };
+                self.received_quote =
+                    coincube_ui::component::quote_display::random_quote(context);
+                self.received_image_handle =
+                    coincube_ui::component::quote_display::image_handle_for_context(context);
                 self.phase = SparkReceivePhase::Received { amount_sat };
                 Task::none()
             }

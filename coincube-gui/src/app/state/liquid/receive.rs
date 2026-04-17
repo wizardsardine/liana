@@ -74,6 +74,7 @@ pub struct LiquidReceive {
     /// Show the "Payment received!" celebration screen.
     show_received_celebration: bool,
     received_amount_display: String,
+    received_celebration_context: String,
     received_quote: coincube_ui::component::quote_display::Quote,
     received_image_handle: iced::widget::image::Handle,
 }
@@ -131,11 +132,12 @@ impl LiquidReceive {
             show_qr_modal: false,
             show_received_celebration: false,
             received_amount_display: String::new(),
+            received_celebration_context: "lightning-receive".to_string(),
             received_quote: coincube_ui::component::quote_display::random_quote(
-                "transaction-received",
+                "lightning-receive",
             ),
             received_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
-                "transaction-received",
+                "lightning-receive",
             ),
         }
     }
@@ -179,6 +181,7 @@ impl State for LiquidReceive {
         // Show celebration screen when a new payment is received
         if self.show_received_celebration {
             let celebration = view::liquid::received_celebration_page(
+                &self.received_celebration_context,
                 &self.received_amount_display,
                 &self.received_quote,
                 &self.received_image_handle,
@@ -646,13 +649,23 @@ impl State for LiquidReceive {
                                     Amount::from_sat(payment.amount_sat)
                                         .to_formatted_string_with_unit(cache.bitcoin_unit)
                                 };
+                                let context =
+                                    if usdt_amount.is_some() {
+                                        "note-receive"
+                                    } else {
+                                        match &payment.details {
+                                            DomainPaymentDetails::Lightning { .. } => {
+                                                "lightning-receive"
+                                            }
+                                            _ => "liquid-receive",
+                                        }
+                                    };
+                                self.received_celebration_context = context.to_string();
                                 self.received_quote =
-                                    coincube_ui::component::quote_display::random_quote(
-                                        "transaction-received",
-                                    );
+                                    coincube_ui::component::quote_display::random_quote(context);
                                 self.received_image_handle =
                                     coincube_ui::component::quote_display::image_handle_for_context(
-                                        "transaction-received",
+                                        context,
                                     );
                                 self.show_received_celebration = true;
                                 break; // Only fire for the first unseen receive

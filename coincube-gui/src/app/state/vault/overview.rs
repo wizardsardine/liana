@@ -90,10 +90,10 @@ impl VaultOverview {
             show_received_celebration: false,
             received_amount_display: String::new(),
             received_quote: coincube_ui::component::quote_display::random_quote(
-                "transaction-received",
+                "bitcoin-receive",
             ),
             received_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
-                "transaction-received",
+                "bitcoin-receive",
             ),
         }
     }
@@ -103,6 +103,7 @@ impl State for VaultOverview {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         if self.show_received_celebration {
             let celebration = view::vault::overview::received_celebration_page(
+                "bitcoin-receive",
                 &self.received_amount_display,
                 &self.received_quote,
                 &self.received_image_handle,
@@ -211,11 +212,11 @@ impl State for VaultOverview {
                                 .to_formatted_string_with_unit(cache.bitcoin_unit);
                             self.received_quote =
                                 coincube_ui::component::quote_display::random_quote(
-                                    "transaction-received",
+                                    "bitcoin-receive",
                                 );
                             self.received_image_handle =
                                 coincube_ui::component::quote_display::image_handle_for_context(
-                                    "transaction-received",
+                                    "bitcoin-receive",
                                 );
                             self.show_received_celebration = true;
                         }
