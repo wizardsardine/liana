@@ -236,11 +236,11 @@ impl LiquidSend {
             pay_fees_with_asset: true,
             max_loading: false,
             is_drain: false,
-            sent_celebration_context: "lightning-send".to_string(),
+            sent_celebration_context: "liquid-send".to_string(),
             sent_amount_display: String::new(),
-            sent_quote: coincube_ui::component::quote_display::random_quote("lightning-send"),
+            sent_quote: coincube_ui::component::quote_display::random_quote("liquid-send"),
             sent_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
-                "lightning-send",
+                "liquid-send",
             ),
         }
     }
@@ -2036,11 +2036,14 @@ impl State for LiquidSend {
                         };
                     }
                     // Fresh quote for the success screen — pick the
-                    // context based on the send method/asset.
-                    let context = if self.receive_network == ReceiveNetwork::Lightning {
-                        "lightning-send"
-                    } else if self.to_asset == SendAsset::Usdt {
+                    // context based on the send method/asset. USDt is
+                    // checked first so the "note" pose wins whenever
+                    // USDt is involved, matching the receive-side
+                    // priority in state/liquid/receive.rs.
+                    let context = if self.to_asset == SendAsset::Usdt {
                         "note-send"
+                    } else if self.receive_network == ReceiveNetwork::Lightning {
+                        "lightning-send"
                     } else if self.receive_network == ReceiveNetwork::Bitcoin {
                         "bitcoin-send"
                     } else {

@@ -132,12 +132,10 @@ impl LiquidReceive {
             show_qr_modal: false,
             show_received_celebration: false,
             received_amount_display: String::new(),
-            received_celebration_context: "lightning-receive".to_string(),
-            received_quote: coincube_ui::component::quote_display::random_quote(
-                "lightning-receive",
-            ),
+            received_celebration_context: "liquid-receive".to_string(),
+            received_quote: coincube_ui::component::quote_display::random_quote("liquid-receive"),
             received_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
-                "lightning-receive",
+                "liquid-receive",
             ),
         }
     }
