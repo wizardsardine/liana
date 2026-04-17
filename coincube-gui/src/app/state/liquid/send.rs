@@ -2041,6 +2041,8 @@ impl State for LiquidSend {
                         "lightning-send"
                     } else if self.to_asset == SendAsset::Usdt {
                         "note-send"
+                    } else if self.receive_network == ReceiveNetwork::Bitcoin {
+                        "bitcoin-send"
                     } else {
                         "liquid-send"
                     };

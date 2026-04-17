@@ -2113,7 +2113,7 @@ impl App {
                             use coincube_ui::component::amount::DisplayAmount;
                             let context = match &details.details {
                                 PaymentDetails::Lightning { .. } => "lightning-receive",
-                                PaymentDetails::Bitcoin { .. } => "liquid-receive",
+                                PaymentDetails::Bitcoin { .. } => "bitcoin-receive",
                                 _ => "liquid-receive",
                             };
                             self.received_celebration_amount =

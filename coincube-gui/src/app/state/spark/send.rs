@@ -229,7 +229,14 @@ impl State for SparkSend {
                 self.destination_input.clear();
                 self.amount_input.clear();
                 // Pick celebration image based on send method.
-                let context = if self.last_send_method == "Bolt11Invoice"
+                // `last_send_method` mirrors the
+                // `breez_sdk_spark::SendPaymentMethod` variant names
+                // (BitcoinAddress / Bolt11Invoice / SparkAddress /
+                // SparkInvoice), plus LNURL-pay variants routed
+                // through the Lightning path.
+                let context = if self.last_send_method == "BitcoinAddress" {
+                    "bitcoin-send"
+                } else if self.last_send_method == "Bolt11Invoice"
                     || self.last_send_method.contains("Lnurl")
                 {
                     "lightning-send"

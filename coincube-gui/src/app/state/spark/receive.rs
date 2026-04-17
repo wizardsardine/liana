@@ -310,19 +310,29 @@ impl State for SparkReceive {
                     return Task::none();
                 }
 
-                // BOLT11 correlation: if we're displaying a specific
-                // invoice and the event carries a bolt11, require an
-                // exact match. If the event doesn't carry a bolt11
-                // (Spark-native, or SDK didn't populate the field),
-                // fall back to advancing on any incoming payment —
-                // the panel is in Generated state with the user
-                // actively waiting for a payment.
+                // Correlate the event with the currently displayed
+                // receive method so we only celebrate the payment the
+                // user is actually waiting for:
+                //
+                // - Bolt11 invoice displayed + matching bolt11 event:
+                //   the invoice was paid → advance.
+                // - Bolt11 invoice displayed + event without bolt11:
+                //   unrelated non-Lightning payment → skip.
+                // - No invoice displayed (on-chain flow) + event
+                //   without bolt11: on-chain deposit / Spark-native
+                //   transfer → advance.
+                // - No invoice displayed (on-chain flow) + event with
+                //   bolt11: unrelated Lightning payment → skip.
+                //
+                // BOLT11 comparison is case-insensitive — canonical
+                // form is lowercase but some SDKs hand back mixed case.
                 let matches_invoice = match (&self.displayed_invoice, &bolt11) {
                     (Some(displayed), Some(event_bolt11)) => {
                         displayed.eq_ignore_ascii_case(event_bolt11)
                     }
-                    (Some(_), None) => true,
-                    (None, _) => true,
+                    (Some(_), None) => false,
+                    (None, None) => true,
+                    (None, Some(_)) => false,
                 };
                 if !matches_invoice {
                     return Task::none();

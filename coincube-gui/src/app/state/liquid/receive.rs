@@ -656,6 +656,9 @@ impl State for LiquidReceive {
                                         DomainPaymentDetails::Lightning { .. } => {
                                             "lightning-receive"
                                         }
+                                        DomainPaymentDetails::OnChainBitcoin { .. } => {
+                                            "bitcoin-receive"
+                                        }
                                         _ => "liquid-receive",
                                     }
                                 };

@@ -172,13 +172,13 @@ pub fn broadcast_action<'a>(
     sent_image_handle: &'a iced::widget::image::Handle,
 ) -> Element<'a, Message> {
     if saved {
-        return coincube_ui::component::sent_celebration_page(
+        coincube_ui::component::sent_celebration_page(
             "bitcoin-send",
             spend_amount_display,
             sent_quote,
             sent_image_handle,
             Message::Spend(super::super::SpendTxMessage::Cancel),
-        );
+        )
     } else {
         card::simple(
             Column::new()

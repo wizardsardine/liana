@@ -148,7 +148,11 @@ impl QuoteProvider {
 
         // For network-specific contexts, fall back to the generic
         // transaction-sent / transaction-received context when no
-        // quotes explicitly list the specific context.
+        // quotes explicitly list the specific context. Exact matches
+        // are always preferred — the fallback pool is only consulted
+        // when no exact quotes exist, so a small curated set of
+        // network-specific quotes isn't diluted by the much larger
+        // generic pool.
         let fallback_context = if context.ends_with("-send") {
             Some("transaction-sent")
         } else if context.ends_with("-receive") {
@@ -157,30 +161,44 @@ impl QuoteProvider {
             None
         };
 
-        let candidates: Vec<&Quote> = ALL_QUOTES
+        let by_context = |ctx: &str| -> Vec<&'static Quote> {
+            ALL_QUOTES
+                .iter()
+                .filter(|q| q.contexts.iter().any(|c| c == ctx))
+                .collect()
+        };
+
+        let exact_all = by_context(context);
+        let exact_fresh: Vec<&Quote> = exact_all
             .iter()
-            .filter(|q| {
-                q.contexts.iter().any(|c| c == context)
-                    || fallback_context
-                        .map(|fb| q.contexts.iter().any(|c| c == fb))
-                        .unwrap_or(false)
-            })
+            .copied()
             .filter(|q| !self.recent_ids.contains(&q.id))
             .collect();
 
-        // Fall back to full context pool if recency excludes everything
-        let pool = if candidates.is_empty() {
-            ALL_QUOTES
+        // Preference order:
+        //   1. Exact context, excluding recently shown.
+        //   2. Exact context, including recently shown (recency
+        //      window exhausted).
+        //   3. Fallback context, excluding recently shown.
+        //   4. Fallback context, including recently shown.
+        let pool: Vec<&Quote> = if !exact_fresh.is_empty() {
+            exact_fresh
+        } else if !exact_all.is_empty() {
+            exact_all
+        } else if let Some(fb) = fallback_context {
+            let fb_all = by_context(fb);
+            let fb_fresh: Vec<&Quote> = fb_all
                 .iter()
-                .filter(|q| {
-                    q.contexts.iter().any(|c| c == context)
-                        || fallback_context
-                            .map(|fb| q.contexts.iter().any(|c| c == fb))
-                            .unwrap_or(false)
-                })
-                .collect::<Vec<_>>()
+                .copied()
+                .filter(|q| !self.recent_ids.contains(&q.id))
+                .collect();
+            if !fb_fresh.is_empty() {
+                fb_fresh
+            } else {
+                fb_all
+            }
         } else {
-            candidates
+            Vec::new()
         };
 
         // Prefer short quotes for brief-duration states
