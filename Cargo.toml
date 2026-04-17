@@ -1,7 +1,28 @@
 [workspace]
 resolver = "2"
-members = ["fuzz", "coincube-core", "coincubed", "coincube-gui", "coincube-ui"]
-default-members = ["coincube-core", "coincubed", "coincube-gui", "coincube-ui"]
+members = [
+    "fuzz",
+    "coincube-core",
+    "coincubed",
+    "coincube-gui",
+    "coincube-ui",
+    "coincube-spark-protocol",
+]
+# coincube-spark-bridge is deliberately NOT a member of this workspace.
+# It links breez-sdk-spark 0.13.1, whose `tokio_with_wasm ^0.8.7` and
+# `rusqlite ^0.32.1 (links = "sqlite3")` dep requirements are unresolvable
+# together with breez-sdk-liquid 0.12.2. Making the bridge a standalone
+# workspace (with its own Cargo.lock) gives it an isolated dep graph and
+# lets it coexist with the Liquid-linked gui at runtime via stdin/stdout
+# IPC. See coincube-spark-bridge/Cargo.toml for its own [workspace] block.
+exclude = ["coincube-spark-bridge"]
+default-members = [
+    "coincube-core",
+    "coincubed",
+    "coincube-gui",
+    "coincube-ui",
+    "coincube-spark-protocol",
+]
 
 # Patch to resolve dependency conflicts with Breez SDK
 [patch.crates-io]

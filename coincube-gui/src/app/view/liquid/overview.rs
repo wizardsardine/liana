@@ -1,5 +1,6 @@
-use breez_sdk_liquid::model::{PaymentDetails, PaymentState};
 use coincube_core::miniscript::bitcoin::Amount;
+
+use crate::app::wallets::{DomainPaymentDetails, DomainPaymentStatus};
 use coincube_ui::{
     color,
     component::{
@@ -17,7 +18,7 @@ use iced::{
     Alignment, Background, Length,
 };
 
-use crate::app::breez::assets::format_usdt_display;
+use crate::app::breez_liquid::assets::format_usdt_display;
 use crate::app::view::{liquid::RecentTransaction, FiatAmountConverter, LiquidOverviewMessage};
 
 #[allow(clippy::too_many_arguments)]
@@ -40,7 +41,9 @@ pub fn liquid_overview_view<'a>(
     let pending_outgoing_sats: u64 = recent_transaction
         .iter()
         .filter(|t| {
-            !t.is_incoming && t.usdt_display.is_none() && matches!(t.status, PaymentState::Pending)
+            !t.is_incoming
+                && t.usdt_display.is_none()
+                && matches!(t.status, DomainPaymentStatus::Pending)
         })
         .map(|t| (t.amount + t.fees_sat).to_sat())
         .sum();
@@ -48,7 +51,9 @@ pub fn liquid_overview_view<'a>(
     let pending_incoming_sats: u64 = recent_transaction
         .iter()
         .filter(|t| {
-            t.is_incoming && t.usdt_display.is_none() && matches!(t.status, PaymentState::Pending)
+            t.is_incoming
+                && t.usdt_display.is_none()
+                && matches!(t.status, DomainPaymentStatus::Pending)
         })
         .map(|t| t.amount.to_sat())
         .sum();
@@ -152,23 +157,9 @@ pub fn liquid_overview_view<'a>(
                 .width(Length::Fixed(90.0)),
         )
         .push(
-            iced_button(
-                Container::new(text("Receive").size(13))
-                    .padding([6, 12])
-                    .center_x(Length::Fill),
-            )
-            .on_press(LiquidOverviewMessage::ReceiveLbtc)
-            .width(Length::Fixed(90.0))
-            .style(|_, _| iced::widget::button::Style {
-                background: Some(Background::Color(iced::Color::TRANSPARENT)),
-                text_color: color::ORANGE,
-                border: iced::Border {
-                    color: color::ORANGE,
-                    width: 1.0,
-                    radius: 25.0.into(),
-                },
-                ..Default::default()
-            }),
+            button::orange_outline(None, "Receive")
+                .on_press(LiquidOverviewMessage::ReceiveLbtc)
+                .width(Length::Fixed(90.0)),
         );
 
     // USDt asset row
@@ -194,23 +185,9 @@ pub fn liquid_overview_view<'a>(
                 .width(Length::Fixed(90.0)),
         )
         .push(
-            iced_button(
-                Container::new(text("Receive").size(13))
-                    .padding([6, 12])
-                    .center_x(Length::Fill),
-            )
-            .on_press(LiquidOverviewMessage::ReceiveUsdt)
-            .width(Length::Fixed(90.0))
-            .style(|_, _| iced::widget::button::Style {
-                background: Some(Background::Color(iced::Color::TRANSPARENT)),
-                text_color: color::ORANGE,
-                border: iced::Border {
-                    color: color::ORANGE,
-                    width: 1.0,
-                    radius: 25.0.into(),
-                },
-                ..Default::default()
-            }),
+            button::orange_outline(None, "Receive")
+                .on_press(LiquidOverviewMessage::ReceiveUsdt)
+                .width(Length::Fixed(90.0)),
         );
 
     let portfolio_card = Container::new(
@@ -250,13 +227,13 @@ pub fn liquid_overview_view<'a>(
                 coincube_ui::image::asset_network_logo("usdt", "liquid", 40.0)
             } else {
                 match &tx.details {
-                    PaymentDetails::Lightning { .. } => {
+                    DomainPaymentDetails::Lightning { .. } => {
                         coincube_ui::image::asset_network_logo("btc", "lightning", 40.0)
                     }
-                    PaymentDetails::Liquid { .. } => {
+                    DomainPaymentDetails::LiquidAsset { .. } => {
                         coincube_ui::image::asset_network_logo("lbtc", "liquid", 40.0)
                     }
-                    PaymentDetails::Bitcoin { .. } => {
+                    DomainPaymentDetails::OnChainBitcoin { .. } => {
                         coincube_ui::image::asset_network_logo("btc", "bitcoin", 40.0)
                     }
                 }
@@ -286,7 +263,7 @@ pub fn liquid_overview_view<'a>(
                 }
             }
 
-            if matches!(tx.status, PaymentState::Pending) {
+            if matches!(tx.status, DomainPaymentStatus::Pending) {
                 let (bg, fg) = (color::GREY_3, color::BLACK);
                 let pending_badge = Container::new(
                     Row::new()

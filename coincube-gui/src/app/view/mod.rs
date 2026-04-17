@@ -6,6 +6,7 @@ pub mod global_home;
 pub mod liquid;
 pub mod p2p;
 pub mod settings;
+pub mod spark;
 
 pub mod vault;
 
@@ -13,6 +14,11 @@ use std::iter::FromIterator;
 
 pub use liquid::*;
 pub use message::*;
+pub use spark::{
+    SparkOverviewMessage, SparkOverviewView, SparkReceiveMessage, SparkReceiveView,
+    SparkSendMessage, SparkSendView, SparkSettingsMessage, SparkSettingsStatus, SparkSettingsView,
+    SparkStatus, SparkTransactionsMessage, SparkTransactionsStatus, SparkTransactionsView,
+};
 pub use vault::fiat::FiatAmountConverter;
 pub use vault::warning::warn;
 
@@ -186,6 +192,141 @@ pub fn sidebar<'a>(
     }
 
     menu_column = menu_column.push(home_button);
+
+    // ── Spark wallet section ──────────────────────────────────────────────
+    //
+    // Sits above Liquid in the sidebar because Spark is the default
+    // wallet for everyday Lightning UX; Liquid is the advanced slot
+    // for L-BTC, USDt, and other Liquid-native flows.
+    let is_spark_expanded = cache.spark_expanded;
+
+    let spark_chevron = if is_spark_expanded {
+        up_icon()
+    } else {
+        down_icon()
+    };
+    let spark_button = Button::new(
+        Row::new()
+            .spacing(10)
+            .align_y(iced::alignment::Vertical::Center)
+            .push(coincube_ui::icon::lightning_icon().style(theme::text::secondary))
+            .push(text("Spark").size(15))
+            .push(Space::new().width(Length::Fill))
+            .push(spark_chevron.style(theme::text::secondary))
+            .padding(10),
+    )
+    .width(iced::Length::Fill)
+    .style(theme::button::menu)
+    .on_press(Message::ToggleSpark);
+
+    menu_column = menu_column.push(spark_button);
+
+    if is_spark_expanded {
+        use crate::app::menu::SparkSubMenu;
+
+        let spark_overview_button = if matches!(menu, Menu::Spark(SparkSubMenu::Overview)) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(home_icon()), "Overview")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(home_icon()), "Overview")
+                    .on_press(Message::Menu(Menu::Spark(SparkSubMenu::Overview)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
+        let spark_send_button = if matches!(menu, Menu::Spark(SparkSubMenu::Send)) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(send_icon()), "Send")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(send_icon()), "Send")
+                    .on_press(Message::Menu(Menu::Spark(SparkSubMenu::Send)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
+        let spark_receive_button = if matches!(menu, Menu::Spark(SparkSubMenu::Receive)) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(receive_icon()), "Receive")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(receive_icon()), "Receive")
+                    .on_press(Message::Menu(Menu::Spark(SparkSubMenu::Receive)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
+        let spark_transactions_button =
+            if matches!(menu, Menu::Spark(SparkSubMenu::Transactions(_))) {
+                row!(
+                    Space::new().width(Length::Fixed(20.0)),
+                    button::menu_active(Some(receipt_icon()), "Transactions")
+                        .on_press(Message::Reload)
+                        .width(iced::Length::Fill),
+                    menu_bar_highlight()
+                )
+                .width(Length::Fill)
+            } else {
+                row!(
+                    Space::new().width(Length::Fixed(20.0)),
+                    button::menu(Some(receipt_icon()), "Transactions")
+                        .on_press(Message::Menu(Menu::Spark(SparkSubMenu::Transactions(None))))
+                        .width(iced::Length::Fill),
+                )
+                .width(Length::Fill)
+            };
+
+        let spark_settings_button = if matches!(menu, Menu::Spark(SparkSubMenu::Settings(_))) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(settings_icon()), "Settings")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(settings_icon()), "Settings")
+                    .on_press(Message::Menu(Menu::Spark(SparkSubMenu::Settings(None))))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
+        menu_column = menu_column
+            .push(spark_overview_button)
+            .push(spark_send_button)
+            .push(spark_receive_button)
+            .push(spark_transactions_button)
+            .push(spark_settings_button);
+    }
 
     // Check if Liquid submenu is expanded from cache
     let is_liquid_expanded = cache.liquid_expanded;

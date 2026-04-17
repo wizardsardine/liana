@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use crate::{
     app::{
-        breez::BreezClient,
+        breez_liquid::BreezClient,
         cache::Cache,
         menu::Menu,
         message::Message,

@@ -11,12 +11,12 @@ use iced::{
     Alignment, Length,
 };
 
-use crate::app::breez::assets::format_usdt_display;
+use crate::app::breez_liquid::assets::format_usdt_display;
 use crate::app::state::liquid::sideshift_send::SendPhase;
 use crate::app::view::liquid::RecentTransaction;
 use crate::app::view::{SideshiftSendMessage, SideshiftShiftType};
+use crate::app::wallets::DomainPaymentDetails;
 use crate::services::sideshift::{ShiftResponse, ShiftStatusKind, SideshiftNetwork};
-use breez_sdk_liquid::model::PaymentDetails;
 
 // ---------------------------------------------------------------------------
 // Top-level entry point
@@ -238,15 +238,16 @@ fn address_input_view<'a>(
         tx_list = tx_list.push(h4_bold("Last transactions"));
 
         for tx in recent_transactions.iter().take(5) {
-            let usdt_amount = if let PaymentDetails::Liquid { asset_id, .. } = &tx.details {
-                if !usdt_asset_id.is_empty() && asset_id == usdt_asset_id {
-                    Some(format_usdt_display(tx.amount.to_sat()))
+            let usdt_amount =
+                if let DomainPaymentDetails::LiquidAsset { asset_id, .. } = &tx.details {
+                    if !usdt_asset_id.is_empty() && asset_id == usdt_asset_id {
+                        Some(format_usdt_display(tx.amount.to_sat()))
+                    } else {
+                        None
+                    }
                 } else {
                     None
-                }
-            } else {
-                None
-            };
+                };
 
             let amount_text = if let Some(ref usdt) = usdt_amount {
                 format!("{}{} USDt", if tx.is_incoming { "+ " } else { "- " }, usdt)

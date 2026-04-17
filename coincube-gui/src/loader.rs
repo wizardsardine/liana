@@ -29,7 +29,7 @@ use coincubed::{
 };
 
 use crate::app;
-use crate::app::breez::BreezClient;
+use crate::app::breez_liquid::BreezClient;
 use crate::app::cache::DaemonCache;
 use crate::app::settings::{CubeSettings, WalletSettings};
 use crate::backup::Backup;
@@ -72,6 +72,13 @@ pub struct Loader {
     pub wallet_settings: Option<WalletSettings>,
     pub cube_settings: CubeSettings,
     pub breez_client: Option<std::sync::Arc<BreezClient>>,
+    /// Optional Spark backend loaded alongside `breez_client` in the PIN
+    /// flow. `None` when the cube has no Spark signer or when the bridge
+    /// subprocess failed to spawn — panels that depend on Spark surface a
+    /// "Spark unavailable" placeholder in that case. Propagated unchanged
+    /// from [`Message::BreezClientLoadedAfterPin`] through
+    /// [`Message::BreezLoaded`] into [`app::App::new`].
+    pub spark_backend: Option<std::sync::Arc<app::wallets::SparkBackend>>,
     step: Step,
     quote_provider: QuoteProvider,
     current_quote: Quote,
@@ -128,6 +135,7 @@ pub enum Message {
     ),
     BreezLoaded {
         breez: std::sync::Arc<BreezClient>,
+        spark_backend: Option<std::sync::Arc<app::wallets::SparkBackend>>,
         cache: Cache,
         wallet: Arc<Wallet>,
         config: app::Config,
@@ -156,6 +164,7 @@ impl Loader {
         wallet_settings: Option<WalletSettings>,
         cube_settings: CubeSettings,
         breez_client: Option<std::sync::Arc<BreezClient>>,
+        spark_backend: Option<std::sync::Arc<app::wallets::SparkBackend>>,
     ) -> (Self, Task<Message>) {
         let task = if let Some(ref wallet) = wallet_settings {
             let socket_path = datadir_path
@@ -185,6 +194,7 @@ impl Loader {
                 cube_settings,
                 backup,
                 breez_client,
+                spark_backend,
                 quote_provider,
                 current_quote,
                 current_image_handle,
@@ -422,6 +432,7 @@ impl Loader {
                     self.wallet_settings.clone(),
                     self.cube_settings.clone(),
                     self.breez_client.clone(),
+                    self.spark_backend.clone(),
                 );
                 *self = loader;
                 cmd
@@ -595,6 +606,7 @@ pub async fn load_application(
         node_bitcoind_ibd: None,
         node_bitcoind_last_log: None,
         vault_expanded: false,
+        spark_expanded: false,
         liquid_expanded: false,
         marketplace_expanded: false,
         marketplace_p2p_expanded: false,
@@ -609,6 +621,8 @@ pub async fn load_application(
         btc_usd_price: None,
         show_direction_badges: true,
         lightning_address: None,
+        cube_id: config.cube_settings.id.clone(),
+        default_lightning_backend: config.cube_settings.default_lightning_backend,
     };
 
     Ok((

@@ -37,6 +37,8 @@ pub struct Cache {
     pub bitcoin_unit: BitcoinDisplayUnit,
     /// UI state: whether the Vault submenu is expanded
     pub vault_expanded: bool,
+    /// UI state: whether the Spark submenu is expanded
+    pub spark_expanded: bool,
     /// UI state: whether the Liquid submenu is expanded
     pub liquid_expanded: bool,
     /// UI state: whether the Marketplace submenu is expanded
@@ -69,6 +71,17 @@ pub struct Cache {
     pub show_direction_badges: bool,
     /// Cached Lightning Address for display in the sidebar across all panels
     pub lightning_address: Option<String>,
+    /// Id of the current Cube — needed by Spark Settings so the
+    /// `update_settings_file` closure can find the right cube when
+    /// persisting the `default_lightning_backend` picker change.
+    pub cube_id: String,
+    /// Current preference for which backend fulfills incoming
+    /// Lightning Address invoices. Mirrored from
+    /// `CubeSettings::default_lightning_backend` so panels can read
+    /// it without going through the disk layer; the authoritative
+    /// copy lives on `App::cube_settings` and is re-read on
+    /// `Message::SettingsSaved`.
+    pub default_lightning_backend: crate::app::wallets::WalletKind,
 }
 
 /// only used for tests.
@@ -85,6 +98,7 @@ impl std::default::Default for Cache {
             fiat_price: None,
             bitcoin_unit: BitcoinDisplayUnit::default(),
             vault_expanded: true,
+            spark_expanded: false,
             liquid_expanded: false,
             marketplace_expanded: false,
             marketplace_p2p_expanded: false,
@@ -99,6 +113,8 @@ impl std::default::Default for Cache {
             btc_usd_price: None,
             show_direction_badges: true,
             lightning_address: None,
+            cube_id: String::new(),
+            default_lightning_backend: crate::app::wallets::WalletKind::default(),
         }
     }
 }

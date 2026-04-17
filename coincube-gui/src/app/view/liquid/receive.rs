@@ -1,5 +1,6 @@
-use breez_sdk_liquid::model::{PaymentDetails, PaymentState};
 use coincube_core::miniscript::bitcoin::{Amount, Denomination};
+
+use crate::app::wallets::{DomainPaymentDetails, DomainPaymentStatus};
 
 use coincube_ui::{
     color,
@@ -23,7 +24,7 @@ use iced::{
 use coincube_ui::image::asset_network_logo;
 
 use crate::app::{
-    breez::assets::{format_usdt_display, parse_asset_to_minor_units, USDT_PRECISION},
+    breez_liquid::assets::{format_usdt_display, parse_asset_to_minor_units, USDT_PRECISION},
     settings::unit::BitcoinDisplayUnit,
     state::liquid::send::SendAsset,
     view::{liquid::RecentTransaction, LiquidReceiveMessage, ReceiveMethod, SenderNetwork},
@@ -193,13 +194,13 @@ pub fn liquid_receive_view<'a>(
                 coincube_ui::image::asset_network_logo("usdt", "liquid", 40.0)
             } else {
                 match &tx.details {
-                    PaymentDetails::Lightning { .. } => {
+                    DomainPaymentDetails::Lightning { .. } => {
                         coincube_ui::image::asset_network_logo("btc", "lightning", 40.0)
                     }
-                    PaymentDetails::Liquid { .. } => {
+                    DomainPaymentDetails::LiquidAsset { .. } => {
                         coincube_ui::image::asset_network_logo("lbtc", "liquid", 40.0)
                     }
-                    PaymentDetails::Bitcoin { .. } => {
+                    DomainPaymentDetails::OnChainBitcoin { .. } => {
                         coincube_ui::image::asset_network_logo("btc", "bitcoin", 40.0)
                     }
                 }
@@ -231,7 +232,7 @@ pub fn liquid_receive_view<'a>(
                 }
             }
 
-            if matches!(tx.status, PaymentState::Pending) {
+            if matches!(tx.status, DomainPaymentStatus::Pending) {
                 let (bg, fg) = (color::GREY_3, color::BLACK);
                 let pending_badge = Container::new(
                     Row::new()

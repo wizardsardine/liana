@@ -1,6 +1,7 @@
 mod about;
 pub mod general;
 mod install_stats;
+mod lightning;
 
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use coincube_ui::widget::Element;
 use about::AboutSettingsState;
 use general::GeneralSettingsState;
 use install_stats::InstallStatsState;
+use lightning::LightningSettingsState;
 
 use crate::{
     app::{
@@ -65,6 +67,13 @@ impl State for SettingsState {
                     )
                     .into(),
                 );
+                self.setting
+                    .as_mut()
+                    .map(|s| s.reload(daemon, None))
+                    .unwrap_or_else(Task::none)
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::LightningSection)) => {
+                self.setting = Some(LightningSettingsState::new(self.cube_id.clone()).into());
                 self.setting
                     .as_mut()
                     .map(|s| s.reload(daemon, None))

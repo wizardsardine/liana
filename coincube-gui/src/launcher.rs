@@ -447,7 +447,7 @@ impl Launcher {
                         iced_wry::extract_window_id(None).map(Message::PasskeyWindowId)
                     }
                 } else {
-                    // PIN-based Cube creation (existing flow)
+                    // PIN-based Cube creation
                     Task::perform(
                         async move {
                             // Generate MasterSigner
@@ -1249,7 +1249,7 @@ impl Launcher {
 
                         Task::perform(
                             async move {
-                                // Restore Liquid wallet MasterSigner from mnemonic
+                                // Restore MasterSigner from recovery mnemonic
                                 let master_signer = MasterSigner::from_mnemonic(network, mnemonic)
                                     .map_err(|e| {
                                         format!("Failed to restore from mnemonic: {}", e)

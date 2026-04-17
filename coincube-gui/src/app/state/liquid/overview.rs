@@ -1,33 +1,32 @@
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use breez_sdk_liquid::model::PaymentDetails;
-use breez_sdk_liquid::prelude::Payment;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::widget::*;
 use iced::Task;
 
-use crate::app::breez::assets::usdt_asset_id;
+use crate::app::breez_liquid::assets::usdt_asset_id;
+use crate::app::cache::Cache;
 use crate::app::menu::{LiquidSubMenu, Menu};
 use crate::app::state::{redirect, State};
-use crate::app::{breez::BreezClient, cache::Cache};
+use crate::app::wallets::{DomainPayment, DomainPaymentDetails, LiquidBackend};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::utils::format_time_ago;
 
 /// LiquidOverview
 pub struct LiquidOverview {
-    breez_client: Arc<BreezClient>,
+    breez_client: Arc<LiquidBackend>,
     btc_balance: Amount,
     usdt_balance: u64,
     recent_transaction: Vec<view::liquid::RecentTransaction>,
-    recent_payments: Vec<Payment>,
-    selected_payment: Option<Payment>,
+    recent_payments: Vec<DomainPayment>,
+    selected_payment: Option<DomainPayment>,
     error: Option<String>,
 }
 
 impl LiquidOverview {
-    pub fn new(breez_client: Arc<BreezClient>) -> Self {
+    pub fn new(breez_client: Arc<LiquidBackend>) -> Self {
         Self {
             breez_client,
             btc_balance: Amount::from_sat(0),
@@ -219,12 +218,11 @@ impl State for LiquidOverview {
                     self.btc_balance = *balance;
                     self.usdt_balance = *usdt_balance;
 
-                    let recent: Vec<Payment> = recent_payment.iter().take(5).cloned().collect();
+                    let recent: Vec<DomainPayment> =
+                        recent_payment.iter().take(5).cloned().collect();
                     self.recent_payments = recent.clone();
 
-                    let usdt_id =
-                        crate::app::breez::assets::usdt_asset_id(self.breez_client.network())
-                            .unwrap_or("");
+                    let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
 
                     if !recent.is_empty() {
                         let fiat_converter: Option<view::FiatAmountConverter> =
@@ -235,35 +233,24 @@ impl State for LiquidOverview {
                                 let status = payment.status;
                                 let time_ago = format_time_ago(payment.timestamp.into());
 
-                                // Detect USDt payments and build display string
-                                let is_usdt = matches!(
-                                    &payment.details,
-                                    PaymentDetails::Liquid { asset_id, .. }
-                                        if !usdt_id.is_empty() && asset_id == usdt_id
-                                );
-
-                                // For USDt, extract the correct amount from asset_info
-                                // (amount_sat is BTC-denominated and wrong for USDt).
-                                let amount = if is_usdt {
-                                    if let PaymentDetails::Liquid {
-                                        asset_info: Some(ref info),
+                                // Detect USDt payments and build display string.
+                                let usdt_amount_minor = match &payment.details {
+                                    DomainPaymentDetails::LiquidAsset {
+                                        asset_id,
+                                        asset_info,
                                         ..
-                                    } = &payment.details
-                                    {
-                                        Amount::from_sat(
-                                            (info.amount
-                                                * 10_f64.powi(
-                                                    crate::app::breez::assets::USDT_PRECISION
-                                                        as i32,
-                                                ))
-                                            .round()
-                                                as u64,
-                                        )
-                                    } else {
-                                        Amount::from_sat(payment.amount_sat)
+                                    } if !usdt_id.is_empty() && asset_id == usdt_id => {
+                                        asset_info.as_ref().map(|i| i.amount_minor)
                                     }
-                                } else {
-                                    Amount::from_sat(payment.amount_sat)
+                                    _ => None,
+                                };
+                                let is_usdt = usdt_amount_minor.is_some();
+
+                                // For USDt, display the asset amount; otherwise display
+                                // the BTC amount from `amount_sat`.
+                                let amount = match usdt_amount_minor {
+                                    Some(minor) => Amount::from_sat(minor),
+                                    None => Amount::from_sat(payment.amount_sat),
                                 };
 
                                 // Only compute fiat for BTC rows; USDt has its own display.
@@ -280,38 +267,16 @@ impl State for LiquidOverview {
                                         "USDt Transfer".to_owned(),
                                         Some(format!(
                                             "{} USDt",
-                                            crate::app::breez::assets::format_usdt_display(
+                                            crate::app::breez_liquid::assets::format_usdt_display(
                                                 amount.to_sat()
                                             )
                                         )),
                                     )
                                 } else {
-                                    let d: &str = match &payment.details {
-                                        PaymentDetails::Lightning {
-                                            payer_note,
-                                            description,
-                                            ..
-                                        } => payer_note
-                                            .as_ref()
-                                            .filter(|s| !s.is_empty())
-                                            .unwrap_or(description),
-                                        PaymentDetails::Liquid {
-                                            payer_note,
-                                            description,
-                                            ..
-                                        } => payer_note
-                                            .as_ref()
-                                            .filter(|s| !s.is_empty())
-                                            .unwrap_or(description),
-                                        PaymentDetails::Bitcoin { description, .. } => description,
-                                    };
-                                    (d.to_owned(), None)
+                                    (payment.details.description().to_owned(), None)
                                 };
 
-                                let is_incoming = matches!(
-                                    payment.payment_type,
-                                    breez_sdk_liquid::prelude::PaymentType::Receive
-                                );
+                                let is_incoming = payment.is_incoming();
                                 let details = payment.details.clone();
                                 let fees_sat = Amount::from_sat(payment.fees_sat);
                                 view::liquid::RecentTransaction {

@@ -56,6 +56,10 @@ pub fn link(theme: &Theme, status: Status) -> Style {
     button(&theme.colors.buttons.link, status)
 }
 
+pub fn orange_outline(theme: &Theme, status: Status) -> Style {
+    button(&theme.colors.buttons.orange_outline, status)
+}
+
 fn button(p: &Button, status: Status) -> Style {
     match status {
         Status::Active => Style {

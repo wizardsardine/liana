@@ -4,12 +4,12 @@ use std::time::Duration;
 use coincube_ui::widget::*;
 use iced::{clipboard, Subscription, Task};
 
-use crate::app::breez::assets::{parse_asset_to_minor_units, usdt_asset_id, USDT_PRECISION};
-use crate::app::breez::BreezClient;
+use crate::app::breez_liquid::assets::{parse_asset_to_minor_units, usdt_asset_id, USDT_PRECISION};
 use crate::app::cache::Cache;
 use crate::app::menu::Menu;
 use crate::app::message::Message;
 use crate::app::view;
+use crate::app::wallets::LiquidBackend;
 use crate::services::coincube::CoincubeClient;
 use crate::services::sideshift::{
     ShiftQuote, ShiftResponse, ShiftStatusKind, SideshiftClient, SideshiftNetwork,
@@ -298,7 +298,7 @@ impl SideshiftSendFlow {
     pub fn update(
         &mut self,
         msg: &SideshiftSendMessage,
-        breez_client: &Arc<BreezClient>,
+        breez_client: &Arc<LiquidBackend>,
         usdt_balance: u64,
     ) -> Task<Message> {
         match msg {

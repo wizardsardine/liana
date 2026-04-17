@@ -18,10 +18,16 @@ pub const WARM_PAPER: Color = iced::color!(0xF5F0E8);
 pub const TRANSPARENT: Color = iced::Color::TRANSPARENT;
 
 // === Brand accent colors ===
-pub const ORANGE: Color = iced::color!(0xF7931A); // Bitcoin Orange — primary accent
-pub const DARK_ORANGE: Color = iced::color!(0xD4770E); // Depth/hover on orange elements
-pub const LIGHT_ORANGE: Color = iced::color!(0xFFB347); // Glow halos, highlights
-pub const TRANSPARENT_ORANGE: Color = iced::color!(0xF7931A, 0.3);
+// Sourced from the coincube.io landing page CSS variables:
+//   --color-orange:       oklch(0.72 0.17 55)  ≈ #F3821D
+//   --color-orange-dark:  oklch(0.62 0.15 52)  ≈ #CA6719
+//   --color-orange-light: oklch(0.80 0.13 65)  ≈ #F3A862
+// DARK_ORANGE is the hover state for primary buttons; LIGHT_ORANGE
+// is reserved for glow halos and highlights.
+pub const ORANGE: Color = iced::color!(0xF3821D); // Primary brand accent
+pub const DARK_ORANGE: Color = iced::color!(0xCA6719); // Hover/pressed state for orange elements
+pub const LIGHT_ORANGE: Color = iced::color!(0xF3A862); // Glow halos, highlights
+pub const TRANSPARENT_ORANGE: Color = iced::color!(0xF3821D, 0.3);
 
 pub const GREEN: Color = iced::color!(0x00FF66);
 pub const DARK_GREEN: Color = iced::color!(0x1B8A4A); // Light-mode friendly green
@@ -45,5 +51,5 @@ pub const LIGHT_HOVER: Color = iced::color!(0xE5E0D8); // Hover state background
 // === Toast / notification severity colors (WCAG AA with white text) ===
 pub const SUCCESS_GREEN: Color = iced::color!(0x2D6A4F); // 6.39:1
 pub const ERROR_RED: Color = iced::color!(0xC0392B); // 5.44:1
-pub const WARN_ORANGE: Color = iced::color!(0xD4770E); // ~4.6:1 (same as DARK_ORANGE)
+pub const WARN_ORANGE: Color = iced::color!(0xCA6719); // ~4.5:1 (same as DARK_ORANGE)
 pub const INFO_BLUE: Color = iced::color!(0x2E86C1); // ~5.0:1

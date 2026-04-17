@@ -4,7 +4,8 @@ use coincube_ui::widget::*;
 use iced::Task;
 
 use crate::app::view::LiquidSettingsMessage;
-use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
+use crate::app::wallets::LiquidBackend;
+use crate::app::{cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 
@@ -13,11 +14,11 @@ use crate::daemon::Daemon;
 /// NOTE: The master seed backup flow has been moved to General Settings
 /// (Cube-level backup) since the master seed is shared across all wallets.
 pub struct LiquidSettings {
-    breez_client: Arc<BreezClient>,
+    breez_client: Arc<LiquidBackend>,
 }
 
 impl LiquidSettings {
-    pub fn new(breez_client: Arc<BreezClient>) -> Self {
+    pub fn new(breez_client: Arc<LiquidBackend>) -> Self {
         Self { breez_client }
     }
 }

@@ -42,6 +42,7 @@ pub fn general_section<'a>(
     let mut col = Column::new()
         .spacing(20)
         .push(super::header("General", SettingsMessage::GeneralSection))
+        .push(network_row(cache.network))
         .push(bitcoin_display_unit(new_unit_setting))
         .push(direction_badges_toggle(show_direction_badges))
         .push(fiat_price(new_price_setting, currencies_list))
@@ -71,8 +72,7 @@ fn backup_master_seed_card<'a>(backed_up: bool) -> Element<'a, Message> {
             "Start Backup",
         )
     };
-
-    card::simple(
+        card::simple(
         Row::new()
             .spacing(20)
             .align_y(Alignment::Center)
@@ -89,6 +89,27 @@ fn backup_master_seed_card<'a>(backed_up: bool) -> Element<'a, Message> {
                     .style(theme::button::secondary)
                     .on_press(SettingsMessage::BackupMasterSeed(BackupWalletMessage::Start).into()),
             ),
+    )
+    .width(Length::Fill)
+    .into()
+}
+
+fn network_row<'a>(network: coincube_core::miniscript::bitcoin::Network) -> Element<'a, Message> {
+    use coincube_core::miniscript::bitcoin::Network;
+    let label = match network {
+        Network::Bitcoin => "Mainnet",
+        Network::Regtest => "Regtest",
+        Network::Testnet => "Testnet",
+        Network::Signet => "Signet",
+        _ => "Unknown",
+    };
+    card::simple(
+        Row::new()
+            .spacing(20)
+            .align_y(Alignment::Center)
+            .push(text("Network:").bold())
+            .push(Space::new().width(Length::Fill))
+            .push(text(label)),
     )
     .width(Length::Fill)
     .into()
