@@ -65,34 +65,53 @@ pub fn balance_header_card<'a, Msg: 'a>(content: impl Into<Element<'a, Msg>>) ->
 /// `cache.current_cube_backed_up` is false and the user hasn't dismissed
 /// it this session.
 ///
-/// Clicking "Back Up Now" routes the user to General Settings where the
-/// backup flow lives. Clicking the × dismisses it for the session —
-/// it returns on app restart until the user actually backs up.
+/// Constrained to the same width as the main content column so it lines
+/// up with the page content below it. Clicking "Back Up Now" routes to
+/// General Settings; clicking the × dismisses for the session — it
+/// returns on app restart until the user actually backs up.
 pub fn backup_warning_banner<'a>() -> Element<'a, Message> {
-    container(
+    let body = container(
         row![
-            coincube_ui::icon::warning_icon().style(theme::text::warning),
+            coincube_ui::icon::warning_icon().color(color::BLACK),
             text::p2_regular(
                 "Your master seed phrase is not backed up. Back it up to avoid \
                  losing access to your Cube."
             )
-            .style(theme::text::warning),
+            .color(color::BLACK),
             Space::new().width(Length::Fill),
             button::secondary(None, "Back Up Now")
                 .padding([6, 14])
+                .width(Length::Fixed(140.0))
                 .on_press(Message::Menu(Menu::Settings(
                     crate::app::menu::SettingsSubMenu::General,
                 ))),
-            button::transparent(Some(cross_icon()), "")
-                .padding([6, 8])
-                .on_press(Message::DismissBackupWarning),
+            iced::widget::Button::new(
+                cross_icon()
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center),
+            )
+            .padding([8, 10])
+            .style(theme::button::secondary)
+            .on_press(Message::DismissBackupWarning),
         ]
         .spacing(10)
         .align_y(Alignment::Center),
     )
     .padding([8, 16])
     .width(Length::Fill)
-    .style(theme::notification::warning)
+    .style(theme::notification::warning);
+
+    // Constrain to the same FillPortion(1/8/1) layout used by the
+    // dashboard content column so the banner lines up horizontally.
+    container(row![
+        Space::new().width(Length::FillPortion(1)),
+        container(body)
+            .width(Length::FillPortion(8))
+            .max_width(1500),
+        Space::new().width(Length::FillPortion(1)),
+    ])
+    .padding([8, 0])
+    .width(Length::Fill)
     .into()
 }
 
