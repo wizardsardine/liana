@@ -132,6 +132,7 @@ impl Installer {
         Task::none()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         destination_path: CoincubeDirectory,
         network: bitcoin::Network,
