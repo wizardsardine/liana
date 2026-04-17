@@ -85,8 +85,6 @@ pub struct Context {
     /// is launched from inside a Cube.  Used by the key picker to fetch
     /// Cube-scoped Keychain keys from the API.
     pub cube_id: Option<String>,
-    /// Human-readable Cube name for display in the key-picker modal.
-    pub cube_name: Option<String>,
     /// Authenticated coincube-api client, used by the key picker to
     /// fetch Cube-scoped Keychain keys.  `None` when launched from
     /// the Loader (user hasn't done coincube-api auth yet).
@@ -126,7 +124,6 @@ impl Context {
             wallet_alias: String::new(),
             backup: None,
             cube_id: cube_settings.map(|cs| cs.id.clone()),
-            cube_name: cube_settings.map(|cs| cs.name.clone()),
             coincube_client,
         }
     }

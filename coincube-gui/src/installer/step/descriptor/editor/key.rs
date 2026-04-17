@@ -1577,10 +1577,14 @@ impl super::DescriptorEditModal for SelectKeySource {
         self.processing
     }
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
-        // Trigger initial Keychain keys fetch on first update
-        if !self.keychain_keys_fetched && self.keychain_available() {
-            return self.on_fetch_cube_keys();
-        }
+        // Trigger initial Keychain keys fetch on first update.
+        // Batched with the normal message handling so the incoming
+        // message is not dropped.
+        let fetch_task = if !self.keychain_keys_fetched && self.keychain_available() {
+            Some(self.on_fetch_cube_keys())
+        } else {
+            None
+        };
         // step back if selected device disconnected
         if self.step == Step::Details {
             if let Focus::Device(fg) = self.focus {
@@ -1591,7 +1595,7 @@ impl super::DescriptorEditModal for SelectKeySource {
                 }
             }
         }
-        match message {
+        let msg_task = match message {
             Message::ImportExport(ImportExportMessage::Close) => {
                 self.modal = None;
                 if self.step == Step::Select {
@@ -1666,6 +1670,11 @@ impl super::DescriptorEditModal for SelectKeySource {
                 }
             },
             _ => Task::none(),
+        };
+        // Batch the one-shot fetch alongside the normal message result.
+        match fetch_task {
+            Some(ft) => Task::batch([ft, msg_task]),
+            None => msg_task,
         }
     }
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
