@@ -188,7 +188,7 @@ pub fn home_view<'a>(
         })
     } else {
         let content = Row::new()
-            .push(icon::warning_fill_icon().size(ICON_SIZE_M))
+            .push(icon::warning_fill_icon().size(ICON_SIZE_M as u32))
             .push(
                 h4_regular(format!(
                     "Recovery path is or will soon be available for {} coin(s).",

@@ -31,7 +31,9 @@ where
     F: 'a + Fn(bool) -> M,
     M: 'a,
 {
-    let checkbox = checkbox(VALID_SSL_DOMAIN_NOTES, !value).on_toggle(move |b| closure(!b));
+    let checkbox = checkbox(!value)
+        .label(VALID_SSL_DOMAIN_NOTES)
+        .on_toggle(move |b| closure(!b));
     if addr.valid && is_ssl(&addr.value) {
         Some(checkbox.into())
     } else {

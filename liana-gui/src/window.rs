@@ -16,6 +16,7 @@ pub fn create_app_settings(app_id: &str) -> Settings {
         default_text_size: text::P1_SIZE.into(),
         default_font: font::REGULAR,
         fonts: font::load(),
+        vsync: true,
     }
 }
 

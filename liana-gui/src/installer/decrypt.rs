@@ -34,7 +34,7 @@ use liana_ui::{
         text::{self, p1_regular},
     },
     icon, theme,
-    widget::{modal::Modal, Button, CheckBox, Container, Element, Row},
+    widget::{modal::Modal, Button, CheckBox, Container, Element, Row, SpaceExt},
 };
 
 use crate::{
@@ -687,8 +687,9 @@ pub fn mnemonic_input_button<'a>(
 
     if collapsed {
         let line = Row::new().push(form).push(paste).spacing(V_SPACING);
-        let check_box =
-            CheckBox::new(disclaimer, ack).on_toggle(|ack| Decrypt::MnemonicAck(ack).into());
+        let check_box = CheckBox::new(ack)
+            .label(disclaimer)
+            .on_toggle(|ack| Decrypt::MnemonicAck(ack).into());
         let col = Column::new()
             .push(row![
                 text::p1_regular(label).color(color::WHITE),
@@ -758,6 +759,6 @@ pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Messag
         .align_x(alignment::Horizontal::Center);
 
     card::simple(column)
-        .width(Length::Fixed(modal::MODAL_WIDTH as f32))
+        .width(modal::MODAL_WIDTH as u32)
         .height(Length::Fixed(450.0))
 }

@@ -435,11 +435,9 @@ pub fn signer_xpubs<'a>(
             .push_maybe(if !xpubs.is_empty() {
                 Some(
                     Container::new(
-                        checkbox(
-                            "I have backed up the mnemonic, show the extended public key",
-                            did_backup,
-                        )
-                        .on_toggle(Message::UserActionDone),
+                        checkbox(did_backup)
+                            .label("I have backed up the mnemonic, show the extended public key")
+                            .on_toggle(Message::UserActionDone),
                     )
                     .padding(10),
                 )
@@ -694,7 +692,8 @@ pub fn register_descriptor<'a>(
         .width(Length::Fill);
 
     let registered_checkbox = created_desc.then_some(
-        checkbox("I have registered the descriptor on my device(s)", done)
+        checkbox(done)
+            .label("I have registered the descriptor on my device(s)")
             .on_toggle(Message::UserActionDone),
     );
 
@@ -815,7 +814,9 @@ pub fn backup_descriptor<'a>(
                     .max_width(1500),
             )
             .push(
-                checkbox("I have backed up my descriptor", done).on_toggle(Message::UserActionDone),
+                checkbox(done)
+                    .label("I have backed up my descriptor")
+                    .on_toggle(Message::UserActionDone),
             )
             .push(if done {
                 button::primary(None, "Next")
@@ -1772,7 +1773,11 @@ pub fn backup_mnemonic<'a>(
                         )
                     }),
             )
-            .push(checkbox("I have backed up my mnemonic", done).on_toggle(Message::UserActionDone))
+            .push(
+                checkbox(done)
+                    .label("I have backed up my mnemonic")
+                    .on_toggle(Message::UserActionDone),
+            )
             .push(if done {
                 button::secondary(None, "Next")
                     .on_press(Message::Next)

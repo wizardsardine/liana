@@ -18,9 +18,9 @@ impl Catalog for Theme {
 pub fn default(theme: &Theme) -> Style {
     Style {
         color: theme.colors.rule,
-        width: 2,
         radius: 0.0.into(),
         fill_mode: FillMode::Full,
+        snap: true,
     }
 }
 
@@ -28,8 +28,8 @@ pub fn default(theme: &Theme) -> Style {
 pub fn accent(theme: &Theme) -> Style {
     Style {
         color: theme.colors.text.accent,
-        width: 3,
         radius: 2.0.into(),
         fill_mode: FillMode::Percent(30.0),
+        snap: true,
     }
 }

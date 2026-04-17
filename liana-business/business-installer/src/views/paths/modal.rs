@@ -95,7 +95,8 @@ pub fn edit_path_modal_view<'a>(
                 format!("{name} ({identity_str})")
             };
             col = col.push(
-                checkbox(label, is_selected)
+                checkbox(is_selected)
+                    .label(label)
                     .on_toggle(move |_| Msg::TemplateToggleKeyInPath(*key_id)),
             );
         }

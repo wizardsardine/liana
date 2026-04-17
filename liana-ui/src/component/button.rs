@@ -12,9 +12,9 @@ use iced::{
 };
 
 const MENU_BTN_PADDING: [u16; 2] = [4 /* Top/Bottom */, 12 /* Left/Right */];
-const MENU_TEXT_SIZE: u16 = 22;
-const MENU_TEXT_COMPACT_SIZE: u16 = 18;
-const MENU_ICON_SIZE: u16 = ICON_SIZE_L;
+const MENU_TEXT_SIZE: u32 = 22;
+const MENU_TEXT_COMPACT_SIZE: u32 = 18;
+const MENU_ICON_SIZE: u32 = ICON_SIZE_L as u32;
 
 const ICON_BTN_SIZE: f32 = 40.0;
 const ICON_BTN_PADDING: f32 = 10.0;

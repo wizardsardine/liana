@@ -50,6 +50,7 @@ fn card_with_shadow(palette: &ContainerPalette, btn: bool) -> Style {
             }
         },
         shadow: CARD_SHADOW,
+        snap: false,
     }
 }
 

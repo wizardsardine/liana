@@ -31,7 +31,7 @@ use liana_ui::{
         tooltip,
     },
     icon, theme,
-    widget::{Container, Element},
+    widget::{ColumnExt, Container, Element, RowExt, SpaceExt},
 };
 
 use crate::{
@@ -925,7 +925,7 @@ impl SelectKeySource {
             .push_maybe(keys)
             .push(self.view_other_options())
             .align_x(Horizontal::Center)
-            .width(modal::MODAL_WIDTH);
+            .width(modal::MODAL_WIDTH as u32);
         let cont = Container::new(column).padding(15).style(theme::card::modal);
         cont.into()
     }

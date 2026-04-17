@@ -379,9 +379,9 @@ if form_is_valid {
 ### Common Spacing
 
 ```rust
-Space::with_height(Length::Fixed(100.0))  // Large gap
-Space::with_width(Length::Fill)           // Flexible fill
-Space::with_width(Length::FillPortion(2)) // Proportional
+Space::new().height(Length::Fixed(100.0))  // Large gap
+Space::new().width(Length::Fill)           // Flexible fill
+Space::new().width(Length::FillPortion(2)) // Proportional
 ```
 
 ### Column Layout

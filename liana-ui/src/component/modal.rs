@@ -20,14 +20,14 @@ use crate::{
     theme::{self, Theme},
 };
 
-use crate::widget::{Button, Column, Element, Row, Text};
+use crate::widget::{Button, Column, ColumnExt, Element, Row, RowExt, SpaceExt, Text};
 
-pub const BTN_W: u16 = 500;
-pub const BTN_H: u16 = 40;
-pub const V_SPACING: u16 = 10;
-pub const H_SPACING: u16 = 5;
+pub const BTN_W: u32 = 500;
+pub const BTN_H: u32 = 40;
+pub const V_SPACING: u32 = 10;
+pub const H_SPACING: u32 = 5;
 const MODAL_PADDING: f32 = 20.0;
-const MODAL_SPACING: u16 = 15;
+const MODAL_SPACING: u32 = 15;
 
 /// Modal width presets.
 #[derive(Debug, Clone, Copy)]
@@ -96,7 +96,7 @@ where
         .push(content)
         .spacing(MODAL_SPACING)
         .padding(MODAL_PADDING)
-        .width(width as u16);
+        .width(width as u32);
 
     let padding = Padding {
         top: 0.0,

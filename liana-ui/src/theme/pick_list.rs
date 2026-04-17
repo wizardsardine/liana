@@ -1,7 +1,7 @@
 use iced::widget::overlay::menu::Style as MenuStyle;
 use iced::{
     widget::pick_list::{Catalog, Status, Style, StyleFn},
-    Border,
+    Border, Shadow,
 };
 
 use super::palette::Menu;
@@ -25,7 +25,7 @@ pub fn primary(theme: &Theme, status: Status) -> Style {
     let style = match status {
         Status::Active => theme.colors.buttons.pick_list.active,
         Status::Hovered => theme.colors.buttons.pick_list.hovered,
-        Status::Opened => theme.colors.buttons.pick_list.hovered,
+        Status::Opened { .. } => theme.colors.buttons.pick_list.hovered,
     };
     Style {
         text_color: style.text,
@@ -62,6 +62,7 @@ impl From<Menu> for MenuStyle {
             text_color: value.text,
             selected_text_color: value.selected_text,
             selected_background: value.selected_background.into(),
+            shadow: Shadow::default(),
         }
     }
 }

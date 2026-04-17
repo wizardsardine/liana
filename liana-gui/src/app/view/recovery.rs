@@ -98,7 +98,7 @@ pub fn recovery_path_view<'a>(
 ) -> Element<'a, Message> {
     Row::new()
         .push(
-            checkbox("", selected)
+            checkbox(selected)
                 .on_toggle(move |_| Message::CreateSpend(CreateSpendMessage::SelectPath(index))),
         )
         .push(

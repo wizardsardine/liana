@@ -1,7 +1,7 @@
 use iced::{
     event::{self, Event},
     keyboard,
-    widget::{focus_next, focus_previous, pane_grid},
+    widget::{operation::focus_next, operation::focus_previous, pane_grid},
     Length, Size, Subscription, Task,
 };
 use iced_runtime::window;
@@ -146,7 +146,7 @@ where
             tracing::warn!("Error while setting error: {}", e);
         }
         let mut cmds = vec![
-            window::get_oldest().map(Message::Window),
+            window::oldest().map(Message::Window),
             Task::perform(ctrl_c(), |_| Message::CtrlC),
         ];
         let (pane, cmd) = pane::Pane::<I, S, M>::new(&config);
@@ -248,7 +248,7 @@ where
                         tracing::error!("Failed to update the window config: {e}");
                     }
                 }
-                iced::window::get_latest().and_then(iced::window::close)
+                iced::window::latest().and_then(iced::window::close)
             }
             Message::KeyPressed(Key::Tab(shift)) => {
                 log::debug!("Tab pressed!");
@@ -350,7 +350,7 @@ where
                     }
                 }
                 if !self.panes.iter().any(|(_, p)| !p.tabs.is_empty()) {
-                    return iced::window::get_latest().and_then(iced::window::close);
+                    return iced::window::latest().and_then(iced::window::close);
                 }
                 Task::none()
             }
@@ -652,11 +652,12 @@ where
             .into()
     }
 
-    pub fn scale_factor(&self) -> f64 {
+    pub fn scale_factor(&self) -> f32 {
         1.0
     }
 }
 
+#[derive(Clone)]
 pub struct Config {
     pub liana_directory: LianaDirectory,
     network: Option<bitcoin::Network>,
