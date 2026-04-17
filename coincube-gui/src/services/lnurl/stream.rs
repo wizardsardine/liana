@@ -4,25 +4,43 @@ use std::sync::Arc;
 use iced::futures::{self, SinkExt, TryStreamExt};
 use reqwest_sse::EventSource as _;
 
-use crate::app::breez::BreezClient;
+use crate::app::breez_liquid::BreezClient;
+use crate::app::wallets::{SparkBackend, WalletKind};
 
 use super::{InvoiceRequestEvent, InvoiceResponse, LnurlMessage};
 
+/// BOLT11 BOLT-11 encoded description field hard limit: tagged field
+/// values are length-prefixed with 10 bits, so the upper bound is
+/// 1023 bytes. Most payer wallets reject invoices larger than this
+/// anyway, and the LUD-06 spec caps metadata at ~639 bytes for
+/// reliable cross-wallet compatibility. We use 639 as the Spark-side
+/// max; longer descriptions (commonly NIP-57 zap requests) fall back
+/// to Liquid so the invoice still commits via description_hash.
+const BOLT11_MAX_DESCRIPTION_BYTES: usize = 639;
+
 /// Wrapper around the data needed for the LNURL SSE subscription.
-/// Implements `Hash` based only on `token` and `retries` so that
-/// Iced re-creates the subscription when those change (reconnect on
-/// disconnect), while the `breez_client` Arc is passed through without
-/// affecting identity.
+/// Implements `Hash` based on `token`, `retries`, and `preferred` so
+/// that Iced re-creates the subscription when any of those change
+/// (reconnect on disconnect, or re-route when the user switches their
+/// Lightning backend preference), while the backend Arcs are passed
+/// through without affecting identity.
+///
+/// Phase 5: both backends are held so `handle_invoice_request` can
+/// route per-request based on the cube's `default_lightning_backend`
+/// preference and the incoming event's description length.
 struct LnurlStreamData {
     token: String,
     retries: usize,
     breez_client: Arc<BreezClient>,
+    spark_backend: Option<Arc<SparkBackend>>,
+    preferred: WalletKind,
 }
 
 impl Hash for LnurlStreamData {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.token.hash(state);
         self.retries.hash(state);
+        self.preferred.hash(state);
     }
 }
 
@@ -35,12 +53,16 @@ pub fn lnurl_subscription(
     token: String,
     retries: usize,
     breez_client: Arc<BreezClient>,
+    spark_backend: Option<Arc<SparkBackend>>,
+    preferred: WalletKind,
 ) -> iced::Subscription<LnurlMessage> {
     iced::Subscription::run_with(
         LnurlStreamData {
             token,
             retries,
             breez_client,
+            spark_backend,
+            preferred,
         },
         create_stream,
     )
@@ -54,6 +76,8 @@ fn create_stream(
     let auth = format!("Bearer {}", data.token);
     let sse_url = format!("{}/api/v1/lnurl/stream", api_base_url);
     let breez_client = data.breez_client.clone();
+    let spark_backend = data.spark_backend.clone();
+    let preferred = data.preferred;
     let retries = data.retries;
 
     // Attempt to parse parameters for the SSE connection
@@ -171,6 +195,8 @@ fn create_stream(
                                                         handle_invoice_request(
                                                             &mut channel,
                                                             &breez_client,
+                                                            spark_backend.as_ref(),
+                                                            preferred,
                                                             &http,
                                                             &api_base_url,
                                                             &auth_header,
@@ -234,11 +260,26 @@ fn create_stream(
 }
 
 /// Handles an incoming LNURL invoice request:
-/// 1. Generates a BOLT11 invoice via Breez SDK
+/// 1. Generates a BOLT11 invoice via the routed backend
 /// 2. POSTs the invoice back to the API
+///
+/// Routing rules (Phase 5):
+/// - `preferred == Spark` AND `spark_backend.is_some()` AND the event
+///   carries a `description` AND the description fits in
+///   [`BOLT11_MAX_DESCRIPTION_BYTES`] → Spark. The invoice's `d` tag
+///   holds the raw metadata string; the payer's wallet must verify
+///   that SHA256(description) matches the callback's metadata hash,
+///   which it does by construction (the API computes them from the
+///   same source).
+/// - Otherwise → Liquid, which commits via `description_hash`
+///   directly and handles zap requests (NIP-57) that exceed the
+///   639-byte cap.
+#[allow(clippy::too_many_arguments)]
 async fn handle_invoice_request(
     channel: &mut iced::futures::channel::mpsc::Sender<LnurlMessage>,
     breez_client: &Arc<BreezClient>,
+    spark_backend: Option<&Arc<SparkBackend>>,
+    preferred: WalletKind,
     http: &reqwest::Client,
     api_base_url: &str,
     auth_header: &str,
@@ -274,15 +315,60 @@ async fn handle_invoice_request(
     }
     let amount_sat = event.amount_msats / 1000;
 
-    // Generate BOLT11 invoice via Breez Liquid SDK
-    let invoice_result = breez_client
-        .receive_lnurl_invoice(amount_sat, event.description_hash)
-        .await;
+    // Decide which backend mints the invoice. Spark only runs when
+    // all preconditions hold: explicit preference, bridge available,
+    // API sent a description preimage, the preimage fits the BOLT11
+    // description cap, AND SHA256(description) matches the
+    // description_hash the API advertised to the payer. The hash
+    // check prevents a divergence between the invoice's `d` tag and
+    // what the payer's wallet expects — if they differ, the payer
+    // rejects the invoice.
+    let use_spark = matches!(preferred, WalletKind::Spark)
+        && spark_backend.is_some()
+        && event.description.as_deref().is_some_and(|d| {
+            if d.len() > BOLT11_MAX_DESCRIPTION_BYTES {
+                return false;
+            }
+            use sha2::{Digest, Sha256};
+            let hash = Sha256::digest(d.as_bytes());
+            let hash_hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
+            if hash_hex != event.description_hash {
+                log::warn!(
+                    "[LNURL] description hash mismatch for request {}: \
+                     expected {}, got {} — falling back to Liquid",
+                    request_id,
+                    event.description_hash,
+                    hash_hex,
+                );
+                return false;
+            }
+            true
+        });
+
+    let invoice_result = if use_spark {
+        let spark = spark_backend.expect("checked above");
+        let description = event.description.clone().expect("checked above");
+        log::info!(
+            "[LNURL] Routing request {} via Spark (desc_len={})",
+            request_id,
+            description.len()
+        );
+        spark
+            .receive_bolt11(Some(amount_sat), description, None)
+            .await
+            .map(|ok| ok.payment_request)
+            .map_err(|e| e.to_string())
+    } else {
+        log::info!("[LNURL] Routing request {} via Liquid", request_id);
+        breez_client
+            .receive_lnurl_invoice(amount_sat, event.description_hash.clone())
+            .await
+            .map(|resp| resp.destination)
+            .map_err(|e| e.to_string())
+    };
 
     match invoice_result {
-        Ok(response) => {
-            let payment_request = response.destination;
-
+        Ok(payment_request) => {
             log::info!(
                 "[LNURL] Invoice generated for request {}: {}...",
                 request_id,
@@ -336,10 +422,9 @@ async fn handle_invoice_request(
                 }
             }
         }
-        Err(err) => {
-            let error = err.to_string();
+        Err(error) => {
             log::error!(
-                "[LNURL] Breez SDK failed to generate invoice for request {}: {}",
+                "[LNURL] Backend failed to generate invoice for request {}: {}",
                 request_id,
                 error
             );

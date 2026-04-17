@@ -3,6 +3,7 @@ pub mod connect;
 mod global_home;
 pub mod liquid;
 pub mod settings;
+pub mod spark;
 pub mod vault;
 
 use std::sync::Arc;
@@ -27,6 +28,7 @@ pub use liquid::receive::LiquidReceive;
 pub use liquid::send::LiquidSend;
 pub use liquid::settings::{BackupWalletState, LiquidSettings, LiquidSettingsFlowState};
 pub use liquid::transactions::LiquidTransactions;
+pub use spark::{SparkOverview, SparkReceive, SparkSend, SparkSettings, SparkTransactions};
 pub use vault::coins::CoinsPanel;
 pub use vault::label::LabelsEdited;
 pub use vault::overview::VaultOverview;

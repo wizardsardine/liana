@@ -1,6 +1,7 @@
 pub mod about;
 pub mod general;
 pub mod install_stats;
+pub mod lightning;
 
 use iced::widget::{Column, Row};
 use iced::{Alignment, Length};
@@ -72,6 +73,11 @@ pub fn list<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Message> {
                 "General",
                 icon::wrench_icon(),
                 Message::Settings(SettingsMessage::GeneralSection),
+            ))
+            .push(settings_section(
+                "Lightning",
+                icon::lightning_icon(),
+                Message::Settings(SettingsMessage::LightningSection),
             ))
             .push(settings_section(
                 "About",

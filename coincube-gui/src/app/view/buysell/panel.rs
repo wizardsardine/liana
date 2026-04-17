@@ -84,7 +84,7 @@ pub struct BuySellPanel {
 
     // services used by several buysell providers
     pub coincube_client: crate::services::coincube::CoincubeClient,
-    pub breez_client: std::sync::Arc<crate::app::breez::BreezClient>,
+    pub breez_client: std::sync::Arc<crate::app::breez_liquid::BreezClient>,
     pub detected_country: Option<&'static crate::services::coincube::Country>,
 
     // coincube session information, restored from OS keyring
@@ -98,7 +98,7 @@ impl BuySellPanel {
     pub fn new(
         network: bitcoin::Network,
         wallet: std::sync::Arc<crate::app::wallet::Wallet>,
-        breez_client: std::sync::Arc<crate::app::breez::BreezClient>,
+        breez_client: std::sync::Arc<crate::app::breez_liquid::BreezClient>,
     ) -> Self {
         BuySellPanel {
             // Start in detecting location state

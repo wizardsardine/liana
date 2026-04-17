@@ -10,7 +10,7 @@ use coincubed::config::Config as DaemonConfig;
 
 use crate::{
     app::{
-        breez::BreezError,
+        breez_liquid::BreezError,
         cache::{DaemonCache, FiatPrice},
         error::Error,
         view,
@@ -75,15 +75,15 @@ pub enum Message {
     BroadcastModal(Result<HashSet<Txid>, Error>),
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
     Export(ImportExportMessage),
-    PaymentsLoaded(Result<Vec<breez_sdk_liquid::prelude::Payment>, BreezError>),
-    RefundablesLoaded(Result<Vec<breez_sdk_liquid::prelude::RefundableSwap>, BreezError>),
+    PaymentsLoaded(Result<Vec<crate::app::wallets::DomainPayment>, BreezError>),
+    RefundablesLoaded(Result<Vec<crate::app::wallets::DomainRefundableSwap>, BreezError>),
     /// Result of a debounced background poll started by
     /// `App::refresh_refundables_task`. Distinct from `RefundablesLoaded`
     /// (which is produced by manual panel reloads) so that only poll
     /// responses touch the App's debounce/in-flight tracking. A reload
     /// response racing ahead of a poll must not clear the in-flight flag,
     /// or a second concurrent `list_refundables()` could be launched.
-    RefundablesPolled(Result<Vec<breez_sdk_liquid::prelude::RefundableSwap>, BreezError>),
+    RefundablesPolled(Result<Vec<crate::app::wallets::DomainRefundableSwap>, BreezError>),
     /// Result of a user-initiated `refund_onchain_tx` call. The `swap_address`
     /// is carried alongside the response so the handler can look up the exact
     /// `in_flight_refunds` entry that originated this refund — necessary when
@@ -95,6 +95,12 @@ pub enum Message {
     },
     BreezInfo(Result<breez_sdk_liquid::prelude::GetInfoResponse, BreezError>),
     BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
+    /// Forwarded from the [`coincube-spark-bridge`] subprocess via
+    /// `SparkBackend::event_subscription`. Wrapped in the
+    /// [`crate::app::breez_spark::SparkClientEvent`] newtype so the
+    /// app-level message doesn't depend on `coincube_spark_protocol`
+    /// directly.
+    SparkEvent(crate::app::breez_spark::SparkClientEvent),
     SettingsSaved,
     SettingsSaveFailed(Error),
     /// Store the Bitcoind handle produced by configure_and_start_internal_bitcoind so

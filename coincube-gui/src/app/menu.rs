@@ -3,6 +3,10 @@ use coincube_core::miniscript::bitcoin::{OutPoint, Txid};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Menu {
     Home,
+    /// Spark wallet — default for everyday Lightning UX (Phase 5 flips
+    /// the Lightning Address routing default here). Listed above Liquid
+    /// in the sidebar because it's the default wallet post-Phase 5.
+    Spark(SparkSubMenu),
     Liquid(LiquidSubMenu),
     Vault(VaultSubMenu),
     Marketplace(MarketplaceSubMenu),
@@ -46,6 +50,21 @@ pub enum LiquidSubMenu {
     Settings(Option<SettingsOption>),
 }
 
+/// Spark wallet sub-panels.
+///
+/// Mirrors [`LiquidSubMenu`] on purpose — the Phase 4 plan is to copy
+/// the Liquid panels into `state/spark/` and `view/spark/` and strip
+/// the Liquid-only flows, so keeping the enum shape identical lets that
+/// work land without menu churn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SparkSubMenu {
+    Overview,
+    Send,
+    Receive,
+    Transactions(Option<Txid>),
+    Settings(Option<SettingsOption>),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VaultSubMenu {
     Overview,
@@ -61,6 +80,10 @@ pub enum VaultSubMenu {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsSubMenu {
     General,
+    /// App-level Lightning preferences — currently a single card
+    /// picking which backend fulfills incoming Lightning Address
+    /// invoices for this cube.
+    Lightning,
     About,
 }
 

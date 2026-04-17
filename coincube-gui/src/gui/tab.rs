@@ -11,7 +11,7 @@ use coincubed::commands::ListCoinsResult;
 
 use crate::{
     app::{
-        self, breez,
+        self, breez_liquid,
         cache::{Cache, DaemonCache},
         settings::{update_settings_file, WalletId, WalletSettings},
         wallet::Wallet,
@@ -64,10 +64,17 @@ pub enum Message {
         datadir: CoincubeDirectory,
         network: bitcoin::Network,
         config: app::Config,
-        breez_client: Result<Arc<app::breez::BreezClient>, app::breez::BreezError>,
+        breez_client: Result<Arc<app::breez_liquid::BreezClient>, app::breez_liquid::BreezError>,
     },
     BreezClientLoadedAfterPin {
-        breez_client: Result<Arc<app::breez::BreezClient>, app::breez::BreezError>,
+        breez_client: Result<Arc<app::breez_liquid::BreezClient>, app::breez_liquid::BreezError>,
+        /// Spark backend loaded in the same task as the Liquid client.
+        /// `None` if the cube has no Spark signer configured; `Some(Err(..))`
+        /// if the bridge subprocess failed to spawn or the handshake failed.
+        /// A failure here is non-fatal — the gui logs and continues with
+        /// `spark_backend = None`, which surfaces as "Spark unavailable" in
+        /// the Spark panels.
+        spark_backend: Option<Arc<app::wallets::SparkBackend>>,
         config: app::Config,
         datadir: CoincubeDirectory,
         network: bitcoin::Network,
@@ -178,7 +185,7 @@ impl Tab {
                         }
                     }
                     let (install, command) =
-                        Installer::new(datadir, network, None, init, false, None, None);
+                        Installer::new(datadir, network, None, init, false, None, None, None);
                     self.state = State::Installer(install);
                     command.map(Message::Install)
                 }
@@ -229,6 +236,7 @@ impl Tab {
                         false,
                         None,
                         None, // No breez_client from login screen
+                        None, // No spark_backend from login screen
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
@@ -268,7 +276,7 @@ impl Tab {
                         datadir: l.datadir.clone(),
                         network: l.network,
                         config,
-                        breez_client: Err(breez::BreezError::SignerError(
+                        breez_client: Err(breez_liquid::BreezError::SignerError(
                             "BreezClient missing - should have been pre-loaded after PIN entry. \
                              Liquid wallet is encrypted and cannot be loaded without PIN."
                                 .to_string(),
@@ -339,6 +347,7 @@ impl Tab {
                             Some(*settings),
                             cube.clone(),
                             i.breez_client.clone(), // Pass pre-loaded BreezClient from installer
+                            None, // Installer path doesn't plumb Spark yet — follow-up
                         );
                         self.state = State::Loader(loader);
                         command.map(Message::Load)
@@ -358,6 +367,7 @@ impl Tab {
 
                             let (app, command) = app::App::new_without_wallet(
                                 breez.clone(),
+                                i.spark_backend.clone(),
                                 cfg,
                                 i.datadir.clone(),
                                 network,
@@ -403,6 +413,7 @@ impl Tab {
                         true, // launched from app (loader is part of app flow)
                         Some(loader.cube_settings.clone()), // pass cube settings for returning
                         loader.breez_client.clone(), // pass breez_client to avoid re-entering PIN
+                        None, // spark_backend not available from loader path
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
@@ -438,6 +449,7 @@ impl Tab {
                             // Use pre-loaded BreezClient (came from PIN entry path)
                             return Task::done(Message::Load(loader::Message::BreezLoaded {
                                 breez,
+                                spark_backend: loader.spark_backend.clone(),
                                 cache,
                                 wallet,
                                 config: loader.gui_config.clone(),
@@ -470,6 +482,7 @@ impl Tab {
                         // Use pre-loaded BreezClient (came from PIN entry path)
                         return Task::done(Message::Load(loader::Message::BreezLoaded {
                             breez,
+                            spark_backend: loader.spark_backend.clone(),
                             cache,
                             wallet,
                             config,
@@ -495,6 +508,7 @@ impl Tab {
                 }
                 loader::Message::BreezLoaded {
                     breez,
+                    spark_backend,
                     cache,
                     wallet,
                     config,
@@ -508,6 +522,7 @@ impl Tab {
                         cache,
                         wallet,
                         breez,
+                        spark_backend,
                         config,
                         daemon,
                         datadir,
@@ -537,6 +552,7 @@ impl Tab {
                             true,                              // launched from app
                             Some(app.cube_settings().clone()), // pass cube settings for returning
                             Some(app.breez_client()), // pass breez_client to avoid re-entering PIN
+                            app.spark_backend(),      // preserve Spark bridge across vault setup
                         );
                         self.state = State::Installer(install);
                         command.map(Message::Install)
@@ -572,22 +588,65 @@ impl Tab {
 
                             Task::perform(
                                 async move {
-                                    // Load BreezClient for Liquid wallet with PIN
-                                    let breez_result = if let Some(fingerprint) =
-                                        cube.liquid_wallet_signer_fingerprint
-                                    {
-                                        breez::load_breez_client(
-                                            datadir_clone.path(),
-                                            network_val,
-                                            fingerprint,
-                                            &pin,
-                                        )
-                                        .await
-                                    } else {
-                                        Err(breez::BreezError::SignerError(
-                                            "No Liquid wallet configured".to_string(),
-                                        ))
-                                    };
+                                    // Both Breez SDKs (Liquid + Spark) load
+                                    // from the same HotSigner fingerprint.
+                                    // A single fingerprint is persisted on
+                                    // the cube as `breez_wallet_signer_fingerprint`;
+                                    // the serde alias on that field accepts
+                                    // the old `liquid_wallet_signer_fingerprint`
+                                    // name transparently, so cubes written
+                                    // before the consolidation still load.
+                                    let breez_signer_fingerprint =
+                                        cube.breez_wallet_signer_fingerprint;
+
+                                    let breez_result =
+                                        if let Some(fingerprint) = breez_signer_fingerprint {
+                                            breez_liquid::load_breez_client(
+                                                datadir_clone.path(),
+                                                network_val,
+                                                fingerprint,
+                                                &pin,
+                                            )
+                                            .await
+                                        } else {
+                                            Err(breez_liquid::BreezError::SignerError(
+                                                "No Liquid wallet configured".to_string(),
+                                            ))
+                                        };
+
+                                    // Load Spark backend alongside Liquid. Failures
+                                    // here are non-fatal — we log + return None so
+                                    // the gui can continue with Liquid-only and the
+                                    // Spark panels surface a placeholder. The load
+                                    // path spawns the bridge subprocess
+                                    // (coincube-spark-bridge), performs the init
+                                    // handshake with the cube's mnemonic, and
+                                    // returns an Arc<SparkClient> on success.
+                                    let spark_backend =
+                                        if let Some(fingerprint) = breez_signer_fingerprint {
+                                            match app::breez_spark::load_spark_client(
+                                                datadir_clone.path(),
+                                                network_val,
+                                                fingerprint,
+                                                &pin,
+                                            )
+                                            .await
+                                            {
+                                                Ok(client) => Some(Arc::new(
+                                                    app::wallets::SparkBackend::new(client),
+                                                )),
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        "Spark bridge unavailable, continuing \
+                                                     without Spark: {}",
+                                                        e
+                                                    );
+                                                    None
+                                                }
+                                            }
+                                        } else {
+                                            None
+                                        };
 
                                     (
                                         config_clone,
@@ -595,6 +654,7 @@ impl Tab {
                                         network_val,
                                         cube,
                                         breez_result,
+                                        spark_backend,
                                         wallet_settings_clone,
                                         internal_bitcoind_clone,
                                         backup_clone,
@@ -606,12 +666,14 @@ impl Tab {
                                     network,
                                     cube,
                                     breez_result,
+                                    spark_backend,
                                     wallet_settings,
                                     internal_bitcoind,
                                     backup,
                                 )| {
                                     Message::BreezClientLoadedAfterPin {
                                         breez_client: breez_result,
+                                        spark_backend,
                                         config,
                                         datadir,
                                         network,
@@ -665,7 +727,7 @@ impl Tab {
                             "BreezClient unavailable for remote backend, continuing in disconnected mode: {}",
                             e
                         );
-                        Arc::new(app::breez::BreezClient::disconnected(network))
+                        Arc::new(app::breez_liquid::BreezClient::disconnected(network))
                     }
                 };
                 match create_app_with_remote_backend(
@@ -694,6 +756,7 @@ impl Tab {
                 _,
                 Message::BreezClientLoadedAfterPin {
                     breez_client,
+                    spark_backend,
                     config,
                     datadir,
                     network,
@@ -710,19 +773,23 @@ impl Tab {
                 // will surface their own errors on demand.
                 let breez = match breez_client {
                     Ok(breez) => breez,
-                    Err(app::breez::BreezError::NetworkNotSupported(_)) => {
-                        Arc::new(app::breez::BreezClient::disconnected(network))
+                    Err(app::breez_liquid::BreezError::NetworkNotSupported(_)) => {
+                        Arc::new(app::breez_liquid::BreezClient::disconnected(network))
                     }
                     Err(e) => {
                         tracing::warn!(
                             "BreezClient unavailable after PIN, continuing in disconnected mode: {}",
                             e
                         );
-                        Arc::new(app::breez::BreezClient::disconnected(network))
+                        Arc::new(app::breez_liquid::BreezClient::disconnected(network))
                     }
                 };
                 if let Some(wallet_settings) = wallet_settings {
                     if wallet_settings.remote_backend_auth.is_some() {
+                        // Remote-backend login path doesn't plumb Spark yet —
+                        // the remote backend uses `create_app_with_remote_backend`
+                        // which takes its own `None` for Spark. Wiring the
+                        // remote-backend Spark path is a follow-up.
                         let (login, command) = login::CoincubeLiteLogin::new(
                             datadir.clone(),
                             network,
@@ -741,13 +808,20 @@ impl Tab {
                             Some(wallet_settings.clone()),
                             cube,
                             Some(breez),
+                            spark_backend,
                         );
                         self.state = State::Loader(loader);
                         command.map(Message::Load)
                     }
                 } else {
-                    let (app, command) =
-                        App::new_without_wallet(breez, config, datadir, network, cube);
+                    let (app, command) = App::new_without_wallet(
+                        breez,
+                        spark_backend,
+                        config,
+                        datadir,
+                        network,
+                        cube,
+                    );
                     self.state = State::App(app);
                     command.map(Message::Run)
                 }
@@ -907,7 +981,7 @@ pub fn create_app_with_remote_backend(
     coincube_dir: CoincubeDirectory,
     network: bitcoin::Network,
     config: app::Config,
-    breez_client: Arc<app::breez::BreezClient>,
+    breez_client: Arc<app::breez_liquid::BreezClient>,
 ) -> Result<(app::App, iced::Task<app::Message>), String> {
     // If someone modified the wallet_alias on Liana-Connect,
     // then the new alias is imported and stored in the settings file.
@@ -1010,6 +1084,7 @@ pub fn create_app_with_remote_backend(
             node_bitcoind_ibd: None,
             node_bitcoind_last_log: None,
             vault_expanded: false,
+            spark_expanded: false,
             liquid_expanded: false,
             marketplace_expanded: false,
             marketplace_p2p_expanded: false,
@@ -1022,6 +1097,8 @@ pub fn create_app_with_remote_backend(
             btc_usd_price: None,
             show_direction_badges: true,
             lightning_address: None,
+            cube_id: cube_settings.id.clone(),
+            default_lightning_backend: cube_settings.default_lightning_backend,
         },
         Arc::new(
             Wallet::new(wallet.descriptor)
@@ -1036,6 +1113,7 @@ pub fn create_app_with_remote_backend(
                 .expect("Datadir should be conform"),
         ),
         breez_client,
+        None, // Spark backend — Phase 4 wires the runtime spawn
         config,
         Arc::new(remote_backend),
         coincube_dir,

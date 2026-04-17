@@ -145,6 +145,7 @@ const SOL_LOGO: &[u8] = include_bytes!("../static/logos/sol.svg");
 const LIQUID_LOGO: &[u8] = include_bytes!("../static/logos/liquid.svg");
 const LIGHTNING_BADGE: &[u8] = include_bytes!("../static/logos/lightning_badge.svg");
 const CHAIN_BADGE: &[u8] = include_bytes!("../static/logos/chain_badge.svg");
+const SPARK_BADGE: &[u8] = include_bytes!("../static/logos/spark_badge.svg");
 
 pub fn btc_logo<'a>() -> Svg<'a, Theme> {
     Svg::new(svg::Handle::from_memory(BTC_LOGO))
@@ -164,6 +165,14 @@ pub fn lightning_badge<'a>() -> Svg<'a, Theme> {
 
 pub fn chain_badge<'a>() -> Svg<'a, Theme> {
     Svg::new(svg::Handle::from_memory(CHAIN_BADGE))
+}
+
+/// Black circle + white asterisk badge representing the Spark
+/// protocol. Used as a network badge on BTC logos to distinguish
+/// Spark-native payments from plain on-chain Bitcoin in transaction
+/// row icons.
+pub fn spark_badge<'a>() -> Svg<'a, Theme> {
+    Svg::new(svg::Handle::from_memory(SPARK_BADGE))
 }
 
 pub fn eth_logo<'a>() -> Svg<'a, Theme> {
@@ -197,6 +206,7 @@ pub fn network_logo<'a>(network: &str) -> Svg<'a, Theme> {
         "polygon" => eth_logo(),
         "lightning" => lightning_badge(),
         "bitcoin" => chain_badge(),
+        "spark" => spark_badge(),
         _ => usdt_logo(),
     }
 }

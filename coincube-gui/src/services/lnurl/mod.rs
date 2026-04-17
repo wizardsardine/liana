@@ -10,6 +10,14 @@ pub struct InvoiceRequestEvent {
     pub username: String,
     pub amount_msats: u64,
     pub description_hash: String,
+    /// Raw preimage of `description_hash`: the LNURL metadata JSON for
+    /// standard requests, or the serialized nostr zap request for
+    /// NIP-57 zaps. Present on API versions that support Spark routing
+    /// (Phase 5+) and absent on older servers — the SSE handler falls
+    /// back to Liquid (which commits to the hash directly) whenever
+    /// this field is missing.
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// Request body for POST /api/v1/lnurl/invoice-response

@@ -26,6 +26,7 @@ pub fn general_section<'a>(
     let mut col = Column::new()
         .spacing(20)
         .push(super::header("General", SettingsMessage::GeneralSection))
+        .push(network_row(cache.network))
         .push(bitcoin_display_unit(new_unit_setting))
         .push(direction_badges_toggle(show_direction_badges))
         .push(fiat_price(new_price_setting, currencies_list));
@@ -35,6 +36,27 @@ pub fn general_section<'a>(
     }
 
     dashboard(menu, cache, col)
+}
+
+fn network_row<'a>(network: coincube_core::miniscript::bitcoin::Network) -> Element<'a, Message> {
+    use coincube_core::miniscript::bitcoin::Network;
+    let label = match network {
+        Network::Bitcoin => "Mainnet",
+        Network::Regtest => "Regtest",
+        Network::Testnet => "Testnet",
+        Network::Signet => "Signet",
+        _ => "Unknown",
+    };
+    card::simple(
+        Row::new()
+            .spacing(20)
+            .align_y(Alignment::Center)
+            .push(text("Network:").bold())
+            .push(Space::new().width(Length::Fill))
+            .push(text(label)),
+    )
+    .width(Length::Fill)
+    .into()
 }
 
 fn direction_badges_toggle<'a>(show: bool) -> Element<'a, Message> {
