@@ -5,7 +5,7 @@ use coincube_ui::{
     component::{amount::*, badge, button, card, form, text::*},
     icon::{self, receipt_icon},
     theme,
-    widget::*,
+    widget::{Button, Column, ColumnExt, Container, Element, Row},
 };
 
 use crate::{

@@ -1,6 +1,6 @@
 use iced::Length;
 
-use coincube_ui::{component::hw, theme, widget::*};
+use coincube_ui::{widget::{Button, Element}, component::hw, theme};
 
 use crate::{
     app::view::message::*,

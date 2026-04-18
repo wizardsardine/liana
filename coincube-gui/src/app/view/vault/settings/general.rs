@@ -6,7 +6,7 @@ use super::header;
 use coincube_ui::component::card;
 use coincube_ui::component::text::*;
 use coincube_ui::theme;
-use coincube_ui::widget::*;
+use coincube_ui::widget::Element;
 
 use crate::app::cache;
 use crate::app::menu::Menu;

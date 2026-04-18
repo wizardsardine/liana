@@ -13,7 +13,7 @@ use coincube_core::miniscript::bitcoin::{
 use coincube_ui::{
     component::{amount::*, button, text::*},
     theme,
-    widget::*,
+    widget::{Column, Container, Element, Row},
 };
 
 use crate::app::{

@@ -21,7 +21,7 @@ use coincube_ui::{
         text::{self, *},
     },
     icon, theme,
-    widget::*,
+    widget::{Column, Container, Element, Row},
 };
 
 use crate::{
