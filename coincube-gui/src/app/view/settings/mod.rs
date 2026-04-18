@@ -8,7 +8,10 @@ use iced::widget::{Column, Row};
 use iced::{Alignment, Length};
 
 use coincube_ui::component::{badge, text::*};
-use coincube_ui::{icon, theme, widget::*};
+use coincube_ui::{
+    icon, theme,
+    widget::{Button, Container, Element},
+};
 
 use crate::app::cache::Cache;
 use crate::app::menu::Menu;
