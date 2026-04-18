@@ -63,7 +63,18 @@ pub fn update(
 ) -> iced::Task<Message> {
     match msg {
         ConnectCubeMembersMessage::Enter => {
-            if state.members.is_empty() && state.pending_invites.is_empty() && !state.loading {
+            // Skip if a load is already in flight — avoid piling duplicates
+            // on top of each other when the user taps quickly.
+            if state.loading {
+                return iced::Task::none();
+            }
+            // Retry when (a) we have no data yet, or (b) the previous load
+            // failed and the panel is showing stale/empty data plus an
+            // error banner. Successful cached data is left alone — the
+            // Reload button is the explicit "force refresh" path.
+            let needs_load = state.error.is_some()
+                || (state.members.is_empty() && state.pending_invites.is_empty());
+            if needs_load {
                 return spawn_load(state, client, cube_id);
             }
             iced::Task::none()
@@ -274,8 +285,9 @@ fn spawn_load_silent(
 /// for PR 3. The string match is defensive so a false-negative just routes
 /// to the generic error banner rather than the dedicated dialog.
 fn is_stranded_vault_conflict(err: &str) -> bool {
-    let lower = err.to_ascii_lowercase();
-    lower.contains("active vault") || lower.contains("active vaults")
+    // Matches both "active vault" and "active vaults" (plural contains
+    // singular as a substring).
+    err.to_ascii_lowercase().contains("active vault")
 }
 
 #[cfg(test)]
@@ -525,6 +537,62 @@ mod tests {
         );
         assert_eq!(state.members.len(), 1);
         assert_eq!(state.members[0].id, 2);
+    }
+
+    #[test]
+    fn enter_retries_when_prior_load_errored_even_with_stale_data() {
+        // Regression: successful load populated members, then a later
+        // Reload failed — Enter used to skip the retry because members
+        // wasn't empty, leaving the panel wedged on stale data + an
+        // error banner.
+        let mut state = ConnectCubeMembersState::new();
+        state.members = vec![sample_member(7, "alice@example.com")];
+        state.error = Some("previous load failed".to_string());
+        // generation starts at 0
+        assert_eq!(state.load_generation, 0);
+
+        // None/None for client/cube_id — we assert on the load-generation
+        // bump as a proxy for "spawn_load was invoked". spawn_load's
+        // guarded branch sets state.error and returns Task::none when the
+        // client is missing, so we expect the error message to be
+        // replaced with the "not ready" copy.
+        run(&mut state, ConnectCubeMembersMessage::Enter);
+        // `spawn_load` short-circuits on missing client, which in turn
+        // replaces `state.error` with the "Not ready" message. The stale
+        // error from the prior failed load is cleared as a side effect —
+        // proving the retry path fired.
+        assert_ne!(
+            state.error.as_deref(),
+            Some("previous load failed"),
+            "Enter should have attempted a fresh load, clearing the stale error"
+        );
+    }
+
+    #[test]
+    fn enter_skips_when_loaded_successfully_and_no_error() {
+        // Happy cached state: members present, no error, not loading.
+        // Enter should be a no-op — the explicit Reload button is the
+        // "force refresh" path.
+        let mut state = ConnectCubeMembersState::new();
+        state.members = vec![sample_member(7, "alice@example.com")];
+        state.error = None;
+        // Need a client for spawn_load to fire the network task; we
+        // assert the generation DOESN'T bump instead.
+        let gen_before = state.load_generation;
+        let loading_before = state.loading;
+        run(&mut state, ConnectCubeMembersMessage::Enter);
+        assert_eq!(state.load_generation, gen_before);
+        assert_eq!(state.loading, loading_before);
+    }
+
+    #[test]
+    fn enter_skips_when_load_is_in_flight() {
+        let mut state = ConnectCubeMembersState::new();
+        state.loading = true; // simulate in-flight load
+        let gen_before = state.load_generation;
+        run(&mut state, ConnectCubeMembersMessage::Enter);
+        assert_eq!(state.load_generation, gen_before);
+        assert!(state.loading);
     }
 
     #[test]

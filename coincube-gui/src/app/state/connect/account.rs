@@ -1205,6 +1205,36 @@ pub fn load_contacts_data(client: &CoincubeClient, generation: u64) -> iced::Tas
     ])
 }
 
+/// Load Security tab data (verified devices + login activity).
+pub fn load_security_data(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
+    let c1 = client.clone();
+    let c2 = client.clone();
+    iced::Task::batch([
+        iced::Task::perform(
+            async move { c1.get_verified_devices().await },
+            move |res| match res {
+                Ok(devices) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::VerifiedDevicesLoaded(devices, generation),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Error(e.to_string()),
+                )),
+            },
+        ),
+        iced::Task::perform(
+            async move { c2.get_login_activity().await },
+            move |res| match res {
+                Ok(activity) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::LoginActivityLoaded(activity, generation),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Error(e.to_string()),
+                )),
+            },
+        ),
+    ])
+}
+
 #[cfg(test)]
 mod invite_form_tests {
     //! State-layer tests for the W12 cube multi-select invite form.
@@ -1325,34 +1355,4 @@ mod invite_form_tests {
         );
         assert_eq!(panel.contacts_state.invite_cube_selections, vec![1, 42]);
     }
-}
-
-/// Load Security tab data (verified devices + login activity).
-pub fn load_security_data(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
-    let c1 = client.clone();
-    let c2 = client.clone();
-    iced::Task::batch([
-        iced::Task::perform(
-            async move { c1.get_verified_devices().await },
-            move |res| match res {
-                Ok(devices) => Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::VerifiedDevicesLoaded(devices, generation),
-                )),
-                Err(e) => Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::Error(e.to_string()),
-                )),
-            },
-        ),
-        iced::Task::perform(
-            async move { c2.get_login_activity().await },
-            move |res| match res {
-                Ok(activity) => Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::LoginActivityLoaded(activity, generation),
-                )),
-                Err(e) => Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::Error(e.to_string()),
-                )),
-            },
-        ),
-    ])
 }
