@@ -330,7 +330,24 @@ fn invite_form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcco
         .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
         .push(text::p2_regular("Role").color(color::GREY_3))
         .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
-        .push(role_chips)
+        .push(role_chips);
+
+    // W12: optional cube multi-select. Only rendered when the backend
+    // returned a non-empty cube list.
+    if let Some(cubes) = cs.invite_available_cubes.as_deref() {
+        if !cubes.is_empty() {
+            form = form
+                .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
+                .push(
+                    text::p2_regular("Also add to Cube(s) (optional)")
+                        .color(color::GREY_3),
+                )
+                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                .push(invite_cubes_section(cubes, &cs.invite_cube_selections));
+        }
+    }
+
+    form = form
         .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
         .push(submit)
         .spacing(0)
@@ -343,7 +360,73 @@ fn invite_form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcco
             .push(text::p2_regular(err).color(color::RED));
     }
 
+    if let Some(msg) = cs.invite_cube_error.as_deref() {
+        form = form
+            .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
+            .push(invite_cube_conflict_card(msg));
+    }
+
     form.into()
+}
+
+/// Renders the cube multi-select list. Each row is a labelled
+/// [`CheckBox`] emitting `ToggleInviteCube(id)` on toggle.
+fn invite_cubes_section<'a>(
+    cubes: &'a [crate::app::state::connect::InviteCubeOption],
+    selections: &'a [u64],
+) -> Element<'a, ConnectAccountMessage> {
+    let mut col = Column::new().spacing(6);
+    for cube in cubes {
+        let checked = selections.contains(&cube.id);
+        let id = cube.id;
+        let label = format!("{} ({})", cube.name, cube.network);
+        col = col.push(
+            CheckBox::new(checked)
+                .label(label)
+                .on_toggle(move |_| {
+                    ConnectAccountMessage::Contacts(ContactsMessage::ToggleInviteCube(id))
+                })
+                .style(theme::checkbox::primary)
+                .size(18),
+        );
+    }
+    container(col.padding(4)).width(Length::Fill).into()
+}
+
+/// Banner shown when `POST /connect/invites` 403'd on a cube id. The
+/// message suggests the user re-pick — the cube list has already been
+/// reloaded at this point so the new checkboxes reflect current
+/// membership.
+fn invite_cube_conflict_card<'a>(msg: &str) -> Element<'a, ConnectAccountMessage> {
+    container(
+        Column::new()
+            .push(
+                text::p1_bold("One or more selected cubes is no longer available")
+                    .color(color::RED),
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+            .push(text::p2_regular(msg.to_string()).style(theme::text::primary))
+            .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+            .push(
+                text::p2_regular(
+                    "Review your cube selection below and try again.",
+                )
+                .color(color::GREY_3),
+            )
+            .padding(16)
+            .spacing(0),
+    )
+    .style(|t| container::Style {
+        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+        border: iced::Border {
+            color: color::RED,
+            width: 1.0,
+            radius: 12.0.into(),
+        },
+        ..Default::default()
+    })
+    .width(Length::Fill)
+    .into()
 }
 
 fn role_chip<'a>(

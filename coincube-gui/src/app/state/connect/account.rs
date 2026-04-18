@@ -50,6 +50,16 @@ pub enum ContactsStep {
     Detail(u64),
 }
 
+/// One cube option shown in the invite-form's "Also add to Cube(s)"
+/// multi-select. Kept lightweight — we only need `{id, label}` for the
+/// checkbox row.
+#[derive(Debug, Clone)]
+pub struct InviteCubeOption {
+    pub id: u64,
+    pub name: String,
+    pub network: String,
+}
+
 /// State for the Contacts section within ConnectAccountPanel.
 pub struct ContactsState {
     pub step: ContactsStep,
@@ -62,6 +72,17 @@ pub struct ContactsState {
     pub detail_cubes_error: Option<String>,
     pub loading: bool,
     pub error: Option<String>,
+    // --- W12: cube multi-select on the invite form ---
+    /// Cubes the authenticated user owns or is a member of. Populated
+    /// on `ShowInviteForm`. Empty (or `None` pending load) hides the
+    /// section entirely per the plan.
+    pub invite_available_cubes: Option<Vec<InviteCubeOption>>,
+    /// Cube ids the user has ticked on the invite form. Cleared when
+    /// the user navigates away from the form.
+    pub invite_cube_selections: Vec<u64>,
+    /// Non-`None` when the last submit 403'd on a cube id — drives the
+    /// "one or more selected cubes is no longer available" dialog.
+    pub invite_cube_error: Option<String>,
 }
 
 impl ContactsState {
@@ -77,6 +98,9 @@ impl ContactsState {
             detail_cubes_error: None,
             loading: false,
             error: None,
+            invite_available_cubes: None,
+            invite_cube_selections: Vec::new(),
+            invite_cube_error: None,
         }
     }
 
@@ -857,11 +881,77 @@ impl ConnectAccountPanel {
                 self.contacts_state.invite_role = ContactRole::Keyholder;
                 self.contacts_state.invite_sending = false;
                 self.contacts_state.error = None;
+                self.contacts_state.invite_cube_selections.clear();
+                self.contacts_state.invite_cube_error = None;
+                // Load the user's cubes for the "Also add to Cube(s)"
+                // multi-select (W12). Hidden in the view until this
+                // resolves; empty Vec renders as "no cubes section".
+                let client = self.client.clone();
+                let gen = self.session_generation;
+                return iced::Task::perform(
+                    async move { client.list_cubes().await },
+                    move |res| match res {
+                        Ok(cubes) => {
+                            let options = cubes
+                                .into_iter()
+                                .map(|c| InviteCubeOption {
+                                    id: c.id,
+                                    name: c.name,
+                                    network: c.network,
+                                })
+                                .collect::<Vec<_>>();
+                            Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::Contacts(
+                                    ContactsMessage::InviteCubesAvailable(options, gen),
+                                ),
+                            ))
+                        }
+                        Err(e) => {
+                            // Leave the section hidden on load failure —
+                            // the user can still send a plain invite.
+                            log::warn!("[CONTACTS] Failed to list cubes for invite form: {}", e);
+                            Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::Contacts(
+                                    ContactsMessage::InviteCubesAvailable(Vec::new(), gen),
+                                ),
+                            ))
+                        }
+                    },
+                );
+            }
+
+            ContactsMessage::InviteCubesAvailable(cubes, gen) => {
+                if gen == self.session_generation {
+                    // Drop any prior selection that's no longer in the
+                    // authoritative list (e.g. after a 403 reload where
+                    // the user lost access to a cube mid-form).
+                    let valid_ids: std::collections::HashSet<u64> =
+                        cubes.iter().map(|c| c.id).collect();
+                    self.contacts_state
+                        .invite_cube_selections
+                        .retain(|id| valid_ids.contains(id));
+                    self.contacts_state.invite_available_cubes = Some(cubes);
+                }
+            }
+
+            ContactsMessage::ToggleInviteCube(cube_id) => {
+                let selections = &mut self.contacts_state.invite_cube_selections;
+                if let Some(pos) = selections.iter().position(|id| *id == cube_id) {
+                    selections.remove(pos);
+                } else {
+                    selections.push(cube_id);
+                }
+                // Clear the "cube unavailable" dialog on any edit so a
+                // stale message doesn't linger after the user adjusts
+                // their picks.
+                self.contacts_state.invite_cube_error = None;
             }
 
             ContactsMessage::BackToList => {
                 self.contacts_state.step = ContactsStep::List;
                 self.contacts_state.error = None;
+                self.contacts_state.invite_cube_selections.clear();
+                self.contacts_state.invite_cube_error = None;
             }
 
             ContactsMessage::ShowDetail(contact_id) => {
@@ -914,21 +1004,73 @@ impl ConnectAccountPanel {
                 }
                 self.contacts_state.invite_sending = true;
                 self.contacts_state.error = None;
+                self.contacts_state.invite_cube_error = None;
                 let client = self.client.clone();
                 let role = self.contacts_state.invite_role;
+                let cube_ids = self.contacts_state.invite_cube_selections.clone();
+                let had_cubes = !cube_ids.is_empty();
                 return iced::Task::perform(
                     async move {
                         client
-                            .create_invite(CreateInviteRequest { email, role })
+                            .create_invite(CreateInviteRequest {
+                                email,
+                                role,
+                                cube_ids,
+                            })
                             .await
                     },
-                    |res| match res {
+                    move |res| match res {
                         Ok(()) => Message::View(view::Message::ConnectAccount(
                             ConnectAccountMessage::Contacts(ContactsMessage::InviteCreated),
+                        )),
+                        // A 403 when cubes were attached almost always means
+                        // the caller is no longer a member of one of them
+                        // (the per-cube membership check failed). Route to
+                        // the dedicated handler so the form stays open with
+                        // a clear "some cubes are no longer available" msg.
+                        Err(e) if had_cubes && matches!(
+                            &e,
+                            crate::services::coincube::CoincubeError::Unsuccessful(info)
+                                if info.status_code == 403
+                        ) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Contacts(
+                                ContactsMessage::InviteCubeForbidden(e.to_string()),
+                            ),
                         )),
                         Err(e) => Message::View(view::Message::ConnectAccount(
                             ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
                         )),
+                    },
+                );
+            }
+
+            ContactsMessage::InviteCubeForbidden(msg) => {
+                self.contacts_state.invite_sending = false;
+                self.contacts_state.invite_cube_error = Some(msg);
+                // Refresh the cube list so the checkboxes reflect the
+                // user's current memberships. We stay on the form so
+                // the user can adjust and retry.
+                let client = self.client.clone();
+                let gen = self.session_generation;
+                return iced::Task::perform(
+                    async move { client.list_cubes().await },
+                    move |res| {
+                        let options = match res {
+                            Ok(cubes) => cubes
+                                .into_iter()
+                                .map(|c| InviteCubeOption {
+                                    id: c.id,
+                                    name: c.name,
+                                    network: c.network,
+                                })
+                                .collect(),
+                            Err(_) => Vec::new(),
+                        };
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Contacts(
+                                ContactsMessage::InviteCubesAvailable(options, gen),
+                            ),
+                        ))
                     },
                 );
             }
@@ -1060,6 +1202,128 @@ pub fn load_contacts_data(client: &CoincubeClient, generation: u64) -> iced::Tas
             },
         ),
     ])
+}
+
+#[cfg(test)]
+mod invite_form_tests {
+    //! State-layer tests for the W12 cube multi-select invite form.
+    //! Exercises the `ContactsMessage` dispatch path via the public
+    //! `update_message` entrypoint; we don't inspect returned `Task`s
+    //! (those are opaque futures) — only the resulting `ContactsState`.
+    use super::*;
+
+    fn option(id: u64, name: &str) -> InviteCubeOption {
+        InviteCubeOption {
+            id,
+            name: name.to_string(),
+            network: "bitcoin".to_string(),
+        }
+    }
+
+    fn dispatch(panel: &mut ConnectAccountPanel, msg: ContactsMessage) {
+        let _ = panel.update_message(ConnectAccountMessage::Contacts(msg));
+    }
+
+    #[test]
+    fn available_cubes_sets_state_and_becomes_renderable() {
+        let mut panel = ConnectAccountPanel::new();
+        let gen = panel.session_generation();
+        dispatch(
+            &mut panel,
+            ContactsMessage::InviteCubesAvailable(
+                vec![option(1, "Alpha"), option(7, "Bravo")],
+                gen,
+            ),
+        );
+        let cubes = panel
+            .contacts_state
+            .invite_available_cubes
+            .as_ref()
+            .expect("available cubes should be Some");
+        assert_eq!(cubes.len(), 2);
+        assert_eq!(cubes[0].name, "Alpha");
+    }
+
+    #[test]
+    fn available_cubes_empty_hides_section() {
+        let mut panel = ConnectAccountPanel::new();
+        let gen = panel.session_generation();
+        dispatch(
+            &mut panel,
+            ContactsMessage::InviteCubesAvailable(Vec::new(), gen),
+        );
+        // `Some(empty)` means "loaded, but nothing to show" — the view
+        // layer's `if !cubes.is_empty()` guard hides the section.
+        assert!(matches!(
+            panel.contacts_state.invite_available_cubes,
+            Some(ref v) if v.is_empty()
+        ));
+    }
+
+    #[test]
+    fn stale_available_cubes_ignored() {
+        let mut panel = ConnectAccountPanel::new();
+        let stale_gen = panel.session_generation().wrapping_add(1);
+        dispatch(
+            &mut panel,
+            ContactsMessage::InviteCubesAvailable(vec![option(1, "Alpha")], stale_gen),
+        );
+        assert!(panel.contacts_state.invite_available_cubes.is_none());
+    }
+
+    #[test]
+    fn toggle_cube_adds_and_removes_from_selection() {
+        let mut panel = ConnectAccountPanel::new();
+        dispatch(&mut panel, ContactsMessage::ToggleInviteCube(7));
+        assert_eq!(panel.contacts_state.invite_cube_selections, vec![7]);
+
+        dispatch(&mut panel, ContactsMessage::ToggleInviteCube(3));
+        assert_eq!(panel.contacts_state.invite_cube_selections, vec![7, 3]);
+
+        dispatch(&mut panel, ContactsMessage::ToggleInviteCube(7));
+        assert_eq!(panel.contacts_state.invite_cube_selections, vec![3]);
+    }
+
+    #[test]
+    fn toggle_cube_clears_stale_conflict_banner() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.contacts_state.invite_cube_error = Some("old".to_string());
+        dispatch(&mut panel, ContactsMessage::ToggleInviteCube(7));
+        assert!(panel.contacts_state.invite_cube_error.is_none());
+    }
+
+    #[test]
+    fn invite_cube_forbidden_clears_sending_and_stores_message() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.contacts_state.invite_sending = true;
+        dispatch(
+            &mut panel,
+            ContactsMessage::InviteCubeForbidden("Cube 7 unavailable".to_string()),
+        );
+        assert!(!panel.contacts_state.invite_sending);
+        assert_eq!(
+            panel.contacts_state.invite_cube_error.as_deref(),
+            Some("Cube 7 unavailable"),
+        );
+    }
+
+    #[test]
+    fn reload_prunes_stale_selections() {
+        // User selected cubes [1, 7, 42], then the cube list reloads
+        // without 7 (user lost access). Selection should drop 7 but
+        // keep the others.
+        let mut panel = ConnectAccountPanel::new();
+        panel.contacts_state.invite_cube_selections = vec![1, 7, 42];
+        let gen = panel.session_generation();
+        dispatch(
+            &mut panel,
+            ContactsMessage::InviteCubesAvailable(
+                vec![option(1, "Alpha"), option(42, "Gamma")],
+                gen,
+            ),
+        );
+        assert_eq!(panel.contacts_state.invite_cube_selections, vec![1, 42]);
+    }
 }
 
 /// Load Security tab data (verified devices + login activity).

@@ -960,8 +960,12 @@ impl SelectKeySource {
                 let mut contact_keys = Vec::new();
 
                 for key in raw_keys {
-                    let owner_id = key.primary_owner_id;
-                    if owner_id == current_user_id {
+                    let owner_id = key.effective_owner_user_id();
+                    // Prefer the server's viewer-relative `is_own_key` when
+                    // it's set; fall back to a local id comparison for
+                    // pre-W3 backends where the field is always false.
+                    let is_own = key.is_own_key || owner_id == current_user_id;
+                    if is_own {
                         my_keys.push(ResolvedCubeKey {
                             raw: key,
                             owner: KeychainKeyOwner::SelfUser {
@@ -972,12 +976,21 @@ impl SelectKeySource {
                         c.contact_user_id == owner_id
                             && c.role == crate::services::coincube::ContactRole::Keyholder
                     }) {
+                        // Prefer the server-supplied `ownerEmail` when the
+                        // W3 backend populated it; the contact-list lookup
+                        // still runs because we need `contact_id` for the
+                        // keychain-key `KeySource` enum.
+                        let contact_email = if !key.owner_email.is_empty() {
+                            key.owner_email.clone()
+                        } else {
+                            contact.contact_user.email.clone()
+                        };
                         contact_keys.push(ResolvedCubeKey {
                             raw: key,
                             owner: KeychainKeyOwner::Contact {
                                 primary_owner_id: owner_id,
                                 contact_id: contact.id,
-                                contact_email: contact.contact_user.email.clone(),
+                                contact_email,
                             },
                         });
                     }
@@ -1149,7 +1162,11 @@ impl SelectKeySource {
         }
 
         for rk in &self.my_keychain_keys {
-            let disabled = self.is_owner_already_placed(rk.raw.primary_owner_id);
+            let owner_id = rk.raw.effective_owner_user_id();
+            let already_placed = self.is_owner_already_placed(owner_id);
+            // W9 pre-check: reject keys that another Vault already claims.
+            let used_elsewhere = rk.raw.used_by_vault;
+            let disabled = already_placed || used_elsewhere;
             let fp_short: String = rk.raw.fingerprint.chars().take(8).collect();
             let fingerprint = Some(format!("#{}", fp_short));
             let msg = if disabled {
@@ -1160,7 +1177,16 @@ impl SelectKeySource {
                     Self::route(SelectKeySourceMessage::SelectKeychainKey(rk_clone.clone()))
                 })
             };
-            let warning = disabled.then(|| "Already selected".to_string());
+            // Surface the more specific reason when both apply: once a key
+            // is in another Vault, that's the blocking constraint even if
+            // the owner is also placed elsewhere in this build.
+            let warning = if used_elsewhere {
+                Some("Used by another Vault".to_string())
+            } else if already_placed {
+                Some("Already selected".to_string())
+            } else {
+                None
+            };
             col = col.push(modal::key_entry(
                 Some(icon::round_key_icon()),
                 rk.raw.name.clone(),
@@ -1204,7 +1230,7 @@ impl SelectKeySource {
             std::collections::BTreeMap::new();
         for rk in &self.contact_keychain_keys {
             seen_contacts
-                .entry(rk.raw.primary_owner_id)
+                .entry(rk.raw.effective_owner_user_id())
                 .or_default()
                 .push(rk);
         }
@@ -1218,7 +1244,10 @@ impl SelectKeySource {
                 };
                 col = col.push(p1_bold(contact_label));
                 for rk in keys {
-                    let disabled = self.is_owner_already_placed(rk.raw.primary_owner_id);
+                    let owner_id = rk.raw.effective_owner_user_id();
+                    let already_placed = self.is_owner_already_placed(owner_id);
+                    let used_elsewhere = rk.raw.used_by_vault;
+                    let disabled = already_placed || used_elsewhere;
                     let fp = &rk.raw.fingerprint;
                     let fingerprint = Some(format!("#{}", &fp[..fp.len().min(8)]));
                     let msg = if disabled {
@@ -1229,7 +1258,13 @@ impl SelectKeySource {
                             Self::route(SelectKeySourceMessage::SelectKeychainKey(rk_clone.clone()))
                         })
                     };
-                    let warning = disabled.then(|| "Already selected".to_string());
+                    let warning = if used_elsewhere {
+                        Some("Used by another Vault".to_string())
+                    } else if already_placed {
+                        Some("Already selected".to_string())
+                    } else {
+                        None
+                    };
                     col = col.push(modal::key_entry(
                         Some(icon::round_key_icon()),
                         rk.raw.name.clone(),

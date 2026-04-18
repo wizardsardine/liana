@@ -793,6 +793,18 @@ pub enum ContactsMessage {
     ContactCubesLoaded(u64, Vec<crate::services::coincube::ContactCube>, u64),
     /// Contact detail cubes fetch failed — includes contact_id for stale guard.
     ContactCubesFailed(u64, String),
+    // --- W12: cube multi-select on invite form ---
+    /// Available cubes loaded for the invite form (from `list_cubes`).
+    /// Carries `session_generation` for stale-response guarding.
+    InviteCubesAvailable(
+        Vec<crate::app::state::connect::InviteCubeOption>,
+        u64,
+    ),
+    /// User toggled a cube checkbox in the invite form.
+    ToggleInviteCube(u64),
+    /// A cube id from the last submit was 403'd by the backend (W12).
+    /// Triggers an "unavailable cubes" dialog and reloads the cube list.
+    InviteCubeForbidden(String),
     /// Error.
     Error(String),
 }
@@ -816,6 +828,33 @@ pub enum ConnectCubeMessage {
     CopyToClipboard(String),
     Error(String),
     Avatar(AvatarMessage),
+    /// Cube-scoped members management (W8 — see
+    /// `plans/PLAN-cube-membership-desktop.md`).
+    Members(ConnectCubeMembersMessage),
+}
+
+/// Messages for the cube-scoped Members panel. Carries a `load_gen` token on
+/// async results so stale responses (e.g. from a prior `Reload`) can be
+/// discarded.
+#[derive(Debug, Clone)]
+pub enum ConnectCubeMembersMessage {
+    /// Enter the panel — fires `Reload` if state is empty.
+    Enter,
+    /// Fetch `GET /connect/cubes/{id}` to refresh members + pending invites.
+    Reload,
+    Loaded(
+        Result<crate::services::coincube::CubeResponse, String>,
+        u32, // load generation
+    ),
+    InviteEmailChanged(String),
+    SubmitInvite,
+    InviteResult(Result<crate::services::coincube::CubeInviteOrAddResult, String>),
+    RevokeInvite(u64),
+    RevokeInviteResult(u64, Result<(), String>),
+    RemoveMember(u64),
+    RemoveMemberResult(u64, Result<(), String>),
+    DismissError,
+    DismissRemoveConflict,
 }
 
 #[derive(Debug, Clone)]

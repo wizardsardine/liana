@@ -378,29 +378,143 @@ pub struct CubeResponse {
     pub lightning_address: Option<String>,
     pub bolt12_offer: Option<String>,
     pub status: String,
+    /// Populated by `GET /connect/cubes/{id}` (not by `list_cubes`). Defaults
+    /// to empty so existing list-based code paths keep working.
+    #[serde(default)]
+    pub members: Vec<CubeMember>,
+    #[serde(default)]
+    pub pending_invites: Vec<CubeInviteSummary>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CubeMember {
+    pub id: u64,
+    pub user_id: u64,
+    pub user: CubeMemberUser,
+    pub joined_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CubeMemberUser {
+    pub email: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CubeInviteSummary {
+    pub id: u64,
+    pub cube_id: u64,
+    pub email: String,
+    pub status: String,
+    pub expires_at: String,
+    pub created_at: String,
+}
+
+/// Result of `POST /connect/cubes/{cubeId}/invites`. The backend returns
+/// `{status, member, invite}` where exactly one of `member`/`invite` is set
+/// depending on `status`. We normalise that into an enum.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(try_from = "CubeInviteOrAddResultRaw")]
+pub enum CubeInviteOrAddResult {
+    /// The invitee was already a contact — they were added as a member
+    /// immediately.
+    Added(CubeMember),
+    /// The invitee is not yet a contact — an invite was created and the
+    /// pending-cube-attachment row will be fanned out on accept.
+    Invited(CubeInviteSummary),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CubeInviteOrAddResultRaw {
+    status: String,
+    #[serde(default)]
+    member: Option<CubeMember>,
+    #[serde(default)]
+    invite: Option<CubeInviteSummary>,
+}
+
+impl std::convert::TryFrom<CubeInviteOrAddResultRaw> for CubeInviteOrAddResult {
+    type Error = String;
+
+    fn try_from(raw: CubeInviteOrAddResultRaw) -> Result<Self, Self::Error> {
+        match raw.status.as_str() {
+            "added" => raw
+                .member
+                .map(CubeInviteOrAddResult::Added)
+                .ok_or_else(|| "expected `member` when status=added".to_string()),
+            "invited" => raw
+                .invite
+                .map(CubeInviteOrAddResult::Invited)
+                .ok_or_else(|| "expected `invite` when status=invited".to_string()),
+            other => Err(format!("unexpected cube-invite status: {}", other)),
+        }
+    }
 }
 
 /// A key returned by `GET /api/v1/connect/cubes/{cubeUuid}/keys`.
-/// The response is a flat array — owner resolution (self vs. contact)
-/// is done client-side by comparing `primary_owner_id` against the
-/// authenticated user's ID.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+///
+/// Two backend shapes coexist during the W3 rollout:
+///
+/// 1. **Legacy** — the flat `models.Key` dump with `primaryOwnerId`,
+///    `keychainId`, `curve`, `taproot`, `cubeId`, `createdAt`,
+///    `updatedAt`. Owner resolution (self vs. contact) is done client-side.
+/// 2. **W3 (post-PLAN-cube-membership-backend)** — a purpose-built
+///    `CubeKeyResponse` that drops most of the above and adds the
+///    viewer-relative `ownerUserId` / `ownerEmail` / `isOwnKey` /
+///    `usedByVault` fields.
+///
+/// Every field is `#[serde(default)]` so either shape deserialises cleanly.
+/// The new fields default to zero-values, and legacy callers (pre-W3
+/// backend) keep working via the legacy fields. See
+/// `plans/PLAN-cube-membership-desktop.md` §2.3.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct CubeKeyRaw {
     pub id: u64,
-    pub primary_owner_id: u64,
-    pub keychain_id: Option<u64>,
     pub name: String,
-    pub curve: String,
-    pub taproot: bool,
     pub xpub: String,
     pub fingerprint: String,
     pub derivation_path: String,
     pub network: String,
-    pub cube_id: u64,
     pub status: String,
+
+    // --- Legacy fields (may disappear post-W3) ---
+    pub primary_owner_id: u64,
+    pub keychain_id: Option<u64>,
+    pub curve: String,
+    pub taproot: bool,
+    pub cube_id: u64,
     pub created_at: String,
     pub updated_at: String,
+
+    // --- W3 fields (post-PLAN-cube-membership-backend) ---
+    /// Server-supplied owner id; falls back to `primary_owner_id` when
+    /// talking to a pre-W3 backend.
+    pub owner_user_id: u64,
+    /// Email of the key's primary owner. Empty on a pre-W3 backend; the
+    /// desktop falls back to a contact-list lookup in that case.
+    pub owner_email: String,
+    /// `true` iff the authenticated caller is the owner of this key.
+    /// Pre-W3 this is always `false` from the server; the desktop computes
+    /// it locally.
+    pub is_own_key: bool,
+    /// `true` iff this key is currently referenced by any active Vault.
+    /// Drives the W9 pre-check in the Vault Builder key picker.
+    pub used_by_vault: bool,
+}
+
+impl CubeKeyRaw {
+    /// Returns the server-supplied `ownerUserId` when present, falling back
+    /// to the legacy `primaryOwnerId`. Callers should prefer this over
+    /// reading either field directly.
+    pub fn effective_owner_user_id(&self) -> u64 {
+        if self.owner_user_id != 0 {
+            self.owner_user_id
+        } else {
+            self.primary_owner_id
+        }
+    }
 }
 
 /// Response from GET /api/v1/connect/cubes/limits
@@ -747,9 +861,16 @@ pub struct Invite {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateInviteRequest {
     pub email: String,
     pub role: ContactRole,
+    /// Optional list of cube ids to pre-attach the invitee to. When empty
+    /// the field is omitted from the JSON body so older staging servers
+    /// (pre-W10, which don't recognise the field) keep working.
+    /// See `plans/PLAN-cube-membership-desktop.md` §2.7.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cube_ids: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -760,4 +881,135 @@ pub struct ContactCube {
     pub name: String,
     pub network: String,
     pub has_recovery_kit: bool,
+}
+
+// =============================================================================
+// Connect Vault types
+// =============================================================================
+//
+// The backend's `ConnectVault` is attached to a cube. A vault owns many
+// `ConnectVaultMember` rows, each referencing a `ConnectContact` and/or a
+// `Key`. The desktop installer creates the vault shell via
+// `POST /connect/cubes/{cubeId}/vault` and fans out member rows via
+// `POST /connect/cubes/{cubeId}/vault/members`.
+//
+// W9 guard: adding a member with a `keyId` that's already attached to
+// another vault returns 409 with error code `KEY_ALREADY_USED_IN_VAULT`.
+// The helper `CoincubeError::is_key_already_used_in_vault()` (below)
+// lets callers route that into the Vault Builder's "key conflict" dialog.
+
+/// Role a contact plays on a vault (mirrors `models.InviteRole`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VaultMemberRole {
+    Keyholder,
+    Beneficiary,
+    Observer,
+}
+
+impl std::fmt::Display for VaultMemberRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Keyholder => write!(f, "Keyholder"),
+            Self::Beneficiary => write!(f, "Beneficiary"),
+            Self::Observer => write!(f, "Observer"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateConnectVaultRequest {
+    pub timelock_days: i32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddVaultMemberRequest {
+    /// `Some` for contact-scoped members (a contact's key is being added).
+    /// `None` when the vault owner adds their own key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contact_id: Option<u64>,
+    /// Backend key id. `None` for contact-only members (e.g. Beneficiary)
+    /// that don't contribute a signing key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<u64>,
+    pub role: VaultMemberRole,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultMemberKeySummary {
+    pub id: u64,
+    pub name: String,
+    pub xpub: String,
+    pub derivation_path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultMemberContactSummary {
+    pub id: u64,
+    #[serde(default)]
+    pub contact_user: Option<VaultMemberContactUserSummary>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultMemberContactUserSummary {
+    pub id: u64,
+    pub email: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultMemberResponse {
+    pub id: u64,
+    #[serde(default)]
+    pub contact_id: Option<u64>,
+    #[serde(default)]
+    pub key_id: Option<u64>,
+    pub role: VaultMemberRole,
+    #[serde(default)]
+    pub contact: Option<VaultMemberContactSummary>,
+    #[serde(default)]
+    pub key: Option<VaultMemberKeySummary>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectVaultResponse {
+    pub id: u64,
+    pub cube_id: u64,
+    pub timelock_days: i32,
+    pub timelock_expires_at: String,
+    pub last_reset_at: String,
+    pub status: String,
+    #[serde(default)]
+    pub members: Vec<VaultMemberResponse>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Error code string returned by the backend's W9 guard. Public so callers
+/// can match on it when routing 409s.
+pub const ERR_KEY_ALREADY_USED_IN_VAULT: &str = "KEY_ALREADY_USED_IN_VAULT";
+
+impl CoincubeError {
+    /// Returns `true` if this error is a W9 "key already used in another
+    /// vault" conflict from `POST /connect/cubes/{id}/vault/members`.
+    /// Drives the Vault Builder's key-conflict dialog.
+    pub fn is_key_already_used_in_vault(&self) -> bool {
+        let CoincubeError::Unsuccessful(info) = self else {
+            return false;
+        };
+        if info.status_code != 409 {
+            return false;
+        }
+        if let Ok(env) = serde_json::from_str::<ApiErrorResponse>(&info.text) {
+            return env.error.code == ERR_KEY_ALREADY_USED_IN_VAULT;
+        }
+        false
+    }
 }

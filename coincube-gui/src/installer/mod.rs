@@ -1,3 +1,4 @@
+pub(crate) mod connect_vault;
 mod context;
 mod decrypt;
 mod descriptor;

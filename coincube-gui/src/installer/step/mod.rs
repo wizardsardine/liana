@@ -37,9 +37,14 @@ use coincube_ui::widget::*;
 use crate::{
     app::settings::{ProviderKey, WalletSettings},
     hw::HardwareWallets,
-    installer::{context::Context, message::Message, view},
+    installer::{
+        connect_vault::{self, ConnectVaultError, ConnectVaultOutcome},
+        context::{ConnectVaultMemberPayload, Context},
+        message::Message,
+        view,
+    },
     node::bitcoind::Bitcoind,
-    services,
+    services::{self, coincube::CoincubeClient},
 };
 
 pub trait Step {
@@ -76,6 +81,19 @@ pub struct Final {
     warning: Option<String>,
     wallet_settings: Option<WalletSettings>,
     key_redemptions: HashMap<ProviderKey, Option<Result<(), services::keys::Error>>>,
+    // --- Backend `ConnectVault` hand-off (populated in `load_context`) ---
+    coincube_client: Option<CoincubeClient>,
+    cube_uuid: Option<String>,
+    cube_name: Option<String>,
+    network: String,
+    connect_vault_members: Vec<ConnectVaultMemberPayload>,
+    connect_vault_timelock_days: Option<i32>,
+    /// `Some` once the vault-create round-trip resolves. Drives the
+    /// success caption in the Final view.
+    connect_vault_outcome: Option<ConnectVaultOutcome>,
+    /// `Some` when a W9 409 rolls back the vault — carries the key id so
+    /// the user knows which key to change.
+    connect_vault_key_conflict_id: Option<u64>,
 }
 
 impl Final {
@@ -86,6 +104,14 @@ impl Final {
             warning: None,
             wallet_settings: None,
             key_redemptions: HashMap::new(),
+            coincube_client: None,
+            cube_uuid: None,
+            cube_name: None,
+            network: String::new(),
+            connect_vault_members: Vec::new(),
+            connect_vault_timelock_days: None,
+            connect_vault_outcome: None,
+            connect_vault_key_conflict_id: None,
         }
     }
 }
@@ -104,6 +130,16 @@ impl Step for Final {
             .values()
             .filter_map(|ks| ks.provider_key.as_ref().map(|pk| (pk.clone(), None)))
             .collect();
+        self.coincube_client.clone_from(&ctx.coincube_client);
+        self.cube_uuid.clone_from(&ctx.cube_id);
+        self.cube_name.clone_from(&ctx.cube_name);
+        self.network = match ctx.bitcoin_config.network {
+            coincube_core::miniscript::bitcoin::Network::Bitcoin => "mainnet".to_string(),
+            other => other.to_string(),
+        };
+        self.connect_vault_members
+            .clone_from(&ctx.connect_vault_members);
+        self.connect_vault_timelock_days = ctx.connect_vault_timelock_days;
     }
     fn load(&self) -> Task<Message> {
         if self.generating {
@@ -165,7 +201,65 @@ impl Step for Final {
                 }
                 Ok(wallet_settings) => {
                     self.wallet_settings = Some(wallet_settings);
-                    // Now redeem any provider keys.
+                    // Kick off the backend vault-create orchestration
+                    // before token redemption. If it isn't applicable
+                    // (no Connect client or no keychain members) the
+                    // inner function short-circuits and the Final step
+                    // treats the `NotApplicable` error as a no-op.
+                    let client = self.coincube_client.clone();
+                    let cube_uuid = self.cube_uuid.clone();
+                    let cube_name = self.cube_name.clone();
+                    let network = self.network.clone();
+                    let members = self.connect_vault_members.clone();
+                    let timelock = self.connect_vault_timelock_days;
+                    return Task::perform(
+                        connect_vault::create_connect_vault(
+                            client, cube_uuid, cube_name, network, members, timelock,
+                        ),
+                        Message::ConnectVaultCreated,
+                    );
+                }
+            },
+            Message::ConnectVaultCreated(result) => match result {
+                Ok(outcome) => {
+                    self.connect_vault_outcome = Some(outcome);
+                    self.connect_vault_key_conflict_id = None;
+                    // Clear any previous warning so the success caption
+                    // wins over a transient banner from an earlier retry.
+                    self.warning = None;
+                    return Task::perform(async move {}, |_| Message::RedeemNextKey);
+                }
+                Err(ConnectVaultError::NotApplicable) => {
+                    // No Connect client, no cube, or no keychain
+                    // members — silently continue with the local-only
+                    // install.
+                    return Task::perform(async move {}, |_| Message::RedeemNextKey);
+                }
+                Err(ConnectVaultError::KeyAlreadyUsedInVault { key_id }) => {
+                    // W9 race condition: the vault shell was rolled
+                    // back upstream. Surface the dedicated copy and
+                    // continue with redemption so the local install
+                    // doesn't stall. The user can re-run the installer
+                    // to retry the vault.
+                    self.connect_vault_key_conflict_id = Some(key_id);
+                    self.warning = Some(format!(
+                        "This key (#{}) was already used in another Vault. \
+                         A key can only participate in one Vault. Your local \
+                         wallet is installed; restart the Vault Builder and \
+                         pick a different key to create the Connect vault.",
+                        key_id
+                    ));
+                    return Task::perform(async move {}, |_| Message::RedeemNextKey);
+                }
+                Err(ConnectVaultError::Other(msg)) => {
+                    // Transient / unexpected failure. Warn but continue
+                    // — the local wallet is already persisted, and the
+                    // user can retry via the in-app Connect flow later.
+                    self.warning = Some(format!(
+                        "Connect vault sync failed: {}. Your local wallet is \
+                         installed; the Connect vault can be retried later.",
+                        msg
+                    ));
                     return Task::perform(async move {}, |_| Message::RedeemNextKey);
                 }
             },
@@ -209,12 +303,26 @@ impl Step for Final {
         progress: (usize, usize),
         email: Option<&'a str>,
     ) -> Element<'a, Message> {
+        // Surface the approximate-timelock caveat here — the days
+        // value is derived client-side from block-count, which varies
+        // with block cadence, so the user should know it's a best-effort
+        // figure rather than an exact day count.
+        let caption = self.connect_vault_outcome.as_ref().map(|out| {
+            format!(
+                "Connect vault attached — approx. {}-day timelock ({} signer{}). \
+                 The timelock is approximate; on-chain block time drives the actual expiry.",
+                out.timelock_days,
+                out.members_added,
+                if out.members_added == 1 { "" } else { "s" }
+            )
+        });
         view::install(
             progress,
             email,
             self.generating,
             self.wallet_settings.is_some() && self.warning.is_none(),
             self.warning.as_ref(),
+            caption,
         )
     }
 }

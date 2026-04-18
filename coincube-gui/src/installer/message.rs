@@ -85,6 +85,12 @@ pub enum Message {
     ),
     CubeSaveFailed(String),
     RetryCubeSave,
+    /// Result of the post-install `create_connect_vault` orchestration
+    /// (see `installer/connect_vault.rs`). Emitted after
+    /// `Installed(Ok)` so the Final step can surface the outcome.
+    ConnectVaultCreated(
+        Result<super::connect_vault::ConnectVaultOutcome, super::connect_vault::ConnectVaultError>,
+    ),
     CoincubeConnect(CoincubeConnectMsg),
     BorderWalletWizard(
         super::step::descriptor::editor::border_wallet_wizard::BorderWalletWizardMessage,

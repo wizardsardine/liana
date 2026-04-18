@@ -1058,6 +1058,31 @@ pub fn sidebar<'a>(
             .push(connect_avatar_button)
             .push(connect_contacts_button)
             .push(connect_invites_button);
+
+        // Cube Members sub-menu (W8) — behind the CUBE_MEMBERS_UI_ENABLED
+        // build-time flag while the backend rolls out.
+        if crate::feature_flags::CUBE_MEMBERS_UI_ENABLED {
+            let connect_members_button =
+                if matches!(menu, Menu::Connect(ConnectSubMenu::CubeMembers)) {
+                    row!(
+                        Space::new().width(Length::Fixed(20.0)),
+                        button::menu_active(Some(person_icon()), "Members")
+                            .on_press(Message::Reload)
+                            .width(iced::Length::Fill),
+                        menu_bar_highlight()
+                    )
+                    .width(Length::Fill)
+                } else {
+                    row!(
+                        Space::new().width(Length::Fixed(20.0)),
+                        button::menu(Some(person_icon()), "Members")
+                            .on_press(Message::Menu(Menu::Connect(ConnectSubMenu::CubeMembers)))
+                            .width(iced::Length::Fill),
+                    )
+                    .width(Length::Fill)
+                };
+            menu_column = menu_column.push(connect_members_button);
+        }
     }
 
     // Global Settings button (always visible at bottom of main menu)

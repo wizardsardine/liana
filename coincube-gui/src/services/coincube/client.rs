@@ -1,13 +1,14 @@
 use super::{
-    get_countries, ApiErrorResponse, ApiResponse, AvatarGenerateData, AvatarGenerateRequest,
-    AvatarSelectData, AvatarSelectRequest, BillingHistoryEntry, ChargeStatusResponse,
-    CheckUsernameResponse, CheckoutRequest, CheckoutResponse, ClaimLightningAddressRequest,
-    CoincubeError, ConnectPlan, Contact, ContactCube, Country, CreateInviteRequest, CubeKeyRaw,
-    CubeLimitsResponse, CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData, Invite,
-    LightningAddress, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest, PublicAvatarData,
-    RefreshTokenRequest, RegenerationData, RegisterCubeRequest, SaveQuoteRequest,
+    get_countries, AddVaultMemberRequest, ApiErrorResponse, ApiResponse, AvatarGenerateData,
+    AvatarGenerateRequest, AvatarSelectData, AvatarSelectRequest, BillingHistoryEntry,
+    ChargeStatusResponse, CheckUsernameResponse, CheckoutRequest, CheckoutResponse,
+    ClaimLightningAddressRequest, CoincubeError, ConnectPlan, ConnectVaultResponse, Contact,
+    ContactCube, Country, CreateConnectVaultRequest, CreateInviteRequest, CubeInviteOrAddResult,
+    CubeKeyRaw, CubeLimitsResponse, CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData,
+    Invite, LightningAddress, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
+    PublicAvatarData, RefreshTokenRequest, RegenerationData, RegisterCubeRequest, SaveQuoteRequest,
     SaveQuoteResponse, StatsPeriod, TimeseriesResponse, TodayStats, UpdateCubeRequest, User,
-    VerifiedDevice,
+    VaultMemberResponse, VerifiedDevice,
 };
 use reqwest::{Client, Method};
 use serde::Deserialize;
@@ -334,6 +335,22 @@ impl CoincubeClient {
         Ok(resp.data)
     }
 
+    /// Test-only constructor that points the client at an arbitrary base URL
+    /// (typically an `httpmock` MockServer). Skips `https_only` so `http://`
+    /// loopback URLs are accepted.
+    #[cfg(test)]
+    pub fn for_test(base_url: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::ClientBuilder::new()
+                .timeout(std::time::Duration::from_secs(5))
+                .https_only(false)
+                .build()
+                .unwrap(),
+            base_url: base_url.into(),
+            token: None,
+        }
+    }
+
     // --- Cube-scoped endpoints (Lightning Address, Avatar) ---
     // All use /connect/cubes/{cubeId}/... paths (server-side numeric ID)
 
@@ -640,5 +657,710 @@ impl CoincubeClient {
         let res = res.check_success().await?;
         let resp: ApiResponse<Vec<ContactCube>> = res.json().await?;
         Ok(resp.data)
+    }
+}
+
+// =============================================================================
+// Cube members & cube-scoped invites (W8)
+// =============================================================================
+
+impl CoincubeClient {
+    /// GET /api/v1/connect/cubes/{cubeId} — fetch a single cube, including
+    /// members and pending invites.
+    pub async fn get_cube(&self, cube_id: u64) -> Result<CubeResponse, CoincubeError> {
+        let url = format!("{}/api/v1/connect/cubes/{}", self.base_url, cube_id);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<CubeResponse> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// POST /api/v1/connect/cubes/{cubeId}/invites — smart invite. If `email`
+    /// matches an existing contact the user is added as a member immediately
+    /// (`Added`); otherwise an invite is created and a pending-attachment row
+    /// is recorded against this cube (`Invited`).
+    pub async fn create_cube_invite(
+        &self,
+        cube_id: u64,
+        email: &str,
+    ) -> Result<CubeInviteOrAddResult, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/invites",
+            self.base_url, cube_id
+        );
+        let body = serde_json::json!({ "email": email });
+        let res = self.client.post(&url).json(&body).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<CubeInviteOrAddResult> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// DELETE /api/v1/connect/cubes/{cubeId}/invites/{inviteId} — revoke a
+    /// pending cube-scoped invite.
+    pub async fn revoke_cube_invite(
+        &self,
+        cube_id: u64,
+        invite_id: u64,
+    ) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/invites/{}",
+            self.base_url, cube_id, invite_id
+        );
+        let res = self.client.delete(&url).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// DELETE /api/v1/connect/cubes/{cubeId}/members/{memberId} — remove a
+    /// cube member. Fails 409 if the member's keys are in an active Vault
+    /// (stranded-vault guard, W4).
+    pub async fn remove_cube_member(
+        &self,
+        cube_id: u64,
+        member_id: u64,
+    ) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/members/{}",
+            self.base_url, cube_id, member_id
+        );
+        let res = self.client.delete(&url).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+}
+
+// =============================================================================
+// Connect Vault lifecycle
+// =============================================================================
+//
+// The Vault Builder (installer/step/descriptor/editor) uses these to
+// create the server-side `ConnectVault` shell after the local descriptor
+// is persisted. See `plans/PLAN-cube-membership-desktop.md` §2.6 for the
+// W9 race-to-409 fallback flow.
+
+impl CoincubeClient {
+    /// POST /api/v1/connect/cubes/{cubeId}/vault — create the vault shell
+    /// for a cube. Owner-only. Returns the (empty-members) vault.
+    pub async fn create_connect_vault(
+        &self,
+        cube_id: u64,
+        req: CreateConnectVaultRequest,
+    ) -> Result<ConnectVaultResponse, CoincubeError> {
+        let url = format!("{}/api/v1/connect/cubes/{}/vault", self.base_url, cube_id);
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<ConnectVaultResponse> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// GET /api/v1/connect/cubes/{cubeId}/vault — fetch the existing vault
+    /// (404s if none exists).
+    pub async fn get_connect_vault(
+        &self,
+        cube_id: u64,
+    ) -> Result<ConnectVaultResponse, CoincubeError> {
+        let url = format!("{}/api/v1/connect/cubes/{}/vault", self.base_url, cube_id);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<ConnectVaultResponse> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// DELETE /api/v1/connect/cubes/{cubeId}/vault — tear down the vault.
+    /// Useful as a rollback when `add_vault_member` fails partway through
+    /// a Vault Builder finalisation.
+    pub async fn delete_connect_vault(&self, cube_id: u64) -> Result<(), CoincubeError> {
+        let url = format!("{}/api/v1/connect/cubes/{}/vault", self.base_url, cube_id);
+        let res = self.client.delete(&url).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// POST /api/v1/connect/cubes/{cubeId}/vault/members — attach a member
+    /// (contact + key, contact-only, or key-only) to a vault.
+    ///
+    /// Fails 409 with `KEY_ALREADY_USED_IN_VAULT` when the supplied `keyId`
+    /// is already referenced by any vault (W9). Callers should check
+    /// `CoincubeError::is_key_already_used_in_vault()` and surface the
+    /// conflict dialog.
+    pub async fn add_vault_member(
+        &self,
+        cube_id: u64,
+        req: AddVaultMemberRequest,
+    ) -> Result<VaultMemberResponse, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/vault/members",
+            self.base_url, cube_id
+        );
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<VaultMemberResponse> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// DELETE /api/v1/connect/cubes/{cubeId}/vault/members/{memberId} —
+    /// remove a vault member. Used by rollback paths.
+    pub async fn remove_vault_member(
+        &self,
+        cube_id: u64,
+        member_id: u64,
+    ) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/vault/members/{}",
+            self.base_url, cube_id, member_id
+        );
+        let res = self.client.delete(&url).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod cube_member_tests {
+    use super::*;
+    use httpmock::{Method, MockServer};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn create_cube_invite_returns_added_on_existing_contact() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/cubes/42/invites")
+                .json_body(json!({ "email": "new@example.com" }));
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "status": "added",
+                        "member": {
+                            "id": 7,
+                            "userId": 99,
+                            "user": { "email": "new@example.com" },
+                            "joinedAt": "2026-04-18T00:00:00Z"
+                        },
+                        "invite": null
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let result = client
+            .create_cube_invite(42, "new@example.com")
+            .await
+            .expect("create_cube_invite should succeed");
+
+        mock.assert();
+        match result {
+            CubeInviteOrAddResult::Added(member) => {
+                assert_eq!(member.id, 7);
+                assert_eq!(member.user_id, 99);
+                assert_eq!(member.user.email, "new@example.com");
+            }
+            CubeInviteOrAddResult::Invited(_) => panic!("expected Added, got Invited"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_cube_invite_returns_invited_on_new_email() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/cubes/42/invites");
+            then.status(201).header("content-type", "application/json").json_body(json!({
+                "success": true,
+                "data": {
+                    "status": "invited",
+                    "member": null,
+                    "invite": {
+                        "id": 314,
+                        "cubeId": 42,
+                        "email": "brand-new@example.com",
+                        "status": "pending",
+                        "expiresAt": "2026-05-18T00:00:00Z",
+                        "createdAt": "2026-04-18T00:00:00Z"
+                    }
+                }
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let result = client
+            .create_cube_invite(42, "brand-new@example.com")
+            .await
+            .expect("create_cube_invite should succeed");
+
+        mock.assert();
+        match result {
+            CubeInviteOrAddResult::Invited(invite) => {
+                assert_eq!(invite.id, 314);
+                assert_eq!(invite.cube_id, 42);
+                assert_eq!(invite.email, "brand-new@example.com");
+                assert_eq!(invite.expires_at, "2026-05-18T00:00:00Z");
+            }
+            CubeInviteOrAddResult::Added(_) => panic!("expected Invited, got Added"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_cube_invite_409_on_duplicate_member() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/cubes/42/invites");
+            then.status(409).header("content-type", "application/json").json_body(json!({
+                "success": false,
+                "error": {
+                    "code": "CUBE_DUPLICATE_MEMBER",
+                    "message": "User is already a member of this cube"
+                }
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .create_cube_invite(42, "dup@example.com")
+            .await
+            .expect_err("expected 409 error");
+        mock.assert();
+
+        let rendered = format!("{}", err);
+        assert!(
+            rendered.contains("already a member"),
+            "error message should surface API text, got: {}",
+            rendered
+        );
+    }
+
+    #[tokio::test]
+    async fn revoke_cube_invite_ok_on_success() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::DELETE)
+                .path("/api/v1/connect/cubes/42/invites/314");
+            then.status(200).header("content-type", "application/json").json_body(json!({
+                "success": true,
+                "data": { "status": "revoked" }
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        client
+            .revoke_cube_invite(42, 314)
+            .await
+            .expect("revoke_cube_invite should succeed");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn remove_cube_member_409_propagates_error() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::DELETE)
+                .path("/api/v1/connect/cubes/42/members/7");
+            then.status(409).header("content-type", "application/json").json_body(json!({
+                "success": false,
+                "error": {
+                    "code": "CONTACT_HAS_KEYS_IN_ACTIVE_VAULTS",
+                    "message": "Cannot remove member — keys are signing an active Vault"
+                }
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .remove_cube_member(42, 7)
+            .await
+            .expect_err("expected 409 error");
+        mock.assert();
+
+        let rendered = format!("{}", err);
+        assert!(
+            rendered.contains("active Vault"),
+            "error message should surface API text, got: {}",
+            rendered
+        );
+    }
+
+    #[tokio::test]
+    async fn get_cube_deserializes_members_and_pending_invites() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::GET).path("/api/v1/connect/cubes/42");
+            then.status(200).header("content-type", "application/json").json_body(json!({
+                "success": true,
+                "data": {
+                    "id": 42,
+                    "uuid": "abc-123",
+                    "name": "My Cube",
+                    "network": "bitcoin",
+                    "lightningAddress": "me@coincube.io",
+                    "bolt12Offer": null,
+                    "status": "active",
+                    "members": [
+                        {
+                            "id": 7,
+                            "userId": 99,
+                            "user": { "email": "alice@example.com" },
+                            "joinedAt": "2026-04-18T00:00:00Z"
+                        }
+                    ],
+                    "pendingInvites": [
+                        {
+                            "id": 314,
+                            "cubeId": 42,
+                            "email": "bob@example.com",
+                            "status": "pending",
+                            "expiresAt": "2026-05-18T00:00:00Z",
+                            "createdAt": "2026-04-18T00:00:00Z"
+                        }
+                    ]
+                }
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let cube = client.get_cube(42).await.expect("get_cube should succeed");
+        mock.assert();
+
+        assert_eq!(cube.id, 42);
+        assert_eq!(cube.members.len(), 1);
+        assert_eq!(cube.members[0].user.email, "alice@example.com");
+        assert_eq!(cube.pending_invites.len(), 1);
+        assert_eq!(cube.pending_invites[0].email, "bob@example.com");
+    }
+
+    #[tokio::test]
+    async fn get_cube_keys_deserialises_w3_payload() {
+        use crate::services::coincube::CubeKeyRaw;
+        // W3 shape: `ownerUserId`, `ownerEmail`, `isOwnKey`, `usedByVault`
+        // populated; legacy fields absent.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/api/v1/connect/cubes/abc-uuid/keys");
+            then.status(200).header("content-type", "application/json").json_body(json!({
+                "success": true,
+                "data": [
+                    {
+                        "id": 1,
+                        "name": "Alice's Key",
+                        "xpub": "xpub661...",
+                        "fingerprint": "deadbeef",
+                        "derivationPath": "m/48'/0'/0'/2'",
+                        "network": "bitcoin",
+                        "status": "active",
+                        "ownerUserId": 99,
+                        "ownerEmail": "alice@example.com",
+                        "isOwnKey": false,
+                        "usedByVault": true
+                    }
+                ]
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let keys = client
+            .get_cube_keys("abc-uuid")
+            .await
+            .expect("get_cube_keys should succeed");
+        mock.assert();
+
+        assert_eq!(keys.len(), 1);
+        let k: &CubeKeyRaw = &keys[0];
+        assert_eq!(k.owner_user_id, 99);
+        assert_eq!(k.effective_owner_user_id(), 99);
+        assert_eq!(k.owner_email, "alice@example.com");
+        assert!(!k.is_own_key);
+        assert!(k.used_by_vault);
+        // Legacy fields default out.
+        assert_eq!(k.primary_owner_id, 0);
+    }
+
+    #[tokio::test]
+    async fn get_cube_keys_deserialises_legacy_payload() {
+        use crate::services::coincube::CubeKeyRaw;
+        // Pre-W3 shape: only legacy fields; new fields defaulted.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/api/v1/connect/cubes/abc-uuid/keys");
+            then.status(200).header("content-type", "application/json").json_body(json!({
+                "success": true,
+                "data": [
+                    {
+                        "id": 1,
+                        "primaryOwnerId": 7,
+                        "keychainId": 42,
+                        "name": "Legacy Key",
+                        "curve": "secp256k1",
+                        "taproot": false,
+                        "xpub": "xpub661...",
+                        "fingerprint": "deadbeef",
+                        "derivationPath": "m/48'/0'/0'/2'",
+                        "network": "bitcoin",
+                        "cubeId": 5,
+                        "status": "active",
+                        "createdAt": "2026-04-18T00:00:00Z",
+                        "updatedAt": "2026-04-18T00:00:00Z"
+                    }
+                ]
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let keys = client
+            .get_cube_keys("abc-uuid")
+            .await
+            .expect("get_cube_keys should succeed");
+        mock.assert();
+
+        assert_eq!(keys.len(), 1);
+        let k: &CubeKeyRaw = &keys[0];
+        assert_eq!(k.primary_owner_id, 7);
+        assert_eq!(k.effective_owner_user_id(), 7);
+        assert!(k.owner_email.is_empty());
+        assert!(!k.is_own_key);
+        assert!(!k.used_by_vault);
+    }
+
+    #[tokio::test]
+    async fn create_connect_vault_returns_empty_shell() {
+        use crate::services::coincube::CreateConnectVaultRequest;
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/cubes/42/vault")
+                .json_body(json!({ "timelockDays": 180 }));
+            then.status(201).header("content-type", "application/json").json_body(json!({
+                "success": true,
+                "data": {
+                    "id": 5,
+                    "cubeId": 42,
+                    "timelockDays": 180,
+                    "timelockExpiresAt": "2026-10-15T00:00:00Z",
+                    "lastResetAt": "2026-04-18T00:00:00Z",
+                    "status": "active",
+                    "members": [],
+                    "createdAt": "2026-04-18T00:00:00Z",
+                    "updatedAt": "2026-04-18T00:00:00Z"
+                }
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let vault = client
+            .create_connect_vault(42, CreateConnectVaultRequest { timelock_days: 180 })
+            .await
+            .expect("create_connect_vault should succeed");
+        mock.assert();
+        assert_eq!(vault.id, 5);
+        assert_eq!(vault.cube_id, 42);
+        assert_eq!(vault.timelock_days, 180);
+        assert!(vault.members.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_vault_member_omits_optional_fields_when_none() {
+        use crate::services::coincube::{AddVaultMemberRequest, VaultMemberRole};
+        // Verify that `contactId` is omitted from the JSON when None
+        // (self-member case). `keyId` is present.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/cubes/42/vault/members")
+                .json_body(json!({ "keyId": 99, "role": "keyholder" }));
+            then.status(201).header("content-type", "application/json").json_body(json!({
+                "success": true,
+                "data": {
+                    "id": 7,
+                    "keyId": 99,
+                    "role": "keyholder",
+                    "createdAt": "2026-04-18T00:00:00Z"
+                }
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let member = client
+            .add_vault_member(
+                42,
+                AddVaultMemberRequest {
+                    contact_id: None,
+                    key_id: Some(99),
+                    role: VaultMemberRole::Keyholder,
+                },
+            )
+            .await
+            .expect("add_vault_member should succeed");
+        mock.assert();
+        assert_eq!(member.id, 7);
+        assert_eq!(member.key_id, Some(99));
+        assert_eq!(member.role, VaultMemberRole::Keyholder);
+    }
+
+    #[tokio::test]
+    async fn add_vault_member_409_key_already_used_maps_to_helper() {
+        use crate::services::coincube::{AddVaultMemberRequest, VaultMemberRole};
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/cubes/42/vault/members");
+            then.status(409).header("content-type", "application/json").json_body(json!({
+                "success": false,
+                "error": {
+                    "code": "KEY_ALREADY_USED_IN_VAULT",
+                    "message": "Key has already been used in another vault; a key can participate in at most one vault."
+                },
+                "keyId": 99,
+                "vaultId": 17
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .add_vault_member(
+                42,
+                AddVaultMemberRequest {
+                    contact_id: None,
+                    key_id: Some(99),
+                    role: VaultMemberRole::Keyholder,
+                },
+            )
+            .await
+            .expect_err("expected 409");
+        mock.assert();
+        assert!(
+            err.is_key_already_used_in_vault(),
+            "is_key_already_used_in_vault() should match: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn add_vault_member_generic_409_not_matched_by_helper() {
+        use crate::services::coincube::{AddVaultMemberRequest, VaultMemberRole};
+        // A 409 with a different error code must NOT trip the helper.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/cubes/42/vault/members");
+            then.status(409).header("content-type", "application/json").json_body(json!({
+                "success": false,
+                "error": {
+                    "code": "DUPLICATE_RESOURCE",
+                    "message": "This member already exists on the vault"
+                }
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .add_vault_member(
+                42,
+                AddVaultMemberRequest {
+                    contact_id: Some(1),
+                    key_id: Some(2),
+                    role: VaultMemberRole::Keyholder,
+                },
+            )
+            .await
+            .expect_err("expected 409");
+        mock.assert();
+        assert!(
+            !err.is_key_already_used_in_vault(),
+            "generic 409 must not match the W9 helper"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_invite_with_cube_ids_posts_expected_json_body() {
+        use crate::services::coincube::{ContactRole, CreateInviteRequest};
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/invites")
+                .json_body(json!({
+                    "email": "friend@example.com",
+                    "role": "keyholder",
+                    "cubeIds": [1, 7, 42]
+                }));
+            then.status(201).header("content-type", "application/json").json_body(json!({
+                "success": true,
+                "data": { "id": 100 }
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        client
+            .create_invite(CreateInviteRequest {
+                email: "friend@example.com".to_string(),
+                role: ContactRole::Keyholder,
+                cube_ids: vec![1, 7, 42],
+            })
+            .await
+            .expect("create_invite should succeed");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn create_invite_without_cube_ids_omits_field() {
+        // Backward-compat with pre-W10 staging backends: when cube_ids is
+        // empty, the JSON body must NOT carry the field.
+        use crate::services::coincube::{ContactRole, CreateInviteRequest};
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/invites")
+                .json_body(json!({
+                    "email": "friend@example.com",
+                    "role": "keyholder"
+                }));
+            then.status(201).header("content-type", "application/json").json_body(json!({
+                "success": true,
+                "data": { "id": 100 }
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        client
+            .create_invite(CreateInviteRequest {
+                email: "friend@example.com".to_string(),
+                role: ContactRole::Keyholder,
+                cube_ids: Vec::new(),
+            })
+            .await
+            .expect("create_invite should succeed");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn get_cube_tolerates_missing_members_and_invites() {
+        // `list_cubes()` may return cubes without the members/pending_invites
+        // fields; serde(default) should keep those call sites working.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::GET).path("/api/v1/connect/cubes/42");
+            then.status(200).header("content-type", "application/json").json_body(json!({
+                "success": true,
+                "data": {
+                    "id": 42,
+                    "uuid": "abc-123",
+                    "name": "My Cube",
+                    "network": "bitcoin",
+                    "lightningAddress": null,
+                    "bolt12Offer": null,
+                    "status": "active"
+                }
+            }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let cube = client.get_cube(42).await.expect("get_cube should succeed");
+        mock.assert();
+
+        assert!(cube.members.is_empty());
+        assert!(cube.pending_invites.is_empty());
     }
 }

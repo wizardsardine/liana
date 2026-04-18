@@ -1,5 +1,6 @@
 pub mod account;
 pub mod cube;
+pub mod cube_members;
 
 pub(crate) const CONNECT_KEYRING_SERVICE: &str = if cfg!(debug_assertions) {
     "dev.coincube.Connect"
@@ -10,9 +11,11 @@ pub(crate) const CONNECT_KEYRING_SERVICE: &str = if cfg!(debug_assertions) {
 pub(crate) const CONNECT_KEYRING_USER: &str = "global_session";
 
 pub use account::{
-    CheckoutPhase, CheckoutState, ConnectAccountPanel, ConnectFlowStep, ContactsState, ContactsStep,
+    CheckoutPhase, CheckoutState, ConnectAccountPanel, ConnectFlowStep, ContactsState,
+    ContactsStep, InviteCubeOption,
 };
 pub use cube::ConnectCubePanel;
+pub use cube_members::ConnectCubeMembersState;
 
 use std::sync::Arc;
 
