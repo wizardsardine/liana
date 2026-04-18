@@ -167,12 +167,18 @@ pub fn save_action<'a>(saved: bool) -> Element<'a, Message> {
 pub fn broadcast_action<'a>(
     conflicting_txids: &HashSet<Txid>,
     saved: bool,
+    spend_amount_display: &'a str,
+    sent_quote: &'a coincube_ui::component::quote_display::Quote,
+    sent_image_handle: &'a iced::widget::image::Handle,
 ) -> Element<'a, Message> {
     if saved {
-        card::simple(text("Transaction is broadcast"))
-            .width(Length::Fixed(400.0))
-            .align_x(iced::alignment::Horizontal::Center)
-            .into()
+        coincube_ui::component::sent_celebration_page(
+            "bitcoin-send",
+            spend_amount_display,
+            sent_quote,
+            sent_image_handle,
+            Message::Spend(super::super::SpendTxMessage::Cancel),
+        )
     } else {
         card::simple(
             Column::new()

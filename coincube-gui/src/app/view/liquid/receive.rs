@@ -1141,11 +1141,13 @@ fn receive_cards(
 
 /// Full-screen celebration view when a payment is received.
 pub fn received_celebration_page<'a>(
+    context: &str,
     amount_display: &'a str,
     quote: &'a coincube_ui::component::quote_display::Quote,
     image_handle: &'a iced::widget::image::Handle,
 ) -> Element<'a, LiquidReceiveMessage> {
     coincube_ui::component::received_celebration_page(
+        context,
         amount_display,
         quote,
         image_handle,

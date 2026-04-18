@@ -196,6 +196,8 @@ pub struct LiquidSend {
     /// Whether the current amount was set via "Send Max" for L-BTC (use Drain).
     is_drain: bool,
     /// Quote and image handle for the "Transaction complete" screen.
+    sent_celebration_context: String,
+    sent_amount_display: String,
     sent_quote: coincube_ui::component::quote_display::Quote,
     sent_image_handle: iced::widget::image::Handle,
 }
@@ -234,9 +236,11 @@ impl LiquidSend {
             pay_fees_with_asset: true,
             max_loading: false,
             is_drain: false,
-            sent_quote: coincube_ui::component::quote_display::random_quote("transaction-sent"),
+            sent_celebration_context: "liquid-send".to_string(),
+            sent_amount_display: String::new(),
+            sent_quote: coincube_ui::component::quote_display::random_quote("liquid-send"),
             sent_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
-                "transaction-sent",
+                "liquid-send",
             ),
         }
     }
@@ -439,6 +443,8 @@ impl State for LiquidSend {
                 ),
                 pay_fees_with_asset: self.pay_fees_with_asset,
                 max_loading: self.max_loading,
+                sent_celebration_context: &self.sent_celebration_context,
+                sent_amount_display: &self.sent_amount_display,
                 sent_quote: &self.sent_quote,
                 sent_image_handle: &self.sent_image_handle,
             })
@@ -2017,13 +2023,36 @@ impl State for LiquidSend {
                     self.prepare_response = None;
                     self.is_sending = false;
                     self.is_drain = false;
-                    // Fresh quote for the success screen
-                    self.sent_quote =
-                        coincube_ui::component::quote_display::random_quote("transaction-sent");
+                    // Compute amount display for celebration screen.
+                    {
+                        use coincube_ui::component::amount::DisplayAmount;
+                        self.sent_amount_display = if self.to_asset == SendAsset::Usdt
+                            && !self.usdt_amount_input.value.trim().is_empty()
+                        {
+                            format!("{} USDt", self.usdt_amount_input.value.trim())
+                        } else {
+                            self.amount
+                                .to_formatted_string_with_unit(cache.bitcoin_unit)
+                        };
+                    }
+                    // Fresh quote for the success screen — pick the
+                    // context based on the send method/asset. USDt is
+                    // checked first so the "note" pose wins whenever
+                    // USDt is involved, matching the receive-side
+                    // priority in state/liquid/receive.rs.
+                    let context = if self.to_asset == SendAsset::Usdt {
+                        "note-send"
+                    } else if self.receive_network == ReceiveNetwork::Lightning {
+                        "lightning-send"
+                    } else if self.receive_network == ReceiveNetwork::Bitcoin {
+                        "bitcoin-send"
+                    } else {
+                        "liquid-send"
+                    };
+                    self.sent_celebration_context = context.to_string();
+                    self.sent_quote = coincube_ui::component::quote_display::random_quote(context);
                     self.sent_image_handle =
-                        coincube_ui::component::quote_display::image_handle_for_context(
-                            "transaction-sent",
-                        );
+                        coincube_ui::component::quote_display::image_handle_for_context(context);
                     let breez_client = self.breez_client.clone();
                     return Task::perform(async move { breez_client.sync().await }, |result| {
                         match result {

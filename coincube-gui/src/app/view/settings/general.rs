@@ -79,15 +79,20 @@ fn backup_master_seed_card<'a>(backed_up: bool) -> Element<'a, Message> {
             .push(
                 Column::new()
                     .spacing(4)
+                    .width(Length::Fill)
                     .push(text(title).bold())
                     .push(text(subtitle).size(14)),
             )
-            .push(Space::new().width(Length::Fill))
             .push(
-                iced::widget::Button::new(text(button_label).bold())
-                    .padding([8, 16])
-                    .style(theme::button::secondary)
-                    .on_press(SettingsMessage::BackupMasterSeed(BackupWalletMessage::Start).into()),
+                iced::widget::Button::new(
+                    text(button_label)
+                        .bold()
+                        .shaping(iced::advanced::text::Shaping::Advanced),
+                )
+                .padding([8, 16])
+                .width(Length::Fixed(160.0))
+                .style(theme::button::secondary)
+                .on_press(SettingsMessage::BackupMasterSeed(BackupWalletMessage::Start).into()),
             ),
     )
     .width(Length::Fill)

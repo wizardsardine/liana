@@ -38,12 +38,13 @@ use crate::{
     export::{ImportExportMessage, ImportExportType},
     hw::{is_compatible_with_tapminiscript, HardwareWallet, HardwareWallets, UnsupportedReason},
     installer::{
-        descriptor::{Key, KeySource},
+        descriptor::{Key, KeySource, KeychainKeyOwner},
         message::{self, Message},
         Error, PathKind,
     },
     services::{
         self,
+        coincube::CubeKeyRaw,
         keys::{self, api::KeyKind},
     },
     signer::Signer,
@@ -51,6 +52,20 @@ use crate::{
 
 const MAX_ALIAS_LEN: usize = 24;
 pub type FnMsg = fn() -> Message;
+
+/// A `CubeKeyRaw` enriched with resolved owner identity (self vs. contact).
+#[derive(Debug, Clone)]
+pub struct ResolvedCubeKey {
+    pub raw: CubeKeyRaw,
+    pub owner: KeychainKeyOwner,
+}
+
+/// Result of fetching and resolving Cube keys.
+#[derive(Debug, Clone)]
+pub struct ResolvedCubeKeys {
+    pub my_keys: Vec<ResolvedCubeKey>,
+    pub contact_keys: Vec<ResolvedCubeKey>,
+}
 
 pub fn new_multixkey_from_xpub(
     xpub: DescriptorXKey<Xpub>,
@@ -132,6 +147,10 @@ pub enum SelectKeySourceMessage {
     Collapse(bool),
     Retry,
     None,
+    // Keychain key messages
+    FetchCubeKeys,
+    CubeKeysLoaded(Result<ResolvedCubeKeys, String>),
+    SelectKeychainKey(ResolvedCubeKey),
 }
 
 /// This struct represent metadata about a spending path, including whether it's
@@ -183,6 +202,20 @@ pub struct SelectKeySource {
     actual_path: PathData,
     master_signer: Arc<Mutex<Signer>>,
     developer_mode: bool,
+    /// Cube UUID for fetching Keychain keys from the API.
+    cube_id: Option<String>,
+    /// Authenticated coincube-api client for fetching Keychain keys.
+    coincube_client: Option<crate::services::coincube::CoincubeClient>,
+    /// Resolved Keychain keys owned by the current user.
+    my_keychain_keys: Vec<ResolvedCubeKey>,
+    /// Resolved Keychain keys owned by contacts (Keyholder role only).
+    contact_keychain_keys: Vec<ResolvedCubeKey>,
+    /// Whether we are currently loading Keychain keys from the API.
+    keychain_keys_loading: bool,
+    /// Error from the last Keychain keys fetch attempt.
+    keychain_keys_error: Option<String>,
+    /// Whether the initial fetch has been triggered.
+    keychain_keys_fetched: bool,
     /// The currently selected key.
     selected_key: SelectedKey,
     step: Step,
@@ -213,6 +246,8 @@ impl SelectKeySource {
         accounts: HashMap<Fingerprint, ChildNumber>,
         master_signer: Arc<Mutex<Signer>>,
         developer_mode: bool,
+        cube_id: Option<String>,
+        coincube_client: Option<crate::services::coincube::CoincubeClient>,
     ) -> Self {
         Self {
             network,
@@ -222,6 +257,13 @@ impl SelectKeySource {
             actual_path,
             master_signer,
             developer_mode,
+            cube_id,
+            coincube_client,
+            my_keychain_keys: Vec::new(),
+            contact_keychain_keys: Vec::new(),
+            keychain_keys_loading: false,
+            keychain_keys_error: None,
+            keychain_keys_fetched: false,
             selected_key: SelectedKey::None,
             step: Step::Select,
             focus: Focus::None,
@@ -893,6 +935,316 @@ impl SelectKeySource {
             _ => Task::none(),
         }
     }
+    // ── Keychain key handlers ─────────────────────────────────────────
+
+    fn on_fetch_cube_keys(&mut self) -> Task<Message> {
+        let (Some(cube_id), Some(client)) = (self.cube_id.clone(), self.coincube_client.clone())
+        else {
+            return Task::none();
+        };
+        self.keychain_keys_loading = true;
+        self.keychain_keys_error = None;
+        self.keychain_keys_fetched = true;
+
+        Task::perform(
+            async move {
+                let raw_keys = client
+                    .get_cube_keys(&cube_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let contacts = client.get_contacts().await.map_err(|e| e.to_string())?;
+                let user = client.get_user().await.map_err(|e| e.to_string())?;
+                let current_user_id: u64 = user.id.into();
+
+                let mut my_keys = Vec::new();
+                let mut contact_keys = Vec::new();
+
+                for key in raw_keys {
+                    let owner_id = key.primary_owner_id;
+                    if owner_id == current_user_id {
+                        my_keys.push(ResolvedCubeKey {
+                            raw: key,
+                            owner: KeychainKeyOwner::SelfUser {
+                                primary_owner_id: owner_id,
+                            },
+                        });
+                    } else if let Some(contact) = contacts.iter().find(|c| {
+                        c.contact_user_id == owner_id
+                            && c.role == crate::services::coincube::ContactRole::Keyholder
+                    }) {
+                        contact_keys.push(ResolvedCubeKey {
+                            raw: key,
+                            owner: KeychainKeyOwner::Contact {
+                                primary_owner_id: owner_id,
+                                contact_id: contact.id,
+                                contact_email: contact.contact_user.email.clone(),
+                            },
+                        });
+                    }
+                    // Keys from non-Keyholder contacts are silently discarded.
+                }
+
+                Ok(ResolvedCubeKeys {
+                    my_keys,
+                    contact_keys,
+                })
+            },
+            |result| Self::route(SelectKeySourceMessage::CubeKeysLoaded(result)),
+        )
+    }
+
+    fn on_cube_keys_loaded(&mut self, result: Result<ResolvedCubeKeys, String>) -> Task<Message> {
+        self.keychain_keys_loading = false;
+        match result {
+            Ok(resolved) => {
+                self.my_keychain_keys = resolved.my_keys;
+                self.contact_keychain_keys = resolved.contact_keys;
+                self.keychain_keys_error = None;
+            }
+            Err(e) => {
+                tracing::warn!("Failed to fetch Cube keys: {}", e);
+                self.keychain_keys_error = Some(e);
+            }
+        }
+        Task::none()
+    }
+
+    fn on_select_keychain_key(&mut self, resolved: ResolvedCubeKey) -> Task<Message> {
+        let fingerprint_str = &resolved.raw.fingerprint;
+        let xpub_str = &resolved.raw.xpub;
+        let derivation_str = &resolved.raw.derivation_path;
+
+        let Ok(fingerprint) = Fingerprint::from_str(fingerprint_str) else {
+            self.error = Some(format!("Invalid fingerprint: {}", fingerprint_str));
+            return Task::none();
+        };
+        let Ok(xpub) = xpub_str.parse::<Xpub>() else {
+            self.error = Some(format!("Invalid xpub: {}", xpub_str));
+            return Task::none();
+        };
+        let Ok(derivation_path) = DerivationPath::from_str(derivation_str) else {
+            self.error = Some(format!("Invalid derivation path: {}", derivation_str));
+            return Task::none();
+        };
+
+        let descriptor_key = DescriptorPublicKey::XPub(DescriptorXKey {
+            origin: Some((fingerprint, derivation_path)),
+            xkey: xpub,
+            derivation_path: DerivationPath::master(),
+            wildcard: Wildcard::Unhardened,
+        });
+
+        if !check_key_network(&descriptor_key, self.network) {
+            self.error = Some("Key network does not match".to_string());
+            return Task::none();
+        }
+
+        if self.owner_placed_elsewhere(resolved.owner.primary_owner_id(), fingerprint) {
+            self.error = Some(
+                "This owner already has a Keychain key placed in this Vault.".to_string(),
+            );
+            return Task::none();
+        }
+
+        if self.keys.contains_key(&fingerprint) {
+            self.selected_key = SelectedKey::Existing(fingerprint);
+        } else {
+            let key = Key {
+                source: KeySource::KeychainKey {
+                    owner: resolved.owner,
+                    key_id: resolved.raw.id,
+                    name: resolved.raw.name.clone(),
+                },
+                name: resolved.raw.name.clone(),
+                fingerprint,
+                key: descriptor_key,
+                account: None,
+            };
+            self.selected_key = SelectedKey::New(Box::new(key));
+        }
+        self.form_alias.value = resolved.raw.name;
+        self.form_alias.valid = true;
+        self.focus = Focus::None;
+        self.step = Step::Details;
+        Task::none()
+    }
+
+    /// Whether the Keychain key sections should be shown.
+    fn keychain_available(&self) -> bool {
+        self.cube_id.is_some() && self.coincube_client.is_some()
+    }
+
+    /// Check if a key's owner already has a key placed in this vault.
+    /// Self-contained: reads `primary_owner_id` directly from the
+    /// `KeychainKeyOwner` stored on each placed key, so it works
+    /// regardless of the fetched key list state.
+    fn is_owner_already_placed(&self, primary_owner_id: u64) -> bool {
+        self.keys.values().any(|(_, k)| {
+            if let KeySource::KeychainKey { owner, .. } = &k.source {
+                owner.primary_owner_id() == primary_owner_id
+            } else {
+                false
+            }
+        })
+    }
+
+    /// Backstop for `on_select_keychain_key`: returns true if accepting
+    /// the candidate Keychain key would violate "one Keychain key per
+    /// owner per Vault".  A conflict exists when a *different* Keychain
+    /// key from the same owner is placed at coordinates outside the
+    /// currently-edited slot (those can't be overwritten by this
+    /// selection).  Replacing the key at the currently-edited slot is
+    /// allowed.
+    fn owner_placed_elsewhere(
+        &self,
+        primary_owner_id: u64,
+        candidate_fingerprint: Fingerprint,
+    ) -> bool {
+        self.keys.values().any(|(coords, k)| {
+            if k.fingerprint == candidate_fingerprint {
+                return false;
+            }
+            let KeySource::KeychainKey { owner, .. } = &k.source else {
+                return false;
+            };
+            if owner.primary_owner_id() != primary_owner_id {
+                return false;
+            }
+            coords.is_empty()
+                || coords
+                    .iter()
+                    .any(|c| !self.actual_path.coordinates.contains(c))
+        })
+    }
+
+    // ── Keychain key views ──────────────────────────────────────────
+
+    fn view_my_keychain_keys(&self) -> Element<Message> {
+        let mut col = Column::new().spacing(modal::V_SPACING).width(modal::BTN_W);
+        col = col.push(p1_bold("My Keychain Keys"));
+
+        // Treat "not yet fetched" as loading — the auto-fetch fires on
+        // the first update() call, leaving a brief pre-fetch window
+        // where the lists are empty without the empty state being real.
+        if (!self.keychain_keys_fetched || self.keychain_keys_loading)
+            && self.my_keychain_keys.is_empty()
+            && self.keychain_keys_error.is_none()
+        {
+            col = col.push(p1_regular("Fetching Keychain keys…"));
+            return col.into();
+        }
+        if let Some(err) = &self.keychain_keys_error {
+            col = col.push(p1_regular(format!("Failed to load keys: {}", err)));
+            col = col.push(
+                button::secondary(Some(icon::reload_icon()), "Retry")
+                    .on_press(Self::route(SelectKeySourceMessage::FetchCubeKeys)),
+            );
+            return col.into();
+        }
+        if self.my_keychain_keys.is_empty() {
+            col = col.push(p1_regular(
+                "No Keychain keys. Add one in the COINCUBE mobile app.",
+            ));
+            return col.into();
+        }
+
+        for rk in &self.my_keychain_keys {
+            let disabled = self.is_owner_already_placed(rk.raw.primary_owner_id);
+            let fp_short: String = rk.raw.fingerprint.chars().take(8).collect();
+            let fingerprint = Some(format!("#{}", fp_short));
+            let msg = if disabled {
+                None
+            } else {
+                let rk_clone = rk.clone();
+                Some(move || {
+                    Self::route(SelectKeySourceMessage::SelectKeychainKey(rk_clone.clone()))
+                })
+            };
+            let warning = disabled.then(|| "Already selected".to_string());
+            col = col.push(modal::key_entry(
+                Some(icon::round_key_icon()),
+                rk.raw.name.clone(),
+                fingerprint,
+                None,
+                None,
+                warning,
+                msg,
+            ));
+        }
+        col.into()
+    }
+
+    fn view_contact_keychain_keys(&self) -> Element<Message> {
+        let mut col = Column::new().spacing(modal::V_SPACING).width(modal::BTN_W);
+        col = col.push(p1_bold("Contact Keychain Keys"));
+
+        // Treat "not yet fetched" as loading (see view_my_keychain_keys).
+        if (!self.keychain_keys_fetched || self.keychain_keys_loading)
+            && self.contact_keychain_keys.is_empty()
+            && self.keychain_keys_error.is_none()
+        {
+            col = col.push(p1_regular("Fetching contact keys…"));
+            return col.into();
+        }
+        if let Some(err) = &self.keychain_keys_error {
+            col = col.push(p1_regular(format!("Failed to load keys: {}", err)));
+            col = col.push(
+                button::secondary(Some(icon::reload_icon()), "Retry")
+                    .on_press(Self::route(SelectKeySourceMessage::FetchCubeKeys)),
+            );
+            return col.into();
+        }
+        if self.contact_keychain_keys.is_empty() {
+            col = col.push(p1_regular("None of your contacts have shared keys yet."));
+            return col.into();
+        }
+
+        // Group keys by owner (BTreeMap for stable render order)
+        let mut seen_contacts: std::collections::BTreeMap<u64, Vec<&ResolvedCubeKey>> =
+            std::collections::BTreeMap::new();
+        for rk in &self.contact_keychain_keys {
+            seen_contacts
+                .entry(rk.raw.primary_owner_id)
+                .or_default()
+                .push(rk);
+        }
+        for keys in seen_contacts.values() {
+            if let Some(first) = keys.first() {
+                let contact_label = match &first.owner {
+                    KeychainKeyOwner::Contact { contact_email, .. } => {
+                        format!("{} [Keyholder]", contact_email)
+                    }
+                    _ => "Contact".to_string(),
+                };
+                col = col.push(p1_bold(contact_label));
+                for rk in keys {
+                    let disabled = self.is_owner_already_placed(rk.raw.primary_owner_id);
+                    let fp = &rk.raw.fingerprint;
+                    let fingerprint = Some(format!("#{}", &fp[..fp.len().min(8)]));
+                    let msg = if disabled {
+                        None
+                    } else {
+                        let rk_clone = (*rk).clone();
+                        Some(move || {
+                            Self::route(SelectKeySourceMessage::SelectKeychainKey(rk_clone.clone()))
+                        })
+                    };
+                    let warning = disabled.then(|| "Already selected".to_string());
+                    col = col.push(modal::key_entry(
+                        Some(icon::round_key_icon()),
+                        rk.raw.name.clone(),
+                        fingerprint,
+                        None,
+                        None,
+                        warning,
+                        msg,
+                    ));
+                }
+            }
+        }
+        col.into()
+    }
+
     fn main_view(
         &self,
         hws: Vec<(
@@ -919,12 +1271,19 @@ impl SelectKeySource {
             Some(|| Message::Close),
         );
 
+        let my_keychain =
+            (self.keychain_available() && !only_safety_net).then(|| self.view_my_keychain_keys());
+        let contact_keychain = (self.keychain_available() && !only_safety_net)
+            .then(|| self.view_contact_keychain_keys());
+
         let column = Column::new()
             .spacing(10)
             .push(header)
             .push(no_devices)
             .push(devices)
             .push(keys)
+            .push(my_keychain)
+            .push(contact_keychain)
             .push(self.view_other_options())
             .align_x(Horizontal::Center)
             .width(modal::MODAL_WIDTH);
@@ -1161,6 +1520,7 @@ impl SelectKeySource {
             KeySource::Manual => icon::round_key_icon(),
             KeySource::Token(..) => icon::hdd_icon(),
             KeySource::BorderWallet => icon::round_key_icon(),
+            KeySource::KeychainKey { .. } => icon::round_key_icon(),
         };
         let message = if let KeySource::Token(kind, _) = source {
             if !self.actual_path.token_kind.contains(&kind) {
@@ -1260,6 +1620,14 @@ impl super::DescriptorEditModal for SelectKeySource {
         self.processing
     }
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+        // Trigger initial Keychain keys fetch on first update.
+        // Batched with the normal message handling so the incoming
+        // message is not dropped.
+        let fetch_task = if !self.keychain_keys_fetched && self.keychain_available() {
+            Some(self.on_fetch_cube_keys())
+        } else {
+            None
+        };
         // step back if selected device disconnected
         if self.step == Step::Details {
             if let Focus::Device(fg) = self.focus {
@@ -1270,7 +1638,7 @@ impl super::DescriptorEditModal for SelectKeySource {
                 }
             }
         }
-        match message {
+        let msg_task = match message {
             Message::ImportExport(ImportExportMessage::Close) => {
                 self.modal = None;
                 if self.step == Step::Select {
@@ -1338,8 +1706,18 @@ impl super::DescriptorEditModal for SelectKeySource {
                 SelectKeySourceMessage::Collapse(collapse) => self.on_collapse(collapse),
                 SelectKeySourceMessage::Retry => self.on_retry(),
                 SelectKeySourceMessage::None => Task::none(),
+                SelectKeySourceMessage::FetchCubeKeys => self.on_fetch_cube_keys(),
+                SelectKeySourceMessage::CubeKeysLoaded(result) => self.on_cube_keys_loaded(result),
+                SelectKeySourceMessage::SelectKeychainKey(resolved) => {
+                    self.on_select_keychain_key(resolved)
+                }
             },
             _ => Task::none(),
+        };
+        // Batch the one-shot fetch alongside the normal message result.
+        match fetch_task {
+            Some(ft) => Task::batch([ft, msg_task]),
+            None => msg_task,
         }
     }
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {

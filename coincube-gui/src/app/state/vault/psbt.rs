@@ -262,9 +262,23 @@ impl PsbtState {
             }
             Message::BroadcastModal(res) => match res {
                 Ok(conflicting_txids) => {
+                    use coincube_ui::component::amount::DisplayAmount;
+                    let amount_display = self
+                        .tx
+                        .spend_amount
+                        .to_formatted_string_with_unit(cache.bitcoin_unit);
                     self.modal = Some(PsbtModal::Broadcast(BroadcastModal {
                         conflicting_txids,
-                        ..Default::default()
+                        broadcast: false,
+                        error: None,
+                        sent_quote: coincube_ui::component::quote_display::random_quote(
+                            "bitcoin-send",
+                        ),
+                        sent_image_handle:
+                            coincube_ui::component::quote_display::image_handle_for_context(
+                                "bitcoin-send",
+                            ),
+                        spend_amount_display: amount_display,
                     }));
                 }
                 Err(e) => {
@@ -364,12 +378,16 @@ impl Modal for SaveModal {
     }
 }
 
-#[derive(Default)]
 pub struct BroadcastModal {
     broadcast: bool,
     error: Option<Error>,
     /// IDs of any directly conflicting transactions.
     conflicting_txids: HashSet<Txid>,
+    /// Quote and image handle for the celebration screen.
+    sent_quote: coincube_ui::component::quote_display::Quote,
+    sent_image_handle: iced::widget::image::Handle,
+    /// Formatted spend amount for the celebration display.
+    spend_amount_display: String,
 }
 
 impl Modal for BroadcastModal {
@@ -412,7 +430,13 @@ impl Modal for BroadcastModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
             content,
-            view::vault::psbt::broadcast_action(&self.conflicting_txids, self.broadcast),
+            view::vault::psbt::broadcast_action(
+                &self.conflicting_txids,
+                self.broadcast,
+                &self.spend_amount_display,
+                &self.sent_quote,
+                &self.sent_image_handle,
+            ),
         )
         .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
         .into()

@@ -380,6 +380,29 @@ pub struct CubeResponse {
     pub status: String,
 }
 
+/// A key returned by `GET /api/v1/connect/cubes/{cubeUuid}/keys`.
+/// The response is a flat array — owner resolution (self vs. contact)
+/// is done client-side by comparing `primary_owner_id` against the
+/// authenticated user's ID.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CubeKeyRaw {
+    pub id: u64,
+    pub primary_owner_id: u64,
+    pub keychain_id: Option<u64>,
+    pub name: String,
+    pub curve: String,
+    pub taproot: bool,
+    pub xpub: String,
+    pub fingerprint: String,
+    pub derivation_path: String,
+    pub network: String,
+    pub cube_id: u64,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// Response from GET /api/v1/connect/cubes/limits
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

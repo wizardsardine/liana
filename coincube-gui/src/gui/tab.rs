@@ -187,6 +187,7 @@ impl Tab {
                     }
                     let (install, command) = Installer::new(
                         datadir, network, None, init, false, None, None, None, false,
+                        None, // No coincube_client from launcher
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
@@ -273,6 +274,7 @@ impl Tab {
                         None, // No breez_client from login screen
                         None, // No spark_backend from login screen
                         false,
+                        None, // No coincube_client from login screen
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
@@ -453,6 +455,7 @@ impl Tab {
                         GlobalSettings::load_developer_mode(&GlobalSettings::path(
                             &loader.datadir_path,
                         )),
+                        None, // No coincube_client from loader path
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
@@ -595,6 +598,7 @@ impl Tab {
                             GlobalSettings::load_developer_mode(&GlobalSettings::path(
                                 app.datadir(),
                             )),
+                            app.authenticated_coincube_client(), // authenticated API client for Keychain keys
                         );
                         self.state = State::Installer(install);
                         command.map(Message::Install)
@@ -1128,6 +1132,7 @@ pub fn create_app_with_remote_backend(
             has_vault: true,
             cube_name: cube_settings.name.clone(),
             current_cube_backed_up: cube_settings.backed_up,
+            backup_warning_dismissed: false,
             current_cube_is_passkey: cube_settings.is_passkey_cube(),
             has_p2p: false, // Set later by App::new based on mnemonic availability
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
