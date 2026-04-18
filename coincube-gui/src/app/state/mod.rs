@@ -22,8 +22,8 @@ use crate::daemon::{
     Daemon,
 };
 pub use connect::{ConnectAccountPanel, ConnectCubePanel, ConnectPanel};
-pub(crate) use global_home::{effective_transfer_max_sat, effective_transfer_min_sat};
 pub use global_home::GlobalHome;
+pub(crate) use global_home::{effective_transfer_max_sat, effective_transfer_min_sat};
 pub use liquid::overview::LiquidOverview;
 pub use liquid::receive::LiquidReceive;
 pub use liquid::send::LiquidSend;

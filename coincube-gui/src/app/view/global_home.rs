@@ -1,4 +1,14 @@
+use crate::app::breez_liquid::assets::format_usdt_display;
+use crate::app::{
+    menu::Menu,
+    view::{vault::receive::address_card, FiatAmountConverter},
+};
+use crate::app::{
+    menu::{LiquidSubMenu, VaultSubMenu},
+    view::message::{HomeMessage, Message},
+};
 use breez_sdk_liquid::{bitcoin::Denomination, model::PreparePayOnchainResponse};
+use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     color,
     component::{amount::*, button, form, text::*},
@@ -13,16 +23,6 @@ use iced::{
     widget::{mouse_area, Button, Column, Space, Stack},
     Alignment, Length,
 };
-use crate::app::breez_liquid::assets::format_usdt_display;
-use crate::app::{
-    menu::Menu,
-    view::{vault::receive::address_card, FiatAmountConverter},
-};
-use crate::app::{
-    menu::{LiquidSubMenu, VaultSubMenu},
-    view::message::{HomeMessage, Message},
-};
-use coincube_core::miniscript::bitcoin::Amount;
 
 #[derive(Clone, Copy, Debug)]
 #[allow(dead_code)]
@@ -394,8 +394,14 @@ where
     M: 'a,
 {
     match kind {
-        WalletKind::Liquid => droplet_fill_icon().size(size).style(theme::text::secondary).into(),
-        WalletKind::Spark => lightning_icon().size(size).style(theme::text::secondary).into(),
+        WalletKind::Liquid => droplet_fill_icon()
+            .size(size)
+            .style(theme::text::secondary)
+            .into(),
+        WalletKind::Spark => lightning_icon()
+            .size(size)
+            .style(theme::text::secondary)
+            .into(),
         WalletKind::Vault => vault_icon().size(size).style(theme::text::secondary).into(),
     }
 }
@@ -573,18 +579,16 @@ fn enter_amount_card<'a>(
                             // Helper text reflects the per-direction effective
                             // minimum (§Design section 4) composed with Breez's
                             // SDK limits on swap-involving legs.
-                            let effective_min =
-                                crate::app::state::effective_transfer_min_sat(
-                                    direction,
-                                    onchain_send_limit,
-                                    onchain_receive_limit,
-                                );
-                            let effective_max =
-                                crate::app::state::effective_transfer_max_sat(
-                                    direction,
-                                    onchain_send_limit,
-                                    onchain_receive_limit,
-                                );
+                            let effective_min = crate::app::state::effective_transfer_min_sat(
+                                direction,
+                                onchain_send_limit,
+                                onchain_receive_limit,
+                            );
+                            let effective_max = crate::app::state::effective_transfer_max_sat(
+                                direction,
+                                onchain_send_limit,
+                                onchain_receive_limit,
+                            );
                             Container::new(
                                 text(match (effective_min, effective_max) {
                                     (Some(min), Some(max)) => format!(
@@ -1000,17 +1004,15 @@ fn confirm_transfer_view<'a>(
                     .push(
                         crate::app::view::shared::feerate_picker::feerate_presets_row::<Message>(
                             transfer_feerate_loading,
-                            |preset| {
-                                Message::Home(HomeMessage::FetchTransferFeeratePreset(preset))
-                            },
+                            |preset| Message::Home(HomeMessage::FetchTransferFeeratePreset(preset)),
                         ),
                     )
-                    .push(
-                        crate::app::view::shared::feerate_picker::feerate_input::<Message, _>(
-                            transfer_feerate,
-                            |s| Message::Home(HomeMessage::SetTransferFeerate(s)),
-                        ),
-                    ),
+                    .push(crate::app::view::shared::feerate_picker::feerate_input::<
+                        Message,
+                        _,
+                    >(transfer_feerate, |s| {
+                        Message::Home(HomeMessage::SetTransferFeerate(s))
+                    })),
             )
             .width(Length::Fill)
             .style(theme::card::simple)
@@ -1350,8 +1352,7 @@ pub struct GlobalViewConfig<'a> {
     pub transfer_feerate: &'a form::Value<String>,
     /// Which Fast/Normal/Slow preset is currently fetching a mempool-driven
     /// estimate. The button for the loading preset renders non-pressable.
-    pub transfer_feerate_loading:
-        Option<crate::app::view::shared::feerate_picker::FeeratePreset>,
+    pub transfer_feerate_loading: Option<crate::app::view::shared::feerate_picker::FeeratePreset>,
     /// Spark-quoted on-chain fee for the prepared send (Spark-sourced
     /// directions only). Rendered in the Fees row on the confirm screen.
     pub spark_send_fee_sat: Option<u64>,
@@ -1781,8 +1782,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         )
         .push(spark_btc_row)
         .push_maybe(pending_spark_incoming.and_then(|pt| {
-            (pt.stage != TransferStage::Completed)
-                .then(|| pending_deposit_card(pt, bitcoin_unit))
+            (pt.stage != TransferStage::Completed).then(|| pending_deposit_card(pt, bitcoin_unit))
         }));
 
     let spark_card: Element<'a, Message> = Container::new(spark_card_content)

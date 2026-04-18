@@ -1,10 +1,4 @@
-use coincube_ui::{
-    color,
-    component::text::*,
-    icon,
-    theme,
-    widget::*,
-};
+use coincube_ui::{color, component::text::*, icon, theme, widget::*};
 use iced::{
     widget::{button as iced_button, container, Column, Container, Row, Space},
     Alignment, Background, Length,

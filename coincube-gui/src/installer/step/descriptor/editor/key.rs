@@ -1040,9 +1040,8 @@ impl SelectKeySource {
         }
 
         if self.owner_placed_elsewhere(resolved.owner.primary_owner_id(), fingerprint) {
-            self.error = Some(
-                "This owner already has a Keychain key placed in this Vault.".to_string(),
-            );
+            self.error =
+                Some("This owner already has a Keychain key placed in this Vault.".to_string());
             return Task::none();
         }
 
