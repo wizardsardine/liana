@@ -2031,6 +2031,14 @@ impl App {
                         tasks.push(Task::done(Message::View(view::Message::SparkReceive(
                             view::SparkReceiveMessage::DepositsChanged,
                         ))));
+                        // Transfer-redesign follow-up: the Home state tracks a
+                        // `pending_spark_incoming` indicator for transfer-initiated
+                        // deposits (VaultToSpark / LiquidToSpark). Forward the
+                        // event so Home can reconcile its own view (auto-claim a
+                        // matured deposit, or clear the indicator once claimed).
+                        tasks.push(Task::done(Message::View(view::Message::Home(
+                            view::HomeMessage::SparkDepositsChanged,
+                        ))));
                     }
                     _ => {}
                 }
@@ -2188,6 +2196,20 @@ impl App {
                             ))),
                             home_task.unwrap_or_else(Task::none),
                         ];
+                        // Transfer-redesign follow-up: a peg-in (BTC on-chain →
+                        // L-BTC) completing is the event we need to clear the
+                        // Liquid card's pending-receive indicator after a
+                        // VaultToLiquid or SparkToLiquid transfer. Only counts
+                        // when the incoming payment is the Bitcoin swap leg.
+                        if matches!(details.payment_type, PaymentType::Receive)
+                            && matches!(details.details, PaymentDetails::Bitcoin { .. })
+                        {
+                            tasks.push(Task::done(Message::View(view::Message::Home(
+                                view::HomeMessage::LiquidPeginCompleted {
+                                    amount_sat: details.amount_sat,
+                                },
+                            ))));
+                        }
                         if let Some(msg) = self.panels.active_liquid_refresh(true) {
                             tasks.push(Task::done(msg));
                         }

@@ -6,6 +6,7 @@ pub mod global_home;
 pub mod liquid;
 pub mod p2p;
 pub mod settings;
+pub mod shared;
 pub mod spark;
 
 pub mod vault;
