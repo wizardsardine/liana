@@ -72,7 +72,7 @@ A second Lightning-enabled wallet via the Breez Spark SDK. The SDK runs in a sib
 
 The practical consequence is that `cargo run -p coincube-gui` on its own does NOT build the bridge, and without the bridge binary the gui renders "Spark is not configured for this cube" even on a freshly-created Cube. Build both halves together via the [`Makefile`](Makefile):
 
-```
+```bash
 make build        # builds bridge + gui (debug)
 make run          # builds bridge, then runs the gui
 make release      # release build of both
@@ -80,7 +80,7 @@ make release      # release build of both
 
 Or invoke cargo directly for just the bridge:
 
-```
+```bash
 cargo build --manifest-path coincube-spark-bridge/Cargo.toml
 ```
 
