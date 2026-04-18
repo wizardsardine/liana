@@ -2,7 +2,10 @@ use std::convert::From;
 
 use iced::Length;
 
-use coincube_ui::{component::notification, widget::{Column, Container}};
+use coincube_ui::{
+    component::notification,
+    widget::{Column, Container},
+};
 
 use crate::{
     app::error::Error,
