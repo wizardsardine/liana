@@ -1254,9 +1254,8 @@ impl State for GlobalHome {
                                         if let Some(daemon) = daemon {
                                             let txid = spend_tx.psbt.unsigned_tx.compute_txid();
                                             let daemon_clone = daemon.clone();
-                                            self.is_sending = true;
                                             let to_kind = transfer_direction.to_kind();
-                                            let amount_sat = Amount::from_str_in(
+                                            let Ok(amount_sat) = Amount::from_str_in(
                                                 &self.entered_amount.value,
                                                 if matches!(
                                                     cache.bitcoin_unit,
@@ -1267,8 +1266,19 @@ impl State for GlobalHome {
                                                     coincube_core::miniscript::bitcoin::Denomination::Satoshi
                                                 },
                                             )
-                                            .map(|a| a.to_sat())
-                                            .unwrap_or(0);
+                                            .map(|a| a.to_sat()) else {
+                                                // Signed PSBT exists but the amount
+                                                // field no longer parses — refuse to
+                                                // broadcast rather than emit a
+                                                // misleading zero-amount pending card.
+                                                self.entered_amount.valid = false;
+                                                return Task::done(Message::View(
+                                                    view::Message::ShowError(
+                                                        "Invalid amount; please re-enter before broadcasting.".to_string(),
+                                                    ),
+                                                ));
+                                            };
+                                            self.is_sending = true;
 
                                             return Task::perform(
                                                 async move {
@@ -1433,13 +1443,21 @@ impl State for GlobalHome {
                         vout: _,
                         result,
                     } => {
-                        // Success: do nothing further — the bridge's follow-up
-                        // `DepositsChanged` event will re-enter the watcher and
-                        // drive it to clear `pending_spark_incoming`. Failure: log
-                        // and surface so the user can retry from the Receive panel.
+                        // Success: mark the indicator Completed so the view hides
+                        // it immediately and `BackToHome` can reap it symmetric to
+                        // `pending_vault_incoming`. The bridge's follow-up
+                        // `DepositsChanged` will still re-enter the watcher and
+                        // clear the field outright. Failure: log and surface so
+                        // the user can retry from the Receive panel.
                         self.auto_claiming_spark_deposit = None;
                         match result {
-                            Ok(_amount) => Task::none(),
+                            Ok(_amount) => {
+                                if let Some(mut pending) = self.pending_spark_incoming {
+                                    pending.stage = TransferStage::Completed;
+                                    self.pending_spark_incoming = Some(pending);
+                                }
+                                Task::none()
+                            }
                             Err(e) => {
                                 log::warn!("Auto-claim of Spark deposit failed: {e}");
                                 Task::none()
@@ -1580,6 +1598,13 @@ impl State for GlobalHome {
                             self.pending_vault_incoming = None;
                             self.pending_vault_incoming_swap_id = None;
                             return self.clear_pending_liquid_to_vault_transfer();
+                        }
+                        if self
+                            .pending_spark_incoming
+                            .map(|pending| pending.stage == TransferStage::Completed)
+                            .unwrap_or(false)
+                        {
+                            self.pending_spark_incoming = None;
                         }
                         Task::none()
                     }

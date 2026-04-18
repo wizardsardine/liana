@@ -1757,35 +1757,36 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 Message::Home(HomeMessage::ReceiveSparkBtc),
             ));
 
-    let spark_card_content = Column::new()
-        .spacing(12)
-        .push(
-            Row::new()
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .push(lightning_icon().size(16).style(theme::text::secondary))
-                .push(text("Spark").size(14).style(theme::text::secondary)),
-        )
-        .push(
-            Column::new()
-                .spacing(4)
-                .push(if balance_masked {
-                    Row::new().push(text("********").size(H2_SIZE))
-                } else {
-                    amount_with_size_and_unit(&spark_balance, H2_SIZE, bitcoin_unit)
-                })
-                .push(if balance_masked {
-                    Some(text("********").size(P1_SIZE))
-                } else {
-                    spark_fiat
-                        .as_ref()
-                        .map(|f| f.to_text().size(P1_SIZE).style(theme::text::secondary))
-                }),
-        )
-        .push(spark_btc_row)
-        .push_maybe(pending_spark_incoming.and_then(|pt| {
-            (pt.stage != TransferStage::Completed).then(|| pending_deposit_card(pt, bitcoin_unit))
-        }));
+        let spark_card_content = Column::new()
+            .spacing(12)
+            .push(
+                Row::new()
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .push(lightning_icon().size(16).style(theme::text::secondary))
+                    .push(text("Spark").size(14).style(theme::text::secondary)),
+            )
+            .push(
+                Column::new()
+                    .spacing(4)
+                    .push(if balance_masked {
+                        Row::new().push(text("********").size(H2_SIZE))
+                    } else {
+                        amount_with_size_and_unit(&spark_balance, H2_SIZE, bitcoin_unit)
+                    })
+                    .push(if balance_masked {
+                        Some(text("********").size(P1_SIZE))
+                    } else {
+                        spark_fiat
+                            .as_ref()
+                            .map(|f| f.to_text().size(P1_SIZE).style(theme::text::secondary))
+                    }),
+            )
+            .push(spark_btc_row)
+            .push_maybe(pending_spark_incoming.and_then(|pt| {
+                (pt.stage != TransferStage::Completed)
+                    .then(|| pending_deposit_card(pt, bitcoin_unit))
+            }));
 
         let spark_card: Element<'a, Message> = Container::new(spark_card_content)
             .padding(20)
