@@ -27,6 +27,8 @@ Example VAULT configuration:
 
 **LIQUID WALLET** - Lightning-enabled spending wallet powered by Breez SDK for instant, low-fee payments. [Liquid](https://liquid.net/) is a sidechain of Bitcoin that provides low cost payments and confidential transactions.
 
+**SPARK WALLET** - Second Lightning-enabled wallet powered by the Breez Spark SDK, running alongside the Liquid wallet. Both wallets derive from the same master seed, so one mnemonic and one PIN cover everything. Spark support is currently limited to Bitcoin mainnet and Regtest.
+
 **BUY/SELL** - Integrated Bitcoin on/off-ramp functionality.
 
 COINCUBE is designed for **trustless inheritance**, **loss protection**, **liquid spending**, and
@@ -63,6 +65,26 @@ The code for the GUI can be found in the [`coincube-gui`](coincube-gui) folder.
 #### Liquid Wallet
 
 Lightning-enabled spending wallet integration with Breez SDK (under development).
+
+#### Spark Wallet
+
+A second Lightning-enabled wallet via the Breez Spark SDK. The SDK runs in a sibling subprocess — [`coincube-spark-bridge`](coincube-spark-bridge) — that the gui spawns on startup and communicates with over stdin/stdout JSON-RPC. The bridge lives in its own Cargo workspace because `breez-sdk-spark` and `breez-sdk-liquid` cannot share a dependency graph; see the `exclude = ["coincube-spark-bridge"]` entry in the root [`Cargo.toml`](Cargo.toml) for the paired side of this setup.
+
+The practical consequence is that `cargo run -p coincube-gui` on its own does NOT build the bridge, and without the bridge binary the gui renders "Spark is not configured for this cube" even on a freshly-created Cube. Build both halves together via the [`Makefile`](Makefile):
+
+```bash
+make build        # builds bridge + gui (debug)
+make run          # builds bridge, then runs the gui
+make release      # release build of both
+```
+
+Or invoke cargo directly for just the bridge:
+
+```bash
+cargo build --manifest-path coincube-spark-bridge/Cargo.toml
+```
+
+At runtime the gui looks for the bridge binary next to the gui executable, then falls back to `coincube-spark-bridge/target/{debug,release}/coincube-spark-bridge`. A custom location can be provided via the `COINCUBE_SPARK_BRIDGE_PATH` environment variable.
 
 ## Security
 
