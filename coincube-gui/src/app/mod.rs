@@ -2111,14 +2111,48 @@ impl App {
                         // Show global celebration for incoming payments
                         if matches!(details.payment_type, PaymentType::Receive) {
                             use coincube_ui::component::amount::DisplayAmount;
-                            let context = match &details.details {
-                                PaymentDetails::Lightning { .. } => "lightning-receive",
-                                PaymentDetails::Bitcoin { .. } => "bitcoin-receive",
-                                _ => "liquid-receive",
+                            let usdt_id =
+                                crate::app::breez_liquid::assets::usdt_asset_id(self.cache.network);
+                            // Mirror the check in state/liquid/receive.rs: a
+                            // payment is considered USDt only when it's a
+                            // Liquid asset with the matching asset_id AND
+                            // `asset_info` is populated so we can format the
+                            // minor-unit amount.
+                            let usdt_amount_minor: Option<u64> = match &details.details {
+                                PaymentDetails::Liquid {
+                                    asset_id,
+                                    asset_info,
+                                    ..
+                                } if usdt_id.is_some_and(|id| id == asset_id) => {
+                                    asset_info.as_ref().map(|info| {
+                                        let precision =
+                                            crate::app::breez_liquid::assets::USDT_PRECISION;
+                                        let scale = 10_f64.powi(precision as i32);
+                                        (info.amount * scale).round() as u64
+                                    })
+                                }
+                                _ => None,
                             };
-                            self.received_celebration_amount =
+                            let context = if usdt_amount_minor.is_some() {
+                                "note-receive"
+                            } else {
+                                match &details.details {
+                                    PaymentDetails::Lightning { .. } => "lightning-receive",
+                                    PaymentDetails::Bitcoin { .. } => "bitcoin-receive",
+                                    _ => "liquid-receive",
+                                }
+                            };
+                            self.received_celebration_amount = if let Some(minor) =
+                                usdt_amount_minor
+                            {
+                                format!(
+                                    "{} USDt",
+                                    crate::app::breez_liquid::assets::format_usdt_display(minor)
+                                )
+                            } else {
                                 bitcoin::Amount::from_sat(details.amount_sat)
-                                    .to_formatted_string_with_unit(self.cache.bitcoin_unit);
+                                    .to_formatted_string_with_unit(self.cache.bitcoin_unit)
+                            };
                             self.received_celebration_context = context.to_string();
                             self.received_celebration_quote =
                                 coincube_ui::component::quote_display::random_quote(context);
