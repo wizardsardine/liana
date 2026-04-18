@@ -60,32 +60,58 @@ pub fn balance_header_card<'a, Msg: 'a>(content: impl Into<Element<'a, Msg>>) ->
         .into()
 }
 
-/// A soft "master seed not backed up" warning banner, shown on the Vault
-/// and Liquid home screens when `cache.current_cube_backed_up` is false.
+/// A compact "master seed not backed up" warning strip, rendered at the
+/// top of every page by the `dashboard` wrapper when
+/// `cache.current_cube_backed_up` is false and the user hasn't dismissed
+/// it this session.
 ///
-/// Tapping the banner routes the user to General Settings where the backup
-/// flow lives. This is informational, not blocking — users can dismiss it
-/// by completing the backup.
+/// Constrained to the same width as the main content column so it lines
+/// up with the page content below it. Clicking "Back Up Now" routes to
+/// General Settings; clicking the × dismisses for the session — it
+/// returns on app restart until the user actually backs up.
 pub fn backup_warning_banner<'a>() -> Element<'a, Message> {
-    container(
+    let body = container(
         row![
-            coincube_ui::icon::warning_icon().style(theme::text::warning),
-            text::p1_regular(
-                "Your master seed phrase is not backed up. \
-                 Back it up now to avoid losing access to your Cube."
+            coincube_ui::icon::warning_icon().color(color::BLACK),
+            text::p2_regular(
+                "Your master seed phrase is not backed up. Back it up to avoid \
+                 losing access to your Cube."
             )
-            .style(theme::text::warning),
+            .color(color::BLACK),
             Space::new().width(Length::Fill),
-            button::secondary(None, "Back Up Now").on_press(Message::Menu(Menu::Settings(
-                crate::app::menu::SettingsSubMenu::General,
-            ))),
+            button::secondary(None, "Back Up Now")
+                .padding([6, 14])
+                .width(Length::Fixed(140.0))
+                .on_press(Message::Menu(Menu::Settings(
+                    crate::app::menu::SettingsSubMenu::General,
+                ))),
+            iced::widget::Button::new(
+                cross_icon()
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center),
+            )
+            .padding([8, 10])
+            .style(theme::button::secondary)
+            .on_press(Message::DismissBackupWarning),
         ]
         .spacing(10)
         .align_y(Alignment::Center),
     )
-    .padding(15)
+    .padding([8, 16])
     .width(Length::Fill)
-    .style(theme::notification::warning)
+    .style(theme::notification::warning);
+
+    // Constrain to the same FillPortion(1/8/1) layout used by the
+    // dashboard content column so the banner lines up horizontally.
+    container(row![
+        Space::new().width(Length::FillPortion(1)),
+        container(body)
+            .width(Length::FillPortion(8))
+            .max_width(1500),
+        Space::new().width(Length::FillPortion(1)),
+    ])
+    .padding([8, 0])
+    .width(Length::Fill)
     .into()
 }
 
@@ -1110,6 +1136,9 @@ pub fn dashboard_with_info<'a, T: Into<Element<'a, Message>>>(
 ) -> Element<'a, Message> {
     let has_vault = cache.has_vault;
     let has_p2p = cache.has_p2p;
+    let show_backup_warning = !cache.current_cube_backed_up
+        && !cache.current_cube_is_passkey
+        && !cache.backup_warning_dismissed;
     Row::new()
         .push(
             sidebar(
@@ -1127,6 +1156,7 @@ pub fn dashboard_with_info<'a, T: Into<Element<'a, Message>>>(
         .push(
             Column::new()
                 .push(warn(None))
+                .push_maybe(show_backup_warning.then(backup_warning_banner))
                 .push(
                     Container::new(
                         scrollable(row!(

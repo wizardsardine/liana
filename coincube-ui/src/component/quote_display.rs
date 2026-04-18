@@ -53,6 +53,23 @@ const IMG_KAGE_SEATED: &[u8] = include_bytes!("../../static/images/kage/kage-sea
 const IMG_KAGE_FRONT: &[u8] = include_bytes!("../../static/images/kage/kage-front.png");
 const IMG_KAGE_BUST: &[u8] = include_bytes!("../../static/images/kage/kage-bust.png");
 const IMG_KAGE_P2P_SUCCESS: &[u8] = include_bytes!("../../static/images/kage/kage-p2p-success.png");
+const IMG_KAGE_LIGHTNING_SEND: &[u8] =
+    include_bytes!("../../static/images/kage/kage-lightning-send.png");
+const IMG_KAGE_LIGHTNING_RECEIVE: &[u8] =
+    include_bytes!("../../static/images/kage/kage-lightning-receive.png");
+const IMG_KAGE_NOTE_SEND: &[u8] = include_bytes!("../../static/images/kage/kage-note-send.png");
+const IMG_KAGE_NOTE_RECEIVE: &[u8] =
+    include_bytes!("../../static/images/kage/kage-note-receive.png");
+const IMG_KAGE_SPARK_SEND: &[u8] = include_bytes!("../../static/images/kage/kage-spark-send.png");
+const IMG_KAGE_SPARK_RECEIVE: &[u8] =
+    include_bytes!("../../static/images/kage/kage-spark-receive.png");
+const IMG_KAGE_LIQUID_SEND: &[u8] = include_bytes!("../../static/images/kage/kage-liquid-send.png");
+const IMG_KAGE_LIQUID_RECEIVE: &[u8] =
+    include_bytes!("../../static/images/kage/kage-liquid-receive.png");
+const IMG_KAGE_BITCOIN_SEND: &[u8] =
+    include_bytes!("../../static/images/kage/kage-bitcoin-send.png");
+const IMG_KAGE_BITCOIN_RECEIVE: &[u8] =
+    include_bytes!("../../static/images/kage/kage-bitcoin-receive.png");
 
 /// Returns the default `(image_bytes, image_height_px)` for a given context key.
 pub fn default_image_for_context(context: &str) -> (&'static [u8], u16) {
@@ -67,6 +84,17 @@ pub fn default_image_for_context(context: &str) -> (&'static [u8], u16) {
         "error" => (IMG_KAGE_BUST, 160),
         "idle" => (IMG_KAGE_FRONT, 240),
         "balance-update" => (IMG_CUBE_ACTIVE, 120),
+        // Network-specific celebration images
+        "lightning-send" => (IMG_KAGE_LIGHTNING_SEND, 240),
+        "lightning-receive" => (IMG_KAGE_LIGHTNING_RECEIVE, 240),
+        "note-send" => (IMG_KAGE_NOTE_SEND, 240),
+        "note-receive" => (IMG_KAGE_NOTE_RECEIVE, 240),
+        "spark-send" => (IMG_KAGE_SPARK_SEND, 240),
+        "spark-receive" => (IMG_KAGE_SPARK_RECEIVE, 240),
+        "liquid-send" => (IMG_KAGE_LIQUID_SEND, 240),
+        "liquid-receive" => (IMG_KAGE_LIQUID_RECEIVE, 240),
+        "bitcoin-send" => (IMG_KAGE_BITCOIN_SEND, 240),
+        "bitcoin-receive" => (IMG_KAGE_BITCOIN_RECEIVE, 240),
         _ => (IMG_KAGE_SEATED, 240),
     }
 }
@@ -102,23 +130,75 @@ impl QuoteProvider {
     pub fn select(&mut self, context: &str) -> Quote {
         let prefer_short = matches!(
             context,
-            "transaction-sent" | "transaction-received" | "balance-update" | "error"
+            "transaction-sent"
+                | "transaction-received"
+                | "balance-update"
+                | "error"
+                | "lightning-send"
+                | "lightning-receive"
+                | "note-send"
+                | "note-receive"
+                | "spark-send"
+                | "spark-receive"
+                | "liquid-send"
+                | "liquid-receive"
+                | "bitcoin-send"
+                | "bitcoin-receive"
         );
 
-        let candidates: Vec<&Quote> = ALL_QUOTES
+        // For network-specific contexts, fall back to the generic
+        // transaction-sent / transaction-received context when no
+        // quotes explicitly list the specific context. Exact matches
+        // are always preferred — the fallback pool is only consulted
+        // when no exact quotes exist, so a small curated set of
+        // network-specific quotes isn't diluted by the much larger
+        // generic pool.
+        let fallback_context = if context.ends_with("-send") {
+            Some("transaction-sent")
+        } else if context.ends_with("-receive") {
+            Some("transaction-received")
+        } else {
+            None
+        };
+
+        let by_context = |ctx: &str| -> Vec<&'static Quote> {
+            ALL_QUOTES
+                .iter()
+                .filter(|q| q.contexts.iter().any(|c| c == ctx))
+                .collect()
+        };
+
+        let exact_all = by_context(context);
+        let exact_fresh: Vec<&Quote> = exact_all
             .iter()
-            .filter(|q| q.contexts.iter().any(|c| c == context))
+            .copied()
             .filter(|q| !self.recent_ids.contains(&q.id))
             .collect();
 
-        // Fall back to full context pool if recency excludes everything
-        let pool = if candidates.is_empty() {
-            ALL_QUOTES
+        // Preference order:
+        //   1. Exact context, excluding recently shown.
+        //   2. Exact context, including recently shown (recency
+        //      window exhausted).
+        //   3. Fallback context, excluding recently shown.
+        //   4. Fallback context, including recently shown.
+        let pool: Vec<&Quote> = if !exact_fresh.is_empty() {
+            exact_fresh
+        } else if !exact_all.is_empty() {
+            exact_all
+        } else if let Some(fb) = fallback_context {
+            let fb_all = by_context(fb);
+            let fb_fresh: Vec<&Quote> = fb_all
                 .iter()
-                .filter(|q| q.contexts.iter().any(|c| c == context))
-                .collect::<Vec<_>>()
+                .copied()
+                .filter(|q| !self.recent_ids.contains(&q.id))
+                .collect();
+            if !fb_fresh.is_empty() {
+                fb_fresh
+            } else {
+                fb_all
+            }
         } else {
-            candidates
+            Vec::new()
         };
 
         // Prefer short quotes for brief-duration states

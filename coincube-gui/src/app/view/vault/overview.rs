@@ -82,7 +82,6 @@ pub fn vault_overview_view<'a>(
     processing: bool,
     sync_status: &SyncStatus,
     show_rescan_warning: bool,
-    show_backup_warning: bool,
     bitcoin_unit: BitcoinDisplayUnit,
     node_bitcoind_sync_progress: Option<f64>,
     node_bitcoind_ibd: Option<bool>,
@@ -175,7 +174,6 @@ pub fn vault_overview_view<'a>(
                 ),
         ))
         .push(show_rescan_warning.then_some(rescan_warning()))
-        .push(show_backup_warning.then(crate::app::view::backup_warning_banner))
         .push(match (node_bitcoind_ibd, node_bitcoind_sync_progress) {
             (Some(true), Some(progress)) => Some(
                 Container::new(
@@ -527,11 +525,13 @@ pub fn payment_view<'a>(
 
 /// Full-screen celebration view when a vault payment is received.
 pub fn received_celebration_page<'a>(
+    context: &str,
     amount_display: &'a str,
     quote: &'a coincube_ui::component::quote_display::Quote,
     image_handle: &'a iced::widget::image::Handle,
 ) -> Element<'a, Message> {
     coincube_ui::component::received_celebration_page(
+        context,
         amount_display,
         quote,
         image_handle,

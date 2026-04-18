@@ -135,6 +135,7 @@ pub enum Message {
     P2P(P2PMessage),
     ToggleTheme,
     DismissReceivedCelebration,
+    DismissBackupWarning,
 }
 
 impl Close for Message {

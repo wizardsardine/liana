@@ -22,7 +22,7 @@ use iced::{
 use coincube_spark_protocol::DepositInfo;
 
 use crate::app::state::spark::receive::{SparkReceiveMethod, SparkReceivePhase};
-use crate::app::view::Message;
+use crate::app::view::{Message, SparkReceiveMessage};
 
 pub struct SparkReceiveView<'a> {
     pub backend_available: bool,
@@ -40,6 +40,10 @@ pub struct SparkReceiveView<'a> {
     pub claiming: Option<&'a (String, u32)>,
     /// Phase 4f: transient error from the most recent claim attempt.
     pub claim_error: Option<&'a str>,
+    pub received_amount_display: &'a str,
+    pub received_celebration_context: &'a str,
+    pub received_quote: &'a coincube_ui::component::quote_display::Quote,
+    pub received_image_handle: &'a iced::widget::image::Handle,
 }
 
 impl<'a> SparkReceiveView<'a> {
@@ -55,6 +59,17 @@ impl<'a> SparkReceiveView<'a> {
                      signer to receive payments.",
                 ))
                 .into();
+        }
+
+        // ── Full-screen celebration for received payments ─────────────
+        if matches!(self.phase, SparkReceivePhase::Received { .. }) {
+            return coincube_ui::component::received_celebration_page(
+                self.received_celebration_context,
+                self.received_amount_display,
+                self.received_quote,
+                self.received_image_handle,
+                Message::SparkReceive(SparkReceiveMessage::Reset),
+            );
         }
 
         let mut content = Column::new().spacing(20).push(heading);
@@ -365,26 +380,10 @@ fn phase_body<'a>(
             .into()
         }
 
-        SparkReceivePhase::Received { amount_sat } => Container::new(
-            Column::new()
-                .spacing(14)
-                .align_x(Alignment::Center)
-                .push(h4_bold("Payment received"))
-                .push(p1_regular(format!("+{} sats", amount_sat.unsigned_abs())))
-                .push(p2_regular(
-                    "Your wallet balance has been updated. Check the \
-                     Transactions tab for the full record.",
-                ))
-                .push(Space::new().height(Length::Fixed(8.0)))
-                .push(
-                    button::primary(None, "Generate another")
-                        .on_press(Message::SparkReceive(SparkReceiveMessage::Reset))
-                        .width(Length::Fixed(180.0)),
-                ),
-        )
-        .padding(16)
-        .style(theme::card::simple)
-        .into(),
+        SparkReceivePhase::Received { .. } => {
+            // Handled by the full-screen celebration in render()
+            Container::new(Column::new()).into()
+        }
 
         SparkReceivePhase::Error(err) => Container::new(
             Column::new()

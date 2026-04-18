@@ -656,6 +656,7 @@ pub struct App {
     /// Liquid payments (e.g. LNURL) regardless of which panel is active.
     show_received_celebration: bool,
     received_celebration_amount: String,
+    received_celebration_context: String,
     received_celebration_quote: coincube_ui::component::quote_display::Quote,
     received_celebration_image: iced::widget::image::Handle,
     /// tx_ids of recent incoming payments we've already toasted for in
@@ -808,6 +809,7 @@ impl App {
                 lnurl_sse_retries: 0,
                 show_received_celebration: false,
                 received_celebration_amount: String::new(),
+                received_celebration_context: "transaction-received".to_string(),
                 received_celebration_quote: coincube_ui::component::quote_display::random_quote(
                     "transaction-received",
                 ),
@@ -896,6 +898,7 @@ impl App {
                 lnurl_sse_retries: 0,
                 show_received_celebration: false,
                 received_celebration_amount: String::new(),
+                received_celebration_context: "transaction-received".to_string(),
                 received_celebration_quote: coincube_ui::component::quote_display::random_quote(
                     "transaction-received",
                 ),
@@ -1594,7 +1597,13 @@ impl App {
                         self.cube_settings.fiat_price = cube.fiat_price.clone();
                         // Keep the "backed up" banner state in sync with
                         // whatever was persisted — the backup flow saves
-                        // cube.backed_up = true via this same path.
+                        // cube.backed_up = true via this same path. If the
+                        // backed-up state transitions back to false, also
+                        // clear the session dismissal so the banner
+                        // resurfaces for the new state.
+                        if self.cache.current_cube_backed_up && !cube.backed_up {
+                            self.cache.backup_warning_dismissed = false;
+                        }
                         self.cache.current_cube_backed_up = cube.backed_up;
                         self.cache.current_cube_is_passkey = cube.is_passkey_cube();
                         self.cube_settings.backed_up = cube.backed_up;
@@ -1959,6 +1968,9 @@ impl App {
             Message::View(view::Message::DismissReceivedCelebration) => {
                 self.show_received_celebration = false;
             }
+            Message::View(view::Message::DismissBackupWarning) => {
+                self.cache.backup_warning_dismissed = true;
+            }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     tracing::error!("Error opening '{}': {}", url, e);
@@ -2113,16 +2125,53 @@ impl App {
                         // Show global celebration for incoming payments
                         if matches!(details.payment_type, PaymentType::Receive) {
                             use coincube_ui::component::amount::DisplayAmount;
-                            self.received_celebration_amount =
+                            let usdt_id =
+                                crate::app::breez_liquid::assets::usdt_asset_id(self.cache.network);
+                            // Mirror the check in state/liquid/receive.rs: a
+                            // payment is considered USDt only when it's a
+                            // Liquid asset with the matching asset_id AND
+                            // `asset_info` is populated so we can format the
+                            // minor-unit amount.
+                            let usdt_amount_minor: Option<u64> = match &details.details {
+                                PaymentDetails::Liquid {
+                                    asset_id,
+                                    asset_info,
+                                    ..
+                                } if usdt_id.is_some_and(|id| id == asset_id) => {
+                                    asset_info.as_ref().map(|info| {
+                                        crate::app::breez_liquid::assets::usdt_amount_to_minor(
+                                            info.amount,
+                                        )
+                                    })
+                                }
+                                _ => None,
+                            };
+                            let context = if usdt_amount_minor.is_some() {
+                                "note-receive"
+                            } else {
+                                match &details.details {
+                                    PaymentDetails::Lightning { .. } => "lightning-receive",
+                                    PaymentDetails::Bitcoin { .. } => "bitcoin-receive",
+                                    _ => "liquid-receive",
+                                }
+                            };
+                            self.received_celebration_amount = if let Some(minor) =
+                                usdt_amount_minor
+                            {
+                                format!(
+                                    "{} USDt",
+                                    crate::app::breez_liquid::assets::format_usdt_display(minor)
+                                )
+                            } else {
                                 bitcoin::Amount::from_sat(details.amount_sat)
-                                    .to_formatted_string_with_unit(self.cache.bitcoin_unit);
+                                    .to_formatted_string_with_unit(self.cache.bitcoin_unit)
+                            };
+                            self.received_celebration_context = context.to_string();
                             self.received_celebration_quote =
-                                coincube_ui::component::quote_display::random_quote(
-                                    "transaction-received",
-                                );
+                                coincube_ui::component::quote_display::random_quote(context);
                             self.received_celebration_image =
                                 coincube_ui::component::quote_display::image_handle_for_context(
-                                    "transaction-received",
+                                    context,
                                 );
                             self.show_received_celebration = true;
                         }
@@ -2433,6 +2482,7 @@ impl App {
         let view = if self.show_received_celebration {
             // Global celebration overlay takes precedence over the normal panel view
             let celebration = coincube_ui::component::received_celebration_page(
+                &self.received_celebration_context,
                 &self.received_celebration_amount,
                 &self.received_celebration_quote,
                 &self.received_celebration_image,

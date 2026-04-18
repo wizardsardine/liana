@@ -27,6 +27,10 @@ pub struct SparkSendView<'a> {
     pub destination_input: &'a str,
     pub amount_input: &'a str,
     pub phase: &'a SparkSendPhase,
+    pub sent_amount_display: &'a str,
+    pub sent_celebration_context: &'a str,
+    pub sent_quote: &'a coincube_ui::component::quote_display::Quote,
+    pub sent_image_handle: &'a iced::widget::image::Handle,
 }
 
 impl<'a> SparkSendView<'a> {
@@ -42,6 +46,17 @@ impl<'a> SparkSendView<'a> {
                      signer to send payments.",
                 ))
                 .into();
+        }
+
+        // ── Full-screen celebration for successful sends ─────────────
+        if matches!(self.phase, SparkSendPhase::Sent(_)) {
+            return coincube_ui::component::sent_celebration_page(
+                self.sent_celebration_context,
+                self.sent_amount_display,
+                self.sent_quote,
+                self.sent_image_handle,
+                Message::SparkSend(crate::app::view::SparkSendMessage::Reset),
+            );
         }
 
         let mut content = Column::new().spacing(20).push(heading);
@@ -152,36 +167,9 @@ fn phase_body<'a>(phase: &SparkSendPhase) -> Element<'a, Message> {
         .style(theme::card::simple)
         .into(),
 
-        SparkSendPhase::Sent(ok) => {
-            // Clone the payment id so we can hand it to both the kv
-            // row (display) and the Copy button (Clipboard message).
-            let payment_id = ok.payment_id.clone();
-            Container::new(
-                Column::new()
-                    .spacing(14)
-                    .push(h4_bold("Sent"))
-                    .push(kv_row("Payment id", ok.payment_id.clone()))
-                    .push(kv_row("Amount", format!("{} sats", ok.amount_sat)))
-                    .push(kv_row("Fee", format!("{} sats", ok.fee_sat)))
-                    .push(Space::new().height(Length::Fixed(8.0)))
-                    .push(
-                        Row::new()
-                            .spacing(10)
-                            .push(
-                                button::secondary(None, "Copy id")
-                                    .on_press(Message::Clipboard(payment_id))
-                                    .width(Length::Fixed(140.0)),
-                            )
-                            .push(
-                                button::primary(None, "Send another")
-                                    .on_press(Message::SparkSend(SparkSendMessage::Reset))
-                                    .width(Length::Fixed(160.0)),
-                            ),
-                    ),
-            )
-            .padding(16)
-            .style(theme::card::simple)
-            .into()
+        SparkSendPhase::Sent(_) => {
+            // Handled by the full-screen celebration in render()
+            Container::new(Column::new()).into()
         }
 
         SparkSendPhase::Error(err) => Container::new(

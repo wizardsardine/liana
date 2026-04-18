@@ -59,6 +59,8 @@ pub struct LiquidSendFlowConfig<'a> {
     pub cross_asset_supported: bool,
     pub pay_fees_with_asset: bool,
     pub max_loading: bool,
+    pub sent_celebration_context: &'a str,
+    pub sent_amount_display: &'a str,
     pub sent_quote: &'a coincube_ui::component::quote_display::Quote,
     pub sent_image_handle: &'a iced::widget::image::Handle,
 }
@@ -183,13 +185,12 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
             view::dashboard(config.menu, config.cache, content)
         }
         LiquidSendFlowState::Sent => {
-            let content = sent_page(
-                config.amount,
-                config.bitcoin_unit,
-                config.to_asset,
-                config.usdt_amount_input.value.trim(),
+            let content = coincube_ui::component::sent_celebration_page(
+                config.sent_celebration_context,
+                config.sent_amount_display,
                 config.sent_quote,
                 config.sent_image_handle,
+                LiquidSendMessage::BackToHome,
             )
             .map(Message::LiquidSend);
             view::dashboard(config.menu, config.cache, content)
@@ -1785,64 +1786,6 @@ pub fn final_check_page<'a>(
                 .align_x(Alignment::Center),
         )
         .width(Length::Fill)
-        .into()
-}
-
-pub fn sent_page<'a>(
-    amount: Amount,
-    bitcoin_unit: BitcoinDisplayUnit,
-    to_asset: SendAsset,
-    usdt_send_amount: &str,
-    quote: &'a coincube_ui::component::quote_display::Quote,
-    image_handle: &'a iced::widget::image::Handle,
-) -> Element<'a, LiquidSendMessage> {
-    use coincube_ui::component::quote_display::{self, QuoteDisplayProps};
-    use coincube_ui::widget::{Column, Row};
-
-    let sent_amount_str = if to_asset == SendAsset::Usdt && !usdt_send_amount.is_empty() {
-        format!("{} USDt", usdt_send_amount)
-    } else if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
-        format!("{} {}", amount.to_btc(), bitcoin_unit)
-    } else {
-        format!("{} {}", amount.to_sat(), bitcoin_unit)
-    };
-
-    Column::new()
-        .spacing(20)
-        .width(Length::Fill)
-        .align_x(Alignment::Center)
-        .push(Space::new().height(Length::Fixed(20.0)))
-        .push(quote_display::display(
-            &QuoteDisplayProps::new("transaction-sent", quote, image_handle).image_size(480),
-        ))
-        .push(h3("Transaction complete!"))
-        .push(
-            Row::new()
-                .spacing(5)
-                .push(
-                    text(sent_amount_str)
-                        .size(20)
-                        .color(color::ORANGE)
-                        .font(iced::Font {
-                            style: iced::font::Style::Italic,
-                            ..Default::default()
-                        }),
-                )
-                .push(
-                    text("has been sent successfully.")
-                        .size(20)
-                        .font(iced::Font {
-                            style: iced::font::Style::Italic,
-                            ..Default::default()
-                        }),
-                ),
-        )
-        .push(Space::new().height(Length::Fixed(10.0)))
-        .push(
-            button::primary(None, "Back")
-                .width(Length::Fixed(150.0))
-                .on_press(LiquidSendMessage::BackToHome),
-        )
         .into()
 }
 

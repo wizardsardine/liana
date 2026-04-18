@@ -207,15 +207,14 @@ fn map_liquid_details(details: LiquidPaymentDetails) -> DomainPaymentDetails {
         } => {
             let asset_info = asset_info.map(|info| {
                 // The SDK exposes `amount` as an f64 already shifted by the asset
-                // precision. Convert back to minor units (same formula the UI used
-                // before the refactor). The UI uses `USDT_PRECISION` for the only
-                // non-L-BTC asset we currently support.
-                let precision = USDT_PRECISION;
-                let scale = 10_f64.powi(precision as i32);
-                let amount_minor = (info.amount * scale).round() as u64;
+                // precision. The UI uses `USDT_PRECISION` for the only non-L-BTC
+                // asset we currently support — `usdt_amount_to_minor` centralises
+                // the conversion formula.
                 DomainLiquidAssetInfo {
-                    amount_minor,
-                    precision,
+                    amount_minor: crate::app::breez_liquid::assets::usdt_amount_to_minor(
+                        info.amount,
+                    ),
+                    precision: USDT_PRECISION,
                 }
             });
             DomainPaymentDetails::LiquidAsset {

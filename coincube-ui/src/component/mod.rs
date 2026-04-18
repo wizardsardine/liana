@@ -34,6 +34,7 @@ pub fn separation<'a, T: 'a>() -> Container<'a, T> {
 }
 
 pub fn received_celebration_page<'a, M: Clone + 'a>(
+    context: &str,
     amount_display: &'a str,
     quote: &'a quote_display::Quote,
     image_handle: &'a iced::widget::image::Handle,
@@ -47,7 +48,7 @@ pub fn received_celebration_page<'a, M: Clone + 'a>(
         .align_x(iced::Alignment::Center)
         .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
         .push(qd::display(
-            &QuoteDisplayProps::new("transaction-received", quote, image_handle).image_size(480),
+            &QuoteDisplayProps::new(context, quote, image_handle).image_size(480),
         ))
         .push(text::h3("Payment received!"))
         .push(
@@ -64,6 +65,54 @@ pub fn received_celebration_page<'a, M: Clone + 'a>(
                 )
                 .push(
                     iced::widget::text("has arrived.")
+                        .size(20)
+                        .font(iced::Font {
+                            style: iced::font::Style::Italic,
+                            ..Default::default()
+                        }),
+                ),
+        )
+        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+        .push(
+            button::primary(None, "Back")
+                .width(Length::Fixed(150.0))
+                .on_press(on_dismiss),
+        )
+        .into()
+}
+
+pub fn sent_celebration_page<'a, M: Clone + 'a>(
+    context: &str,
+    amount_display: &'a str,
+    quote: &'a quote_display::Quote,
+    image_handle: &'a iced::widget::image::Handle,
+    on_dismiss: M,
+) -> Element<'a, M> {
+    use quote_display::{self as qd, QuoteDisplayProps};
+
+    Column::new()
+        .spacing(20)
+        .width(Length::Fill)
+        .align_x(iced::Alignment::Center)
+        .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
+        .push(qd::display(
+            &QuoteDisplayProps::new(context, quote, image_handle).image_size(480),
+        ))
+        .push(text::h3("Transaction complete!"))
+        .push(
+            Row::new()
+                .spacing(5)
+                .push(
+                    iced::widget::text(amount_display)
+                        .size(20)
+                        .color(crate::color::ORANGE)
+                        .font(iced::Font {
+                            style: iced::font::Style::Italic,
+                            ..Default::default()
+                        }),
+                )
+                .push(
+                    iced::widget::text("has been sent successfully.")
                         .size(20)
                         .font(iced::Font {
                             style: iced::font::Style::Italic,

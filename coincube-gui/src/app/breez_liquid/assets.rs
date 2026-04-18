@@ -127,6 +127,15 @@ pub fn format_asset_amount(amount: u64, precision: u8) -> String {
 /// Number of decimal places to show when displaying USDt to the user.
 pub const USDT_DISPLAY_DECIMALS: u8 = 2;
 
+/// Convert a USDt amount reported by the Breez SDK (f64, already shifted
+/// by the asset precision) into minor units (u64) as the rest of the
+/// codebase stores and displays them. Centralised here so all sites
+/// read from the same formula and constant.
+pub fn usdt_amount_to_minor(amount: f64) -> u64 {
+    let scale = 10_f64.powi(USDT_PRECISION as i32);
+    (amount * scale).round() as u64
+}
+
 /// Format a USDt base-unit amount (8-decimal precision) for display with 2 decimal places.
 pub fn format_usdt_display(amount: u64) -> String {
     let divisor = 10_u64.pow(USDT_PRECISION as u32);
