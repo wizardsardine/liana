@@ -40,6 +40,7 @@ release:
 
 test:
 	$(CARGO) test
+	$(CARGO) test --manifest-path $(BRIDGE_MANIFEST)
 
 clean:
 	$(CARGO) clean
