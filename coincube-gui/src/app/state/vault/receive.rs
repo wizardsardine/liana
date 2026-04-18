@@ -6,7 +6,7 @@ use coincube_core::miniscript::bitcoin::{
     Address, Network,
 };
 use coincube_ui::widget::modal;
-use coincube_ui::widget::*;
+use coincube_ui::widget::Element;
 use iced::{clipboard, widget::qr_code, Subscription, Task};
 
 use crate::daemon::model::LabelsLoader;

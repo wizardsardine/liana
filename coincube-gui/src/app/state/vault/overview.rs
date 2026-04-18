@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use coincube_core::miniscript::bitcoin::{Amount, OutPoint};
-use coincube_ui::widget::*;
+use coincube_ui::widget::Element;
 use coincubed::commands::CoinStatus;
 use iced::Task;
 
