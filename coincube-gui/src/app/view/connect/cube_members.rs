@@ -68,8 +68,14 @@ pub fn cube_members_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCu
         col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
     }
 
-    // Members list
-    if panel.members.is_empty() && panel.pending_invites.is_empty() && !panel.loading {
+    // Members list. Skip the "No members yet" placeholder when there's
+    // an error — we don't actually know the cube is empty, the load just
+    // failed. The `error_banner` below communicates that state instead.
+    if panel.members.is_empty()
+        && panel.pending_invites.is_empty()
+        && !panel.loading
+        && panel.error.is_none()
+    {
         col = col.push(empty_state());
     } else if !panel.members.is_empty() {
         col = col.push(text::p1_bold("Members").style(theme::text::primary));
@@ -363,18 +369,22 @@ fn expiry_element<'a>(expires_at: &str) -> Element<'a, ConnectCubeMessage> {
     };
     let now = chrono::Utc::now();
     let days = (expiry.date_naive() - now.date_naive()).num_days();
+    // Handle the negative branch up front so the match below is
+    // exhaustive via a binding arm (match guards don't contribute to
+    // exhaustiveness — a wildcard arm would be unreachable).
+    if days < 0 {
+        return text::p2_regular("Expired").color(color::RED).into();
+    }
     match days {
-        1 => text::p2_regular("Expires in 1 day")
-            .color(color::GREY_3)
-            .into(),
-        d if d > 0 => text::p2_regular(format!("Expires in {} days", d))
-            .color(color::GREY_3)
-            .into(),
         0 => text::p2_regular("Expires today")
             .color(color::ORANGE)
             .into(),
-        d if d < 0 => text::p2_regular("Expired").color(color::RED).into(),
-        _ => text::p2_regular("").into(),
+        1 => text::p2_regular("Expires in 1 day")
+            .color(color::GREY_3)
+            .into(),
+        d => text::p2_regular(format!("Expires in {} days", d))
+            .color(color::GREY_3)
+            .into(),
     }
 }
 

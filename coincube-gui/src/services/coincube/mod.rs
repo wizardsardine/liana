@@ -464,13 +464,17 @@ impl std::convert::TryFrom<CubeInviteOrAddResultRaw> for CubeInviteOrAddResult {
 ///    viewer-relative `ownerUserId` / `ownerEmail` / `isOwnKey` /
 ///    `usedByVault` fields.
 ///
-/// Every field is `#[serde(default)]` so either shape deserialises cleanly.
-/// The new fields default to zero-values, and legacy callers (pre-W3
-/// backend) keep working via the legacy fields. See
-/// `plans/PLAN-cube-membership-desktop.md` §2.3.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+/// Fields that appear in *both* shapes (`id`, `name`, `xpub`,
+/// `fingerprint`, `derivationPath`, `network`, `status`) are required —
+/// missing them indicates a broken backend response and should fail
+/// deserialisation fast. Rollout-specific fields (the legacy-only and
+/// W3-only sets below) are individually `#[serde(default)]` so the
+/// desktop keeps working against whichever shape the server happens to
+/// serve. See `plans/PLAN-cube-membership-desktop.md` §2.3.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CubeKeyRaw {
+    // --- Required fields (present in both legacy and W3 shapes) ---
     pub id: u64,
     pub name: String,
     pub xpub: String,
@@ -480,27 +484,38 @@ pub struct CubeKeyRaw {
     pub status: String,
 
     // --- Legacy fields (may disappear post-W3) ---
+    #[serde(default)]
     pub primary_owner_id: u64,
+    #[serde(default)]
     pub keychain_id: Option<u64>,
+    #[serde(default)]
     pub curve: String,
+    #[serde(default)]
     pub taproot: bool,
+    #[serde(default)]
     pub cube_id: u64,
+    #[serde(default)]
     pub created_at: String,
+    #[serde(default)]
     pub updated_at: String,
 
     // --- W3 fields (post-PLAN-cube-membership-backend) ---
     /// Server-supplied owner id; falls back to `primary_owner_id` when
     /// talking to a pre-W3 backend.
+    #[serde(default)]
     pub owner_user_id: u64,
     /// Email of the key's primary owner. Empty on a pre-W3 backend; the
     /// desktop falls back to a contact-list lookup in that case.
+    #[serde(default)]
     pub owner_email: String,
     /// `true` iff the authenticated caller is the owner of this key.
     /// Pre-W3 this is always `false` from the server; the desktop computes
     /// it locally.
+    #[serde(default)]
     pub is_own_key: bool,
     /// `true` iff this key is currently referenced by any active Vault.
     /// Drives the W9 pre-check in the Vault Builder key picker.
+    #[serde(default)]
     pub used_by_vault: bool,
 }
 

@@ -1086,20 +1086,6 @@ impl SelectKeySource {
         self.cube_id.is_some() && self.coincube_client.is_some()
     }
 
-    /// Check if a key's owner already has a key placed in this vault.
-    /// Self-contained: reads `primary_owner_id` directly from the
-    /// `KeychainKeyOwner` stored on each placed key, so it works
-    /// regardless of the fetched key list state.
-    fn is_owner_already_placed(&self, primary_owner_id: u64) -> bool {
-        self.keys.values().any(|(_, k)| {
-            if let KeySource::KeychainKey { owner, .. } = &k.source {
-                owner.primary_owner_id() == primary_owner_id
-            } else {
-                false
-            }
-        })
-    }
-
     /// Backstop for `on_select_keychain_key`: returns true if accepting
     /// the candidate Keychain key would violate "one Keychain key per
     /// owner per Vault".  A conflict exists when a *different* Keychain
@@ -1162,10 +1148,20 @@ impl SelectKeySource {
 
         for rk in &self.my_keychain_keys {
             let owner_id = rk.raw.effective_owner_user_id();
-            let already_placed = self.is_owner_already_placed(owner_id);
+            // Match the submit-side `on_select_keychain_key` backstop:
+            // a row is "owner-blocked" only when a DIFFERENT key from
+            // the same owner occupies coordinates outside the
+            // currently-edited slot. Replacing the key at the active
+            // slot is allowed. An unparseable fingerprint disables the
+            // row defensively — the submit path would also reject it.
+            let candidate_fp = Fingerprint::from_str(&rk.raw.fingerprint).ok();
+            let owner_blocked = match candidate_fp {
+                Some(fp) => self.owner_placed_elsewhere(owner_id, fp),
+                None => true,
+            };
             // W9 pre-check: reject keys that another Vault already claims.
             let used_elsewhere = rk.raw.used_by_vault;
-            let disabled = already_placed || used_elsewhere;
+            let disabled = owner_blocked || used_elsewhere;
             let fp_short: String = rk.raw.fingerprint.chars().take(8).collect();
             let fingerprint = Some(format!("#{}", fp_short));
             let msg = if disabled {
@@ -1181,7 +1177,7 @@ impl SelectKeySource {
             // the owner is also placed elsewhere in this build.
             let warning = if used_elsewhere {
                 Some("Used by another Vault".to_string())
-            } else if already_placed {
+            } else if owner_blocked {
                 Some("Already selected".to_string())
             } else {
                 None
@@ -1244,9 +1240,17 @@ impl SelectKeySource {
                 col = col.push(p1_bold(contact_label));
                 for rk in keys {
                     let owner_id = rk.raw.effective_owner_user_id();
-                    let already_placed = self.is_owner_already_placed(owner_id);
+                    // See `view_my_keychain_keys` above — we mirror the
+                    // coordinate-aware `owner_placed_elsewhere` check
+                    // used by the submit-side backstop so row-disabled
+                    // state matches what clicking actually rejects.
+                    let candidate_fp = Fingerprint::from_str(&rk.raw.fingerprint).ok();
+                    let owner_blocked = match candidate_fp {
+                        Some(fp) => self.owner_placed_elsewhere(owner_id, fp),
+                        None => true,
+                    };
                     let used_elsewhere = rk.raw.used_by_vault;
-                    let disabled = already_placed || used_elsewhere;
+                    let disabled = owner_blocked || used_elsewhere;
                     let fp = &rk.raw.fingerprint;
                     let fingerprint = Some(format!("#{}", &fp[..fp.len().min(8)]));
                     let msg = if disabled {
@@ -1259,7 +1263,7 @@ impl SelectKeySource {
                     };
                     let warning = if used_elsewhere {
                         Some("Used by another Vault".to_string())
-                    } else if already_placed {
+                    } else if owner_blocked {
                         Some("Already selected".to_string())
                     } else {
                         None

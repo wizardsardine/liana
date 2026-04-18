@@ -617,9 +617,11 @@ impl Step for DefineDescriptor {
                 let KeySource::KeychainKey { owner, key_id, .. } = &key.source else {
                     // HW, xpub, master-signer, token, and border-wallet
                     // keys have no backend row — they stay local-only per
-                    // the 2026-04-18 plan direction. Log so operators can
-                    // spot silently-skipped signers.
-                    tracing::info!(
+                    // the 2026-04-18 plan direction. Logged at `debug!`:
+                    // this is an informational "skipped as expected"
+                    // message, not actionable, and we'd rather keep
+                    // per-wallet identifiers out of info-level telemetry.
+                    tracing::debug!(
                         "Skipping non-keychain key {} for backend vault (source kind = {:?}); \
                          backend ConnectVault will be local-key-free for this signer",
                         fingerprint,

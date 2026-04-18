@@ -405,7 +405,7 @@ fn invite_cube_conflict_card<'a>(msg: &str) -> Element<'a, ConnectAccountMessage
             .push(text::p2_regular(msg.to_string()).style(theme::text::primary))
             .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
             .push(
-                text::p2_regular("Review your cube selection below and try again.")
+                text::p2_regular("Review your cube selection above and try again.")
                     .color(color::GREY_3),
             )
             .padding(16)

@@ -886,37 +886,7 @@ impl ConnectAccountPanel {
                 // Load the user's cubes for the "Also add to Cube(s)"
                 // multi-select (W12). Hidden in the view until this
                 // resolves; empty Vec renders as "no cubes section".
-                let client = self.client.clone();
-                let gen = self.session_generation;
-                return iced::Task::perform(async move { client.list_cubes().await }, move |res| {
-                    match res {
-                        Ok(cubes) => {
-                            let options = cubes
-                                .into_iter()
-                                .map(|c| InviteCubeOption {
-                                    id: c.id,
-                                    name: c.name,
-                                    network: c.network,
-                                })
-                                .collect::<Vec<_>>();
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::Contacts(
-                                    ContactsMessage::InviteCubesAvailable(options, gen),
-                                ),
-                            ))
-                        }
-                        Err(e) => {
-                            // Leave the section hidden on load failure —
-                            // the user can still send a plain invite.
-                            log::warn!("[CONTACTS] Failed to list cubes for invite form: {}", e);
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::Contacts(
-                                    ContactsMessage::InviteCubesAvailable(Vec::new(), gen),
-                                ),
-                            ))
-                        }
-                    }
-                });
+                return load_invite_cubes(&self.client, self.session_generation);
             }
 
             ContactsMessage::InviteCubesAvailable(cubes, gen) => {
@@ -1054,26 +1024,7 @@ impl ConnectAccountPanel {
                 // Refresh the cube list so the checkboxes reflect the
                 // user's current memberships. We stay on the form so
                 // the user can adjust and retry.
-                let client = self.client.clone();
-                let gen = self.session_generation;
-                return iced::Task::perform(async move { client.list_cubes().await }, move |res| {
-                    let options = match res {
-                        Ok(cubes) => cubes
-                            .into_iter()
-                            .map(|c| InviteCubeOption {
-                                id: c.id,
-                                name: c.name,
-                                network: c.network,
-                            })
-                            .collect(),
-                        Err(_) => Vec::new(),
-                    };
-                    Message::View(view::Message::ConnectAccount(
-                        ConnectAccountMessage::Contacts(ContactsMessage::InviteCubesAvailable(
-                            options, gen,
-                        )),
-                    ))
-                });
+                return load_invite_cubes(&self.client, self.session_generation);
             }
 
             ContactsMessage::InviteCreated => {
@@ -1203,6 +1154,36 @@ pub fn load_contacts_data(client: &CoincubeClient, generation: u64) -> iced::Tas
             },
         ),
     ])
+}
+
+/// Load the user's cubes for the W12 invite-form multi-select, mapping
+/// the raw `CubeResponse`s into lightweight `InviteCubeOption`s. Used by
+/// both the initial `ShowInviteForm` load and the `InviteCubeForbidden`
+/// reload after a 403 — any backend error silently resolves to an empty
+/// list so the invite form degrades to the plain (cube-less) path.
+fn load_invite_cubes(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
+    let client = client.clone();
+    iced::Task::perform(async move { client.list_cubes().await }, move |res| {
+        let options = match res {
+            Ok(cubes) => cubes
+                .into_iter()
+                .map(|c| InviteCubeOption {
+                    id: c.id,
+                    name: c.name,
+                    network: c.network,
+                })
+                .collect(),
+            Err(e) => {
+                log::warn!("[CONTACTS] Failed to list cubes for invite form: {}", e);
+                Vec::new()
+            }
+        };
+        Message::View(view::Message::ConnectAccount(
+            ConnectAccountMessage::Contacts(ContactsMessage::InviteCubesAvailable(
+                options, generation,
+            )),
+        ))
+    })
 }
 
 /// Load Security tab data (verified devices + login activity).
