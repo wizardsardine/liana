@@ -1589,7 +1589,13 @@ impl App {
                         self.cube_settings.fiat_price = cube.fiat_price.clone();
                         // Keep the "backed up" banner state in sync with
                         // whatever was persisted — the backup flow saves
-                        // cube.backed_up = true via this same path.
+                        // cube.backed_up = true via this same path. If the
+                        // backed-up state transitions back to false, also
+                        // clear the session dismissal so the banner
+                        // resurfaces for the new state.
+                        if self.cache.current_cube_backed_up && !cube.backed_up {
+                            self.cache.backup_warning_dismissed = false;
+                        }
                         self.cache.current_cube_backed_up = cube.backed_up;
                         self.cache.current_cube_is_passkey = cube.is_passkey_cube();
                         self.cube_settings.backed_up = cube.backed_up;
@@ -2125,10 +2131,9 @@ impl App {
                                     ..
                                 } if usdt_id.is_some_and(|id| id == asset_id) => {
                                     asset_info.as_ref().map(|info| {
-                                        let precision =
-                                            crate::app::breez_liquid::assets::USDT_PRECISION;
-                                        let scale = 10_f64.powi(precision as i32);
-                                        (info.amount * scale).round() as u64
+                                        crate::app::breez_liquid::assets::usdt_amount_to_minor(
+                                            info.amount,
+                                        )
                                     })
                                 }
                                 _ => None,

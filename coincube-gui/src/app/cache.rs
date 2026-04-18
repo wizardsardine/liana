@@ -57,9 +57,13 @@ pub struct Cache {
     /// Cube. Drives the soft "not backed up" warning banners on the Vault
     /// and Liquid home screens. Mirrors `CubeSettings::backed_up`.
     pub current_cube_backed_up: bool,
-    /// Session-scoped dismissal of the "not backed up" banner. Reset on
-    /// app restart and on Cube switch so the reminder keeps surfacing
-    /// until the user actually backs up.
+    /// Session-scoped dismissal of the "not backed up" banner. Defaults
+    /// to `false` for every new `Cache`, so each Tab (one Cube per Tab)
+    /// starts with the banner visible, and it's also reset if
+    /// `current_cube_backed_up` ever transitions back to `false`. Set to
+    /// `true` only by the user clicking the dismiss button. Cleared on
+    /// app restart — the reminder keeps surfacing until the user
+    /// actually backs up.
     pub backup_warning_dismissed: bool,
     /// Whether the current Cube uses a passkey-derived master key (no PIN,
     /// no stored encrypted mnemonic). Used to hide the seed-backup UI.
