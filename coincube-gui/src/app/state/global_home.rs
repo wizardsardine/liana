@@ -7,7 +7,7 @@ use breez_sdk_liquid::model::{
     PayOnchainRequest, PaymentDetails, PaymentType, PreparePayOnchainRequest,
     PreparePayOnchainResponse,
 };
-use coincube_core::miniscript::bitcoin::{Address, Amount, bip32::ChildNumber};
+use coincube_core::miniscript::bitcoin::{bip32::ChildNumber, Address, Amount};
 
 use crate::app::wallets::{DomainPaymentDetails, DomainPaymentStatus};
 use coincube_ui::component::amount::BitcoinDisplayUnit;
