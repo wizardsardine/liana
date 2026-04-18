@@ -16,7 +16,7 @@ use coincube_ui::{
         transaction::{TransactionDirection, TransactionListItem},
     },
     icon, theme,
-    widget::*,
+    widget::{ColumnExt, Element},
 };
 use iced::{
     widget::{scrollable, Column, Container, Row, Space},
