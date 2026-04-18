@@ -2,7 +2,7 @@ use super::{
     get_countries, ApiErrorResponse, ApiResponse, AvatarGenerateData, AvatarGenerateRequest,
     AvatarSelectData, AvatarSelectRequest, BillingHistoryEntry, ChargeStatusResponse,
     CheckUsernameResponse, CheckoutRequest, CheckoutResponse, ClaimLightningAddressRequest,
-    CoincubeError, ConnectPlan, Contact, ContactCube, Country, CreateInviteRequest,
+    CoincubeError, ConnectPlan, Contact, ContactCube, Country, CreateInviteRequest, CubeKeyRaw,
     CubeLimitsResponse, CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData, Invite,
     LightningAddress, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest, PublicAvatarData,
     RefreshTokenRequest, RegenerationData, RegisterCubeRequest, SaveQuoteRequest,
@@ -564,6 +564,17 @@ impl CoincubeClient {
         let res = self.client.get(&url).send().await?;
         let res = res.check_success().await?;
         let resp: ApiResponse<Vec<Contact>> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// GET /api/v1/connect/cubes/{cubeUuid}/keys — retrieve Keychain keys
+    /// attached to a Cube.  Returns a flat array of keys; owner resolution
+    /// (self vs. contact) is done client-side.
+    pub async fn get_cube_keys(&self, cube_uuid: &str) -> Result<Vec<CubeKeyRaw>, CoincubeError> {
+        let url = format!("{}/api/v1/connect/cubes/{}/keys", self.base_url, cube_uuid);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<Vec<CubeKeyRaw>> = res.json().await?;
         Ok(resp.data)
     }
 

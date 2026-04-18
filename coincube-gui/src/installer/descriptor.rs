@@ -11,6 +11,33 @@ use crate::{
 /// Whether to enable cosigner keys on all paths (excluding safety net paths).
 const ENABLE_COSIGNER_KEYS: bool = false;
 
+/// Identifies the owner of a Keychain key — either the current user
+/// or one of their contacts.  Carries `primary_owner_id` on every
+/// variant so duplicate-owner checks are self-contained and don't
+/// depend on the fetched key lists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeychainKeyOwner {
+    SelfUser {
+        primary_owner_id: u64,
+    },
+    Contact {
+        primary_owner_id: u64,
+        contact_id: u64,
+        contact_email: String,
+    },
+}
+
+impl KeychainKeyOwner {
+    pub fn primary_owner_id(&self) -> u64 {
+        match self {
+            Self::SelfUser { primary_owner_id } => *primary_owner_id,
+            Self::Contact {
+                primary_owner_id, ..
+            } => *primary_owner_id,
+        }
+    }
+}
+
 /// The source of a descriptor public key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeySource {
@@ -24,6 +51,15 @@ pub enum KeySource {
     Token(KeyKind, ProviderKey),
     /// A Border Wallet key (derived transiently from grid pattern).
     BorderWallet,
+    /// A key from the COINCUBE Keychain, attached to a Cube.
+    /// At sign time the Vault sends a PSBT signing request to the
+    /// Keychain app via gRPC; the signer accepts/rejects and signs
+    /// locally on their device.
+    KeychainKey {
+        owner: KeychainKeyOwner,
+        key_id: u64,
+        name: String,
+    },
 }
 
 impl KeySource {
@@ -66,6 +102,7 @@ impl KeySource {
             Self::Manual => KeySourceKind::Manual,
             Self::Token(kind, _) => KeySourceKind::Token(*kind),
             Self::BorderWallet => KeySourceKind::BorderWallet,
+            Self::KeychainKey { .. } => KeySourceKind::KeychainKey,
         }
     }
 
@@ -107,6 +144,8 @@ pub enum KeySourceKind {
     Token(KeyKind),
     /// A Border Wallet key.
     BorderWallet,
+    /// A key from the COINCUBE Keychain.
+    KeychainKey,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -58,7 +58,7 @@ use crate::{
     signer::Signer,
 };
 
-pub use descriptor::{KeySource, KeySourceKind, PathKind, PathSequence};
+pub use descriptor::{KeySource, KeySourceKind, KeychainKeyOwner, PathKind, PathSequence};
 pub use message::Message;
 use step::{
     BackupDescriptor, BackupMnemonic, ChooseBackend, ChooseDescriptorTemplate, CoincubeConnectStep,
@@ -144,6 +144,7 @@ impl Installer {
         breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
         spark_backend: Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
         mut developer_mode: bool,
+        coincube_client: Option<crate::services::coincube::CoincubeClient>,
     ) -> (Installer, Task<Message>) {
         let signer = if developer_mode {
             let master_signer = breez_client
@@ -184,6 +185,8 @@ impl Installer {
                         _ => RemoteBackend::None,
                     }
                 }),
+            cube_settings.as_ref(),
+            coincube_client,
         );
         let mut installer = Installer {
             network,

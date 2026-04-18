@@ -7,7 +7,10 @@ use crate::{
     backup::Backup,
     dir::CoincubeDirectory,
     node::bitcoind::{Bitcoind, InternalBitcoindConfig},
-    services::connect::client::backend::{BackendClient, BackendWalletClient},
+    services::{
+        coincube::CoincubeClient,
+        connect::client::backend::{BackendClient, BackendWalletClient},
+    },
     signer::Signer,
 };
 use async_hwi::DeviceKind;
@@ -78,6 +81,14 @@ pub struct Context {
     pub remote_backend: RemoteBackend,
     pub backup: Option<Backup>,
     pub wallet_alias: String,
+    /// Cube UUID (from CubeSettings.id) — present when the Vault installer
+    /// is launched from inside a Cube.  Used by the key picker to fetch
+    /// Cube-scoped Keychain keys from the API.
+    pub cube_id: Option<String>,
+    /// Authenticated coincube-api client, used by the key picker to
+    /// fetch Cube-scoped Keychain keys.  `None` when launched from
+    /// the Loader (user hasn't done coincube-api auth yet).
+    pub coincube_client: Option<CoincubeClient>,
 }
 
 impl Context {
@@ -85,6 +96,8 @@ impl Context {
         network: bitcoin::Network,
         coincube_directory: CoincubeDirectory,
         remote_backend: RemoteBackend,
+        cube_settings: Option<&crate::app::settings::CubeSettings>,
+        coincube_client: Option<CoincubeClient>,
     ) -> Self {
         Self {
             descriptor_template: DescriptorTemplate::default(),
@@ -110,6 +123,8 @@ impl Context {
             remote_backend,
             wallet_alias: String::new(),
             backup: None,
+            cube_id: cube_settings.map(|cs| cs.id.clone()),
+            coincube_client,
         }
     }
 }
