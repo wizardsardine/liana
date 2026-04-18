@@ -954,7 +954,7 @@ impl SelectKeySource {
                     .map_err(|e| e.to_string())?;
                 let contacts = client.get_contacts().await.map_err(|e| e.to_string())?;
                 let user = client.get_user().await.map_err(|e| e.to_string())?;
-                let current_user_id = user.id as u64;
+                let current_user_id: u64 = user.id.into();
 
                 let mut my_keys = Vec::new();
                 let mut contact_keys = Vec::new();
