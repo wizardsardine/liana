@@ -111,12 +111,7 @@ pub async fn create_connect_vault(
 
     // 2. Create the vault shell.
     let vault: ConnectVaultResponse = client
-        .create_connect_vault(
-            cube.id,
-            CreateConnectVaultRequest {
-                timelock_days,
-            },
-        )
+        .create_connect_vault(cube.id, CreateConnectVaultRequest { timelock_days })
         .await
         .map_err(|e| ConnectVaultError::Other(format!("Failed to create Connect vault: {}", e)))?;
 
@@ -224,52 +219,58 @@ mod tests {
 
         let register = server.mock(|when, then| {
             when.method(Method::POST).path("/api/v1/connect/cubes");
-            then.status(200).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": {
-                    "id": 42,
-                    "uuid": "abc-uuid",
-                    "name": "My Cube",
-                    "network": "mainnet",
-                    "lightningAddress": null,
-                    "bolt12Offer": null,
-                    "status": "active"
-                }
-            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 42,
+                        "uuid": "abc-uuid",
+                        "name": "My Cube",
+                        "network": "mainnet",
+                        "lightningAddress": null,
+                        "bolt12Offer": null,
+                        "status": "active"
+                    }
+                }));
         });
 
         let create_vault = server.mock(|when, then| {
             when.method(Method::POST)
                 .path("/api/v1/connect/cubes/42/vault")
                 .json_body(json!({ "timelockDays": 180 }));
-            then.status(201).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": {
-                    "id": 5,
-                    "cubeId": 42,
-                    "timelockDays": 180,
-                    "timelockExpiresAt": "2026-10-15T00:00:00Z",
-                    "lastResetAt": "2026-04-18T00:00:00Z",
-                    "status": "active",
-                    "members": [],
-                    "createdAt": "2026-04-18T00:00:00Z",
-                    "updatedAt": "2026-04-18T00:00:00Z"
-                }
-            }));
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 5,
+                        "cubeId": 42,
+                        "timelockDays": 180,
+                        "timelockExpiresAt": "2026-10-15T00:00:00Z",
+                        "lastResetAt": "2026-04-18T00:00:00Z",
+                        "status": "active",
+                        "members": [],
+                        "createdAt": "2026-04-18T00:00:00Z",
+                        "updatedAt": "2026-04-18T00:00:00Z"
+                    }
+                }));
         });
 
         let add_member = server.mock(|when, then| {
             when.method(Method::POST)
                 .path("/api/v1/connect/cubes/42/vault/members");
-            then.status(201).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": {
-                    "id": 7,
-                    "keyId": 99,
-                    "role": "keyholder",
-                    "createdAt": "2026-04-18T00:00:00Z"
-                }
-            }));
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 7,
+                        "keyId": 99,
+                        "role": "keyholder",
+                        "createdAt": "2026-04-18T00:00:00Z"
+                    }
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -299,58 +300,66 @@ mod tests {
 
         let register = server.mock(|when, then| {
             when.method(Method::POST).path("/api/v1/connect/cubes");
-            then.status(200).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": {
-                    "id": 42,
-                    "uuid": "abc-uuid",
-                    "name": "My Cube",
-                    "network": "mainnet",
-                    "lightningAddress": null,
-                    "bolt12Offer": null,
-                    "status": "active"
-                }
-            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 42,
+                        "uuid": "abc-uuid",
+                        "name": "My Cube",
+                        "network": "mainnet",
+                        "lightningAddress": null,
+                        "bolt12Offer": null,
+                        "status": "active"
+                    }
+                }));
         });
 
         let create_vault = server.mock(|when, then| {
             when.method(Method::POST)
                 .path("/api/v1/connect/cubes/42/vault");
-            then.status(201).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": {
-                    "id": 5,
-                    "cubeId": 42,
-                    "timelockDays": 180,
-                    "timelockExpiresAt": "2026-10-15T00:00:00Z",
-                    "lastResetAt": "2026-04-18T00:00:00Z",
-                    "status": "active",
-                    "members": [],
-                    "createdAt": "2026-04-18T00:00:00Z",
-                    "updatedAt": "2026-04-18T00:00:00Z"
-                }
-            }));
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 5,
+                        "cubeId": 42,
+                        "timelockDays": 180,
+                        "timelockExpiresAt": "2026-10-15T00:00:00Z",
+                        "lastResetAt": "2026-04-18T00:00:00Z",
+                        "status": "active",
+                        "members": [],
+                        "createdAt": "2026-04-18T00:00:00Z",
+                        "updatedAt": "2026-04-18T00:00:00Z"
+                    }
+                }));
         });
 
         let add_member = server.mock(|when, then| {
             when.method(Method::POST)
                 .path("/api/v1/connect/cubes/42/vault/members");
-            then.status(409).header("content-type", "application/json").json_body(json!({
-                "success": false,
-                "error": {
-                    "code": "KEY_ALREADY_USED_IN_VAULT",
-                    "message": "Key has already been used in another vault"
-                }
-            }));
+            then.status(409)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": false,
+                    "error": {
+                        "code": "KEY_ALREADY_USED_IN_VAULT",
+                        "message": "Key has already been used in another vault"
+                    }
+                }));
         });
 
         let rollback = server.mock(|when, then| {
             when.method(Method::DELETE)
                 .path("/api/v1/connect/cubes/42/vault");
-            then.status(200).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": { "deleted": true }
-            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": { "deleted": true }
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());

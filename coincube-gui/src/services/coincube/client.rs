@@ -684,10 +684,7 @@ impl CoincubeClient {
         cube_id: u64,
         email: &str,
     ) -> Result<CubeInviteOrAddResult, CoincubeError> {
-        let url = format!(
-            "{}/api/v1/connect/cubes/{}/invites",
-            self.base_url, cube_id
-        );
+        let url = format!("{}/api/v1/connect/cubes/{}/invites", self.base_url, cube_id);
         let body = serde_json::json!({ "email": email });
         let res = self.client.post(&url).json(&body).send().await?;
         let res = res.check_success().await?;
@@ -868,21 +865,23 @@ mod cube_member_tests {
         let mock = server.mock(|when, then| {
             when.method(Method::POST)
                 .path("/api/v1/connect/cubes/42/invites");
-            then.status(201).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": {
-                    "status": "invited",
-                    "member": null,
-                    "invite": {
-                        "id": 314,
-                        "cubeId": 42,
-                        "email": "brand-new@example.com",
-                        "status": "pending",
-                        "expiresAt": "2026-05-18T00:00:00Z",
-                        "createdAt": "2026-04-18T00:00:00Z"
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "status": "invited",
+                        "member": null,
+                        "invite": {
+                            "id": 314,
+                            "cubeId": 42,
+                            "email": "brand-new@example.com",
+                            "status": "pending",
+                            "expiresAt": "2026-05-18T00:00:00Z",
+                            "createdAt": "2026-04-18T00:00:00Z"
+                        }
                     }
-                }
-            }));
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -909,13 +908,15 @@ mod cube_member_tests {
         let mock = server.mock(|when, then| {
             when.method(Method::POST)
                 .path("/api/v1/connect/cubes/42/invites");
-            then.status(409).header("content-type", "application/json").json_body(json!({
-                "success": false,
-                "error": {
-                    "code": "CUBE_DUPLICATE_MEMBER",
-                    "message": "User is already a member of this cube"
-                }
-            }));
+            then.status(409)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": false,
+                    "error": {
+                        "code": "CUBE_DUPLICATE_MEMBER",
+                        "message": "User is already a member of this cube"
+                    }
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -939,10 +940,12 @@ mod cube_member_tests {
         let mock = server.mock(|when, then| {
             when.method(Method::DELETE)
                 .path("/api/v1/connect/cubes/42/invites/314");
-            then.status(200).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": { "status": "revoked" }
-            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": { "status": "revoked" }
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -959,13 +962,15 @@ mod cube_member_tests {
         let mock = server.mock(|when, then| {
             when.method(Method::DELETE)
                 .path("/api/v1/connect/cubes/42/members/7");
-            then.status(409).header("content-type", "application/json").json_body(json!({
-                "success": false,
-                "error": {
-                    "code": "CONTACT_HAS_KEYS_IN_ACTIVE_VAULTS",
-                    "message": "Cannot remove member — keys are signing an active Vault"
-                }
-            }));
+            then.status(409)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": false,
+                    "error": {
+                        "code": "CONTACT_HAS_KEYS_IN_ACTIVE_VAULTS",
+                        "message": "Cannot remove member — keys are signing an active Vault"
+                    }
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -988,36 +993,38 @@ mod cube_member_tests {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
             when.method(Method::GET).path("/api/v1/connect/cubes/42");
-            then.status(200).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": {
-                    "id": 42,
-                    "uuid": "abc-123",
-                    "name": "My Cube",
-                    "network": "bitcoin",
-                    "lightningAddress": "me@coincube.io",
-                    "bolt12Offer": null,
-                    "status": "active",
-                    "members": [
-                        {
-                            "id": 7,
-                            "userId": 99,
-                            "user": { "email": "alice@example.com" },
-                            "joinedAt": "2026-04-18T00:00:00Z"
-                        }
-                    ],
-                    "pendingInvites": [
-                        {
-                            "id": 314,
-                            "cubeId": 42,
-                            "email": "bob@example.com",
-                            "status": "pending",
-                            "expiresAt": "2026-05-18T00:00:00Z",
-                            "createdAt": "2026-04-18T00:00:00Z"
-                        }
-                    ]
-                }
-            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 42,
+                        "uuid": "abc-123",
+                        "name": "My Cube",
+                        "network": "bitcoin",
+                        "lightningAddress": "me@coincube.io",
+                        "bolt12Offer": null,
+                        "status": "active",
+                        "members": [
+                            {
+                                "id": 7,
+                                "userId": 99,
+                                "user": { "email": "alice@example.com" },
+                                "joinedAt": "2026-04-18T00:00:00Z"
+                            }
+                        ],
+                        "pendingInvites": [
+                            {
+                                "id": 314,
+                                "cubeId": 42,
+                                "email": "bob@example.com",
+                                "status": "pending",
+                                "expiresAt": "2026-05-18T00:00:00Z",
+                                "createdAt": "2026-04-18T00:00:00Z"
+                            }
+                        ]
+                    }
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -1040,24 +1047,26 @@ mod cube_member_tests {
         let mock = server.mock(|when, then| {
             when.method(Method::GET)
                 .path("/api/v1/connect/cubes/abc-uuid/keys");
-            then.status(200).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": [
-                    {
-                        "id": 1,
-                        "name": "Alice's Key",
-                        "xpub": "xpub661...",
-                        "fingerprint": "deadbeef",
-                        "derivationPath": "m/48'/0'/0'/2'",
-                        "network": "bitcoin",
-                        "status": "active",
-                        "ownerUserId": 99,
-                        "ownerEmail": "alice@example.com",
-                        "isOwnKey": false,
-                        "usedByVault": true
-                    }
-                ]
-            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": [
+                        {
+                            "id": 1,
+                            "name": "Alice's Key",
+                            "xpub": "xpub661...",
+                            "fingerprint": "deadbeef",
+                            "derivationPath": "m/48'/0'/0'/2'",
+                            "network": "bitcoin",
+                            "status": "active",
+                            "ownerUserId": 99,
+                            "ownerEmail": "alice@example.com",
+                            "isOwnKey": false,
+                            "usedByVault": true
+                        }
+                    ]
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -1086,27 +1095,29 @@ mod cube_member_tests {
         let mock = server.mock(|when, then| {
             when.method(Method::GET)
                 .path("/api/v1/connect/cubes/abc-uuid/keys");
-            then.status(200).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": [
-                    {
-                        "id": 1,
-                        "primaryOwnerId": 7,
-                        "keychainId": 42,
-                        "name": "Legacy Key",
-                        "curve": "secp256k1",
-                        "taproot": false,
-                        "xpub": "xpub661...",
-                        "fingerprint": "deadbeef",
-                        "derivationPath": "m/48'/0'/0'/2'",
-                        "network": "bitcoin",
-                        "cubeId": 5,
-                        "status": "active",
-                        "createdAt": "2026-04-18T00:00:00Z",
-                        "updatedAt": "2026-04-18T00:00:00Z"
-                    }
-                ]
-            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": [
+                        {
+                            "id": 1,
+                            "primaryOwnerId": 7,
+                            "keychainId": 42,
+                            "name": "Legacy Key",
+                            "curve": "secp256k1",
+                            "taproot": false,
+                            "xpub": "xpub661...",
+                            "fingerprint": "deadbeef",
+                            "derivationPath": "m/48'/0'/0'/2'",
+                            "network": "bitcoin",
+                            "cubeId": 5,
+                            "status": "active",
+                            "createdAt": "2026-04-18T00:00:00Z",
+                            "updatedAt": "2026-04-18T00:00:00Z"
+                        }
+                    ]
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -1133,20 +1144,22 @@ mod cube_member_tests {
             when.method(Method::POST)
                 .path("/api/v1/connect/cubes/42/vault")
                 .json_body(json!({ "timelockDays": 180 }));
-            then.status(201).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": {
-                    "id": 5,
-                    "cubeId": 42,
-                    "timelockDays": 180,
-                    "timelockExpiresAt": "2026-10-15T00:00:00Z",
-                    "lastResetAt": "2026-04-18T00:00:00Z",
-                    "status": "active",
-                    "members": [],
-                    "createdAt": "2026-04-18T00:00:00Z",
-                    "updatedAt": "2026-04-18T00:00:00Z"
-                }
-            }));
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 5,
+                        "cubeId": 42,
+                        "timelockDays": 180,
+                        "timelockExpiresAt": "2026-10-15T00:00:00Z",
+                        "lastResetAt": "2026-04-18T00:00:00Z",
+                        "status": "active",
+                        "members": [],
+                        "createdAt": "2026-04-18T00:00:00Z",
+                        "updatedAt": "2026-04-18T00:00:00Z"
+                    }
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -1171,15 +1184,17 @@ mod cube_member_tests {
             when.method(Method::POST)
                 .path("/api/v1/connect/cubes/42/vault/members")
                 .json_body(json!({ "keyId": 99, "role": "keyholder" }));
-            then.status(201).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": {
-                    "id": 7,
-                    "keyId": 99,
-                    "role": "keyholder",
-                    "createdAt": "2026-04-18T00:00:00Z"
-                }
-            }));
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 7,
+                        "keyId": 99,
+                        "role": "keyholder",
+                        "createdAt": "2026-04-18T00:00:00Z"
+                    }
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -1246,13 +1261,15 @@ mod cube_member_tests {
         let mock = server.mock(|when, then| {
             when.method(Method::POST)
                 .path("/api/v1/connect/cubes/42/vault/members");
-            then.status(409).header("content-type", "application/json").json_body(json!({
-                "success": false,
-                "error": {
-                    "code": "DUPLICATE_RESOURCE",
-                    "message": "This member already exists on the vault"
-                }
-            }));
+            then.status(409)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": false,
+                    "error": {
+                        "code": "DUPLICATE_RESOURCE",
+                        "message": "This member already exists on the vault"
+                    }
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -1286,10 +1303,12 @@ mod cube_member_tests {
                     "role": "keyholder",
                     "cubeIds": [1, 7, 42]
                 }));
-            then.status(201).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": { "id": 100 }
-            }));
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": { "id": 100 }
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -1317,10 +1336,12 @@ mod cube_member_tests {
                     "email": "friend@example.com",
                     "role": "keyholder"
                 }));
-            then.status(201).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": { "id": 100 }
-            }));
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": { "id": 100 }
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -1342,18 +1363,20 @@ mod cube_member_tests {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
             when.method(Method::GET).path("/api/v1/connect/cubes/42");
-            then.status(200).header("content-type", "application/json").json_body(json!({
-                "success": true,
-                "data": {
-                    "id": 42,
-                    "uuid": "abc-123",
-                    "name": "My Cube",
-                    "network": "bitcoin",
-                    "lightningAddress": null,
-                    "bolt12Offer": null,
-                    "status": "active"
-                }
-            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 42,
+                        "uuid": "abc-123",
+                        "name": "My Cube",
+                        "network": "bitcoin",
+                        "lightningAddress": null,
+                        "bolt12Offer": null,
+                        "status": "active"
+                    }
+                }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());

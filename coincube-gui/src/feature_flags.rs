@@ -29,8 +29,7 @@ pub const PASSKEY_ENABLED: bool = is_truthy(option_env!("COINCUBE_ENABLE_PASSKEY
 /// Defaults to `false` while the backend dependencies are rolling out. When
 /// `false`, the `Members` sub-menu button is hidden from the sidebar — the
 /// rest of the panel code still compiles but is unreachable via UI.
-pub const CUBE_MEMBERS_UI_ENABLED: bool =
-    is_truthy(option_env!("COINCUBE_CUBE_MEMBERS_UI"));
+pub const CUBE_MEMBERS_UI_ENABLED: bool = is_truthy(option_env!("COINCUBE_CUBE_MEMBERS_UI"));
 
 /// `const`-compatible truthy check: accepts `"1"`, `"true"`, `"yes"`
 /// (case-insensitive for the latter two). Anything else, including `None`,

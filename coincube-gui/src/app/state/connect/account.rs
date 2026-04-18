@@ -888,9 +888,8 @@ impl ConnectAccountPanel {
                 // resolves; empty Vec renders as "no cubes section".
                 let client = self.client.clone();
                 let gen = self.session_generation;
-                return iced::Task::perform(
-                    async move { client.list_cubes().await },
-                    move |res| match res {
+                return iced::Task::perform(async move { client.list_cubes().await }, move |res| {
+                    match res {
                         Ok(cubes) => {
                             let options = cubes
                                 .into_iter()
@@ -916,8 +915,8 @@ impl ConnectAccountPanel {
                                 ),
                             ))
                         }
-                    },
-                );
+                    }
+                });
             }
 
             ContactsMessage::InviteCubesAvailable(cubes, gen) => {
@@ -1028,15 +1027,20 @@ impl ConnectAccountPanel {
                         // (the per-cube membership check failed). Route to
                         // the dedicated handler so the form stays open with
                         // a clear "some cubes are no longer available" msg.
-                        Err(e) if had_cubes && matches!(
-                            &e,
-                            crate::services::coincube::CoincubeError::Unsuccessful(info)
-                                if info.status_code == 403
-                        ) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(
-                                ContactsMessage::InviteCubeForbidden(e.to_string()),
-                            ),
-                        )),
+                        Err(e)
+                            if had_cubes
+                                && matches!(
+                                    &e,
+                                    crate::services::coincube::CoincubeError::Unsuccessful(info)
+                                        if info.status_code == 403
+                                ) =>
+                        {
+                            Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::Contacts(
+                                    ContactsMessage::InviteCubeForbidden(e.to_string()),
+                                ),
+                            ))
+                        }
                         Err(e) => Message::View(view::Message::ConnectAccount(
                             ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
                         )),
@@ -1052,27 +1056,24 @@ impl ConnectAccountPanel {
                 // the user can adjust and retry.
                 let client = self.client.clone();
                 let gen = self.session_generation;
-                return iced::Task::perform(
-                    async move { client.list_cubes().await },
-                    move |res| {
-                        let options = match res {
-                            Ok(cubes) => cubes
-                                .into_iter()
-                                .map(|c| InviteCubeOption {
-                                    id: c.id,
-                                    name: c.name,
-                                    network: c.network,
-                                })
-                                .collect(),
-                            Err(_) => Vec::new(),
-                        };
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(
-                                ContactsMessage::InviteCubesAvailable(options, gen),
-                            ),
-                        ))
-                    },
-                );
+                return iced::Task::perform(async move { client.list_cubes().await }, move |res| {
+                    let options = match res {
+                        Ok(cubes) => cubes
+                            .into_iter()
+                            .map(|c| InviteCubeOption {
+                                id: c.id,
+                                name: c.name,
+                                network: c.network,
+                            })
+                            .collect(),
+                        Err(_) => Vec::new(),
+                    };
+                    Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::Contacts(ContactsMessage::InviteCubesAvailable(
+                            options, gen,
+                        )),
+                    ))
+                });
             }
 
             ContactsMessage::InviteCreated => {

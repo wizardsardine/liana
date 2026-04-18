@@ -338,10 +338,7 @@ fn invite_form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcco
         if !cubes.is_empty() {
             form = form
                 .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
-                .push(
-                    text::p2_regular("Also add to Cube(s) (optional)")
-                        .color(color::GREY_3),
-                )
+                .push(text::p2_regular("Also add to Cube(s) (optional)").color(color::GREY_3))
                 .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
                 .push(invite_cubes_section(cubes, &cs.invite_cube_selections));
         }
@@ -408,10 +405,8 @@ fn invite_cube_conflict_card<'a>(msg: &str) -> Element<'a, ConnectAccountMessage
             .push(text::p2_regular(msg.to_string()).style(theme::text::primary))
             .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
             .push(
-                text::p2_regular(
-                    "Review your cube selection below and try again.",
-                )
-                .color(color::GREY_3),
+                text::p2_regular("Review your cube selection below and try again.")
+                    .color(color::GREY_3),
             )
             .padding(16)
             .spacing(0),

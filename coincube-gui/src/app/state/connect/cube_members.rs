@@ -45,14 +45,6 @@ impl ConnectCubeMembersState {
         *self = Self::default();
     }
 
-    /// True once a successful load has populated state. The view uses this to
-    /// decide whether to render the empty-state placeholder vs. a spinner.
-    pub fn has_loaded(&self) -> bool {
-        !self.loading && self.error.is_none()
-            || !self.members.is_empty()
-            || !self.pending_invites.is_empty()
-    }
-
     fn bump_generation(&mut self) -> u32 {
         self.load_generation = self.load_generation.wrapping_add(1);
         self.load_generation
@@ -313,10 +305,7 @@ mod tests {
         }
     }
 
-    fn run(
-        state: &mut ConnectCubeMembersState,
-        msg: ConnectCubeMembersMessage,
-    ) {
+    fn run(state: &mut ConnectCubeMembersState, msg: ConnectCubeMembersMessage) {
         // None/None for client/cube_id — every test here exercises the pure
         // state transitions, not the async branches. Tasks returned when the
         // client is missing are `Task::none()`.

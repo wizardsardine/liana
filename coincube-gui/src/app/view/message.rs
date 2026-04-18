@@ -796,10 +796,7 @@ pub enum ContactsMessage {
     // --- W12: cube multi-select on invite form ---
     /// Available cubes loaded for the invite form (from `list_cubes`).
     /// Carries `session_generation` for stale-response guarding.
-    InviteCubesAvailable(
-        Vec<crate::app::state::connect::InviteCubeOption>,
-        u64,
-    ),
+    InviteCubesAvailable(Vec<crate::app::state::connect::InviteCubeOption>, u64),
     /// User toggled a cube checkbox in the invite form.
     ToggleInviteCube(u64),
     /// A cube id from the last submit was 403'd by the backend (W12).

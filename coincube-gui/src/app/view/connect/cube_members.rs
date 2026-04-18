@@ -34,17 +34,17 @@ pub fn cube_members_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCu
             Column::new()
                 .push(text::h4_bold("Members").style(theme::text::primary))
                 .push(
-                    text::p2_regular(
-                        "People who can view this Cube and contribute signing keys.",
-                    )
-                    .color(color::GREY_3),
+                    text::p2_regular("People who can view this Cube and contribute signing keys.")
+                        .color(color::GREY_3),
                 )
                 .spacing(2),
         )
         .push(iced::widget::Space::new().width(Length::Fill))
         .push(
             button::secondary(None, "Refresh")
-                .on_press(ConnectCubeMessage::Members(ConnectCubeMembersMessage::Reload))
+                .on_press(ConnectCubeMessage::Members(
+                    ConnectCubeMembersMessage::Reload,
+                ))
                 .width(Length::Shrink),
         )
         .align_y(Alignment::Center);
@@ -130,9 +130,7 @@ fn invite_form<'a>(
     };
 
     let input = TextInput::new("email@example.com", &panel.invite_email)
-        .on_input(|s| {
-            ConnectCubeMessage::Members(ConnectCubeMembersMessage::InviteEmailChanged(s))
-        })
+        .on_input(|s| ConnectCubeMessage::Members(ConnectCubeMembersMessage::InviteEmailChanged(s)))
         .on_submit_maybe(can_submit.then_some(ConnectCubeMessage::Members(
             ConnectCubeMembersMessage::SubmitInvite,
         )))
@@ -225,10 +223,7 @@ fn pending_invite_card<'a>(invite: &'a CubeInviteSummary) -> Element<'a, Connect
         .push(text::p1_regular(invite.email.as_str()).style(theme::text::primary))
         .push(
             Row::new()
-                .push(
-                    text::p2_regular(invite.status.as_str())
-                        .color(status_color(&invite.status)),
-                )
+                .push(text::p2_regular(invite.status.as_str()).color(status_color(&invite.status)))
                 .push(iced::widget::Space::new().width(Length::Fixed(12.0)))
                 .push(expiry_elem)
                 .align_y(Alignment::Center),
@@ -320,20 +315,18 @@ fn remove_conflict_banner<'a>(msg: &str) -> Element<'a, ConnectCubeMessage> {
             .push(text::p2_regular(msg.to_string()).style(theme::text::primary))
             .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
             .push(
-                text::p2_regular(
-                    "Wind down the Vault(s) first, then try again.",
-                )
-                .color(color::GREY_3),
+                text::p2_regular("Wind down the Vault(s) first, then try again.")
+                    .color(color::GREY_3),
             )
             .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
             .push(
                 Row::new()
                     .push(iced::widget::Space::new().width(Length::Fill))
-                    .push(
-                        button::secondary(None, "Dismiss").on_press(ConnectCubeMessage::Members(
+                    .push(button::secondary(None, "Dismiss").on_press(
+                        ConnectCubeMessage::Members(
                             ConnectCubeMembersMessage::DismissRemoveConflict,
-                        )),
-                    ),
+                        ),
+                    )),
             )
             .padding(16)
             .spacing(0),
@@ -377,7 +370,9 @@ fn expiry_element<'a>(expires_at: &str) -> Element<'a, ConnectCubeMessage> {
         d if d > 0 => text::p2_regular(format!("Expires in {} days", d))
             .color(color::GREY_3)
             .into(),
-        0 => text::p2_regular("Expires today").color(color::ORANGE).into(),
+        0 => text::p2_regular("Expires today")
+            .color(color::ORANGE)
+            .into(),
         d if d < 0 => text::p2_regular("Expired").color(color::RED).into(),
         _ => text::p2_regular("").into(),
     }
