@@ -1005,13 +1005,21 @@ impl State for GlobalHome {
                         Task::none()
                     }
                     HomeMessage::SelectWalletInPicker(kind) => {
-                        // Apply the selection to the side currently being edited and
-                        // recompute the cached direction. If the selection would create
-                        // an illegal same-wallet pair, the popup already disables the
-                        // offending row — so this handler just trusts the input.
+                        // Apply the selection to the side being edited. The TO
+                        // popup already filters out the current FROM, but the
+                        // FROM popup shows all three — so picking a FROM that
+                        // collides with the current TO is possible. Treat that
+                        // as a swap: move the previous FROM into the TO slot.
+                        // The TO popup's filter means the symmetric case
+                        // doesn't occur there.
                         if let Some(side) = self.wallet_picker {
                             match side {
-                                PickerSide::From => self.transfer_from = Some(kind),
+                                PickerSide::From => {
+                                    if self.transfer_to == Some(kind) {
+                                        self.transfer_to = self.transfer_from;
+                                    }
+                                    self.transfer_from = Some(kind);
+                                }
                                 PickerSide::To => self.transfer_to = Some(kind),
                             }
                             if let (Some(from), Some(to)) = (self.transfer_from, self.transfer_to) {

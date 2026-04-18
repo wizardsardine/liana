@@ -10,7 +10,7 @@ use coincube_ui::{
     widget::*,
 };
 use iced::{
-    widget::{container, mouse_area, Button, Column, Space, Stack},
+    widget::{mouse_area, Button, Column, Space, Stack},
     Alignment, Length,
 };
 use crate::app::breez_liquid::assets::format_usdt_display;
@@ -488,68 +488,44 @@ fn wallet_selector_popup<'a>(
         PickerSide::To => to,
     };
 
-    // The wallet on the *other* side — we disable selecting it to prevent the
-    // illegal same-wallet pair (plan §3).
-    let other = match editing {
-        PickerSide::From => to,
+    // When editing the TO side, hide whatever wallet is currently set as FROM —
+    // listing it disabled is noise when the user already knows they're
+    // transferring *from* it. When editing the FROM side, show all three: the
+    // user may want to swap which wallet is the source, and seeing the current
+    // TO wallet in the FROM list is useful for that (picking it implicitly
+    // swaps sides in the state layer).
+    let hidden = match editing {
+        PickerSide::From => None,
         PickerSide::To => from,
     };
 
     let row_for = |kind: WalletKind, balance: Amount| -> Element<'a, Message> {
-        let disabled = other == Some(kind);
         let is_selected = current == Some(kind);
         let balance_str = balance.to_formatted_string_with_unit(bitcoin_unit);
         let icon_elem = wallet_kind_icon::<Message>(kind, 36.0);
-        if disabled {
-            // Render the row without an on-press (so it's inert) and dim via opacity.
-            // We still reuse `picker_row`'s structure for visual consistency; we swap
-            // the on-press target for a no-op Error message, then override the
-            // container style below to signal "disabled".
-            Container::new(crate::app::view::shared::picker::picker_row(
-                icon_elem,
-                kind.label(),
-                &balance_str,
-                kind.badge(),
-                is_selected,
-                // Clicks on disabled rows are swallowed; `Error` is harmless and
-                // doesn't advance any state.
-                Message::Home(HomeMessage::Error(String::new())),
-            ))
-            .style(|_: &theme::Theme| container::Style {
-                background: Some(iced::Background::Color(iced::Color {
-                    a: 0.4,
-                    ..color::GREY_4
-                })),
-                border: iced::Border {
-                    radius: 12.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
-            .into()
-        } else {
-            crate::app::view::shared::picker::picker_row(
-                icon_elem,
-                kind.label(),
-                &balance_str,
-                kind.badge(),
-                is_selected,
-                Message::Home(HomeMessage::SelectWalletInPicker(kind)),
-            )
-        }
+        crate::app::view::shared::picker::picker_row(
+            icon_elem,
+            kind.label(),
+            &balance_str,
+            kind.badge(),
+            is_selected,
+            Message::Home(HomeMessage::SelectWalletInPicker(kind)),
+        )
     };
 
     let mut col = Column::new()
         .spacing(16)
         .padding(24)
         .max_width(420)
-        .push(text(title_label).size(H4_SIZE).bold())
-        .push(row_for(WalletKind::Liquid, liquid_balance));
+        .push(text(title_label).size(H4_SIZE).bold());
 
-    if has_spark {
+    if hidden != Some(WalletKind::Liquid) {
+        col = col.push(row_for(WalletKind::Liquid, liquid_balance));
+    }
+    if has_spark && hidden != Some(WalletKind::Spark) {
         col = col.push(row_for(WalletKind::Spark, spark_balance));
     }
-    if has_vault {
+    if has_vault && hidden != Some(WalletKind::Vault) {
         col = col.push(row_for(WalletKind::Vault, vault_balance));
     }
 
