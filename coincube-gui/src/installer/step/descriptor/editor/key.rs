@@ -1039,6 +1039,13 @@ impl SelectKeySource {
             return Task::none();
         }
 
+        if self.owner_placed_elsewhere(resolved.owner.primary_owner_id(), fingerprint) {
+            self.error = Some(
+                "This owner already has a Keychain key placed in this Vault.".to_string(),
+            );
+            return Task::none();
+        }
+
         if self.keys.contains_key(&fingerprint) {
             self.selected_key = SelectedKey::Existing(fingerprint);
         } else {
@@ -1081,13 +1088,48 @@ impl SelectKeySource {
         })
     }
 
+    /// Backstop for `on_select_keychain_key`: returns true if accepting
+    /// the candidate Keychain key would violate "one Keychain key per
+    /// owner per Vault".  A conflict exists when a *different* Keychain
+    /// key from the same owner is placed at coordinates outside the
+    /// currently-edited slot (those can't be overwritten by this
+    /// selection).  Replacing the key at the currently-edited slot is
+    /// allowed.
+    fn owner_placed_elsewhere(
+        &self,
+        primary_owner_id: u64,
+        candidate_fingerprint: Fingerprint,
+    ) -> bool {
+        self.keys.values().any(|(coords, k)| {
+            if k.fingerprint == candidate_fingerprint {
+                return false;
+            }
+            let KeySource::KeychainKey { owner, .. } = &k.source else {
+                return false;
+            };
+            if owner.primary_owner_id() != primary_owner_id {
+                return false;
+            }
+            coords.is_empty()
+                || coords
+                    .iter()
+                    .any(|c| !self.actual_path.coordinates.contains(c))
+        })
+    }
+
     // ── Keychain key views ──────────────────────────────────────────
 
     fn view_my_keychain_keys(&self) -> Element<Message> {
         let mut col = Column::new().spacing(modal::V_SPACING).width(modal::BTN_W);
         col = col.push(p1_bold("My Keychain Keys"));
 
-        if self.keychain_keys_loading && self.my_keychain_keys.is_empty() {
+        // Treat "not yet fetched" as loading — the auto-fetch fires on
+        // the first update() call, leaving a brief pre-fetch window
+        // where the lists are empty without the empty state being real.
+        if (!self.keychain_keys_fetched || self.keychain_keys_loading)
+            && self.my_keychain_keys.is_empty()
+            && self.keychain_keys_error.is_none()
+        {
             col = col.push(p1_regular("Fetching Keychain keys…"));
             return col.into();
         }
@@ -1108,8 +1150,8 @@ impl SelectKeySource {
 
         for rk in &self.my_keychain_keys {
             let disabled = self.is_owner_already_placed(rk.raw.primary_owner_id);
-            let fp = &rk.raw.fingerprint;
-            let fingerprint = Some(format!("#{}", &fp[..fp.len().min(8)]));
+            let fp_short: String = rk.raw.fingerprint.chars().take(8).collect();
+            let fingerprint = Some(format!("#{}", fp_short));
             let msg = if disabled {
                 None
             } else {
@@ -1136,8 +1178,20 @@ impl SelectKeySource {
         let mut col = Column::new().spacing(modal::V_SPACING).width(modal::BTN_W);
         col = col.push(p1_bold("Contact Keychain Keys"));
 
-        if self.keychain_keys_loading && self.contact_keychain_keys.is_empty() {
+        // Treat "not yet fetched" as loading (see view_my_keychain_keys).
+        if (!self.keychain_keys_fetched || self.keychain_keys_loading)
+            && self.contact_keychain_keys.is_empty()
+            && self.keychain_keys_error.is_none()
+        {
             col = col.push(p1_regular("Fetching contact keys…"));
+            return col.into();
+        }
+        if let Some(err) = &self.keychain_keys_error {
+            col = col.push(p1_regular(format!("Failed to load keys: {}", err)));
+            col = col.push(
+                button::secondary(Some(icon::reload_icon()), "Retry")
+                    .on_press(Self::route(SelectKeySourceMessage::FetchCubeKeys)),
+            );
             return col.into();
         }
         if self.contact_keychain_keys.is_empty() {
