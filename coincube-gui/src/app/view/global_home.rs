@@ -1398,6 +1398,7 @@ pub struct GlobalViewConfig<'a> {
     pub fiat_converter: Option<FiatAmountConverter>,
     pub balance_masked: bool,
     pub has_vault: bool,
+    pub has_spark: bool,
     pub current_view: HomeView,
     pub transfer_direction: Option<TransferDirection>,
     pub entered_amount: &'a form::Value<String>,
@@ -1456,6 +1457,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         fiat_converter,
         balance_masked,
         has_vault,
+        has_spark,
         current_view,
         transfer_direction,
         entered_amount,
@@ -1855,7 +1857,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 )
                 .align_y(Alignment::Center),
         )
-        .push(spark_card)
+        .push_maybe(has_spark.then_some(spark_card))
         .push(liquid_card)
         .push(
             Container::new(
