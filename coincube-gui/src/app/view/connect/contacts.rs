@@ -132,7 +132,14 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
         col = col.push(iced::widget::Space::new().height(Length::Fixed(8.0)));
 
         for contact in contacts {
-            let email = &contact.contact_user.email;
+            // Contact responses with no linked user are rare (backend
+            // marks the field `omitempty`) — render a placeholder and
+            // still list them so the user can revoke/clean up.
+            let email = contact
+                .contact_user
+                .as_ref()
+                .map(|u| u.email.as_str())
+                .unwrap_or("unknown contact");
             let first_char = email
                 .chars()
                 .next()
@@ -160,7 +167,7 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
                 .push(iced::widget::Space::new().width(Length::Fixed(12.0)))
                 .push(
                     Column::new()
-                        .push(text::p1_regular(email.as_str()).style(theme::text::primary))
+                        .push(text::p1_regular(email).style(theme::text::primary))
                         .push(text::p2_regular(role_label).color(role_color(&contact.role)))
                         .spacing(2),
                 )
@@ -481,7 +488,11 @@ fn contact_detail_ux<'a>(
             .into();
     };
 
-    let email = &contact.contact_user.email;
+    let email = contact
+        .contact_user
+        .as_ref()
+        .map(|u| u.email.as_str())
+        .unwrap_or("unknown contact");
     let first_char = email
         .chars()
         .next()
@@ -527,7 +538,7 @@ fn contact_detail_ux<'a>(
         Column::new()
             .push(avatar)
             .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-            .push(text::h4_bold(email.as_str()).style(theme::text::primary))
+            .push(text::h4_bold(email).style(theme::text::primary))
             .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
             .push(role_badge)
             .push(iced::widget::Space::new().height(Length::Fixed(6.0)))

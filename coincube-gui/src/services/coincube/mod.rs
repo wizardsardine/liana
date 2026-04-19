@@ -847,19 +847,60 @@ impl std::fmt::Display for ContactRole {
 pub struct ContactUser {
     pub id: u64,
     pub email: String,
+    /// Backend's `ContactResponse.ContactUser` omits this (it's a
+    /// `UserSummary`, not a full user); desktop was overly strict before.
+    #[serde(default)]
     pub email_verified: Option<bool>,
 }
 
+/// A contact row returned by `GET /api/v1/connect/contacts`.
+///
+/// The backend's `ContactResponse` is intentionally a lean summary —
+/// only `{id, contactUser, role, createdAt}`. The flat fields
+/// `userId`, `contactUserId`, `inviteId` aren't part of the wire shape;
+/// they're marked `#[serde(default)]` so legacy payloads still
+/// deserialise. Callers that need the contact's user id should use
+/// [`Contact::effective_contact_user_id`] which prefers the nested
+/// `contact_user.id` over the flat field.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Contact {
     pub id: u64,
+    /// Relationship-owner's user id — tautological from the caller's
+    /// perspective. Not in the current backend response.
+    #[serde(default)]
     pub user_id: u64,
+    /// Flat `contactUserId` from the legacy shape. Use
+    /// [`Contact::effective_contact_user_id`] rather than reading this
+    /// field directly — it will be zero when talking to the current
+    /// backend.
+    #[serde(default)]
     pub contact_user_id: u64,
+    #[serde(default)]
     pub invite_id: Option<u64>,
     pub role: ContactRole,
-    pub contact_user: ContactUser,
+    /// Nested user summary. The current backend marks this optional
+    /// (`omitempty`); an entry without a contact user is skippable at
+    /// the call site.
+    #[serde(default)]
+    pub contact_user: Option<ContactUser>,
     pub created_at: String,
+}
+
+impl Contact {
+    /// Returns the contact's user id, falling back to the nested
+    /// `contact_user.id` when the flat `contact_user_id` is absent/zero.
+    /// Returns `None` when the contact has no linked user at all.
+    pub fn effective_contact_user_id(&self) -> Option<u64> {
+        if self.contact_user_id != 0 {
+            Some(self.contact_user_id)
+        } else {
+            self.contact_user
+                .as_ref()
+                .map(|u| u.id)
+                .filter(|id| *id != 0)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

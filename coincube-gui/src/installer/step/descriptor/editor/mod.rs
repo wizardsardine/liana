@@ -57,7 +57,6 @@ pub struct DefineDescriptor {
 
     modal: Option<Box<dyn DescriptorEditModal>>,
     signer: Arc<Mutex<Signer>>,
-    developer_mode: bool,
 
     keys: HashMap<Fingerprint, Key>,
     paths: Vec<Path>,
@@ -74,14 +73,17 @@ pub struct DefineDescriptor {
 }
 
 impl DefineDescriptor {
-    pub fn new(network: Network, signer: Arc<Mutex<Signer>>, developer_mode: bool) -> Self {
+    // Formerly took a `developer_mode` flag that gated the
+    // "Generate hot key" button in the old Other-options list. The
+    // card-grid redesign promotes that flow to a first-class "Cube
+    // Key" card, so the gate is gone.
+    pub fn new(network: Network, signer: Arc<Mutex<Signer>>) -> Self {
         Self {
             network,
             use_taproot: false,
             modal: None,
 
             signer,
-            developer_mode,
             error: None,
             keys: HashMap::new(),
             descriptor_template: DescriptorTemplate::default(),
@@ -223,7 +225,6 @@ impl DefineDescriptor {
             keys,
             self.accounts.clone(),
             self.signer.clone(),
-            self.developer_mode,
             self.cube_id.clone(),
             self.coincube_client.clone(),
         )
@@ -331,6 +332,18 @@ impl Step for DefineDescriptor {
             )) => {
                 let modal = self.edit_key_modal(path_kind, coordinates);
                 self.modal = Some(Box::new(modal));
+            }
+            Message::DefineDescriptor(message::DefineDescriptor::ReopenKeyModal(coordinates)) => {
+                // Derive path_kind from the first coordinate's path
+                // index (every coordinate in the Vec belongs to the
+                // same path, by construction of the picker call sites).
+                if let Some((path_idx, _)) = coordinates.first() {
+                    if let Some(path) = self.paths.get(*path_idx) {
+                        let path_kind = path.sequence.into();
+                        let modal = self.edit_key_modal(path_kind, coordinates);
+                        self.modal = Some(Box::new(modal));
+                    }
+                }
             }
             Message::DefineDescriptor(message::DefineDescriptor::AliasEdited(fg, alias)) => {
                 if let Some(key) = self.keys.get_mut(&fg) {
@@ -917,7 +930,6 @@ mod tests {
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
             Network::Signet,
             Arc::new(Mutex::new(Signer::generate(Network::Signet).unwrap())),
-            true,
         ));
         sandbox.load(&ctx).await;
 
@@ -1002,7 +1014,6 @@ mod tests {
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
             Network::Testnet,
             Arc::new(Mutex::new(Signer::generate(Network::Testnet).unwrap())),
-            true, // developer_mode=true: test exercises the hot-signer path
         ));
         sandbox.load(&ctx).await;
 

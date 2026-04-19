@@ -226,6 +226,11 @@ pub enum DefineDescriptor {
     AliasEdited(Fingerprint, String /* alias*/),
     /// Open the Border Wallet wizard for the given path coordinates.
     OpenBorderWalletWizard(Vec<(usize, usize)>),
+    /// Close the current modal and re-open the Select-key-source picker
+    /// for the given coordinates. Used by the Border Wallet wizard's
+    /// intro "Back" button to return to the picker instead of dropping
+    /// the user back to the descriptor editor.
+    ReopenKeyModal(Vec<(usize, usize)>),
 }
 
 #[allow(clippy::large_enum_variant)]
