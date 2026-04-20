@@ -10,7 +10,6 @@ use iced::{
 use crate::{
     color,
     component::{
-        button,
         form::{self, Value},
         text, tooltip,
     },
@@ -30,28 +29,65 @@ pub fn widget_style(theme: &Theme, status: Status) -> Style {
     theme::button::secondary(theme, status)
 }
 
-pub fn header<'a, Message, Back, Close>(
+/// Standard modal header used across the app: left-aligned title plus a
+/// right-aligned close ×. Back navigation — when the modal has it — now
+/// lives in a footer row rendered via [`back_button`] placed next to the
+/// primary action (matches the Recovery Phrase / Border Wallet pattern).
+/// The × is sized to match the chevron glyph used by [`back_button`] so
+/// the two nav controls read as the same visual weight.
+pub fn header<'a, Message, Close>(
     label: Option<String>,
-    back_message: Option<Back>,
     close_message: Option<Close>,
 ) -> Element<'a, Message>
 where
-    Back: 'static + Fn() -> Message,
     Close: 'static + Fn() -> Message,
     Message: Clone + 'static,
 {
-    let back = back_message
-        .map(|m| button::transparent(Some(icon::arrow_back().size(25)), "").on_press(m()));
     let title = label.map(text::h3);
-    let close = close_message
-        .map(|m| button::transparent(Some(icon::cross_icon().size(40)), "").on_press(m()));
+    // Build the close button without the `button::transparent` helper:
+    // that helper assumes an icon+text pair and pads for the spacing
+    // gap + empty label, which leaves a visible gutter between the ×
+    // and the modal's right edge. A minimal `Button::new(icon)` with
+    // zero padding sits flush to the right instead.
+    let close = close_message.map(|m| {
+        iced::widget::Button::new(icon::cross_icon())
+            .style(theme::button::transparent)
+            .padding(0)
+            .on_press(m())
+    });
+    // Layout: [title] [flex-fill] [close]. The `width(Fill)` on the Row
+    // is what makes the flex spacer actually push `close` to the right
+    // edge of the modal — without it the Row defaults to `Shrink` and
+    // both children collapse together in the middle.
     Row::new()
-        .push(back)
         .push(title)
         .push(Space::new().width(Length::Fill))
         .push(close)
         .align_y(Vertical::Center)
+        .spacing(H_SPACING)
+        .width(Length::Fill)
         .into()
+}
+
+/// Reusable "⟨ Back" button placed in a modal footer row (left-aligned,
+/// next to the primary action). Matches the style already used by the
+/// Recovery Phrase / Select Pattern / etc. Border Wallet wizard screens.
+pub fn back_button<'a, Message, F>(on_press: F) -> Element<'a, Message>
+where
+    Message: Clone + 'a,
+    F: 'static + Fn() -> Message,
+{
+    iced::widget::Button::new(
+        Row::new()
+            .push(icon::previous_icon().style(theme::text::secondary))
+            .push(Space::new().width(Length::Fixed(4.0)))
+            .push(text::p1_medium("Back").style(theme::text::secondary))
+            .spacing(4)
+            .align_y(Vertical::Center),
+    )
+    .style(theme::button::transparent)
+    .on_press(on_press())
+    .into()
 }
 
 pub fn optional_section<'a, Message, Collapse, Fold>(

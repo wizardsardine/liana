@@ -1,3 +1,4 @@
+pub(crate) mod connect_vault;
 mod context;
 mod decrypt;
 mod descriptor;
@@ -201,7 +202,7 @@ impl Installer {
                 UserFlow::CreateWallet => vec![
                     ChooseDescriptorTemplate::default().into(),
                     DescriptorTemplateDescription::default().into(),
-                    DefineDescriptor::new(network, signer.clone(), developer_mode).into(),
+                    DefineDescriptor::new(network, signer.clone()).into(),
                     BackupMnemonic::new(signer.clone()).into(),
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::new_create_wallet().into(),

@@ -46,8 +46,6 @@ use crate::{
     utils::{default_derivation_path, example_xpub},
 };
 
-type FnMsg = fn() -> installer::Message;
-
 #[allow(unused, clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy)]
 pub enum Error {
@@ -726,7 +724,6 @@ pub fn mnemonic_input_button<'a>(
 pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Message> {
     let header = modal::header(
         Some("Decrypt backup file".to_string()),
-        None::<FnMsg>,
         Some(|| installer::Message::Decrypt(Decrypt::Close)),
     );
 
