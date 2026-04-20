@@ -248,6 +248,7 @@ impl State for GlobalHome {
                 fiat_converter,
                 balance_masked: self.balance_masked,
                 has_vault: cache.has_vault,
+                has_spark: self.spark_backend.is_some(),
                 current_view: self.current_view,
                 transfer_direction: self.transfer_direction,
                 entered_amount: &self.entered_amount,

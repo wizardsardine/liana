@@ -7,7 +7,7 @@ use coincube_ui::{
     component::{amount::*, badge, button, form, text::*},
     icon::{self, coins_icon},
     theme,
-    widget::*,
+    widget::{Button, Column, Container, Element, Row},
 };
 
 use crate::{
