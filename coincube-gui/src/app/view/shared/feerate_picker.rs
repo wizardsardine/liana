@@ -4,9 +4,9 @@ use coincube_ui::{
 };
 use iced::Length;
 
-/// Priority tier for the mempool-driven feerate presets. Mirrors the enum
-/// already declared in `view/message.rs` but we re-declare here to avoid
-/// cross-module dependency churn for a tiny enum.
+/// Priority tier for the mempool-driven feerate presets. Canonical definition
+/// — `view/message.rs` imports it for the `FetchTransferFeeratePreset` and
+/// `TransferFeerateEstimated` message variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeeratePreset {
     /// ~4h confirmation target.

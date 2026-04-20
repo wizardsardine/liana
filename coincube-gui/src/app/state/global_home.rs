@@ -1005,9 +1005,19 @@ impl State for GlobalHome {
                                 // `pending_liquid_receive_sats`). Baseline
                                 // snapshots the daemon's current view so the
                                 // Tick reconciler can tell "our tx landed"
-                                // from growth relative to this moment.
-                                self.pending_vault_receive_baseline_sats =
-                                    cache_vault_pending_receive_sats(cache);
+                                // from growth relative to this moment — but
+                                // only on a fresh batch. If a prior broadcast
+                                // is still unreconciled, its amount may
+                                // already sit in `cache_vault_pending_receive_sats`;
+                                // re-snapshotting here would fold it into the
+                                // baseline while `pending_vault_receive_sats`
+                                // still includes it, making the reconciliation
+                                // bar (`baseline + pending`) permanently
+                                // unreachable.
+                                if self.pending_vault_receive_sats == 0 {
+                                    self.pending_vault_receive_baseline_sats =
+                                        cache_vault_pending_receive_sats(cache);
+                                }
                                 self.pending_vault_receive_sats =
                                     self.pending_vault_receive_sats.saturating_add(amount_sat);
                             }
