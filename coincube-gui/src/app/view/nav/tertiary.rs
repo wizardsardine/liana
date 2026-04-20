@@ -1,7 +1,7 @@
 //! Tertiary (~72px) left nav rail — the third column that appears only
 //! when the current route has a third level (e.g. Cube → Settings →
 //! {General/Lightning/About}, Marketplace → P2P → {Order Book / My Trades
-//! / ...}, Vault → Settings → {Node / Wallet / Import-Export / About}).
+//! / ...}, Vault → Settings → {Node / Wallet / Import-Export}).
 //!
 //! Styled like [`super::primary`] and [`super::secondary`], but with a
 //! slightly lighter background so the third level reads as "deeper".
@@ -269,7 +269,5 @@ fn vault_settings_items() -> Vec<SubItem> {
                 )
             },
         },
-        // About intentionally omitted — already reachable via
-        // Cube → Settings → About, no need for a Vault duplicate.
     ]
 }

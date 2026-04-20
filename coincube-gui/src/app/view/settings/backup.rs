@@ -30,7 +30,7 @@ fn header<'a>(_title: &'a str) -> Element<'a, Message> {
         .spacing(10)
         .align_y(Alignment::Center)
         .push(
-            ui_button::transparent_border(None, "< Previous")
+            ui_button::secondary(None, "< Previous")
                 .on_press(wrap(BackupWalletMessage::PreviousStep))
                 .padding([8, 16])
                 .width(Length::Fixed(150.0)),

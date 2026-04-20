@@ -37,13 +37,10 @@ use iced::{
     Alignment, Length,
 };
 
-/// Maximum width of the sidebar, assuming the tertiary rail is visible.
-/// The rail column itself is conditionally narrower when the current
-/// route has no third level. Toast offset uses this max width.
-pub const SIDEBAR_WIDTH: f32 = primary::RAIL_WIDTH + secondary::RAIL_WIDTH + tertiary::RAIL_WIDTH;
-
-/// Width when only the primary + secondary rails are visible (most
-/// routes). Used for the wordmark / identity / toggle bands.
+/// Width of the primary + secondary rails. The tertiary rail is an
+/// overlay on the content area, so the sidebar column itself is always
+/// this width. Used for the wordmark / identity / toggle bands and for
+/// the toast offset.
 pub const SIDEBAR_BASE_WIDTH: f32 = primary::RAIL_WIDTH + secondary::RAIL_WIDTH;
 
 /// Height of the wordmark header band that caps both rails.

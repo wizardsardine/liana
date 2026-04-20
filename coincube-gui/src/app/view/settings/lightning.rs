@@ -10,11 +10,10 @@
 //! Additional Lightning-flavored preferences (BOLT12 toggles, LNURL
 //! pay defaults, etc.) can pile into this page as they land.
 
-use iced::widget::{button as iced_button, Column, Container, Row, Space};
+use iced::widget::{Column, Row, Space};
 use iced::{Alignment, Length};
 
-use coincube_ui::component::{card, text::*};
-use coincube_ui::theme;
+use coincube_ui::component::{button, card, text::*};
 use coincube_ui::widget::*;
 
 use crate::app::cache::Cache;
@@ -74,32 +73,23 @@ fn backend_picker_card<'a>(current: WalletKind) -> Element<'a, Message> {
     .into()
 }
 
-/// Build a picker chip with *centered* text in both active and
-/// inactive states. The shared `button::primary` /
-/// `button::transparent_border` helpers disagree on text alignment
-/// (primary centers, transparent_border left-aligns), so a chip row
-/// built from both looks visibly lopsided. Rolling our own with
-/// `iced::widget::button` + a centered Container keeps both chips
-/// structurally identical — only the theme style and the on_press
-/// handler differ.
+/// Picker chip styled like the Home page Send/Receive buttons:
+/// the active chip uses `button::primary` (solid orange) and the
+/// inactive chip uses `button::orange_outline` (orange outline →
+/// solid orange on hover). Both helpers center their text, so the
+/// two chips sit flush side-by-side.
 fn picker_chip<'a>(
     label: &'static str,
     active: bool,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
-    let content = Container::new(text(label))
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .padding([6, 14]);
-    let style = if active {
-        theme::button::primary
+    let btn = if active {
+        button::primary(None, label)
     } else {
-        theme::button::transparent_border
+        button::orange_outline(None, label)
     };
-    iced_button(content)
-        .width(Length::Fixed(140.0))
-        .height(Length::Fixed(40.0))
-        .style(style)
+    btn.width(Length::Fixed(140.0))
+        .padding([8, 16])
         .on_press_maybe(on_press)
         .into()
 }

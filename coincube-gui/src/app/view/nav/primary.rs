@@ -7,7 +7,7 @@
 
 use super::NavContext;
 use crate::app::{
-    menu::{Menu, TopLevel},
+    menu::{MarketplaceSubMenu, Menu, P2PSubMenu, TopLevel},
     view::Message,
 };
 use coincube_ui::{
@@ -48,9 +48,19 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
         top = top.push(setup_vault_item());
     }
 
-    for &t in &[TopLevel::Marketplace, TopLevel::Connect] {
-        top = top.push(item(t, current == t));
+    // Marketplace is hidden entirely when the cube has neither P2P nor a
+    // vault — those are the only two surfaces it can link into, and
+    // `TopLevel::Marketplace.default_menu()` would otherwise route the
+    // user to a P2P Overview panel that isn't mounted (blank content).
+    if ctx.has_p2p || ctx.has_vault {
+        let landing = marketplace_landing_menu(ctx);
+        top = top.push(item_with_route(
+            TopLevel::Marketplace,
+            current == TopLevel::Marketplace,
+            landing,
+        ));
     }
+    top = top.push(item(TopLevel::Connect, current == TopLevel::Connect));
 
     container(top)
         .width(Length::Fixed(RAIL_WIDTH))
@@ -60,6 +70,10 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
 }
 
 fn item<'a>(t: TopLevel, active: bool) -> Element<'a, Message> {
+    item_with_route(t, active, t.default_menu())
+}
+
+fn item_with_route<'a>(t: TopLevel, active: bool, route: Menu) -> Element<'a, Message> {
     let body: Column<Message> = column![
         icon_for(t).size(ICON_SIZE),
         iced::widget::text(t.label())
@@ -83,7 +97,7 @@ fn item<'a>(t: TopLevel, active: bool) -> Element<'a, Message> {
     } else {
         theme::button::rail
     })
-    .on_press(Message::Menu(t.default_menu()));
+    .on_press(Message::Menu(route));
 
     let highlight: Element<'a, Message> = if active {
         container(Space::new().width(Length::Fixed(HIGHLIGHT_WIDTH)))
@@ -101,6 +115,24 @@ fn item<'a>(t: TopLevel, active: bool) -> Element<'a, Message> {
 
     let r: Row<Message> = row![highlight, button].width(Length::Fixed(RAIL_WIDTH));
     r.into()
+}
+
+/// Landing route for a Marketplace rail click.
+///
+/// The secondary rail only surfaces P2P when `has_p2p` is set and
+/// Buy/Sell when `has_vault` is set. Picking the first available entry
+/// keeps the click consistent with what the user will actually see in
+/// the secondary rail. Callers must gate the Marketplace button
+/// themselves — this helper assumes at least one is available and
+/// falls back to P2P to match `TopLevel::default_menu`.
+fn marketplace_landing_menu(ctx: &NavContext<'_>) -> Menu {
+    if ctx.has_p2p {
+        Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Overview))
+    } else if ctx.has_vault {
+        Menu::Marketplace(MarketplaceSubMenu::BuySell)
+    } else {
+        Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Overview))
+    }
 }
 
 fn icon_for<'a>(t: TopLevel) -> Text<'a> {

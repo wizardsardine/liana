@@ -97,16 +97,11 @@ pub fn sidebar_primary(theme: &Theme) -> Style {
     }
 }
 
-/// Secondary (188px) left rail — same tone as the content area with a
-/// subtle right-edge rule separating it from content.
+/// Secondary (188px) left rail — same tone as the content area so
+/// the secondary rail blends with content visually.
 pub fn sidebar_secondary(theme: &Theme) -> Style {
     Style {
         background: Some(Background::Color(theme.colors.general.background)),
-        border: iced::Border {
-            color: theme.colors.rule,
-            width: 0.0,
-            radius: 0.0.into(),
-        },
         ..Default::default()
     }
 }

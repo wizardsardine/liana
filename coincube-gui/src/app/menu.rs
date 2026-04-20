@@ -106,7 +106,6 @@ pub enum SettingsOption {
     Node,
     Wallet,
     ImportExport,
-    About,
 }
 
 /// Discriminant for the primary (left-most) nav rail. Derived from `Menu`

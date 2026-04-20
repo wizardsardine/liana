@@ -590,9 +590,11 @@ impl Panels {
     /// already sends a separate RefreshLiquidBalance message).
     fn active_liquid_refresh(&self, exclude_home: bool) -> Option<Message> {
         match &self.current {
-            Menu::Home(_) if !exclude_home => Some(Message::View(view::Message::Home(
-                view::HomeMessage::RefreshLiquidBalance,
-            ))),
+            Menu::Home(crate::app::menu::HomeSubMenu::Overview) if !exclude_home => {
+                Some(Message::View(view::Message::Home(
+                    view::HomeMessage::RefreshLiquidBalance,
+                )))
+            }
             Menu::Liquid(sub) => match sub {
                 crate::app::menu::LiquidSubMenu::Overview => Some(Message::View(
                     view::Message::LiquidOverview(view::LiquidOverviewMessage::RefreshRequested),
@@ -1041,9 +1043,6 @@ impl App {
                                             }
                                             menu::SettingsOption::ImportExport => {
                                                 view::SettingsMessage::ImportExportSection
-                                            }
-                                            menu::SettingsOption::About => {
-                                                view::SettingsMessage::AboutSection
                                             }
                                         })),
                                     );
@@ -1752,10 +1751,17 @@ impl App {
                     let current = &self.panels.current;
                     let cache = self.cache.clone();
 
-                    let is_settings_current = matches!(
+                    // Vault Settings and Cube (Home) Settings are distinct
+                    // panels backed by separate state — keep their
+                    // "am I current?" flags separate so each panel only
+                    // reacts when it is actually the visible route.
+                    let is_vault_settings_current = matches!(
+                        current,
+                        Menu::Vault(crate::app::menu::VaultSubMenu::Settings(_))
+                    );
+                    let is_global_settings_current = matches!(
                         current,
                         Menu::Home(crate::app::menu::HomeSubMenu::Settings(_))
-                            | Menu::Vault(crate::app::menu::VaultSubMenu::Settings(_))
                     );
 
                     let is_spend_current =
@@ -1772,7 +1778,12 @@ impl App {
                         vault_settings.update(
                             Some(daemon.clone()),
                             &cache,
-                            Message::UpdatePanelCache(is_settings_current),
+                            Message::UpdatePanelCache(is_vault_settings_current),
+                        ),
+                        self.panels.global_settings.update(
+                            Some(daemon.clone()),
+                            &cache,
+                            Message::UpdatePanelCache(is_global_settings_current),
                         ),
                     ];
 

@@ -210,48 +210,6 @@ pub fn import_export<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Messag
     )
 }
 
-pub fn about_section<'a>(
-    menu: &'a Menu,
-    cache: &'a Cache,
-    coincubed_version: Option<&String>,
-) -> Element<'a, Message> {
-    let header = header("About", SettingsMessage::AboutSection);
-
-    let content = card::simple(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(badge::badge(icon::tooltip_icon()))
-                    .push(text("Version").bold())
-                    .padding(10)
-                    .spacing(20)
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill),
-            )
-            .push(separation().width(Length::Fill))
-            .push(Space::new().height(Length::Fixed(10.0)))
-            .push(
-                Row::new().push(Space::new().width(Length::Fill)).push(
-                    Column::new()
-                        .push(text(format!("coincube-gui v{}", crate::VERSION)))
-                        .push(
-                            coincubed_version
-                                .map(|version| text(format!("coincubed v{}", version))),
-                        ),
-                ),
-            ),
-    );
-
-    dashboard(
-        menu,
-        cache,
-        Column::new()
-            .spacing(20)
-            .push(header)
-            .push(content)
-            .width(Length::Fill),
-    )
-}
 
 pub fn remote_backend_section<'a>(
     menu: &'a Menu,
