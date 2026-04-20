@@ -7,7 +7,7 @@ use breez_sdk_liquid::model::RefundRequest;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::component::form;
 use coincube_ui::component::quote_display::{self, Quote};
-use coincube_ui::widget::*;
+use coincube_ui::widget::{Column, Element};
 use iced::{widget::image, Task};
 
 use crate::app::breez_liquid::assets::usdt_asset_id;
@@ -262,7 +262,7 @@ impl State for LiquidTransactions {
             LiquidTransactionsModal::None => content,
             LiquidTransactionsModal::Export { state } => {
                 use crate::app::view::Message as ViewMessage;
-                use coincube_ui::component::text::*;
+                use coincube_ui::component::text::{text, Text};
                 use coincube_ui::widget::modal::Modal;
 
                 let modal_content = match state {
