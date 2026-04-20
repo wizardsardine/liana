@@ -2,7 +2,7 @@ use std::convert::TryInto;
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::Amount;
-use coincube_ui::widget::*;
+use coincube_ui::widget::Element;
 use iced::Task;
 
 use crate::app::breez_liquid::assets::usdt_asset_id;

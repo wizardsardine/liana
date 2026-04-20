@@ -41,3 +41,4 @@ clippy-report.json
 audit-report.json
 audit-sonar.json
 clippy-sonar.json
+wildcard-cleanup-plan.md

@@ -14,7 +14,8 @@ use iced::widget::{Column, Row, Space};
 use iced::{Alignment, Length};
 
 use coincube_ui::component::{button, card, text::*};
-use coincube_ui::widget::*;
+use coincube_ui::theme;
+use coincube_ui::widget::Element;
 
 use crate::app::cache::Cache;
 use crate::app::menu::Menu;

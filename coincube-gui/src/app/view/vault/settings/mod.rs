@@ -23,7 +23,7 @@ use coincube_ui::{
     component::{badge, button, card, form, separation, text::*},
     icon,
     theme::{self},
-    widget::*,
+    widget::{Button, Container, Element, ProgressBar, Row, TextInput},
 };
 
 use crate::{

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use coincube_ui::widget::*;
+use coincube_ui::widget::Element;
 use iced::{clipboard, Subscription, Task};
 
 use crate::app::breez_liquid::assets::{parse_asset_to_minor_units, usdt_asset_id, USDT_PRECISION};
