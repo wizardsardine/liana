@@ -91,9 +91,6 @@ pub struct Final {
     /// `Some` once the vault-create round-trip resolves. Drives the
     /// success caption in the Final view.
     connect_vault_outcome: Option<ConnectVaultOutcome>,
-    /// `Some` when a W9 409 rolls back the vault — carries the key id so
-    /// the user knows which key to change.
-    connect_vault_key_conflict_id: Option<u64>,
 }
 
 impl Final {
@@ -111,7 +108,6 @@ impl Final {
             connect_vault_members: Vec::new(),
             connect_vault_timelock_days: None,
             connect_vault_outcome: None,
-            connect_vault_key_conflict_id: None,
         }
     }
 }
@@ -223,7 +219,6 @@ impl Step for Final {
             Message::ConnectVaultCreated(result) => match result {
                 Ok(outcome) => {
                     self.connect_vault_outcome = Some(outcome);
-                    self.connect_vault_key_conflict_id = None;
                     // Clear any previous warning so the success caption
                     // wins over a transient banner from an earlier retry.
                     self.warning = None;
@@ -241,7 +236,6 @@ impl Step for Final {
                     // continue with redemption so the local install
                     // doesn't stall. The user can re-run the installer
                     // to retry the vault.
-                    self.connect_vault_key_conflict_id = Some(key_id);
                     self.warning = Some(format!(
                         "This key (#{}) was already used in another Vault. \
                          A key can only participate in one Vault. Your local \

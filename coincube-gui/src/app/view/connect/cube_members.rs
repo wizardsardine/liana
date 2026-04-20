@@ -368,13 +368,15 @@ fn expiry_element<'a>(expires_at: &str) -> Element<'a, ConnectCubeMessage> {
         return text::p2_regular("").into();
     };
     let now = chrono::Utc::now();
-    let days = (expiry.date_naive() - now.date_naive()).num_days();
-    // Handle the negative branch up front so the match below is
-    // exhaustive via a binding arm (match guards don't contribute to
-    // exhaustiveness — a wildcard arm would be unreachable).
-    if days < 0 {
+    // Check the full timestamp first. If we only compared
+    // `expiry.date_naive() - now.date_naive()` we'd bucket an invite
+    // that expired at 08:00 today as "Expires today" at 18:00 even
+    // though it's already past.
+    let expiry_utc = expiry.with_timezone(&chrono::Utc);
+    if expiry_utc <= now {
         return text::p2_regular("Expired").color(color::RED).into();
     }
+    let days = (expiry_utc.date_naive() - now.date_naive()).num_days();
     match days {
         0 => text::p2_regular("Expires today")
             .color(color::ORANGE)

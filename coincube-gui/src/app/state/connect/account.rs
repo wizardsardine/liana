@@ -883,6 +883,12 @@ impl ConnectAccountPanel {
                 self.contacts_state.error = None;
                 self.contacts_state.invite_cube_selections.clear();
                 self.contacts_state.invite_cube_error = None;
+                // Drop the prior cube list so re-opens don't briefly
+                // render stale checkboxes from a previous session while
+                // the fresh `list_cubes()` call is in flight. The view
+                // hides the "Also add to Cube(s)" section entirely when
+                // this is `None`.
+                self.contacts_state.invite_available_cubes = None;
                 // Load the user's cubes for the "Also add to Cube(s)"
                 // multi-select (W12). Hidden in the view until this
                 // resolves; empty Vec renders as "no cubes section".

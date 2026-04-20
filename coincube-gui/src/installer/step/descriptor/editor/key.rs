@@ -1641,10 +1641,20 @@ impl SelectKeySource {
         let paste_btn = button::secondary(Some(icon::paste_icon()), "Paste")
             .on_press(Self::route(SelectKeySourceMessage::PasteXpub));
 
-        let error = self
-            .import_xpub_error
-            .as_ref()
-            .map(|e| p1_regular(e.clone()).color(color::RED));
+        // Parse errors live in two places depending on entry path:
+        //   * `form_xpub.warning` — set by `on_update_xpub` for manual
+        //     paste errors ("Invalid Xpub", "Wrong network", "Wrong
+        //     derivation path", "Origin missing", "Key already used").
+        //   * `import_xpub_error` — set by `on_import_xpub` on the
+        //     file-picker path.
+        // Surface whichever is present; prefer the inline manual-paste
+        // warning because it reflects the user's latest action.
+        let error_text: Option<String> = self
+            .form_xpub
+            .warning
+            .map(|w| w.to_string())
+            .or_else(|| self.import_xpub_error.clone());
+        let error = error_text.map(|e| p1_regular(e).color(color::RED));
 
         // Footer: [Back] [spacer] [Paste]. Paste is the primary action
         // on this screen (it pulls clipboard contents into the text

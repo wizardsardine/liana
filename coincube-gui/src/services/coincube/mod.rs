@@ -888,18 +888,17 @@ pub struct Contact {
 }
 
 impl Contact {
-    /// Returns the contact's user id, falling back to the nested
-    /// `contact_user.id` when the flat `contact_user_id` is absent/zero.
+    /// Returns the contact's user id, preferring the nested
+    /// `contact_user.id` (the source of truth in the current backend's
+    /// `ContactResponse`) and falling back to the legacy flat
+    /// `contact_user_id` only when the nested object is missing.
     /// Returns `None` when the contact has no linked user at all.
     pub fn effective_contact_user_id(&self) -> Option<u64> {
-        if self.contact_user_id != 0 {
-            Some(self.contact_user_id)
-        } else {
-            self.contact_user
-                .as_ref()
-                .map(|u| u.id)
-                .filter(|id| *id != 0)
-        }
+        self.contact_user
+            .as_ref()
+            .map(|u| u.id)
+            .filter(|id| *id != 0)
+            .or_else(|| (self.contact_user_id != 0).then_some(self.contact_user_id))
     }
 }
 
