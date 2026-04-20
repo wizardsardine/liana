@@ -827,27 +827,40 @@ impl State for GlobalHome {
                         // Parse the destination as a checked Bitcoin address — if
                         // the string is a BIP21 URI (rare here but cheap to
                         // handle) strip the prefix first. Mirrors the logic in
-                        // `BreezOnchainAddress`.
+                        // `BreezOnchainAddress`. Destination is sourced from our
+                        // own trusted components (Breez peg-in / Vault daemon)
+                        // and Spark has already prepared against it, so failure
+                        // here indicates an upstream bug — refuse to proceed
+                        // rather than leave the confirm view without a displayable
+                        // destination.
                         let addr_str = destination
                             .strip_prefix("bitcoin:")
                             .unwrap_or(&destination)
                             .split('?')
                             .next()
                             .unwrap_or(&destination);
-                        if let Ok(parsed) = Address::from_str(addr_str) {
-                            if let Ok(checked) = parsed.require_network(cache.network) {
-                                self.receive_address_info = Some(ReceiveAddressInfo {
-                                    address: checked,
-                                    index: ChildNumber::Normal { index: 0 },
-                                    labels: HashMap::new(),
-                                });
-                            } else {
+                        let checked = match Address::from_str(addr_str)
+                            .ok()
+                            .and_then(|p| p.require_network(cache.network).ok())
+                        {
+                            Some(a) => a,
+                            None => {
                                 log::error!(
                                     "Spark destination {addr_str} is not valid for network {:?}",
                                     cache.network
                                 );
+                                return Task::done(Message::View(view::Message::Home(
+                                    HomeMessage::Error(format!(
+                                        "Prepared Spark destination is not a valid address for this network: {addr_str}"
+                                    )),
+                                )));
                             }
-                        }
+                        };
+                        self.receive_address_info = Some(ReceiveAddressInfo {
+                            address: checked,
+                            index: ChildNumber::Normal { index: 0 },
+                            labels: HashMap::new(),
+                        });
                         self.spark_send_handle = Some(prepare_handle);
                         self.spark_send_fee_sat = Some(fee_sat);
                         Task::none()
@@ -1491,6 +1504,12 @@ impl State for GlobalHome {
                     HomeMessage::OnChainLimitsFetched { send, receive } => {
                         self.onchain_send_limit = Some(send);
                         self.onchain_receive_limit = Some(receive);
+                        // Re-validate: if the user entered an amount before limits
+                        // resolved, `validate_entered_amount` parked it with
+                        // "Loading limits…" / valid=false. Now that the min/max
+                        // are available, re-check so the Next button unlocks
+                        // without requiring the user to retype.
+                        self.validate_entered_amount(cache);
                         Task::none()
                     }
                     HomeMessage::PrepareOnChainResponseReceived(response) => {
