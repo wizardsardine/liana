@@ -34,6 +34,12 @@ pub struct ConnectCubeMembersState {
     /// Monotonic counter used to discard stale `Loaded` responses when the
     /// user issues multiple `Reload`s in quick succession.
     load_generation: u32,
+    /// `true` once a `Loaded(Ok(_))` has landed. Distinguishes a fresh
+    /// panel from a panel that's *successfully* loaded an empty cube —
+    /// both have empty `members` and `pending_invites` but only the
+    /// former should auto-fetch on `Enter`. Failed loads do not set
+    /// this flag, so `Enter` keeps retrying them.
+    loaded_once: bool,
 }
 
 impl ConnectCubeMembersState {
@@ -68,12 +74,12 @@ pub fn update(
             if state.loading {
                 return iced::Task::none();
             }
-            // Retry when (a) we have no data yet, or (b) the previous load
-            // failed and the panel is showing stale/empty data plus an
-            // error banner. Successful cached data is left alone — the
-            // Reload button is the explicit "force refresh" path.
-            let needs_load = state.error.is_some()
-                || (state.members.is_empty() && state.pending_invites.is_empty());
+            // Retry when (a) no successful load has happened yet, or
+            // (b) the previous load failed (error is set). Once a
+            // successful load has landed — even for an empty cube —
+            // `loaded_once` is true and the Reload button is the
+            // explicit "force refresh" path.
+            let needs_load = state.error.is_some() || !state.loaded_once;
             if needs_load {
                 return spawn_load(state, client, cube_id);
             }
@@ -92,8 +98,11 @@ pub fn update(
                     state.members = cube.members;
                     state.pending_invites = cube.pending_invites;
                     state.error = None;
+                    state.loaded_once = true;
                 }
                 Err(e) => {
+                    // Leave `loaded_once` alone — a failed load doesn't
+                    // count as loaded; the next `Enter` will retry.
                     state.error = Some(e);
                 }
             }
@@ -570,19 +579,55 @@ mod tests {
 
     #[test]
     fn enter_skips_when_loaded_successfully_and_no_error() {
-        // Happy cached state: members present, no error, not loading.
-        // Enter should be a no-op — the explicit Reload button is the
+        // Happy cached state: members present, no error, not loading,
+        // and — critically — `loaded_once` set by a prior successful
+        // load. Enter should be a no-op; Reload is the explicit
         // "force refresh" path.
         let mut state = ConnectCubeMembersState::new();
         state.members = vec![sample_member(7, "alice@example.com")];
         state.error = None;
-        // Need a client for spawn_load to fire the network task; we
-        // assert the generation DOESN'T bump instead.
+        state.loaded_once = true;
         let gen_before = state.load_generation;
         let loading_before = state.loading;
         run(&mut state, ConnectCubeMembersMessage::Enter);
         assert_eq!(state.load_generation, gen_before);
         assert_eq!(state.loading, loading_before);
+    }
+
+    #[test]
+    fn enter_skips_after_successful_empty_load() {
+        // Regression: a cube that genuinely has zero members and zero
+        // pending invites used to re-fetch on every Enter because the
+        // "has loaded" check reused the emptiness of the lists.
+        // After a `Loaded(Ok(empty))` lands, `loaded_once` is true and
+        // Enter must no-op.
+        let mut state = ConnectCubeMembersState::new();
+        let gen = state.bump_generation();
+        state.loading = true;
+        let empty_cube = CubeResponse {
+            id: 42,
+            uuid: "abc".to_string(),
+            name: "Empty".to_string(),
+            network: "bitcoin".to_string(),
+            lightning_address: None,
+            bolt12_offer: None,
+            status: "active".to_string(),
+            members: vec![],
+            pending_invites: vec![],
+        };
+        run(
+            &mut state,
+            ConnectCubeMembersMessage::Loaded(Ok(empty_cube), gen),
+        );
+        assert!(state.loaded_once);
+
+        let gen_before = state.load_generation;
+        run(&mut state, ConnectCubeMembersMessage::Enter);
+        assert_eq!(
+            state.load_generation, gen_before,
+            "Enter must not spawn a new load after a successful empty load"
+        );
+        assert!(!state.loading);
     }
 
     #[test]

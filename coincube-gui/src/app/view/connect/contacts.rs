@@ -15,7 +15,7 @@ use crate::{
     services::coincube::{ContactRole, Invite},
 };
 
-use super::card_style;
+use super::{card_style, format_date};
 
 /// Top-level contacts dispatcher.
 pub fn contacts_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
@@ -636,10 +636,4 @@ fn role_color(role: &ContactRole) -> iced::Color {
         ContactRole::Beneficiary => color::GREEN,
         ContactRole::Observer => color::GREY_3,
     }
-}
-
-fn format_date(iso: &str) -> String {
-    chrono::DateTime::parse_from_rfc3339(iso)
-        .map(|dt| dt.format("%b %d, %Y").to_string())
-        .unwrap_or_else(|_| iso.to_string())
 }

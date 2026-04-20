@@ -191,6 +191,16 @@ pub fn connect_account_panel<'a>(
     col.push(body).into()
 }
 
+/// Parse an RFC 3339 timestamp and render it as `"Mon DD, YYYY"`
+/// (e.g. `"Apr 20, 2026"`). Falls back to the raw input on parse
+/// failure. Shared helper used by both the Contacts and Cube Members
+/// views.
+pub(super) fn format_date(iso: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(iso)
+        .map(|dt| dt.format("%b %d, %Y").to_string())
+        .unwrap_or_else(|_| iso.to_string())
+}
+
 fn card_style(t: &theme::Theme) -> container::Style {
     container::Style {
         background: Some(iced::Background::Color(t.colors.cards.simple.background)),
