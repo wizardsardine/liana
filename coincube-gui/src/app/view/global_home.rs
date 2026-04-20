@@ -1716,91 +1716,95 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
     // Rendered above the Liquid card because Spark is the default
     // wallet for everyday Lightning UX post-Phase 5. The card only
     // surfaces when `has_spark` is true — cubes without a Spark
-    // signer hide it entirely.
-    let spark_fiat = fiat_converter.as_ref().map(|c| c.convert(spark_balance));
-    let spark_btc_row = Row::new()
-        .spacing(8)
-        .align_y(Alignment::Center)
-        .push(coincube_ui::image::asset_network_logo::<Message>(
-            "btc", "spark", 28.0,
-        ))
-        .push(
-            text("BTC")
-                .size(P1_SIZE)
-                .style(theme::text::secondary)
-                .width(Length::Fixed(60.0)),
-        )
-        .push(if balance_masked {
-            Row::new().push(text("********").size(P1_SIZE))
-        } else {
-            amount_with_size_and_unit(&spark_balance, P1_SIZE, bitcoin_unit)
-        })
-        .push_maybe(
-            (!balance_masked)
-                .then(|| {
-                    spark_fiat
-                        .as_ref()
-                        .map(|f| f.to_text().size(P2_SIZE).style(theme::text::secondary))
-                })
-                .flatten(),
-        )
-        .push(Space::new().width(Length::Fill))
-        .push(
-            button::primary(None, "Send")
-                .width(Length::Fixed(90.0))
-                .on_press(Message::Home(HomeMessage::SendSparkBtc)),
-        )
-        .push(orange_outline_btn(
-            "Receive",
-            Message::Home(HomeMessage::ReceiveSparkBtc),
-        ));
+    // signer hide it entirely, so the entire widget tree is built
+    // lazily inside `then(..)` to avoid wasted work on every render.
+    let spark_card = has_spark.then(|| {
+        let spark_fiat = fiat_converter.as_ref().map(|c| c.convert(spark_balance));
+        let spark_btc_row = Row::new()
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .push(coincube_ui::image::asset_network_logo::<Message>(
+                "btc", "spark", 28.0,
+            ))
+            .push(
+                text("BTC")
+                    .size(P1_SIZE)
+                    .style(theme::text::secondary)
+                    .width(Length::Fixed(60.0)),
+            )
+            .push(if balance_masked {
+                Row::new().push(text("********").size(P1_SIZE))
+            } else {
+                amount_with_size_and_unit(&spark_balance, P1_SIZE, bitcoin_unit)
+            })
+            .push_maybe(
+                (!balance_masked)
+                    .then(|| {
+                        spark_fiat
+                            .as_ref()
+                            .map(|f| f.to_text().size(P2_SIZE).style(theme::text::secondary))
+                    })
+                    .flatten(),
+            )
+            .push(Space::new().width(Length::Fill))
+            .push(
+                button::primary(None, "Send")
+                    .width(Length::Fixed(90.0))
+                    .on_press(Message::Home(HomeMessage::SendSparkBtc)),
+            )
+            .push(orange_outline_btn(
+                "Receive",
+                Message::Home(HomeMessage::ReceiveSparkBtc),
+            ));
 
-    let spark_card_content = Column::new()
-        .spacing(12)
-        .push(
-            Row::new()
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .push(lightning_icon().size(16).style(theme::text::secondary))
-                .push(text("Spark").size(14).style(theme::text::secondary)),
-        )
-        .push(
-            Column::new()
-                .spacing(4)
-                .push(if balance_masked {
-                    Row::new().push(text("********").size(H2_SIZE))
-                } else {
-                    amount_with_size_and_unit(&spark_balance, H2_SIZE, bitcoin_unit)
-                })
-                .push(if balance_masked {
-                    Some(text("********").size(P1_SIZE))
-                } else {
-                    spark_fiat
-                        .as_ref()
-                        .map(|f| f.to_text().size(P1_SIZE).style(theme::text::secondary))
-                }),
-        )
-        .push(spark_btc_row)
-        .push_maybe(pending_spark_incoming.and_then(|pt| {
-            (pt.stage != TransferStage::Completed).then(|| pending_deposit_card(pt, bitcoin_unit))
-        }));
+        let spark_card_content = Column::new()
+            .spacing(12)
+            .push(
+                Row::new()
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .push(lightning_icon().size(16).style(theme::text::secondary))
+                    .push(text("Spark").size(14).style(theme::text::secondary)),
+            )
+            .push(
+                Column::new()
+                    .spacing(4)
+                    .push(if balance_masked {
+                        Row::new().push(text("********").size(H2_SIZE))
+                    } else {
+                        amount_with_size_and_unit(&spark_balance, H2_SIZE, bitcoin_unit)
+                    })
+                    .push(if balance_masked {
+                        Some(text("********").size(P1_SIZE))
+                    } else {
+                        spark_fiat
+                            .as_ref()
+                            .map(|f| f.to_text().size(P1_SIZE).style(theme::text::secondary))
+                    }),
+            )
+            .push(spark_btc_row)
+            .push_maybe(pending_spark_incoming.and_then(|pt| {
+                (pt.stage != TransferStage::Completed)
+                    .then(|| pending_deposit_card(pt, bitcoin_unit))
+            }));
 
-    let spark_card: Element<'a, Message> = Container::new(spark_card_content)
-        .padding(20)
-        .style(|t| iced::widget::container::Style {
-            border: iced::Border {
-                color: color::ORANGE,
-                width: 0.2,
-                radius: 25.0.into(),
-            },
-            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-            ..Default::default()
-        })
-        .into();
+        let spark_card: Element<'a, Message> = Container::new(spark_card_content)
+            .padding(20)
+            .style(|t| iced::widget::container::Style {
+                border: iced::Border {
+                    color: color::ORANGE,
+                    width: 0.2,
+                    radius: 25.0.into(),
+                },
+                background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+                ..Default::default()
+            })
+            .into();
 
-    let spark_card = mouse_area(spark_card).on_press(Message::Menu(Menu::Spark(
-        crate::app::menu::SparkSubMenu::Overview,
-    )));
+        mouse_area(spark_card).on_press(Message::Menu(Menu::Spark(
+            crate::app::menu::SparkSubMenu::Overview,
+        )))
+    });
 
     let vault_card_element = mouse_area(wallet_card(
         WalletType::Vault,
