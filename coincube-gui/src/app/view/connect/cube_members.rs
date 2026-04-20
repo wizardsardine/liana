@@ -69,12 +69,13 @@ pub fn cube_members_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCu
     }
 
     // Members list. Skip the "No members yet" placeholder when there's
-    // an error — we don't actually know the cube is empty, the load just
-    // failed. The `error_banner` below communicates that state instead.
+    // a *load* error — we don't actually know the cube is empty, the
+    // fetch just failed. An action error (e.g. invite validation) is
+    // unrelated to list shape, so it doesn't gate the empty state.
     if panel.members.is_empty()
         && panel.pending_invites.is_empty()
         && !panel.loading
-        && panel.error.is_none()
+        && panel.load_error.is_none()
     {
         col = col.push(empty_state());
     } else if !panel.members.is_empty() {
@@ -88,7 +89,14 @@ pub fn cube_members_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCu
         col = col.push(text::p1_regular("Loading\u{2026}").color(color::GREY_3));
     }
 
-    if let Some(err) = panel.error.as_deref() {
+    // Load errors take precedence — they describe a structural issue
+    // (can't render data) and are more severe than a transient action
+    // failure. An action error below is surfaced only when there's no
+    // load error to supersede it.
+    if let Some(err) = panel.load_error.as_deref() {
+        col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+        col = col.push(error_banner(err));
+    } else if let Some(err) = panel.error.as_deref() {
         col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
         col = col.push(error_banner(err));
     }

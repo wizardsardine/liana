@@ -25,8 +25,17 @@ pub struct ConnectCubeMembersState {
     pub invite_email: String,
     pub loading: bool,
     pub invite_sending: bool,
-    /// Last surfaced error string. Cleared by `DismissError`.
+    /// User-action errors (invite validation, submit failure, revoke,
+    /// remove). Cleared by `InviteEmailChanged`, `DismissError`, or a
+    /// successful follow-up action.
     pub error: Option<String>,
+    /// Fetch-specific errors from `GET /connect/cubes/{id}`. Kept
+    /// separate from `error` so:
+    ///   * `Enter`'s auto-retry only fires on a prior load failure, not
+    ///     on a validation hiccup the user hasn't dismissed yet.
+    ///   * Editing the invite-email field doesn't silently clear a
+    ///     standing load error.
+    pub load_error: Option<String>,
     /// Non-`None` when a `RemoveMember` 409'd with stranded-vault details.
     /// The payload is the raw server message — W4's structured conflict body
     /// is parsed in PR 3, for now we surface the text verbatim.
@@ -75,11 +84,13 @@ pub fn update(
                 return iced::Task::none();
             }
             // Retry when (a) no successful load has happened yet, or
-            // (b) the previous load failed (error is set). Once a
-            // successful load has landed — even for an empty cube —
-            // `loaded_once` is true and the Reload button is the
-            // explicit "force refresh" path.
-            let needs_load = state.error.is_some() || !state.loaded_once;
+            // (b) the previous load failed. Gate on `load_error`
+            // specifically, not the generic `error` slot — a pending
+            // invite-validation message shouldn't trigger a reload.
+            // Once a successful load has landed — even for an empty
+            // cube — `loaded_once` is true and the Reload button is
+            // the explicit "force refresh" path.
+            let needs_load = state.load_error.is_some() || !state.loaded_once;
             if needs_load {
                 return spawn_load(state, client, cube_id);
             }
@@ -97,13 +108,15 @@ pub fn update(
                 Ok(cube) => {
                     state.members = cube.members;
                     state.pending_invites = cube.pending_invites;
-                    state.error = None;
+                    state.load_error = None;
                     state.loaded_once = true;
                 }
                 Err(e) => {
                     // Leave `loaded_once` alone — a failed load doesn't
                     // count as loaded; the next `Enter` will retry.
-                    state.error = Some(e);
+                    // Route to `load_error` so a standing validation
+                    // message in `error` isn't overwritten.
+                    state.load_error = Some(e);
                 }
             }
             iced::Task::none()
@@ -130,7 +143,11 @@ pub fn update(
                 return iced::Task::none();
             }
             let (Some(client), Some(cube_id)) = (client, cube_id) else {
-                state.error = Some("Not ready — the cube is still registering.".to_string());
+                // Precondition failure on the load path (cube not yet
+                // registered) — route to `load_error` so the next
+                // `Enter` retries the fetch instead of silently sitting
+                // on an action-level error.
+                state.load_error = Some("Not ready — the cube is still registering.".to_string());
                 return iced::Task::none();
             };
             state.invite_sending = true;
@@ -240,7 +257,12 @@ pub fn update(
         }
 
         ConnectCubeMembersMessage::DismissError => {
+            // Dismiss whichever banner is visible. Note: a load error
+            // will simply come back on the next `Enter` / `Reload` if
+            // the underlying cause (network, auth, etc.) hasn't been
+            // resolved.
             state.error = None;
+            state.load_error = None;
             iced::Task::none()
         }
 
@@ -259,7 +281,10 @@ fn spawn_load(
     cube_id: Option<u64>,
 ) -> iced::Task<Message> {
     if client.is_none() || cube_id.is_none() {
-        state.error = Some("Not ready — the cube is still registering.".to_string());
+        // This is a load-path failure (the fetch couldn't even fire)
+        // so it belongs on `load_error`. `Enter` uses that slot to
+        // decide whether to retry.
+        state.load_error = Some("Not ready — the cube is still registering.".to_string());
         return iced::Task::none();
     }
     spawn_load_silent(state, client, cube_id)
@@ -408,7 +433,10 @@ mod tests {
     }
 
     #[test]
-    fn loaded_err_surfaces_error() {
+    fn loaded_err_surfaces_on_load_error_not_action_error() {
+        // Fetch failures route to `load_error` so `Enter`'s auto-retry
+        // fires on them and so they don't collide with any standing
+        // user-action error in `state.error`.
         let mut state = ConnectCubeMembersState::new();
         let gen = state.bump_generation();
         state.loading = true;
@@ -418,7 +446,8 @@ mod tests {
             ConnectCubeMembersMessage::Loaded(Err("boom".to_string()), gen),
         );
         assert!(!state.loading);
-        assert_eq!(state.error.as_deref(), Some("boom"));
+        assert_eq!(state.load_error.as_deref(), Some("boom"));
+        assert!(state.error.is_none(), "load errors must not touch `error`");
     }
 
     #[test]
@@ -556,24 +585,65 @@ mod tests {
         // error banner.
         let mut state = ConnectCubeMembersState::new();
         state.members = vec![sample_member(7, "alice@example.com")];
-        state.error = Some("previous load failed".to_string());
-        // generation starts at 0
+        state.loaded_once = true;
+        state.load_error = Some("previous load failed".to_string());
         assert_eq!(state.load_generation, 0);
 
-        // None/None for client/cube_id — we assert on the load-generation
-        // bump as a proxy for "spawn_load was invoked". spawn_load's
-        // guarded branch sets state.error and returns Task::none when the
-        // client is missing, so we expect the error message to be
-        // replaced with the "not ready" copy.
+        // None/None for client/cube_id — `spawn_load`'s guarded branch
+        // replaces `load_error` with the "Not ready" message when the
+        // client is missing, so we expect the stale load error to be
+        // overwritten — proving the retry path fired.
         run(&mut state, ConnectCubeMembersMessage::Enter);
-        // `spawn_load` short-circuits on missing client, which in turn
-        // replaces `state.error` with the "Not ready" message. The stale
-        // error from the prior failed load is cleared as a side effect —
-        // proving the retry path fired.
         assert_ne!(
-            state.error.as_deref(),
+            state.load_error.as_deref(),
             Some("previous load failed"),
-            "Enter should have attempted a fresh load, clearing the stale error"
+            "Enter should have attempted a fresh load, overwriting the stale error"
+        );
+    }
+
+    #[test]
+    fn enter_does_not_retry_when_only_action_error_is_set() {
+        // Regression for the bot-flagged cross-contamination: a
+        // pending invite-validation error should NOT trigger an
+        // unnecessary network reload on Enter. Only `load_error`
+        // counts as a load-level signal.
+        let mut state = ConnectCubeMembersState::new();
+        state.members = vec![sample_member(7, "alice@example.com")];
+        state.loaded_once = true;
+        state.error = Some("Please enter a valid email address".to_string());
+        let gen_before = state.load_generation;
+        let loading_before = state.loading;
+        run(&mut state, ConnectCubeMembersMessage::Enter);
+        assert_eq!(
+            state.load_generation, gen_before,
+            "validation error must not trigger a reload"
+        );
+        assert_eq!(state.loading, loading_before);
+        // And the action error survives.
+        assert_eq!(
+            state.error.as_deref(),
+            Some("Please enter a valid email address")
+        );
+    }
+
+    #[test]
+    fn invite_email_change_does_not_clear_load_error() {
+        // Regression for the bot-flagged cross-contamination: typing
+        // into the invite-email field clears `state.error` (the
+        // validation-message slot), but must leave `state.load_error`
+        // alone so a standing fetch-failure banner isn't masked.
+        let mut state = ConnectCubeMembersState::new();
+        state.error = Some("Please enter a valid email address".to_string());
+        state.load_error = Some("network unreachable".to_string());
+        run(
+            &mut state,
+            ConnectCubeMembersMessage::InviteEmailChanged("a@b.c".to_string()),
+        );
+        assert!(state.error.is_none(), "validation error should be cleared");
+        assert_eq!(
+            state.load_error.as_deref(),
+            Some("network unreachable"),
+            "load error must survive invite-email edits"
         );
     }
 
@@ -641,11 +711,15 @@ mod tests {
     }
 
     #[test]
-    fn dismiss_error_clears_slots() {
+    fn dismiss_error_clears_both_error_slots() {
+        // DismissError clears whichever banner was visible — both the
+        // action-error and the load-error slots.
         let mut state = ConnectCubeMembersState::new();
-        state.error = Some("oops".to_string());
+        state.error = Some("action oops".to_string());
+        state.load_error = Some("load oops".to_string());
         run(&mut state, ConnectCubeMembersMessage::DismissError);
         assert!(state.error.is_none());
+        assert!(state.load_error.is_none());
 
         state.remove_conflict = Some("vault conflict".to_string());
         run(&mut state, ConnectCubeMembersMessage::DismissRemoveConflict);

@@ -775,8 +775,6 @@ pub enum ContactsMessage {
     ShowDetail(u64),
     /// Email input changed (invite form).
     InviteEmailChanged(String),
-    /// Role changed (invite form).
-    InviteRoleChanged(crate::services::coincube::ContactRole),
     /// Submit invite.
     SubmitInvite,
     /// Invite created successfully — reload list.
@@ -802,6 +800,34 @@ pub enum ContactsMessage {
     /// A cube id from the last submit was 403'd by the backend (W12).
     /// Triggers an "unavailable cubes" dialog and reloads the cube list.
     InviteCubeForbidden(String),
+    // --- W14: add-existing-contact-to-cube ---
+    /// Open the multi-select "Add to Cube(s)…" dialog for an existing
+    /// contact. Kicks off the candidate-cube fetch.
+    OpenAddToCubeDialog(u64 /* contact id */),
+    /// Candidate cubes loaded for the dialog (after network filter,
+    /// unjoined filter, and owner-or-member filter).
+    AddToCubeCandidatesLoaded(
+        u64, /* contact id */
+        Vec<crate::app::state::connect::InviteCubeOption>,
+        u64, /* session generation */
+    ),
+    /// User toggled a cube checkbox in the dialog.
+    ToggleAddToCubeSelection(u64 /* cube id */),
+    /// User confirmed the dialog — fires `create_cube_invite` per
+    /// selection.
+    ConfirmAddToCube,
+    /// Result of the parallel `create_cube_invite` calls. The `Ok`
+    /// branch carries the list of (cube_id, Result<(), String>) so the
+    /// handler can distinguish full success from partial failure.
+    AddToCubeResult(Vec<(u64, Result<(), String>)>),
+    /// Close the dialog without submitting.
+    CloseAddToCubeDialog,
+    /// One-click "Add to Current Cube" on a contact row. Fires a
+    /// single `create_cube_invite` for the active cube.
+    AddContactToCurrentCube(u64 /* contact id */),
+    /// Result of the one-click add. `Ok(cube_id)` for success,
+    /// `Err((contact_id, msg))` for failure.
+    AddContactToCurrentCubeResult(u64 /* contact id */, Result<u64, String>),
     /// Error.
     Error(String),
 }
