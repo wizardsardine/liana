@@ -1837,7 +1837,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 )
                 .align_y(Alignment::Center),
         )
-        .push_maybe(has_spark.then_some(spark_card))
+        .push_maybe(spark_card)
         .push(liquid_card)
         .push(vault_card_element)
         .push_maybe(transfer_available(has_vault, has_spark).then(|| {

@@ -1082,7 +1082,10 @@ impl State for GlobalHome {
                                     valid: true,
                                     warning: None,
                                 };
-                                Task::none()
+                                // Re-preview the Vault-source PSBT at the new
+                                // feerate (see `vault_transfer_preview_task`).
+                                self.spend_tx_fees = None;
+                                self.vault_transfer_preview_task(cache, &daemon)
                             }
                             Err(e) => {
                                 log::warn!("Fee estimator failed for preset {preset:?}: {e}");
@@ -1107,7 +1110,14 @@ impl State for GlobalHome {
                             valid,
                             warning,
                         };
-                        Task::none()
+                        // Feerate changed → any prior preview fee is now stale.
+                        // Clear it immediately so the confirm screen doesn't
+                        // show a number that no longer matches the input, then
+                        // re-run the preview. The result handler gates on the
+                        // feerate_vb it was dispatched with, so late results
+                        // from the old feerate get dropped.
+                        self.spend_tx_fees = None;
+                        self.vault_transfer_preview_task(cache, &daemon)
                     }
                     HomeMessage::OpenWalletPicker(side) => {
                         self.wallet_picker = Some(side);
@@ -1764,6 +1774,7 @@ impl State for GlobalHome {
                         self.transfer_signed = false;
                         self.spark_send_handle = None;
                         self.spark_send_fee_sat = None;
+                        self.spend_tx_fees = None;
                         self.transfer_feerate = default_transfer_feerate();
                         self.transfer_feerate_loading = None;
                         if self
@@ -1804,6 +1815,12 @@ impl State for GlobalHome {
                                         index: ChildNumber::Normal { index: 1 },
                                         labels: HashMap::new(),
                                     });
+                                    // For Vault-sourced directions the Fees/Total
+                                    // rows can't be populated until we can call
+                                    // `create_spend_tx` — which needs this address.
+                                    // Kick off the dry-run preview now that it's in
+                                    // place. No-op for other directions.
+                                    return self.vault_transfer_preview_task(cache, &daemon);
                                 }
                                 Err(_) => {
                                     log::error!(
@@ -1904,6 +1921,34 @@ impl State for GlobalHome {
                         self.transfer_signed = true;
                         self.modal = Modal::None;
                         self.is_sending = false;
+                        Task::none()
+                    }
+                    HomeMessage::TransferPsbtPreviewReady { feerate_vb, result } => {
+                        // Drop late results: if the user has since edited the
+                        // feerate, `self.transfer_feerate.value` won't parse to
+                        // the feerate this preview was built against. Keeping
+                        // only the latest-feerate result prevents the Fees row
+                        // flickering to out-of-order values during fast typing.
+                        let current_feerate =
+                            self.transfer_feerate.value.trim().parse::<u64>().ok();
+                        if current_feerate != Some(feerate_vb) {
+                            return Task::none();
+                        }
+                        match result {
+                            Ok(fees) => {
+                                self.spend_tx_fees = Some(fees);
+                            }
+                            Err(e) => {
+                                // Quiet failure: the user sees blank Fees/Total,
+                                // and the real `SignVaultToLiquidTx` path will
+                                // surface any error (insufficient funds etc.)
+                                // if they click through. Logging only.
+                                log::debug!(
+                                    "Vault transfer PSBT preview failed at feerate {feerate_vb}: {e}"
+                                );
+                                self.spend_tx_fees = None;
+                            }
+                        }
                         Task::none()
                     }
                 }
@@ -2141,6 +2186,82 @@ impl GlobalHome {
                 .unwrap_or(false),
             _ => false,
         }
+    }
+
+    /// Build a dry-run PSBT for Vault-sourced transfers to populate the
+    /// Fees/Total rows on the confirm screen pre-sign. Liquid-sourced
+    /// directions get this via `prepare_pay_onchain`; Vault-sourced needs a
+    /// real `create_spend_tx` because the fee depends on coin selection
+    /// + the user-picked feerate. Skipped unless direction is VaultToLiquid
+    /// or VaultToSpark AND all required inputs (address, feerate, amount)
+    /// are populated and valid. The result carries its source feerate so
+    /// the handler can discard late-arriving results whose feerate has
+    /// since been edited (prevents keystroke-race flicker).
+    fn vault_transfer_preview_task(
+        &self,
+        cache: &Cache,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+    ) -> Task<Message> {
+        let Some(direction) = self.transfer_direction else {
+            return Task::none();
+        };
+        if !matches!(
+            direction,
+            TransferDirection::VaultToLiquid | TransferDirection::VaultToSpark
+        ) {
+            return Task::none();
+        }
+        let Some(address_info) = self.receive_address_info.clone() else {
+            return Task::none();
+        };
+        let Some(daemon) = daemon.clone() else {
+            return Task::none();
+        };
+        if !self.transfer_feerate.valid {
+            return Task::none();
+        }
+        let Ok(feerate_vb) = self.transfer_feerate.value.trim().parse::<u64>() else {
+            return Task::none();
+        };
+        if feerate_vb == 0 {
+            return Task::none();
+        }
+        let denomination = if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+            coincube_core::miniscript::bitcoin::Denomination::Bitcoin
+        } else {
+            coincube_core::miniscript::bitcoin::Denomination::Satoshi
+        };
+        let Ok(amount) = Amount::from_str_in(&self.entered_amount.value, denomination) else {
+            return Task::none();
+        };
+        if !self.entered_amount.valid {
+            return Task::none();
+        }
+        let amount_sat = amount.to_sat();
+        let mut destinations = HashMap::new();
+        destinations.insert(address_info.address.as_unchecked().clone(), amount_sat);
+        Task::perform(
+            async move {
+                match daemon
+                    .create_spend_tx(&[], &destinations, feerate_vb, None)
+                    .await
+                {
+                    Ok(CreateSpendResult::Success { psbt, .. }) => {
+                        psbt.fee().map_err(|e| e.to_string())
+                    }
+                    Ok(CreateSpendResult::InsufficientFunds { missing }) => {
+                        Err(format!("Insufficient funds: {missing} sats missing"))
+                    }
+                    Err(e) => Err(format!("Preview failed: {e}")),
+                }
+            },
+            move |result| {
+                Message::View(view::Message::Home(HomeMessage::TransferPsbtPreviewReady {
+                    feerate_vb,
+                    result,
+                }))
+            },
+        )
     }
 
     /// Fetch the Spark wallet balance via `get_info` on the bridge.

@@ -904,6 +904,16 @@ pub enum HomeMessage {
         preset: crate::app::view::shared::feerate_picker::FeeratePreset,
         result: Result<u32, String>,
     },
+    /// Result of a dry-run PSBT build for Vault-sourced transfers, used to
+    /// show Fees/Total on the confirm screen before signing. Fired whenever
+    /// the destination address, feerate, or amount change. `feerate_vb`
+    /// echoes the input so the handler can drop late results whose feerate
+    /// no longer matches the current state (keystroke-fast previews would
+    /// otherwise flicker out-of-order).
+    TransferPsbtPreviewReady {
+        feerate_vb: u64,
+        result: Result<Amount, String>,
+    },
     /// Result of the async step-1→2 prep for Spark-sourced transfers: we
     /// fetched a fresh Vault address (for SparkToVault) or a Breez peg-in
     /// address (for SparkToLiquid) and called `spark.prepare_send(addr, amt)`
