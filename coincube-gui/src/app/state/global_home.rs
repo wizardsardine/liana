@@ -11,6 +11,19 @@ pub const MIN_TRANSFER_SATS: u64 = 25_000;
 /// that an accidental no-edit signing on regtest / testnet still confirms.
 const DEFAULT_TRANSFER_FEERATE_SATS_VB: &str = "2";
 
+/// Sum of external unconfirmed vault coins — the daemon's view of "sats
+/// pending incoming" on the Vault. Used both to drive the Vault card's
+/// "+ pending" badge and to reconcile the session-level
+/// `pending_vault_receive_sats` counter (see `Message::Tick` handler).
+fn cache_vault_pending_receive_sats(cache: &Cache) -> u64 {
+    cache
+        .coins()
+        .iter()
+        .filter(|coin| coin.spend_info.is_none() && !crate::daemon::model::coin_is_owned(coin))
+        .fold(Amount::ZERO, |acc, coin| acc + coin.amount)
+        .to_sat()
+}
+
 /// Construct a `form::Value<String>` at the default Transfer feerate. Used on
 /// `GlobalHome::new`, and on every flow reset so a value (or stuck loading
 /// flag) from a prior transfer doesn't leak into the next flow.
@@ -187,6 +200,17 @@ pub struct GlobalHome {
     transfer_feerate_loading: Option<crate::app::view::shared::feerate_picker::FeeratePreset>,
     pending_vault_incoming: Option<PendingTransfer>,
     pending_vault_incoming_swap_id: Option<String>,
+    /// Session-level counter for non-swap inbound Vault transfers (SparkToVault).
+    /// Mirrors `pending_liquid_receive_sats` but for the Vault card. Bumped on
+    /// `TransferBroadcast` with a Vault destination and decremented on `Tick`
+    /// as the vault daemon observes the incoming on-chain tx (so we don't
+    /// double-count what `vault_pending_receive_sats` already surfaces from
+    /// `cache.coins()`).
+    pending_vault_receive_sats: u64,
+    /// Snapshot of the cache-derived `vault_pending_receive_sats` at the moment
+    /// we bumped `pending_vault_receive_sats`. Growth above this baseline is
+    /// how we recognise our broadcast tx landing in the daemon's view.
+    pending_vault_receive_baseline_sats: u64,
     /// Mirror of `pending_vault_incoming` for the Spark card. Set when a
     /// transfer into Spark has broadcast on-chain and the destination deposit
     /// is awaiting maturity + claim. Cleared by `SparkDepositsChanged` when a
@@ -251,6 +275,8 @@ impl GlobalHome {
             transfer_feerate_loading: None,
             pending_vault_incoming: None,
             pending_vault_incoming_swap_id: None,
+            pending_vault_receive_sats: 0,
+            pending_vault_receive_baseline_sats: 0,
             pending_spark_incoming: None,
             spark_send_handle: None,
             spark_send_fee_sat: None,
@@ -303,6 +329,8 @@ impl GlobalHome {
             transfer_feerate_loading: None,
             pending_vault_incoming: None,
             pending_vault_incoming_swap_id: None,
+            pending_vault_receive_sats: 0,
+            pending_vault_receive_baseline_sats: 0,
             pending_spark_incoming: None,
             spark_send_handle: None,
             spark_send_fee_sat: None,
@@ -326,12 +354,18 @@ impl State for GlobalHome {
             .filter(|coin| coin.spend_info.is_none())
             .fold(Amount::from_sat(0), |acc, coin| acc + coin.amount);
 
-        let vault_pending_receive_sats = cache
-            .coins()
-            .iter()
-            .filter(|coin| coin.spend_info.is_none() && !crate::daemon::model::coin_is_owned(coin))
-            .fold(Amount::ZERO, |acc, coin| acc + coin.amount)
-            .to_sat();
+        let cache_vault_pending_receive = cache_vault_pending_receive_sats(cache);
+
+        // Add any remaining non-swap broadcast amount (SparkToVault) that the
+        // daemon hasn't observed yet. The subtraction decays the counter as
+        // `cache_derived` grows past the broadcast-time baseline so we don't
+        // double-count once the tx lands in the daemon's mempool view.
+        let still_pending_counter = self.pending_vault_receive_sats.saturating_sub(
+            cache_vault_pending_receive
+                .saturating_sub(self.pending_vault_receive_baseline_sats),
+        );
+        let vault_pending_receive_sats =
+            cache_vault_pending_receive.saturating_add(still_pending_counter);
 
         let vault_pending_send_sats = cache
             .coins()
@@ -919,7 +953,21 @@ impl State for GlobalHome {
                             stage: TransferStage::PendingDeposit,
                         };
                         match destination_kind {
-                            WalletKind::Vault => self.pending_vault_incoming = Some(pending),
+                            WalletKind::Vault => {
+                                // SparkToVault: there's no swap lifecycle to
+                                // drive stage transitions on the
+                                // `pending_vault_incoming` indicator, so use
+                                // the session-level counter (mirrors
+                                // `pending_liquid_receive_sats`). Baseline
+                                // snapshots the daemon's current view so the
+                                // Tick reconciler can tell "our tx landed"
+                                // from growth relative to this moment.
+                                self.pending_vault_receive_baseline_sats =
+                                    cache_vault_pending_receive_sats(cache);
+                                self.pending_vault_receive_sats = self
+                                    .pending_vault_receive_sats
+                                    .saturating_add(amount_sat);
+                            }
                             WalletKind::Liquid => {
                                 // Liquid peg-in is pending — bump the existing
                                 // "incoming peg-in" counter so the Liquid card
@@ -1826,6 +1874,31 @@ impl State for GlobalHome {
                     if let Some(ref mut spend_tx) = self.transfer_spend_tx {
                         use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
                         return sign_modal.update(daemon, message, spend_tx);
+                    }
+                }
+                Task::none()
+            }
+            Message::Tick => {
+                // Reconcile `pending_vault_receive_sats` against the daemon's
+                // view. Once cache-derived pending has grown by at least the
+                // broadcast amount relative to our baseline, the tx has landed
+                // and we latch the counter to zero so a later confirmation
+                // (which drops the coin out of the "external unconfirmed" set)
+                // doesn't resurrect the stale indicator.
+                if self.pending_vault_receive_sats > 0 {
+                    let current = cache_vault_pending_receive_sats(cache);
+                    if current
+                        >= self
+                            .pending_vault_receive_baseline_sats
+                            .saturating_add(self.pending_vault_receive_sats)
+                    {
+                        self.pending_vault_receive_sats = 0;
+                        self.pending_vault_receive_baseline_sats = 0;
+                    } else if current < self.pending_vault_receive_baseline_sats {
+                        // Cache shrunk below the snapshot (e.g. a prior external
+                        // unconfirmed coin confirmed). Rebase so growth is
+                        // measured from the new floor.
+                        self.pending_vault_receive_baseline_sats = current;
                     }
                 }
                 Task::none()
