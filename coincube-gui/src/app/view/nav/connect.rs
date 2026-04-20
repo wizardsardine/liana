@@ -18,7 +18,7 @@ pub fn items(ctx: &NavContext) -> Vec<SubItem> {
         }];
     }
 
-    vec![
+    let mut items = vec![
         SubItem {
             label: "Overview",
             icon: home_icon,
@@ -49,5 +49,16 @@ pub fn items(ctx: &NavContext) -> Vec<SubItem> {
             route: Menu::Connect(ConnectSubMenu::Invites),
             matches: |m| matches!(m, Menu::Connect(ConnectSubMenu::Invites)),
         },
-    ]
+    ];
+
+    if crate::feature_flags::CUBE_MEMBERS_UI_ENABLED {
+        items.push(SubItem {
+            label: "Members",
+            icon: person_icon,
+            route: Menu::Connect(ConnectSubMenu::CubeMembers),
+            matches: |m| matches!(m, Menu::Connect(ConnectSubMenu::CubeMembers)),
+        });
+    }
+
+    items
 }
