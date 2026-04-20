@@ -48,7 +48,7 @@ pub fn render_item_row<'a>(menu: &Menu, item: &SubItem, rail_width: f32) -> Elem
     .align_x(Alignment::Center)
     .width(Length::Fill);
 
-    let on_press = if active {
+    let on_press = if menu == &item.route {
         Message::Reload
     } else {
         Message::Menu(item.route.clone())
