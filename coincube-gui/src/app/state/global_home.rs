@@ -35,6 +35,20 @@ fn default_transfer_feerate() -> form::Value<String> {
     }
 }
 
+/// Extract the Breez peg-out swap id from a successful `pay_onchain` response.
+/// Mirrors `swap_id_for_bitcoin_send` in `app/mod.rs` for the SdkEvent path —
+/// here we consume the `Payment` by value since the caller owns the response.
+fn bitcoin_send_swap_id(payment: &breez_sdk_liquid::prelude::Payment) -> Option<String> {
+    if matches!(payment.payment_type, PaymentType::Send) {
+        match &payment.details {
+            PaymentDetails::Bitcoin { swap_id, .. } => Some(swap_id.clone()),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::str::FromStr;
@@ -1264,69 +1278,51 @@ impl State for GlobalHome {
                                                     .await
                                             },
                                             move |result| match result {
-                                                Ok(response) => match destination_kind {
-                                                    // LiquidToVault keeps the richer path
-                                                    // (swap_id persistence so we can resume
-                                                    // a pending peg-out across restarts).
-                                                    WalletKind::Vault => {
-                                                        let swap_id = if matches!(
-                                                            response.payment.payment_type,
-                                                            PaymentType::Send
-                                                        ) {
-                                                            match response.payment.details {
-                                                                PaymentDetails::Bitcoin {
+                                                Ok(response) => {
+                                                    // Both LiquidToVault and LiquidToSpark
+                                                    // care about the Breez peg-out swap_id
+                                                    // (for resume/persistence and for
+                                                    // matching the async PaymentFailed back
+                                                    // to the right pending indicator).
+                                                    let swap_id =
+                                                        bitcoin_send_swap_id(&response.payment);
+                                                    match destination_kind {
+                                                        // LiquidToVault keeps the richer path
+                                                        // (swap_id persistence so we can
+                                                        // resume a pending peg-out across
+                                                        // restarts).
+                                                        WalletKind::Vault => Message::View(
+                                                            view::Message::Home(
+                                                                HomeMessage::LiquidToVaultSubmitted {
+                                                                    amount: transfer_amount,
                                                                     swap_id,
-                                                                    ..
-                                                                } => Some(swap_id),
-                                                                _ => None,
-                                                            }
-                                                        } else {
-                                                            None
-                                                        };
-                                                        Message::View(view::Message::Home(
-                                                            HomeMessage::LiquidToVaultSubmitted {
-                                                                amount: transfer_amount,
-                                                                swap_id,
-                                                            },
-                                                        ))
-                                                    }
-                                                    // LiquidToSpark: route through the
-                                                    // generic success handler, but capture
-                                                    // the peg-out swap_id so an async
-                                                    // `PaymentFailed` can clear the Spark
-                                                    // pending indicator (see
-                                                    // `pending_spark_incoming_swap_id`).
-                                                    WalletKind::Spark => {
-                                                        let swap_id = if matches!(
-                                                            response.payment.payment_type,
-                                                            PaymentType::Send
-                                                        ) {
-                                                            match response.payment.details {
-                                                                PaymentDetails::Bitcoin {
+                                                                },
+                                                            ),
+                                                        ),
+                                                        // LiquidToSpark: route through the
+                                                        // generic success handler, but
+                                                        // forward the swap_id so an async
+                                                        // PaymentFailed can clear the Spark
+                                                        // pending indicator (see
+                                                        // `pending_spark_incoming_swap_id`).
+                                                        WalletKind::Spark => Message::View(
+                                                            view::Message::Home(
+                                                                HomeMessage::TransferBroadcast {
+                                                                    amount_sat: transfer_amount
+                                                                        .to_sat(),
+                                                                    destination_kind,
                                                                     swap_id,
-                                                                    ..
-                                                                } => Some(swap_id),
-                                                                _ => None,
-                                                            }
-                                                        } else {
-                                                            None
-                                                        };
-                                                        Message::View(view::Message::Home(
-                                                            HomeMessage::TransferBroadcast {
-                                                                amount_sat: transfer_amount
-                                                                    .to_sat(),
-                                                                destination_kind,
-                                                                swap_id,
-                                                            },
-                                                        ))
+                                                                },
+                                                            ),
+                                                        ),
+                                                        // Liquid can't be its own destination.
+                                                        WalletKind::Liquid => Message::View(
+                                                            view::Message::Home(
+                                                                HomeMessage::TransferSuccessful,
+                                                            ),
+                                                        ),
                                                     }
-                                                    // Liquid can't be its own destination.
-                                                    WalletKind::Liquid => {
-                                                        Message::View(view::Message::Home(
-                                                            HomeMessage::TransferSuccessful,
-                                                        ))
-                                                    }
-                                                },
+                                                }
                                                 Err(error) => Message::View(view::Message::Home(
                                                     HomeMessage::Error(error.to_string()),
                                                 )),
