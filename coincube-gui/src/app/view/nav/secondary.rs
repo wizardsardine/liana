@@ -6,25 +6,19 @@
 //! here, left edge on the primary rail) and which side is the content
 //! area.
 
-use super::{NavContext, SubItem};
+use super::items::render_item_row;
+use super::NavContext;
 use crate::app::{
     menu::{Menu, TopLevel},
     view::Message,
 };
 use coincube_ui::{
-    color, theme,
-    widget::{Button, Column, Element, Row},
+    theme,
+    widget::{Column, Element},
 };
-use iced::{
-    widget::{column, container, row, Space},
-    Alignment, Length,
-};
+use iced::{widget::container, Length};
 
 pub const RAIL_WIDTH: f32 = 72.0;
-pub const ITEM_HEIGHT: f32 = 64.0;
-const HIGHLIGHT_WIDTH: f32 = 5.0;
-const ICON_SIZE: f32 = 22.0;
-const LABEL_SIZE: f32 = 10.0;
 
 pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
     let current: TopLevel = menu.into();
@@ -40,7 +34,7 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
 
     let mut list: Column<Message> = Column::new().spacing(0).width(Length::Fill);
     for item in items {
-        list = list.push(item_row(menu, &item));
+        list = list.push(render_item_row(menu, &item, RAIL_WIDTH));
     }
 
     container(list)
@@ -48,59 +42,4 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
         .height(Length::Fill)
         .style(theme::container::sidebar_primary)
         .into()
-}
-
-fn item_row<'a>(menu: &Menu, item: &SubItem) -> Element<'a, Message> {
-    let active = (item.matches)(menu);
-    let icon = (item.icon)().size(ICON_SIZE);
-
-    let body: Column<Message> = column![
-        icon,
-        iced::widget::text(item.label)
-            .size(LABEL_SIZE)
-            .align_x(Alignment::Center),
-    ]
-    .spacing(4)
-    .align_x(Alignment::Center)
-    .width(Length::Fill);
-
-    let on_press = if active {
-        Message::Reload
-    } else {
-        Message::Menu(item.route.clone())
-    };
-
-    let button: Button<Message> = Button::new(
-        container(body)
-            .padding([8, 0])
-            .width(Length::Fill)
-            .center_x(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(ITEM_HEIGHT))
-    .style(if active {
-        theme::button::rail_active
-    } else {
-        theme::button::rail
-    })
-    .on_press(on_press);
-
-    // Orange strip on the trailing (right) edge for the active item —
-    // mirror of the primary rail's leading-edge strip.
-    let highlight: Element<'a, Message> = if active {
-        container(Space::new().width(Length::Fixed(HIGHLIGHT_WIDTH)))
-            .height(Length::Fixed(ITEM_HEIGHT))
-            .style(theme::container::custom(color::ORANGE))
-            .into()
-    } else {
-        container(
-            Space::new()
-                .width(Length::Fixed(HIGHLIGHT_WIDTH))
-                .height(Length::Fixed(ITEM_HEIGHT)),
-        )
-        .into()
-    };
-
-    let r: Row<Message> = row![button, highlight].width(Length::Fixed(RAIL_WIDTH));
-    r.into()
 }
