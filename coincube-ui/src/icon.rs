@@ -379,3 +379,7 @@ pub fn cloud_check_icon<'a>() -> Text<'a> {
 pub fn cloud_slash_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F2B8}')
 }
+
+pub fn grid_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F3FA}')
+}

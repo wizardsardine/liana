@@ -6,6 +6,7 @@ use crate::{
     app::settings::KeySetting,
     backup::Backup,
     dir::CoincubeDirectory,
+    installer::descriptor::PathKind,
     node::bitcoind::{Bitcoind, InternalBitcoindConfig},
     services::{
         coincube::CoincubeClient,
@@ -14,8 +15,32 @@ use crate::{
     signer::Signer,
 };
 use async_hwi::DeviceKind;
-use coincube_core::{descriptors::CoincubeDescriptor, miniscript::bitcoin};
+use coincube_core::{
+    descriptors::CoincubeDescriptor,
+    miniscript::bitcoin::{self, bip32::Fingerprint},
+};
 use coincubed::config::{BitcoinBackend, BitcoinConfig};
+
+/// One backend `ConnectVaultMember` row to create after the descriptor
+/// is installed. Only keychain-sourced descriptor keys (W8 / W3) produce
+/// a payload — hardware-wallet, xpub-entered, master-signer and
+/// token-sourced keys are intentionally skipped (per
+/// `plans/PLAN-cube-membership-desktop.md` design decision,
+/// 2026-04-18: "only keychain-sourced keys become VaultMember rows").
+#[derive(Debug, Clone)]
+pub struct ConnectVaultMemberPayload {
+    pub fingerprint: Fingerprint,
+    /// Backend `keys.id` captured when the user selected this key in the
+    /// Vault Builder picker.
+    pub key_id: u64,
+    /// Populated when the key belongs to a contact-Keyholder, `None` when
+    /// the key belongs to the vault owner themselves.
+    pub contact_id: Option<u64>,
+    /// Path the key participates in. Carried through for future role
+    /// inference; all members currently default to `Keyholder` per the
+    /// 2026-04-18 plan direction.
+    pub path_kind: PathKind,
+}
 
 #[derive(Debug, Clone)]
 pub enum RemoteBackend {
@@ -89,6 +114,22 @@ pub struct Context {
     /// fetch Cube-scoped Keychain keys.  `None` when launched from
     /// the Loader (user hasn't done coincube-api auth yet).
     pub coincube_client: Option<CoincubeClient>,
+    /// Cube display name used when idempotently registering the cube
+    /// with the backend during Final. `None` when no cube settings
+    /// were passed in.
+    pub cube_name: Option<String>,
+    /// Vault members to fan out to the backend after the local install
+    /// completes. Populated by `DefineDescriptor::apply()` for every
+    /// keychain-sourced descriptor key. Empty when no such keys exist
+    /// in the descriptor.
+    pub connect_vault_members: Vec<ConnectVaultMemberPayload>,
+    /// Approximate timelock (in days) used for the backend vault's
+    /// `timelockDays` field. Derived from the longest Recovery path's
+    /// `PathSequence::Recovery(blocks)` via `max(blocks / 144, 1)` —
+    /// inherently approximate because block cadence varies. Surfaced
+    /// with an "approximate" caveat in the Final step's success caption.
+    /// `None` when the descriptor has no recovery paths.
+    pub connect_vault_timelock_days: Option<i32>,
 }
 
 impl Context {
@@ -125,6 +166,9 @@ impl Context {
             backup: None,
             cube_id: cube_settings.map(|cs| cs.id.clone()),
             coincube_client,
+            cube_name: cube_settings.map(|cs| cs.name.clone()),
+            connect_vault_members: Vec::new(),
+            connect_vault_timelock_days: None,
         }
     }
 }

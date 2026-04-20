@@ -1158,6 +1158,21 @@ impl App {
                     self.panels.current = menu;
                     return contacts_task;
                 }
+                // Load Cube Members on demand (W8 — gated by
+                // CUBE_MEMBERS_UI_ENABLED at the sidebar, but defensive here
+                // in case a deep-link message sneaks through).
+                if matches!(submenu, menu::ConnectSubMenu::CubeMembers)
+                    && self.panels.connect.account.is_authenticated()
+                {
+                    self.panels.current = menu;
+                    return iced::Task::done(Message::View(
+                        crate::app::view::Message::ConnectCube(
+                            crate::app::view::ConnectCubeMessage::Members(
+                                crate::app::view::ConnectCubeMembersMessage::Enter,
+                            ),
+                        ),
+                    ));
+                }
             }
             menu::Menu::Liquid(_submenu) => {
                 // Liquid transaction preselection is handled via PreselectPayment message

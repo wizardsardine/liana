@@ -52,6 +52,10 @@ pub enum ConnectSubMenu {
     Duress,
     Contacts,
     Invites,
+    /// Cube-scoped members + pending-invites management. Feature-flagged by
+    /// `feature_flags::CUBE_MEMBERS_UI_ENABLED`; sidebar entry is hidden
+    /// otherwise.
+    CubeMembers,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
