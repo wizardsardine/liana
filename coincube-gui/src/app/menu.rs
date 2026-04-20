@@ -22,7 +22,7 @@ pub enum HomeSubMenu {
     /// Cube landing / dashboard.
     Overview,
     /// Cube-level settings. The inner enum drives the third rail —
-    /// General / Lightning / About.
+    /// General / Lightning / About / Stats.
     Settings(HomeSettingsOption),
 }
 
