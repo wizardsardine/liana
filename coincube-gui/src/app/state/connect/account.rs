@@ -1379,8 +1379,8 @@ impl ConnectAccountPanel {
                     return iced::Task::none();
                 };
                 let email = match contact.contact_user.as_ref() {
-                    Some(u) => u.email.clone(),
-                    None => {
+                    Some(u) if !u.email.is_empty() => u.email.clone(),
+                    _ => {
                         self.contacts_state
                             .add_to_current_cube_errors
                             .insert(contact_id, "Contact has no linked user".to_string());

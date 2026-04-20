@@ -598,9 +598,9 @@ fn contact_detail_ux<'a>(
                 button::primary(None, "Add to Current Cube").on_press_maybe(
                     (cs.active_cube_server_id.is_some()
                         && !cs.add_to_current_cube_pending.contains(&contact_id))
-                        .then_some(ConnectAccountMessage::Contacts(
-                            ContactsMessage::AddContactToCurrentCube(contact_id),
-                        )),
+                    .then_some(ConnectAccountMessage::Contacts(
+                        ContactsMessage::AddContactToCurrentCube(contact_id),
+                    )),
                 ),
             );
         }
