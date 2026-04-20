@@ -214,8 +214,14 @@ pub struct GlobalHome {
     /// Mirror of `pending_vault_incoming` for the Spark card. Set when a
     /// transfer into Spark has broadcast on-chain and the destination deposit
     /// is awaiting maturity + claim. Cleared by `SparkDepositsChanged` when a
-    /// matching deposit matures and is claimed.
+    /// matching deposit matures and is claimed — or by `LiquidToVaultFailed`
+    /// when the peg-out swap fails before a deposit ever arrives.
     pending_spark_incoming: Option<PendingTransfer>,
+    /// Peg-out swap id for an in-flight LiquidToSpark transfer. Lets us
+    /// match Breez's async `PaymentFailed` event back to the Spark pending
+    /// indicator so a failed swap doesn't leave the badge stuck (no Spark
+    /// deposit arrives in that case, so `SparkDepositsChanged` never fires).
+    pending_spark_incoming_swap_id: Option<String>,
     /// Prepared Spark send handle, populated on step 1→2 for Spark-sourced
     /// transfers (SparkToVault, SparkToLiquid). Consumed by `ConfirmSparkSend`.
     spark_send_handle: Option<String>,
@@ -278,6 +284,7 @@ impl GlobalHome {
             pending_vault_receive_sats: 0,
             pending_vault_receive_baseline_sats: 0,
             pending_spark_incoming: None,
+            pending_spark_incoming_swap_id: None,
             spark_send_handle: None,
             spark_send_fee_sat: None,
             auto_claiming_spark_deposit: None,
@@ -332,6 +339,7 @@ impl GlobalHome {
             pending_vault_receive_sats: 0,
             pending_vault_receive_baseline_sats: 0,
             pending_spark_incoming: None,
+            pending_spark_incoming_swap_id: None,
             spark_send_handle: None,
             spark_send_fee_sat: None,
             auto_claiming_spark_deposit: None,
@@ -361,8 +369,7 @@ impl State for GlobalHome {
         // `cache_derived` grows past the broadcast-time baseline so we don't
         // double-count once the tx lands in the daemon's mempool view.
         let still_pending_counter = self.pending_vault_receive_sats.saturating_sub(
-            cache_vault_pending_receive
-                .saturating_sub(self.pending_vault_receive_baseline_sats),
+            cache_vault_pending_receive.saturating_sub(self.pending_vault_receive_baseline_sats),
         );
         let vault_pending_receive_sats =
             cache_vault_pending_receive.saturating_add(still_pending_counter);
@@ -935,6 +942,7 @@ impl State for GlobalHome {
                                     HomeMessage::TransferBroadcast {
                                         amount_sat: amount_sats,
                                         destination_kind: to_kind,
+                                        swap_id: None,
                                     },
                                 )),
                                 Err(error) => Message::View(view::Message::Home(
@@ -946,6 +954,7 @@ impl State for GlobalHome {
                     HomeMessage::TransferBroadcast {
                         amount_sat,
                         destination_kind,
+                        swap_id,
                     } => {
                         self.is_sending = false;
                         let pending = PendingTransfer {
@@ -964,9 +973,8 @@ impl State for GlobalHome {
                                 // from growth relative to this moment.
                                 self.pending_vault_receive_baseline_sats =
                                     cache_vault_pending_receive_sats(cache);
-                                self.pending_vault_receive_sats = self
-                                    .pending_vault_receive_sats
-                                    .saturating_add(amount_sat);
+                                self.pending_vault_receive_sats =
+                                    self.pending_vault_receive_sats.saturating_add(amount_sat);
                             }
                             WalletKind::Liquid => {
                                 // Liquid peg-in is pending — bump the existing
@@ -983,6 +991,11 @@ impl State for GlobalHome {
                                 // and destination. Treat defensively: still mark the
                                 // Spark card as pending.
                                 self.pending_spark_incoming = Some(pending);
+                                // Only set for LiquidToSpark (Breez peg-out) — the
+                                // Vault→Spark and Spark-internal paths don't produce
+                                // a Breez swap_id, so we leave the tracker cleared
+                                // and rely on `SparkDepositsChanged` for them.
+                                self.pending_spark_incoming_swap_id = swap_id;
                             }
                         }
                         self.current_view.next();
@@ -1278,13 +1291,32 @@ impl State for GlobalHome {
                                                         ))
                                                     }
                                                     // LiquidToSpark: route through the
-                                                    // generic success handler.
+                                                    // generic success handler, but capture
+                                                    // the peg-out swap_id so an async
+                                                    // `PaymentFailed` can clear the Spark
+                                                    // pending indicator (see
+                                                    // `pending_spark_incoming_swap_id`).
                                                     WalletKind::Spark => {
+                                                        let swap_id = if matches!(
+                                                            response.payment.payment_type,
+                                                            PaymentType::Send
+                                                        ) {
+                                                            match response.payment.details {
+                                                                PaymentDetails::Bitcoin {
+                                                                    swap_id,
+                                                                    ..
+                                                                } => Some(swap_id),
+                                                                _ => None,
+                                                            }
+                                                        } else {
+                                                            None
+                                                        };
                                                         Message::View(view::Message::Home(
                                                             HomeMessage::TransferBroadcast {
                                                                 amount_sat: transfer_amount
                                                                     .to_sat(),
                                                                 destination_kind,
+                                                                swap_id,
                                                             },
                                                         ))
                                                     }
@@ -1364,11 +1396,15 @@ impl State for GlobalHome {
                                                         // Vault→Spark: reuse the Spark-send
                                                         // success handler so both legs land
                                                         // in the same `PendingDeposit` state.
+                                                        // No Breez swap is involved — this is
+                                                        // a direct Vault PSBT broadcast — so
+                                                        // there's no swap_id to track.
                                                         WalletKind::Spark => {
                                                             Message::View(view::Message::Home(
                                                                 HomeMessage::TransferBroadcast {
                                                                     amount_sat,
                                                                     destination_kind: to_kind,
+                                                                    swap_id: None,
                                                                 },
                                                             ))
                                                         }
@@ -1456,6 +1492,7 @@ impl State for GlobalHome {
                         // home-card indicator.
                         if deposits.is_empty() {
                             self.pending_spark_incoming = None;
+                            self.pending_spark_incoming_swap_id = None;
                             self.auto_claiming_spark_deposit = None;
                             return Task::none();
                         }
@@ -1612,9 +1649,23 @@ impl State for GlobalHome {
                             self.pending_vault_incoming_swap_id = None;
                             return self.clear_pending_liquid_to_vault_transfer();
                         }
+                        if self.is_matching_pending_spark_swap(swap_id.as_deref()) {
+                            // Peg-out landed on-chain — leave the Spark pending
+                            // badge in place (`SparkDepositsChanged` clears it
+                            // once the deposit matures), but release the swap_id
+                            // tracker so a future unrelated `PaymentFailed`
+                            // can't accidentally match and clear it.
+                            self.pending_spark_incoming_swap_id = None;
+                        }
                         Task::none()
                     }
                     HomeMessage::LiquidToVaultFailed(swap_id) => {
+                        // Dispatched from Breez `PaymentFailed` for any Liquid
+                        // peg-out, so it covers both LiquidToVault and
+                        // LiquidToSpark. Route to whichever pending indicator
+                        // owns this swap_id — for LiquidToSpark there's no
+                        // deposit to ever arrive, so `SparkDepositsChanged`
+                        // won't clear the badge on our behalf.
                         if self.is_matching_pending_swap(swap_id.as_deref()) {
                             self.pending_vault_incoming = None;
                             self.pending_vault_incoming_swap_id = None;
@@ -1624,6 +1675,13 @@ impl State for GlobalHome {
                                     "Liquid to Vault transfer failed. Please retry.".to_string(),
                                 ))),
                             ]);
+                        }
+                        if self.is_matching_pending_spark_swap(swap_id.as_deref()) {
+                            self.pending_spark_incoming = None;
+                            self.pending_spark_incoming_swap_id = None;
+                            return Task::done(Message::View(view::Message::ShowError(
+                                "Liquid to Spark transfer failed. Please retry.".to_string(),
+                            )));
                         }
                         Task::none()
                     }
@@ -1672,6 +1730,7 @@ impl State for GlobalHome {
                             .unwrap_or(false)
                         {
                             self.pending_spark_incoming = None;
+                            self.pending_spark_incoming_swap_id = None;
                         }
                         Task::none()
                     }
@@ -2016,6 +2075,18 @@ impl GlobalHome {
                 .map(|swap_id| swap_id == expected_swap_id)
                 .unwrap_or(false),
             (Some(_), None) => false,
+            _ => false,
+        }
+    }
+
+    fn is_matching_pending_spark_swap(&self, incoming_swap_id: Option<&str>) -> bool {
+        match (
+            &self.pending_spark_incoming,
+            &self.pending_spark_incoming_swap_id,
+        ) {
+            (Some(_), Some(expected_swap_id)) => incoming_swap_id
+                .map(|swap_id| swap_id == expected_swap_id)
+                .unwrap_or(false),
             _ => false,
         }
     }

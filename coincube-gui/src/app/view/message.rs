@@ -934,6 +934,12 @@ pub enum HomeMessage {
     TransferBroadcast {
         amount_sat: u64,
         destination_kind: WalletKind,
+        /// Breez peg-out swap id when this broadcast came from `pay_onchain`
+        /// (currently only LiquidToSpark). Stored against the Spark pending
+        /// indicator so an async `PaymentFailed` for the same swap can clear
+        /// the Spark card's badge — without it, a failed LiquidToSpark leaves
+        /// the badge stuck permanently because no Spark deposit ever arrives.
+        swap_id: Option<String>,
     },
     PrepareOnChainResponseReceived(PreparePayOnchainResponse),
     TransferSuccessful,

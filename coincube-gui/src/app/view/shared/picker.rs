@@ -42,7 +42,6 @@ where
                     None
                 }),
         )
-        .push(Space::new().width(Length::Fill))
         .push(
             Container::new(text(network.to_uppercase()).size(10).color(color::ORANGE))
                 .padding([2, 6])
@@ -54,7 +53,8 @@ where
                     },
                     ..Default::default()
                 }),
-        );
+        )
+        .push(Space::new().width(Length::Fill));
 
     if is_selected {
         row = row.push(icon::check2_icon().size(18).color(color::ORANGE));
