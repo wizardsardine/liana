@@ -414,7 +414,7 @@ pub fn payment_view<'a>(
     }
     .to_string();
     dashboard(
-        &Menu::Home,
+        &Menu::Home(crate::app::menu::HomeSubMenu::Overview),
         cache,
         Column::new()
             .push(match tx.kind {

@@ -87,3 +87,37 @@ pub fn border_grey(theme: &Theme) -> Style {
         ..Default::default()
     }
 }
+
+/// Primary (72px) left rail — darker tone so it visually reads as the
+/// app's navigation spine, distinct from the content area.
+pub fn sidebar_primary(theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(theme.colors.general.foreground)),
+        ..Default::default()
+    }
+}
+
+/// Secondary (188px) left rail — same tone as the content area with a
+/// subtle right-edge rule separating it from content.
+pub fn sidebar_secondary(theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(theme.colors.general.background)),
+        border: iced::Border {
+            color: theme.colors.rule,
+            width: 0.0,
+            radius: 0.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+/// Tertiary (~72px) left rail — appears only when the current route
+/// has a third level. A step lighter than the primary/secondary rails
+/// (uses the card background) so the deeper nav level reads as
+/// slightly elevated without breaking the dark palette.
+pub fn sidebar_tertiary(theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(theme.colors.cards.simple.background)),
+        ..Default::default()
+    }
+}

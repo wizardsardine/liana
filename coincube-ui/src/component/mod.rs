@@ -9,6 +9,7 @@ pub mod modal;
 pub mod notification;
 pub mod quote_display;
 pub mod spinner;
+pub mod tabs;
 pub mod text;
 pub mod toast;
 pub mod tooltip;

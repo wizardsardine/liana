@@ -23,26 +23,18 @@ fn wrap(msg: BackupWalletMessage) -> Message {
     Message::Settings(SettingsMessage::BackupMasterSeed(msg))
 }
 
-/// Breadcrumb header for backup wizard screens.
-fn header<'a>(title: &'a str) -> Element<'a, Message> {
+/// Header for backup wizard screens: a single "< Previous" button
+/// that rolls back one step in the flow.
+fn header<'a>(_title: &'a str) -> Element<'a, Message> {
     Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
         .push(
-            Button::new(text("Settings").size(30).bold())
-                .style(theme::button::transparent)
-                .on_press(Message::Menu(crate::app::menu::Menu::Settings(
-                    crate::app::menu::SettingsSubMenu::General,
-                ))),
+            ui_button::transparent_border(None, "< Previous")
+                .on_press(wrap(BackupWalletMessage::PreviousStep))
+                .padding([8, 16])
+                .width(Length::Fixed(150.0)),
         )
-        .push(icon::chevron_right().size(30))
-        .push(
-            Button::new(text("Backup").size(30).bold())
-                .style(theme::button::transparent)
-                .on_press(wrap(BackupWalletMessage::PreviousStep)),
-        )
-        .push(icon::chevron_right().size(30))
-        .push(text(title).size(30).bold())
         .into()
 }
 

@@ -180,7 +180,13 @@ pub fn liquid_receive_view<'a>(
     // ── Last transactions (matching Send screen) ────────────────────────────
     content = content.push(Column::new().spacing(10).push(h4_bold("Last transactions")));
 
-    if !recent_transaction.is_empty() {
+    if recent_transaction.is_empty() {
+        content = content.push(empty_tx_placeholder(
+            icon::receipt_icon().size(80),
+            "No transactions yet",
+            "Your transaction history will appear here once you send or receive coins.",
+        ));
+    } else {
         for (idx, tx) in recent_transaction.iter().enumerate() {
             let direction = if tx.is_incoming {
                 TransactionDirection::Incoming
@@ -720,19 +726,25 @@ fn input_fields<'a>(
     .width(Length::Fixed(50.0))
     .height(Length::Fixed(50.0));
 
-    Column::new()
-        .spacing(12)
-        .width(Length::Fill)
-        .push(hints)
-        .push(
-            Row::new()
-                .spacing(10)
-                .align_y(Alignment::Center)
-                .push(amount_form)
-                .push(description_input_field)
-                .push(next_btn),
-        )
-        .into()
+    Container::new(
+        Column::new()
+            .spacing(12)
+            .width(Length::Fill)
+            .push(h4_bold("Invoice details"))
+            .push(hints)
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .push(amount_form)
+                    .push(description_input_field)
+                    .push(next_btn),
+            ),
+    )
+    .padding(16)
+    .width(Length::Fill)
+    .style(theme::card::simple)
+    .into()
 }
 
 fn usdt_input_fields<'a>(
@@ -768,17 +780,23 @@ fn usdt_input_fields<'a>(
     .width(Length::Fixed(50.0))
     .height(Length::Fixed(50.0));
 
-    Column::new()
-        .spacing(12)
-        .width(Length::Fill)
-        .push(
-            Row::new()
-                .spacing(10)
-                .align_y(Alignment::Center)
-                .push(amount_input)
-                .push(next_btn),
-        )
-        .into()
+    Container::new(
+        Column::new()
+            .spacing(12)
+            .width(Length::Fill)
+            .push(h4_bold("USDt amount"))
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .push(amount_input)
+                    .push(next_btn),
+            ),
+    )
+    .padding(16)
+    .width(Length::Fill)
+    .style(theme::card::simple)
+    .into()
 }
 
 fn generate_button<'a>() -> Element<'a, LiquidReceiveMessage> {
@@ -1029,6 +1047,7 @@ fn receive_cards(
                 .height(Length::Fixed(160.0))
                 .style(theme::card::simple),
         )
+        .padding(0)
         .on_press(LiquidReceiveMessage::OpenSenderPicker)
         .style(|_: &theme::Theme, status| iced::widget::button::Style {
             background: Some(Background::Color(color::TRANSPARENT)),
@@ -1109,6 +1128,7 @@ fn receive_cards(
                 .height(Length::Fixed(160.0))
                 .style(theme::card::simple),
         )
+        .padding(0)
         .on_press(LiquidReceiveMessage::OpenReceivePicker)
         .style(|_: &theme::Theme, status| iced::widget::button::Style {
             background: Some(Background::Color(color::TRANSPARENT)),
@@ -1333,4 +1353,36 @@ fn picker_row_selected(theme: &theme::Theme) -> iced::widget::container::Style {
         },
         ..Default::default()
     }
+}
+
+fn empty_tx_placeholder<'a, T: Into<Element<'a, LiquidReceiveMessage>>>(
+    icon: T,
+    title: &'a str,
+    subtitle: &'a str,
+) -> Element<'a, LiquidReceiveMessage> {
+    let content = Column::new()
+        .push(icon)
+        .push(text(title).style(theme::text::secondary).bold())
+        .push(
+            text(subtitle)
+                .size(P2_SIZE)
+                .style(theme::text::secondary)
+                .align_x(Alignment::Center),
+        )
+        .spacing(16)
+        .align_x(Alignment::Center);
+
+    Container::new(content)
+        .width(Length::Fill)
+        .padding(60)
+        .center_x(Length::Fill)
+        .style(|t| container::Style {
+            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+            border: iced::Border {
+                radius: 20.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
 }
