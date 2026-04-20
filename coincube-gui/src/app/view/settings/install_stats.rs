@@ -4,7 +4,7 @@ use iced::{Alignment, Color, Length, Point, Rectangle};
 
 use coincube_ui::component::{card, text::*};
 use coincube_ui::theme;
-use coincube_ui::widget::*;
+use coincube_ui::widget::{Button, Element, ProgressBar};
 
 use crate::app::cache;
 use crate::app::menu::Menu;

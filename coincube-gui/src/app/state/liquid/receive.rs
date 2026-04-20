@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use coincube_core::miniscript::bitcoin::{Amount, Denomination};
 use coincube_ui::component::form;
-use coincube_ui::widget::*;
+use coincube_ui::widget::Element;
 use iced::{clipboard, widget::qr_code, Subscription, Task};
 
 use super::sideshift_receive::SideshiftReceiveFlow;

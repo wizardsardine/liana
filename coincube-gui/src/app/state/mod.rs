@@ -9,7 +9,7 @@ pub mod vault;
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::{Amount, OutPoint};
-use coincube_ui::widget::*;
+use coincube_ui::widget::Element;
 use iced::{Subscription, Task};
 
 use super::{cache::Cache, menu::Menu, message::Message, view, wallet::Wallet};

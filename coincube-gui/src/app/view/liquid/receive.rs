@@ -11,7 +11,7 @@ use coincube_ui::{
         transaction::{TransactionDirection, TransactionListItem},
     },
     icon, theme,
-    widget::*,
+    widget::Element,
 };
 use iced::{
     widget::{

@@ -9,7 +9,7 @@ use coincube_ui::{
     color,
     component::{button as ui_button, text::*},
     icon, theme,
-    widget::*,
+    widget::{Button, CheckBox, Container, Element, TextInput},
 };
 use iced::widget::{container, Column, Row, Space};
 use iced::{Alignment, Length};
