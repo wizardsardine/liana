@@ -1739,7 +1739,24 @@ impl App {
                 }
             },
             Message::CacheUpdated => {
-                // Update vault panels with cache if they exist
+                // Cube (Home) Settings lives on every cube, vault or not,
+                // so its cache update must fire independently of the
+                // vault-panel branch below. Vault Settings and Cube
+                // Settings are distinct panels backed by separate state —
+                // each panel's "am I current?" flag only matches the one
+                // it actually owns.
+                let is_global_settings_current = matches!(
+                    &self.panels.current,
+                    Menu::Home(crate::app::menu::HomeSubMenu::Settings(_))
+                );
+                let mut commands = vec![self.panels.global_settings.update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    Message::UpdatePanelCache(is_global_settings_current),
+                )];
+
+                // Vault-specific panels only exist on cubes with a
+                // configured vault.
                 if let (Some(daemon), Some(vault_overview), Some(vault_settings)) = (
                     &self.daemon,
                     self.panels.vault_overview.as_mut(),
@@ -1749,41 +1766,25 @@ impl App {
                     let current = &self.panels.current;
                     let cache = self.cache.clone();
 
-                    // Vault Settings and Cube (Home) Settings are distinct
-                    // panels backed by separate state — keep their
-                    // "am I current?" flags separate so each panel only
-                    // reacts when it is actually the visible route.
                     let is_vault_settings_current = matches!(
                         current,
                         Menu::Vault(crate::app::menu::VaultSubMenu::Settings(_))
                     );
-                    let is_global_settings_current = matches!(
-                        current,
-                        Menu::Home(crate::app::menu::HomeSubMenu::Settings(_))
-                    );
-
                     let is_spend_current =
                         matches!(current, Menu::Vault(crate::app::menu::VaultSubMenu::Send));
 
-                    let mut commands = vec![
-                        vault_overview.update(
-                            Some(daemon.clone()),
-                            &cache,
-                            Message::UpdatePanelCache(
-                                current == &Menu::Vault(crate::app::menu::VaultSubMenu::Overview),
-                            ),
+                    commands.push(vault_overview.update(
+                        Some(daemon.clone()),
+                        &cache,
+                        Message::UpdatePanelCache(
+                            current == &Menu::Vault(crate::app::menu::VaultSubMenu::Overview),
                         ),
-                        vault_settings.update(
-                            Some(daemon.clone()),
-                            &cache,
-                            Message::UpdatePanelCache(is_vault_settings_current),
-                        ),
-                        self.panels.global_settings.update(
-                            Some(daemon.clone()),
-                            &cache,
-                            Message::UpdatePanelCache(is_global_settings_current),
-                        ),
-                    ];
+                    ));
+                    commands.push(vault_settings.update(
+                        Some(daemon.clone()),
+                        &cache,
+                        Message::UpdatePanelCache(is_vault_settings_current),
+                    ));
 
                     // Also update create_spend panel if it exists
                     if let Some(create_spend) = self.panels.create_spend.as_mut() {
@@ -1793,9 +1794,9 @@ impl App {
                             Message::UpdatePanelCache(is_spend_current),
                         ));
                     }
-
-                    return Task::batch(commands);
                 }
+
+                return Task::batch(commands);
             }
             Message::LoadDaemonConfig(cfg) => {
                 // Only load daemon config if we have a vault (daemon and wallet exist)
