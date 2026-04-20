@@ -123,8 +123,11 @@ pub fn update(
                     // count as loaded; the next `Enter` will retry.
                     // Route to `load_error` so a standing validation
                     // message in `error` isn't overwritten.
+                    // `members`, `pending_invites`, and `vault_created_at`
+                    // are all left intact so the panel keeps rendering the
+                    // last-good snapshot — including the "Joined after
+                    // Vault" badges — instead of a half-cleared view.
                     state.load_error = Some(e);
-                    state.vault_created_at = None;
                 }
             }
             iced::Task::none()
@@ -476,6 +479,55 @@ mod tests {
         assert!(!state.loading);
         assert_eq!(state.load_error.as_deref(), Some("boom"));
         assert!(state.error.is_none(), "load errors must not touch `error`");
+    }
+
+    #[test]
+    fn loaded_err_preserves_last_good_snapshot() {
+        // Regression: a reload failure must leave `members`,
+        // `pending_invites`, and `vault_created_at` intact so the panel
+        // keeps rendering the last-good snapshot. Wiping any one of them
+        // (in particular `vault_created_at`) breaks the "Joined after
+        // Vault" badges on stale member rows — the rows still render,
+        // but their badges silently vanish.
+        let mut state = ConnectCubeMembersState::new();
+        let gen1 = state.bump_generation();
+        state.loading = true;
+        let late_member = sample_member_joined(7, "late@example.com", "2026-02-01T00:00:00Z");
+        let mut cube = sample_cube(
+            "Cube",
+            vec![late_member.clone()],
+            vec![sample_invite(9, "p@example.com")],
+        );
+        cube.vault = Some(sample_vault("2026-01-01T00:00:00Z"));
+        run(
+            &mut state,
+            ConnectCubeMembersMessage::Loaded(Ok(cube), gen1),
+        );
+        assert!(badge_visible(&state, &late_member));
+
+        // A subsequent reload fails — stale snapshot must survive.
+        let gen2 = state.bump_generation();
+        state.loading = true;
+        run(
+            &mut state,
+            ConnectCubeMembersMessage::Loaded(Err("boom".to_string()), gen2),
+        );
+        assert_eq!(state.load_error.as_deref(), Some("boom"));
+        assert_eq!(state.members.len(), 1, "stale member list should survive");
+        assert_eq!(
+            state.pending_invites.len(),
+            1,
+            "stale invites should survive"
+        );
+        assert_eq!(
+            state.vault_created_at.as_deref(),
+            Some("2026-01-01T00:00:00Z"),
+            "stale vault_created_at must survive so badges stay consistent"
+        );
+        assert!(
+            badge_visible(&state, &late_member),
+            "badge must still render on the stale row after a failed reload"
+        );
     }
 
     #[test]
