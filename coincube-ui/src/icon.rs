@@ -368,10 +368,18 @@ pub fn shield_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F53F}')
 }
 
+pub fn shield_plus_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F53A}')
+}
+
 pub fn cloud_check_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F299}')
 }
 
 pub fn cloud_slash_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F2B8}')
+}
+
+pub fn grid_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F3FA}')
 }

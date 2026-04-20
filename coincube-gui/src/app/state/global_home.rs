@@ -63,7 +63,7 @@ use coincube_core::miniscript::bitcoin::{bip32::ChildNumber, Address, Amount};
 use crate::app::wallets::{DomainPaymentDetails, DomainPaymentStatus};
 use coincube_ui::component::amount::BitcoinDisplayUnit;
 use coincube_ui::component::form;
-use coincube_ui::widget::*;
+use coincube_ui::widget::Element;
 use iced::{Subscription, Task};
 
 use super::vault::psbt::SignModal;

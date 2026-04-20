@@ -57,7 +57,6 @@ pub struct DefineDescriptor {
 
     modal: Option<Box<dyn DescriptorEditModal>>,
     signer: Arc<Mutex<Signer>>,
-    developer_mode: bool,
 
     keys: HashMap<Fingerprint, Key>,
     paths: Vec<Path>,
@@ -74,14 +73,17 @@ pub struct DefineDescriptor {
 }
 
 impl DefineDescriptor {
-    pub fn new(network: Network, signer: Arc<Mutex<Signer>>, developer_mode: bool) -> Self {
+    // Formerly took a `developer_mode` flag that gated the
+    // "Generate hot key" button in the old Other-options list. The
+    // card-grid redesign promotes that flow to a first-class "Cube
+    // Key" card, so the gate is gone.
+    pub fn new(network: Network, signer: Arc<Mutex<Signer>>) -> Self {
         Self {
             network,
             use_taproot: false,
             modal: None,
 
             signer,
-            developer_mode,
             error: None,
             keys: HashMap::new(),
             descriptor_template: DescriptorTemplate::default(),
@@ -223,7 +225,6 @@ impl DefineDescriptor {
             keys,
             self.accounts.clone(),
             self.signer.clone(),
-            self.developer_mode,
             self.cube_id.clone(),
             self.coincube_client.clone(),
         )
@@ -331,6 +332,18 @@ impl Step for DefineDescriptor {
             )) => {
                 let modal = self.edit_key_modal(path_kind, coordinates);
                 self.modal = Some(Box::new(modal));
+            }
+            Message::DefineDescriptor(message::DefineDescriptor::ReopenKeyModal(coordinates)) => {
+                // Derive path_kind from the first coordinate's path
+                // index (every coordinate in the Vec belongs to the
+                // same path, by construction of the picker call sites).
+                if let Some((path_idx, _)) = coordinates.first() {
+                    if let Some(path) = self.paths.get(*path_idx) {
+                        let path_kind = path.sequence.into();
+                        let modal = self.edit_key_modal(path_kind, coordinates);
+                        self.modal = Some(Box::new(modal));
+                    }
+                }
             }
             Message::DefineDescriptor(message::DefineDescriptor::AliasEdited(fg, alias)) => {
                 if let Some(key) = self.keys.get_mut(&fg) {
@@ -494,6 +507,11 @@ impl Step for DefineDescriptor {
 
         ctx.bitcoin_config.network = self.network;
         ctx.keys = HashMap::new();
+        // Reset backend-vault payloads — `apply()` runs every time the
+        // user re-confirms the descriptor, including after going back
+        // and editing, so we can't append incrementally.
+        ctx.connect_vault_members = Vec::new();
+        ctx.connect_vault_timelock_days = None;
         let mut hw_is_used = false;
         let mut spending_keys: Vec<DescriptorPublicKey> = Vec::new();
         let mut key_derivation_index = HashMap::<Fingerprint, usize>::new();
@@ -586,6 +604,71 @@ impl Step for DefineDescriptor {
         if spending_keys.is_empty() {
             return false;
         }
+
+        // Harvest keychain-sourced keys across all paths into backend-vault
+        // member payloads. Dedup by fingerprint — a key reused across
+        // paths still only produces one `ConnectVaultMember` row. We rely
+        // on the first occurrence's path_kind (primary > recovery) as a
+        // tiebreaker for the logged role hint.
+        use crate::installer::context::ConnectVaultMemberPayload;
+        use crate::installer::descriptor::{KeySource, KeychainKeyOwner, PathKind};
+        let mut seen_fingerprints: std::collections::HashSet<Fingerprint> =
+            std::collections::HashSet::new();
+        for path in self.paths.iter() {
+            let path_kind = path.sequence.path_kind();
+            for maybe_key in path.keys.iter() {
+                let Some(editor_key_ref) = maybe_key.as_ref() else {
+                    continue;
+                };
+                let fingerprint = editor_key_ref.fingerprint;
+                if !seen_fingerprints.insert(fingerprint) {
+                    continue;
+                }
+                let Some(key) = self.keys.get(&fingerprint) else {
+                    continue;
+                };
+                let KeySource::KeychainKey { owner, key_id, .. } = &key.source else {
+                    // HW, xpub, master-signer, token, and border-wallet
+                    // keys have no backend row — they stay local-only per
+                    // the 2026-04-18 plan direction. Logged at `debug!`:
+                    // this is an informational "skipped as expected"
+                    // message, not actionable, and we'd rather keep
+                    // per-wallet identifiers out of info-level telemetry.
+                    tracing::debug!(
+                        "Skipping non-keychain key {} for backend vault (source kind = {:?}); \
+                         backend ConnectVault will be local-key-free for this signer",
+                        fingerprint,
+                        key.source.kind()
+                    );
+                    continue;
+                };
+                let contact_id = match owner {
+                    KeychainKeyOwner::SelfUser { .. } => None,
+                    KeychainKeyOwner::Contact { contact_id, .. } => Some(*contact_id),
+                };
+                ctx.connect_vault_members.push(ConnectVaultMemberPayload {
+                    fingerprint,
+                    key_id: *key_id,
+                    contact_id,
+                    path_kind,
+                });
+            }
+        }
+
+        // Approximate timelock from the longest Recovery path's sequence
+        // (blocks). Skip SafetyNet (u16::MAX) — it's not a real timelock.
+        let longest_recovery_blocks = self
+            .paths
+            .iter()
+            .filter(|p| p.sequence.path_kind() == PathKind::Recovery)
+            .map(|p| p.sequence.as_u16() as u32)
+            .max();
+        ctx.connect_vault_timelock_days = longest_recovery_blocks.map(|blocks| {
+            // Bitcoin averages ~144 blocks/day. Round up so the server
+            // timelock never expires before the on-chain timelock.
+            let days = blocks.div_ceil(144);
+            days.max(1) as i32
+        });
 
         let spending_keys = if spending_keys.len() == 1 {
             PathInfo::Single(spending_keys[0].clone())
@@ -847,7 +930,6 @@ mod tests {
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
             Network::Signet,
             Arc::new(Mutex::new(Signer::generate(Network::Signet).unwrap())),
-            true,
         ));
         sandbox.load(&ctx).await;
 
@@ -932,7 +1014,6 @@ mod tests {
         let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
             Network::Testnet,
             Arc::new(Mutex::new(Signer::generate(Network::Testnet).unwrap())),
-            true, // developer_mode=true: test exercises the hot-signer path
         ));
         sandbox.load(&ctx).await;
 

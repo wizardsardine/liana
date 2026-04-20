@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use coincube_ui::widget::*;
+use coincube_ui::widget::Element;
 use iced::Task;
 
 use crate::app::view::LiquidSettingsMessage;

@@ -1,5 +1,6 @@
 pub mod account;
 pub mod cube;
+pub mod cube_members;
 
 pub(crate) const CONNECT_KEYRING_SERVICE: &str = if cfg!(debug_assertions) {
     "dev.coincube.Connect"
@@ -10,9 +11,11 @@ pub(crate) const CONNECT_KEYRING_SERVICE: &str = if cfg!(debug_assertions) {
 pub(crate) const CONNECT_KEYRING_USER: &str = "global_session";
 
 pub use account::{
-    CheckoutPhase, CheckoutState, ConnectAccountPanel, ConnectFlowStep, ContactsState, ContactsStep,
+    AddToCubeDialog, CheckoutPhase, CheckoutState, ConnectAccountPanel, ConnectFlowStep,
+    ContactsState, ContactsStep, InviteCubeOption,
 };
 pub use cube::ConnectCubePanel;
+pub use cube_members::ConnectCubeMembersState;
 
 use std::sync::Arc;
 
@@ -57,10 +60,24 @@ impl ConnectPanel {
         cube_name: String,
         cube_network: String,
     ) -> Self {
+        let mut account = ConnectAccountPanel::new();
+        // W12 §2.7 tweak #1 / W14: propagate the active cube's network
+        // into ContactsState so the invite-form + add-to-cube dialogs
+        // can filter their candidate-cube lists.
+        account.set_active_network(Some(cube_network.clone()));
         ConnectPanel {
-            account: ConnectAccountPanel::new(),
+            account,
             cube: ConnectCubePanel::new(breez_client, cube_uuid, cube_name, cube_network),
         }
+    }
+
+    /// Mirror the active Cube's server-side numeric id onto
+    /// `ContactsState` so the W14 "Add to Current Cube" action can
+    /// target the exact loaded cube (works even when the user has
+    /// multiple cubes on the same network).
+    fn sync_active_cube_server_id(&mut self) {
+        self.account
+            .set_active_cube_server_id(self.cube.server_cube_id);
     }
 
     /// Sync the authenticated client from account panel to cube panel.
@@ -131,6 +148,7 @@ impl State for ConnectPanel {
                 let was_authenticated = self.account.is_authenticated();
                 let task = self.account.update_message(msg);
                 self.sync_client();
+                self.sync_active_cube_server_id();
                 // After first login, register the cube with the backend
                 // (idempotent — returns existing if already registered).
                 // The response includes lightning address if already claimed.
@@ -141,7 +159,15 @@ impl State for ConnectPanel {
                 }
                 task
             }
-            Message::View(view::Message::ConnectCube(msg)) => self.cube.update_message(msg),
+            Message::View(view::Message::ConnectCube(msg)) => {
+                let task = self.cube.update_message(msg);
+                // `CubeRegistered(Ok)` populates `server_cube_id`; mirror
+                // it into the account panel so the "Add to Current
+                // Cube" button becomes enabled as soon as the cube is
+                // known to the backend.
+                self.sync_active_cube_server_id();
+                task
+            }
             _ => iced::Task::none(),
         }
     }

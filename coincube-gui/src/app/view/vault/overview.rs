@@ -19,7 +19,7 @@ use coincube_ui::{
     },
     icon::{self, cross_icon},
     theme,
-    widget::*,
+    widget::{Button, Column, ColumnExt, Element},
 };
 
 use crate::{

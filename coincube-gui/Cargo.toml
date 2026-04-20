@@ -165,6 +165,7 @@ iced = { version = "0.14.0", features = ["x11", "wayland"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
+httpmock = "0.7"
 
 [build-dependencies]
 dotenvy = "0.15.7"

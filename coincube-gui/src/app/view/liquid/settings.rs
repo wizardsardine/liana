@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use coincube_core::signer::MasterSigner;
 use coincube_ui::component::text::*;
 use coincube_ui::theme;
-use coincube_ui::widget::*;
+use coincube_ui::widget::{Button, Element};
 use iced::widget::Column;
 use iced::Length;
 

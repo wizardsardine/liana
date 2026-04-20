@@ -12,5 +12,10 @@ services:
       - sonarqube_data:/opt/sonarqube/data
       - ${HOME}/sonarqube/plugins:/opt/sonarqube/extensions/plugins
 
+
+
 volumes:
   sonarqube_data:
+
+
+

@@ -17,7 +17,7 @@ use coincube_ui::{
     },
     icon::{self, receipt_icon},
     theme,
-    widget::*,
+    widget::{Button, Column, Container, Element, Row},
 };
 
 use crate::{
