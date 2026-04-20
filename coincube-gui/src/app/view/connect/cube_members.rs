@@ -6,7 +6,7 @@
 
 use coincube_ui::{
     color,
-    component::{button, text},
+    component::{button, text, tooltip},
     icon::*,
     theme,
     widget::*,
@@ -18,7 +18,7 @@ use crate::{
         state::connect::ConnectCubePanel,
         view::{ConnectCubeMembersMessage, ConnectCubeMessage},
     },
-    services::coincube::{CubeInviteSummary, CubeMember},
+    services::coincube::{member_joined_after_vault, CubeInviteSummary, CubeMember},
 };
 
 use super::{card_style, format_date};
@@ -81,8 +81,9 @@ pub fn cube_members_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCu
     } else if !panel.members.is_empty() {
         col = col.push(text::p1_bold("Members").style(theme::text::primary));
         col = col.push(iced::widget::Space::new().height(Length::Fixed(8.0)));
+        let vault_created_at = panel.vault_created_at.as_deref();
         for member in &panel.members {
-            col = col.push(member_card(member));
+            col = col.push(member_card(member, vault_created_at));
             col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
         }
     } else if panel.loading {
@@ -181,7 +182,10 @@ fn invite_form<'a>(
 // Member & Invite cards
 // =============================================================================
 
-fn member_card<'a>(member: &'a CubeMember) -> Element<'a, ConnectCubeMessage> {
+fn member_card<'a>(
+    member: &'a CubeMember,
+    vault_created_at: Option<&str>,
+) -> Element<'a, ConnectCubeMessage> {
     let email = &member.user.email;
     let initial = email
         .chars()
@@ -204,9 +208,34 @@ fn member_card<'a>(member: &'a CubeMember) -> Element<'a, ConnectCubeMessage> {
             ..Default::default()
         });
 
+    // W16-desktop: show a subdued "Joined after Vault" badge on members
+    // who landed after the attached Vault's signing quorum was sealed.
+    // Their keys can attach to a future Vault rebuild but won't sign
+    // the current one. Tooltip spells out the implication on hover.
+    let joined_after_vault =
+        vault_created_at.is_some_and(|v| member_joined_after_vault(&member.joined_at, v));
+    let badge_row: Option<Element<'_, ConnectCubeMessage>> = if joined_after_vault {
+        Some(
+            Row::new()
+                .push(text::p2_regular("Joined after Vault").color(color::GREY_3))
+                .push(iced::widget::Space::new().width(Length::Fixed(4.0)))
+                .push(tooltip(
+                    "This member can attach keys but won't be in the current Vault's \
+                     signing quorum. Their keys will be available when the Vault is rebuilt.",
+                ))
+                .align_y(Alignment::Center)
+                .into(),
+        )
+    } else {
+        None
+    };
+
     let joined = format_date(&member.joined_at);
-    let info = Column::new()
-        .push(text::p1_regular(email.as_str()).style(theme::text::primary))
+    let mut info = Column::new().push(text::p1_regular(email.as_str()).style(theme::text::primary));
+    if let Some(badge) = badge_row {
+        info = info.push(badge);
+    }
+    let info = info
         .push(text::p2_regular(format!("Joined {}", joined)).color(color::GREY_3))
         .spacing(2);
 
