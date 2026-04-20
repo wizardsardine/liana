@@ -17,7 +17,7 @@ use coincube_ui::{
     component::{amount::*, badge, button, form, spinner, text::*},
     icon::{self},
     theme,
-    widget::*,
+    widget::{Button, ColumnExt, Element, RowExt},
 };
 
 use crate::{
