@@ -15,7 +15,7 @@ use crate::{
     services::coincube::{ContactRole, Invite},
 };
 
-use super::card_style;
+use super::{card_style, format_date};
 
 /// Top-level contacts dispatcher.
 pub fn contacts_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
@@ -132,7 +132,14 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
         col = col.push(iced::widget::Space::new().height(Length::Fixed(8.0)));
 
         for contact in contacts {
-            let email = &contact.contact_user.email;
+            // Contact responses with no linked user are rare (backend
+            // marks the field `omitempty`) — render a placeholder and
+            // still list them so the user can revoke/clean up.
+            let email = contact
+                .contact_user
+                .as_ref()
+                .map(|u| u.email.as_str())
+                .unwrap_or("unknown contact");
             let first_char = email
                 .chars()
                 .next()
@@ -160,7 +167,7 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
                 .push(iced::widget::Space::new().width(Length::Fixed(12.0)))
                 .push(
                     Column::new()
-                        .push(text::p1_regular(email.as_str()).style(theme::text::primary))
+                        .push(text::p1_regular(email).style(theme::text::primary))
                         .push(text::p2_regular(role_label).color(role_color(&contact.role)))
                         .spacing(2),
                 )
@@ -274,22 +281,6 @@ fn invite_form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcco
     )
     .is_ok();
 
-    let role_chips = Row::new()
-        .push(role_chip(
-            "Keyholder",
-            ContactRole::Keyholder,
-            cs.invite_role,
-        ))
-        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
-        .push(role_chip(
-            "Beneficiary",
-            ContactRole::Beneficiary,
-            cs.invite_role,
-        ))
-        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
-        .push(role_chip("Observer", ContactRole::Observer, cs.invite_role))
-        .align_y(Alignment::Center);
-
     let submit: Element<ConnectAccountMessage> = if cs.invite_sending {
         iced::widget::button(
             container(text::p1_regular("Sending\u{2026}").color(color::GREY_3))
@@ -327,10 +318,24 @@ fn invite_form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcco
                 .size(16)
                 .padding(15),
         )
-        .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
-        .push(text::p2_regular("Role").color(color::GREY_3))
-        .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
-        .push(role_chips)
+        .push(iced::widget::Space::new().height(Length::Fixed(16.0)));
+    // Role selector removed 2026-04-20 per PR 5 §2.7 tweak #2 —
+    // Keyholder is the only usable role today; invite_role stays in
+    // ContactsState pre-initialised so reintroduction is a small diff.
+
+    // W12: optional cube multi-select. Only rendered when the backend
+    // returned a non-empty cube list.
+    if let Some(cubes) = cs.invite_available_cubes.as_deref() {
+        if !cubes.is_empty() {
+            form = form
+                .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
+                .push(text::p2_regular("Also add to Cube(s) (optional)").color(color::GREY_3))
+                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                .push(invite_cubes_section(cubes, &cs.invite_cube_selections));
+        }
+    }
+
+    form = form
         .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
         .push(submit)
         .spacing(0)
@@ -343,27 +348,71 @@ fn invite_form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcco
             .push(text::p2_regular(err).color(color::RED));
     }
 
+    if let Some(msg) = cs.invite_cube_error.as_deref() {
+        form = form
+            .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
+            .push(invite_cube_conflict_card(msg));
+    }
+
     form.into()
 }
 
-fn role_chip<'a>(
-    label: &'static str,
-    role: ContactRole,
-    selected: ContactRole,
+/// Renders the cube multi-select list. Each row is a labelled
+/// [`CheckBox`] emitting `ToggleInviteCube(id)` on toggle.
+fn invite_cubes_section<'a>(
+    cubes: &'a [crate::app::state::connect::InviteCubeOption],
+    selections: &'a [u64],
 ) -> Element<'a, ConnectAccountMessage> {
-    if role == selected {
-        button::primary(None, label)
-            .on_press(ConnectAccountMessage::Contacts(
-                ContactsMessage::InviteRoleChanged(role),
-            ))
-            .into()
-    } else {
-        button::secondary(None, label)
-            .on_press(ConnectAccountMessage::Contacts(
-                ContactsMessage::InviteRoleChanged(role),
-            ))
-            .into()
+    let mut col = Column::new().spacing(6);
+    for cube in cubes {
+        let checked = selections.contains(&cube.id);
+        let id = cube.id;
+        let label = format!("{} ({})", cube.name, cube.network);
+        col = col.push(
+            CheckBox::new(checked)
+                .label(label)
+                .on_toggle(move |_| {
+                    ConnectAccountMessage::Contacts(ContactsMessage::ToggleInviteCube(id))
+                })
+                .style(theme::checkbox::primary)
+                .size(18),
+        );
     }
+    container(col.padding(4)).width(Length::Fill).into()
+}
+
+/// Banner shown when `POST /connect/invites` 403'd on a cube id. The
+/// message suggests the user re-pick — the cube list has already been
+/// reloaded at this point so the new checkboxes reflect current
+/// membership.
+fn invite_cube_conflict_card<'a>(msg: &str) -> Element<'a, ConnectAccountMessage> {
+    container(
+        Column::new()
+            .push(
+                text::p1_bold("One or more selected cubes is no longer available")
+                    .color(color::RED),
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+            .push(text::p2_regular(msg.to_string()).style(theme::text::primary))
+            .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+            .push(
+                text::p2_regular("Review your cube selection above and try again.")
+                    .color(color::GREY_3),
+            )
+            .padding(16)
+            .spacing(0),
+    )
+    .style(|t| container::Style {
+        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+        border: iced::Border {
+            color: color::RED,
+            width: 1.0,
+            radius: 12.0.into(),
+        },
+        ..Default::default()
+    })
+    .width(Length::Fill)
+    .into()
 }
 
 // =============================================================================
@@ -403,7 +452,11 @@ fn contact_detail_ux<'a>(
             .into();
     };
 
-    let email = &contact.contact_user.email;
+    let email = contact
+        .contact_user
+        .as_ref()
+        .map(|u| u.email.as_str())
+        .unwrap_or("unknown contact");
     let first_char = email
         .chars()
         .next()
@@ -449,7 +502,7 @@ fn contact_detail_ux<'a>(
         Column::new()
             .push(avatar)
             .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-            .push(text::h4_bold(email.as_str()).style(theme::text::primary))
+            .push(text::h4_bold(email).style(theme::text::primary))
             .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
             .push(role_badge)
             .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
@@ -520,7 +573,58 @@ fn contact_detail_ux<'a>(
         }
     };
 
-    Column::new()
+    // W14: entry points for "add this contact to a cube". Only rendered
+    // when the contact has a linked user — an orphaned contact can't be
+    // added to a cube anyway.
+    let can_add = contact.contact_user.is_some();
+    // Hide the "Add to Current Cube" button entirely when the contact
+    // is already a member of the loaded cube — the Associated Cubes
+    // list right above already communicates the state, and clicking
+    // would only 409 on duplicate. The multi-select "Add to Cube(s)…"
+    // stays available so the user can still attach them to *other*
+    // cubes they own.
+    let show_add_current = !cs.contact_is_in_active_cube(contact_id);
+    let current_cube_err = cs.add_to_current_cube_errors.get(&contact_id);
+    let add_actions: Option<Element<ConnectAccountMessage>> = can_add.then(|| {
+        let mut row = Row::new().spacing(8).align_y(Alignment::Center);
+        if show_add_current {
+            row = row.push(
+                // One-click "Add to Current Cube" — primary action,
+                // gated on having the active cube's server-side id
+                // resolved (populated post `register_cube`). Works
+                // regardless of how many other cubes the user owns on
+                // the same network — the action targets the specific
+                // loaded cube, not a network-matching guess.
+                button::primary(None, "Add to Current Cube").on_press_maybe(
+                    (cs.active_cube_server_id.is_some()
+                        && !cs.add_to_current_cube_pending.contains(&contact_id))
+                    .then_some(ConnectAccountMessage::Contacts(
+                        ContactsMessage::AddContactToCurrentCube(contact_id),
+                    )),
+                ),
+            );
+        }
+        row = row.push(
+            // Multi-select — secondary action, always available.
+            button::secondary(None, "Add to Cube(s)…").on_press(ConnectAccountMessage::Contacts(
+                ContactsMessage::OpenAddToCubeDialog(contact_id),
+            )),
+        );
+        if let Some(err) = current_cube_err {
+            row = row
+                .push(iced::widget::Space::new().width(Length::Fixed(12.0)))
+                .push(text::p2_regular(err.clone()).color(color::RED));
+        }
+        row.into()
+    });
+
+    let add_to_cube_dialog = cs
+        .add_to_cube_target
+        .as_ref()
+        .filter(|d| d.contact_id == contact_id)
+        .map(add_to_cube_dialog_card);
+
+    let mut col = Column::new()
         .push(back_button)
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
         .push(contact_header)
@@ -531,10 +635,119 @@ fn contact_detail_ux<'a>(
             container(Column::new().push(cubes_section).padding(16).spacing(2))
                 .style(card_style)
                 .width(Length::Fill),
+        );
+
+    if let Some(actions) = add_actions {
+        col = col
+            .push(iced::widget::Space::new().height(Length::Fixed(14.0)))
+            .push(actions);
+    }
+
+    if let Some(dialog) = add_to_cube_dialog {
+        col = col
+            .push(iced::widget::Space::new().height(Length::Fixed(14.0)))
+            .push(dialog);
+    }
+
+    col.spacing(0).width(Length::Fill).into()
+}
+
+/// W14 multi-select dialog body. Rendered inline beneath the Associated
+/// Cubes card in the contact detail view when
+/// `contacts_state.add_to_cube_target` is set for this contact.
+fn add_to_cube_dialog_card<'a>(
+    dialog: &'a crate::app::state::connect::AddToCubeDialog,
+) -> Element<'a, ConnectAccountMessage> {
+    let header = Row::new()
+        .push(text::p1_bold("Add to Cube(s)").style(theme::text::primary))
+        .push(iced::widget::Space::new().width(Length::Fill))
+        .push(
+            iced::widget::button(cross_icon().color(color::GREY_3))
+                .padding([4, 6])
+                .style(theme::button::transparent)
+                .on_press(ConnectAccountMessage::Contacts(
+                    ContactsMessage::CloseAddToCubeDialog,
+                )),
         )
-        .spacing(0)
-        .width(Length::Fill)
-        .into()
+        .align_y(Alignment::Center);
+
+    let body: Element<ConnectAccountMessage> = match dialog.candidate_cubes.as_deref() {
+        None => text::p2_regular("Loading eligible cubes\u{2026}")
+            .color(color::GREY_3)
+            .into(),
+        Some([]) => text::p2_regular(
+            "No eligible cubes — the contact is already in all of your \
+             active-network cubes, or you have none.",
+        )
+        .color(color::GREY_3)
+        .into(),
+        Some(cubes) => {
+            let mut col = Column::new().spacing(6);
+            for cube in cubes {
+                let checked = dialog.selections.contains(&cube.id);
+                let id = cube.id;
+                let mut row = Row::new().spacing(8).align_y(Alignment::Center).push(
+                    CheckBox::new(checked)
+                        .label(format!("{} ({})", cube.name, cube.network))
+                        .on_toggle(move |_| {
+                            ConnectAccountMessage::Contacts(
+                                ContactsMessage::ToggleAddToCubeSelection(id),
+                            )
+                        })
+                        .style(theme::checkbox::primary)
+                        .size(18),
+                );
+                if let Some(err) = dialog.failures.get(&id) {
+                    row = row
+                        .push(iced::widget::Space::new().width(Length::Fill))
+                        .push(text::p2_regular(err.clone()).color(color::RED));
+                }
+                col = col.push(row);
+            }
+            col.into()
+        }
+    };
+
+    let can_confirm =
+        !dialog.submitting && !dialog.selections.is_empty() && dialog.candidate_cubes.is_some();
+    let confirm_label = if dialog.submitting {
+        "Adding\u{2026}"
+    } else {
+        "Add"
+    };
+    let confirm_btn = button::primary(None, confirm_label).on_press_maybe(can_confirm.then_some(
+        ConnectAccountMessage::Contacts(ContactsMessage::ConfirmAddToCube),
+    ));
+
+    let footer = Row::new()
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .push(iced::widget::Space::new().width(Length::Fill))
+        .push(
+            button::secondary(None, "Cancel").on_press(ConnectAccountMessage::Contacts(
+                ContactsMessage::CloseAddToCubeDialog,
+            )),
+        )
+        .push(confirm_btn);
+
+    container(
+        Column::new()
+            .spacing(12)
+            .push(header)
+            .push(
+                text::p2_regular(format!(
+                    "Add {} to the selected cubes.",
+                    dialog.contact_email
+                ))
+                .color(color::GREY_3),
+            )
+            .push(body)
+            .push(footer)
+            .padding(16),
+    )
+    .style(card_style)
+    .width(Length::Fill)
+    .into()
 }
 
 // =============================================================================
@@ -547,10 +760,4 @@ fn role_color(role: &ContactRole) -> iced::Color {
         ContactRole::Beneficiary => color::GREEN,
         ContactRole::Observer => color::GREY_3,
     }
-}
-
-fn format_date(iso: &str) -> String {
-    chrono::DateTime::parse_from_rfc3339(iso)
-        .map(|dt| dt.format("%b %d, %Y").to_string())
-        .unwrap_or_else(|_| iso.to_string())
 }

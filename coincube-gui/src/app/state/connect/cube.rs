@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-use super::AvatarFlowStep;
+use super::{cube_members, AvatarFlowStep, ConnectCubeMembersState};
 
 /// Per-Cube Connect panel handling Lightning Address and Avatar.
 /// These features are tied to the Cube's Breez wallet (BOLT12 offer).
@@ -51,6 +51,8 @@ pub struct ConnectCubePanel {
     pub avatar_error: Option<String>,
     pub avatar_image_cache: HashMap<u64, (Vec<u8>, iced::widget::image::Handle)>,
     pub avatar_draft: AvatarUserTraits,
+    // Members (W8)
+    pub members: ConnectCubeMembersState,
 }
 
 impl ConnectCubePanel {
@@ -83,6 +85,7 @@ impl ConnectCubePanel {
             avatar_error: None,
             avatar_image_cache: HashMap::new(),
             avatar_draft: AvatarUserTraits::default(),
+            members: ConnectCubeMembersState::new(),
         }
     }
 
@@ -113,6 +116,7 @@ impl ConnectCubePanel {
         self.avatar_error = None;
         self.avatar_image_cache.clear();
         self.avatar_draft = AvatarUserTraits::default();
+        self.members.clear();
     }
 
     /// Returns the server-side cube ID as a string for API paths.
@@ -332,6 +336,15 @@ impl ConnectCubePanel {
 
             ConnectCubeMessage::Avatar(avatar_msg) => {
                 return self.update_avatar(avatar_msg);
+            }
+
+            ConnectCubeMessage::Members(msg) => {
+                return cube_members::update(
+                    &mut self.members,
+                    msg,
+                    self.client.clone(),
+                    self.server_cube_id,
+                );
             }
         }
 

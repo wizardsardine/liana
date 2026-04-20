@@ -4,7 +4,7 @@ use coincube_ui::{
     icon::{arrow_right, clipboard_icon, previous_icon},
     image::usdt_network_logo,
     theme,
-    widget::*,
+    widget::{ColumnExt, Element, RowExt},
 };
 use iced::{
     widget::{Column, Container, Row, Space, TextInput},

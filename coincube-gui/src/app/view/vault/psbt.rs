@@ -28,7 +28,7 @@ use coincube_ui::{
         text::{self, *},
     },
     icon, theme,
-    widget::*,
+    widget::{Button, Column, Container, Element, Row, RowExt, TextInput},
 };
 
 use crate::{
@@ -1115,7 +1115,6 @@ fn border_wallet_recon_phrase_view(
 ) -> Element<'_, Message> {
     let header = modal::header(
         Some("Reconstruct Border Wallet".to_string()),
-        None::<fn() -> Message>,
         Some(|| {
             Message::Spend(SpendTxMessage::BorderWalletRecon(
                 BorderWalletReconMessage::Cancel,
@@ -1189,7 +1188,6 @@ fn border_wallet_recon_phrase_view(
 fn border_wallet_recon_grid_view(recon: &BorderWalletReconstructionState) -> Element<'_, Message> {
     let header = modal::header(
         Some("Select Pattern".to_string()),
-        None::<fn() -> Message>,
         Some(|| {
             Message::Spend(SpendTxMessage::BorderWalletRecon(
                 BorderWalletReconMessage::Cancel,

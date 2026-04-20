@@ -1901,6 +1901,7 @@ pub fn install<'a>(
     generating: bool,
     installed: bool,
     warning: Option<&'a String>,
+    connect_vault_caption: Option<String>,
 ) -> Element<'a, Message> {
     let prev_msg = if !generating && warning.is_some() {
         Some(Message::Previous)
@@ -1926,6 +1927,9 @@ pub fn install<'a>(
             } else {
                 Container::new(Space::new().height(Length::Fixed(25.0)))
             })
+            .push(connect_vault_caption.map(|caption| {
+                card::simple(text(caption).style(theme::text::secondary)).padding(10)
+            }))
             .spacing(10)
             .width(Length::Fill),
         true,
