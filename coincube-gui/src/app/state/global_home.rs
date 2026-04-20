@@ -2193,10 +2193,10 @@ impl GlobalHome {
     /// directions get this via `prepare_pay_onchain`; Vault-sourced needs a
     /// real `create_spend_tx` because the fee depends on coin selection
     /// + the user-picked feerate. Skipped unless direction is VaultToLiquid
-    /// or VaultToSpark AND all required inputs (address, feerate, amount)
-    /// are populated and valid. The result carries its source feerate so
-    /// the handler can discard late-arriving results whose feerate has
-    /// since been edited (prevents keystroke-race flicker).
+    ///   or VaultToSpark AND all required inputs (address, feerate, amount)
+    ///   are populated and valid. The result carries its source feerate so
+    ///   the handler can discard late-arriving results whose feerate has
+    ///   since been edited (prevents keystroke-race flicker).
     fn vault_transfer_preview_task(
         &self,
         cache: &Cache,

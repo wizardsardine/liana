@@ -20,24 +20,37 @@ pub enum FeeratePreset {
 /// A simple feerate input (sats/vbyte). The warning string and placeholder
 /// match the regular Vault spend flow (`view/vault/spend/mod.rs:367-372`) so
 /// the two feerate controls feel identical.
-pub fn feerate_input<'a, M, F>(feerate: &'a form::Value<String>, on_change: F) -> Element<'a, M>
+///
+/// `disabled = true` renders the input read-only — used on the Vault transfer
+/// confirm screen after the PSBT is signed so the user can't edit the rate
+/// out from under the signature.
+pub fn feerate_input<'a, M, F>(
+    feerate: &'a form::Value<String>,
+    on_change: F,
+    disabled: bool,
+) -> Element<'a, M>
 where
     M: 'a + Clone,
     F: 'static + Fn(String) -> M,
 {
-    form::Form::new_trimmed("42 (in sats/vbyte)", feerate, on_change)
-        .warning("Feerate must be an integer less than or equal to 1000 sats/vbyte")
-        .size(P1_SIZE)
-        .padding(10)
-        .into()
+    let form = if disabled {
+        form::Form::new_disabled("42 (in sats/vbyte)", feerate)
+    } else {
+        form::Form::new_trimmed("42 (in sats/vbyte)", feerate, on_change)
+            .warning("Feerate must be an integer less than or equal to 1000 sats/vbyte")
+    };
+    form.size(P1_SIZE).padding(10).into()
 }
 
 /// Three mempool-driven feerate presets (Fast / Normal / Slow). The button
 /// corresponding to `loading` is rendered non-pressable to indicate an
-/// estimate is in flight; the on_select message fires for the others.
+/// estimate is in flight; the on_select message fires for the others. When
+/// `disabled`, every button is non-pressable — see `feerate_input` for the
+/// reason this matters on the Vault transfer confirm screen.
 pub fn feerate_presets_row<'a, M>(
     loading: Option<FeeratePreset>,
     on_select: impl Fn(FeeratePreset) -> M + 'static,
+    disabled: bool,
 ) -> Element<'a, M>
 where
     M: 'a + Clone,
@@ -47,7 +60,7 @@ where
             let is_loading = loading == Some(preset);
             button::secondary(None, if is_loading { "…" } else { label })
                 .width(Length::Fixed(110.0))
-                .on_press_maybe((!is_loading).then_some(on_select))
+                .on_press_maybe((!is_loading && !disabled).then_some(on_select))
                 .into()
         };
 

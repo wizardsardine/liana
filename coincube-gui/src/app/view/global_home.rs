@@ -1005,14 +1005,17 @@ fn confirm_transfer_view<'a>(
                         crate::app::view::shared::feerate_picker::feerate_presets_row::<Message>(
                             transfer_feerate_loading,
                             |preset| Message::Home(HomeMessage::FetchTransferFeeratePreset(preset)),
+                            is_tx_signed,
                         ),
                     )
                     .push(crate::app::view::shared::feerate_picker::feerate_input::<
                         Message,
                         _,
-                    >(transfer_feerate, |s| {
-                        Message::Home(HomeMessage::SetTransferFeerate(s))
-                    })),
+                    >(
+                        transfer_feerate,
+                        |s| Message::Home(HomeMessage::SetTransferFeerate(s)),
+                        is_tx_signed,
+                    )),
             )
             .width(Length::Fill)
             .style(theme::card::simple)
