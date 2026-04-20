@@ -624,6 +624,16 @@ impl DatabaseConnection for DummyDatabase {
             .collect()
     }
 
+    fn get_all_receiver_session_ids(&mut self) -> Vec<SessionId> {
+        self.db
+            .read()
+            .unwrap()
+            .payjoin_receiver_sessions
+            .keys()
+            .map(|id| SessionId::new(*id))
+            .collect()
+    }
+
     fn update_receiver_session_completed_at(&mut self, session_id: &SessionId) {
         let mut db = self.db.write().unwrap();
         if let Some(session) = db.payjoin_receiver_sessions.get_mut(&session_id.0) {

@@ -200,6 +200,29 @@ impl PsbtState {
                 self.modal = Some(PsbtModal::Sign(modal));
                 return cmd;
             }
+            Message::View(view::Message::Spend(view::SpendTxMessage::SendPayjoin)) => {
+                let daemon = daemon.clone();
+                let txid = self.tx.psbt.unsigned_tx.compute_txid();
+                self.warning = None;
+                return Task::perform(
+                    async move {
+                        daemon
+                            .send_payjoin_proposal(&txid)
+                            .await
+                            .map(|_| txid.to_string())
+                            .map_err(|e| e.into())
+                    },
+                    Message::PayjoinInitiated,
+                );
+            }
+            Message::PayjoinInitiated(res) => match res {
+                Ok(_) => {
+                    self.tx.payjoin_status = Some(lianad::payjoin::types::PayjoinStatus::Success);
+                }
+                Err(e) => {
+                    self.warning = Some(e);
+                }
+            },
             Message::View(view::Message::Spend(view::SpendTxMessage::Broadcast)) => {
                 let outpoints: Vec<_> = self.tx.coins.keys().cloned().collect();
                 return Task::perform(

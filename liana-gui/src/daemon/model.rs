@@ -85,7 +85,10 @@ fn payjoin_filtered_spend_info(
             .map(|(i, _)| i)
             .collect();
         let mut filtered = psbt.clone();
-        filtered.inputs = liana_indices.iter().map(|&i| psbt.inputs[i].clone()).collect();
+        filtered.inputs = liana_indices
+            .iter()
+            .map(|&i| psbt.inputs[i].clone())
+            .collect();
         filtered.unsigned_tx.input = liana_indices
             .iter()
             .map(|&i| psbt.unsigned_tx.input[i].clone())

@@ -122,6 +122,7 @@ pub trait Daemon: Debug {
     async fn receive_payjoin(&self) -> Result<model::GetAddressResult, DaemonError>;
     async fn get_payjoin_info(&self, txid: &Txid) -> Result<PayjoinStatus, DaemonError>;
     async fn get_active_payjoin_receiver_sessions(&self) -> Result<Vec<u32>, DaemonError>;
+    async fn send_payjoin_proposal(&self, txid: &Txid) -> Result<(), DaemonError>;
     async fn update_deriv_indexes(
         &self,
         receive: Option<u32>,

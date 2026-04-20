@@ -185,6 +185,12 @@ impl From<commands::CommandError> for Error {
             commands::CommandError::IntoUrlError(_) => {
                 Error::new(ErrorCode::ServerError(INTO_URL_ERROR), e.to_string())
             }
+            commands::CommandError::NoPayjoinSessionForTxid(_) => {
+                Error::new(ErrorCode::InvalidParams, e.to_string())
+            }
+            commands::CommandError::SendPayjoinFailed(_) => {
+                Error::new(ErrorCode::ServerError(BROADCAST_ERROR), e.to_string())
+            }
         }
     }
 }

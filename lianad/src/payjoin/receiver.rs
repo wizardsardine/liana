@@ -29,7 +29,7 @@ use crate::{
     payjoin::helpers::{finalize_psbt, post_request, OHTTP_RELAY},
 };
 
-use super::db::ReceiverPersister;
+use super::db::{ReceiverPersister, SessionId};
 
 fn read_from_directory(
     receiver: Receiver<Initialized>,
@@ -270,15 +270,13 @@ fn finalize_proposal(
         }
 
         if is_signed {
-            let proposal = proposal
+            proposal
                 .finalize_proposal(|_| {
                     let mut psbt = psbt.clone();
                     finalize_psbt(&mut psbt, secp);
                     Ok(psbt)
                 })
                 .save(persister)?;
-
-            send_payjoin_proposal(proposal, persister)?;
         }
     }
     Ok(())
@@ -290,19 +288,115 @@ fn send_payjoin_proposal(
 ) -> Result<(), Box<dyn Error>> {
     let (req, ctx) = proposal
         .create_post_request(OHTTP_RELAY)
-        .expect("Failed to extract request");
+        .map_err(|e| format!("Failed to extract request: {:?}", e))?;
 
-    // Respond to sender
     log::info!("[Payjoin] Receiver responding to sender...");
-    match post_request(req) {
-        Ok(resp) => {
-            proposal
-                .process_response(resp.bytes().expect("Failed to read response").as_ref(), ctx)
-                .save(persister)?;
-        }
-        Err(err) => log::error!("[Payjoin] send_payjoin_proposal(): {}", err),
-    }
+    let resp = post_request(req)?;
+    proposal
+        .process_response(resp.bytes()?.as_ref(), ctx)
+        .save(persister)?;
     Ok(())
+}
+
+/// Extract the payjoin PSBT's txid from a single serialized `SessionEvent`, if present.
+/// Looks at both `AppliedFeeRange` (ProvisionalProposal-era) and `FinalizedProposal`
+/// events so we can match sessions that have expired after the PSBT was produced.
+fn payjoin_txid_from_event(event_json: &[u8]) -> Option<bitcoin::Txid> {
+    let val: serde_json::Value = serde_json::from_slice(event_json).ok()?;
+    let obj = val.as_object()?;
+    for (key, inner) in obj {
+        match key.as_str() {
+            "FinalizedProposal" => {
+                let psbt: bitcoin::psbt::Psbt = serde_json::from_value(inner.clone()).ok()?;
+                return Some(psbt.unsigned_tx.compute_txid());
+            }
+            "AppliedFeeRange" => {
+                let payjoin = inner.get("payjoin_psbt")?.clone();
+                let psbt: bitcoin::psbt::Psbt = serde_json::from_value(payjoin).ok()?;
+                return Some(psbt.unsigned_tx.compute_txid());
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Find the receiver session whose payjoin PSBT has the given txid.
+/// First attempts replay and inspects the current state; if replay fails
+/// (e.g. expired) or yields a state without a PSBT, falls back to scanning
+/// raw event JSON for the PSBT so closed and expired sessions still match.
+pub(crate) fn find_session_id_by_txid(
+    db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
+    txid: &bitcoin::Txid,
+) -> Option<SessionId> {
+    let session_ids = {
+        let mut db_conn = db.connection();
+        db_conn.get_all_receiver_session_ids()
+    };
+    for session_id in session_ids {
+        let persister = ReceiverPersister::from_id(Arc::new(db.clone()), session_id.clone());
+        if let Ok((state, _)) = replay_event_log(&persister) {
+            let psbt_txid = match &state {
+                ReceiveSession::ProvisionalProposal(r) => {
+                    Some(r.psbt_to_sign().unsigned_tx.compute_txid())
+                }
+                ReceiveSession::PayjoinProposal(r) => Some(r.psbt().unsigned_tx.compute_txid()),
+                _ => None,
+            };
+            if psbt_txid.as_ref() == Some(txid) {
+                return Some(session_id);
+            }
+        }
+        let events = db.connection().load_receiver_session_events(&session_id);
+        if events
+            .iter()
+            .filter_map(|ev| payjoin_txid_from_event(ev))
+            .any(|t| t == *txid)
+        {
+            return Some(session_id);
+        }
+    }
+    None
+}
+
+/// Manually send the payjoin proposal for a given session. If the session is still in the
+/// `ProvisionalProposal` state and the stored PSBT is signed, it is finalized first.
+pub(crate) fn send_payjoin_for_session(
+    db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
+    session_id: SessionId,
+    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+) -> Result<(), Box<dyn Error>> {
+    let persister = ReceiverPersister::from_id(Arc::new(db.clone()), session_id.clone());
+    let (state, _) = match replay_event_log(&persister) {
+        Ok(v) => v,
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("expired") {
+                log::info!(
+                    "Payjoin session {:?} expired during manual send, marking closed",
+                    session_id
+                );
+                let _ = persister.close();
+                return Err("Payjoin session expired.".into());
+            }
+            return Err(format!("Failed to replay receiver event log: {:?}", e).into());
+        }
+    };
+    let proposal = match state {
+        ReceiveSession::PayjoinProposal(proposal) => proposal,
+        ReceiveSession::ProvisionalProposal(proposal) => {
+            let mut db_conn = db.connection();
+            finalize_proposal(proposal, &persister, &mut db_conn, secp)?;
+            let (state, _) = replay_event_log(&persister)
+                .map_err(|e| format!("Failed to replay receiver event log: {:?}", e))?;
+            match state {
+                ReceiveSession::PayjoinProposal(proposal) => proposal,
+                _ => return Err("PSBT must be signed before sending the payjoin proposal.".into()),
+            }
+        }
+        _ => return Err("Payjoin session is not ready to send.".into()),
+    };
+    send_payjoin_proposal(proposal, &persister)
 }
 
 fn process_receiver_session(
@@ -343,7 +437,9 @@ fn process_receiver_session(
         ReceiveSession::ProvisionalProposal(proposal) => {
             finalize_proposal(proposal, &persister, db_conn, secp)?
         }
-        ReceiveSession::PayjoinProposal(proposal) => send_payjoin_proposal(proposal, &persister)?,
+        ReceiveSession::PayjoinProposal(_) => {
+            log::debug!("[Payjoin] Payjoin proposal ready; awaiting manual send");
+        }
         ReceiveSession::Closed(_) | ReceiveSession::HasReplyableError(_) => {
             log::info!("Payjoin session completed or expired, marking as closed");
             persister.close()?;

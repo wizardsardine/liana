@@ -1113,24 +1113,27 @@ impl SqliteConn {
         .unwrap_or_default()
     }
 
-    /// Get receiver session id from txid
+    /// Get every receiver session id (both active and closed).
+    pub fn get_all_receiver_session_ids(&mut self) -> Vec<SessionId> {
+        db_query(
+            &mut self.conn,
+            "SELECT id FROM payjoin_receivers",
+            rusqlite::params![],
+            |row| {
+                let id: i64 = row.get(0)?;
+                Ok(SessionId::new(id))
+            },
+        )
+        .expect("Db must not fail")
+    }
+
+    /// Deprecated: txid-in-events byte scan never worked since events serialize
+    /// txids as JSON hex while the caller passes raw bytes. Kept as a stub
+    /// returning None; callers should use the replay-based lookup in `payjoin::receiver`.
     pub fn get_payjoin_receiver_session_id_from_txid(
         &mut self,
-        txid: &bitcoin::Txid,
+        _txid: &bitcoin::Txid,
     ) -> Option<SessionId> {
-        let sessions = self.get_active_payjoin_receiver_sessions();
-        let txid_bytes = txid[..].to_vec();
-        for (session_id, _) in sessions {
-            let events = self.load_receiver_session_events(&session_id);
-            for event in events {
-                if event
-                    .windows(txid_bytes.len())
-                    .any(|w| w == txid_bytes.as_slice())
-                {
-                    return Some(session_id);
-                }
-            }
-        }
         None
     }
 

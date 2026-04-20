@@ -12,6 +12,7 @@ use crate::{
     payjoin::{
         db::ReceiverPersister,
         helpers::{fetch_ohttp_keys, FetchOhttpKeysError},
+        receiver::{find_session_id_by_txid, send_payjoin_for_session},
         types::PayjoinStatus,
     },
     poller::PollerMessage,
@@ -86,6 +87,8 @@ pub enum CommandError {
     FailedToPostOriginalPayjoinProposal(String),
     ReplayError(String),
     IntoUrlError(String),
+    NoPayjoinSessionForTxid(bitcoin::Txid),
+    SendPayjoinFailed(String),
 }
 
 impl fmt::Display for CommandError {
@@ -153,6 +156,12 @@ impl fmt::Display for CommandError {
             }
             Self::IntoUrlError(e) => {
                 write!(f, "Payjoin into url failed: '{}'.", e)
+            }
+            Self::NoPayjoinSessionForTxid(txid) => {
+                write!(f, "No payjoin receiver session found for txid '{}'.", txid)
+            }
+            Self::SendPayjoinFailed(e) => {
+                write!(f, "Failed to send payjoin proposal: '{}'.", e)
             }
         }
     }
@@ -435,17 +444,34 @@ impl DaemonControl {
 
     /// Get receiver session and its sender/receiver status by txid
     pub fn get_payjoin_info(&self, txid: &bitcoin::Txid) -> Result<PayjoinStatus, CommandError> {
-        let mut db_conn = self.db.connection();
         log::debug!("Getting payjoin info for txid: {:?}", txid);
-        if let Some(session_id) = db_conn.get_payjoin_receiver_session_id_from_txid(txid) {
+        if let Some(session_id) = find_session_id_by_txid(&self.db, txid) {
             let persister =
                 ReceiverPersister::from_id(Arc::new(self.db.clone()), session_id.clone());
-            let (state, _) = replay_receiver_event_log(&persister)
-                .map_err(|e| CommandError::ReplayError(format!("Receiver replay failed: {e:?}")))?;
-            return Ok(state.into());
+            match replay_receiver_event_log(&persister) {
+                Ok((state, _)) => return Ok(state.into()),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("expired") {
+                        log::info!("Payjoin session {:?} expired for tx {:?}", session_id, txid);
+                        return Ok(PayjoinStatus::Expired);
+                    }
+                    return Err(CommandError::ReplayError(format!(
+                        "Receiver replay failed: {e:?}"
+                    )));
+                }
+            }
         }
 
         Ok(PayjoinStatus::Unknown)
+    }
+
+    /// Send a finalized payjoin proposal for the receiver session associated with the given txid.
+    pub fn send_payjoin_proposal(&self, txid: &bitcoin::Txid) -> Result<(), CommandError> {
+        let session_id = find_session_id_by_txid(&self.db, txid)
+            .ok_or(CommandError::NoPayjoinSessionForTxid(*txid))?;
+        send_payjoin_for_session(&self.db, session_id, &self.secp)
+            .map_err(|e| CommandError::SendPayjoinFailed(e.to_string()))
     }
 
     /// Get all active payjoin receiver sessions with their derivation indexes

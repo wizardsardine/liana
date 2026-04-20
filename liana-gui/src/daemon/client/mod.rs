@@ -120,6 +120,12 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
         self.call("getactivepayjoinreceiversessions", Option::<Request>::None)
     }
 
+    async fn send_payjoin_proposal(&self, txid: &Txid) -> Result<(), DaemonError> {
+        let _res: serde_json::value::Value =
+            self.call("sendpayjoinproposal", Some(vec![txid.to_string()]))?;
+        Ok(())
+    }
+
     async fn update_deriv_indexes(
         &self,
         receive: Option<u32>,

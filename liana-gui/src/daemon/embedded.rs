@@ -147,6 +147,22 @@ impl Daemon for EmbeddedDaemon {
         .await
     }
 
+    async fn send_payjoin_proposal(&self, txid: &Txid) -> Result<(), DaemonError> {
+        let control = match self.handle.lock().await.as_ref() {
+            Some(DaemonHandle::Controller { control, .. }) => control.clone(),
+            Some(_) => unreachable!("No lianad rpc server must be started"),
+            None => return Err(DaemonError::DaemonStopped),
+        };
+        let txid = *txid;
+        tokio::task::spawn_blocking(move || {
+            control
+                .send_payjoin_proposal(&txid)
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
+        .await
+        .map_err(|e| DaemonError::Unexpected(e.to_string()))?
+    }
+
     async fn update_deriv_indexes(
         &self,
         receive: Option<u32>,
