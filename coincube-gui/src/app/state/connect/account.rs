@@ -297,6 +297,32 @@ impl ConnectAccountPanel {
         self.contacts_state.active_cube_server_id = cube_id;
     }
 
+    /// Kick off a `get_cubes_by_contact(contact_id)` fetch and wire
+    /// the result into `ContactCubesLoaded` / `ContactCubesFailed`.
+    /// Shared by `ShowDetail` (initial load) and by post-mutation
+    /// handlers that need to refresh the Associated Cubes section
+    /// after a successful add.
+    fn fetch_contact_cubes(&self, contact_id: u64) -> iced::Task<Message> {
+        let client = self.client.clone();
+        let gen = self.session_generation;
+        iced::Task::perform(
+            async move { client.get_cubes_by_contact(contact_id).await },
+            move |res| match res {
+                Ok(cubes) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::ContactCubesLoaded(
+                        contact_id, cubes, gen,
+                    )),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::ContactCubesFailed(
+                        contact_id,
+                        e.to_string(),
+                    )),
+                )),
+            },
+        )
+    }
+
     /// Reset contacts state to list view and reload data from the API.
     pub fn reload_contacts(&mut self) -> iced::Task<Message> {
         self.contacts_state.step = ContactsStep::List;
@@ -1026,24 +1052,7 @@ impl ConnectAccountPanel {
                 self.contacts_state.detail_cubes = None;
                 self.contacts_state.detail_cubes_error = None;
                 self.contacts_state.error = None;
-                let client = self.client.clone();
-                let gen = self.session_generation;
-                return iced::Task::perform(
-                    async move { client.get_cubes_by_contact(contact_id).await },
-                    move |res| match res {
-                        Ok(cubes) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::ContactCubesLoaded(
-                                contact_id, cubes, gen,
-                            )),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::ContactCubesFailed(
-                                contact_id,
-                                e.to_string(),
-                            )),
-                        )),
-                    },
-                );
+                return self.fetch_contact_cubes(contact_id);
             }
 
             ContactsMessage::InviteEmailChanged(email) => {
@@ -1310,28 +1319,7 @@ impl ConnectAccountPanel {
                         self.contacts_state.step,
                         ContactsStep::Detail(id) if id == contact_id
                     ) {
-                        let client = self.client.clone();
-                        let gen = self.session_generation;
-                        return iced::Task::perform(
-                            async move { client.get_cubes_by_contact(contact_id).await },
-                            move |res| match res {
-                                Ok(cubes) => Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::Contacts(
-                                        ContactsMessage::ContactCubesLoaded(
-                                            contact_id, cubes, gen,
-                                        ),
-                                    ),
-                                )),
-                                Err(e) => Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::Contacts(
-                                        ContactsMessage::ContactCubesFailed(
-                                            contact_id,
-                                            e.to_string(),
-                                        ),
-                                    ),
-                                )),
-                            },
-                        );
+                        return self.fetch_contact_cubes(contact_id);
                     }
                     return iced::Task::none();
                 }
@@ -1378,8 +1366,7 @@ impl ConnectAccountPanel {
                 let Some(cube_id) = self.contacts_state.active_cube_server_id else {
                     self.contacts_state.add_to_current_cube_errors.insert(
                         contact_id,
-                        "Current cube isn't registered yet — please retry in a moment."
-                            .to_string(),
+                        "Current cube isn't registered yet — please retry in a moment.".to_string(),
                     );
                     return iced::Task::none();
                 };
@@ -1418,28 +1405,7 @@ impl ConnectAccountPanel {
                         self.contacts_state.step,
                         ContactsStep::Detail(id) if id == contact_id
                     ) {
-                        let client = self.client.clone();
-                        let gen = self.session_generation;
-                        return iced::Task::perform(
-                            async move { client.get_cubes_by_contact(contact_id).await },
-                            move |res| match res {
-                                Ok(cubes) => Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::Contacts(
-                                        ContactsMessage::ContactCubesLoaded(
-                                            contact_id, cubes, gen,
-                                        ),
-                                    ),
-                                )),
-                                Err(e) => Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::Contacts(
-                                        ContactsMessage::ContactCubesFailed(
-                                            contact_id,
-                                            e.to_string(),
-                                        ),
-                                    ),
-                                )),
-                            },
-                        );
+                        return self.fetch_contact_cubes(contact_id);
                     }
                 }
                 Err(msg) => {
@@ -1925,10 +1891,7 @@ mod add_to_cube_tests {
             &mut panel,
             ContactsMessage::AddToCubeCandidatesLoaded(
                 7,
-                vec![
-                    option(1, "Alpha", "bitcoin"),
-                    option(2, "Bravo", "bitcoin"),
-                ],
+                vec![option(1, "Alpha", "bitcoin"), option(2, "Bravo", "bitcoin")],
                 gen,
             ),
         );
@@ -2168,10 +2131,7 @@ mod add_to_cube_tests {
         let mut panel = panel_with_contact(contact, Some("bitcoin"));
         dispatch(
             &mut panel,
-            ContactsMessage::AddContactToCurrentCubeResult(
-                7,
-                Err("backend 500".to_string()),
-            ),
+            ContactsMessage::AddContactToCurrentCubeResult(7, Err("backend 500".to_string())),
         );
         assert_eq!(
             panel
@@ -2181,5 +2141,88 @@ mod add_to_cube_tests {
                 .map(String::as_str),
             Some("backend 500")
         );
+    }
+
+    // ── `contact_is_in_active_cube` helper ────────────────────────
+    // The contact-detail view uses this to hide the "Add to Current
+    // Cube" button when clicking it would no-op / 409.
+    use crate::services::coincube::ContactCube;
+
+    fn sample_contact_cube(id: u64, network: &str) -> ContactCube {
+        ContactCube {
+            id,
+            uuid: format!("cube-{id}"),
+            name: format!("Cube {id}"),
+            network: network.to_string(),
+            has_recovery_kit: false,
+        }
+    }
+
+    #[test]
+    fn contact_is_in_active_cube_false_when_no_active_cube() {
+        let contact = sample_contact(7, 99, "alice@example.com");
+        let mut panel = panel_with_contact(contact, Some("bitcoin"));
+        panel.contacts_state.step = ContactsStep::Detail(7);
+        panel.contacts_state.detail_cubes = Some(vec![sample_contact_cube(42, "bitcoin")]);
+        // No active_cube_server_id → helper returns false (we can't say
+        // the contact is in "the active cube" when there isn't one).
+        panel.contacts_state.active_cube_server_id = None;
+        assert!(!panel.contacts_state.contact_is_in_active_cube(7));
+    }
+
+    #[test]
+    fn contact_is_in_active_cube_false_while_detail_cubes_loading() {
+        // Optimistic: show the button until the associated-cubes fetch
+        // completes, rather than flashing it in once data arrives.
+        let contact = sample_contact(7, 99, "alice@example.com");
+        let mut panel = panel_with_contact(contact, Some("bitcoin"));
+        panel.contacts_state.step = ContactsStep::Detail(7);
+        panel.contacts_state.active_cube_server_id = Some(42);
+        panel.contacts_state.detail_cubes = None;
+        assert!(!panel.contacts_state.contact_is_in_active_cube(7));
+    }
+
+    #[test]
+    fn contact_is_in_active_cube_false_when_not_on_detail_step() {
+        // Defensive: only the Detail(contact_id) step has `detail_cubes`
+        // scoped to this contact. Returning true on any other step
+        // would mis-gate the button on the list view.
+        let contact = sample_contact(7, 99, "alice@example.com");
+        let mut panel = panel_with_contact(contact, Some("bitcoin"));
+        panel.contacts_state.active_cube_server_id = Some(42);
+        panel.contacts_state.detail_cubes = Some(vec![sample_contact_cube(42, "bitcoin")]);
+        panel.contacts_state.step = ContactsStep::List;
+        assert!(!panel.contacts_state.contact_is_in_active_cube(7));
+    }
+
+    #[test]
+    fn contact_is_in_active_cube_false_when_active_cube_not_in_associated_list() {
+        // Contact is a member of cubes 1 and 2, but the user is loaded
+        // into cube 42 — the contact is NOT in the active cube, so the
+        // button should remain visible.
+        let contact = sample_contact(7, 99, "alice@example.com");
+        let mut panel = panel_with_contact(contact, Some("bitcoin"));
+        panel.contacts_state.step = ContactsStep::Detail(7);
+        panel.contacts_state.active_cube_server_id = Some(42);
+        panel.contacts_state.detail_cubes = Some(vec![
+            sample_contact_cube(1, "bitcoin"),
+            sample_contact_cube(2, "bitcoin"),
+        ]);
+        assert!(!panel.contacts_state.contact_is_in_active_cube(7));
+    }
+
+    #[test]
+    fn contact_is_in_active_cube_true_when_active_cube_in_associated_list() {
+        // The core regression target: contact is already a member of
+        // the active cube, so the button should hide.
+        let contact = sample_contact(7, 99, "alice@example.com");
+        let mut panel = panel_with_contact(contact, Some("bitcoin"));
+        panel.contacts_state.step = ContactsStep::Detail(7);
+        panel.contacts_state.active_cube_server_id = Some(42);
+        panel.contacts_state.detail_cubes = Some(vec![
+            sample_contact_cube(1, "bitcoin"),
+            sample_contact_cube(42, "bitcoin"),
+        ]);
+        assert!(panel.contacts_state.contact_is_in_active_cube(7));
     }
 }

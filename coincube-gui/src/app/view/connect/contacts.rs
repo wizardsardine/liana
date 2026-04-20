@@ -577,12 +577,18 @@ fn contact_detail_ux<'a>(
     // when the contact has a linked user — an orphaned contact can't be
     // added to a cube anyway.
     let can_add = contact.contact_user.is_some();
+    // Hide the "Add to Current Cube" button entirely when the contact
+    // is already a member of the loaded cube — the Associated Cubes
+    // list right above already communicates the state, and clicking
+    // would only 409 on duplicate. The multi-select "Add to Cube(s)…"
+    // stays available so the user can still attach them to *other*
+    // cubes they own.
+    let show_add_current = !cs.contact_is_in_active_cube(contact_id);
     let current_cube_err = cs.add_to_current_cube_errors.get(&contact_id);
     let add_actions: Option<Element<ConnectAccountMessage>> = can_add.then(|| {
-        let mut row = Row::new()
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .push(
+        let mut row = Row::new().spacing(8).align_y(Alignment::Center);
+        if show_add_current {
+            row = row.push(
                 // One-click "Add to Current Cube" — primary action,
                 // gated on having the active cube's server-side id
                 // resolved (populated post `register_cube`). Works
@@ -590,21 +596,20 @@ fn contact_detail_ux<'a>(
                 // the same network — the action targets the specific
                 // loaded cube, not a network-matching guess.
                 button::primary(None, "Add to Current Cube").on_press_maybe(
-                    cs.active_cube_server_id.is_some().then_some(
-                        ConnectAccountMessage::Contacts(
+                    cs.active_cube_server_id
+                        .is_some()
+                        .then_some(ConnectAccountMessage::Contacts(
                             ContactsMessage::AddContactToCurrentCube(contact_id),
-                        ),
-                    ),
-                ),
-            )
-            .push(
-                // Multi-select — secondary action, always available.
-                button::secondary(None, "Add to Cube(s)…").on_press(
-                    ConnectAccountMessage::Contacts(
-                        ContactsMessage::OpenAddToCubeDialog(contact_id),
-                    ),
+                        )),
                 ),
             );
+        }
+        row = row.push(
+            // Multi-select — secondary action, always available.
+            button::secondary(None, "Add to Cube(s)…").on_press(ConnectAccountMessage::Contacts(
+                ContactsMessage::OpenAddToCubeDialog(contact_id),
+            )),
+        );
         if let Some(err) = current_cube_err {
             row = row
                 .push(iced::widget::Space::new().width(Length::Fixed(12.0)))
@@ -681,20 +686,17 @@ fn add_to_cube_dialog_card<'a>(
             for cube in cubes {
                 let checked = dialog.selections.contains(&cube.id);
                 let id = cube.id;
-                let mut row = Row::new()
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                    .push(
-                        CheckBox::new(checked)
-                            .label(format!("{} ({})", cube.name, cube.network))
-                            .on_toggle(move |_| {
-                                ConnectAccountMessage::Contacts(
-                                    ContactsMessage::ToggleAddToCubeSelection(id),
-                                )
-                            })
-                            .style(theme::checkbox::primary)
-                            .size(18),
-                    );
+                let mut row = Row::new().spacing(8).align_y(Alignment::Center).push(
+                    CheckBox::new(checked)
+                        .label(format!("{} ({})", cube.name, cube.network))
+                        .on_toggle(move |_| {
+                            ConnectAccountMessage::Contacts(
+                                ContactsMessage::ToggleAddToCubeSelection(id),
+                            )
+                        })
+                        .style(theme::checkbox::primary)
+                        .size(18),
+                );
                 if let Some(err) = dialog.failures.get(&id) {
                     row = row
                         .push(iced::widget::Space::new().width(Length::Fill))
