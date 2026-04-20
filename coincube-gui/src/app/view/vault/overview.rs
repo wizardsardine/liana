@@ -402,6 +402,7 @@ fn event_list_view(
 }
 
 pub fn payment_view<'a>(
+    menu: &'a Menu,
     cache: &'a Cache,
     tx: &'a HistoryTransaction,
     output_index: usize,
@@ -414,7 +415,7 @@ pub fn payment_view<'a>(
     }
     .to_string();
     dashboard(
-        &Menu::Home,
+        menu,
         cache,
         Column::new()
             .push(match tx.kind {

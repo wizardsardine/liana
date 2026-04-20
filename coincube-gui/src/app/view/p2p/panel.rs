@@ -3327,19 +3327,18 @@ impl State for P2PPanel {
                             ]);
 
                             return row![]
-                                .push(
-                                    view::sidebar(
-                                        menu,
-                                        cache,
+                                .push(view::nav::sidebar(
+                                    menu,
+                                    &view::nav::NavContext {
                                         has_vault,
-                                        &cache.cube_name,
-                                        None,
-                                        None,
-                                        cache.has_p2p,
-                                    )
-                                    .height(Length::Fill)
-                                    .width(Length::Fixed(190.0)),
-                                )
+                                        has_p2p: cache.has_p2p,
+                                        cube_name: &cache.cube_name,
+                                        lightning_address: None,
+                                        avatar: None,
+                                        theme_mode: cache.theme_mode,
+                                        connect_authenticated: cache.connect_authenticated,
+                                    },
+                                ))
                                 .push(
                                     iced::widget::Column::new()
                                         .push(view::warn(None))
@@ -3488,19 +3487,18 @@ impl State for P2PPanel {
                                 .style(theme::container::foreground);
 
                                 return row![]
-                                    .push(
-                                        view::sidebar(
-                                            menu,
-                                            cache,
+                                    .push(view::nav::sidebar(
+                                        menu,
+                                        &view::nav::NavContext {
                                             has_vault,
-                                            &cache.cube_name,
-                                            None,
-                                            None,
-                                            cache.has_p2p,
-                                        )
-                                        .height(Length::Fill)
-                                        .width(Length::Fixed(190.0)),
-                                    )
+                                            has_p2p: cache.has_p2p,
+                                            cube_name: &cache.cube_name,
+                                            lightning_address: None,
+                                            avatar: None,
+                                            theme_mode: cache.theme_mode,
+                                            connect_authenticated: cache.connect_authenticated,
+                                        },
+                                    ))
                                     .push(
                                         iced::widget::Column::new()
                                             .push(view::warn(None))
@@ -3545,19 +3543,18 @@ impl State for P2PPanel {
                                 .style(theme::container::foreground);
 
                                 return row![]
-                                    .push(
-                                        view::sidebar(
-                                            menu,
-                                            cache,
+                                    .push(view::nav::sidebar(
+                                        menu,
+                                        &view::nav::NavContext {
                                             has_vault,
-                                            &cache.cube_name,
-                                            None,
-                                            None,
-                                            cache.has_p2p,
-                                        )
-                                        .height(Length::Fill)
-                                        .width(Length::Fixed(190.0)),
-                                    )
+                                            has_p2p: cache.has_p2p,
+                                            cube_name: &cache.cube_name,
+                                            lightning_address: None,
+                                            avatar: None,
+                                            theme_mode: cache.theme_mode,
+                                            connect_authenticated: cache.connect_authenticated,
+                                        },
+                                    ))
                                     .push(
                                         iced::widget::Column::new()
                                             .push(view::warn(None))
@@ -3674,19 +3671,18 @@ impl State for P2PPanel {
                                 .style(theme::container::foreground);
 
                                 return row![]
-                                    .push(
-                                        view::sidebar(
-                                            menu,
-                                            cache,
+                                    .push(view::nav::sidebar(
+                                        menu,
+                                        &view::nav::NavContext {
                                             has_vault,
-                                            &cache.cube_name,
-                                            None,
-                                            None,
-                                            cache.has_p2p,
-                                        )
-                                        .height(Length::Fill)
-                                        .width(Length::Fixed(190.0)),
-                                    )
+                                            has_p2p: cache.has_p2p,
+                                            cube_name: &cache.cube_name,
+                                            lightning_address: None,
+                                            avatar: None,
+                                            theme_mode: cache.theme_mode,
+                                            connect_authenticated: cache.connect_authenticated,
+                                        },
+                                    ))
                                     .push(
                                         iced::widget::Column::new()
                                             .push(view::warn(None))
@@ -3728,19 +3724,18 @@ impl State for P2PPanel {
                                 .style(theme::container::foreground);
 
                                 return row![]
-                                    .push(
-                                        view::sidebar(
-                                            menu,
-                                            cache,
+                                    .push(view::nav::sidebar(
+                                        menu,
+                                        &view::nav::NavContext {
                                             has_vault,
-                                            &cache.cube_name,
-                                            None,
-                                            None,
-                                            cache.has_p2p,
-                                        )
-                                        .height(Length::Fill)
-                                        .width(Length::Fixed(190.0)),
-                                    )
+                                            has_p2p: cache.has_p2p,
+                                            cube_name: &cache.cube_name,
+                                            lightning_address: None,
+                                            avatar: None,
+                                            theme_mode: cache.theme_mode,
+                                            connect_authenticated: cache.connect_authenticated,
+                                        },
+                                    ))
                                     .push(
                                         iced::widget::Column::new()
                                             .push(view::warn(None))

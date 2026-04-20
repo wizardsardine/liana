@@ -507,13 +507,13 @@ fn wallet_card<'a>(
                     )
                     .push(
                         button::primary(None, "Send")
-                            .width(Length::Fixed(120.0))
+                            .width(Length::Fixed(90.0))
                             .on_press(send_action),
                     )
                     .push(Space::new().width(Length::Fixed(8.0)))
                     .push(
                         button::orange_outline(None, "Receive")
-                            .width(Length::Fixed(120.0))
+                            .width(Length::Fixed(90.0))
                             .on_press(receive_action),
                     ),
             ),

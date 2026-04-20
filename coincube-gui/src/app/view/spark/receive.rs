@@ -8,8 +8,9 @@
 
 use coincube_ui::{
     component::{
+        amount::BitcoinDisplayUnit,
         button,
-        text::{h2, h4_bold, p1_regular, p2_regular},
+        text::{h4_bold, p1_regular, p2_regular},
     },
     theme,
     widget::{Column, Container, Element, Row},
@@ -22,6 +23,7 @@ use iced::{
 use coincube_spark_protocol::DepositInfo;
 
 use crate::app::state::spark::receive::{SparkReceiveMethod, SparkReceivePhase};
+use crate::app::view::spark::{last_tx::last_transactions_section, SparkRecentTransaction};
 use crate::app::view::{Message, SparkReceiveMessage};
 
 pub struct SparkReceiveView<'a> {
@@ -44,16 +46,16 @@ pub struct SparkReceiveView<'a> {
     pub received_celebration_context: &'a str,
     pub received_quote: &'a coincube_ui::component::quote_display::Quote,
     pub received_image_handle: &'a iced::widget::image::Handle,
+    pub recent_transactions: &'a [SparkRecentTransaction],
+    pub bitcoin_unit: BitcoinDisplayUnit,
+    pub show_direction_badges: bool,
 }
 
 impl<'a> SparkReceiveView<'a> {
     pub fn render(self) -> Element<'a, Message> {
-        let heading = Container::new(h2("Spark — Receive"));
-
         if !self.backend_available {
             return Column::new()
                 .spacing(20)
-                .push(heading)
                 .push(p1_regular(
                     "Spark is not available for this cube. Set up a Spark \
                      signer to receive payments.",
@@ -72,7 +74,7 @@ impl<'a> SparkReceiveView<'a> {
             );
         }
 
-        let mut content = Column::new().spacing(20).push(heading);
+        let mut content = Column::new().spacing(20);
 
         // ── Method picker ─────────────────────────────────────────────
         let method_picker = Container::new(
@@ -164,6 +166,15 @@ impl<'a> SparkReceiveView<'a> {
                 self.claim_error,
             ));
         }
+
+        // ── Last transactions ─────────────────────────────────────────
+        content = content.push(last_transactions_section(
+            self.recent_transactions,
+            self.bitcoin_unit,
+            self.show_direction_badges,
+            |idx| Message::SparkReceive(SparkReceiveMessage::SelectTransaction(idx)),
+            Message::SparkReceive(SparkReceiveMessage::History),
+        ));
 
         content.into()
     }

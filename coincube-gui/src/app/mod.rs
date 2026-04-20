@@ -63,12 +63,6 @@ use self::state::vault::settings::SettingsState as VaultSettingsState;
 
 struct Panels {
     current: Menu,
-    vault_expanded: bool,
-    spark_expanded: bool,
-    liquid_expanded: bool,
-    marketplace_expanded: bool,
-    marketplace_p2p_expanded: bool,
-    connect_expanded: bool,
     // Always available panels
     global_home: GlobalHome,
     liquid_overview: LiquidOverview,
@@ -146,13 +140,7 @@ impl Panels {
         let liquid_backend = Arc::new(LiquidBackend::new(breez_client.clone()));
 
         Self {
-            current: Menu::Home,
-            vault_expanded: false,
-            spark_expanded: false,
-            liquid_expanded: false,
-            marketplace_expanded: false,
-            marketplace_p2p_expanded: false,
-            connect_expanded: false,
+            current: Menu::Home(crate::app::menu::HomeSubMenu::Overview),
             // Liquid panels always available (use LiquidBackend, not Vault wallet)
             global_home: if let Some(w) = &wallet {
                 GlobalHome::new(
@@ -256,13 +244,7 @@ impl Panels {
         let liquid_backend = Arc::new(LiquidBackend::new(breez_client.clone()));
 
         Self {
-            current: Menu::Home,
-            vault_expanded: false,
-            spark_expanded: false,
-            liquid_expanded: false,
-            marketplace_expanded: false,
-            marketplace_p2p_expanded: false,
-            connect_expanded: false,
+            current: Menu::Home(crate::app::menu::HomeSubMenu::Overview),
             global_home: GlobalHome::new(
                 wallet.clone(),
                 liquid_backend.clone(),
@@ -471,7 +453,10 @@ impl Panels {
 
     fn current(&self) -> Option<&dyn State> {
         match &self.current {
-            Menu::Home => Some(&self.global_home),
+            Menu::Home(crate::app::menu::HomeSubMenu::Overview) => Some(&self.global_home),
+            Menu::Home(crate::app::menu::HomeSubMenu::Settings(_)) => {
+                Some(&self.global_settings as &dyn State)
+            }
             Menu::Liquid(submenu) => match submenu {
                 crate::app::menu::LiquidSubMenu::Overview => Some(&self.liquid_overview),
                 crate::app::menu::LiquidSubMenu::Send => Some(&self.liquid_send),
@@ -528,13 +513,15 @@ impl Panels {
                 self.p2p.as_ref().map(|v| v as &dyn State)
             }
             Menu::Connect(_) => Some(&self.connect as &dyn State),
-            Menu::Settings(_) => Some(&self.global_settings as &dyn State),
         }
     }
 
     fn current_mut(&mut self) -> Option<&mut dyn State> {
         match &self.current {
-            Menu::Home => Some(&mut self.global_home),
+            Menu::Home(crate::app::menu::HomeSubMenu::Overview) => Some(&mut self.global_home),
+            Menu::Home(crate::app::menu::HomeSubMenu::Settings(_)) => {
+                Some(&mut self.global_settings as &mut dyn State)
+            }
             Menu::Liquid(submenu) => match submenu {
                 crate::app::menu::LiquidSubMenu::Overview => Some(&mut self.liquid_overview),
                 crate::app::menu::LiquidSubMenu::Send => Some(&mut self.liquid_send),
@@ -594,7 +581,6 @@ impl Panels {
                 self.p2p.as_mut().map(|v| v as &mut dyn State)
             }
             Menu::Connect(_) => Some(&mut self.connect as &mut dyn State),
-            Menu::Settings(_) => Some(&mut self.global_settings as &mut dyn State),
         }
     }
 
@@ -604,9 +590,9 @@ impl Panels {
     /// already sends a separate RefreshLiquidBalance message).
     fn active_liquid_refresh(&self, exclude_home: bool) -> Option<Message> {
         match &self.current {
-            Menu::Home if !exclude_home => Some(Message::View(view::Message::Home(
-                view::HomeMessage::RefreshLiquidBalance,
-            ))),
+            Menu::Home(crate::app::menu::HomeSubMenu::Overview) if !exclude_home => Some(
+                Message::View(view::Message::Home(view::HomeMessage::RefreshLiquidBalance)),
+            ),
             Menu::Liquid(sub) => match sub {
                 crate::app::menu::LiquidSubMenu::Overview => Some(Message::View(
                     view::Message::LiquidOverview(view::LiquidOverviewMessage::RefreshRequested),
@@ -979,6 +965,30 @@ impl App {
         }
 
         match &menu {
+            // Cube → Settings → {General/Lightning/About}: auto-dispatch the
+            // matching sub-section so the inner SettingsState installs the
+            // right child panel. The third rail visible alongside drives this
+            // and highlights the active option.
+            menu::Menu::Home(menu::HomeSubMenu::Settings(option)) => {
+                let section_msg = match option {
+                    menu::HomeSettingsOption::General => view::SettingsMessage::GeneralSection,
+                    menu::HomeSettingsOption::Lightning => view::SettingsMessage::LightningSection,
+                    menu::HomeSettingsOption::About => view::SettingsMessage::AboutSection,
+                    menu::HomeSettingsOption::Stats => view::SettingsMessage::InstallStatsSection,
+                };
+                self.panels.current = menu.clone();
+                // Fire even if daemon is None — the inner settings
+                // panels don't require daemon for construction; they
+                // just pass it through to their own reload().
+                if let Some(panel) = self.panels.current_mut() {
+                    return panel.update(
+                        self.daemon.clone(),
+                        &self.cache,
+                        Message::View(view::Message::Settings(section_msg)),
+                    );
+                }
+                return Task::none();
+            }
             menu::Menu::Vault(submenu) => {
                 // Only process vault menu if we have a wallet
                 if let Some(wallet) = &self.wallet {
@@ -1025,6 +1035,12 @@ impl App {
                                         Message::View(view::Message::Settings(match setting {
                                             menu::SettingsOption::Node => {
                                                 view::SettingsMessage::EditBitcoindSettings
+                                            }
+                                            menu::SettingsOption::Wallet => {
+                                                view::SettingsMessage::EditWalletSettings
+                                            }
+                                            menu::SettingsOption::ImportExport => {
+                                                view::SettingsMessage::ImportExportSection
                                             }
                                         })),
                                     );
@@ -1738,7 +1754,24 @@ impl App {
                 }
             },
             Message::CacheUpdated => {
-                // Update vault panels with cache if they exist
+                // Cube (Home) Settings lives on every cube, vault or not,
+                // so its cache update must fire independently of the
+                // vault-panel branch below. Vault Settings and Cube
+                // Settings are distinct panels backed by separate state —
+                // each panel's "am I current?" flag only matches the one
+                // it actually owns.
+                let is_global_settings_current = matches!(
+                    &self.panels.current,
+                    Menu::Home(crate::app::menu::HomeSubMenu::Settings(_))
+                );
+                let mut commands = vec![self.panels.global_settings.update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    Message::UpdatePanelCache(is_global_settings_current),
+                )];
+
+                // Vault-specific panels only exist on cubes with a
+                // configured vault.
                 if let (Some(daemon), Some(vault_overview), Some(vault_settings)) = (
                     &self.daemon,
                     self.panels.vault_overview.as_mut(),
@@ -1748,29 +1781,25 @@ impl App {
                     let current = &self.panels.current;
                     let cache = self.cache.clone();
 
-                    let is_settings_current = matches!(
+                    let is_vault_settings_current = matches!(
                         current,
-                        Menu::Settings(_)
-                            | Menu::Vault(crate::app::menu::VaultSubMenu::Settings(_))
+                        Menu::Vault(crate::app::menu::VaultSubMenu::Settings(_))
                     );
-
                     let is_spend_current =
                         matches!(current, Menu::Vault(crate::app::menu::VaultSubMenu::Send));
 
-                    let mut commands = vec![
-                        vault_overview.update(
-                            Some(daemon.clone()),
-                            &cache,
-                            Message::UpdatePanelCache(
-                                current == &Menu::Vault(crate::app::menu::VaultSubMenu::Overview),
-                            ),
+                    commands.push(vault_overview.update(
+                        Some(daemon.clone()),
+                        &cache,
+                        Message::UpdatePanelCache(
+                            current == &Menu::Vault(crate::app::menu::VaultSubMenu::Overview),
                         ),
-                        vault_settings.update(
-                            Some(daemon.clone()),
-                            &cache,
-                            Message::UpdatePanelCache(is_settings_current),
-                        ),
-                    ];
+                    ));
+                    commands.push(vault_settings.update(
+                        Some(daemon.clone()),
+                        &cache,
+                        Message::UpdatePanelCache(is_vault_settings_current),
+                    ));
 
                     // Also update create_spend panel if it exists
                     if let Some(create_spend) = self.panels.create_spend.as_mut() {
@@ -1780,9 +1809,9 @@ impl App {
                             Message::UpdatePanelCache(is_spend_current),
                         ));
                     }
-
-                    return Task::batch(commands);
                 }
+
+                return Task::batch(commands);
             }
             Message::LoadDaemonConfig(cfg) => {
                 // Only load daemon config if we have a vault (daemon and wallet exist)
@@ -1842,110 +1871,17 @@ impl App {
                 }
             }
             Message::View(view::Message::Menu(menu)) => {
-                if let Some(panel) = self.panels.current_mut() {
-                    return Task::batch([panel.close(), self.set_current_panel(menu)]);
-                }
-            }
-            Message::View(view::Message::ToggleVault) => {
-                self.panels.vault_expanded = !self.panels.vault_expanded;
-                self.cache.vault_expanded = self.panels.vault_expanded;
-
-                if self.panels.vault_expanded {
-                    self.panels.spark_expanded = false;
-                    self.cache.spark_expanded = false;
-                    self.panels.liquid_expanded = false;
-                    self.cache.liquid_expanded = false;
-                    self.panels.connect_expanded = false;
-                    self.cache.connect_expanded = false;
-                    self.panels.marketplace_expanded = false;
-                    self.cache.marketplace_expanded = false;
-                    self.panels.marketplace_p2p_expanded = false;
-                    self.cache.marketplace_p2p_expanded = false;
-                }
-            }
-            Message::View(view::Message::ToggleSpark) => {
-                self.panels.spark_expanded = !self.panels.spark_expanded;
-                self.cache.spark_expanded = self.panels.spark_expanded;
-
-                if self.panels.spark_expanded {
-                    self.panels.vault_expanded = false;
-                    self.cache.vault_expanded = false;
-                    self.panels.liquid_expanded = false;
-                    self.cache.liquid_expanded = false;
-                    self.panels.connect_expanded = false;
-                    self.cache.connect_expanded = false;
-                    self.panels.marketplace_expanded = false;
-                    self.cache.marketplace_expanded = false;
-                    self.panels.marketplace_p2p_expanded = false;
-                    self.cache.marketplace_p2p_expanded = false;
-                }
-            }
-            Message::View(view::Message::ToggleLiquid) => {
-                self.panels.liquid_expanded = !self.panels.liquid_expanded;
-                self.cache.liquid_expanded = self.panels.liquid_expanded;
-
-                if self.panels.liquid_expanded {
-                    self.panels.vault_expanded = false;
-                    self.cache.vault_expanded = false;
-                    self.panels.spark_expanded = false;
-                    self.cache.spark_expanded = false;
-                    self.panels.connect_expanded = false;
-                    self.cache.connect_expanded = false;
-                    self.panels.marketplace_expanded = false;
-                    self.cache.marketplace_expanded = false;
-                    self.panels.marketplace_p2p_expanded = false;
-                    self.cache.marketplace_p2p_expanded = false;
-                }
-            }
-            Message::View(view::Message::ToggleMarketplace) => {
-                self.panels.marketplace_expanded = !self.panels.marketplace_expanded;
-                self.cache.marketplace_expanded = self.panels.marketplace_expanded;
-
-                if self.panels.marketplace_expanded {
-                    self.panels.vault_expanded = false;
-                    self.cache.vault_expanded = false;
-                    self.panels.spark_expanded = false;
-                    self.cache.spark_expanded = false;
-                    self.panels.liquid_expanded = false;
-                    self.cache.liquid_expanded = false;
-                    self.panels.connect_expanded = false;
-                    self.cache.connect_expanded = false;
-                } else {
-                    // Collapsing Marketplace also collapses nested P2P
-                    self.panels.marketplace_p2p_expanded = false;
-                    self.cache.marketplace_p2p_expanded = false;
-                }
-            }
-            Message::View(view::Message::ToggleMarketplaceP2P) => {
-                self.panels.marketplace_p2p_expanded = !self.panels.marketplace_p2p_expanded;
-                self.cache.marketplace_p2p_expanded = self.panels.marketplace_p2p_expanded;
-            }
-            Message::View(view::Message::ToggleConnect) => {
-                self.panels.connect_expanded = !self.panels.connect_expanded;
-                self.cache.connect_expanded = self.panels.connect_expanded;
-                if self.panels.connect_expanded {
-                    self.panels.vault_expanded = false;
-                    self.cache.vault_expanded = false;
-                    self.panels.spark_expanded = false;
-                    self.cache.spark_expanded = false;
-                    self.panels.liquid_expanded = false;
-                    self.cache.liquid_expanded = false;
-                    self.panels.marketplace_expanded = false;
-                    self.cache.marketplace_expanded = false;
-                    self.panels.marketplace_p2p_expanded = false;
-                    self.cache.marketplace_p2p_expanded = false;
-                }
-                // When expanding, navigate to the Connect panel unless already
-                // on a Connect sub-page while authenticated.
-                let already_on_connect = self.cache.connect_authenticated
-                    && matches!(self.panels.current, Menu::Connect(_));
-                if self.panels.connect_expanded && !already_on_connect {
-                    let menu = Menu::Connect(crate::app::menu::ConnectSubMenu::LightningAddress);
-                    if let Some(panel) = self.panels.current_mut() {
-                        return Task::batch([panel.close(), self.set_current_panel(menu)]);
-                    }
-                    return self.set_current_panel(menu);
-                }
+                // Always honor the navigation even when the current
+                // panel has no instance (e.g. the user landed on an
+                // orphan route like Marketplace(BuySell) with no vault).
+                // Otherwise rail clicks get silently dropped and the
+                // user is trapped on whichever screen is rendering.
+                let close_task = self
+                    .panels
+                    .current_mut()
+                    .map(|p| p.close())
+                    .unwrap_or_else(Task::none);
+                return Task::batch([close_task, self.set_current_panel(menu)]);
             }
             msg @ Message::View(view::Message::ConnectAccount(_))
             | msg @ Message::View(view::Message::ConnectCube(_)) => {

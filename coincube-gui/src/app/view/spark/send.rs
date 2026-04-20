@@ -8,8 +8,9 @@
 
 use coincube_ui::{
     component::{
+        amount::BitcoinDisplayUnit,
         button,
-        text::{h2, h4_bold, p1_regular, p2_regular},
+        text::{h4_bold, p1_regular, p2_regular},
     },
     theme,
     widget::{Column, Container, Element, Row},
@@ -20,7 +21,8 @@ use iced::{
 };
 
 use crate::app::state::spark::send::SparkSendPhase;
-use crate::app::view::Message;
+use crate::app::view::spark::{last_tx::last_transactions_section, SparkRecentTransaction};
+use crate::app::view::{Message, SparkSendMessage};
 
 pub struct SparkSendView<'a> {
     pub backend_available: bool,
@@ -31,16 +33,16 @@ pub struct SparkSendView<'a> {
     pub sent_celebration_context: &'a str,
     pub sent_quote: &'a coincube_ui::component::quote_display::Quote,
     pub sent_image_handle: &'a iced::widget::image::Handle,
+    pub recent_transactions: &'a [SparkRecentTransaction],
+    pub bitcoin_unit: BitcoinDisplayUnit,
+    pub show_direction_badges: bool,
 }
 
 impl<'a> SparkSendView<'a> {
     pub fn render(self) -> Element<'a, Message> {
-        let heading = Container::new(h2("Spark — Send"));
-
         if !self.backend_available {
             return Column::new()
                 .spacing(20)
-                .push(heading)
                 .push(p1_regular(
                     "Spark is not available for this cube. Set up a Spark \
                      signer to send payments.",
@@ -59,7 +61,7 @@ impl<'a> SparkSendView<'a> {
             );
         }
 
-        let mut content = Column::new().spacing(20).push(heading);
+        let mut content = Column::new().spacing(20);
 
         // ── Input card ────────────────────────────────────────────────
         let destination = text_input(
@@ -95,6 +97,15 @@ impl<'a> SparkSendView<'a> {
 
         // ── Phase-specific body ───────────────────────────────────────
         content = content.push(phase_body(self.phase));
+
+        // ── Last transactions ─────────────────────────────────────────
+        content = content.push(last_transactions_section(
+            self.recent_transactions,
+            self.bitcoin_unit,
+            self.show_direction_badges,
+            |idx| Message::SparkSend(SparkSendMessage::SelectTransaction(idx)),
+            Message::SparkSend(SparkSendMessage::History),
+        ));
 
         content.into()
     }

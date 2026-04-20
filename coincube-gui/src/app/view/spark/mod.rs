@@ -7,6 +7,7 @@
 //! picker, diagnostics). [`SparkPlaceholderView`] is kept around
 //! as a generic "coming soon" slot for future panels.
 
+pub mod last_tx;
 pub mod overview;
 pub mod receive;
 pub mod send;
@@ -96,6 +97,15 @@ pub enum SparkSendMessage {
     /// prepared/sent state. Fired from the "Send another" / "Try
     /// again" / "Cancel" buttons.
     Reset,
+    /// A `list_payments` RPC completed — used to populate the Last
+    /// Transactions section under the Send form.
+    PaymentsLoaded(Vec<coincube_spark_protocol::PaymentSummary>),
+    /// A `list_payments` RPC failed — silently clears the list.
+    PaymentsFailed(String),
+    /// User tapped a row in Last Transactions.
+    SelectTransaction(usize),
+    /// User tapped "View All Transactions".
+    History,
 }
 
 /// View-level messages for the Phase 4c Spark Receive panel.
@@ -143,4 +153,13 @@ pub enum SparkReceiveMessage {
     /// `DepositsChanged` event. The panel re-fetches the list.
     DepositsChanged,
     Reset,
+    /// A `list_payments` RPC completed — used to populate the Last
+    /// Transactions section under the Receive form.
+    PaymentsLoaded(Vec<coincube_spark_protocol::PaymentSummary>),
+    /// A `list_payments` RPC failed — silently clears the list.
+    PaymentsFailed(String),
+    /// User tapped a row in Last Transactions.
+    SelectTransaction(usize),
+    /// User tapped "View All Transactions".
+    History,
 }

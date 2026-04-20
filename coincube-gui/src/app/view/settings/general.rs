@@ -1,8 +1,8 @@
 use iced::widget::{pick_list, Column, Row, Space, Toggler};
 use iced::{Alignment, Length};
 
-use coincube_ui::component::card;
 use coincube_ui::component::text::*;
+use coincube_ui::component::{button, card};
 use coincube_ui::theme;
 use coincube_ui::widget::{ColumnExt, Element};
 
@@ -84,15 +84,10 @@ fn backup_master_seed_card<'a>(backed_up: bool) -> Element<'a, Message> {
                     .push(text(subtitle).size(14)),
             )
             .push(
-                iced::widget::Button::new(
-                    text(button_label)
-                        .bold()
-                        .shaping(iced::advanced::text::Shaping::Advanced),
-                )
-                .padding([8, 16])
-                .width(Length::Fixed(160.0))
-                .style(theme::button::secondary)
-                .on_press(SettingsMessage::BackupMasterSeed(BackupWalletMessage::Start).into()),
+                button::secondary(None, button_label)
+                    .padding([8, 16])
+                    .width(Length::Fixed(160.0))
+                    .on_press(SettingsMessage::BackupMasterSeed(BackupWalletMessage::Start).into()),
             ),
     )
     .width(Length::Fill)

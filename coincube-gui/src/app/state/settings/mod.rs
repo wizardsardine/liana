@@ -130,7 +130,11 @@ impl State for SettingsState {
         if let Some(setting) = &self.setting {
             setting.view(menu, cache)
         } else {
-            crate::app::view::settings::list(menu, cache)
+            // No setting installed yet — the tertiary rail's click would
+            // normally auto-dispatch the matching section. Render the
+            // dashboard frame only so the rails stay visible while we
+            // (effectively) wait a frame for that dispatch.
+            crate::app::view::dashboard(menu, cache, iced::widget::Space::new())
         }
     }
 

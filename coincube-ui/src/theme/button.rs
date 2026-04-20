@@ -161,6 +161,26 @@ pub fn tab(theme: &Theme, status: Status) -> Style {
     style
 }
 
+/// Inactive primary-rail item. Square corners, no border, transparent
+/// background with the standard menu text color — hover darkens the
+/// background to the content-area tone to give click feedback.
+pub fn rail(theme: &Theme, status: Status) -> Style {
+    let mut style = button(&theme.colors.buttons.menu, status);
+    style.border.radius = 0.0.into();
+    style.border.width = 0.0;
+    style
+}
+
+/// Active primary-rail item. Same square corners as `rail` but forced
+/// into the pressed state so the active section reads as "selected"
+/// even when not hovered.
+pub fn rail_active(theme: &Theme, _status: Status) -> Style {
+    let mut style = button(&theme.colors.buttons.menu, Status::Pressed);
+    style.border.radius = 0.0.into();
+    style.border.width = 0.0;
+    style
+}
+
 pub fn tab_liquid(theme: &Theme, _status: Status) -> Style {
     tab(theme, Status::Pressed)
 }

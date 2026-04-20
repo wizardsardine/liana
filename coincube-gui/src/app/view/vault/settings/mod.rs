@@ -20,7 +20,7 @@ use coincubed::config::BitcoindRpcAuth;
 use super::super::{dashboard, message::*};
 
 use coincube_ui::{
-    component::{badge, button, card, form, separation, text::*, tooltip::tooltip},
+    component::{badge, button, card, form, separation, text::*},
     icon,
     theme::{self},
     widget::{Button, Container, Element, ProgressBar, Row, TextInput},
@@ -41,47 +41,12 @@ use crate::{
     },
 };
 
-fn header<'a>(title: &'a str, msg: SettingsMessage) -> Row<'a, Message> {
-    Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(
-            Button::new(text("Settings").size(30).bold())
-                .style(theme::button::transparent)
-                .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Settings(None)))),
-        )
-        .push(icon::chevron_right().size(30))
-        .push(
-            Button::new(text(title).size(30).bold())
-                .style(theme::button::transparent)
-                .on_press(Message::Settings(msg)),
-        )
-}
-
-fn settings_section<'a>(
-    title: &'a str,
-    tool_tip: Option<&'static str>,
-    icon: coincube_ui::widget::Text<'static>,
-    msg: Message,
-) -> Container<'a, Message> {
-    let tt = tool_tip.map(tooltip);
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(badge::badge(icon))
-                .push(text(title).bold())
-                .push(tt)
-                .padding(10)
-                .spacing(20)
-                .align_y(Alignment::Center)
-                .width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .style(theme::button::transparent_border)
-        .on_press(msg),
-    )
-    .width(Length::Fill)
-    .style(theme::card::simple)
+fn header<'a>(title: &'a str, _msg: SettingsMessage) -> Row<'a, Message> {
+    // Matches the plain `h3` heading style used on the Home / Wallets
+    // page so Vault Settings sub-pages don't pick up extra button
+    // padding. The tertiary rail already surfaces the active sub-page,
+    // so no breadcrumb is rendered here.
+    Row::new().push(h3(title).bold())
 }
 
 fn export_section<'a>(
@@ -112,38 +77,20 @@ fn export_section<'a>(
     .style(theme::card::simple)
 }
 
-pub fn list<'a>(menu: &'a Menu, cache: &'a Cache, is_remote_backend: bool) -> Element<'a, Message> {
+pub fn list<'a>(
+    menu: &'a Menu,
+    cache: &'a Cache,
+    _is_remote_backend: bool,
+) -> Element<'a, Message> {
+    // Landing fallback — normally users enter via the tertiary rail and
+    // land on a specific sub-page directly (Node / Wallet / Import-Export /
+    // About), so this view shouldn't be hit in practice. Left here as a
+    // defensive fallback for Settings(None) + no inner `self.setting` state.
     let header = Button::new(text("Settings").size(30).bold())
         .style(theme::button::transparent)
-        .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Settings(None))));
-
-    let node = settings_section(
-        "Node",
-        None,
-        icon::bitcoin_icon(),
-        Message::Settings(SettingsMessage::EditBitcoindSettings),
-    );
-
-    let backend = settings_section(
-        "Backend",
-        None,
-        icon::bitcoin_icon(),
-        Message::Settings(SettingsMessage::EditRemoteBackendSettings),
-    );
-
-    let wallet = settings_section(
-        "Wallet",
-        None,
-        icon::wallet_icon(),
-        Message::Settings(SettingsMessage::EditWalletSettings),
-    );
-
-    let import_export = settings_section(
-        "Import/Export",
-        None,
-        icon::wallet_icon(),
-        Message::Settings(SettingsMessage::ImportExportSection),
-    );
+        .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Settings(Some(
+            crate::app::menu::SettingsOption::Node,
+        )))));
 
     dashboard(
         menu,
@@ -152,9 +99,7 @@ pub fn list<'a>(menu: &'a Menu, cache: &'a Cache, is_remote_backend: bool) -> El
             .spacing(20)
             .width(Length::Fill)
             .push(header)
-            .push(if !is_remote_backend { node } else { backend })
-            .push(wallet)
-            .push(import_export),
+            .push(p1_regular("Pick a settings category from the left.")),
     )
 }
 
@@ -261,49 +206,6 @@ pub fn import_export<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Messag
             .push(export_labels)
             .push(export_transactions)
             .push(export_descriptor)
-            .width(Length::Fill),
-    )
-}
-
-pub fn about_section<'a>(
-    menu: &'a Menu,
-    cache: &'a Cache,
-    coincubed_version: Option<&String>,
-) -> Element<'a, Message> {
-    let header = header("About", SettingsMessage::AboutSection);
-
-    let content = card::simple(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(badge::badge(icon::tooltip_icon()))
-                    .push(text("Version").bold())
-                    .padding(10)
-                    .spacing(20)
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill),
-            )
-            .push(separation().width(Length::Fill))
-            .push(Space::new().height(Length::Fixed(10.0)))
-            .push(
-                Row::new().push(Space::new().width(Length::Fill)).push(
-                    Column::new()
-                        .push(text(format!("coincube-gui v{}", crate::VERSION)))
-                        .push(
-                            coincubed_version
-                                .map(|version| text(format!("coincubed v{}", version))),
-                        ),
-                ),
-            ),
-    );
-
-    dashboard(
-        menu,
-        cache,
-        Column::new()
-            .spacing(20)
-            .push(header)
-            .push(content)
             .width(Length::Fill),
     )
 }

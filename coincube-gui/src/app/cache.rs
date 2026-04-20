@@ -35,18 +35,6 @@ pub struct Cache {
     pub fiat_price: Option<FiatPrice>,
     /// Bitcoin display unit preference (BTC or Sats)
     pub bitcoin_unit: BitcoinDisplayUnit,
-    /// UI state: whether the Vault submenu is expanded
-    pub vault_expanded: bool,
-    /// UI state: whether the Spark submenu is expanded
-    pub spark_expanded: bool,
-    /// UI state: whether the Liquid submenu is expanded
-    pub liquid_expanded: bool,
-    /// UI state: whether the Marketplace submenu is expanded
-    pub marketplace_expanded: bool,
-    /// UI state: whether the P2P sub-accordion within Marketplace is expanded
-    pub marketplace_p2p_expanded: bool,
-    /// UI state: whether the Connect submenu is expanded
-    pub connect_expanded: bool,
     /// Whether the Connect user is authenticated (Dashboard step reached)
     pub connect_authenticated: bool,
     /// Whether this cube has a vault wallet configured
@@ -105,12 +93,6 @@ impl std::default::Default for Cache {
             daemon_cache: DaemonCache::default(),
             fiat_price: None,
             bitcoin_unit: BitcoinDisplayUnit::default(),
-            vault_expanded: true,
-            spark_expanded: false,
-            liquid_expanded: false,
-            marketplace_expanded: false,
-            marketplace_p2p_expanded: false,
-            connect_expanded: false,
             connect_authenticated: false,
             has_vault: false,
             cube_name: String::new(),

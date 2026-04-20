@@ -278,6 +278,7 @@ pub fn liquid_send_view<'a>(
                 .height(Length::Fixed(160.0))
                 .style(theme::card::simple),
         )
+        .padding(0)
         .on_press(LiquidSendMessage::OpenSendPicker)
         .style(|_: &theme::Theme, status| iced_button::Style {
             background: Some(Background::Color(color::TRANSPARENT)),
@@ -362,6 +363,7 @@ pub fn liquid_send_view<'a>(
                 .height(Length::Fixed(160.0))
                 .style(theme::card::simple),
         )
+        .padding(0)
         .on_press(LiquidSendMessage::OpenReceivePicker)
         .style(|_: &theme::Theme, status| iced_button::Style {
             background: Some(Background::Color(color::TRANSPARENT)),
@@ -413,45 +415,46 @@ pub fn liquid_send_view<'a>(
         input.valid && !input.value.trim().is_empty() && input_type.is_some()
     };
 
-    let input_section = Column::new()
-        .spacing(12)
-        .width(Length::Fill)
-        .push(
-            text("RECEIVING ADDRESS")
-                .size(P2_SIZE)
-                .style(theme::text::secondary),
-        )
-        .push(
-            Row::new()
-                .spacing(10)
-                .align_y(Alignment::Center)
-                .push(
-                    form::Form::new(hint_text, input, LiquidSendMessage::InputEdited)
-                        .size(16)
-                        .padding(15),
-                )
-                .push(
-                    Container::new(
-                        iced::widget::button(
-                            Container::new(icon::arrow_right())
-                                .width(Length::Fill)
-                                .height(Length::Fill)
-                                .align_x(Alignment::Center)
-                                .align_y(Alignment::Center),
-                        )
-                        .on_press_maybe(if can_proceed {
-                            Some(LiquidSendMessage::Send)
-                        } else {
-                            None
-                        })
-                        .width(Length::Fixed(50.0))
-                        .height(Length::Fixed(50.0))
-                        .style(theme::button::primary),
+    let input_section = Container::new(
+        Column::new()
+            .spacing(12)
+            .width(Length::Fill)
+            .push(h4_bold("Receiving address"))
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .push(
+                        form::Form::new(hint_text, input, LiquidSendMessage::InputEdited)
+                            .size(16)
+                            .padding(15),
                     )
-                    .width(Length::Fixed(50.0))
-                    .height(Length::Fixed(50.0)),
-                ),
-        );
+                    .push(
+                        Container::new(
+                            iced::widget::button(
+                                Container::new(icon::arrow_right())
+                                    .width(Length::Fill)
+                                    .height(Length::Fill)
+                                    .align_x(Alignment::Center)
+                                    .align_y(Alignment::Center),
+                            )
+                            .on_press_maybe(if can_proceed {
+                                Some(LiquidSendMessage::Send)
+                            } else {
+                                None
+                            })
+                            .width(Length::Fixed(50.0))
+                            .height(Length::Fixed(50.0))
+                            .style(theme::button::primary),
+                        )
+                        .width(Length::Fixed(50.0))
+                        .height(Length::Fixed(50.0)),
+                    ),
+            ),
+    )
+    .padding(16)
+    .width(Length::Fill)
+    .style(theme::card::simple);
 
     content = content.push(input_section);
 
@@ -546,7 +549,7 @@ pub fn liquid_send_view<'a>(
             content = content.push(item.view(LiquidSendMessage::SelectTransaction(idx)));
         }
     } else {
-        content = content.push(empty_tx_placeholder(
+        content = content.push(coincube_ui::component::empty_placeholder(
             receipt_icon().size(80),
             "No transactions yet",
             "Your transaction history will appear here once you send or receive coins.",
@@ -1786,38 +1789,6 @@ pub fn final_check_page<'a>(
                 .align_x(Alignment::Center),
         )
         .width(Length::Fill)
-        .into()
-}
-
-pub fn empty_tx_placeholder<'a, T: Into<Element<'a, LiquidSendMessage>>>(
-    icon: T,
-    title: &'a str,
-    subtitle: &'a str,
-) -> Element<'a, LiquidSendMessage> {
-    let content = Column::new()
-        .push(icon)
-        .push(text(title).style(theme::text::secondary).bold())
-        .push(
-            text(subtitle)
-                .size(P2_SIZE)
-                .style(theme::text::secondary)
-                .align_x(Alignment::Center),
-        )
-        .spacing(16)
-        .align_x(Alignment::Center);
-
-    Container::new(content)
-        .width(Length::Fill)
-        .padding(60)
-        .center_x(Length::Fill)
-        .style(|t| container::Style {
-            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-            border: iced::Border {
-                radius: 20.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
         .into()
 }
 
