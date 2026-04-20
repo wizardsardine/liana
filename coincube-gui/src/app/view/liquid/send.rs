@@ -10,7 +10,7 @@ use coincube_ui::{
     },
     icon::{self, receipt_icon},
     theme,
-    widget::*,
+    widget::Element,
 };
 use iced::{
     widget::{button as iced_button, container, Column, Container, Row, Space},

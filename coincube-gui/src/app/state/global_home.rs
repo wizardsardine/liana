@@ -236,6 +236,13 @@ pub struct GlobalHome {
     /// indicator so a failed swap doesn't leave the badge stuck (no Spark
     /// deposit arrives in that case, so `SparkDepositsChanged` never fires).
     pending_spark_incoming_swap_id: Option<String>,
+    /// Set once `SparkDepositsLoaded` has observed a non-empty deposit list
+    /// while our LiquidToSpark transfer is pending. Required before we
+    /// accept an empty-list signal as "our deposit was claimed" — otherwise
+    /// an unrelated `SparkDepositsChanged` firing while our Bitcoin tx is
+    /// still in-flight would clear the badge prematurely. Reset alongside
+    /// `pending_spark_incoming` so each new transfer starts fresh.
+    pending_spark_deposit_seen: bool,
     /// Prepared Spark send handle, populated on step 1→2 for Spark-sourced
     /// transfers (SparkToVault, SparkToLiquid). Consumed by `ConfirmSparkSend`.
     spark_send_handle: Option<String>,
@@ -299,6 +306,7 @@ impl GlobalHome {
             pending_vault_receive_baseline_sats: 0,
             pending_spark_incoming: None,
             pending_spark_incoming_swap_id: None,
+            pending_spark_deposit_seen: false,
             spark_send_handle: None,
             spark_send_fee_sat: None,
             auto_claiming_spark_deposit: None,
@@ -354,6 +362,7 @@ impl GlobalHome {
             pending_vault_receive_baseline_sats: 0,
             pending_spark_incoming: None,
             pending_spark_incoming_swap_id: None,
+            pending_spark_deposit_seen: false,
             spark_send_handle: None,
             spark_send_fee_sat: None,
             auto_claiming_spark_deposit: None,
@@ -924,9 +933,21 @@ impl State for GlobalHome {
                         // Spark-sourced confirm: broadcast the prepared send. The
                         // destination address + prepare handle were populated at
                         // step 1→2 (see `SparkPrepareSendReady`).
-                        let (Some(spark), Some(handle)) =
-                            (self.spark_backend.clone(), self.spark_send_handle.clone())
-                        else {
+                        let Some(spark) = self.spark_backend.clone() else {
+                            return Task::done(Message::View(view::Message::Home(
+                                HomeMessage::Error(
+                                    "No prepared Spark send — retry from amount step".to_string(),
+                                ),
+                            )));
+                        };
+                        // Single-use handle: take it out of state before
+                        // spawning the task so a retry click after a failed
+                        // `send_payment` can't re-submit a handle the Spark
+                        // backend has already consumed. Forces re-prepare from
+                        // the amount step on failure; on success
+                        // `TransferBroadcast` is the path that would have
+                        // otherwise cleared it.
+                        let Some(handle) = self.spark_send_handle.take() else {
                             return Task::done(Message::View(view::Message::Home(
                                 HomeMessage::Error(
                                     "No prepared Spark send — retry from amount step".to_string(),
@@ -1010,6 +1031,9 @@ impl State for GlobalHome {
                                 // a Breez swap_id, so we leave the tracker cleared
                                 // and rely on `SparkDepositsChanged` for them.
                                 self.pending_spark_incoming_swap_id = swap_id;
+                                // Fresh transfer — we haven't observed the new
+                                // deposit in Spark's unclaimed list yet.
+                                self.pending_spark_deposit_seen = false;
                             }
                         }
                         self.current_view.next();
@@ -1380,13 +1404,24 @@ impl State for GlobalHome {
                                                 },
                                                 move |result| match result {
                                                     Ok(()) => match to_kind {
-                                                        // Vault→Liquid keeps the existing
-                                                        // TransferSuccessful message (which
-                                                        // bumps `pending_liquid_receive_sats`
-                                                        // via the Breez swap-completed path).
+                                                        // Vault→Liquid: route through
+                                                        // `TransferBroadcast` so the Liquid
+                                                        // card's pending-receive counter
+                                                        // gets bumped at broadcast time.
+                                                        // `LiquidPeginCompleted` decrements
+                                                        // it once Breez finishes the
+                                                        // peg-in swap. The PSBT is paying
+                                                        // a Breez peg-in deposit address;
+                                                        // we don't track a swap_id here
+                                                        // because Breez correlates by
+                                                        // tx-output, not by GUI state.
                                                         WalletKind::Liquid => {
                                                             Message::View(view::Message::Home(
-                                                                HomeMessage::TransferSuccessful,
+                                                                HomeMessage::TransferBroadcast {
+                                                                    amount_sat,
+                                                                    destination_kind: to_kind,
+                                                                    swap_id: None,
+                                                                },
                                                             ))
                                                         }
                                                         // Vault→Spark: reuse the Spark-send
@@ -1483,32 +1518,51 @@ impl State for GlobalHome {
                         if self.pending_spark_incoming.is_none() {
                             return Task::none();
                         }
-                        // Empty list → whatever was pending got claimed (either by us
-                        // or by the user from the Spark Receive panel). Clear the
-                        // home-card indicator.
+                        // Empty list → whatever was pending got claimed (either by
+                        // us or by the user from the Spark Receive panel). For
+                        // LiquidToSpark (swap_id tracked) we additionally require
+                        // that we've previously observed our deposit in the list,
+                        // because the Bitcoin peg-out tx doesn't show up until it
+                        // lands on-chain: an unrelated `SparkDepositsChanged`
+                        // firing during that window would otherwise clear the
+                        // badge while the transfer is still in flight. For the
+                        // general case (Vault→Spark, Spark-internal) keep the
+                        // existing clear-on-empty behavior — a failure path would
+                        // never produce an empty list anyway.
                         if deposits.is_empty() {
+                            let is_liquid_to_spark = self.pending_spark_incoming_swap_id.is_some();
+                            if is_liquid_to_spark && !self.pending_spark_deposit_seen {
+                                return Task::none();
+                            }
                             self.pending_spark_incoming = None;
                             self.pending_spark_incoming_swap_id = None;
+                            self.pending_spark_deposit_seen = false;
                             self.auto_claiming_spark_deposit = None;
                             return Task::none();
                         }
-                        // Pick the first mature, error-free deposit we aren't already
-                        // claiming and auto-claim it. The bridge fires
-                        // `DepositsChanged` again on success, which re-enters this
-                        // handler and clears the indicator.
-                        let in_flight = self.auto_claiming_spark_deposit.clone();
-                        let candidate = deposits.iter().find(|d| {
-                            d.is_mature
-                                && d.claim_error.is_none()
-                                && in_flight.as_ref() != Some(&(d.txid.clone(), d.vout))
-                        });
-                        let Some(candidate) = candidate else {
-                            return Task::none();
-                        };
-                        // Don't clobber an in-flight claim for a different deposit.
+                        // We've now observed at least one deposit in the list
+                        // while our transfer is pending — remember this so a
+                        // later empty list can be interpreted as "claimed"
+                        // rather than "never arrived" (see above).
+                        self.pending_spark_deposit_seen = true;
+                        // One auto-claim at a time: if a claim is in flight,
+                        // wait for its `DepositsChanged` follow-up before
+                        // picking the next candidate. This covers both the
+                        // "same deposit re-firing" and "different mature
+                        // deposit arrived" cases in one check.
                         if self.auto_claiming_spark_deposit.is_some() {
                             return Task::none();
                         }
+                        // Pick the first mature, error-free deposit and
+                        // auto-claim it. The bridge fires `DepositsChanged`
+                        // again on success, which re-enters this handler and
+                        // clears the indicator.
+                        let Some(candidate) = deposits
+                            .iter()
+                            .find(|d| d.is_mature && d.claim_error.is_none())
+                        else {
+                            return Task::none();
+                        };
                         let Some(spark) = self.spark_backend.clone() else {
                             return Task::none();
                         };
@@ -1675,6 +1729,7 @@ impl State for GlobalHome {
                         if self.is_matching_pending_spark_swap(swap_id.as_deref()) {
                             self.pending_spark_incoming = None;
                             self.pending_spark_incoming_swap_id = None;
+                            self.pending_spark_deposit_seen = false;
                             return Task::done(Message::View(view::Message::ShowError(
                                 "Liquid to Spark transfer failed. Please retry.".to_string(),
                             )));
@@ -1727,6 +1782,7 @@ impl State for GlobalHome {
                         {
                             self.pending_spark_incoming = None;
                             self.pending_spark_incoming_swap_id = None;
+                            self.pending_spark_deposit_seen = false;
                         }
                         Task::none()
                     }
