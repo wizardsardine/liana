@@ -590,11 +590,9 @@ impl Panels {
     /// already sends a separate RefreshLiquidBalance message).
     fn active_liquid_refresh(&self, exclude_home: bool) -> Option<Message> {
         match &self.current {
-            Menu::Home(crate::app::menu::HomeSubMenu::Overview) if !exclude_home => {
-                Some(Message::View(view::Message::Home(
-                    view::HomeMessage::RefreshLiquidBalance,
-                )))
-            }
+            Menu::Home(crate::app::menu::HomeSubMenu::Overview) if !exclude_home => Some(
+                Message::View(view::Message::Home(view::HomeMessage::RefreshLiquidBalance)),
+            ),
             Menu::Liquid(sub) => match sub {
                 crate::app::menu::LiquidSubMenu::Overview => Some(Message::View(
                     view::Message::LiquidOverview(view::LiquidOverviewMessage::RefreshRequested),

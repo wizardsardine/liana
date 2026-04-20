@@ -16,8 +16,10 @@ use coincube_ui::{
 };
 use iced::{
     widget::{button as iced_button, container, Column, Container, Row, Space},
-    Alignment, Background, Length,
+    Background, Length,
 };
+
+use coincube_ui::component::empty_placeholder;
 
 use crate::app::view::spark::{SparkPaymentMethod, SparkRecentTransaction};
 use crate::app::wallets::DomainPaymentStatus;
@@ -154,37 +156,5 @@ pub fn last_transactions_section<'a, M: 'a + Clone + 'static>(
                 .center_x(Length::Fill),
         )
         .push(Space::new().height(Length::Fixed(40.0)))
-        .into()
-}
-
-fn empty_placeholder<'a, M: 'a + 'static, T: Into<Element<'a, M>>>(
-    icon: T,
-    title: &'a str,
-    subtitle: &'a str,
-) -> Element<'a, M> {
-    let content = Column::new()
-        .push(icon)
-        .push(text(title).style(theme::text::secondary).bold())
-        .push(
-            text(subtitle)
-                .size(P2_SIZE)
-                .style(theme::text::secondary)
-                .align_x(Alignment::Center),
-        )
-        .spacing(16)
-        .align_x(Alignment::Center);
-
-    Container::new(content)
-        .width(Length::Fill)
-        .padding(60)
-        .center_x(Length::Fill)
-        .style(|t| container::Style {
-            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-            border: iced::Border {
-                radius: 20.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
         .into()
 }

@@ -1,8 +1,8 @@
 use iced::widget::{pick_list, Column, Row, Space, Toggler};
 use iced::{Alignment, Length};
 
-use coincube_ui::component::{button, card};
 use coincube_ui::component::text::*;
+use coincube_ui::component::{button, card};
 use coincube_ui::theme;
 use coincube_ui::widget::*;
 

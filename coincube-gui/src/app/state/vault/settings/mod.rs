@@ -331,7 +331,6 @@ impl From<ImportExportSettingsState> for Box<dyn State> {
     }
 }
 
-
 #[derive(Default)]
 pub struct BackendSettingsState {
     email_form: form::Value<String>,

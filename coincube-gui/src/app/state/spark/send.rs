@@ -364,21 +364,21 @@ async fn resolve_and_prepare(
     }
 }
 
-/// Fire a `list_payments` RPC on the bridge and translate the result
-/// into the appropriate `SparkSendMessage` variant.
+/// Panel-local thin wrapper around the shared
+/// [`super::fetch_payments_task`] helper — only the message variants
+/// differ between the Send and Receive panels.
 fn fetch_payments_task(backend: Option<Arc<SparkBackend>>) -> Task<Message> {
-    let Some(backend) = backend else {
-        return Task::none();
-    };
-    Task::perform(
-        async move { backend.list_payments(Some(20)).await },
-        |result| match result {
-            Ok(list) => Message::View(crate::app::view::Message::SparkSend(
-                crate::app::view::SparkSendMessage::PaymentsLoaded(list.payments),
-            )),
-            Err(e) => Message::View(crate::app::view::Message::SparkSend(
-                crate::app::view::SparkSendMessage::PaymentsFailed(e.to_string()),
-            )),
+    super::fetch_payments_task(
+        backend,
+        |payments| {
+            Message::View(crate::app::view::Message::SparkSend(
+                crate::app::view::SparkSendMessage::PaymentsLoaded(payments),
+            ))
+        },
+        |err| {
+            Message::View(crate::app::view::Message::SparkSend(
+                crate::app::view::SparkSendMessage::PaymentsFailed(err),
+            ))
         },
     )
 }

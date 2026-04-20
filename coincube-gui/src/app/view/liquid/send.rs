@@ -549,7 +549,7 @@ pub fn liquid_send_view<'a>(
             content = content.push(item.view(LiquidSendMessage::SelectTransaction(idx)));
         }
     } else {
-        content = content.push(empty_tx_placeholder(
+        content = content.push(coincube_ui::component::empty_placeholder(
             receipt_icon().size(80),
             "No transactions yet",
             "Your transaction history will appear here once you send or receive coins.",
@@ -1789,38 +1789,6 @@ pub fn final_check_page<'a>(
                 .align_x(Alignment::Center),
         )
         .width(Length::Fill)
-        .into()
-}
-
-pub fn empty_tx_placeholder<'a, T: Into<Element<'a, LiquidSendMessage>>>(
-    icon: T,
-    title: &'a str,
-    subtitle: &'a str,
-) -> Element<'a, LiquidSendMessage> {
-    let content = Column::new()
-        .push(icon)
-        .push(text(title).style(theme::text::secondary).bold())
-        .push(
-            text(subtitle)
-                .size(P2_SIZE)
-                .style(theme::text::secondary)
-                .align_x(Alignment::Center),
-        )
-        .spacing(16)
-        .align_x(Alignment::Center);
-
-    Container::new(content)
-        .width(Length::Fill)
-        .padding(60)
-        .center_x(Length::Fill)
-        .style(|t| container::Style {
-            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-            border: iced::Border {
-                radius: 20.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
         .into()
 }
 

@@ -210,7 +210,6 @@ pub fn import_export<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Messag
     )
 }
 
-
 pub fn remote_backend_section<'a>(
     menu: &'a Menu,
     cache: &'a Cache,

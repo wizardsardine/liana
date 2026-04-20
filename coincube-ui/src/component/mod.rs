@@ -130,6 +130,43 @@ pub fn sent_celebration_page<'a, M: Clone + 'a>(
         .into()
 }
 
+/// Empty-state placeholder card — centered icon + title + subtitle on a
+/// card background with rounded corners. Used by transaction lists
+/// across the Spark and Liquid wallets when the user has no payment
+/// history yet. Parameterized over the view's message type so the same
+/// helper serves panels that emit different message enums.
+pub fn empty_placeholder<'a, M: 'a + 'static, T: Into<Element<'a, M>>>(
+    icon: T,
+    title: &'a str,
+    subtitle: &'a str,
+) -> Element<'a, M> {
+    let content = Column::new()
+        .push(icon)
+        .push(text::text(title).style(theme::text::secondary).bold())
+        .push(
+            text::text(subtitle)
+                .size(text::P2_SIZE)
+                .style(theme::text::secondary)
+                .align_x(iced::Alignment::Center),
+        )
+        .spacing(16)
+        .align_x(iced::Alignment::Center);
+
+    iced::widget::Container::new(content)
+        .width(Length::Fill)
+        .padding(60)
+        .center_x(Length::Fill)
+        .style(|t| iced::widget::container::Style {
+            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+            border: iced::Border {
+                radius: 20.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
 pub fn network_banner<'a, T: 'a>(network: Network) -> Container<'a, T> {
     Container::new(
         Row::new()
