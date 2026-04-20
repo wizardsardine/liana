@@ -106,6 +106,12 @@ pub struct ContactsState {
     /// overwrite each other). `Ok(())` = in-flight or complete,
     /// `Err(msg)` = last attempt failed.
     pub add_to_current_cube_errors: std::collections::HashMap<u64, String>,
+    /// Contact ids whose one-click "Add to Current Cube" task is
+    /// currently in flight. Prevents a double-click from firing two
+    /// `create_cube_invite` requests (the second would 409, but it
+    /// still wastes a round-trip and would briefly flash the duplicate
+    /// error in the UI).
+    pub add_to_current_cube_pending: std::collections::HashSet<u64>,
 }
 
 /// State for the W14 "Add to Cube(s)…" multi-select dialog. Opened via
@@ -148,6 +154,7 @@ impl ContactsState {
             active_cube_server_id: None,
             add_to_cube_target: None,
             add_to_current_cube_errors: std::collections::HashMap::new(),
+            add_to_current_cube_pending: std::collections::HashSet::new(),
         }
     }
 
@@ -1214,11 +1221,18 @@ impl ConnectAccountPanel {
                     log::warn!("[CONTACTS] OpenAddToCubeDialog: contact {contact_id} not found");
                     return iced::Task::none();
                 };
-                let email = contact
-                    .contact_user
-                    .as_ref()
-                    .map(|u| u.email.clone())
-                    .unwrap_or_default();
+                let email = match contact.contact_user.as_ref() {
+                    Some(u) if !u.email.is_empty() => u.email.clone(),
+                    _ => {
+                        self.contacts_state
+                            .add_to_current_cube_errors
+                            .insert(contact_id, "Contact has no linked user".to_string());
+                        return iced::Task::none();
+                    }
+                };
+                self.contacts_state
+                    .add_to_current_cube_errors
+                    .remove(&contact_id);
                 self.contacts_state.add_to_cube_target = Some(AddToCubeDialog {
                     contact_id,
                     contact_email: email,
@@ -1271,6 +1285,8 @@ impl ConnectAccountPanel {
                 dialog.failures.clear();
                 let email = dialog.contact_email.clone();
                 let cube_ids = dialog.selections.clone();
+                let contact_id = dialog.contact_id;
+                let gen = self.session_generation;
                 let client = self.client.clone();
                 return iced::Task::perform(
                     async move {
@@ -1284,20 +1300,26 @@ impl ConnectAccountPanel {
                         }
                         results
                     },
-                    |results| {
+                    move |results| {
                         Message::View(view::Message::ConnectAccount(
                             ConnectAccountMessage::Contacts(ContactsMessage::AddToCubeResult(
-                                results,
+                                contact_id, gen, results,
                             )),
                         ))
                     },
                 );
             }
 
-            ContactsMessage::AddToCubeResult(results) => {
+            ContactsMessage::AddToCubeResult(contact_id, gen, results) => {
+                if gen != self.session_generation {
+                    return iced::Task::none();
+                }
                 let Some(dialog) = self.contacts_state.add_to_cube_target.as_mut() else {
                     return iced::Task::none();
                 };
+                if dialog.contact_id != contact_id {
+                    return iced::Task::none();
+                }
                 dialog.submitting = false;
                 let mut failures = std::collections::HashMap::new();
                 let mut succeeded_ids: Vec<u64> = Vec::new();
@@ -1335,6 +1357,13 @@ impl ConnectAccountPanel {
             }
 
             ContactsMessage::AddContactToCurrentCube(contact_id) => {
+                if self
+                    .contacts_state
+                    .add_to_current_cube_pending
+                    .contains(&contact_id)
+                {
+                    return iced::Task::none();
+                }
                 let Some(contact) = self
                     .contacts_state
                     .contacts
@@ -1375,6 +1404,9 @@ impl ConnectAccountPanel {
                 self.contacts_state
                     .add_to_current_cube_errors
                     .remove(&contact_id);
+                self.contacts_state
+                    .add_to_current_cube_pending
+                    .insert(contact_id);
                 let client = self.client.clone();
                 return iced::Task::perform(
                     async move {
@@ -1394,26 +1426,31 @@ impl ConnectAccountPanel {
                 );
             }
 
-            ContactsMessage::AddContactToCurrentCubeResult(contact_id, res) => match res {
-                Ok(_cube_id) => {
-                    self.contacts_state
-                        .add_to_current_cube_errors
-                        .remove(&contact_id);
-                    // Refresh the Associated Cubes section if we're on
-                    // that contact's detail view.
-                    if matches!(
-                        self.contacts_state.step,
-                        ContactsStep::Detail(id) if id == contact_id
-                    ) {
-                        return self.fetch_contact_cubes(contact_id);
+            ContactsMessage::AddContactToCurrentCubeResult(contact_id, res) => {
+                self.contacts_state
+                    .add_to_current_cube_pending
+                    .remove(&contact_id);
+                match res {
+                    Ok(_cube_id) => {
+                        self.contacts_state
+                            .add_to_current_cube_errors
+                            .remove(&contact_id);
+                        // Refresh the Associated Cubes section if we're on
+                        // that contact's detail view.
+                        if matches!(
+                            self.contacts_state.step,
+                            ContactsStep::Detail(id) if id == contact_id
+                        ) {
+                            return self.fetch_contact_cubes(contact_id);
+                        }
+                    }
+                    Err(msg) => {
+                        self.contacts_state
+                            .add_to_current_cube_errors
+                            .insert(contact_id, msg);
                     }
                 }
-                Err(msg) => {
-                    self.contacts_state
-                        .add_to_current_cube_errors
-                        .insert(contact_id, msg);
-                }
-            },
+            }
 
             ContactsMessage::Error(e) => {
                 log::error!("[CONTACTS] Error: {}", e);
@@ -1997,7 +2034,7 @@ mod add_to_cube_tests {
         }
         dispatch(
             &mut panel,
-            ContactsMessage::AddToCubeResult(vec![(1, Ok(())), (2, Ok(()))]),
+            ContactsMessage::AddToCubeResult(7, 0, vec![(1, Ok(())), (2, Ok(()))]),
         );
         assert!(
             panel.contacts_state.add_to_cube_target.is_none(),
@@ -2016,11 +2053,15 @@ mod add_to_cube_tests {
         }
         dispatch(
             &mut panel,
-            ContactsMessage::AddToCubeResult(vec![
-                (1, Ok(())),
-                (2, Err("already a member".to_string())),
-                (3, Err("forbidden".to_string())),
-            ]),
+            ContactsMessage::AddToCubeResult(
+                7,
+                0,
+                vec![
+                    (1, Ok(())),
+                    (2, Err("already a member".to_string())),
+                    (3, Err("forbidden".to_string())),
+                ],
+            ),
         );
         let dialog = panel
             .contacts_state

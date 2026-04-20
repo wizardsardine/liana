@@ -816,10 +816,16 @@ pub enum ContactsMessage {
     /// User confirmed the dialog — fires `create_cube_invite` per
     /// selection.
     ConfirmAddToCube,
-    /// Result of the parallel `create_cube_invite` calls. The `Ok`
-    /// branch carries the list of (cube_id, Result<(), String>) so the
-    /// handler can distinguish full success from partial failure.
-    AddToCubeResult(Vec<(u64, Result<(), String>)>),
+    /// Result of the parallel `create_cube_invite` calls. Carries the
+    /// originating contact id and session generation so late responses
+    /// are dropped instead of landing on a stale or unrelated dialog.
+    /// The payload lists per-cube outcomes so the handler can
+    /// distinguish full success from partial failure.
+    AddToCubeResult(
+        u64, /* contact id */
+        u64, /* session generation */
+        Vec<(u64, Result<(), String>)>,
+    ),
     /// Close the dialog without submitting.
     CloseAddToCubeDialog,
     /// One-click "Add to Current Cube" on a contact row. Fires a

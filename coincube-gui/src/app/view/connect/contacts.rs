@@ -596,8 +596,8 @@ fn contact_detail_ux<'a>(
                 // the same network — the action targets the specific
                 // loaded cube, not a network-matching guess.
                 button::primary(None, "Add to Current Cube").on_press_maybe(
-                    cs.active_cube_server_id
-                        .is_some()
+                    (cs.active_cube_server_id.is_some()
+                        && !cs.add_to_current_cube_pending.contains(&contact_id))
                         .then_some(ConnectAccountMessage::Contacts(
                             ContactsMessage::AddContactToCurrentCube(contact_id),
                         )),
