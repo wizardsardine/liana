@@ -2,7 +2,10 @@ use iced::widget::{Column, Row, Space};
 use iced::{Alignment, Length};
 
 use coincube_ui::component::{badge, card, separation, text::*};
-use coincube_ui::{icon, widget::*};
+use coincube_ui::{
+    icon,
+    widget::{ColumnExt, Element},
+};
 
 use crate::app::cache;
 use crate::app::menu::Menu;
