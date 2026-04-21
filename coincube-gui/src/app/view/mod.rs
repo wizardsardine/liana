@@ -8,6 +8,7 @@ pub mod nav;
 pub mod p2p;
 pub mod settings;
 pub mod spark;
+pub mod wallet_header;
 
 pub mod vault;
 

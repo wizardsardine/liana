@@ -16,6 +16,7 @@ use iced::{
 use iced_anim::AnimationBuilder;
 
 use crate::app::breez_liquid::assets::format_usdt_display;
+use crate::app::view::wallet_header::{wallet_header, HeaderVariant, SyncState, WalletHeaderProps};
 use crate::app::{
     menu::Menu,
     view::{vault::receive::address_card, FiatAmountConverter},
@@ -260,6 +261,7 @@ fn wallet_card<'a>(
     pending_animation_phase: f32,
     pending_send_sats: u64,
     pending_receive_sats: u64,
+    display_mode: crate::app::settings::display::DisplayMode,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
 
@@ -417,106 +419,75 @@ fn wallet_card<'a>(
                         ),
                 ),
         ),
-        _ => Column::new()
-            .spacing(12)
-            .push(
-                Row::new()
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                    .push(icon.size(16))
-                    .push({
-                        let t = text(title).size(14);
-                        if let Some(c) = title_color {
-                            t.color(c)
-                        } else {
-                            t.style(theme::text::secondary)
-                        }
-                    }),
-            )
-            .push(
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .push(
-                        Column::new()
-                            .spacing(4)
-                            .push(if balance_masked {
-                                Row::new().push(text("********").size(H2_SIZE))
+        _ => {
+            // BTC currency row mirrors Spark's BTC row / Liquid's L-BTC row,
+            // so Vault's Send/Receive lives at the row level rather than as
+            // duplicate card-level buttons. Vault's send/receive actions
+            // route through Menu navigation (`send_action`/`receive_action`).
+            let btc_fiat_text =
+                fiat_balance.map(|f| f.to_text().size(P2_SIZE).style(theme::text::secondary));
+            let btc_row = Row::new()
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .push(coincube_ui::image::asset_network_logo::<Message>(
+                    "btc", "bitcoin", 40.0,
+                ))
+                .push(
+                    text("BTC")
+                        .size(P1_SIZE)
+                        .style(theme::text::secondary)
+                        .width(Length::Fixed(60.0)),
+                )
+                .push(if balance_masked {
+                    Row::new().push(text("********").size(P1_SIZE))
+                } else {
+                    amount_with_size_and_unit(balance, P1_SIZE, bitcoin_unit)
+                })
+                .push_maybe((!balance_masked).then_some(btc_fiat_text).flatten())
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    button::primary(None, "Send")
+                        .width(Length::Fixed(90.0))
+                        .on_press(send_action),
+                )
+                .push(Space::new().width(Length::Fixed(8.0)))
+                .push(
+                    button::orange_outline(None, "Receive")
+                        .width(Length::Fixed(90.0))
+                        .on_press(receive_action),
+                );
+
+            Column::new()
+                .spacing(12)
+                .push(
+                    Row::new()
+                        .spacing(8)
+                        .align_y(Alignment::Center)
+                        .push(icon.size(16))
+                        .push({
+                            let t = text(title).size(14);
+                            if let Some(c) = title_color {
+                                t.color(c)
                             } else {
-                                amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit)
-                            })
-                            .push(if balance_masked {
-                                Some(text("********").size(P1_SIZE))
-                            } else {
-                                fiat_balance.map(|fiat| {
-                                    fiat.to_text().size(P1_SIZE).style(theme::text::secondary)
-                                })
-                            })
-                            .push_maybe((!balance_masked && pending_send_sats > 0).then(|| {
-                                Row::new()
-                                    .spacing(6)
-                                    .align_y(Alignment::Center)
-                                    .push(warning_icon().size(12).style(theme::text::secondary))
-                                    .push(text("-").size(P2_SIZE).style(theme::text::secondary))
-                                    .push(amount_with_size_and_unit(
-                                        &Amount::from_sat(pending_send_sats),
-                                        P2_SIZE,
-                                        bitcoin_unit,
-                                    ))
-                                    .push(
-                                        text("pending").size(P2_SIZE).style(theme::text::secondary),
-                                    )
-                            }))
-                            .push_maybe((!balance_masked && pending_receive_sats > 0).then(|| {
-                                Row::new()
-                                    .spacing(6)
-                                    .align_y(Alignment::Center)
-                                    .push(warning_icon().size(12).style(theme::text::secondary))
-                                    .push(text("+").size(P2_SIZE).style(theme::text::secondary))
-                                    .push(amount_with_size_and_unit(
-                                        &Amount::from_sat(pending_receive_sats),
-                                        P2_SIZE,
-                                        bitcoin_unit,
-                                    ))
-                                    .push(
-                                        text("pending").size(P2_SIZE).style(theme::text::secondary),
-                                    )
-                            }))
-                            .width(Length::Fill),
-                    )
-                    .push(Space::new().width(Length::Fill))
-                    .push_maybe(matches!(wallet_type, WalletType::Liquid).then(|| {
-                        button::secondary(Some(arrow_down_up_icon()), "Transfer")
-                            .style(|t, _s| iced::widget::button::Style {
-                                text_color: color::ORANGE,
-                                border: iced::Border {
-                                    color: color::ORANGE,
-                                    width: 1.0,
-                                    radius: 35.0.into(),
-                                },
-                                background: Some(iced::Background::Color(
-                                    t.colors.cards.simple.background,
-                                )),
-                                ..Default::default()
-                            })
-                            .width(Length::Fixed(140.0))
-                            .on_press(Message::Home(HomeMessage::NextStep))
-                    }))
-                    .push_maybe(
-                        matches!(wallet_type, WalletType::Liquid)
-                            .then(|| Space::new().width(Length::Fixed(8.0))),
-                    )
-                    .push(
-                        button::primary(None, "Send")
-                            .width(Length::Fixed(90.0))
-                            .on_press(send_action),
-                    )
-                    .push(Space::new().width(Length::Fixed(8.0)))
-                    .push(
-                        button::orange_outline(None, "Receive")
-                            .width(Length::Fixed(90.0))
-                            .on_press(receive_action),
-                    ),
-            ),
+                                t.style(theme::text::secondary)
+                            }
+                        }),
+                )
+                .push(wallet_header::<Message>(WalletHeaderProps {
+                    sats: *balance,
+                    fiat: fiat_balance,
+                    balance_masked,
+                    bitcoin_unit,
+                    variant: HeaderVariant::Card,
+                    sync: SyncState::Synced,
+                    unconfirmed: None,
+                    pending_send_sats,
+                    pending_receive_sats,
+                    display_mode,
+                    on_swap: Some(Message::FlipDisplayMode),
+                }))
+                .push(btc_row)
+        }
     };
 
     let content = if matches!(wallet_type, WalletType::Vault) {
@@ -1397,6 +1368,13 @@ pub struct GlobalViewConfig<'a> {
     pub vault_balance: Amount,
     pub fiat_converter: Option<FiatAmountConverter>,
     pub balance_masked: bool,
+    /// True until every applicable wallet has reported its first balance
+    /// (or its first error). Drives the Total Balance loading placeholder
+    /// so the aggregate doesn't briefly read as a misleadingly low partial.
+    pub total_balance_loading: bool,
+    /// Global fiat-native vs. bitcoin-native display preference. Mirrored
+    /// from `cache.display_mode`.
+    pub display_mode: crate::app::settings::display::DisplayMode,
     pub has_vault: bool,
     pub has_spark: bool,
     pub current_view: HomeView,
@@ -1456,6 +1434,8 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         vault_balance,
         fiat_converter,
         balance_masked,
+        total_balance_loading,
+        display_mode,
         has_vault,
         has_spark,
         current_view,
@@ -1541,6 +1521,15 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
     let total_fiat = fiat_converter.as_ref().map(|c| c.convert(total_amount));
     let lbtc_fiat = fiat_converter.as_ref().map(|c| c.convert(liquid_balance));
 
+    // Global Total Balance: aggregate across Spark + Liquid (L-BTC + USDt-as-sats) + Vault.
+    // Callers pass `has_spark`/`has_vault` to gate visibility, but zero-balance
+    // default values for absent wallets don't skew the total.
+    let global_total_sats = spark_balance.to_sat() + total_sats + vault_balance.to_sat();
+    let global_total_amount = Amount::from_sat(global_total_sats);
+    let global_total_fiat = fiat_converter
+        .as_ref()
+        .map(|c| c.convert(global_total_amount));
+
     let orange_outline_btn = |label: &'static str, msg: Message| -> Element<'a, Message> {
         button::orange_outline(None, label)
             .width(Length::Fixed(90.0))
@@ -1556,7 +1545,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 .spacing(8)
                 .align_y(Alignment::Center)
                 .push(coincube_ui::image::asset_network_logo::<Message>(
-                    "lbtc", "liquid", 28.0,
+                    "lbtc", "liquid", 40.0,
                 ))
                 .push(
                     text("L-BTC")
@@ -1629,7 +1618,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 .spacing(8)
                 .align_y(Alignment::Center)
                 .push(coincube_ui::image::asset_network_logo::<Message>(
-                    "usdt", "liquid", 28.0,
+                    "usdt", "liquid", 40.0,
                 ))
                 .push(
                     text("USDt")
@@ -1705,20 +1694,15 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 .push(droplet_fill_icon().size(16).style(theme::text::secondary))
                 .push(text("Liquid").size(14).style(theme::text::secondary)),
         )
-        .push(
-            Column::new()
-                .spacing(4)
-                .push(if balance_masked {
-                    Row::new().push(text("********").size(H2_SIZE))
-                } else {
-                    amount_with_size_and_unit(&total_amount, H2_SIZE, bitcoin_unit)
-                })
-                .push(if balance_masked {
-                    Some(text("********").size(P1_SIZE))
-                } else {
-                    total_fiat.map(|f| f.to_text().size(P1_SIZE).style(theme::text::secondary))
-                }),
-        )
+        .push(wallet_header::<Message>(WalletHeaderProps::new(
+            total_amount,
+            total_fiat,
+            balance_masked,
+            bitcoin_unit,
+            HeaderVariant::Card,
+            display_mode,
+            Some(Message::FlipDisplayMode),
+        )))
         .push(lbtc_row)
         .push(usdt_row);
 
@@ -1750,7 +1734,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
             .spacing(8)
             .align_y(Alignment::Center)
             .push(coincube_ui::image::asset_network_logo::<Message>(
-                "btc", "spark", 28.0,
+                "btc", "spark", 40.0,
             ))
             .push(
                 text("BTC")
@@ -1792,22 +1776,15 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                     .push(lightning_icon().size(16).style(theme::text::secondary))
                     .push(text("Spark").size(14).style(theme::text::secondary)),
             )
-            .push(
-                Column::new()
-                    .spacing(4)
-                    .push(if balance_masked {
-                        Row::new().push(text("********").size(H2_SIZE))
-                    } else {
-                        amount_with_size_and_unit(&spark_balance, H2_SIZE, bitcoin_unit)
-                    })
-                    .push(if balance_masked {
-                        Some(text("********").size(P1_SIZE))
-                    } else {
-                        spark_fiat
-                            .as_ref()
-                            .map(|f| f.to_text().size(P1_SIZE).style(theme::text::secondary))
-                    }),
-            )
+            .push(wallet_header::<Message>(WalletHeaderProps::new(
+                spark_balance,
+                spark_fiat,
+                balance_masked,
+                bitcoin_unit,
+                HeaderVariant::Card,
+                display_mode,
+                Some(Message::FlipDisplayMode),
+            )))
             .push(spark_btc_row);
 
         let spark_card: Element<'a, Message> = Container::new(spark_card_content)
@@ -1839,11 +1816,61 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         pending_animation_phase,
         vault_pending_send_sats,
         vault_pending_receive_sats,
+        display_mode,
     ))
     .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Overview)));
 
+    // Total Balance block — the fiat-first headline number above the
+    // Wallets section. While any wallet is still loading we render
+    // placeholder dashes so the aggregate doesn't briefly read as a
+    // misleadingly low partial. Once loaded, a degraded indicator
+    // surfaces beside the label when USDt failed to fetch (its
+    // contribution to the SATS line is then excluded).
+    let total_balance_label_row = Row::new()
+        .spacing(0)
+        .align_y(Alignment::Center)
+        .push(h3("Total Balance").bold())
+        .push(
+            Button::new(if balance_masked {
+                eye_slash_icon()
+            } else {
+                eye_outline_icon()
+            })
+            .style(theme::button::container)
+            .on_press(Message::Home(HomeMessage::ToggleBalanceMask)),
+        )
+        .push_maybe(
+            (usdt_balance_error && !total_balance_loading)
+                .then(|| warning_icon().size(12).style(theme::text::secondary)),
+        );
+
+    let total_balance_value: Element<'a, Message> = if total_balance_loading {
+        Column::new()
+            .spacing(4)
+            .push(text("—").size(H1_SIZE).bold())
+            .push(text("—").size(P1_SIZE).style(theme::text::secondary))
+            .into()
+    } else {
+        wallet_header::<Message>(WalletHeaderProps::new(
+            global_total_amount,
+            global_total_fiat,
+            balance_masked,
+            bitcoin_unit,
+            HeaderVariant::Jumbo,
+            display_mode,
+            Some(Message::FlipDisplayMode),
+        ))
+        .into()
+    };
+
+    let total_balance_block = Column::new()
+        .spacing(6)
+        .push(total_balance_label_row)
+        .push(total_balance_value);
+
     Column::new()
         .spacing(20)
+        .push(total_balance_block)
         .push(
             Row::new()
                 .spacing(0)

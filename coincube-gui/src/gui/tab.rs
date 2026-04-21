@@ -1119,6 +1119,12 @@ pub fn create_app_with_remote_backend(
             },
             fiat_price: None,
             bitcoin_unit: cube_settings.unit_setting.display_unit,
+            display_mode: crate::app::settings::Settings::from_file(
+                &coincube_dir.network_directory(network),
+            )
+            .ok()
+            .map(|s| s.display_mode)
+            .unwrap_or_default(),
             node_bitcoind_sync_progress: None,
             node_bitcoind_ibd: None,
             node_bitcoind_last_log: None,

@@ -122,6 +122,24 @@ impl Panels {
             })
     }
 
+    /// Read the cube's persisted `balance_masked` eye-icon preference.
+    fn initial_balance_masked(
+        datadir: &CoincubeDirectory,
+        network: bitcoin::Network,
+        cube_id: &str,
+    ) -> bool {
+        let network_dir = datadir.network_directory(network);
+        settings::Settings::from_file(&network_dir)
+            .ok()
+            .and_then(|s| {
+                s.cubes
+                    .iter()
+                    .find(|c| c.id == cube_id)
+                    .map(|c| c.balance_masked)
+            })
+            .unwrap_or(false)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn new_without_vault(
         breez_client: Arc<BreezClient>,
@@ -138,6 +156,7 @@ impl Panels {
 
         let default_fiat_currency = Self::default_fiat_currency(datadir, network, &cube_id);
         let liquid_backend = Arc::new(LiquidBackend::new(breez_client.clone()));
+        let initial_balance_masked = Self::initial_balance_masked(datadir, network, &cube_id);
 
         Self {
             current: Menu::Home(crate::app::menu::HomeSubMenu::Overview),
@@ -150,6 +169,7 @@ impl Panels {
                     datadir.clone(),
                     network,
                     cube_id.clone(),
+                    initial_balance_masked,
                 )
             } else {
                 GlobalHome::new_without_wallet(
@@ -158,6 +178,7 @@ impl Panels {
                     datadir.clone(),
                     network,
                     cube_id.clone(),
+                    initial_balance_masked,
                 )
             },
             liquid_overview: LiquidOverview::new(liquid_backend.clone()),
@@ -242,6 +263,8 @@ impl Panels {
 
         let default_fiat_currency = Self::default_fiat_currency(&data_dir, cache.network, &cube_id);
         let liquid_backend = Arc::new(LiquidBackend::new(breez_client.clone()));
+        let initial_balance_masked =
+            Self::initial_balance_masked(&data_dir, cache.network, &cube_id);
 
         Self {
             current: Menu::Home(crate::app::menu::HomeSubMenu::Overview),
@@ -252,6 +275,7 @@ impl Panels {
                 data_dir.clone(),
                 cache.network,
                 cube_id.clone(),
+                initial_balance_masked,
             ),
             vault_overview: Some(VaultOverview::new(
                 wallet.clone(),
@@ -825,24 +849,28 @@ impl App {
             liquid_backend.clone(),
             spark_backend.clone(),
         );
-        // Load bitcoin_unit from cube settings if available
-        let bitcoin_unit = {
-            let network_dir = datadir.network_directory(network);
-            settings::Settings::from_file(&network_dir)
-                .ok()
-                .and_then(|s| {
-                    s.cubes
-                        .iter()
-                        .find(|c| c.id == cube_settings.id)
-                        .map(|c| c.unit_setting.display_unit)
-                })
-                .unwrap_or_default()
-        };
+        // Load bitcoin_unit and display_mode from settings if available
+        let network_dir = datadir.network_directory(network);
+        let settings_file = settings::Settings::from_file(&network_dir).ok();
+        let bitcoin_unit = settings_file
+            .as_ref()
+            .and_then(|s| {
+                s.cubes
+                    .iter()
+                    .find(|c| c.id == cube_settings.id)
+                    .map(|c| c.unit_setting.display_unit)
+            })
+            .unwrap_or_default();
+        let display_mode = settings_file
+            .as_ref()
+            .map(|s| s.display_mode)
+            .unwrap_or_default();
         let cache = Cache {
             network,
             datadir_path: datadir.clone(),
             has_vault: false,
             bitcoin_unit,
+            display_mode,
             cube_name: cube_settings.name.clone(),
             current_cube_backed_up: cube_settings.backed_up,
             current_cube_is_passkey: cube_settings.is_passkey_cube(),
@@ -1921,6 +1949,26 @@ impl App {
             }
             Message::View(view::Message::DismissBackupWarning) => {
                 self.cache.backup_warning_dismissed = true;
+            }
+            Message::View(view::Message::FlipDisplayMode) => {
+                let new_mode = self.cache.display_mode.flipped();
+                self.cache.display_mode = new_mode;
+                let network_dir = self.datadir.network_directory(self.cache.network);
+                return Task::perform(
+                    async move {
+                        settings::update_settings_file(&network_dir, move |mut current| {
+                            current.display_mode = new_mode;
+                            Some(current)
+                        })
+                        .await
+                    },
+                    |res| {
+                        if let Err(e) = res {
+                            tracing::warn!("Failed to persist display_mode: {}", e);
+                        }
+                        Message::Tick
+                    },
+                );
             }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {

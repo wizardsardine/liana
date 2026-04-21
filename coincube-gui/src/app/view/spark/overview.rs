@@ -29,8 +29,10 @@ use iced::{
     Alignment, Background, Length,
 };
 
+use crate::app::settings::display::DisplayMode;
 use crate::app::state::spark::overview::SparkBalanceSnapshot;
 use crate::app::view::vault::fiat::FiatAmount;
+use crate::app::view::wallet_header::{wallet_header, HeaderVariant, SyncState, WalletHeaderProps};
 use crate::app::view::{FiatAmountConverter, SparkOverviewMessage};
 
 /// High-level status of the Spark backend for the current cube.
@@ -82,6 +84,7 @@ pub struct SparkOverviewView<'a> {
     /// token. Rendered as a small "Stable" badge next to the balance
     /// header.
     pub stable_balance_active: bool,
+    pub display_mode: DisplayMode,
 }
 
 impl<'a> SparkOverviewView<'a> {
@@ -113,11 +116,13 @@ impl<'a> SparkOverviewView<'a> {
                 self.bitcoin_unit,
                 self.show_direction_badges,
                 self.stable_balance_active,
+                self.display_mode,
             ),
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn connected_view<'a>(
     balance_sats: u64,
     recent: &'a [SparkRecentTransaction],
@@ -125,6 +130,7 @@ fn connected_view<'a>(
     bitcoin_unit: BitcoinDisplayUnit,
     show_direction_badges: bool,
     stable_balance_active: bool,
+    display_mode: DisplayMode,
 ) -> Element<'a, SparkOverviewMessage> {
     let mut content = Column::new().spacing(20);
 
@@ -145,7 +151,7 @@ fn connected_view<'a>(
         .sum();
 
     // ── Unified portfolio card ─────────────────────────────────────────
-    let mut total_col = Column::new()
+    let total_col = Column::new()
         .spacing(4)
         .push(
             Row::new()
@@ -154,48 +160,19 @@ fn connected_view<'a>(
                 .push(h4_bold("Balance"))
                 .push_maybe(stable_balance_active.then(stable_badge)),
         )
-        .push(amount_with_size_and_unit(
-            &btc_balance,
-            H2_SIZE,
+        .push(wallet_header::<SparkOverviewMessage>(WalletHeaderProps {
+            sats: btc_balance,
+            fiat: btc_fiat,
+            balance_masked: false,
             bitcoin_unit,
-        ));
-    if let Some(fiat) = btc_fiat.as_ref() {
-        total_col = total_col.push(
-            text(format!("~{} {}", fiat.to_rounded_string(), fiat.currency()))
-                .size(P1_SIZE)
-                .style(theme::text::secondary),
-        );
-    }
-    if pending_outgoing_sats > 0 {
-        total_col = total_col.push(
-            Row::new()
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .push(icon::warning_icon().size(12).style(theme::text::secondary))
-                .push(text("-").size(P2_SIZE).style(theme::text::secondary))
-                .push(amount_with_size_and_unit(
-                    &Amount::from_sat(pending_outgoing_sats),
-                    P2_SIZE,
-                    bitcoin_unit,
-                ))
-                .push(text("pending").size(P2_SIZE).style(theme::text::secondary)),
-        );
-    }
-    if pending_incoming_sats > 0 {
-        total_col = total_col.push(
-            Row::new()
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .push(icon::warning_icon().size(12).style(theme::text::secondary))
-                .push(text("+").size(P2_SIZE).style(theme::text::secondary))
-                .push(amount_with_size_and_unit(
-                    &Amount::from_sat(pending_incoming_sats),
-                    P2_SIZE,
-                    bitcoin_unit,
-                ))
-                .push(text("pending").size(P2_SIZE).style(theme::text::secondary)),
-        );
-    }
+            variant: HeaderVariant::Overview,
+            sync: SyncState::Synced,
+            unconfirmed: None,
+            pending_send_sats: pending_outgoing_sats,
+            pending_receive_sats: pending_incoming_sats,
+            display_mode,
+            on_swap: Some(SparkOverviewMessage::FlipDisplayMode),
+        }));
 
     let btc_fiat_str = btc_fiat
         .as_ref()
@@ -204,7 +181,7 @@ fn connected_view<'a>(
     let btc_row = Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
-        .push(coincube_ui::image::asset_network_logo::<SparkOverviewMessage>("btc", "spark", 28.0))
+        .push(coincube_ui::image::asset_network_logo::<SparkOverviewMessage>("btc", "spark", 40.0))
         .push(text("BTC").size(P1_SIZE).bold().width(Length::Fixed(60.0)))
         .push(amount_with_size_and_unit(
             &btc_balance,

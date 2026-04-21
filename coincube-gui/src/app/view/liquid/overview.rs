@@ -19,6 +19,8 @@ use iced::{
 };
 
 use crate::app::breez_liquid::assets::format_usdt_display;
+use crate::app::settings::display::DisplayMode;
+use crate::app::view::wallet_header::{wallet_header, HeaderVariant, SyncState, WalletHeaderProps};
 use crate::app::view::{liquid::RecentTransaction, FiatAmountConverter, LiquidOverviewMessage};
 
 #[allow(clippy::too_many_arguments)]
@@ -31,6 +33,7 @@ pub fn liquid_overview_view<'a>(
     bitcoin_unit: BitcoinDisplayUnit,
     btc_usd_price: Option<f64>,
     show_direction_badges: bool,
+    display_mode: DisplayMode,
 ) -> Element<'a, LiquidOverviewMessage> {
     let mut content = Column::new().spacing(20);
 
@@ -75,53 +78,22 @@ pub fn liquid_overview_view<'a>(
     let total_fiat = fiat_converter.as_ref().map(|c| c.convert(total_balance));
 
     // Total balance header
-    let mut total_col =
-        Column::new()
-            .spacing(4)
-            .push(h4_bold("Balance"))
-            .push(amount_with_size_and_unit(
-                &total_balance,
-                H2_SIZE,
-                bitcoin_unit,
-            ));
-    if let Some(fiat) = total_fiat {
-        total_col = total_col.push(
-            text(format!("~{} {}", fiat.to_rounded_string(), fiat.currency()))
-                .size(P1_SIZE)
-                .style(theme::text::secondary),
-        );
-    }
-    // Pending indicators
-    if pending_outgoing_sats > 0 {
-        total_col = total_col.push(
-            Row::new()
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .push(icon::warning_icon().size(12).style(theme::text::secondary))
-                .push(text("-").size(P2_SIZE).style(theme::text::secondary))
-                .push(amount_with_size_and_unit(
-                    &Amount::from_sat(pending_outgoing_sats),
-                    P2_SIZE,
-                    bitcoin_unit,
-                ))
-                .push(text("pending").size(P2_SIZE).style(theme::text::secondary)),
-        );
-    }
-    if pending_incoming_sats > 0 {
-        total_col = total_col.push(
-            Row::new()
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .push(icon::warning_icon().size(12).style(theme::text::secondary))
-                .push(text("+").size(P2_SIZE).style(theme::text::secondary))
-                .push(amount_with_size_and_unit(
-                    &Amount::from_sat(pending_incoming_sats),
-                    P2_SIZE,
-                    bitcoin_unit,
-                ))
-                .push(text("pending").size(P2_SIZE).style(theme::text::secondary)),
-        );
-    }
+    let total_col = Column::new()
+        .spacing(4)
+        .push(h4_bold("Balance"))
+        .push(wallet_header::<LiquidOverviewMessage>(WalletHeaderProps {
+            sats: total_balance,
+            fiat: total_fiat,
+            balance_masked: false,
+            bitcoin_unit,
+            variant: HeaderVariant::Overview,
+            sync: SyncState::Synced,
+            unconfirmed: None,
+            pending_send_sats: pending_outgoing_sats,
+            pending_receive_sats: pending_incoming_sats,
+            display_mode,
+            on_swap: Some(LiquidOverviewMessage::FlipDisplayMode),
+        }));
 
     // L-BTC asset row
     let lbtc_fiat_str = btc_fiat
@@ -133,7 +105,7 @@ pub fn liquid_overview_view<'a>(
         .align_y(Alignment::Center)
         .push(coincube_ui::image::asset_network_logo::<
             LiquidOverviewMessage,
-        >("lbtc", "liquid", 28.0))
+        >("lbtc", "liquid", 40.0))
         .push(
             text("L-BTC")
                 .size(P1_SIZE)
@@ -170,7 +142,7 @@ pub fn liquid_overview_view<'a>(
         .align_y(Alignment::Center)
         .push(coincube_ui::image::asset_network_logo::<
             LiquidOverviewMessage,
-        >("usdt", "liquid", 28.0))
+        >("usdt", "liquid", 40.0))
         .push(text("USDt").size(P1_SIZE).bold().width(Length::Fixed(60.0)))
         .push(text(usdt_display).size(P1_SIZE))
         .push(

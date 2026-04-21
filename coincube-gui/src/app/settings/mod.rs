@@ -1,5 +1,6 @@
 //! Settings is the module to handle the GUI settings file.
 //! The settings file is used by the GUI to store useful information.
+pub mod display;
 pub mod fiat;
 pub mod unit;
 
@@ -34,6 +35,11 @@ pub struct Settings {
     pub cubes: Vec<CubeSettings>,
     #[serde(default)]
     pub wallets: Vec<WalletSettings>,
+    /// Global fiat-native vs. bitcoin-native display preference.
+    /// Drives whether wallet headers lead with the fiat or the bitcoin
+    /// value across the app. Defaults to fiat-native.
+    #[serde(default)]
+    pub display_mode: display::DisplayMode,
 }
 
 impl Settings {
@@ -202,6 +208,11 @@ pub struct CubeSettings {
     /// of deriving it from the master seed via BIP-85. Defaults to false (use derived).
     #[serde(default)]
     pub allow_random_grid_phrase: bool,
+    /// Privacy toggle: when true, the Home eye-icon has hidden balances on
+    /// both the Total Balance block and per-wallet cards. Persists across
+    /// sessions so users don't have to re-hide on every launch.
+    #[serde(default)]
+    pub balance_masked: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -233,6 +244,7 @@ impl CubeSettings {
             pending_liquid_to_vault_transfer: None,
             passkey_metadata: None,
             allow_random_grid_phrase: false,
+            balance_masked: false,
         }
     }
 

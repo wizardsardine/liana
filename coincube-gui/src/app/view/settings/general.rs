@@ -8,6 +8,7 @@ use coincube_ui::widget::{ColumnExt, Element};
 
 use crate::app::cache;
 use crate::app::menu::Menu;
+use crate::app::settings::display::DisplayMode;
 use crate::app::settings::fiat::PriceSetting;
 use crate::app::settings::unit::{BitcoinDisplayUnit, UnitSetting};
 use crate::app::view::dashboard;
@@ -44,6 +45,7 @@ pub fn general_section<'a>(
         .push(super::header("General", SettingsMessage::GeneralSection))
         .push(network_row(cache.network))
         .push(bitcoin_display_unit(new_unit_setting))
+        .push(display_mode_toggle(cache.display_mode))
         .push(direction_badges_toggle(show_direction_badges))
         .push(fiat_price(new_price_setting, currencies_list))
         .push(backup_master_seed_card(cache.current_cube_backed_up));
@@ -154,6 +156,26 @@ fn toast_testing<'a>() -> Element<'a, Message> {
                     .push(btn("Debug", log::Level::Debug))
                     .push(btn("Trace", log::Level::Trace)),
             ),
+    )
+    .width(Length::Fill)
+    .into()
+}
+
+fn display_mode_toggle<'a>(current: DisplayMode) -> Element<'a, Message> {
+    card::simple(
+        Row::new()
+            .spacing(20)
+            .align_y(Alignment::Center)
+            .push(text("Primary balance value:").bold())
+            .push(Space::new().width(Length::Fill))
+            .push(text("Fiat"))
+            .push(
+                Toggler::new(matches!(current, DisplayMode::BitcoinNative))
+                    .on_toggle(|_| Message::FlipDisplayMode)
+                    .width(50)
+                    .style(theme::toggler::orange),
+            )
+            .push(text("Bitcoin")),
     )
     .width(Length::Fill)
     .into()

@@ -138,6 +138,7 @@ impl State for VaultOverview {
                     cache.node_bitcoind_sync_progress,
                     cache.node_bitcoind_ibd,
                     cache.show_direction_badges,
+                    cache.display_mode,
                 ),
             )
         }

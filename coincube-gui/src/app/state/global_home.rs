@@ -74,13 +74,16 @@ pub struct GlobalHome {
     /// Home page simply hides the Spark card in that case.
     spark_backend: Option<Arc<SparkBackend>>,
     liquid_balance: Amount,
+    liquid_balance_loaded: bool,
     /// Spark wallet balance in sats, refreshed by
     /// [`load_balance`]. `Amount::ZERO` while the first
     /// `get_info` RPC is in flight, or forever when no Spark
     /// backend is wired up for this cube.
     spark_balance: Amount,
+    spark_balance_loaded: bool,
     usdt_balance: u64,
     usdt_balance_error: bool,
+    usdt_balance_loaded: bool,
     wallet: Option<Arc<Wallet>>,
     balance_masked: bool,
     transfer_direction: Option<TransferDirection>,
@@ -111,6 +114,7 @@ pub struct GlobalHome {
 }
 
 impl GlobalHome {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         wallet: Arc<Wallet>,
         breez_client: Arc<LiquidBackend>,
@@ -118,16 +122,20 @@ impl GlobalHome {
         datadir_path: CoincubeDirectory,
         network: coincube_core::miniscript::bitcoin::Network,
         cube_id: String,
+        balance_masked: bool,
     ) -> Self {
         Self {
             wallet: Some(wallet),
             liquid_balance: Amount::ZERO,
+            liquid_balance_loaded: false,
             spark_balance: Amount::ZERO,
+            spark_balance_loaded: false,
             usdt_balance: 0,
             usdt_balance_error: false,
+            usdt_balance_loaded: false,
             breez_client,
             spark_backend,
-            balance_masked: false,
+            balance_masked,
             transfer_direction: None,
             current_view: HomeView::default(),
             entered_amount: form::Value::default(),
@@ -162,16 +170,20 @@ impl GlobalHome {
         datadir_path: CoincubeDirectory,
         network: coincube_core::miniscript::bitcoin::Network,
         cube_id: String,
+        balance_masked: bool,
     ) -> Self {
         Self {
             wallet: None,
             liquid_balance: Amount::from_sat(0),
+            liquid_balance_loaded: false,
             spark_balance: Amount::ZERO,
+            spark_balance_loaded: false,
             usdt_balance: 0,
             usdt_balance_error: false,
+            usdt_balance_loaded: false,
             breez_client,
             spark_backend,
-            balance_masked: false,
+            balance_masked,
             transfer_direction: None,
             current_view: HomeView::default(),
             entered_amount: form::Value::default(),
@@ -236,6 +248,17 @@ impl State for GlobalHome {
         let fiat_converter: Option<view::FiatAmountConverter> =
             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
 
+        // Total Balance is "loading" until every applicable wallet has
+        // reported in. Absent wallets (no Spark / no Vault) don't gate.
+        // Vault loads when the daemon has produced its first poll.
+        let has_spark = self.spark_backend.is_some();
+        let spark_pending = has_spark && !self.spark_balance_loaded;
+        let liquid_pending = !self.liquid_balance_loaded;
+        let usdt_pending = !self.usdt_balance_loaded;
+        let vault_pending = cache.has_vault && cache.last_poll_timestamp().is_none();
+        let total_balance_loading =
+            spark_pending || liquid_pending || usdt_pending || vault_pending;
+
         let content = view::dashboard(
             menu,
             cache,
@@ -247,8 +270,10 @@ impl State for GlobalHome {
                 vault_balance,
                 fiat_converter,
                 balance_masked: self.balance_masked,
+                total_balance_loading,
+                display_mode: cache.display_mode,
                 has_vault: cache.has_vault,
-                has_spark: self.spark_backend.is_some(),
+                has_spark,
                 current_view: self.current_view,
                 transfer_direction: self.transfer_direction,
                 entered_amount: &self.entered_amount,
@@ -359,11 +384,12 @@ impl State for GlobalHome {
                     }
                     HomeMessage::SparkBalanceUpdated(balance) => {
                         self.spark_balance = balance;
+                        self.spark_balance_loaded = true;
                         Task::none()
                     }
                     HomeMessage::ToggleBalanceMask => {
                         self.balance_masked = !self.balance_masked;
-                        Task::none()
+                        self.persist_balance_masked(self.balance_masked)
                     }
                     HomeMessage::NextStep => {
                         if let Some(daemon) = daemon {
@@ -751,15 +777,18 @@ impl State for GlobalHome {
                     }
                     HomeMessage::LiquidBalanceUpdated(liquid_balance) => {
                         self.liquid_balance = liquid_balance;
+                        self.liquid_balance_loaded = true;
                         Task::none()
                     }
                     HomeMessage::UsdtBalanceUpdated(usdt_balance) => {
                         self.usdt_balance = usdt_balance;
                         self.usdt_balance_error = false;
+                        self.usdt_balance_loaded = true;
                         Task::none()
                     }
                     HomeMessage::UsdtBalanceFetchFailed => {
                         self.usdt_balance_error = true;
+                        self.usdt_balance_loaded = true;
                         Task::none()
                     }
                     HomeMessage::OnChainLimitsFetched { send, receive } => {
@@ -1265,6 +1294,28 @@ impl GlobalHome {
                     tracing::error!("USDt balance fetch failed: {:?}", e);
                     Message::View(view::Message::Home(HomeMessage::UsdtBalanceFetchFailed))
                 }
+            },
+        )
+    }
+
+    fn persist_balance_masked(&self, masked: bool) -> Task<Message> {
+        let network_dir = self.datadir_path.network_directory(self.network);
+        let cube_id = self.cube_id.clone();
+        Task::perform(
+            async move {
+                settings::update_settings_file(&network_dir, move |mut current| {
+                    if let Some(cube) = current.cubes.iter_mut().find(|c| c.id == cube_id) {
+                        cube.balance_masked = masked;
+                    }
+                    Some(current)
+                })
+                .await
+            },
+            |res| {
+                if let Err(e) = res {
+                    log::warn!("Failed to persist balance_masked: {}", e);
+                }
+                Message::Tick
             },
         )
     }
