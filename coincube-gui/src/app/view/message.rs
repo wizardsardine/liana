@@ -3,7 +3,7 @@ use crate::{
         menu::Menu,
         settings::unit::BitcoinDisplayUnit,
         view::{
-            global_home::{IncomingTransferStage, TransferDirection},
+            global_home::{PickerSide, TransferStage, WalletKind},
             FiatAmountConverter,
         },
     },
@@ -942,7 +942,13 @@ pub enum HomeMessage {
     /// page's periodic balance refresh).
     SparkBalanceUpdated(Amount),
     ToggleBalanceMask,
-    SelectTransferDirection(TransferDirection),
+    /// Open the wallet-picker popup on the amount screen, editing the named side.
+    OpenWalletPicker(PickerSide),
+    /// Close the wallet-picker popup without changing the selected pair.
+    CloseWalletPicker,
+    /// Commit a wallet selection from the popup; the state layer applies it to
+    /// the side currently being edited and recomputes `transfer_direction`.
+    SelectWalletInPicker(WalletKind),
     AmountEdited(String),
     NextStep,
     PreviousStep,
@@ -953,6 +959,66 @@ pub enum HomeMessage {
     OnChainLimitsFetched {
         send: (u64, u64),    // (min_sat, max_sat)
         receive: (u64, u64), // (min_sat, max_sat)
+    },
+    /// The user edited the feerate input on the Transfer confirm screen
+    /// (only rendered for Vault-sourced directions — `direction.from_kind() == Vault`).
+    SetTransferFeerate(String),
+    /// The user clicked a Fast/Normal/Slow preset on the confirm screen's
+    /// feerate picker. The handler kicks off a mempool fee-estimate fetch
+    /// and applies the result via `TransferFeerateEstimated`.
+    FetchTransferFeeratePreset(crate::app::view::shared::feerate_picker::FeeratePreset),
+    /// Result of the async preset-driven fee-estimate fetch. On success the
+    /// state handler updates `transfer_feerate` to the estimated value.
+    TransferFeerateEstimated {
+        preset: crate::app::view::shared::feerate_picker::FeeratePreset,
+        result: Result<u32, String>,
+    },
+    /// Result of a dry-run PSBT build for Vault-sourced transfers, used to
+    /// show Fees/Total on the confirm screen before signing. Fired whenever
+    /// the destination address, feerate, or amount change. `feerate_vb`
+    /// echoes the input so the handler can drop late results whose feerate
+    /// no longer matches the current state (keystroke-fast previews would
+    /// otherwise flicker out-of-order).
+    TransferPsbtPreviewReady {
+        feerate_vb: u64,
+        result: Result<Amount, String>,
+    },
+    /// Result of the async step-1→2 prep for Spark-sourced transfers: we
+    /// fetched a fresh Vault address (for SparkToVault) or a Breez peg-in
+    /// address (for SparkToLiquid) and called `spark.prepare_send(addr, amt)`
+    /// on it. Handler stores the destination address + prepare handle so
+    /// the confirm screen can render it and `ConfirmSparkSend` can broadcast.
+    SparkPrepareSendReady {
+        /// The destination address Spark will send to. For SparkToVault this
+        /// is a fresh Vault BIP-32 address; for SparkToLiquid it's Breez's
+        /// on-chain peg-in swap address.
+        destination: String,
+        /// Single-use handle returned by `spark.prepare_send`.
+        prepare_handle: String,
+        /// Spark's estimated on-chain fee for this send, in sats. Rendered in
+        /// the Fees row on the Transfer confirm screen.
+        fee_sat: u64,
+    },
+    /// Broadcast a previously-prepared Spark send (SparkToVault, SparkToLiquid).
+    /// Calls `spark.send_payment(handle)` and transitions the pending transfer
+    /// to `PendingDeposit` on success.
+    ConfirmSparkSend,
+    /// A transfer's broadcast step has completed — advance to the Pending
+    /// Deposit success screen and mark the destination wallet's pending
+    /// indicator. Fired from:
+    ///   - `spark.send_payment` success (SparkToVault, SparkToLiquid)
+    ///   - `breez.pay_onchain` success (LiquidToSpark — the LiquidToVault path
+    ///     still uses the richer `LiquidToVaultSubmitted` for swap persistence)
+    ///   - Vault PSBT broadcast success routed here for VaultToSpark
+    TransferBroadcast {
+        amount_sat: u64,
+        destination_kind: WalletKind,
+        /// Breez peg-out swap id when this broadcast came from `pay_onchain`
+        /// (currently only LiquidToSpark). Stored against the Spark pending
+        /// indicator so an async `PaymentFailed` for the same swap can clear
+        /// the Spark card's badge — without it, a failed LiquidToSpark leaves
+        /// the badge stuck permanently because no Spark deposit ever arrives.
+        swap_id: Option<String>,
     },
     PrepareOnChainResponseReceived(PreparePayOnchainResponse),
     TransferSuccessful,
@@ -973,15 +1039,33 @@ pub enum HomeMessage {
     LiquidToVaultFailed(Option<String>),
     PendingTransferRestored {
         amount_sat: u64,
-        stage: IncomingTransferStage,
+        stage: TransferStage,
         swap_id: String,
     },
-    PendingTransferAnimationTick,
     PendingAmountsUpdated {
         liquid_send_sats: u64,
         usdt_send_sats: u64,
         liquid_receive_sats: u64,
         usdt_receive_sats: u64,
+    },
+    /// Fired when the Spark bridge reports `DepositsChanged`. The Home state
+    /// re-queries `list_unclaimed_deposits` and decides whether to auto-claim
+    /// a matured deposit or clear `pending_spark_incoming` (claimed already).
+    SparkDepositsChanged,
+    /// Result of the Home state's own `list_unclaimed_deposits` call.
+    SparkDepositsLoaded(Vec<coincube_spark_protocol::DepositInfo>),
+    /// Completion signal for the auto-claim call. On success, another
+    /// `DepositsChanged` event will fire and the watcher re-runs.
+    AutoClaimSparkResult {
+        txid: String,
+        vout: u32,
+        result: Result<u64, String>,
+    },
+    /// Fired when a Breez peg-in swap completes (BTC on-chain → L-BTC).
+    /// The state handler decrements `pending_liquid_receive_sats` and re-runs
+    /// `load_pending_sends` for full self-heal.
+    LiquidPeginCompleted {
+        amount_sat: u64,
     },
 }
 

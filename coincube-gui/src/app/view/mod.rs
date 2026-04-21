@@ -7,6 +7,7 @@ pub mod liquid;
 pub mod nav;
 pub mod p2p;
 pub mod settings;
+pub mod shared;
 pub mod spark;
 pub mod wallet_header;
 
