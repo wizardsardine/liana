@@ -778,7 +778,9 @@ fn confirm_transfer_view<'a>(
         .push(
             button::secondary(None, "< Previous")
                 .width(Length::Fixed(150.0))
-                .on_press(Message::Home(HomeMessage::PreviousStep)),
+                .on_press_maybe(
+                    (!is_sending).then_some(Message::Home(HomeMessage::PreviousStep)),
+                ),
         )
         .push(Space::new().height(Length::Fixed(20.0)))
         .push(Container::new(
