@@ -1539,19 +1539,17 @@ impl State for GlobalHome {
                             return Task::none();
                         }
                         // Empty list → whatever was pending got claimed (either by
-                        // us or by the user from the Spark Receive panel). For
-                        // LiquidToSpark (swap_id tracked) we additionally require
-                        // that we've previously observed our deposit in the list,
-                        // because the Bitcoin peg-out tx doesn't show up until it
-                        // lands on-chain: an unrelated `SparkDepositsChanged`
-                        // firing during that window would otherwise clear the
-                        // badge while the transfer is still in flight. For the
-                        // general case (Vault→Spark, Spark-internal) keep the
-                        // existing clear-on-empty behavior — a failure path would
-                        // never produce an empty list anyway.
+                        // us or by the user from the Spark Receive panel). Only
+                        // interpret it that way once we've previously observed
+                        // our deposit in the list: the inbound tx (Breez peg-out
+                        // for LiquidToSpark, Bitcoin broadcast for VaultToSpark)
+                        // doesn't appear until it lands on-chain, so an unrelated
+                        // `SparkDepositsChanged` firing during that window (e.g.
+                        // a prior deposit being claimed from the Receive panel)
+                        // would otherwise clear the badge while our transfer is
+                        // still in flight.
                         if deposits.is_empty() {
-                            let is_liquid_to_spark = self.pending_spark_incoming_swap_id.is_some();
-                            if is_liquid_to_spark && !self.pending_spark_deposit_seen {
+                            if !self.pending_spark_deposit_seen {
                                 return Task::none();
                             }
                             self.pending_spark_incoming = None;
