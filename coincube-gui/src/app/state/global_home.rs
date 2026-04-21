@@ -907,6 +907,7 @@ impl State for GlobalHome {
                         self.transfer_signed = false;
                         self.spend_tx_fees = None;
                         self.spark_send_handle = None;
+                        self.spark_send_fee_sat = None;
                         // Mirror `BackToHome`'s reset: if we left the confirm
                         // screen with a stuck `is_sending` (e.g. an error path
                         // that didn't clear it), leaving it set would disable
