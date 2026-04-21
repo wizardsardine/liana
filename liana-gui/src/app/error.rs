@@ -11,6 +11,7 @@ use crate::{
     services::fiat::api::PriceApiError,
 };
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum Error {
     Config(String),
@@ -28,11 +29,11 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Config(e) => write!(f, "{}", e),
-            Self::Wallet(e) => write!(f, "{}", e),
-            Self::Spend(e) => write!(f, "{}", e),
+            Self::Config(e) => write!(f, "{e}"),
+            Self::Wallet(e) => write!(f, "{e}"),
+            Self::Spend(e) => write!(f, "{e}"),
             Self::Daemon(e) => match e {
-                DaemonError::Unexpected(e) => write!(f, "{}", e),
+                DaemonError::Unexpected(e) => write!(f, "{e}"),
                 DaemonError::NoAnswer => write!(f, "Daemon did not answer"),
                 DaemonError::DaemonStopped => write!(f, "Daemon stopped"),
                 DaemonError::RpcSocket(Some(ErrorKind::ConnectionRefused), _) => {
@@ -40,32 +41,32 @@ impl std::fmt::Display for Error {
                 }
                 DaemonError::RpcSocket(kind, e) => {
                     if let Some(k) = kind {
-                        write!(f, "{} [{:?}]", e, k)
+                        write!(f, "{e} [{k:?}]")
                     } else {
-                        write!(f, "{}", e)
+                        write!(f, "{e}")
                     }
                 }
                 DaemonError::Start(e) => {
-                    write!(f, "Failed to start daemon: {}", e)
+                    write!(f, "Failed to start daemon: {e}")
                 }
                 DaemonError::ClientNotSupported => {
                     write!(f, "Daemon client is not supported")
                 }
                 DaemonError::Rpc(code, e) => {
-                    write!(f, "[{:?}] {}", code, e)
+                    write!(f, "[{code:?}] {e}")
                 }
                 DaemonError::Http(code, e) => {
-                    write!(f, "[{:?}] {}", code, e)
+                    write!(f, "[{code:?}] {e}")
                 }
-                DaemonError::CoinSelectionError => write!(f, "{}", e),
-                DaemonError::NotImplemented => write!(f, "{}", e),
+                DaemonError::CoinSelectionError => write!(f, "{e}"),
+                DaemonError::NotImplemented => write!(f, "{e}"),
             },
-            Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
-            Self::HardwareWallet(e) => write!(f, "error: {}\nPlease check if the device is still connected and unlocked with the correct firmware open for the current network and no other application is accessing the device.", e),
-            Self::Desc(e) => write!(f, "Liana descriptor error: {}", e),
+            Self::Unexpected(e) => write!(f, "Unexpected error: {e}"),
+            Self::HardwareWallet(e) => write!(f, "error: {e}\nPlease check if the device is still connected and unlocked with the correct firmware open for the current network and no other application is accessing the device."),
+            Self::Desc(e) => write!(f, "Liana descriptor error: {e}"),
             Self::ImportExport(e) => write!(f, "{e}"),
             Self::RestoreBackup(e) => write!(f, "{e}"),
-            Self::FiatPrice(e) => write!(f, "Fiat price error: {}", e),
+            Self::FiatPrice(e) => write!(f, "Fiat price error: {e}"),
         }
     }
 }

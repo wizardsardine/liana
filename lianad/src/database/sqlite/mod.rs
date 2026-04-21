@@ -63,21 +63,21 @@ impl std::fmt::Display for SqliteDbError {
     fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
         match self {
             SqliteDbError::FileCreation(e) => {
-                write!(f, "Error when create SQLite database file: '{}'", e)
+                write!(f, "Error when create SQLite database file: '{e}'")
             }
             SqliteDbError::FileNotFound(p) => {
                 write!(f, "SQLite database file not found at '{}'.", p.display())
             }
             SqliteDbError::UnsupportedVersion(v) => {
-                write!(f, "Unsupported database version '{}'.", v)
+                write!(f, "Unsupported database version '{v}'.")
             }
             SqliteDbError::InvalidNetwork(net) => {
-                write!(f, "Database was created for network '{}'.", net)
+                write!(f, "Database was created for network '{net}'.")
             }
             SqliteDbError::DescriptorMismatch(desc) => {
-                write!(f, "Database descriptor mismatch: '{}'.", desc)
+                write!(f, "Database descriptor mismatch: '{desc}'.")
             }
-            SqliteDbError::Rusqlite(e) => write!(f, "SQLite error: '{}'", e),
+            SqliteDbError::Rusqlite(e) => write!(f, "SQLite error: '{e}'"),
         }
     }
 }
@@ -433,15 +433,15 @@ impl SqliteConn {
             String::new()
         };
         let where_clause = if !status_condition.is_empty() && !op_condition.is_empty() {
-            format!(" WHERE ({}) AND ({})", status_condition, op_condition)
+            format!(" WHERE ({status_condition}) AND ({op_condition})")
         } else if status_condition.is_empty() && !op_condition.is_empty() {
-            format!(" WHERE {}", op_condition)
+            format!(" WHERE {op_condition}")
         } else if !status_condition.is_empty() && op_condition.is_empty() {
-            format!(" WHERE {}", status_condition)
+            format!(" WHERE {status_condition}")
         } else {
             String::new()
         };
-        let query = format!("SELECT * FROM coins{}", where_clause);
+        let query = format!("SELECT * FROM coins{where_clause}");
         db_query(&mut self.conn, &query, rusqlite::params![], |row| {
             row.try_into()
         })
@@ -668,7 +668,7 @@ impl SqliteConn {
             "SELECT * FROM labels where item in ({})",
             items
                 .iter()
-                .map(|a| format!("'{}'", a))
+                .map(|a| format!("'{a}'"))
                 .collect::<Vec<String>>()
                 .join(",")
         );

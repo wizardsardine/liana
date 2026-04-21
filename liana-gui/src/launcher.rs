@@ -211,7 +211,7 @@ impl Launcher {
         }
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let content = Into::<Element<ViewMessage>>::into(scrollable(
             Column::new()
                 .push(
@@ -363,7 +363,7 @@ fn wallets_list_item(
     network: Network,
     settings: &WalletSettings,
     i: usize,
-) -> Element<ViewMessage> {
+) -> Element<'_, ViewMessage> {
     Container::new(
         Row::new()
             .align_y(Alignment::Center)
@@ -549,7 +549,7 @@ impl DeleteWalletModal {
         Task::none()
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         let mut confirm_button = button::secondary(None, "Delete wallet")
             .width(Length::Fixed(200.0))
             .style(theme::button::destructive);
@@ -725,10 +725,7 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
             "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin. Liana v0.2 and later only support public keys with origins. Please migrate your funds using Liana v0.1.".to_string()
         }
         ConfigError::Unexpected(e) => {
-            format!(
-                "Unexpected {}",
-                e,
-            )
+            format!("Unexpected {e}")
         }
     })?;
     }

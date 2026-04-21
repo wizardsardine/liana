@@ -65,35 +65,35 @@ impl AppState {
             if mins == 1 {
                 "1 minute ago".to_string()
             } else {
-                format!("{} minutes ago", mins)
+                format!("{mins} minutes ago")
             }
         } else if diff < DAY {
             let hours = diff / HOUR;
             if hours == 1 {
                 "1 hour ago".to_string()
             } else {
-                format!("{} hours ago", hours)
+                format!("{hours} hours ago")
             }
         } else if diff < WEEK {
             let days = diff / DAY;
             if days == 1 {
                 "1 day ago".to_string()
             } else {
-                format!("{} days ago", days)
+                format!("{days} days ago")
             }
         } else if diff < MONTH {
             let weeks = diff / WEEK;
             if weeks == 1 {
                 "1 week ago".to_string()
             } else {
-                format!("{} weeks ago", weeks)
+                format!("{weeks} weeks ago")
             }
         } else {
             let months = diff / MONTH;
             if months == 1 {
                 "1 month ago".to_string()
             } else {
-                format!("{} months ago", months)
+                format!("{months} months ago")
             }
         }
     }

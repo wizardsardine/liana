@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use liana::miniscript::bitcoin;
 use std::str::FromStr;
 use std::{collections::HashMap, iter::IntoIterator, sync::Arc};

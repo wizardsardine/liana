@@ -73,9 +73,9 @@ impl From<RpcError> for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::Json(ref e) => write!(f, "JSON decode error: {}", e),
-            Error::Io(ref e) => write!(f, "IO error response: {}", e),
-            Error::Rpc(ref r) => write!(f, "RPC error response: {:?}", r),
+            Error::Json(ref e) => write!(f, "JSON decode error: {e}"),
+            Error::Io(ref e) => write!(f, "IO error response: {e}"),
+            Error::Rpc(ref r) => write!(f, "RPC error response: {r:?}"),
             Error::NoErrorOrResult => write!(f, "Malformed RPC response"),
             Error::NonceMismatch => write!(f, "Nonce of response did not match nonce of request"),
             Error::VersionMismatch => write!(f, "`jsonrpc` field set to non-\"2.0\""),

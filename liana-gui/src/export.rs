@@ -74,6 +74,7 @@ async fn open_file_write(path: &Path) -> Result<File, Error> {
     Ok(file)
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum ImportExportMessage {
     Open,
@@ -165,6 +166,7 @@ impl Display for Error {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum ImportExportType {
     Transactions,
@@ -207,25 +209,25 @@ impl ImportExportType {
 
 impl From<JoinError> for Error {
     fn from(value: JoinError) -> Self {
-        Error::JoinError(format!("{:?}", value))
+        Error::JoinError(format!("{value:?}"))
     }
 }
 
 impl From<std::io::Error> for Error {
     fn from(value: std::io::Error) -> Self {
-        Error::Io(format!("{:?}", value))
+        Error::Io(format!("{value:?}"))
     }
 }
 
 impl From<DaemonError> for Error {
     fn from(value: DaemonError) -> Self {
-        Error::Daemon(format!("{:?}", value))
+        Error::Daemon(format!("{value:?}"))
     }
 }
 
 impl From<ExportError> for Error {
     fn from(value: ExportError) -> Self {
-        Error::Bip329Export(format!("{:?}", value))
+        Error::Bip329Export(format!("{value:?}"))
     }
 }
 
@@ -542,7 +544,7 @@ pub async fn export_transactions(
             "".to_string()
         };
         if !label.is_empty() {
-            label = format!("\"{}\"", label);
+            label = format!("\"{label}\"");
         }
         let txid = tx.txid.to_string();
         let fee = tx.fee_amount.unwrap_or(Amount::ZERO).to_sat() as i128;
@@ -560,10 +562,7 @@ pub async fn export_transactions(
             "".into()
         };
 
-        let line = format!(
-            "{},{},{},{},{},{}\n",
-            date_time, label, value, fee, txid, block
-        );
+        let line = format!("{date_time},{label},{value},{fee},{txid},{block}\n");
         file.write_all(line.as_bytes())?;
     }
     send_progress!(sender, Progress(100.0));
@@ -838,7 +837,7 @@ pub async fn import_backup(
     let backup = match backup {
         Ok(psbt) => psbt,
         Err(e) => {
-            return Err(Error::BackupImport(format!("{:?}", e)));
+            return Err(Error::BackupImport(format!("{e:?}")));
         }
     };
 
@@ -1054,8 +1053,7 @@ pub async fn import_backup(
         .await
         {
             return Err(Error::BackupImport(format!(
-                "Failed to import keys aliases: {}",
-                e
+                "Failed to import keys aliases: {e}"
             )));
         } else {
             // Update wallet state

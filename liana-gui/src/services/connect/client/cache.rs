@@ -35,11 +35,11 @@ impl ConnectCache {
         std::fs::read(path)
             .map_err(|e| match e.kind() {
                 std::io::ErrorKind::NotFound => ConnectCacheError::NotFound,
-                _ => ConnectCacheError::ReadingFile(format!("Reading settings file: {}", e)),
+                _ => ConnectCacheError::ReadingFile(format!("Reading settings file: {e}")),
             })
             .and_then(|file_content| {
                 serde_json::from_slice::<ConnectCache>(&file_content).map_err(|e| {
-                    ConnectCacheError::ReadingFile(format!("Parsing settings file: {}", e))
+                    ConnectCacheError::ReadingFile(format!("Parsing settings file: {e}"))
                 })
             })
     }
@@ -74,7 +74,7 @@ pub async fn update_connect_cache(
     // Create parent directory if it doesn't exist
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| ConnectCacheError::WritingFile(format!("Creating directory: {}", e)))?;
+            .map_err(|e| ConnectCacheError::WritingFile(format!("Creating directory: {e}")))?;
     }
 
     let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
@@ -86,16 +86,16 @@ pub async fn update_connect_cache(
         .truncate(false)
         .open(&path)
         .await
-        .map_err(|e| ConnectCacheError::ReadingFile(format!("Opening file: {}", e)))?
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Opening file: {e}")))?
         .lock_write()
         .await
-        .map_err(|e| ConnectCacheError::ReadingFile(format!("Locking file: {:?}", e)))?;
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Locking file: {e:?}")))?;
 
     let mut cache = if file_exists {
         let mut file_content = Vec::new();
         file.read_to_end(&mut file_content)
             .await
-            .map_err(|e| ConnectCacheError::ReadingFile(format!("Reading file content: {}", e)))?;
+            .map_err(|e| ConnectCacheError::ReadingFile(format!("Reading file content: {e}")))?;
 
         match serde_json::from_slice::<ConnectCache>(&file_content) {
             Ok(cache) => cache,
@@ -129,11 +129,11 @@ pub async fn update_connect_cache(
     cache.upsert_credential(email, tokens.clone());
 
     let content = serde_json::to_vec_pretty(&cache).map_err(|e| {
-        ConnectCacheError::WritingFile(format!("Failed to serialize settings: {}", e))
+        ConnectCacheError::WritingFile(format!("Failed to serialize settings: {e}"))
     })?;
 
     file.seek(SeekFrom::Start(0)).await.map_err(|e| {
-        ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {}", e))
+        ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {e}"))
     })?;
 
     file.write_all(&content).await.map_err(|e| {
@@ -144,7 +144,7 @@ pub async fn update_connect_cache(
     file.inner_mut()
         .set_len(content.len() as u64)
         .await
-        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {}", e)))?;
+        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {e}")))?;
 
     Ok(tokens)
 }
@@ -159,7 +159,7 @@ pub async fn filter_connect_cache(
     // Create parent directory if it doesn't exist
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| ConnectCacheError::WritingFile(format!("Creating directory: {}", e)))?;
+            .map_err(|e| ConnectCacheError::WritingFile(format!("Creating directory: {e}")))?;
     }
 
     let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
@@ -171,16 +171,16 @@ pub async fn filter_connect_cache(
         .truncate(false)
         .open(&path)
         .await
-        .map_err(|e| ConnectCacheError::ReadingFile(format!("Opening file: {}", e)))?
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Opening file: {e}")))?
         .lock_write()
         .await
-        .map_err(|e| ConnectCacheError::ReadingFile(format!("Locking file: {:?}", e)))?;
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Locking file: {e:?}")))?;
 
     let mut cache = if file_exists {
         let mut file_content = Vec::new();
         file.read_to_end(&mut file_content)
             .await
-            .map_err(|e| ConnectCacheError::ReadingFile(format!("Reading file content: {}", e)))?;
+            .map_err(|e| ConnectCacheError::ReadingFile(format!("Reading file content: {e}")))?;
 
         match serde_json::from_slice::<ConnectCache>(&file_content) {
             Ok(cache) => cache,
@@ -197,11 +197,11 @@ pub async fn filter_connect_cache(
     cache.accounts.retain(|a| emails.contains(&a.email));
 
     let content = serde_json::to_vec_pretty(&cache).map_err(|e| {
-        ConnectCacheError::WritingFile(format!("Failed to serialize settings: {}", e))
+        ConnectCacheError::WritingFile(format!("Failed to serialize settings: {e}"))
     })?;
 
     file.seek(SeekFrom::Start(0)).await.map_err(|e| {
-        ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {}", e))
+        ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {e}"))
     })?;
 
     file.write_all(&content).await.map_err(|e| {
@@ -212,7 +212,7 @@ pub async fn filter_connect_cache(
     file.inner_mut()
         .set_len(content.len() as u64)
         .await
-        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {}", e)))?;
+        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {e}")))?;
 
     Ok(())
 }
@@ -229,10 +229,10 @@ impl std::fmt::Display for ConnectCacheError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::NotFound => write!(f, "ConnectCache file not found"),
-            Self::ReadingFile(e) => write!(f, "Error while reading file: {}", e),
-            Self::WritingFile(e) => write!(f, "Error while writing file: {}", e),
-            Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
-            Self::Updating(e) => write!(f, "Error while updating cache file: {}", e),
+            Self::ReadingFile(e) => write!(f, "Error while reading file: {e}"),
+            Self::WritingFile(e) => write!(f, "Error while writing file: {e}"),
+            Self::Unexpected(e) => write!(f, "Unexpected error: {e}"),
+            Self::Updating(e) => write!(f, "Error while updating cache file: {e}"),
         }
     }
 }

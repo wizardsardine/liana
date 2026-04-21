@@ -69,7 +69,7 @@ impl NodeDefinition {
         }
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         match self {
             NodeDefinition::Bitcoind(def) => def.view(),
             NodeDefinition::Electrum(def) => def.view(),
@@ -230,7 +230,7 @@ impl Step for DefineNode {
         _hws: &HardwareWallets,
         progress: (usize, usize),
         _email: Option<&str>,
-    ) -> Element<Message> {
+    ) -> Element<'_, Message> {
         // TODO: Make input fields read-only while waiting for a ping result.
         view::define_bitcoin_node(
             progress,

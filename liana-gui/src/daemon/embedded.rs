@@ -44,7 +44,7 @@ impl EmbeddedDaemon {
 
 impl<T> From<std::sync::PoisonError<T>> for DaemonError {
     fn from(value: std::sync::PoisonError<T>) -> Self {
-        DaemonError::Unexpected(format!("Daemon panic: {}", value))
+        DaemonError::Unexpected(format!("Daemon panic: {value}"))
     }
 }
 

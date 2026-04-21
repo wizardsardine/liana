@@ -164,7 +164,7 @@ impl fmt::Display for DeviceKind {
             DeviceKind::Coldcard => write!(f, "Coldcard"),
             DeviceKind::ColdcardMk4 => write!(f, "ColdcardMk4"),
             DeviceKind::ColdcardQ => write!(f, "ColdcardQ"),
-            DeviceKind::Other(s) => write!(f, "{}", s),
+            DeviceKind::Other(s) => write!(f, "{s}"),
         }
     }
 }
@@ -283,27 +283,27 @@ impl Display for Timelock {
         // Years
         if remaining >= BLOCKS_PER_YEAR {
             let years = remaining / BLOCKS_PER_YEAR;
-            parts.push(format!("{}y", years));
+            parts.push(format!("{years}y"));
             remaining %= BLOCKS_PER_YEAR;
         }
 
         // Months
         if remaining >= BLOCKS_PER_MONTH {
             let months = remaining / BLOCKS_PER_MONTH;
-            parts.push(format!("{}m", months));
+            parts.push(format!("{months}m"));
             remaining %= BLOCKS_PER_MONTH;
         }
 
         // Days
         if remaining >= BLOCKS_PER_DAY {
             let days = remaining / BLOCKS_PER_DAY;
-            parts.push(format!("{}d", days));
+            parts.push(format!("{days}d"));
             remaining %= BLOCKS_PER_DAY;
         }
 
         // Blocks (only show if there are no larger units)
         if parts.is_empty() {
-            parts.push(format!("{} blocks", remaining));
+            parts.push(format!("{remaining} blocks"));
         }
 
         write!(f, "{}", parts.join(" "))
@@ -606,7 +606,7 @@ mod wire_format_tests {
 
     // Test UUIDs - use parse_str instead of new_v4 (no v4 feature dependency)
     fn test_uuid(n: u8) -> Uuid {
-        Uuid::parse_str(&format!("12345678-1234-1234-1234-12345678900{}", n)).unwrap()
+        Uuid::parse_str(&format!("12345678-1234-1234-1234-12345678900{n}")).unwrap()
     }
 
     // Helper to roundtrip a type through JSON
@@ -644,7 +644,7 @@ mod wire_format_tests {
         ];
         for (status, expected) in cases {
             let json = serde_json::to_value(status).unwrap();
-            assert_eq!(json, expected, "WalletStatus::{:?}", status);
+            assert_eq!(json, expected, "WalletStatus::{status:?}");
         }
     }
 
@@ -657,7 +657,7 @@ mod wire_format_tests {
         ];
         for (role, expected) in cases {
             let json = serde_json::to_value(role).unwrap();
-            assert_eq!(json, expected, "UserRole::{:?}", role);
+            assert_eq!(json, expected, "UserRole::{role:?}");
         }
     }
 
@@ -671,7 +671,7 @@ mod wire_format_tests {
         ];
         for (kt, expected) in cases {
             let json = serde_json::to_value(kt).unwrap();
-            assert_eq!(json, expected, "KeyType::{:?}", kt);
+            assert_eq!(json, expected, "KeyType::{kt:?}");
         }
     }
 
@@ -684,7 +684,7 @@ mod wire_format_tests {
         ];
         for (src, expected) in cases {
             let json = serde_json::to_value(&src).unwrap();
-            assert_eq!(json, expected, "XpubSource::{:?}", src);
+            assert_eq!(json, expected, "XpubSource::{src:?}");
         }
     }
 
@@ -700,7 +700,7 @@ mod wire_format_tests {
         ];
         for (dk, expected) in known_cases {
             let json = serde_json::to_value(&dk).unwrap();
-            assert_eq!(json, expected, "DeviceKind::{:?}", dk);
+            assert_eq!(json, expected, "DeviceKind::{dk:?}");
         }
 
         // Other variant serializes as {"other": "value"} (snake_case)
@@ -1520,7 +1520,7 @@ mod wire_format_tests {
         for (json_str, expected) in cases {
             // Test deserialization
             let parsed: WalletStatus = serde_json::from_str(json_str)
-                .unwrap_or_else(|_| panic!("should parse {}", json_str));
+                .unwrap_or_else(|_| panic!("should parse {json_str}"));
             assert_eq!(parsed, expected);
 
             // Test serialization produces same string
@@ -1587,9 +1587,9 @@ mod wire_format_tests {
     fn make_key(id: u8) -> Key {
         Key {
             id,
-            alias: format!("Key{}", id),
+            alias: format!("Key{id}"),
             description: "".to_string(),
-            identity: KeyIdentity::Email(format!("key{}@example.com", id)),
+            identity: KeyIdentity::Email(format!("key{id}@example.com")),
             key_type: KeyType::Internal,
             xpub: None,
             xpub_source: None,

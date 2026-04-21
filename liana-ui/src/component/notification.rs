@@ -69,7 +69,7 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
                 Row::new()
                     .spacing(5)
                     .push_maybe(alias.map(text::p1_bold))
-                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .push(text::p1_regular(format!("#{fingerprint}")))
                     .into(),
                 Row::new()
                     .spacing(5)

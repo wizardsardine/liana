@@ -40,12 +40,12 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Auth(e) => write!(f, "Authentication error: {}", e),
+            Self::Auth(e) => write!(f, "Authentication error: {e}"),
             Self::CredentialsMissing => write!(f, "credentials missing"),
-            Self::Backend(e) => write!(f, "Remote backend error: {}", e),
-            Self::Settings(e) => write!(f, "Settings file error: {}", e),
-            Self::Cache(e) => write!(f, "Connect cache file error: {}", e),
-            Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
+            Self::Backend(e) => write!(f, "Remote backend error: {e}"),
+            Self::Settings(e) => write!(f, "Settings file error: {e}"),
+            Self::Cache(e) => write!(f, "Connect cache file error: {e}"),
+            Self::Unexpected(e) => write!(f, "Unexpected error: {e}"),
         }
     }
 }
@@ -104,6 +104,7 @@ pub enum ViewMessage {
     BackToLauncher(Network),
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum BackendState {
     NoWallet(BackendClient),
@@ -381,7 +382,7 @@ impl LianaLiteLogin {
         Task::none()
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let content = Into::<Element<ViewMessage>>::into(
             Container::new(
                 Column::new().spacing(100).align_x(Alignment::Center).push(

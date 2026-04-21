@@ -25,10 +25,10 @@ pub enum DeleteError {
 impl std::fmt::Display for DeleteError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Io(e) => write!(f, "{}", e),
-            Self::Settings(e) => write!(f, "{}", e),
-            Self::ConnectCache(e) => write!(f, "{}", e),
-            Self::Connect(e) => write!(f, "{}", e),
+            Self::Io(e) => write!(f, "{e}"),
+            Self::Settings(e) => write!(f, "{e}"),
+            Self::ConnectCache(e) => write!(f, "{e}"),
+            Self::Connect(e) => write!(f, "{e}"),
         }
     }
 }

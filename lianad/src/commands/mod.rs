@@ -1,3 +1,4 @@
+#![allow(clippy::result_large_err)]
 //! # Liana commands
 //!
 //! External interface to the Liana daemon.
@@ -45,6 +46,7 @@ use miniscript::{
 };
 use serde::{Deserialize, Serialize};
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandError {
     NoOutpointForSelfSend,
@@ -82,55 +84,50 @@ impl fmt::Display for CommandError {
             Self::NoOutpointForSelfSend => {
                 write!(f, "No provided outpoint for self-send. Need at least one.")
             }
-            Self::InvalidFeerate(sats_vb) => write!(f, "Invalid feerate: {} sats/vb.", sats_vb),
-            Self::AlreadySpent(op) => write!(f, "Coin at '{}' is already spent.", op),
+            Self::InvalidFeerate(sats_vb) => write!(f, "Invalid feerate: {sats_vb} sats/vb."),
+            Self::AlreadySpent(op) => write!(f, "Coin at '{op}' is already spent."),
             Self::ImmatureCoinbase(op) => write!(
                 f,
-                "Coin at '{}' is from an immature coinbase transaction.",
-                op
+                "Coin at '{op}' is from an immature coinbase transaction.",
             ),
-            Self::UnknownOutpoint(op) => write!(f, "Unknown outpoint '{}'.", op),
-            Self::Address(e) => write!(f, "Address error: {}", e),
-            Self::SpendCreation(e) => write!(f, "Creating spend: {}", e),
+            Self::UnknownOutpoint(op) => write!(f, "Unknown outpoint '{op}'."),
+            Self::Address(e) => write!(f, "Address error: {e}"),
+            Self::SpendCreation(e) => write!(f, "Creating spend: {e}"),
             Self::InsufficientFunds(in_val, out_val, feerate) => {
                 if let Some(out_val) = out_val {
                     write!(
                     f,
-                    "Cannot create a {} sat/vb transaction with input value {} and output value {}",
-                    feerate, in_val, out_val
+                    "Cannot create a {feerate} sat/vb transaction with input value {in_val} and output value {out_val}",
                 )
                 } else {
                     write!(
                         f,
-                        "Not enough fund to create a {} sat/vb transaction with input value {}",
-                        feerate, in_val
+                        "Not enough fund to create a {feerate} sat/vb transaction with input value {in_val}",
                     )
                 }
             }
-            Self::UnknownSpend(txid) => write!(f, "Unknown spend transaction '{}'.", txid),
+            Self::UnknownSpend(txid) => write!(f, "Unknown spend transaction '{txid}'."),
             Self::SpendFinalization(e) => {
-                write!(f, "Failed to finalize the spend transaction PSBT: '{}'.", e)
+                write!(f, "Failed to finalize the spend transaction PSBT: '{e}'.")
             }
-            Self::TxBroadcast(e) => write!(f, "Failed to broadcast transaction: '{}'.", e),
+            Self::TxBroadcast(e) => write!(f, "Failed to broadcast transaction: '{e}'."),
             Self::AlreadyRescanning => write!(
                 f,
                 "There is already a rescan ongoing. Please wait for it to complete first."
             ),
-            Self::InsaneRescanTimestamp(t) => write!(f, "Insane timestamp '{}'.", t),
-            Self::RescanTrigger(s) => write!(f, "Error while starting rescan: '{}'", s),
+            Self::InsaneRescanTimestamp(t) => write!(f, "Insane timestamp '{t}'."),
+            Self::RescanTrigger(s) => write!(f, "Error while starting rescan: '{s}'"),
             Self::RecoveryNotAvailable => write!(
                 f,
                 "No coin currently spendable through this timelocked recovery path."
             ),
-            Self::OutpointNotRecoverable(op, t) => write!(
-                f,
-                "Coin at '{}' is not recoverable with timelock '{}'",
-                op, t
-            ),
+            Self::OutpointNotRecoverable(op, t) => {
+                write!(f, "Coin at '{op}' is not recoverable with timelock '{t}'",)
+            }
             Self::InvalidDerivationIndex => {
                 write!(f, "Unhardened or overflowing BIP32 derivation index.")
             }
-            Self::RbfError(e) => write!(f, "RBF error: '{}'.", e),
+            Self::RbfError(e) => write!(f, "RBF error: '{e}'."),
             Self::EmptyFilterList => write!(f, "Filter list is empty, should supply None instead."),
         }
     }
@@ -162,7 +159,7 @@ impl fmt::Display for RbfErrorInfo {
                 write!(f, "A feerate must not be provided if creating a cancel. We'll always use the smallest one which satisfies the RBF rules.")
             }
             Self::TooLowFeerate(r, m) => {
-                write!(f, "Feerate {} too low for minimum feerate {}.", r, m)
+                write!(f, "Feerate {r} too low for minimum feerate {m}.")
             }
             Self::NotSignaling => write!(f, "Replacement candidate does not signal for RBF."),
         }
@@ -1483,6 +1480,7 @@ pub struct ListCoinsResult {
     pub coins: Vec<ListCoinsEntry>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum CreateSpendResult {

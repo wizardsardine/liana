@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     .run_with(move || LianaBusiness::new((config, log_level, VERSION)))
     {
         log::error!("{}", e);
-        Err(format!("Failed to launch UI: {}", e).into())
+        Err(format!("Failed to launch UI: {e}").into())
     } else {
         Ok(())
     }

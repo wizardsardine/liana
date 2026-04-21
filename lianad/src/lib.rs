@@ -94,14 +94,14 @@ pub enum StartupError {
 impl fmt::Display for StartupError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Io(e) => write!(f, "{}", e),
+            Self::Io(e) => write!(f, "{e}"),
             Self::DefaultDataDirNotFound => write!(
                 f,
                 "Not data directory was specified and a default path could not be determined for this platform."
             ),
             Self::DatadirCreation(dir_path, e) => write!(
                 f,
-                "Could not create data directory at '{}': '{}'", dir_path.display(), e
+                "Could not create data directory at '{}': '{e}'", dir_path.display()
             ),
             Self::MissingBitcoindConfig => write!(
                 f,
@@ -117,11 +117,11 @@ impl fmt::Display for StartupError {
             ),
             Self::DbMigrateBitcoinTxs(msg) => write!(
                 f,
-                "Error when migrating Bitcoin transaction from Bitcoin backend to database: {}.", msg
+                "Error when migrating Bitcoin transaction from Bitcoin backend to database: {msg}.",
             ),
-            Self::Database(e) => write!(f, "Error initializing database: '{}'.", e),
-            Self::Bitcoind(e) => write!(f, "Error setting up bitcoind interface: '{}'.", e),
-            Self::Electrum(e) => write!(f, "Error setting up Electrum interface: '{}'.", e),
+            Self::Database(e) => write!(f, "Error initializing database: '{e}'."),
+            Self::Bitcoind(e) => write!(f, "Error setting up bitcoind interface: '{e}'."),
+            Self::Electrum(e) => write!(f, "Error setting up Electrum interface: '{e}'."),
             #[cfg(windows)]
             Self::NoWatchonlyInDatadir => {
                 write!(
@@ -354,6 +354,7 @@ impl DaemonControl {
 
 /// The handle to a Liana daemon. It might either be the handle for a daemon which exposes a
 /// JSONRPC server or one which exposes its API through a `DaemonControl`.
+#[allow(clippy::large_enum_variant)]
 pub enum DaemonHandle {
     Controller {
         poller_sender: mpsc::SyncSender<poller::PollerMessage>,

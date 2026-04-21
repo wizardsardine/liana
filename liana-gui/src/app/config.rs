@@ -31,11 +31,11 @@ impl Config {
         let config = std::fs::read(path)
             .map_err(|e| match e.kind() {
                 std::io::ErrorKind::NotFound => ConfigError::NotFound,
-                _ => ConfigError::ReadingFile(format!("Reading configuration file: {}", e)),
+                _ => ConfigError::ReadingFile(format!("Reading configuration file: {e}")),
             })
             .and_then(|file_content| {
                 toml::from_slice::<Config>(&file_content).map_err(|e| {
-                    ConfigError::ReadingFile(format!("Parsing configuration file: {}", e))
+                    ConfigError::ReadingFile(format!("Parsing configuration file: {e}"))
                 })
             })?;
 
@@ -46,7 +46,7 @@ impl Config {
 
     pub fn to_file(&self, path: &Path) -> Result<(), ConfigError> {
         let content = toml::to_string(&self)
-            .map_err(|e| ConfigError::WritingFile(format!("Failed to serialize config: {}", e)))?;
+            .map_err(|e| ConfigError::WritingFile(format!("Failed to serialize config: {e}")))?;
 
         let mut config_file = OpenOptions::new()
             .write(true)
@@ -73,7 +73,7 @@ impl Config {
                 "trace" => Ok(filter::LevelFilter::TRACE),
                 _ => Err(ConfigError::InvalidField(
                     "log_level",
-                    format!("Unknown value '{}'", level),
+                    format!("Unknown value '{level}'"),
                 )),
             }
         } else if let Some(true) = self.debug {
@@ -98,11 +98,11 @@ impl std::fmt::Display for ConfigError {
         match self {
             Self::NotFound => write!(f, "Config file not found"),
             Self::InvalidField(field, message) => {
-                write!(f, "Config field {} is invalid: {}", field, message)
+                write!(f, "Config field {field} is invalid: {message}")
             }
-            Self::ReadingFile(e) => write!(f, "Error while reading file: {}", e),
-            Self::WritingFile(e) => write!(f, "Error while writing file: {}", e),
-            Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
+            Self::ReadingFile(e) => write!(f, "Error while reading file: {e}"),
+            Self::WritingFile(e) => write!(f, "Error while writing file: {e}"),
+            Self::Unexpected(e) => write!(f, "Unexpected error: {e}"),
         }
     }
 }

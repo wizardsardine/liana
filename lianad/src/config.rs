@@ -14,8 +14,7 @@ where
     <T as FromStr>::Err: std::fmt::Display,
 {
     let string = String::deserialize(deserializer)?;
-    T::from_str(&string)
-        .map_err(|e| de::Error::custom(format!("Error parsing '{}': {}", string, e)))
+    T::from_str(&string).map_err(|e| de::Error::custom(format!("Error parsing '{string}': {e}")))
 }
 
 pub fn serialize_to_string<T: std::fmt::Display, S: Serializer>(
@@ -70,7 +69,7 @@ fn serialize_userpass<S: Serializer>(
     password: &String,
     s: S,
 ) -> Result<S::Ok, S::Error> {
-    s.serialize_str(&format!("{}:{}", user, password))
+    s.serialize_str(&format!("{user}:{password}"))
 }
 
 fn default_loglevel() -> log::LevelFilter {
@@ -226,13 +225,12 @@ impl std::fmt::Display for ConfigError {
         match &self {
             Self::DatadirNotFound => write!(f, "Could not locate the configuration directory."),
             Self::FileNotFound => write!(f, "Could not locate the configuration file."),
-            Self::ReadingFile(e) => write!(f, "Failed to read configuration file: {}", e),
+            Self::ReadingFile(e) => write!(f, "Failed to read configuration file: {e}"),
             Self::UnexpectedDescriptor(desc) => write!(
                 f,
-                "Unexpected descriptor '{}'. We only support wsh() descriptors for now.",
-                desc
+                "Unexpected descriptor '{desc}'. We only support wsh() descriptors for now.",
             ),
-            Self::Unexpected(e) => write!(f, "Configuration error: {}", e),
+            Self::Unexpected(e) => write!(f, "Configuration error: {e}"),
         }
     }
 }
@@ -294,7 +292,7 @@ impl Config {
             custom_path.unwrap_or(config_file_path().ok_or(ConfigError::DatadirNotFound)?);
 
         let config = toml::from_slice::<Config>(&std::fs::read(config_file)?)
-            .map_err(|e| ConfigError::ReadingFile(format!("Parsing configuration file: {}", e)))?;
+            .map_err(|e| ConfigError::ReadingFile(format!("Parsing configuration file: {e}")))?;
         config.check()?;
 
         Ok(config)

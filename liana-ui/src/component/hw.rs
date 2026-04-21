@@ -47,7 +47,7 @@ pub fn supported_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
             Row::new()
                 .spacing(5)
                 .push_maybe(alias.map(|a| text::p1_bold(a)))
-                .push(text::p1_regular(format!("#{}", fingerprint)))
+                .push(text::p1_regular(format!("#{fingerprint}")))
                 .into(),
             Row::new()
                 .spacing(5)
@@ -76,7 +76,7 @@ impl Display for Account {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let index = self.index.to_string();
         let index = index.replace("'", "");
-        write!(f, "Account #{}", index)
+        write!(f, "Account #{index}")
     }
 }
 
@@ -122,7 +122,7 @@ pub fn supported_hardware_wallet_with_account<
         Row::new()
             .spacing(5)
             .push_maybe(alias.map(|a| text::p1_bold(a)))
-            .push(text::p1_regular(format!("#{}", fingerprint)))
+            .push(text::p1_regular(format!("#{fingerprint}")))
             .into(),
         Row::new()
             .spacing(5)
@@ -155,7 +155,7 @@ pub fn warning_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Displa
                 Row::new()
                     .spacing(5)
                     .push_maybe(alias.map(|a| text::p1_bold(a)))
-                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .push(text::p1_regular(format!("#{fingerprint}")))
                     .into(),
                 Row::new()
                     .spacing(5)
@@ -189,7 +189,7 @@ pub fn unimplemented_method_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
         tooltip::Tooltip::new(
             container(
                 column(vec![
-                    text::p1_regular(format!("#{}", fingerprint)).into(),
+                    text::p1_regular(format!("#{fingerprint}")).into(),
                     Row::new()
                         .spacing(5)
                         .push(text::caption(kind.to_string()))
@@ -215,7 +215,7 @@ pub fn disabled_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
     label: &'static str,
 ) -> Container<'a, T> {
     let key = column(vec![
-        text::p1_regular(format!("#{}", fingerprint)).into(),
+        text::p1_regular(format!("#{fingerprint}")).into(),
         Row::new()
             .spacing(5)
             .push(text::caption(kind.to_string()))
@@ -264,7 +264,7 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
                 Row::new()
                     .spacing(5)
                     .push_maybe(alias.map(|a| text::p1_bold(a)))
-                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .push(text::p1_regular(format!("#{fingerprint}")))
                     .into(),
                 Row::new()
                     .spacing(5)
@@ -309,7 +309,7 @@ pub fn selected_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Displ
         Row::new()
             .spacing(5)
             .push_maybe(alias.map(|a| text::p1_bold(a)))
-            .push(text::p1_regular(format!("#{}", fingerprint)))
+            .push(text::p1_regular(format!("#{fingerprint}")))
             .into(),
         Row::new()
             .spacing(5)
@@ -349,7 +349,7 @@ pub fn sign_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Displa
                 Row::new()
                     .spacing(5)
                     .push_maybe(alias.map(|a| text::p1_bold(a)))
-                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .push(text::p1_regular(format!("#{fingerprint}")))
                     .into(),
                 Row::new()
                     .spacing(5)
@@ -384,7 +384,7 @@ pub fn registration_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
                 Row::new()
                     .spacing(5)
                     .push_maybe(alias.map(|a| text::p1_bold(a)))
-                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .push(text::p1_regular(format!("#{fingerprint}")))
                     .into(),
                 Row::new()
                     .spacing(5)
@@ -480,7 +480,7 @@ pub fn unsupported_version_hardware_wallet<'a, T: 'static, K: Display, V: Displa
         row(vec![
             column(vec![
                 text::p1_bold("Unsupported firmware version").into(),
-                text::p1_regular(format!("Install version {} or later", requested_version)).into(),
+                text::p1_regular(format!("Install version {requested_version} or later")).into(),
                 Row::new()
                     .spacing(5)
                     .push(text::caption(kind.to_string()))
@@ -525,7 +525,7 @@ pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
                 Row::new()
                     .spacing(5)
                     .push_maybe(alias.map(|a| text::p1_bold(a)))
-                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .push(text::p1_regular(format!("#{fingerprint}")))
                     .into(),
                 Row::new()
                     .spacing(5)
@@ -557,7 +557,7 @@ pub fn selected_hot_signer<'a, T: 'a, F: Display>(
                 Row::new()
                     .spacing(5)
                     .push_maybe(alias.map(|a| text::p1_bold(a)))
-                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .push(text::p1_regular(format!("#{fingerprint}")))
                     .into(),
                 Row::new()
                     .spacing(5)
@@ -585,7 +585,7 @@ pub fn unselected_hot_signer<'a, T: 'a, F: Display>(
             Row::new()
                 .spacing(5)
                 .push_maybe(alias.map(|a| text::p1_bold(a)))
-                .push(text::p1_regular(format!("#{}", fingerprint)))
+                .push(text::p1_regular(format!("#{fingerprint}")))
                 .into(),
             Row::new()
                 .spacing(5)
@@ -611,7 +611,7 @@ pub fn hot_signer<'a, T: 'a, F: Display>(
                 Row::new()
                     .spacing(5)
                     .push_maybe(alias.map(|a| text::p1_bold(a)))
-                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .push(text::p1_regular(format!("#{fingerprint}")))
                     .into(),
                 Row::new()
                     .spacing(5)
@@ -644,7 +644,7 @@ pub fn selected_provider_key<'a, T: 'a, F: Display>(
                 Row::new()
                     .spacing(5)
                     .push(text::p1_bold(alias))
-                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .push(text::p1_regular(format!("#{fingerprint}")))
                     .into(),
                 Row::new()
                     .spacing(5)
@@ -671,7 +671,7 @@ pub fn unselected_provider_key<'a, T: 'a, F: Display>(
             Row::new()
                 .spacing(5)
                 .push(text::p1_bold(alias))
-                .push(text::p1_regular(format!("#{}", fingerprint)))
+                .push(text::p1_regular(format!("#{fingerprint}")))
                 .into(),
             Row::new()
                 .spacing(5)
@@ -695,7 +695,7 @@ pub fn unsaved_provider_key<'a, T: 'a, F: Display>(
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .push(text::p1_regular(format!("#{fingerprint}")))
                     .into(),
                 Row::new()
                     .spacing(5)

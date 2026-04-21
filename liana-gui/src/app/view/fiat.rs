@@ -29,7 +29,7 @@ impl std::fmt::Display for AmountError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::Negative => write!(f, "Amount must be non-negative"),
-            Self::ParseError(e) => write!(f, "Parse error: {}", e),
+            Self::ParseError(e) => write!(f, "Parse error: {e}"),
         }
     }
 }
@@ -96,15 +96,11 @@ impl std::fmt::Display for AmountConverterError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::NonPositivePrice => write!(f, "Price per BTC must be positive"),
-            Self::ParseError(e) => write!(f, "Parse error: {}", e),
+            Self::ParseError(e) => write!(f, "Parse error: {e}"),
             Self::CurrencyMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "Currency mismatch: expected {}, got {}",
-                    expected, actual
-                )
+                write!(f, "Currency mismatch: expected {expected}, got {actual}")
             }
-            Self::ConversionError(e) => write!(f, "Conversion error: {}", e),
+            Self::ConversionError(e) => write!(f, "Conversion error: {e}"),
         }
     }
 }

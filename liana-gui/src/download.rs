@@ -69,7 +69,7 @@ impl std::fmt::Display for DownloadError {
                 write!(f, "Response has unknown content length.")
             }
             Self::RequestFailed(e) => {
-                write!(f, "Request error: '{}'.", e)
+                write!(f, "Request error: '{e}'.")
             }
         }
     }

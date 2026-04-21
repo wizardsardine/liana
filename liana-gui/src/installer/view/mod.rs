@@ -871,7 +871,7 @@ fn display_policy(
                                 .style(theme::card::simple),
                             )
                         } else {
-                            Container::new(text(format!("[{}]", k)).bold())
+                            Container::new(text(format!("[{k}]")).bold())
                         };
                         if primary_keys.len() == 1 || i == primary_keys.len() - 1 {
                             row.push(content)
@@ -918,7 +918,7 @@ fn display_policy(
                                 .style(theme::card::simple),
                             )
                         } else {
-                            Container::new(text(format!("[{}]", k)).bold())
+                            Container::new(text(format!("[{k}]")).bold())
                         };
                         if recovery_keys.len() == 1 || i == recovery_keys.len() - 1 {
                             row.push(content)
@@ -976,7 +976,7 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
             .iter()
             .filter_map(|(n, u)| {
                 if *n != 0 {
-                    Some(format!("{}{}", n, u))
+                    Some(format!("{n}{u}"))
                 } else {
                     None
                 }
@@ -990,7 +990,7 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
             .iter()
             .filter_map(|(n, u)| {
                 if *n != 0 {
-                    Some(format!("{}{}", n, u))
+                    Some(format!("{n}{u}"))
                 } else {
                     None
                 }
@@ -1153,7 +1153,7 @@ pub fn define_bitcoind<'a>(
                         .spacing(10),
                     |row, auth_type| {
                         row.push(radio(
-                            format!("{}", auth_type),
+                            format!("{auth_type}"),
                             *auth_type,
                             Some(*selected_auth_type),
                             |new_selection| {
@@ -1383,7 +1383,7 @@ pub fn start_internal_bitcoind<'a>(
                         .spacing(10)
                         .align_y(Alignment::Center)
                         .push(icon::circle_cross_icon().style(theme::text::error))
-                        .push(text(format!("Download failed: '{}'.", e)).style(theme::text::error)),
+                        .push(text(format!("Download failed: '{e}'.")).style(theme::text::error)),
                     _ => Row::new().spacing(10).align_y(Alignment::Center),
                 }
             }))
@@ -1403,8 +1403,7 @@ pub fn start_internal_bitcoind<'a>(
                         .align_y(Alignment::Center)
                         .push(icon::circle_cross_icon().style(theme::text::error))
                         .push(
-                            text(format!("Installation failed: '{}'.", e))
-                                .style(theme::text::error),
+                            text(format!("Installation failed: '{e}'.")).style(theme::text::error),
                         ),
                 }
             } else if exe_path.is_some() {
@@ -1581,7 +1580,7 @@ pub fn defined_sequence<'a>(
                 .iter()
                 .filter_map(|(n, unit)| {
                     if *n > 0 {
-                        Some(format!("{}{}", n, unit))
+                        Some(format!("{n}{unit}"))
                     } else {
                         None
                     }

@@ -53,7 +53,7 @@ fn create_spend(control: &DaemonControl, params: Params) -> Result<serde_json::V
                 Error::invalid_params("Invalid 'change_address' parameter: must be a string.")
             })?;
             bitcoin::Address::from_str(addr_str).map_err(|e| {
-                Error::invalid_params(format!("Invalid 'change_address' parameter: {}.", e))
+                Error::invalid_params(format!("Invalid 'change_address' parameter: {e}."))
             })
         })
         .transpose()?;
@@ -137,8 +137,7 @@ fn list_coins(control: &DaemonControl, params: Option<Params>) -> Result<serde_j
                     .and_then(CoinStatus::from_arg)
                     .ok_or_else(|| {
                         Error::invalid_params(format!(
-                            "Invalid value {} in 'statuses' parameter.",
-                            status_arg
+                            "Invalid value {status_arg} in 'statuses' parameter.",
                         ))
                     })
             })
@@ -159,8 +158,7 @@ fn list_coins(control: &DaemonControl, params: Option<Params>) -> Result<serde_j
                     .and_then(|op| bitcoin::OutPoint::from_str(op).ok())
                     .ok_or_else(|| {
                         Error::invalid_params(format!(
-                            "Invalid value {} in 'outpoints' parameter.",
-                            op_arg
+                            "Invalid value {op_arg} in 'outpoints' parameter.",
                         ))
                     })
             })
@@ -179,9 +177,11 @@ where
 {
     Ok(
         if let Some(i) = params.as_ref().and_then(|p| p.get(index, name)) {
-            Some(i.as_u64().and_then(|i| i.try_into().ok()).ok_or_else(|| {
-                Error::invalid_params(format!("Invalid value for '{}': {}", name, i))
-            })?)
+            Some(
+                i.as_u64().and_then(|i| i.try_into().ok()).ok_or_else(|| {
+                    Error::invalid_params(format!("Invalid value for '{name}': {i}"))
+                })?,
+            )
         } else {
             None
         },
@@ -422,16 +422,14 @@ fn update_labels(control: &DaemonControl, params: Params) -> Result<serde_json::
         if let Some(value) = &value {
             if value.len() > 100 {
                 return Err(Error::invalid_params(format!(
-                    "Invalid 'labels.{}' value length: must be less or equal than 100 characters",
-                    item
+                    "Invalid 'labels.{item}' value length: must be less or equal than 100 characters",
                 )));
             }
         }
         let item =
             LabelItem::from_str(item, control.config.bitcoin_config.network).ok_or_else(|| {
                 Error::invalid_params(format!(
-                    "Invalid 'labels.{}' parameter: must be an address, a txid or an outpoint",
-                    item
+                    "Invalid 'labels.{item}' parameter: must be an address, a txid or an outpoint",
                 ))
             })?;
         items.insert(item, value);
@@ -452,16 +450,14 @@ fn get_labels(control: &DaemonControl, params: Params) -> Result<serde_json::Val
     {
         let item = item.as_str().ok_or_else(|| {
             Error::invalid_params(format!(
-                "Invalid item {} format: must be an address, a txid or an outpoint",
-                item
+                "Invalid item {item} format: must be an address, a txid or an outpoint",
             ))
         })?;
 
         let item =
             LabelItem::from_str(item, control.config.bitcoin_config.network).ok_or_else(|| {
                 Error::invalid_params(format!(
-                    "Invalid item {} format: must be an address, a txid or an outpoint",
-                    item
+                    "Invalid item {item} format: must be an address, a txid or an outpoint",
                 ))
             })?;
         items.insert(item);

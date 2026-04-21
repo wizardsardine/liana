@@ -349,7 +349,7 @@ impl Loader {
         }
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         view(&self.step).map(Message::View)
     }
 }
@@ -462,7 +462,7 @@ pub enum ViewMessage {
     SwitchNetwork,
 }
 
-pub fn view(step: &Step) -> Element<ViewMessage> {
+pub fn view(step: &Step) -> Element<'_, ViewMessage> {
     match &step {
         Step::StartingDaemon => cover(
             None,
@@ -619,11 +619,11 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Config(e) => write!(f, "Config error: {}", e),
-            Self::Wallet(e) => write!(f, "Wallet error: {}", e),
-            Self::Daemon(e) => write!(f, "Liana daemon error: {}", e),
-            Self::Bitcoind(e) => write!(f, "Bitcoind error: {}", e),
-            Self::BitcoindLogs(e) => write!(f, "Bitcoind logs error: {}", e),
+            Self::Config(e) => write!(f, "Config error: {e}"),
+            Self::Wallet(e) => write!(f, "Wallet error: {e}"),
+            Self::Daemon(e) => write!(f, "Liana daemon error: {e}"),
+            Self::Bitcoind(e) => write!(f, "Bitcoind error: {e}"),
+            Self::BitcoindLogs(e) => write!(f, "Bitcoind logs error: {e}"),
             Self::RestoreBackup(e) => write!(f, "Restore backup: {e}"),
         }
     }

@@ -30,6 +30,7 @@ use crate::daemon::{
 
 const PREV_ADDRESSES_PAGE_SIZE: usize = 20;
 
+#[allow(clippy::large_enum_variant)]
 pub enum Modal {
     VerifyAddress(VerifyAddressModal),
     ShowQrCode(ShowQrCodeModal),
@@ -356,7 +357,7 @@ impl VerifyAddressModal {
 }
 
 impl VerifyAddressModal {
-    fn view(&self) -> Element<view::Message> {
+    fn view(&self) -> Element<'_, view::Message> {
         view::receive::verify_address_modal(
             self.warning.as_ref(),
             &self.hws.list,
@@ -421,7 +422,7 @@ pub struct ShowQrCodeModal {
 
 impl ShowQrCodeModal {
     pub fn new(address: &Address, index: ChildNumber) -> Option<Self> {
-        qr_code::Data::new(format!("bitcoin:{}?index={}", address, index))
+        qr_code::Data::new(format!("bitcoin:{address}?index={index}"))
             .ok()
             .map(|qr_code| Self {
                 qr_code,
@@ -429,7 +430,7 @@ impl ShowQrCodeModal {
             })
     }
 
-    fn view(&self) -> Element<view::Message> {
+    fn view(&self) -> Element<'_, view::Message> {
         view::receive::qr_modal(&self.qr_code, &self.address)
     }
 }

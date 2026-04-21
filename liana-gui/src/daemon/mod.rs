@@ -53,13 +53,13 @@ pub enum DaemonError {
 impl std::fmt::Display for DaemonError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Rpc(code, e) => write!(f, "Daemon error rpc call: [{:?}] {}", code, e),
+            Self::Rpc(code, e) => write!(f, "Daemon error rpc call: [{code:?}] {e}"),
             Self::NoAnswer => write!(f, "Daemon returned no answer"),
             Self::DaemonStopped => write!(f, "Daemon stopped"),
-            Self::RpcSocket(kind, e) => write!(f, "Daemon transport error: [{:?}] {}", kind, e),
-            Self::Http(kind, e) => write!(f, "Http error: [{:?}] {}", kind, e),
-            Self::Unexpected(e) => write!(f, "Daemon unexpected error: {}", e),
-            Self::Start(e) => write!(f, "Daemon did not start: {}", e),
+            Self::RpcSocket(kind, e) => write!(f, "Daemon transport error: [{kind:?}] {e}"),
+            Self::Http(kind, e) => write!(f, "Http error: [{kind:?}] {e}"),
+            Self::Unexpected(e) => write!(f, "Daemon unexpected error: {e}"),
+            Self::Start(e) => write!(f, "Daemon did not start: {e}"),
             Self::ClientNotSupported => write!(f, "Daemon communication is not supported"),
             Self::CoinSelectionError => write!(f, "Coin selection error"),
             Self::NotImplemented => write!(f, "This feature is not implemented for this backend"),

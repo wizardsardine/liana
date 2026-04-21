@@ -35,6 +35,7 @@ use crate::{
     },
 };
 
+#[allow(clippy::large_enum_variant)]
 pub enum State<I, S, M>
 where
     M: Clone + Send + 'static,
@@ -80,6 +81,7 @@ where
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum Message<M>
 where
@@ -545,7 +547,7 @@ where
         }])
     }
 
-    pub fn view(&self) -> Element<Message<M>> {
+    pub fn view(&self) -> Element<'_, Message<M>> {
         match &self.state {
             State::Installer(v) => v.view().map(|msg| Message::Install(Box::new(msg))),
             State::App(v) => v.view().map(|msg| Message::Run(Box::new(msg))),
@@ -739,7 +741,7 @@ async fn connect_for_business(
         .map_err(|e| login::Error::Unexpected(e.to_string()))?
         .into_iter()
         .find(|w| w.id == wallet_id)
-        .ok_or_else(|| login::Error::Unexpected(format!("Wallet {} not found", wallet_id)))?;
+        .ok_or_else(|| login::Error::Unexpected(format!("Wallet {wallet_id} not found")))?;
 
     // Create wallet client
     let (wallet_client, wallet) = client.connect_wallet(wallet);

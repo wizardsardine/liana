@@ -26,9 +26,9 @@ impl From<&Error> for WarningMessage {
                     }
                 }
                 DaemonError::Http(Some(code), error) => {
-                    WarningMessage(format!("HTTP error {}: {}", code, error))
+                    WarningMessage(format!("HTTP error {code}: {error}"))
                 }
-                DaemonError::Http(None, error) => WarningMessage(format!("HTTP error: {}", error)),
+                DaemonError::Http(None, error) => WarningMessage(format!("HTTP error: {error}")),
                 DaemonError::Unexpected(_) => WarningMessage("Unknown error".to_string()),
                 DaemonError::Start(_) => WarningMessage("Daemon failed to start".to_string()),
                 DaemonError::ClientNotSupported => {
@@ -47,11 +47,11 @@ impl From<&Error> for WarningMessage {
             },
             Error::Unexpected(_) => WarningMessage("Unknown error".to_string()),
             Error::HardwareWallet(_) => WarningMessage("Hardware wallet error".to_string()),
-            Error::Desc(e) => WarningMessage(format!("Descriptor analysis error: '{}'.", e)),
-            Error::Spend(e) => WarningMessage(format!("Spend creation error: '{}'.", e)),
+            Error::Desc(e) => WarningMessage(format!("Descriptor analysis error: '{e}'.")),
+            Error::Spend(e) => WarningMessage(format!("Spend creation error: '{e}'.")),
             Error::ImportExport(e) => WarningMessage(format!("{e}")),
             Error::RestoreBackup(e) => WarningMessage(format!("Failed to restore backup: {e}")),
-            Error::FiatPrice(e) => WarningMessage(format!("Fiat price error: {}", e)),
+            Error::FiatPrice(e) => WarningMessage(format!("Fiat price error: {e}")),
         }
     }
 }

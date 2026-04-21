@@ -113,7 +113,7 @@ fn export_section(
     .style(theme::card::button_simple)
 }
 
-pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
+pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<'_, Message> {
     let header = Button::new(panel_title("Settings"))
         .style(theme::button::transparent_primary_text)
         .on_press(Message::Menu(Menu::Settings));
@@ -310,7 +310,7 @@ pub fn about_section<'a>(
                     Column::new()
                         .push(text(format!("liana-gui v{}", crate::VERSION)))
                         .push_maybe(
-                            lianad_version.map(|version| text(format!("lianad v{}", version))),
+                            lianad_version.map(|version| text(format!("lianad v{version}"))),
                         ),
                 ),
             ),
@@ -437,7 +437,7 @@ pub fn bitcoind_edit<'a>(
                         .spacing(10),
                     |row, auth_type| {
                         row.push(radio(
-                            format!("{}", auth_type),
+                            format!("{auth_type}"),
                             *auth_type,
                             Some(*selected_auth_type),
                             SettingsEditMessage::BitcoindRpcAuthTypeSelected,
@@ -1195,7 +1195,7 @@ fn display_policy<'a>(
                                 .style(theme::card::simple),
                             )
                         } else {
-                            Container::new(text(format!("[{}]", k)).bold())
+                            Container::new(text(format!("[{k}]")).bold())
                         };
                         if primary_keys.len() == 1 || i == primary_keys.len() - 1 {
                             row.push(content)
@@ -1248,7 +1248,7 @@ fn display_policy<'a>(
                                 .style(theme::card::simple),
                             )
                         } else {
-                            Container::new(text(format!("[{}]", k)).bold())
+                            Container::new(text(format!("[{k}]")).bold())
                         };
                         if recovery_keys.len() == 1 || i == recovery_keys.len() - 1 {
                             row.push(content)
@@ -1306,7 +1306,7 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
             .iter()
             .filter_map(|(n, u)| {
                 if *n != 0 {
-                    Some(format!("{}{}", n, u))
+                    Some(format!("{n}{u}"))
                 } else {
                     None
                 }
@@ -1320,7 +1320,7 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
             .iter()
             .filter_map(|(n, u)| {
                 if *n != 0 {
-                    Some(format!("{}{}", n, u))
+                    Some(format!("{n}{u}"))
                 } else {
                     None
                 }

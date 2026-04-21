@@ -697,7 +697,7 @@ impl DescriptorEditModal for EditSequenceModal {
         Task::none()
     }
 
-    fn view(&self, _hws: &HardwareWallets) -> Element<Message> {
+    fn view(&self, _hws: &HardwareWallets) -> Element<'_, Message> {
         view::editor::edit_sequence_modal(&self.sequence)
     }
 }
@@ -751,7 +751,7 @@ impl DescriptorEditModal for EditThresholdModal {
         Task::none()
     }
 
-    fn view(&self, _hws: &HardwareWallets) -> Element<Message> {
+    fn view(&self, _hws: &HardwareWallets) -> Element<'_, Message> {
         view::editor::edit_threshold_modal(self.threshold)
     }
 }

@@ -38,6 +38,7 @@ use crate::daemon::{
 
 use super::export::ExportModal;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum TransactionsModal {
     CreateRbf(CreateRbfModal),

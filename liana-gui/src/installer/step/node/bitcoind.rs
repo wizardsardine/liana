@@ -62,7 +62,7 @@ impl Download {
 
     pub fn start(&mut self) {
         match self.state {
-            DownloadState::Idle { .. }
+            DownloadState::Idle
             | DownloadState::Finished { .. }
             | DownloadState::Errored { .. } => {
                 self.state = DownloadState::Downloading { progress: 0.0 };
@@ -128,7 +128,7 @@ impl std::fmt::Display for InstallBitcoindError {
                 write!(f, "Hashes do not match.")
             }
             Self::UnpackingError(e) => {
-                write!(f, "Error unpacking: '{}'.", e)
+                write!(f, "Error unpacking: '{e}'.")
             }
         }
     }
@@ -333,7 +333,7 @@ impl Step for SelectBitcoindTypeStep {
         _hws: &HardwareWallets,
         progress: (usize, usize),
         _email: Option<&str>,
-    ) -> Element<Message> {
+    ) -> Element<'_, Message> {
         view::select_bitcoind_type(progress)
     }
 }
@@ -364,7 +364,7 @@ impl DefineBitcoind {
             RpcAuthType::CookieFile => {
                 let cookie_path = rpc_auth_vals.cookie_path.value;
                 let cookie = std::fs::read_to_string(cookie_path)
-                    .map_err(|e| Error::Bitcoind(format!("Failed to read cookie file: {}", e)))?;
+                    .map_err(|e| Error::Bitcoind(format!("Failed to read cookie file: {e}")))?;
                 SimpleHttpTransport::builder().cookie_auth(cookie)
             }
             RpcAuthType::UserPass => {
@@ -481,7 +481,7 @@ impl DefineBitcoind {
         }
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         view::define_bitcoind(&self.address, &self.rpc_auth_vals, &self.selected_auth_type)
     }
 }
@@ -604,12 +604,12 @@ impl Step for InternalBitcoindStep {
                                 (rpc_port, p2p_port)
                             }
                             (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
-                                self.error = Some(format!("Could not get available port: {}.", e));
+                                self.error = Some(format!("Could not get available port: {e}."));
                                 return Task::none();
                             }
                             (Err(e1), Err(e2)) => {
                                 self.error =
-                                    Some(format!("Could not get available ports: {}; {}.", e1, e2));
+                                    Some(format!("Could not get available ports: {e1}; {e2}."));
                                 return Task::none();
                             }
                         }
@@ -781,7 +781,7 @@ impl Step for InternalBitcoindStep {
         _hws: &HardwareWallets,
         progress: (usize, usize),
         _email: Option<&str>,
-    ) -> Element<Message> {
+    ) -> Element<'_, Message> {
         view::start_internal_bitcoind(
             progress,
             self.exe_path.as_ref(),

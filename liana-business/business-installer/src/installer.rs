@@ -101,7 +101,7 @@ impl Installer<'_, Message> for BusinessInstaller {
         self.state.update(message)
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         self.state.view()
     }
 

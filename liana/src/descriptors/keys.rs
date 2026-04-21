@@ -39,10 +39,10 @@ impl fmt::Display for DerivedPublicKey {
 
         write!(f, "[")?;
         for byte in fingerprint.as_bytes().iter() {
-            write!(f, "{:02x}", byte)?;
+            write!(f, "{byte:02x}")?;
         }
         for child in deriv_path {
-            write!(f, "/{}", child)?;
+            write!(f, "/{child}")?;
         }
         write!(f, "]{}", self.key)
     }

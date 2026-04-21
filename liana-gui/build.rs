@@ -1,3 +1,4 @@
+#[allow(clippy::uninlined_format_args)]
 fn main() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     // Skip icon if LIANA_SKIP_GUI_ICON env var is set (used by liana-business nix build)
@@ -24,14 +25,14 @@ fn main() {
         }
 
         if let Err(e) = res.compile() {
-            eprintln!("Failed to compile Windows resources: {}", e);
+            eprintln!("Failed to compile Windows resources: {e}");
             panic!("Windows resource compilation failed: {}", e);
         }
 
         // Explicitly link the resource object file (needed for cross-compilation)
-        let resource_obj = format!("{}/resource.o", out_dir);
+        let resource_obj = format!("{out_dir}/resource.o");
         if std::path::Path::new(&resource_obj).exists() {
-            println!("cargo:rustc-link-arg-bins={}", resource_obj);
+            println!("cargo:rustc-link-arg-bins={resource_obj}");
         }
     }
 }

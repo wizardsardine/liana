@@ -40,29 +40,28 @@ impl std::fmt::Display for LianaPolicyError {
         match self {
             Self::MissingRecoveryPath => write!(f, "A Liana policy requires at least one recovery path."),
             Self::InsaneTimelock(tl) => {
-                write!(f, "Timelock value '{}' isn't valid or safe to use", tl)
+                write!(f, "Timelock value '{tl}' isn't valid or safe to use")
             }
             Self::InvalidKey(key) => {
                 write!(
                     f,
-                    "Invalid key '{}'. Need a wildcard ('ranged') xpub with an origin and a multipath for (and only for) deriving change addresses. That is, an xpub of the form '[aaff0099]xpub.../<0;1>/*'.",
-                    key
+                    "Invalid key '{key}'. Need a wildcard ('ranged') xpub with an origin and a multipath for (and only for) deriving change addresses. That is, an xpub of the form '[aaff0099]xpub.../<0;1>/*'.",
                     )
             }
-            Self::InvalidMultiThresh(thresh) => write!(f, "Invalid multisig threshold value '{}'. The threshold must be > to 0 and <= to the number of keys.", thresh),
-            Self::InvalidMultiKeys(n_keys) => write!(f, "Invalid number of keys '{}'. Between 2 and 20 keys must be given to use multiple keys in a specific path.", n_keys),
+            Self::InvalidMultiThresh(thresh) => write!(f, "Invalid multisig threshold value '{thresh}'. The threshold must be > to 0 and <= to the number of keys."),
+            Self::InvalidMultiKeys(n_keys) => write!(f, "Invalid number of keys '{n_keys}'. Between 2 and 20 keys must be given to use multiple keys in a specific path."),
             Self::DuplicateKey(key) => {
-                write!(f, "Duplicate key '{}'.", key)
+                write!(f, "Duplicate key '{key}'.")
             }
             Self::DuplicateOriginSamePath(key) => {
-                write!(f, "Key '{}' is derived from the same origin as another key present in the same spending path. It is not possible to use a signer more than once within a single spending path.", key)
+                write!(f, "Key '{key}' is derived from the same origin as another key present in the same spending path. It is not possible to use a signer more than once within a single spending path.")
             }
             Self::IncompatibleDesc => write!(
                 f,
                 "Descriptor is not compatible with a Liana spending policy."
             ),
-            Self::InvalidPolicy(e) => write!(f, "Invalid Miniscript policy: {}", e),
-            Self::PolicyAnalysis(e) => write!(f, "Analyzing the policy of the miniscript: {}", e),
+            Self::InvalidPolicy(e) => write!(f, "Invalid Miniscript policy: {e}"),
+            Self::PolicyAnalysis(e) => write!(f, "Analyzing the policy of the miniscript: {e}"),
         }
     }
 }
@@ -96,7 +95,7 @@ impl DescKeyChecker {
     ///  - Be deriveable (to contain a wildcard)
     ///  - Be multipath (to contain a step in the derivation path with multiple indexes)
     ///  - The multipath step to only contain two indexes. These can be any indexes, which is
-    ///     useful for deriving multiple keys from the same xpub.
+    ///    useful for deriving multiple keys from the same xpub.
     ///  - Be 'signable' by an external signer (to contain an origin)
     ///
     /// This returns the origin fingerprint for this xpub, to make it possible for the caller to

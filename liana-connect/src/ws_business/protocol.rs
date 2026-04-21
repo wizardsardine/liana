@@ -64,7 +64,7 @@ impl std::fmt::Display for WssConversionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             WssConversionError::DeserializationFailed(msg) => {
-                write!(f, "Failed to deserialize WSS response: {}", msg)
+                write!(f, "Failed to deserialize WSS response: {msg}")
             }
             WssConversionError::InvalidMessageType => {
                 write!(f, "Invalid WebSocket message type (expected Text)")
@@ -214,7 +214,7 @@ fn parse_fetch_request(payload: Option<Value>) -> Result<Uuid, WssConversionErro
         .as_str()
         .ok_or_else(|| WssConversionError::DeserializationFailed("Missing id".to_string()))?;
     Uuid::parse_str(id_str)
-        .map_err(|e| WssConversionError::DeserializationFailed(format!("Invalid UUID: {}", e)))
+        .map_err(|e| WssConversionError::DeserializationFailed(format!("Invalid UUID: {e}")))
 }
 
 fn parse_edit_wallet_request(payload: Option<Value>) -> Result<Request, WssConversionError> {
@@ -235,7 +235,7 @@ fn parse_edit_xpub_request(payload: Option<Value>) -> Result<Request, WssConvers
         WssConversionError::DeserializationFailed("Missing wallet_id".to_string())
     })?;
     let wallet_id = Uuid::parse_str(wallet_id_str)
-        .map_err(|e| WssConversionError::DeserializationFailed(format!("Invalid UUID: {}", e)))?;
+        .map_err(|e| WssConversionError::DeserializationFailed(format!("Invalid UUID: {e}")))?;
     let key_id = payload["key_id"]
         .as_u64()
         .ok_or_else(|| WssConversionError::DeserializationFailed("Missing key_id".to_string()))?
@@ -262,7 +262,7 @@ fn parse_device_registered_request(payload: Option<Value>) -> Result<Request, Ws
         WssConversionError::DeserializationFailed("Missing wallet_id".to_string())
     })?;
     let wallet_id = Uuid::parse_str(wallet_id_str)
-        .map_err(|e| WssConversionError::DeserializationFailed(format!("Invalid UUID: {}", e)))?;
+        .map_err(|e| WssConversionError::DeserializationFailed(format!("Invalid UUID: {e}")))?;
     let infos: RegistrationInfos = serde_json::from_value(payload["infos"].clone())
         .map_err(|e| WssConversionError::DeserializationFailed(e.to_string()))?;
     Ok(Request::DeviceRegistered { wallet_id, infos })
@@ -615,7 +615,7 @@ mod protocol_tests {
 
     // Test UUIDs
     fn test_uuid(n: u8) -> Uuid {
-        Uuid::parse_str(&format!("12345678-1234-1234-1234-12345678900{}", n)).unwrap()
+        Uuid::parse_str(&format!("12345678-1234-1234-1234-12345678900{n}")).unwrap()
     }
 
     // ==================== REQUEST WIRE FORMAT TESTS ====================

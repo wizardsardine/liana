@@ -54,7 +54,7 @@ pub async fn get_service_config(
     };
     let client = reqwest::Client::new();
     let res: ServiceConfigResource = client
-        .get(format!("{}/v1/desktop", backend_api_url))
+        .get(format!("{backend_api_url}/v1/desktop"))
         .header("User-Agent", backend.user_agent())
         .send()
         .await?

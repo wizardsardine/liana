@@ -549,7 +549,7 @@ pub fn signatures<'a>(
 fn container_from_fg(
     fg: Fingerprint,
     aliases: &HashMap<Fingerprint, String>,
-) -> Container<Message> {
+) -> Container<'_, Message> {
     if let Some(alias) = aliases.get(&fg) {
         Container::new(
             tooltip::Tooltip::new(
@@ -1003,7 +1003,7 @@ fn payment_view<'a>(
         .into()
 }
 
-fn change_view(output: &TxOut, network: Network) -> Element<Message> {
+fn change_view(output: &TxOut, network: Network) -> Element<'_, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .unwrap()
         .to_string();

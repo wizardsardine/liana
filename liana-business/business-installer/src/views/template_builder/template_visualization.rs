@@ -55,7 +55,7 @@ fn get_secondary_color(index: usize, total_count: usize) -> String {
     let g = (start_g + (end_g - start_g) * factor) as u8;
     let b = (start_b + (end_b - start_b) * factor) as u8;
 
-    format!("#{:02x}{:02x}{:02x}", r, g, b)
+    format!("#{r:02x}{g:02x}{b:02x}")
 }
 
 /// Generate a single "r" shape SVG as an iced Element.
@@ -86,28 +86,10 @@ pub fn r_shape(index: usize, count: usize) -> Element<'static, Msg> {
     let arc_end_y = center_y;
 
     let svg_content = format!(
-        r#"<svg width="{}" height="{}" viewBox="0 0 {} {}" xmlns="http://www.w3.org/2000/svg">
-            <line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="{}" stroke-linecap="round" />
-            <path d="M {} {} A {} {} 0 0 1 {} {}" stroke="{}" stroke-width="{}" fill="none" stroke-linecap="round" />
-        </svg>"#,
-        width,
-        height,
-        width,
-        height,
-        center_x,
-        stem_top,
-        center_x,
-        stem_bottom,
-        color,
-        thickness,
-        center_x,
-        arc_start_y,
-        radius,
-        radius,
-        arc_end_x,
-        arc_end_y,
-        color,
-        thickness
+        r#"<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">
+            <line x1="{center_x}" y1="{stem_top}" x2="{center_x}" y2="{stem_bottom}" stroke="{color}" stroke-width="{thickness}" stroke-linecap="round" />
+            <path d="M {center_x} {arc_start_y} A {radius} {radius} 0 0 1 {arc_end_x} {arc_end_y}" stroke="{color}" stroke-width="{thickness}" fill="none" stroke-linecap="round" />
+        </svg>"#
     );
 
     let svg_handle = iced::widget::svg::Handle::from_memory(svg_content.as_bytes().to_vec());
@@ -137,21 +119,21 @@ fn format_timelock_human(timelock: &ws_business::Timelock) -> String {
         if months == 1 {
             "After 1 month".to_string()
         } else {
-            format!("After {} months", months)
+            format!("After {months} months")
         }
     } else if blocks >= BLOCKS_PER_DAY {
         let days = blocks / BLOCKS_PER_DAY;
         if days == 1 {
             "After 1 day".to_string()
         } else {
-            format!("After {} days", days)
+            format!("After {days} days")
         }
     } else {
         let hours = blocks / BLOCKS_PER_HOUR;
         if hours <= 1 {
             "After 1 hour".to_string()
         } else {
-            format!("After {} hours", hours)
+            format!("After {hours} hours")
         }
     }
 }
@@ -188,9 +170,9 @@ fn path_card(
     } else {
         let names = key_aliases.join(", ");
         if threshold >= key_count {
-            format!("All of {}", names)
+            format!("All of {names}")
         } else {
-            format!("{} of {}", threshold, names)
+            format!("{threshold} of {names}")
         }
     };
 

@@ -26,13 +26,12 @@ pub enum ElectrumError {
 impl std::fmt::Display for ElectrumError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            ElectrumError::Client(e) => write!(f, "Electrum client error: '{}'.", e),
+            ElectrumError::Client(e) => write!(f, "Electrum client error: '{e}'."),
             ElectrumError::GenesisHashMismatch(expected, server, wallet) => {
                 write!(
                     f,
-                    "Genesis hash mismatch. The genesis hash is expected to be '{}'. \
-                    The server has hash '{}' and the wallet has hash '{}'.",
-                    expected, server, wallet,
+                    "Genesis hash mismatch. The genesis hash is expected to be '{expected}'. \
+                    The server has hash '{server}' and the wallet has hash '{wallet}'.",
                 )
             }
         }
@@ -150,8 +149,8 @@ impl Electrum {
                 .index()
                 .inner() // we include lookahead SPKs
                 .all_spks()
-                .iter()
-                .map(|(_, script)| script.clone())
+                .values()
+                .cloned()
                 .collect();
             request = request.chain_spks(all_spks);
             log::debug!("num SPKs for sync: {}", request.spks.len());

@@ -399,7 +399,7 @@ pub fn tx_view<'a>(
                         Row::new()
                             .width(Length::Fill)
                             .push(Container::new(text("Date:").bold()).width(Length::Fill))
-                            .push(Container::new(text(format!("{}", date))).width(Length::Shrink))
+                            .push(Container::new(text(format!("{date}"))).width(Length::Shrink))
                     }))
                     .push(
                         Row::new()

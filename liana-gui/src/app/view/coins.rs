@@ -261,7 +261,7 @@ fn coin_list_view<'a>(
                                                 .style(theme::text::secondary),
                                         )
                                         .push(
-                                            p2_regular(format!("{}", b))
+                                            p2_regular(format!("{b}"))
                                                 .style(theme::text::secondary),
                                         )
                                         .spacing(5)
@@ -286,7 +286,7 @@ fn coin_list_view<'a>(
                                                 .bold()
                                                 .style(theme::text::secondary),
                                         )
-                                        .push(p2_regular(format!("{}", height)))
+                                        .push(p2_regular(format!("{height}")))
                                         .spacing(5)
                                 } else {
                                     Row::new().push(

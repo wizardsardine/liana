@@ -92,12 +92,11 @@ impl BusinessSettings {
         std::fs::read(path)
             .map_err(|e| match e.kind() {
                 std::io::ErrorKind::NotFound => SettingsError::NotFound,
-                _ => SettingsError::ReadingFile(format!("Reading settings file: {}", e)),
+                _ => SettingsError::ReadingFile(format!("Reading settings file: {e}")),
             })
             .and_then(|file_content| {
-                serde_json::from_slice::<BusinessSettings>(&file_content).map_err(|e| {
-                    SettingsError::ReadingFile(format!("Parsing settings file: {}", e))
-                })
+                serde_json::from_slice::<BusinessSettings>(&file_content)
+                    .map_err(|e| SettingsError::ReadingFile(format!("Parsing settings file: {e}")))
             })
     }
 }
