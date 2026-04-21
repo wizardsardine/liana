@@ -780,6 +780,12 @@ impl CoincubeClient {
     /// is already referenced by any vault (W9). Callers should check
     /// `CoincubeError::is_key_already_used_in_vault()` and surface the
     /// conflict dialog.
+    ///
+    /// W16-desktop: a 409 with code `VAULT_KEYHOLDER_LOCKED` (from
+    /// adding `role=keyholder` to an `active` Vault) is reclassified
+    /// into `CoincubeError::VaultKeyholderLocked { vault_id }` before
+    /// returning — callers pattern-match on the variant rather than
+    /// re-parsing the error body.
     pub async fn add_vault_member(
         &self,
         cube_id: u64,
@@ -790,7 +796,14 @@ impl CoincubeClient {
             self.base_url, cube_id
         );
         let res = self.client.post(&url).json(&req).send().await?;
-        let res = res.check_success().await?;
+        let res = res.check_success().await.map_err(|e| {
+            // Reclassify the W16 409 at the boundary so downstream
+            // handlers can `match` on a typed variant.
+            if let Some(vault_id) = super::vault_keyholder_locked_vault_id(&e) {
+                return CoincubeError::VaultKeyholderLocked { vault_id };
+            }
+            CoincubeError::from(e)
+        })?;
         let resp: ApiResponse<VaultMemberResponse> = res.json().await?;
         Ok(resp.data)
     }
@@ -1288,6 +1301,79 @@ mod cube_member_tests {
         assert!(
             !err.is_key_already_used_in_vault(),
             "generic 409 must not match the W9 helper"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_vault_member_409_vault_keyholder_locked_maps_to_error_variant() {
+        // W16-desktop: 409 with code `VAULT_KEYHOLDER_LOCKED` must be
+        // reclassified into the typed `CoincubeError::VaultKeyholderLocked`
+        // variant so the UI can render the tailored "quorum is fixed"
+        // dialog rather than the generic error banner.
+        use crate::services::coincube::{AddVaultMemberRequest, CoincubeError, VaultMemberRole};
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/cubes/42/vault/members");
+            then.status(409)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": false,
+                    "error": {
+                        "code": "VAULT_KEYHOLDER_LOCKED",
+                        "message": "Cannot add a keyholder to an active Vault."
+                    },
+                    "vaultId": 42
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .add_vault_member(
+                42,
+                AddVaultMemberRequest {
+                    contact_id: Some(1),
+                    key_id: Some(2),
+                    role: VaultMemberRole::Keyholder,
+                },
+            )
+            .await
+            .expect_err("expected 409");
+        mock.assert();
+        assert!(
+            matches!(err, CoincubeError::VaultKeyholderLocked { vault_id: 42 }),
+            "expected VaultKeyholderLocked {{ vault_id: 42 }}, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn add_vault_member_role_chooser_hides_keyholder_on_active_vault() {
+        // W16-desktop: the Keyholder role must not be offered when the
+        // target Vault's status is `Active` — the signing quorum is
+        // sealed, so adding a keyholder row would have no on-chain effect.
+        use crate::services::coincube::{allowed_vault_member_roles, VaultMemberRole, VaultStatus};
+        let roles = allowed_vault_member_roles(Some(&VaultStatus::Active));
+        assert!(
+            !roles.contains(&VaultMemberRole::Keyholder),
+            "Active vault must hide the Keyholder role; got {:?}",
+            roles
+        );
+        assert!(roles.contains(&VaultMemberRole::Beneficiary));
+        assert!(roles.contains(&VaultMemberRole::Observer));
+    }
+
+    #[test]
+    fn add_vault_member_role_chooser_shows_keyholder_on_expired_vault() {
+        // On `Expired` (and on any status other than `Active`) the role
+        // picker still offers Keyholder because rebuilding the Vault is
+        // a legitimate follow-up and the backend accepts it.
+        use crate::services::coincube::{allowed_vault_member_roles, VaultMemberRole, VaultStatus};
+        let roles = allowed_vault_member_roles(Some(&VaultStatus::Expired));
+        assert!(
+            roles.contains(&VaultMemberRole::Keyholder),
+            "non-Active vault must include Keyholder; got {:?}",
+            roles
         );
     }
 
