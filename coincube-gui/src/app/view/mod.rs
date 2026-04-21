@@ -209,7 +209,9 @@ pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
                     .push(if is_previous {
                         Column::new()
                             .push(
-                                button::transparent(None, "< Previous").on_press(Message::Previous),
+                                button::secondary(None, "< Back")
+                                    .width(Length::Fixed(150.0))
+                                    .on_press(Message::Previous),
                             )
                             .width(Length::Fill)
                     } else {

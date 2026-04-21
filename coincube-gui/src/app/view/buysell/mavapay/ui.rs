@@ -122,15 +122,9 @@ fn buy_input_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMess
     .style(theme::card::simple)
     .width(Length::Fixed(600.0));
 
-    let previous_btn = widget::button(
-        widget::Row::new()
-            .spacing(5)
-            .align_y(Alignment::Center)
-            .push(previous_icon().style(theme::text::secondary))
-            .push(text::p1_medium("Previous").style(theme::text::secondary)),
-    )
-    .on_press(BuySellMessage::Mavapay(MavapayMessage::NavigateBack))
-    .style(theme::button::transparent);
+    let previous_btn = button::secondary(Some(previous_icon()), "Back")
+        .width(Length::Fixed(150.0))
+        .on_press(BuySellMessage::Mavapay(MavapayMessage::NavigateBack));
 
     widget::column![
         widget::container(previous_btn).width(Length::Fill),
@@ -362,15 +356,9 @@ fn sell_input_form<'a>(
     .spacing(10)
     .width(iced::Length::Fill);
 
-    let previous_btn = widget::button(
-        widget::Row::new()
-            .spacing(5)
-            .align_y(Alignment::Center)
-            .push(previous_icon().style(theme::text::secondary))
-            .push(text::p1_medium("Previous").style(theme::text::secondary)),
-    )
-    .on_press(BuySellMessage::Mavapay(MavapayMessage::NavigateBack))
-    .style(theme::button::transparent);
+    let previous_btn = button::secondary(Some(previous_icon()), "Back")
+        .width(Length::Fixed(150.0))
+        .on_press(BuySellMessage::Mavapay(MavapayMessage::NavigateBack));
 
     widget::column![
         widget::container(previous_btn).width(Length::Fill),
@@ -775,8 +763,8 @@ fn history_view<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMessag
     };
 
     widget::column![
-        button::transparent(Some(previous_icon()), "Previous")
-            .width(Length::Shrink)
+        button::secondary(Some(previous_icon()), "Back")
+            .width(Length::Fixed(150.0))
             .on_press(BuySellMessage::ResetWidget),
         widget::Space::new().height(10),
         text::h4_bold("Order History"),

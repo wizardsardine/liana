@@ -283,16 +283,9 @@ fn register_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectAccountM
 
     Column::new()
         .push(
-            iced::widget::button(
-                Row::new()
-                    .push(previous_icon().color(color::GREY_2))
-                    .push(iced::widget::Space::new().width(Length::Fixed(5.0)))
-                    .push(text::p1_medium("Previous").style(theme::text::secondary))
-                    .spacing(5)
-                    .align_y(Alignment::Center),
-            )
-            .style(theme::button::transparent)
-            .on_press_maybe((!loading).then_some(ConnectAccountMessage::LogOut)),
+            button::secondary(Some(previous_icon()), "Back")
+                .width(Length::Fixed(150.0))
+                .on_press_maybe((!loading).then_some(ConnectAccountMessage::LogOut)),
         )
         .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
         .push(text::h3("Create an Account").style(theme::text::primary))

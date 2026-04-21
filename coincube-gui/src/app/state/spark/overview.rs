@@ -187,11 +187,15 @@ impl State for SparkOverview {
                 view::SparkOverviewMessage::History => {
                     return redirect(Menu::Spark(SparkSubMenu::Transactions(None)));
                 }
-                view::SparkOverviewMessage::SelectTransaction(_idx) => {
-                    // Spark doesn't expose a transaction-detail panel yet —
-                    // fall back to routing to the Transactions list so the
-                    // user lands somewhere sensible.
-                    return redirect(Menu::Spark(SparkSubMenu::Transactions(None)));
+                view::SparkOverviewMessage::SelectTransaction(idx) => {
+                    if let Some(payment) = self.recent_transactions.get(idx).cloned() {
+                        return Task::batch(vec![
+                            redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
+                            Task::done(Message::View(view::Message::SparkTransactions(
+                                view::SparkTransactionsMessage::Preselect(payment),
+                            ))),
+                        ]);
+                    }
                 }
                 view::SparkOverviewMessage::FlipDisplayMode => {
                     return Task::done(Message::View(view::Message::FlipDisplayMode));
@@ -241,8 +245,10 @@ pub(crate) fn payment_summary_to_recent_tx(
     });
 
     SparkRecentTransaction {
+        id: p.id.clone(),
         description,
         time_ago: format_time_ago(p.timestamp as i64),
+        timestamp: p.timestamp,
         amount,
         fees_sat,
         fiat_amount,

@@ -51,10 +51,14 @@ pub enum SparkTransactionsMessage {
     DataLoaded(Vec<coincube_spark_protocol::PaymentSummary>),
     /// Bridge returned an error response for `list_payments`.
     Error(String),
-    /// User clicked a row. Today this just no-ops — a Spark
-    /// transaction-detail pane is a future polish pass, so a click
-    /// stays on the list rather than navigating away.
+    /// User clicked a row. Opens the detail pane for the payment
+    /// at that index in the current `recent_transactions` list.
     Select(usize),
+    /// Preselect a specific payment to display in the detail pane —
+    /// used by Overview / Send / Receive to hand off a row when the
+    /// user taps there. The panel switches into detail mode without
+    /// needing an index lookup against its own list.
+    Preselect(crate::app::view::spark::SparkRecentTransaction),
     /// Empty-state navigation: "Send sats" button.
     SendBtc,
     /// Empty-state navigation: "Receive sats" button.

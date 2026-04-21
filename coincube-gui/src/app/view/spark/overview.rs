@@ -62,9 +62,16 @@ pub enum SparkPaymentMethod {
 /// Row data the overview renderer needs for each recent payment.
 /// Mirrors `view::liquid::RecentTransaction` but drops the USDt-only
 /// `usdt_display` field (Spark has no USDt support).
+///
+/// Carries the Spark payment `id` and raw `timestamp` so the detail
+/// view can render a full date and a copy-to-clipboard payment ID
+/// without needing to hold onto the originating `PaymentSummary`.
+#[derive(Debug, Clone)]
 pub struct SparkRecentTransaction {
+    pub id: String,
     pub description: String,
     pub time_ago: String,
+    pub timestamp: u64,
     pub amount: Amount,
     pub fees_sat: Amount,
     pub fiat_amount: Option<FiatAmount>,
@@ -176,7 +183,7 @@ fn connected_view<'a>(
 
     let btc_fiat_str = btc_fiat
         .as_ref()
-        .map(|f| format!("~{} {}", f.to_rounded_string(), f.currency()))
+        .map(|f| format!("{} {}", f.to_rounded_string(), f.currency()))
         .unwrap_or_default();
     let btc_row = Row::new()
         .spacing(10)

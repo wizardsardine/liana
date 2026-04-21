@@ -442,16 +442,19 @@ impl State for SparkReceive {
                 self.recent_transactions.clear();
                 Task::none()
             }
-            SparkReceiveMessage::SelectTransaction(_idx) => {
-                // Spark doesn't expose a per-tx detail panel yet —
-                // fall back to the full Transactions list so the user
-                // lands somewhere sensible. When a detail panel lands,
-                // plumb a payment-id field through `SparkRecentTransaction`
-                // and route via a new `SparkSubMenu::Transactions(Some(id))`
-                // shape (the current `Option<Txid>` payload is ignored by
-                // the transactions panel and the wrong type for
-                // Spark-native payment ids, which are strings).
-                redirect(Menu::Spark(SparkSubMenu::Transactions(None)))
+            SparkReceiveMessage::SelectTransaction(idx) => {
+                if let Some(payment) = self.recent_transactions.get(idx).cloned() {
+                    Task::batch(vec![
+                        redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
+                        Task::done(Message::View(
+                            crate::app::view::Message::SparkTransactions(
+                                crate::app::view::SparkTransactionsMessage::Preselect(payment),
+                            ),
+                        )),
+                    ])
+                } else {
+                    Task::none()
+                }
             }
             SparkReceiveMessage::History => redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
         }

@@ -276,18 +276,11 @@ impl BuySellPanel {
         // TODO: include form validation messages
         iced::widget::column![
             // Top bar with previous
-            Button::new(
-                Row::new()
-                    .push(previous_icon().style(theme::text::secondary))
-                    .push(Space::new().width(Length::Fixed(5.0)))
-                    .push(text::p1_medium("Previous").style(theme::text::secondary))
-                    .spacing(5)
-                    .align_y(Alignment::Center),
-            )
-            .style(theme::button::transparent)
-            .on_press_maybe(
-                (!*loading).then_some(ViewMessage::BuySell(BuySellMessage::ResetWidget))
-            ),
+            button::secondary(Some(previous_icon()), "Back")
+                .width(Length::Fixed(150.0))
+                .on_press_maybe(
+                    (!*loading).then_some(ViewMessage::BuySell(BuySellMessage::ResetWidget))
+                ),
             Space::new().height(Length::Fixed(10.0)),
             // Title and subtitle
             iced::widget::column![
@@ -337,16 +330,9 @@ impl BuySellPanel {
         // Top bar with previous
         let top_bar = Row::new()
             .push(
-                Button::new(
-                    Row::new()
-                        .push(previous_icon().style(theme::text::secondary))
-                        .push(Space::new().width(Length::Fixed(5.0)))
-                        .push(text::text("Previous").style(theme::text::secondary))
-                        .spacing(5)
-                        .align_y(Alignment::Center),
-                )
-                .style(theme::button::transparent)
-                .on_press_maybe((!*sending).then_some(BuySellMessage::ResetWidget)),
+                button::secondary(Some(previous_icon()), "Back")
+                    .width(Length::Fixed(150.0))
+                    .on_press_maybe((!*sending).then_some(BuySellMessage::ResetWidget)),
             )
             .align_y(Alignment::Center);
 

@@ -44,6 +44,9 @@ pub struct SparkTransactions {
     loading: bool,
     error: Option<String>,
     modal: SparkTransactionsModal,
+    /// When `Some`, render the detail pane for this payment instead
+    /// of the list. Cleared via `Message::Close` (the back button).
+    selected_payment: Option<SparkRecentTransaction>,
     /// Empty-state Kage quote + image. Picked once when the panel is
     /// constructed so repeated reloads don't re-randomize the quote.
     empty_state_quote: Quote,
@@ -61,6 +64,7 @@ impl SparkTransactions {
             loading: false,
             error: None,
             modal: SparkTransactionsModal::None,
+            selected_payment: None,
             empty_state_quote,
             empty_state_image_handle,
         }
@@ -90,6 +94,21 @@ impl State for SparkTransactions {
     ) -> Element<'a, crate::app::view::Message> {
         let fiat_converter: Option<FiatAmountConverter> =
             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+
+        // When a payment has been selected (via tapping a row here, or
+        // preselected from Overview/Send/Receive), take over the panel
+        // body with the detail view; the back button clears the state
+        // via `Message::Close` and we fall through to the list again.
+        if let Some(payment) = &self.selected_payment {
+            return crate::app::view::dashboard(
+                menu,
+                cache,
+                crate::app::view::spark::transactions::transaction_detail_view(
+                    payment,
+                    cache.bitcoin_unit,
+                ),
+            );
+        }
 
         let status = if self.backend.is_none() {
             SparkTransactionsStatus::Unavailable
@@ -188,8 +207,11 @@ impl State for SparkTransactions {
                         self.loading = false;
                         self.error = Some(err);
                     }
-                    view::SparkTransactionsMessage::Select(_idx) => {
-                        // No detail pane yet — tapping a row is a no-op.
+                    view::SparkTransactionsMessage::Select(idx) => {
+                        self.selected_payment = self.recent_transactions.get(idx).cloned();
+                    }
+                    view::SparkTransactionsMessage::Preselect(payment) => {
+                        self.selected_payment = Some(payment);
                     }
                     view::SparkTransactionsMessage::SendBtc => {
                         return redirect(Menu::Spark(SparkSubMenu::Send));
@@ -198,6 +220,11 @@ impl State for SparkTransactions {
                         return redirect(Menu::Spark(SparkSubMenu::Receive));
                     }
                 }
+            }
+            // Detail pane's back button emits `Message::Close`. Clear
+            // the selection so the next render falls back to the list.
+            Message::View(view::Message::Close) => {
+                self.selected_payment = None;
             }
             // Export flow. Mirrors the Liquid transactions handler:
             // Open → prompt for path → run export → show modal →
