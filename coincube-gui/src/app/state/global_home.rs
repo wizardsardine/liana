@@ -1044,6 +1044,13 @@ impl State for GlobalHome {
                                 // Fresh transfer — we haven't observed the new
                                 // deposit in Spark's unclaimed list yet.
                                 self.pending_spark_deposit_seen = false;
+                                // Drop any in-flight auto-claim tracker from a
+                                // prior transfer: its result would otherwise
+                                // land with the new pending set and stamp this
+                                // (unrelated) transfer as Completed. The
+                                // `AutoClaimSparkResult` handler also gates on
+                                // this field for defense in depth.
+                                self.auto_claiming_spark_deposit = None;
                             }
                         }
                         self.current_view.next();
@@ -1604,11 +1611,16 @@ impl State for GlobalHome {
                             },
                         )
                     }
-                    HomeMessage::AutoClaimSparkResult {
-                        txid: _,
-                        vout: _,
-                        result,
-                    } => {
+                    HomeMessage::AutoClaimSparkResult { txid, vout, result } => {
+                        // Stale result guard: if the tracker no longer matches
+                        // this (txid, vout) it belongs to a previous transfer —
+                        // e.g. a second Spark-destined transfer broadcast while
+                        // this claim was in flight. Stamping Completed on the
+                        // now-current `pending_spark_incoming` would prematurely
+                        // hide the new badge.
+                        if self.auto_claiming_spark_deposit.as_ref() != Some(&(txid, vout)) {
+                            return Task::none();
+                        }
                         // Success: mark the indicator Completed so the view hides
                         // it immediately and `BackToHome` can reap it symmetric to
                         // `pending_vault_incoming`. The bridge's follow-up

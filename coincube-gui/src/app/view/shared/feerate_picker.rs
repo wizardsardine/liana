@@ -37,12 +37,13 @@ where
         form::Form::new_disabled("42 (in sats/vbyte)", feerate)
     } else {
         form::Form::new_trimmed("42 (in sats/vbyte)", feerate, on_change)
-            .warning("Feerate must be an integer less than or equal to 1000 sats/vbyte")
+            .warning("Feerate must be an integer between 1 and 1000 sats/vbyte")
     };
     form.size(P1_SIZE).padding(10).into()
 }
 
-/// Three mempool-driven feerate presets (Fast / Normal / Slow). The button
+/// Three mempool-driven feerate presets, rendered left-to-right as
+/// Slow / Normal / Fast (ascending priority). The button
 /// corresponding to `loading` is rendered non-pressable to indicate an
 /// estimate is in flight; the on_select message fires for the others. When
 /// `disabled`, every button is non-pressable — see `feerate_input` for the
