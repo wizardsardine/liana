@@ -383,3 +383,7 @@ pub fn cloud_slash_icon<'a>() -> Text<'a> {
 pub fn grid_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F3FA}')
 }
+
+pub fn shuffle_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F544}')
+}

@@ -20,7 +20,7 @@ use coincube_ui::{
     color,
     component::{
         button,
-        text::{h2, h4_bold, p1_regular, p2_regular},
+        text::{h3, h4_bold, p1_regular, p2_regular, Text as _},
     },
     theme,
     widget::{Column, Container, Element, Row},
@@ -60,7 +60,9 @@ pub struct SparkSettingsView {
 
 impl SparkSettingsView {
     pub fn render<'a>(self) -> Element<'a, Message> {
-        let heading = Container::new(h2("Spark — Settings"));
+        // Match the Cube/Vault settings pages: plain `h3` heading, no
+        // container wrapper. The rail already shows Spark → Settings.
+        let heading = h3("Settings").bold();
 
         if matches!(self.status, SparkSettingsStatus::Unavailable) {
             let body = Column::new()

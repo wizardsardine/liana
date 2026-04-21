@@ -20,6 +20,7 @@
 //! Lightning Address display, and the on-chain claim lifecycle all
 //! land in Phase 4d.
 
+use std::convert::TryInto;
 use std::sync::Arc;
 
 use coincube_spark_protocol::{DepositInfo, ReceivePaymentOk};
@@ -27,10 +28,12 @@ use coincube_ui::widget::Element;
 use iced::{widget::qr_code, Task};
 
 use crate::app::cache::Cache;
-use crate::app::menu::Menu;
+use crate::app::menu::{Menu, SparkSubMenu};
 use crate::app::message::Message;
-use crate::app::state::State;
+use crate::app::state::{redirect, State};
 use crate::app::view::spark::SparkReceiveView;
+use crate::app::view::spark::SparkRecentTransaction;
+use crate::app::view::FiatAmountConverter;
 use crate::app::wallets::SparkBackend;
 
 /// Which receive flow the user has picked.
@@ -116,6 +119,9 @@ pub struct SparkReceive {
     /// Quote and image handle for the celebration screen.
     received_quote: coincube_ui::component::quote_display::Quote,
     received_image_handle: iced::widget::image::Handle,
+    /// Last few payments fetched from the bridge, rendered under the
+    /// receive form. Populated on reload and after an incoming payment.
+    recent_transactions: Vec<SparkRecentTransaction>,
 }
 
 impl SparkReceive {
@@ -139,6 +145,7 @@ impl SparkReceive {
             received_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
                 "lightning-receive",
             ),
+            recent_transactions: Vec::new(),
         }
     }
 
@@ -171,6 +178,9 @@ impl State for SparkReceive {
                 received_celebration_context: &self.received_celebration_context,
                 received_quote: &self.received_quote,
                 received_image_handle: &self.received_image_handle,
+                recent_transactions: &self.recent_transactions,
+                bitcoin_unit: cache.bitcoin_unit,
+                show_direction_badges: cache.show_direction_badges,
             }
             .render(),
         )
@@ -183,14 +193,18 @@ impl State for SparkReceive {
     ) -> Task<Message> {
         // Refresh the pending-deposits list whenever the panel
         // becomes active. Errors degrade silently — the rest of the
-        // panel still works.
-        fetch_deposits_task(self.backend.clone())
+        // panel still works. Also fetch the recent-payments list so
+        // the "Last transactions" section under the form is fresh.
+        Task::batch(vec![
+            fetch_deposits_task(self.backend.clone()),
+            fetch_payments_task(self.backend.clone()),
+        ])
     }
 
     fn update(
         &mut self,
         _daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
-        _cache: &Cache,
+        cache: &Cache,
         message: Message,
     ) -> Task<Message> {
         let Message::View(crate::app::view::Message::SparkReceive(msg)) = message else {
@@ -352,7 +366,9 @@ impl State for SparkReceive {
                 self.received_image_handle =
                     coincube_ui::component::quote_display::image_handle_for_context(context);
                 self.phase = SparkReceivePhase::Received { amount_sat };
-                Task::none()
+                // Surface the just-received payment in the Last
+                // Transactions list the moment it arrives.
+                fetch_payments_task(self.backend.clone())
             }
             SparkReceiveMessage::PendingDepositsLoaded(deposits) => {
                 self.pending_deposits = deposits;
@@ -406,8 +422,59 @@ impl State for SparkReceive {
                 self.phase = SparkReceivePhase::Idle;
                 Task::none()
             }
+            SparkReceiveMessage::PaymentsLoaded(payments) => {
+                let fiat_converter: Option<FiatAmountConverter> =
+                    cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+                self.recent_transactions = payments
+                    .iter()
+                    .take(5)
+                    .map(|p| {
+                        crate::app::state::spark::overview::payment_summary_to_recent_tx(
+                            p,
+                            fiat_converter.as_ref(),
+                        )
+                    })
+                    .collect();
+                Task::none()
+            }
+            SparkReceiveMessage::PaymentsFailed(err) => {
+                tracing::warn!("spark receive list_payments failed: {}", err);
+                self.recent_transactions.clear();
+                Task::none()
+            }
+            SparkReceiveMessage::SelectTransaction(_idx) => {
+                // Spark doesn't expose a per-tx detail panel yet —
+                // fall back to the full Transactions list so the user
+                // lands somewhere sensible. When a detail panel lands,
+                // plumb a payment-id field through `SparkRecentTransaction`
+                // and route via a new `SparkSubMenu::Transactions(Some(id))`
+                // shape (the current `Option<Txid>` payload is ignored by
+                // the transactions panel and the wrong type for
+                // Spark-native payment ids, which are strings).
+                redirect(Menu::Spark(SparkSubMenu::Transactions(None)))
+            }
+            SparkReceiveMessage::History => redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
         }
     }
+}
+
+/// Panel-local thin wrapper around the shared
+/// [`super::fetch_payments_task`] helper — only the message variants
+/// differ between the Send and Receive panels.
+fn fetch_payments_task(backend: Option<Arc<SparkBackend>>) -> Task<Message> {
+    super::fetch_payments_task(
+        backend,
+        |payments| {
+            Message::View(crate::app::view::Message::SparkReceive(
+                crate::app::view::SparkReceiveMessage::PaymentsLoaded(payments),
+            ))
+        },
+        |err| {
+            Message::View(crate::app::view::Message::SparkReceive(
+                crate::app::view::SparkReceiveMessage::PaymentsFailed(err),
+            ))
+        },
+    )
 }
 
 /// Fire a `list_unclaimed_deposits` RPC and translate the result into

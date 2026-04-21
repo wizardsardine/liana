@@ -8,8 +8,8 @@ use crate::widget::Row;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BitcoinDisplayUnit {
-    #[default]
     BTC,
+    #[default]
     Sats,
 }
 impl std::fmt::Display for BitcoinDisplayUnit {

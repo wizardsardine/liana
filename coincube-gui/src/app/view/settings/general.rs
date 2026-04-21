@@ -1,13 +1,14 @@
 use iced::widget::{pick_list, Column, Row, Space, Toggler};
 use iced::{Alignment, Length};
 
-use coincube_ui::component::card;
 use coincube_ui::component::text::*;
+use coincube_ui::component::{button, card};
 use coincube_ui::theme;
 use coincube_ui::widget::{ColumnExt, Element};
 
 use crate::app::cache;
 use crate::app::menu::Menu;
+use crate::app::settings::display::DisplayMode;
 use crate::app::settings::fiat::PriceSetting;
 use crate::app::settings::unit::{BitcoinDisplayUnit, UnitSetting};
 use crate::app::view::dashboard;
@@ -44,6 +45,7 @@ pub fn general_section<'a>(
         .push(super::header("General", SettingsMessage::GeneralSection))
         .push(network_row(cache.network))
         .push(bitcoin_display_unit(new_unit_setting))
+        .push(display_mode_toggle(cache.display_mode))
         .push(direction_badges_toggle(show_direction_badges))
         .push(fiat_price(new_price_setting, currencies_list))
         .push(backup_master_seed_card(cache.current_cube_backed_up));
@@ -84,15 +86,10 @@ fn backup_master_seed_card<'a>(backed_up: bool) -> Element<'a, Message> {
                     .push(text(subtitle).size(14)),
             )
             .push(
-                iced::widget::Button::new(
-                    text(button_label)
-                        .bold()
-                        .shaping(iced::advanced::text::Shaping::Advanced),
-                )
-                .padding([8, 16])
-                .width(Length::Fixed(160.0))
-                .style(theme::button::secondary)
-                .on_press(SettingsMessage::BackupMasterSeed(BackupWalletMessage::Start).into()),
+                button::secondary(None, button_label)
+                    .padding([8, 16])
+                    .width(Length::Fixed(160.0))
+                    .on_press(SettingsMessage::BackupMasterSeed(BackupWalletMessage::Start).into()),
             ),
     )
     .width(Length::Fill)
@@ -159,6 +156,26 @@ fn toast_testing<'a>() -> Element<'a, Message> {
                     .push(btn("Debug", log::Level::Debug))
                     .push(btn("Trace", log::Level::Trace)),
             ),
+    )
+    .width(Length::Fill)
+    .into()
+}
+
+fn display_mode_toggle<'a>(current: DisplayMode) -> Element<'a, Message> {
+    card::simple(
+        Row::new()
+            .spacing(20)
+            .align_y(Alignment::Center)
+            .push(text("Primary balance value:").bold())
+            .push(Space::new().width(Length::Fill))
+            .push(text("Fiat"))
+            .push(
+                Toggler::new(matches!(current, DisplayMode::BitcoinNative))
+                    .on_toggle(|_| Message::FlipDisplayMode)
+                    .width(50)
+                    .style(theme::toggler::orange),
+            )
+            .push(text("Bitcoin")),
     )
     .width(Length::Fill)
     .into()

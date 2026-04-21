@@ -97,14 +97,6 @@ impl State for SettingsState {
                 );
                 Task::none()
             }
-            Message::View(view::Message::Settings(view::SettingsMessage::AboutSection)) => {
-                self.setting = Some(AboutSettingsState::default().into());
-                let wallet = self.wallet.clone();
-                self.setting
-                    .as_mut()
-                    .map(|s| s.reload(Some(daemon), Some(wallet)))
-                    .unwrap_or_else(Task::none)
-            }
             Message::View(view::Message::Settings(view::SettingsMessage::EditWalletSettings)) => {
                 self.setting = Some(
                     WalletSettingsState::new(
@@ -335,69 +327,6 @@ impl State for ImportExportSettingsState {
 
 impl From<ImportExportSettingsState> for Box<dyn State> {
     fn from(s: ImportExportSettingsState) -> Box<dyn State> {
-        Box::new(s)
-    }
-}
-
-#[derive(Default)]
-pub struct AboutSettingsState {
-    daemon_version: Option<String>,
-    warning: Option<Error>,
-}
-
-impl State for AboutSettingsState {
-    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::vault::settings::about_section(menu, cache, self.daemon_version.as_ref())
-    }
-
-    fn update(
-        &mut self,
-        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-        _cache: &Cache,
-        message: Message,
-    ) -> Task<Message> {
-        let Some(daemon) = daemon else {
-            tracing::warn!("AboutSettingsState::update called without daemon");
-            return Task::none();
-        };
-        if let Message::Info(res) = message {
-            match res {
-                Ok(info) => {
-                    if daemon.backend() == DaemonBackend::RemoteBackend {
-                        self.daemon_version = None;
-                    } else {
-                        self.daemon_version = Some(info.version)
-                    }
-                }
-                Err(e) => {
-                    let err_msg = e.to_string();
-                    self.warning = Some(e);
-                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                }
-            }
-        }
-
-        Task::none()
-    }
-
-    fn reload(
-        &mut self,
-        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-        _wallet: Option<Arc<Wallet>>,
-    ) -> Task<Message> {
-        let Some(daemon) = daemon else {
-            tracing::warn!("AboutSettingsState::reload called without daemon");
-            return Task::none();
-        };
-        Task::perform(
-            async move { daemon.get_info().await.map_err(|e| e.into()) },
-            Message::Info,
-        )
-    }
-}
-
-impl From<AboutSettingsState> for Box<dyn State> {
-    fn from(s: AboutSettingsState) -> Box<dyn State> {
         Box::new(s)
     }
 }

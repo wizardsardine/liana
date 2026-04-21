@@ -24,6 +24,7 @@
 //! and consumed by `send_payment` on confirm. Changing the input after
 //! `Prepared` drops the handle (the SDK's prepare is single-use).
 
+use std::convert::TryInto;
 use std::sync::Arc;
 
 use coincube_spark_protocol::{ParseInputKind, PrepareSendOk, SendPaymentOk};
@@ -31,10 +32,12 @@ use coincube_ui::widget::Element;
 use iced::Task;
 
 use crate::app::cache::Cache;
-use crate::app::menu::Menu;
+use crate::app::menu::{Menu, SparkSubMenu};
 use crate::app::message::Message;
-use crate::app::state::State;
+use crate::app::state::{redirect, State};
+use crate::app::view::spark::SparkRecentTransaction;
 use crate::app::view::spark::SparkSendView;
+use crate::app::view::FiatAmountConverter;
 use crate::app::wallets::SparkBackend;
 
 /// Shape of the Send panel at any instant.
@@ -73,6 +76,9 @@ pub struct SparkSend {
     /// Quote and image handle for the celebration screen.
     sent_quote: coincube_ui::component::quote_display::Quote,
     sent_image_handle: iced::widget::image::Handle,
+    /// Last few payments fetched from the bridge, rendered under the
+    /// send form. Populated on reload and after each successful send.
+    recent_transactions: Vec<SparkRecentTransaction>,
 }
 
 impl SparkSend {
@@ -89,6 +95,7 @@ impl SparkSend {
             sent_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
                 "lightning-send",
             ),
+            recent_transactions: Vec::new(),
         }
     }
 
@@ -116,15 +123,26 @@ impl State for SparkSend {
                 sent_celebration_context: &self.sent_celebration_context,
                 sent_quote: &self.sent_quote,
                 sent_image_handle: &self.sent_image_handle,
+                recent_transactions: &self.recent_transactions,
+                bitcoin_unit: cache.bitcoin_unit,
+                show_direction_badges: cache.show_direction_badges,
             }
             .render(),
         )
     }
 
+    fn reload(
+        &mut self,
+        _daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
+        _wallet: Option<Arc<crate::app::wallet::Wallet>>,
+    ) -> Task<Message> {
+        fetch_payments_task(self.backend.clone())
+    }
+
     fn update(
         &mut self,
         _daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
-        _cache: &Cache,
+        cache: &Cache,
         message: Message,
     ) -> Task<Message> {
         let Message::View(crate::app::view::Message::SparkSend(msg)) = message else {
@@ -228,6 +246,9 @@ impl State for SparkSend {
                 // Clear the inputs so a follow-up send doesn't re-use them.
                 self.destination_input.clear();
                 self.amount_input.clear();
+                // Refresh the Last Transactions list so the new payment
+                // appears under the send form once the user returns.
+                let refresh = fetch_payments_task(self.backend.clone());
                 // Pick celebration image based on send method.
                 // `last_send_method` mirrors the
                 // `breez_sdk_spark::SendPaymentMethod` variant names
@@ -247,7 +268,7 @@ impl State for SparkSend {
                 self.sent_quote = coincube_ui::component::quote_display::random_quote(context);
                 self.sent_image_handle =
                     coincube_ui::component::quote_display::image_handle_for_context(context);
-                Task::none()
+                refresh
             }
             SparkSendMessage::SendFailed(err) => {
                 self.phase = SparkSendPhase::Error(err);
@@ -259,6 +280,33 @@ impl State for SparkSend {
                 self.phase = SparkSendPhase::Idle;
                 Task::none()
             }
+            SparkSendMessage::PaymentsLoaded(payments) => {
+                let fiat_converter: Option<FiatAmountConverter> =
+                    cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+                self.recent_transactions = payments
+                    .iter()
+                    .take(5)
+                    .map(|p| {
+                        crate::app::state::spark::overview::payment_summary_to_recent_tx(
+                            p,
+                            fiat_converter.as_ref(),
+                        )
+                    })
+                    .collect();
+                Task::none()
+            }
+            SparkSendMessage::PaymentsFailed(err) => {
+                tracing::warn!("spark send list_payments failed: {}", err);
+                self.recent_transactions.clear();
+                Task::none()
+            }
+            SparkSendMessage::SelectTransaction(_idx) => {
+                // No per-tx detail pane for Spark yet — fall back to
+                // the full transactions list so the user lands
+                // somewhere sensible.
+                redirect(Menu::Spark(SparkSubMenu::Transactions(None)))
+            }
+            SparkSendMessage::History => redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
         }
     }
 }
@@ -314,4 +362,23 @@ async fn resolve_and_prepare(
                 .map_err(|e| format!("prepare_send failed: {e}"))
         }
     }
+}
+
+/// Panel-local thin wrapper around the shared
+/// [`super::fetch_payments_task`] helper — only the message variants
+/// differ between the Send and Receive panels.
+fn fetch_payments_task(backend: Option<Arc<SparkBackend>>) -> Task<Message> {
+    super::fetch_payments_task(
+        backend,
+        |payments| {
+            Message::View(crate::app::view::Message::SparkSend(
+                crate::app::view::SparkSendMessage::PaymentsLoaded(payments),
+            ))
+        },
+        |err| {
+            Message::View(crate::app::view::Message::SparkSend(
+                crate::app::view::SparkSendMessage::PaymentsFailed(err),
+            ))
+        },
+    )
 }

@@ -4,94 +4,18 @@ pub mod general;
 pub mod install_stats;
 pub mod lightning;
 
-use iced::widget::{Column, Row};
-use iced::{Alignment, Length};
+use coincube_ui::{component::text::*, widget::*};
 
-use coincube_ui::component::{badge, text::*};
-use coincube_ui::{
-    icon, theme,
-    widget::{Button, Container, Element},
-};
+use crate::app::view::message::*;
 
-use crate::app::cache::Cache;
-use crate::app::menu::Menu;
-use crate::app::view::{dashboard, message::*};
-
-pub fn header<'a>(title: &'a str, msg: SettingsMessage) -> Element<'a, Message> {
-    Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(
-            Button::new(text("Settings").size(30).bold())
-                .style(theme::button::transparent)
-                .on_press(Message::Menu(Menu::Settings(
-                    crate::app::menu::SettingsSubMenu::General,
-                ))),
-        )
-        .push(icon::chevron_right().size(30))
-        .push(
-            Button::new(text(title).size(30).bold())
-                .style(theme::button::transparent)
-                .on_press(Message::Settings(msg)),
-        )
-        .into()
-}
-
-fn settings_section<'a>(
-    title: &'a str,
-    icon: coincube_ui::widget::Text<'static>,
-    msg: Message,
-) -> Container<'a, Message> {
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(badge::badge(icon))
-                .push(text(title).bold())
-                .padding(10)
-                .spacing(20)
-                .align_y(Alignment::Center)
-                .width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .style(theme::button::transparent_border)
-        .on_press(msg),
-    )
-    .width(Length::Fill)
-    .style(theme::card::simple)
-}
-
-pub fn list<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Message> {
-    let header = Button::new(text("Settings").size(30).bold())
-        .style(theme::button::transparent)
-        .on_press(Message::Menu(Menu::Settings(
-            crate::app::menu::SettingsSubMenu::General,
-        )));
-
-    dashboard(
-        menu,
-        cache,
-        Column::new()
-            .spacing(20)
-            .push(header)
-            .push(settings_section(
-                "General",
-                icon::wrench_icon(),
-                Message::Settings(SettingsMessage::GeneralSection),
-            ))
-            .push(settings_section(
-                "Lightning",
-                icon::lightning_icon(),
-                Message::Settings(SettingsMessage::LightningSection),
-            ))
-            .push(settings_section(
-                "About",
-                icon::tooltip_icon(),
-                Message::Settings(SettingsMessage::AboutSection),
-            ))
-            .push(settings_section(
-                "Download Stats",
-                icon::graph_icon(),
-                Message::Settings(SettingsMessage::InstallStatsSection),
-            )),
-    )
+/// Page heading shown at the top of each Cube → Settings sub-page.
+/// Matches the plain `h3` heading style used on the Home / Wallets page
+/// so Settings pages don't pick up extra button padding that made them
+/// sit slightly lower than other sections. The rail already communicates
+/// the Settings → {section} hierarchy, so no breadcrumb is needed here.
+///
+/// The `SettingsMessage` argument is kept for API compatibility with the
+/// existing call sites but is no longer dispatched.
+pub fn header<'a>(title: &'a str, _msg: SettingsMessage) -> Element<'a, Message> {
+    h3(title).bold().into()
 }

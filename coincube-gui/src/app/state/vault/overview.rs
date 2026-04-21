@@ -113,6 +113,7 @@ impl State for VaultOverview {
             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
         if let Some((tx, output_index)) = &self.selected_event {
             view::vault::overview::payment_view(
+                menu,
                 cache,
                 tx,
                 *output_index,
@@ -137,6 +138,7 @@ impl State for VaultOverview {
                     cache.node_bitcoind_sync_progress,
                     cache.node_bitcoind_ibd,
                     cache.show_direction_badges,
+                    cache.display_mode,
                 ),
             )
         }

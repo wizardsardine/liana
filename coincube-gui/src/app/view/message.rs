@@ -58,11 +58,6 @@ pub enum Message {
     Reload,
     Clipboard(String),
     Menu(Menu),
-    ToggleVault,
-    ToggleSpark,
-    ToggleLiquid,
-    ToggleMarketplace,
-    ToggleMarketplaceP2P,
     SetupVault,
     Close,
     Select(usize),
@@ -131,11 +126,14 @@ pub enum Message {
     SideshiftSend(SideshiftSendMessage),
     ConnectAccount(ConnectAccountMessage),
     ConnectCube(ConnectCubeMessage),
-    ToggleConnect,
     P2P(P2PMessage),
     ToggleTheme,
     DismissReceivedCelebration,
     DismissBackupWarning,
+    /// Flip the global fiat-native ↔ bitcoin-native display preference
+    /// and persist it. Emitted by the click-to-swap mouse_area on any
+    /// primary balance value, and by the Settings toggle.
+    FlipDisplayMode,
 }
 
 impl Close for Message {
@@ -438,6 +436,9 @@ pub enum LiquidOverviewMessage {
     ReceiveUsdt,
     History,
     SelectTransaction(usize),
+    /// Forwarded to the top-level handler to flip the global
+    /// fiat-native ↔ bitcoin-native display mode.
+    FlipDisplayMode,
     DataLoaded {
         balance: Amount,
         usdt_balance: u64,

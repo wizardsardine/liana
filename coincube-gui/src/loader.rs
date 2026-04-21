@@ -588,6 +588,12 @@ pub async fn load_application(
         .await
         .map(|res| res.coins)?;
 
+    let display_mode = crate::app::settings::Settings::from_file(
+        &config.datadir_path.network_directory(config.network),
+    )
+    .ok()
+    .map(|s| s.display_mode)
+    .unwrap_or_default();
     // Both last poll fields start with the same value.
     let cache = Cache {
         datadir_path: config.datadir_path,
@@ -602,15 +608,10 @@ pub async fn load_application(
         },
         fiat_price: None,
         bitcoin_unit,
+        display_mode,
         node_bitcoind_sync_progress: None,
         node_bitcoind_ibd: None,
         node_bitcoind_last_log: None,
-        vault_expanded: false,
-        spark_expanded: false,
-        liquid_expanded: false,
-        marketplace_expanded: false,
-        marketplace_p2p_expanded: false,
-        connect_expanded: false,
         connect_authenticated: false,
         has_vault: true,
         cube_name: config.cube_settings.name.clone(),

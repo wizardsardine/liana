@@ -126,6 +126,7 @@ impl State for LiquidOverview {
                 cache.bitcoin_unit,
                 cache.btc_usd_price,
                 cache.show_direction_badges,
+                cache.display_mode,
             )
             .map(view::Message::LiquidOverview);
 
@@ -287,6 +288,9 @@ impl State for LiquidOverview {
                 }
                 view::LiquidOverviewMessage::RefreshRequested => {
                     return self.load_balance();
+                }
+                view::LiquidOverviewMessage::FlipDisplayMode => {
+                    return Task::done(Message::View(view::Message::FlipDisplayMode));
                 }
             }
         }

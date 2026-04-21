@@ -88,6 +88,7 @@ impl State for SparkOverview {
             bitcoin_unit: cache.bitcoin_unit,
             show_direction_badges: cache.show_direction_badges,
             stable_balance_active: self.stable_balance_active.unwrap_or(false),
+            display_mode: cache.display_mode,
         }
         .render()
         .map(view::Message::SparkOverview);
@@ -191,6 +192,9 @@ impl State for SparkOverview {
                     // fall back to routing to the Transactions list so the
                     // user lands somewhere sensible.
                     return redirect(Menu::Spark(SparkSubMenu::Transactions(None)));
+                }
+                view::SparkOverviewMessage::FlipDisplayMode => {
+                    return Task::done(Message::View(view::Message::FlipDisplayMode));
                 }
             }
         }

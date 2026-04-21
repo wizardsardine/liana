@@ -22,6 +22,15 @@ pub enum CoincubeError {
     Api(String),
     Parse(serde_json::Error),
     SseError(reqwest_sse::error::EventSourceError),
+    /// Typed variant for W16-desktop's 409
+    /// `VAULT_KEYHOLDER_LOCKED`. Reclassified from `Unsuccessful` by
+    /// `add_vault_member` so the dialog handler can match by variant
+    /// instead of re-parsing the error body. `vault_id` is the
+    /// backend's numeric id for the locked vault (extracted from the
+    /// 409 body); `0` when the body is malformed.
+    VaultKeyholderLocked {
+        vault_id: u64,
+    },
 }
 
 impl From<serde_json::Error> for CoincubeError {
@@ -62,6 +71,11 @@ impl std::fmt::Display for CoincubeError {
             CoincubeError::Api(msg) => write!(f, "API error: {}", msg),
             CoincubeError::Parse(msg) => write!(f, "Parse error: {}", msg),
             CoincubeError::SseError(e) => write!(f, "SSE Error: {}", e),
+            CoincubeError::VaultKeyholderLocked { vault_id } => write!(
+                f,
+                "Can't add a keyholder to Vault #{} — the signing quorum is fixed at build time.",
+                vault_id
+            ),
         }
     }
 }
@@ -384,6 +398,13 @@ pub struct CubeResponse {
     pub members: Vec<CubeMember>,
     #[serde(default)]
     pub pending_invites: Vec<CubeInviteSummary>,
+    /// The cube's attached Vault when one exists. Populated by
+    /// `GET /connect/cubes/{id}`; `None` when the cube has no vault
+    /// yet or when served from `list_cubes()` (which omits the
+    /// association). Drives the W16-desktop "Joined after Vault"
+    /// badge and the Keyholder-role gate.
+    #[serde(default)]
+    pub vault: Option<ConnectVaultResponse>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1032,6 +1053,41 @@ pub struct VaultMemberResponse {
     pub created_at: String,
 }
 
+/// Vault lifecycle status. Drives W16-desktop's Keyholder-role gate:
+/// the signing quorum is immutable on `Active` vaults, so the UI must
+/// hide the Keyholder role option there.
+///
+/// `Other(String)` is a forward-compat fallback so an unknown backend
+/// value deserialises as a readable string instead of failing the
+/// whole `ConnectVaultResponse`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(from = "String")]
+pub enum VaultStatus {
+    Active,
+    Expired,
+    Archived,
+    Other(String),
+}
+
+impl From<String> for VaultStatus {
+    fn from(s: String) -> Self {
+        match s.as_str() {
+            "active" => VaultStatus::Active,
+            "expired" => VaultStatus::Expired,
+            "archived" => VaultStatus::Archived,
+            _ => VaultStatus::Other(s),
+        }
+    }
+}
+
+impl VaultStatus {
+    /// True for vaults whose signing quorum is still sealed — the
+    /// Keyholder-role gate hides the option for these.
+    pub fn is_active(&self) -> bool {
+        matches!(self, VaultStatus::Active)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectVaultResponse {
@@ -1040,16 +1096,96 @@ pub struct ConnectVaultResponse {
     pub timelock_days: i32,
     pub timelock_expires_at: String,
     pub last_reset_at: String,
-    pub status: String,
+    pub status: VaultStatus,
     #[serde(default)]
     pub members: Vec<VaultMemberResponse>,
     pub created_at: String,
     pub updated_at: String,
 }
 
+/// Which `VaultMemberRole` options the Vault-member add UI should
+/// expose, given the target Vault's current status.
+///
+/// W16-desktop (2026-04-20 product decision): the Bitcoin multisig
+/// descriptor is sealed at Vault-build time. Adding a Keyholder after
+/// the fact would create a DB row that has no effect on signing, so
+/// we hide the option on `Active` vaults and the backend 409s if it
+/// slips through.
+///
+/// On `Expired` / `Archived` vaults (and on any unknown status —
+/// fail-open) Keyholder stays in the list because the backend will
+/// accept it.
+pub fn allowed_vault_member_roles(vault_status: Option<&VaultStatus>) -> Vec<VaultMemberRole> {
+    let mut roles = vec![VaultMemberRole::Beneficiary, VaultMemberRole::Observer];
+    let hide_keyholder = vault_status.is_some_and(|s| s.is_active());
+    if !hide_keyholder {
+        roles.insert(0, VaultMemberRole::Keyholder);
+    }
+    roles
+}
+
+/// True when `member.joined_at` lands strictly after the Vault's
+/// `created_at`. Callers can pass both values as RFC 3339 strings
+/// (what the backend emits); the comparison falls back to
+/// string-lexical order when either value fails to parse, which is
+/// still correct for the `2006-01-02T15:04:05Z` layout the backend
+/// uses.
+pub fn member_joined_after_vault(member_joined_at: &str, vault_created_at: &str) -> bool {
+    // Parse both as RFC 3339; if either fails, fall back to
+    // lex-compare — the backend's fixed `yyyy-MM-ddTHH:mm:ssZ`
+    // format sorts correctly lexically.
+    let member = chrono::DateTime::parse_from_rfc3339(member_joined_at).ok();
+    let vault = chrono::DateTime::parse_from_rfc3339(vault_created_at).ok();
+    match (member, vault) {
+        (Some(m), Some(v)) => m > v,
+        _ => member_joined_at > vault_created_at,
+    }
+}
+
 /// Error code string returned by the backend's W9 guard. Public so callers
 /// can match on it when routing 409s.
 pub const ERR_KEY_ALREADY_USED_IN_VAULT: &str = "KEY_ALREADY_USED_IN_VAULT";
+
+/// Error code returned by the backend's W16 guard (see
+/// `coincube-api` PR 8): 409 from
+/// `POST /connect/cubes/{cubeId}/vault/members` when `role=keyholder`
+/// targets a Vault whose status is `active`. The 409 body carries the
+/// `vaultId` of the locked vault; `add_vault_member` reclassifies
+/// these into `CoincubeError::VaultKeyholderLocked { vault_id }`.
+pub const ERR_VAULT_KEYHOLDER_LOCKED: &str = "VAULT_KEYHOLDER_LOCKED";
+
+/// Body shape of the 409 response for `VAULT_KEYHOLDER_LOCKED`. The
+/// backend inlines `vaultId` at the top level alongside the usual
+/// `error: {code, message}` envelope (same pattern as
+/// `KEY_ALREADY_USED_IN_VAULT`).
+#[derive(Debug, Deserialize)]
+struct VaultKeyholderLockedBody {
+    #[serde(rename = "vaultId", default)]
+    vault_id: u64,
+}
+
+/// Returns `Some(vault_id)` when `info` is a 409 whose error envelope
+/// carries the `VAULT_KEYHOLDER_LOCKED` code. Used by
+/// `add_vault_member` to reclassify the raw `Unsuccessful` into the
+/// typed `CoincubeError::VaultKeyholderLocked` variant.
+pub(crate) fn vault_keyholder_locked_vault_id(
+    info: &crate::services::http::NotSuccessResponseInfo,
+) -> Option<u64> {
+    if info.status_code != 409 {
+        return None;
+    }
+    let env = serde_json::from_str::<ApiErrorResponse>(&info.text).ok()?;
+    if env.error.code != ERR_VAULT_KEYHOLDER_LOCKED {
+        return None;
+    }
+    // vault_id is best-effort: if the backend omits it or sends a
+    // non-u64, fall back to 0 — the caller still gets the typed
+    // variant which is the whole point.
+    let vault_id = serde_json::from_str::<VaultKeyholderLockedBody>(&info.text)
+        .map(|b| b.vault_id)
+        .unwrap_or(0);
+    Some(vault_id)
+}
 
 impl CoincubeError {
     /// Returns `true` if this error is a W9 "key already used in another

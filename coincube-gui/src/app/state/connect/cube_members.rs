@@ -40,6 +40,12 @@ pub struct ConnectCubeMembersState {
     /// The payload is the raw server message — W4's structured conflict body
     /// is parsed in PR 3, for now we surface the text verbatim.
     pub remove_conflict: Option<String>,
+    /// `created_at` of the cube's attached Vault, when one exists. Drives
+    /// the W16-desktop "Joined after Vault" badge on each member row:
+    /// members whose `joined_at` strictly exceeds this landed after the
+    /// Vault's signing quorum was sealed. `None` when the cube has no
+    /// vault or the `Loaded` response omitted it.
+    pub vault_created_at: Option<String>,
     /// Monotonic counter used to discard stale `Loaded` responses when the
     /// user issues multiple `Reload`s in quick succession.
     load_generation: u32,
@@ -108,6 +114,7 @@ pub fn update(
                 Ok(cube) => {
                     state.members = cube.members;
                     state.pending_invites = cube.pending_invites;
+                    state.vault_created_at = cube.vault.as_ref().map(|v| v.created_at.clone());
                     state.load_error = None;
                     state.loaded_once = true;
                 }
@@ -116,6 +123,10 @@ pub fn update(
                     // count as loaded; the next `Enter` will retry.
                     // Route to `load_error` so a standing validation
                     // message in `error` isn't overwritten.
+                    // `members`, `pending_invites`, and `vault_created_at`
+                    // are all left intact so the panel keeps rendering the
+                    // last-good snapshot — including the "Joined after
+                    // Vault" badges — instead of a half-cleared view.
                     state.load_error = Some(e);
                 }
             }
@@ -327,16 +338,58 @@ fn is_stranded_vault_conflict(err: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::coincube::{CubeInviteSummary, CubeMember, CubeMemberUser};
+    use crate::services::coincube::{
+        ConnectVaultResponse, CubeInviteSummary, CubeMember, CubeMemberUser, VaultStatus,
+    };
+
+    /// Builder for a bare `CubeResponse` without a vault — most tests just
+    /// exercise the member/invite plumbing and don't care about the W16
+    /// badge fields.
+    fn sample_cube(
+        name: &str,
+        members: Vec<CubeMember>,
+        pending_invites: Vec<CubeInviteSummary>,
+    ) -> CubeResponse {
+        CubeResponse {
+            id: 42,
+            uuid: "abc".to_string(),
+            name: name.to_string(),
+            network: "bitcoin".to_string(),
+            lightning_address: None,
+            bolt12_offer: None,
+            status: "active".to_string(),
+            members,
+            pending_invites,
+            vault: None,
+        }
+    }
+
+    fn sample_vault(created_at: &str) -> ConnectVaultResponse {
+        ConnectVaultResponse {
+            id: 1,
+            cube_id: 42,
+            timelock_days: 90,
+            timelock_expires_at: "2027-01-01T00:00:00Z".to_string(),
+            last_reset_at: created_at.to_string(),
+            status: VaultStatus::Active,
+            members: vec![],
+            created_at: created_at.to_string(),
+            updated_at: created_at.to_string(),
+        }
+    }
 
     fn sample_member(id: u64, email: &str) -> CubeMember {
+        sample_member_joined(id, email, "2026-04-18T00:00:00Z")
+    }
+
+    fn sample_member_joined(id: u64, email: &str, joined_at: &str) -> CubeMember {
         CubeMember {
             id,
             user_id: id + 100,
             user: CubeMemberUser {
                 email: email.to_string(),
             },
-            joined_at: "2026-04-18T00:00:00Z".to_string(),
+            joined_at: joined_at.to_string(),
         }
     }
 
@@ -365,17 +418,11 @@ mod tests {
         let gen = state.bump_generation();
         state.loading = true;
 
-        let cube = CubeResponse {
-            id: 42,
-            uuid: "abc".to_string(),
-            name: "My Cube".to_string(),
-            network: "bitcoin".to_string(),
-            lightning_address: None,
-            bolt12_offer: None,
-            status: "active".to_string(),
-            members: vec![sample_member(7, "alice@example.com")],
-            pending_invites: vec![sample_invite(9, "bob@example.com")],
-        };
+        let cube = sample_cube(
+            "My Cube",
+            vec![sample_member(7, "alice@example.com")],
+            vec![sample_invite(9, "bob@example.com")],
+        );
         run(&mut state, ConnectCubeMembersMessage::Loaded(Ok(cube), gen));
 
         assert!(!state.loading);
@@ -394,17 +441,7 @@ mod tests {
         let gen2 = state.bump_generation(); // gen = 2 (current)
         state.loading = true;
 
-        let stale_cube = CubeResponse {
-            id: 42,
-            uuid: "abc".to_string(),
-            name: "Stale".to_string(),
-            network: "bitcoin".to_string(),
-            lightning_address: None,
-            bolt12_offer: None,
-            status: "active".to_string(),
-            members: vec![sample_member(1, "stale@example.com")],
-            pending_invites: vec![],
-        };
+        let stale_cube = sample_cube("Stale", vec![sample_member(1, "stale@example.com")], vec![]);
         run(
             &mut state,
             ConnectCubeMembersMessage::Loaded(Ok(stale_cube), 1),
@@ -412,17 +449,11 @@ mod tests {
         assert!(state.members.is_empty());
         assert!(state.loading, "stale response should not clear loading");
 
-        let current_cube = CubeResponse {
-            id: 42,
-            uuid: "abc".to_string(),
-            name: "Current".to_string(),
-            network: "bitcoin".to_string(),
-            lightning_address: None,
-            bolt12_offer: None,
-            status: "active".to_string(),
-            members: vec![sample_member(2, "current@example.com")],
-            pending_invites: vec![],
-        };
+        let current_cube = sample_cube(
+            "Current",
+            vec![sample_member(2, "current@example.com")],
+            vec![],
+        );
         run(
             &mut state,
             ConnectCubeMembersMessage::Loaded(Ok(current_cube), gen2),
@@ -448,6 +479,55 @@ mod tests {
         assert!(!state.loading);
         assert_eq!(state.load_error.as_deref(), Some("boom"));
         assert!(state.error.is_none(), "load errors must not touch `error`");
+    }
+
+    #[test]
+    fn loaded_err_preserves_last_good_snapshot() {
+        // Regression: a reload failure must leave `members`,
+        // `pending_invites`, and `vault_created_at` intact so the panel
+        // keeps rendering the last-good snapshot. Wiping any one of them
+        // (in particular `vault_created_at`) breaks the "Joined after
+        // Vault" badges on stale member rows — the rows still render,
+        // but their badges silently vanish.
+        let mut state = ConnectCubeMembersState::new();
+        let gen1 = state.bump_generation();
+        state.loading = true;
+        let late_member = sample_member_joined(7, "late@example.com", "2026-02-01T00:00:00Z");
+        let mut cube = sample_cube(
+            "Cube",
+            vec![late_member.clone()],
+            vec![sample_invite(9, "p@example.com")],
+        );
+        cube.vault = Some(sample_vault("2026-01-01T00:00:00Z"));
+        run(
+            &mut state,
+            ConnectCubeMembersMessage::Loaded(Ok(cube), gen1),
+        );
+        assert!(badge_visible(&state, &late_member));
+
+        // A subsequent reload fails — stale snapshot must survive.
+        let gen2 = state.bump_generation();
+        state.loading = true;
+        run(
+            &mut state,
+            ConnectCubeMembersMessage::Loaded(Err("boom".to_string()), gen2),
+        );
+        assert_eq!(state.load_error.as_deref(), Some("boom"));
+        assert_eq!(state.members.len(), 1, "stale member list should survive");
+        assert_eq!(
+            state.pending_invites.len(),
+            1,
+            "stale invites should survive"
+        );
+        assert_eq!(
+            state.vault_created_at.as_deref(),
+            Some("2026-01-01T00:00:00Z"),
+            "stale vault_created_at must survive so badges stay consistent"
+        );
+        assert!(
+            badge_visible(&state, &late_member),
+            "badge must still render on the stale row after a failed reload"
+        );
     }
 
     #[test]
@@ -674,17 +754,7 @@ mod tests {
         let mut state = ConnectCubeMembersState::new();
         let gen = state.bump_generation();
         state.loading = true;
-        let empty_cube = CubeResponse {
-            id: 42,
-            uuid: "abc".to_string(),
-            name: "Empty".to_string(),
-            network: "bitcoin".to_string(),
-            lightning_address: None,
-            bolt12_offer: None,
-            status: "active".to_string(),
-            members: vec![],
-            pending_invites: vec![],
-        };
+        let empty_cube = sample_cube("Empty", vec![], vec![]);
         run(
             &mut state,
             ConnectCubeMembersMessage::Loaded(Ok(empty_cube), gen),
@@ -724,5 +794,61 @@ mod tests {
         state.remove_conflict = Some("vault conflict".to_string());
         run(&mut state, ConnectCubeMembersMessage::DismissRemoveConflict);
         assert!(state.remove_conflict.is_none());
+    }
+
+    // --- §3.5 W16-desktop: "Joined after Vault" badge ---
+
+    /// Helper: true when the view-layer would render the "Joined after
+    /// Vault" badge for `member`, given the state's cached
+    /// `vault_created_at`. Mirrors the predicate used in the view so the
+    /// state-layer tests match the render gate exactly.
+    fn badge_visible(state: &ConnectCubeMembersState, member: &CubeMember) -> bool {
+        state.vault_created_at.as_deref().is_some_and(|v| {
+            crate::services::coincube::member_joined_after_vault(&member.joined_at, v)
+        })
+    }
+
+    #[test]
+    fn member_row_renders_joined_after_vault_badge_when_joined_after() {
+        let mut state = ConnectCubeMembersState::new();
+        let gen = state.bump_generation();
+        state.loading = true;
+        // Vault sealed on 2026-01-01; member joined after.
+        let late_member = sample_member_joined(7, "late@example.com", "2026-02-01T00:00:00Z");
+        let mut cube = sample_cube("Cube", vec![late_member.clone()], vec![]);
+        cube.vault = Some(sample_vault("2026-01-01T00:00:00Z"));
+        run(&mut state, ConnectCubeMembersMessage::Loaded(Ok(cube), gen));
+        assert_eq!(
+            state.vault_created_at.as_deref(),
+            Some("2026-01-01T00:00:00Z")
+        );
+        assert!(badge_visible(&state, &late_member));
+    }
+
+    #[test]
+    fn member_row_hides_badge_when_joined_before_vault() {
+        let mut state = ConnectCubeMembersState::new();
+        let gen = state.bump_generation();
+        state.loading = true;
+        // Member joined before the Vault was sealed — still in the quorum.
+        let early_member = sample_member_joined(7, "early@example.com", "2025-12-01T00:00:00Z");
+        let mut cube = sample_cube("Cube", vec![early_member.clone()], vec![]);
+        cube.vault = Some(sample_vault("2026-01-01T00:00:00Z"));
+        run(&mut state, ConnectCubeMembersMessage::Loaded(Ok(cube), gen));
+        assert!(!badge_visible(&state, &early_member));
+    }
+
+    #[test]
+    fn member_row_hides_badge_when_cube_has_no_vault() {
+        let mut state = ConnectCubeMembersState::new();
+        let gen = state.bump_generation();
+        state.loading = true;
+        let member = sample_member_joined(7, "m@example.com", "2026-02-01T00:00:00Z");
+        // No vault attached — `vault_created_at` should stay `None`
+        // and the badge must not render.
+        let cube = sample_cube("Cube", vec![member.clone()], vec![]);
+        run(&mut state, ConnectCubeMembersMessage::Loaded(Ok(cube), gen));
+        assert!(state.vault_created_at.is_none());
+        assert!(!badge_visible(&state, &member));
     }
 }
