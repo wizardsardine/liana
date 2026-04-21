@@ -541,178 +541,146 @@ impl State for GlobalHome {
                         Task::none()
                     }
                     HomeMessage::NextStep => {
-                        if let Some(daemon) = daemon {
-                            // Step 0 → 1 (overview → amount entry): this is the Transfer
-                            // button press. Default the direction and prefetch Breez's
-                            // on-chain swap limits.
-                            if self.current_view.step == 0 {
-                                // Liquid is always present. Default the destination to
-                                // Vault when available, otherwise Spark. `transfer_available`
-                                // in the view already gates the button so at least one of
-                                // the two non-Liquid wallets exists here.
-                                let default_to = if cache.has_vault {
-                                    WalletKind::Vault
-                                } else if self.spark_backend.is_some() {
-                                    WalletKind::Spark
-                                } else {
-                                    // Button shouldn't be reachable; bail rather than
-                                    // advancing the step machine.
-                                    return Task::none();
+                        // Step 0 → 1 (overview → amount entry): this is the
+                        // Transfer button press. Default the direction and
+                        // prefetch Breez's on-chain swap limits. Only
+                        // `breez_client` is needed here — Vault daemon is
+                        // required only by the LiquidToVault / SparkToVault
+                        // branches of step 1 → 2, which unwrap inline.
+                        if self.current_view.step == 0 {
+                            // Liquid is always present. Default the destination to
+                            // Vault when available, otherwise Spark. `transfer_available`
+                            // in the view already gates the button so at least one of
+                            // the two non-Liquid wallets exists here.
+                            let default_to = if cache.has_vault {
+                                WalletKind::Vault
+                            } else if self.spark_backend.is_some() {
+                                WalletKind::Spark
+                            } else {
+                                // Button shouldn't be reachable; bail rather than
+                                // advancing the step machine.
+                                return Task::none();
+                            };
+                            self.transfer_from = Some(WalletKind::Liquid);
+                            self.transfer_to = Some(default_to);
+                            self.transfer_direction =
+                                TransferDirection::try_from_pair(WalletKind::Liquid, default_to);
+                            self.wallet_picker = None;
+                            self.entered_amount = form::Value::default();
+                            // Fresh flow: reset the Vault-sourced feerate
+                            // picker so a value (or stuck loading flag)
+                            // from a prior transfer doesn't leak in.
+                            self.transfer_feerate = default_transfer_feerate();
+                            self.transfer_feerate_loading = None;
+                            self.current_view.next();
+                            let breez_client = self.breez_client.clone();
+                            return Task::perform(
+                                async move { breez_client.fetch_onchain_limits().await },
+                                |limit| match limit {
+                                    Ok(limits) => Message::View(view::Message::Home(
+                                        HomeMessage::OnChainLimitsFetched {
+                                            send: (limits.send.min_sat, limits.send.max_sat),
+                                            receive: (
+                                                limits.receive.min_sat,
+                                                limits.receive.max_sat,
+                                            ),
+                                        },
+                                    )),
+                                    Err(error) => Message::View(view::Message::Home(
+                                        HomeMessage::Error(error.to_string()),
+                                    )),
+                                },
+                            );
+                        }
+                        // Step 1 → 2 (amount → confirm): fetch the destination
+                        // receive address and, for the Liquid-source leg, ask
+                        // Breez to prepare a pay_onchain so fees can render on
+                        // the confirm screen.
+                        if self.current_view.step == 1 {
+                            let mut tasks = Vec::new();
+                            if matches!(
+                                self.transfer_direction,
+                                Some(TransferDirection::LiquidToVault)
+                            ) {
+                                let Some(daemon) = daemon.clone() else {
+                                    return Task::done(Message::View(view::Message::Home(
+                                        HomeMessage::Error("Vault unavailable".to_string()),
+                                    )));
                                 };
-                                self.transfer_from = Some(WalletKind::Liquid);
-                                self.transfer_to = Some(default_to);
-                                self.transfer_direction = TransferDirection::try_from_pair(
-                                    WalletKind::Liquid,
-                                    default_to,
-                                );
-                                self.wallet_picker = None;
-                                self.entered_amount = form::Value::default();
-                                // Fresh flow: reset the Vault-sourced feerate
-                                // picker so a value (or stuck loading flag)
-                                // from a prior transfer doesn't leak in.
-                                self.transfer_feerate = default_transfer_feerate();
-                                self.transfer_feerate_loading = None;
+                                self.current_view.next();
+                                tasks.push(Task::perform(
+                                    async move {
+                                        match daemon.get_new_address().await {
+                                            Ok(res) => Ok((res.address, res.derivation_index)),
+                                            Err(e) => Err(e.into()),
+                                        }
+                                    },
+                                    Message::ReceiveAddress,
+                                ));
+                                if let Ok(amount) = Amount::from_str_in(
+                                    &self.entered_amount.value,
+                                    if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                        breez_sdk_liquid::bitcoin::Denomination::Bitcoin
+                                    } else {
+                                        breez_sdk_liquid::bitcoin::Denomination::Satoshi
+                                    },
+                                ) {
+                                    let breez_client = self.breez_client.clone();
+                                    tasks.push(Task::perform(
+                                        async move {
+                                            breez_client
+                                                .prepare_pay_onchain(&PreparePayOnchainRequest {
+                                                    fee_rate_sat_per_vbyte: None,
+                                                    amount: breez_sdk_liquid::model::PayAmount::Bitcoin { receiver_amount_sat: amount.to_sat() },
+                                                })
+                                                .await
+                                        },
+                                        move |result| match result {
+                                            Ok(response) => Message::View(view::Message::Home(HomeMessage::PrepareOnChainResponseReceived(response))),
+                                            Err(error) => Message::View(view::Message::Home(
+                                                HomeMessage::Error(error.to_string()),
+                                            )),
+                                        },
+                                    ))
+                                }
+                            } else if matches!(
+                                self.transfer_direction,
+                                Some(TransferDirection::VaultToLiquid)
+                            ) {
                                 self.current_view.next();
                                 let breez_client = self.breez_client.clone();
-                                return Task::perform(
-                                    async move { breez_client.fetch_onchain_limits().await },
-                                    |limit| match limit {
-                                        Ok(limits) => Message::View(view::Message::Home(
-                                            HomeMessage::OnChainLimitsFetched {
-                                                send: (limits.send.min_sat, limits.send.max_sat),
-                                                receive: (
-                                                    limits.receive.min_sat,
-                                                    limits.receive.max_sat,
-                                                ),
-                                            },
+                                tasks.push(Task::perform(
+                                    async move {
+                                        let result = breez_client.receive_onchain(None).await;
+                                        result
+                                    },
+                                    |result| match result {
+                                        Ok(response) => Message::View(view::Message::Home(
+                                            HomeMessage::BreezOnchainAddress(response.destination),
                                         )),
                                         Err(error) => Message::View(view::Message::Home(
                                             HomeMessage::Error(error.to_string()),
                                         )),
                                     },
-                                );
-                            }
-                            // Step 1 → 2 (amount → confirm): fetch the destination
-                            // receive address and, for the Liquid-source leg, ask Breez
-                            // to prepare a pay_onchain so fees can render on the confirm
-                            // screen.
-                            if self.current_view.step == 1 {
-                                let mut tasks = Vec::new();
-                                if matches!(
-                                    self.transfer_direction,
-                                    Some(TransferDirection::LiquidToVault)
-                                ) {
-                                    self.current_view.next();
-                                    tasks.push(Task::perform(
-                                        async move {
-                                            match daemon.get_new_address().await {
-                                                Ok(res) => Ok((res.address, res.derivation_index)),
-                                                Err(e) => Err(e.into()),
-                                            }
-                                        },
-                                        Message::ReceiveAddress,
-                                    ));
-                                    if let Ok(amount) = Amount::from_str_in(
-                                        &self.entered_amount.value,
-                                        if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
-                                            breez_sdk_liquid::bitcoin::Denomination::Bitcoin
-                                        } else {
-                                            breez_sdk_liquid::bitcoin::Denomination::Satoshi
-                                        },
-                                    ) {
-                                        let breez_client = self.breez_client.clone();
-                                        tasks.push(Task::perform(
-                                            async move {
-                                                breez_client
-                                                    .prepare_pay_onchain(&PreparePayOnchainRequest {
-                                                        fee_rate_sat_per_vbyte: None,
-                                                        amount: breez_sdk_liquid::model::PayAmount::Bitcoin { receiver_amount_sat: amount.to_sat() },
-                                                    })
-                                                    .await
-                                            },
-                                            move |result| match result {
-                                                Ok(response) => Message::View(view::Message::Home(HomeMessage::PrepareOnChainResponseReceived(response))),
-                                                Err(error) => Message::View(view::Message::Home(
-                                                    HomeMessage::Error(error.to_string()),
-                                                )),
-                                            },
-                                        ))
-                                    }
-                                } else if matches!(
-                                    self.transfer_direction,
-                                    Some(TransferDirection::VaultToLiquid)
-                                ) {
-                                    self.current_view.next();
-                                    let breez_client = self.breez_client.clone();
-                                    tasks.push(Task::perform(
-                                        async move {
-                                            let result = breez_client.receive_onchain(None).await;
-                                            result
-                                        },
-                                        |result| match result {
-                                            Ok(response) => Message::View(view::Message::Home(
-                                                HomeMessage::BreezOnchainAddress(
-                                                    response.destination,
-                                                ),
-                                            )),
-                                            Err(error) => Message::View(view::Message::Home(
-                                                HomeMessage::Error(error.to_string()),
-                                            )),
-                                        },
-                                    ));
-                                } else if matches!(
-                                    self.transfer_direction,
-                                    Some(TransferDirection::VaultToSpark)
-                                ) {
-                                    // VaultToSpark: Spark issues a BTC deposit address;
-                                    // the Vault signs a standard on-chain tx to that
-                                    // address. The sign/broadcast path reuses the
-                                    // existing `SignVaultToLiquidTx` handler (widened
-                                    // below to accept this direction).
-                                    if let Some(spark) = self.spark_backend.clone() {
-                                        self.current_view.next();
-                                        tasks.push(Task::perform(
-                                            async move { spark.receive_onchain(None).await },
-                                            |result| match result {
-                                                // `payment_request` is a plain Bitcoin address for
-                                                // on-chain receives (possibly wrapped in a BIP21
-                                                // URI — the existing `BreezOnchainAddress` handler
-                                                // already strips "bitcoin:" prefixes).
-                                                Ok(response) => Message::View(view::Message::Home(
-                                                    HomeMessage::BreezOnchainAddress(
-                                                        response.payment_request,
-                                                    ),
-                                                )),
-                                                Err(error) => Message::View(view::Message::Home(
-                                                    HomeMessage::Error(error.to_string()),
-                                                )),
-                                            },
-                                        ));
-                                    } else {
-                                        return Task::done(Message::View(view::Message::Home(
-                                            HomeMessage::Error(
-                                                "Spark backend unavailable".to_string(),
-                                            ),
-                                        )));
-                                    }
-                                } else if matches!(
-                                    self.transfer_direction,
-                                    Some(TransferDirection::LiquidToSpark)
-                                ) {
-                                    // LiquidToSpark: structurally identical to
-                                    // LiquidToVault. Breez runs a peg-out swap to
-                                    // the Spark-issued BTC deposit address.
-                                    let Some(spark) = self.spark_backend.clone() else {
-                                        return Task::done(Message::View(view::Message::Home(
-                                            HomeMessage::Error(
-                                                "Spark backend unavailable".to_string(),
-                                            ),
-                                        )));
-                                    };
+                                ));
+                            } else if matches!(
+                                self.transfer_direction,
+                                Some(TransferDirection::VaultToSpark)
+                            ) {
+                                // VaultToSpark: Spark issues a BTC deposit address;
+                                // the Vault signs a standard on-chain tx to that
+                                // address. The sign/broadcast path reuses the
+                                // existing `SignVaultToLiquidTx` handler (widened
+                                // below to accept this direction).
+                                if let Some(spark) = self.spark_backend.clone() {
                                     self.current_view.next();
                                     tasks.push(Task::perform(
                                         async move { spark.receive_onchain(None).await },
                                         |result| match result {
+                                            // `payment_request` is a plain Bitcoin address for
+                                            // on-chain receives (possibly wrapped in a BIP21
+                                            // URI — the existing `BreezOnchainAddress` handler
+                                            // already strips "bitcoin:" prefixes).
                                             Ok(response) => Message::View(view::Message::Home(
                                                 HomeMessage::BreezOnchainAddress(
                                                     response.payment_request,
@@ -723,163 +691,196 @@ impl State for GlobalHome {
                                             )),
                                         },
                                     ));
-                                    if let Ok(amount) = Amount::from_str_in(
-                                        &self.entered_amount.value,
-                                        if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
-                                            breez_sdk_liquid::bitcoin::Denomination::Bitcoin
-                                        } else {
-                                            breez_sdk_liquid::bitcoin::Denomination::Satoshi
-                                        },
-                                    ) {
-                                        let breez_client = self.breez_client.clone();
-                                        tasks.push(Task::perform(
-                                            async move {
-                                                breez_client
-                                                    .prepare_pay_onchain(&PreparePayOnchainRequest {
-                                                        fee_rate_sat_per_vbyte: None,
-                                                        amount: breez_sdk_liquid::model::PayAmount::Bitcoin { receiver_amount_sat: amount.to_sat() },
-                                                    })
-                                                    .await
-                                            },
-                                            move |result| match result {
-                                                Ok(response) => Message::View(view::Message::Home(HomeMessage::PrepareOnChainResponseReceived(response))),
-                                                Err(error) => Message::View(view::Message::Home(
-                                                    HomeMessage::Error(error.to_string()),
-                                                )),
-                                            },
-                                        ));
-                                    }
-                                } else if matches!(
-                                    self.transfer_direction,
-                                    Some(TransferDirection::SparkToLiquid)
-                                ) {
-                                    // SparkToLiquid: fetch a Breez peg-in BTC address
-                                    // and prepare a Spark send against it. Breez will
-                                    // credit L-BTC once the on-chain tx confirms.
-                                    let Ok(amount) = Amount::from_str_in(
-                                        &self.entered_amount.value,
-                                        if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
-                                            coincube_core::miniscript::bitcoin::Denomination::Bitcoin
-                                        } else {
-                                            coincube_core::miniscript::bitcoin::Denomination::Satoshi
-                                        },
-                                    ) else {
-                                        return Task::none();
-                                    };
-                                    let Some(spark) = self.spark_backend.clone() else {
-                                        return Task::done(Message::View(view::Message::Home(
-                                            HomeMessage::Error(
-                                                "Spark backend unavailable".to_string(),
+                                } else {
+                                    return Task::done(Message::View(view::Message::Home(
+                                        HomeMessage::Error("Spark backend unavailable".to_string()),
+                                    )));
+                                }
+                            } else if matches!(
+                                self.transfer_direction,
+                                Some(TransferDirection::LiquidToSpark)
+                            ) {
+                                // LiquidToSpark: structurally identical to
+                                // LiquidToVault. Breez runs a peg-out swap to
+                                // the Spark-issued BTC deposit address.
+                                let Some(spark) = self.spark_backend.clone() else {
+                                    return Task::done(Message::View(view::Message::Home(
+                                        HomeMessage::Error("Spark backend unavailable".to_string()),
+                                    )));
+                                };
+                                self.current_view.next();
+                                tasks.push(Task::perform(
+                                    async move { spark.receive_onchain(None).await },
+                                    |result| match result {
+                                        Ok(response) => Message::View(view::Message::Home(
+                                            HomeMessage::BreezOnchainAddress(
+                                                response.payment_request,
                                             ),
-                                        )));
-                                    };
-                                    self.current_view.next();
+                                        )),
+                                        Err(error) => Message::View(view::Message::Home(
+                                            HomeMessage::Error(error.to_string()),
+                                        )),
+                                    },
+                                ));
+                                if let Ok(amount) = Amount::from_str_in(
+                                    &self.entered_amount.value,
+                                    if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                        breez_sdk_liquid::bitcoin::Denomination::Bitcoin
+                                    } else {
+                                        breez_sdk_liquid::bitcoin::Denomination::Satoshi
+                                    },
+                                ) {
                                     let breez_client = self.breez_client.clone();
-                                    let amount_sat = amount.to_sat();
                                     tasks.push(Task::perform(
                                         async move {
-                                            let addr_res = breez_client
-                                                .receive_onchain(None)
+                                            breez_client
+                                                .prepare_pay_onchain(&PreparePayOnchainRequest {
+                                                    fee_rate_sat_per_vbyte: None,
+                                                    amount: breez_sdk_liquid::model::PayAmount::Bitcoin { receiver_amount_sat: amount.to_sat() },
+                                                })
                                                 .await
-                                                .map_err(|e| {
-                                                    format!("Breez receive_onchain failed: {e}")
-                                                })?;
-                                            let destination = addr_res.destination;
-                                            let prep = spark
-                                                .prepare_send(destination.clone(), Some(amount_sat))
-                                                .await
-                                                .map_err(|e| {
-                                                    format!("Spark prepare_send failed: {e}")
-                                                })?;
-                                            Ok::<_, String>((
-                                                destination,
-                                                prep.handle,
-                                                prep.fee_sat,
-                                            ))
                                         },
-                                        |result| match result {
-                                            Ok((destination, prepare_handle, fee_sat)) => {
-                                                Message::View(view::Message::Home(
-                                                    HomeMessage::SparkPrepareSendReady {
-                                                        destination,
-                                                        prepare_handle,
-                                                        fee_sat,
-                                                    },
-                                                ))
-                                            }
+                                        move |result| match result {
+                                            Ok(response) => Message::View(view::Message::Home(HomeMessage::PrepareOnChainResponseReceived(response))),
                                             Err(error) => Message::View(view::Message::Home(
-                                                HomeMessage::Error(error),
-                                            )),
-                                        },
-                                    ));
-                                } else if matches!(
-                                    self.transfer_direction,
-                                    Some(TransferDirection::SparkToVault)
-                                ) {
-                                    // SparkToVault: fetch a fresh Vault address, then
-                                    // ask Spark to `prepare_send` to it — that call
-                                    // yields a handle we broadcast at confirm time via
-                                    // `ConfirmSparkSend`.
-                                    let Ok(amount) = Amount::from_str_in(
-                                        &self.entered_amount.value,
-                                        if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
-                                            coincube_core::miniscript::bitcoin::Denomination::Bitcoin
-                                        } else {
-                                            coincube_core::miniscript::bitcoin::Denomination::Satoshi
-                                        },
-                                    ) else {
-                                        return Task::none();
-                                    };
-                                    let Some(spark) = self.spark_backend.clone() else {
-                                        return Task::done(Message::View(view::Message::Home(
-                                            HomeMessage::Error(
-                                                "Spark backend unavailable".to_string(),
-                                            ),
-                                        )));
-                                    };
-                                    self.current_view.next();
-                                    let daemon_clone = daemon.clone();
-                                    let amount_sat = amount.to_sat();
-                                    tasks.push(Task::perform(
-                                        async move {
-                                            let addr_res = daemon_clone
-                                                .get_new_address()
-                                                .await
-                                                .map_err(|e| {
-                                                    format!("Failed to get Vault address: {e:?}")
-                                                })?;
-                                            let addr_str = addr_res.address.to_string();
-                                            let prep = spark
-                                                .prepare_send(addr_str.clone(), Some(amount_sat))
-                                                .await
-                                                .map_err(|e| {
-                                                    format!("Spark prepare_send failed: {e}")
-                                                })?;
-                                            Ok::<_, String>((addr_str, prep.handle, prep.fee_sat))
-                                        },
-                                        |result| match result {
-                                            Ok((destination, prepare_handle, fee_sat)) => {
-                                                Message::View(view::Message::Home(
-                                                    HomeMessage::SparkPrepareSendReady {
-                                                        destination,
-                                                        prepare_handle,
-                                                        fee_sat,
-                                                    },
-                                                ))
-                                            }
-                                            Err(error) => Message::View(view::Message::Home(
-                                                HomeMessage::Error(error),
+                                                HomeMessage::Error(error.to_string()),
                                             )),
                                         },
                                     ));
                                 }
-                                return Task::batch(tasks);
+                            } else if matches!(
+                                self.transfer_direction,
+                                Some(TransferDirection::SparkToLiquid)
+                            ) {
+                                // SparkToLiquid: fetch a Breez peg-in BTC address
+                                // and prepare a Spark send against it. Breez will
+                                // credit L-BTC once the on-chain tx confirms.
+                                let Ok(amount) = Amount::from_str_in(
+                                    &self.entered_amount.value,
+                                    if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                        coincube_core::miniscript::bitcoin::Denomination::Bitcoin
+                                    } else {
+                                        coincube_core::miniscript::bitcoin::Denomination::Satoshi
+                                    },
+                                ) else {
+                                    return Task::none();
+                                };
+                                let Some(spark) = self.spark_backend.clone() else {
+                                    return Task::done(Message::View(view::Message::Home(
+                                        HomeMessage::Error("Spark backend unavailable".to_string()),
+                                    )));
+                                };
+                                self.current_view.next();
+                                let breez_client = self.breez_client.clone();
+                                let amount_sat = amount.to_sat();
+                                tasks.push(Task::perform(
+                                    async move {
+                                        let addr_res =
+                                            breez_client.receive_onchain(None).await.map_err(
+                                                |e| format!("Breez receive_onchain failed: {e}"),
+                                            )?;
+                                        let destination = addr_res.destination;
+                                        let prep = spark
+                                            .prepare_send(destination.clone(), Some(amount_sat))
+                                            .await
+                                            .map_err(|e| {
+                                                format!("Spark prepare_send failed: {e}")
+                                            })?;
+                                        Ok::<_, String>((destination, prep.handle, prep.fee_sat))
+                                    },
+                                    |result| match result {
+                                        Ok((destination, prepare_handle, fee_sat)) => {
+                                            Message::View(view::Message::Home(
+                                                HomeMessage::SparkPrepareSendReady {
+                                                    destination,
+                                                    prepare_handle,
+                                                    fee_sat,
+                                                },
+                                            ))
+                                        }
+                                        Err(error) => Message::View(view::Message::Home(
+                                            HomeMessage::Error(error),
+                                        )),
+                                    },
+                                ));
+                            } else if matches!(
+                                self.transfer_direction,
+                                Some(TransferDirection::SparkToVault)
+                            ) {
+                                // SparkToVault: fetch a fresh Vault address, then
+                                // ask Spark to `prepare_send` to it — that call
+                                // yields a handle we broadcast at confirm time via
+                                // `ConfirmSparkSend`.
+                                let Ok(amount) = Amount::from_str_in(
+                                    &self.entered_amount.value,
+                                    if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                        coincube_core::miniscript::bitcoin::Denomination::Bitcoin
+                                    } else {
+                                        coincube_core::miniscript::bitcoin::Denomination::Satoshi
+                                    },
+                                ) else {
+                                    return Task::none();
+                                };
+                                let Some(spark) = self.spark_backend.clone() else {
+                                    return Task::done(Message::View(view::Message::Home(
+                                        HomeMessage::Error("Spark backend unavailable".to_string()),
+                                    )));
+                                };
+                                let Some(daemon_clone) = daemon.clone() else {
+                                    return Task::done(Message::View(view::Message::Home(
+                                        HomeMessage::Error("Vault unavailable".to_string()),
+                                    )));
+                                };
+                                self.current_view.next();
+                                let amount_sat = amount.to_sat();
+                                tasks.push(Task::perform(
+                                    async move {
+                                        let addr_res =
+                                            daemon_clone.get_new_address().await.map_err(|e| {
+                                                format!("Failed to get Vault address: {e:?}")
+                                            })?;
+                                        let addr_str = addr_res.address.to_string();
+                                        let prep = spark
+                                            .prepare_send(addr_str.clone(), Some(amount_sat))
+                                            .await
+                                            .map_err(|e| {
+                                                format!("Spark prepare_send failed: {e}")
+                                            })?;
+                                        Ok::<_, String>((addr_str, prep.handle, prep.fee_sat))
+                                    },
+                                    |result| match result {
+                                        Ok((destination, prepare_handle, fee_sat)) => {
+                                            Message::View(view::Message::Home(
+                                                HomeMessage::SparkPrepareSendReady {
+                                                    destination,
+                                                    prepare_handle,
+                                                    fee_sat,
+                                                },
+                                            ))
+                                        }
+                                        Err(error) => Message::View(view::Message::Home(
+                                            HomeMessage::Error(error),
+                                        )),
+                                    },
+                                ));
                             }
-                            self.current_view.next();
+                            return Task::batch(tasks);
                         }
+                        self.current_view.next();
                         Task::none()
                     }
                     HomeMessage::PreviousStep => {
+                        // Any prepared/signed artifact from the confirm screen
+                        // is bound to the amount + destination that were in
+                        // effect when it was built. Stepping back allows the
+                        // user to edit those, so invalidate here — otherwise a
+                        // returning user would land on the confirm screen with
+                        // a stale "Confirm & Broadcast" button and broadcast
+                        // the previous PSBT against a changed amount.
+                        self.transfer_spend_tx = None;
+                        self.transfer_signed = false;
+                        self.spend_tx_fees = None;
+                        self.spark_send_handle = None;
                         self.current_view.previous();
                         Task::none()
                     }
