@@ -223,6 +223,7 @@ fn transaction_row<'a>(
 /// emit — not just Complete/Pending.
 pub fn transaction_detail_view<'a>(
     tx: &'a SparkRecentTransaction,
+    fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let is_incoming = tx.is_incoming;
@@ -232,6 +233,17 @@ pub fn transaction_detail_view<'a>(
         "Outgoing payment"
     };
     let sign = if is_incoming { "+" } else { "-" };
+
+    // For outgoing, the headline number bundles fees so the detail
+    // matches the list-row total the user tapped. Fees are still listed
+    // separately further down. Recompute the fiat off the same total
+    // rather than reusing `tx.fiat_amount`, which is amount-only.
+    let total_amount = if is_incoming {
+        tx.amount
+    } else {
+        tx.amount + tx.fees_sat
+    };
+    let total_fiat = fiat_converter.as_ref().map(|c| c.convert(total_amount));
 
     let method_icon = match tx.method {
         SparkPaymentMethod::Lightning => asset_network_logo::<Message>("btc", "lightning", 56.0),
@@ -260,8 +272,7 @@ pub fn transaction_detail_view<'a>(
         DomainPaymentStatus::WaitingFeeAcceptance => "Awaiting fee",
     };
     let date_text = format_timestamp(tx.timestamp).unwrap_or_else(|| "Unknown".to_string());
-    let fiat_str = tx
-        .fiat_amount
+    let fiat_str = total_fiat
         .as_ref()
         .map(|f| format!("{} {}", f.to_rounded_string(), f.currency()));
 
@@ -270,7 +281,7 @@ pub fn transaction_detail_view<'a>(
         .align_y(Alignment::Center)
         .push(text(sign).size(H1_SIZE))
         .push(amount_with_size_and_unit::<Message>(
-            &tx.amount,
+            &total_amount,
             H1_SIZE,
             bitcoin_unit,
         ));

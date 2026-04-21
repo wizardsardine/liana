@@ -304,11 +304,9 @@ impl State for SparkSend {
                 if let Some(payment) = self.recent_transactions.get(idx).cloned() {
                     Task::batch(vec![
                         redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
-                        Task::done(Message::View(
-                            crate::app::view::Message::SparkTransactions(
-                                crate::app::view::SparkTransactionsMessage::Preselect(payment),
-                            ),
-                        )),
+                        Task::done(Message::View(crate::app::view::Message::SparkTransactions(
+                            crate::app::view::SparkTransactionsMessage::Preselect(payment),
+                        ))),
                     ])
                 } else {
                     Task::none()

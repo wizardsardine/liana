@@ -105,6 +105,7 @@ impl State for SparkTransactions {
                 cache,
                 crate::app::view::spark::transactions::transaction_detail_view(
                     payment,
+                    fiat_converter.clone(),
                     cache.bitcoin_unit,
                 ),
             );
@@ -195,32 +196,30 @@ impl State for SparkTransactions {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::View(view::Message::SparkTransactions(msg)) => {
-                match msg {
-                    view::SparkTransactionsMessage::DataLoaded(payments) => {
-                        self.loading = false;
-                        self.payments = payments;
-                        self.error = None;
-                        self.rebuild_rows(cache);
-                    }
-                    view::SparkTransactionsMessage::Error(err) => {
-                        self.loading = false;
-                        self.error = Some(err);
-                    }
-                    view::SparkTransactionsMessage::Select(idx) => {
-                        self.selected_payment = self.recent_transactions.get(idx).cloned();
-                    }
-                    view::SparkTransactionsMessage::Preselect(payment) => {
-                        self.selected_payment = Some(payment);
-                    }
-                    view::SparkTransactionsMessage::SendBtc => {
-                        return redirect(Menu::Spark(SparkSubMenu::Send));
-                    }
-                    view::SparkTransactionsMessage::ReceiveBtc => {
-                        return redirect(Menu::Spark(SparkSubMenu::Receive));
-                    }
+            Message::View(view::Message::SparkTransactions(msg)) => match msg {
+                view::SparkTransactionsMessage::DataLoaded(payments) => {
+                    self.loading = false;
+                    self.payments = payments;
+                    self.error = None;
+                    self.rebuild_rows(cache);
                 }
-            }
+                view::SparkTransactionsMessage::Error(err) => {
+                    self.loading = false;
+                    self.error = Some(err);
+                }
+                view::SparkTransactionsMessage::Select(idx) => {
+                    self.selected_payment = self.recent_transactions.get(idx).cloned();
+                }
+                view::SparkTransactionsMessage::Preselect(payment) => {
+                    self.selected_payment = Some(payment);
+                }
+                view::SparkTransactionsMessage::SendBtc => {
+                    return redirect(Menu::Spark(SparkSubMenu::Send));
+                }
+                view::SparkTransactionsMessage::ReceiveBtc => {
+                    return redirect(Menu::Spark(SparkSubMenu::Receive));
+                }
+            },
             // Detail pane's back button emits `Message::Close`. Clear
             // the selection so the next render falls back to the list.
             Message::View(view::Message::Close) => {

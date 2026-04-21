@@ -264,7 +264,7 @@ fn connected_view<'a>(
 
             if let Some(fiat) = tx.fiat_amount.as_ref() {
                 item = item.with_fiat_amount(format!(
-                    "~{} {}",
+                    "{} {}",
                     fiat.to_rounded_string(),
                     fiat.currency()
                 ));
