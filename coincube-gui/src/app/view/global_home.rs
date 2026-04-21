@@ -791,7 +791,9 @@ fn confirm_transfer_view<'a>(
                 )
                 .push(Space::new().height(60))
                 .push(match direction {
-                    TransferDirection::LiquidToVault | TransferDirection::SparkToVault => Some(
+                    TransferDirection::LiquidToVault
+                    | TransferDirection::SparkToVault
+                    | TransferDirection::VaultToSpark => Some(
                         Column::new()
                             .spacing(10)
                             .push(
@@ -875,8 +877,7 @@ fn confirm_transfer_view<'a>(
                     ),
                     TransferDirection::VaultToLiquid
                     | TransferDirection::SparkToLiquid
-                    | TransferDirection::LiquidToSpark
-                    | TransferDirection::VaultToSpark => {
+                    | TransferDirection::LiquidToSpark => {
                         let destination_label = direction.to_wallet();
                         Some(
                             Column::new()
