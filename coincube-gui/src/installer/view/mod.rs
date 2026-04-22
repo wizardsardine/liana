@@ -2172,7 +2172,7 @@ pub fn backup_mnemonic<'a>(
     layout(
         progress,
         email,
-        "Backup your Master Seed",
+        "Reminder: Back Up Your Master Seed",
         Column::new()
             .push(text(prompt::MNEMONIC_HELP))
             .push(
