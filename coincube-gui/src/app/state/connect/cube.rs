@@ -253,7 +253,25 @@ impl ConnectCubePanel {
         Some(iced::Task::perform(
             async move {
                 match spark.get_lightning_address().await {
-                    Ok(Some(info)) => ReconcileOutcome::AlreadyBound(info),
+                    Ok(Some(info)) => {
+                        // Only treat as "in sync" when the SDK's
+                        // bound username matches the DB-confirmed
+                        // reservation. A mismatch means the SDK
+                        // holds a stale or foreign binding (prior
+                        // cube, cross-device swap, etc.) and we
+                        // must surface the divergence — silently
+                        // accepting it would display the wrong
+                        // address to the user.
+                        if info.username == db_username {
+                            ReconcileOutcome::AlreadyBound(info)
+                        } else {
+                            ReconcileOutcome::NeedsReRegistration(format!(
+                                "Spark SDK is bound to '{}' but the confirmed \
+                                 reservation is '{}'",
+                                info.username, db_username
+                            ))
+                        }
+                    }
                     Ok(None) => {
                         // SDK has no record — try to bind the
                         // DB-confirmed username on this device.
@@ -507,21 +525,39 @@ impl ConnectCubePanel {
                 match info {
                     Some(info) => {
                         // A `Some` payload means the SDK observed a
-                        // register/change — on this device at the tail
-                        // of the claim flow, or cross-device via
-                        // realtime-sync replay. Mirror the address
-                        // string into the panel's displayed state so
-                        // the sidebar + settings view pick it up.
-                        log::info!(
-                            "[CONNECT-CUBE] Spark lightning address updated: {}",
-                            info.lightning_address
-                        );
-                        self.lightning_address = Some(LightningAddress {
-                            lightning_address: Some(info.lightning_address),
-                        });
-                        // SDK is now bound — any stale "needs
-                        // re-registration" state is resolved.
-                        self.ln_reconcile_needs_reregister = None;
+                        // register/change — on this device at the
+                        // tail of the claim flow, or cross-device
+                        // via realtime-sync replay. Only treat it
+                        // as authoritative when it matches the
+                        // DB-confirmed reservation; a mismatched
+                        // payload means the SDK holds a binding we
+                        // haven't confirmed server-side (pre-confirm
+                        // claim-flow race, cross-device identity
+                        // swap, stale cache), and mirroring it to
+                        // the display would show the wrong address.
+                        let db_addr = self
+                            .lightning_address
+                            .as_ref()
+                            .and_then(|la| la.lightning_address.as_deref());
+                        if db_addr == Some(info.lightning_address.as_str()) {
+                            log::info!(
+                                "[CONNECT-CUBE] Spark lightning address confirmed: {}",
+                                info.lightning_address
+                            );
+                            // SDK matches the DB — any stale "needs
+                            // re-registration" state is resolved.
+                            self.ln_reconcile_needs_reregister = None;
+                        } else {
+                            log::warn!(
+                                "[CONNECT-CUBE] Spark reports {:?} but DB record \
+                                 is {:?} — triggering reconcile",
+                                info.lightning_address,
+                                db_addr
+                            );
+                            if let Some(task) = self.reconcile_spark_lightning_address() {
+                                return task;
+                            }
+                        }
                     }
                     None => {
                         // If the DB still has a confirmed username
