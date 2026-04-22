@@ -300,11 +300,17 @@ impl State for SparkSend {
                 self.recent_transactions.clear();
                 Task::none()
             }
-            SparkSendMessage::SelectTransaction(_idx) => {
-                // No per-tx detail pane for Spark yet — fall back to
-                // the full transactions list so the user lands
-                // somewhere sensible.
-                redirect(Menu::Spark(SparkSubMenu::Transactions(None)))
+            SparkSendMessage::SelectTransaction(idx) => {
+                if let Some(payment) = self.recent_transactions.get(idx).cloned() {
+                    Task::batch(vec![
+                        redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
+                        Task::done(Message::View(crate::app::view::Message::SparkTransactions(
+                            crate::app::view::SparkTransactionsMessage::Preselect(payment),
+                        ))),
+                    ])
+                } else {
+                    Task::none()
+                }
             }
             SparkSendMessage::History => redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
         }

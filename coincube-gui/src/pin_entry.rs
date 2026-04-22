@@ -127,8 +127,9 @@ impl PinEntry {
             .into();
         }
 
-        let back_button =
-            button::transparent(Some(icon::previous_icon()), "Previous").on_press(Message::Back);
+        let back_button = button::secondary(Some(icon::previous_icon()), "Back")
+            .width(Length::Fixed(150.0))
+            .on_press(Message::Back);
 
         let header = Row::new()
             .align_y(Alignment::Center)

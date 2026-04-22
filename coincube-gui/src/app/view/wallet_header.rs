@@ -311,8 +311,6 @@ enum FiatStyle {
 }
 
 /// Render a fiat amount as a styled Row:
-/// - Leading "~" approximation marker at `value_size`, in `color::GREY_3`
-///   to match the SATS suffix on the bitcoin line.
 /// - For USD, the dollar sign is glued to the value as a prefix
 ///   (`$X.XX`) and styled like the value (bold + value_size in
 ///   Primary mode; dimmed + value_size in Secondary mode).
@@ -326,10 +324,7 @@ fn fiat_amount_row<'a, M: 'a>(fiat: &FiatAmount, value_size: u32, style: FiatSty
         FiatStyle::Secondary => text(value_str).size(value_size).color(color::GREY_3),
     };
 
-    let mut row = Row::<'a, M>::new()
-        .spacing(8)
-        .align_y(Alignment::Center)
-        .push(text("~").size(value_size).color(color::GREY_3));
+    let row = Row::<'a, M>::new().spacing(8).align_y(Alignment::Center);
 
     match fiat.currency() {
         Currency::USD => {
@@ -339,23 +334,20 @@ fn fiat_amount_row<'a, M: 'a>(fiat: &FiatAmount, value_size: u32, style: FiatSty
             };
             // Joined "$X.XX" — group prefix + value in an inner row with
             // zero spacing so the sigil sits flush against the number.
-            row = row.push(
+            row.push(
                 Row::<'a, M>::new()
                     .spacing(0)
                     .align_y(Alignment::Center)
                     .push(prefix)
                     .push(value_text),
-            );
+            )
         }
-        other => {
-            row = row.push(value_text).push(
-                text(other.to_string())
-                    .size(value_size)
-                    .color(color::GREY_3),
-            );
-        }
+        other => row.push(value_text).push(
+            text(other.to_string())
+                .size(value_size)
+                .color(color::GREY_3),
+        ),
     }
-    row
 }
 
 fn pending_row<'a, M: 'a>(

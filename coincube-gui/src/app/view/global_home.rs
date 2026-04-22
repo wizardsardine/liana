@@ -672,7 +672,7 @@ fn enter_amount_view<'a>(
                 .push(
                     Row::new()
                         .push(
-                            button::secondary(None, "< Previous")
+                            button::secondary(None, "< Back")
                                 .width(Length::Fixed(150.0))
                                 .on_press(Message::Home(HomeMessage::PreviousStep)),
                         )
@@ -769,7 +769,7 @@ fn confirm_transfer_view<'a>(
         .width(Length::Fill)
         .push(Space::new().height(Length::Fixed(60.0)))
         .push(
-            button::secondary(None, "< Previous")
+            button::secondary(None, "< Back")
                 .width(Length::Fixed(150.0))
                 .on_press_maybe((!is_sending).then_some(Message::Home(HomeMessage::PreviousStep))),
         )

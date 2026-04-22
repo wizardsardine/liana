@@ -6,8 +6,11 @@
 //! the platform authenticator (Touch ID / Face ID via iCloud Keychain).
 //!
 //! Requires macOS 14 (Sonoma) or later for the PRF extension.
+//!
+//! Module gating lives on the `pub mod macos;` declaration in
+//! `services/passkey/mod.rs` — a redundant inner `#![cfg]` would be a
+//! clippy `duplicated_attributes` warning.
 
-#![cfg(target_os = "macos")]
 #![allow(unexpected_cfgs)]
 
 use std::cell::OnceCell;

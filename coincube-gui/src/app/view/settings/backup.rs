@@ -23,14 +23,14 @@ fn wrap(msg: BackupWalletMessage) -> Message {
     Message::Settings(SettingsMessage::BackupMasterSeed(msg))
 }
 
-/// Header for backup wizard screens: a single "< Previous" button
+/// Header for backup wizard screens: a single "< Back" button
 /// that rolls back one step in the flow.
 fn header<'a>(_title: &'a str) -> Element<'a, Message> {
     Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
         .push(
-            ui_button::secondary(None, "< Previous")
+            ui_button::secondary(None, "< Back")
                 .on_press(wrap(BackupWalletMessage::PreviousStep))
                 .padding([8, 16])
                 .width(Length::Fixed(150.0)),

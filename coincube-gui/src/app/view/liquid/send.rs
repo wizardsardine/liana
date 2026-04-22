@@ -474,7 +474,7 @@ pub fn liquid_send_view<'a>(
             } else {
                 tx.fiat_amount
                     .as_ref()
-                    .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()))
+                    .map(|fiat| format!("{} {}", fiat.to_rounded_string(), fiat.currency()))
             };
 
             let display_amount = if tx.usdt_display.is_some() {
@@ -1308,9 +1308,11 @@ pub fn final_check_page<'a>(
 ) -> Element<'a, LiquidSendMessage> {
     let header = Row::new()
         .push(
-            button::transparent(Some(icon::previous_icon()), "Previous").on_press(
-                LiquidSendMessage::PopupMessage(view::SendPopupMessage::Close),
-            ),
+            button::secondary(Some(icon::previous_icon()), "Back")
+                .width(Length::Fixed(150.0))
+                .on_press(LiquidSendMessage::PopupMessage(
+                    view::SendPopupMessage::Close,
+                )),
         )
         .push(Space::new().width(Length::Fill))
         .width(Length::Fill)

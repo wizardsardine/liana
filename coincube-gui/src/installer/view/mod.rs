@@ -2586,7 +2586,8 @@ fn layout<'a>(
     padding_left: bool,
     previous_message: Option<Message>,
 ) -> Element<'a, Message> {
-    let mut prev_button = button::transparent(Some(icon::previous_icon()), "Previous");
+    let mut prev_button =
+        button::secondary(Some(icon::previous_icon()), "Back").width(Length::Fixed(150.0));
     if let Some(msg) = previous_message {
         prev_button = prev_button.on_press(msg);
     }

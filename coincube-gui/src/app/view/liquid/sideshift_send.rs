@@ -301,15 +301,9 @@ fn disambiguation_view<'a>(
     detected_networks: &[SideshiftNetwork],
     error: Option<&'a str>,
 ) -> Element<'a, SideshiftSendMessage> {
-    let back_btn = iced::widget::button(
-        Row::new()
-            .spacing(5)
-            .align_y(Alignment::Center)
-            .push(previous_icon().style(theme::text::secondary))
-            .push(text("Previous").size(P1_SIZE).style(theme::text::secondary)),
-    )
-    .on_press(SideshiftSendMessage::Back)
-    .style(theme::button::transparent);
+    let back_btn = button::secondary(Some(previous_icon()), "Back")
+        .width(Length::Fixed(150.0))
+        .on_press(SideshiftSendMessage::Back);
 
     let title = Column::new().spacing(4).push(h3("Select Network")).push(
         text("This address is compatible with multiple networks. Please select one.")
@@ -418,15 +412,9 @@ fn amount_input_view<'a>(
         .copied()
         .unwrap_or(SideshiftNetwork::Ethereum);
 
-    let back_btn = iced::widget::button(
-        Row::new()
-            .spacing(5)
-            .align_y(Alignment::Center)
-            .push(previous_icon().style(theme::text::secondary))
-            .push(text("Previous").size(P1_SIZE).style(theme::text::secondary)),
-    )
-    .on_press(SideshiftSendMessage::Back)
-    .style(theme::button::transparent);
+    let back_btn = button::secondary(Some(previous_icon()), "Back")
+        .width(Length::Fixed(150.0))
+        .on_press(SideshiftSendMessage::Back);
 
     let title = Column::new()
         .spacing(4)
@@ -609,16 +597,9 @@ fn review_view<'a>(
     .style(theme::card::simple)
     .width(Length::Fill);
 
-    let back_btn = iced::widget::button(
-        Row::new()
-            .spacing(5)
-            .align_y(Alignment::Center)
-            .push(previous_icon().style(theme::text::secondary))
-            .push(text("Previous").size(P1_SIZE).style(theme::text::secondary)),
-    )
-    .on_press(SideshiftSendMessage::Back)
-    .style(theme::button::transparent)
-    .width(Length::FillPortion(1));
+    let back_btn = button::secondary(Some(previous_icon()), "Back")
+        .on_press(SideshiftSendMessage::Back)
+        .width(Length::FillPortion(1));
 
     let confirm_btn = button::primary(None, "Confirm & Send")
         .on_press(SideshiftSendMessage::ConfirmSend)

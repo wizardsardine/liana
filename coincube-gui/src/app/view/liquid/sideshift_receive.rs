@@ -111,15 +111,9 @@ fn external_setup_view<'a>(
     loading: bool,
     error: Option<&'a str>,
 ) -> Element<'a, SideshiftReceiveMessage> {
-    let back_btn = iced::widget::button(
-        Row::new()
-            .spacing(5)
-            .align_y(Alignment::Center)
-            .push(previous_icon().style(theme::text::secondary))
-            .push(text("Previous").size(P1_SIZE).style(theme::text::secondary)),
-    )
-    .on_press(SideshiftReceiveMessage::Back)
-    .style(theme::button::transparent);
+    let back_btn = button::secondary(Some(previous_icon()), "Back")
+        .width(Length::Fixed(150.0))
+        .on_press(SideshiftReceiveMessage::Back);
 
     let title = Column::new()
         .spacing(4)

@@ -167,7 +167,7 @@ fn tx_list_view(
 
     if let Some(fiat_amount) = fiat_converter.map(|converter| {
         let fiat = converter.convert(*amount);
-        format!("~{} {}", fiat.to_rounded_string(), fiat.currency())
+        format!("{} {}", fiat.to_rounded_string(), fiat.currency())
     }) {
         item = item.with_fiat_amount(fiat_amount);
     }
@@ -314,16 +314,10 @@ pub fn transaction_detail_view<'a>(
     bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let txid = tx.tx.compute_txid().to_string();
-    let back_btn: Element<'_, Message> = iced::widget::button(
-        Row::new()
-            .spacing(5)
-            .align_y(Alignment::Center)
-            .push(icon::previous_icon().style(theme::text::secondary))
-            .push(text("Previous").size(14).style(theme::text::secondary)),
-    )
-    .on_press(Message::Close)
-    .style(theme::button::transparent)
-    .into();
+    let back_btn: Element<'_, Message> = button::secondary(Some(icon::previous_icon()), "Back")
+        .width(Length::Fixed(150.0))
+        .on_press(Message::Close)
+        .into();
 
     dashboard(
         menu,

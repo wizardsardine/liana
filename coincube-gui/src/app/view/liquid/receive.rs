@@ -232,7 +232,7 @@ pub fn liquid_receive_view<'a>(
                 let fiat_str = tx
                     .fiat_amount
                     .as_ref()
-                    .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()));
+                    .map(|fiat| format!("{} {}", fiat.to_rounded_string(), fiat.currency()));
                 if let Some(fiat) = fiat_str {
                     item = item.with_fiat_amount(fiat);
                 }

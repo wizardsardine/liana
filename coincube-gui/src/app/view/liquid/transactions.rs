@@ -315,7 +315,7 @@ fn transaction_row<'a>(
 
     if let Some(fiat_amount) = fiat_converter.map(|converter| {
         let fiat = converter.convert(btc_amount);
-        format!("~{} {}", fiat.to_rounded_string(), fiat.currency())
+        format!("{} {}", fiat.to_rounded_string(), fiat.currency())
     }) {
         item = item.with_fiat_amount(fiat_amount);
     }
@@ -359,7 +359,7 @@ fn refundable_row<'a>(
 
     if let Some(fiat_amount) = fiat_converter.map(|converter| {
         let fiat = converter.convert(btc_amount);
-        format!("~{} {}", fiat.to_rounded_string(), fiat.currency())
+        format!("{} {}", fiat.to_rounded_string(), fiat.currency())
     }) {
         item = item.with_fiat_amount(fiat_amount);
     }
@@ -879,16 +879,10 @@ pub fn refundable_detail_view<'a>(
 }
 
 fn detail_back_button() -> Element<'static, Message> {
-    iced::widget::button(
-        Row::new()
-            .spacing(5)
-            .align_y(Alignment::Center)
-            .push(icon::previous_icon().style(theme::text::secondary))
-            .push(text("Previous").size(14).style(theme::text::secondary)),
-    )
-    .on_press(Message::Close)
-    .style(theme::button::transparent)
-    .into()
+    button::secondary(None, "< Back")
+        .width(Length::Fixed(150.0))
+        .on_press(Message::Close)
+        .into()
 }
 
 #[cfg(test)]

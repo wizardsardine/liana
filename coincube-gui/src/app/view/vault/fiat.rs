@@ -64,10 +64,13 @@ impl FiatAmount {
         format_f64_as_string(self.amount, "", self.currency().decimals(), false)
     }
 
-    /// Format a fiat amount as a `Text` widget with a tilde (~) prefix to indicate approximation.
+    /// Format a fiat amount as a `Text` widget: `<value> <currency-code>`
+    /// (e.g. "104.43 USD", "89.35 EUR"). Per design feedback, the leading
+    /// tilde that used to indicate approximation has been dropped across
+    /// all fiat display surfaces.
     pub fn to_text(&self) -> Text<'static> {
         text(format!(
-            "~{} {}",
+            "{} {}",
             self.to_formatted_string(),
             self.currency(),
         ))

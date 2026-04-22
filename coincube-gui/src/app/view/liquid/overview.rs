@@ -98,7 +98,7 @@ pub fn liquid_overview_view<'a>(
     // L-BTC asset row
     let lbtc_fiat_str = btc_fiat
         .as_ref()
-        .map(|f| format!("~{} {}", f.to_rounded_string(), f.currency()))
+        .map(|f| format!("{} {}", f.to_rounded_string(), f.currency()))
         .unwrap_or_default();
     let lbtc_row = Row::new()
         .spacing(10)
@@ -136,7 +136,7 @@ pub fn liquid_overview_view<'a>(
 
     // USDt asset row
     let usdt_display = format!("{} USDt", format_usdt_display(usdt_balance));
-    let usdt_fiat_str = format!("~${:.2}", usdt_fiat_value);
+    let usdt_fiat_str = format!("${:.2}", usdt_fiat_value);
     let usdt_row = Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
@@ -229,7 +229,7 @@ pub fn liquid_overview_view<'a>(
                 let fiat_str = tx
                     .fiat_amount
                     .as_ref()
-                    .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()));
+                    .map(|fiat| format!("{} {}", fiat.to_rounded_string(), fiat.currency()));
                 if let Some(fiat) = fiat_str {
                     item = item.with_fiat_amount(fiat);
                 }

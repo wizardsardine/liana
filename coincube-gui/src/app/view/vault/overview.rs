@@ -117,7 +117,7 @@ pub fn vault_overview_view<'a>(
     });
     let btc_fiat_str = fiat_balance
         .as_ref()
-        .map(|f| format!("~{} {}", f.to_rounded_string(), f.currency()))
+        .map(|f| format!("{} {}", f.to_rounded_string(), f.currency()))
         .unwrap_or_default();
     let vault_btc_row = Row::new()
         .spacing(10)
@@ -383,7 +383,7 @@ fn event_list_view(
 
     if let Some(fiat_amount) = fiat_converter.map(|converter| {
         let fiat = converter.convert(event.amount);
-        format!("~{} {}", fiat.to_rounded_string(), fiat.currency())
+        format!("{} {}", fiat.to_rounded_string(), fiat.currency())
     }) {
         item = item.with_fiat_amount(fiat_amount);
     }

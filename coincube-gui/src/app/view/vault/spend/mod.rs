@@ -119,7 +119,7 @@ pub fn spend_view<'a>(
             } else {
                 Row::new()
                     .push(
-                        button::secondary(None, "< Previous")
+                        button::secondary(None, "< Back")
                             .width(Length::Fixed(150.0))
                             .on_press_maybe(if currently_signing {
                                 None
@@ -497,7 +497,7 @@ pub fn create_spend_tx<'a>(
                     }))
                     .push(
                         (!is_first_step).then_some(
-                            button::secondary(None, "< Previous")
+                            button::secondary(None, "< Back")
                                 .width(Length::Fixed(150.0))
                                 .on_press(Message::Previous),
                         ),
@@ -647,7 +647,7 @@ pub fn recipient_view<'a>(
                                     .align_y(Alignment::Center)
                                     .spacing(5)
                                     .push(Space::new().width(Length::Fixed(20.0))) // add some space between BTC and fiat amounts
-                                    .push(p1_bold(format!("~{}", conv.currency())))
+                                    .push(p1_bold(format!("{}", conv.currency())))
                                     .push(Space::new().width(Length::Fixed(5.0)))
                                     .push(if is_max_selected {
                                         let fiat_from_btc = btc_amt
