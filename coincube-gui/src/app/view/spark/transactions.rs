@@ -204,9 +204,6 @@ fn transaction_row<'a>(
         item = item.with_fiat_amount(fiat_amount);
     }
 
-    // Phase 7 fallback: clicking a row currently just no-ops via the
-    // panel's message handler. A detail pane can land later.
-    let _ = i;
     item.view(Message::SparkTransactions(
         crate::app::view::spark::SparkTransactionsMessage::Select(i),
     ))

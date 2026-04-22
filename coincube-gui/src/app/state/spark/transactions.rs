@@ -105,7 +105,7 @@ impl State for SparkTransactions {
                 cache,
                 crate::app::view::spark::transactions::transaction_detail_view(
                     payment,
-                    fiat_converter.clone(),
+                    fiat_converter,
                     cache.bitcoin_unit,
                 ),
             );
