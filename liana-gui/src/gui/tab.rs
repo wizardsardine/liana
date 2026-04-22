@@ -653,6 +653,7 @@ pub fn create_app_with_remote_backend(
                 last_tick: Instant::now(),
             },
             fiat_price: None,
+            pane_size: std::cell::Cell::new(iced::window::Settings::default().size),
         },
         Arc::new(
             Wallet::new(wallet.descriptor)

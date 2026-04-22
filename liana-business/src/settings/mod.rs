@@ -32,9 +32,9 @@ use liana_gui::{
     services::connect::client::backend::{api, BackendWalletClient},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
+use std::{cell::Cell, collections::HashMap};
 
 /// Currencies supported by the business backend.
 ///
@@ -208,6 +208,7 @@ impl SettingsTrait for BusinessSettings {
                     last_tick: Instant::now(),
                 },
                 fiat_price: None,
+                pane_size: Cell::new(iced::window::Settings::default().size),
             };
 
             Ok(app::App::new(
