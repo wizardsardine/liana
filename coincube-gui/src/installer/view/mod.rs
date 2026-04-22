@@ -2168,43 +2168,18 @@ pub fn hw_list_view<'a>(
 pub fn backup_mnemonic<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
-    words: &'a [&'static str; 12],
-    done: bool,
 ) -> Element<'a, Message> {
     layout(
         progress,
         email,
-        "Backup your mnemonic",
+        "Backup your Master Seed",
         Column::new()
             .push(text(prompt::MNEMONIC_HELP))
             .push(
-                words
-                    .iter()
-                    .enumerate()
-                    .fold(Column::new().spacing(5), |acc, (i, w)| {
-                        acc.push(
-                            Row::new()
-                                .align_y(Alignment::End)
-                                .push(
-                                    Container::new(text(format!("#{}", i + 1)).small())
-                                        .width(Length::Fixed(50.0)),
-                                )
-                                .push(text(*w).bold()),
-                        )
-                    }),
-            )
-            .push(
-                checkbox(done)
-                    .label("I have backed up my mnemonic")
-                    .on_toggle(Message::UserActionDone),
-            )
-            .push(if done {
                 button::secondary(None, "Next")
                     .on_press(Message::Next)
-                    .width(Length::Fixed(200.0))
-            } else {
-                button::secondary(None, "Next").width(Length::Fixed(200.0))
-            })
+                    .width(Length::Fixed(200.0)),
+            )
             .push(Space::new().height(20.0))
             .spacing(50),
         true,
