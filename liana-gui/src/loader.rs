@@ -451,6 +451,7 @@ pub async fn load_application(
             ..Default::default()
         },
         fiat_price: None,
+        pane_size: std::cell::Cell::new(iced::window::Settings::default().size),
     };
 
     Ok((Arc::new(wallet), cache, daemon, internal_bitcoind, backup))

@@ -10,10 +10,10 @@ use crate::{
         Currency, PriceSource,
     },
 };
+use iced::Size;
 use liana::miniscript::bitcoin::Network;
 use lianad::commands::CoinStatus;
-use std::sync::Arc;
-use std::time::Instant;
+use std::{cell::Cell, sync::Arc, time::Instant};
 
 #[derive(Debug, Clone)]
 pub struct Cache {
@@ -24,6 +24,8 @@ pub struct Cache {
     pub last_poll_at_startup: Option<u32>,
     pub daemon_cache: DaemonCache,
     pub fiat_price: Option<FiatPrice>,
+    /// Last observed pane size
+    pub pane_size: Cell<Size>,
 }
 
 /// only used for tests.
@@ -36,6 +38,7 @@ impl std::default::Default for Cache {
             last_poll_at_startup: None,
             daemon_cache: DaemonCache::default(),
             fiat_price: None,
+            pane_size: Cell::new(iced::window::Settings::default().size),
         }
     }
 }

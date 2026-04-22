@@ -20,7 +20,7 @@ pub use message::*;
 use warning::warn;
 
 use iced::{
-    widget::{column, responsive, row, scrollable, Space},
+    widget::{column, responsive, row, scrollable, stack, Space},
     Length,
 };
 
@@ -37,8 +37,6 @@ use crate::app::{
     error::Error,
     menu::{Menu, MenuWidth},
 };
-
-use std::cell::RefCell;
 
 pub fn sidebar<'a>(
     active: &Menu,
@@ -93,48 +91,53 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     warning: Option<&'a Error>,
     content: T,
 ) -> Element<'a, Message> {
-    let content_cell = RefCell::new(Some(content.into()));
-    responsive(move |size| {
-        let sidebar_width = MenuWidth::from_pane_width(size.width);
-        let content = content_cell
-            .borrow_mut()
-            .take()
-            .unwrap_or_else(|| Space::new(Length::Fill, Length::Shrink).into());
-        Row::new()
-            .push(
-                sidebar(menu, cache, sidebar_width)
-                    .height(Length::Fill)
-                    .width(Length::Fixed(sidebar_width.into())),
-            )
-            .push(
-                Column::new()
-                    .push(warn(warning))
-                    .push(
-                        Container::new(column![
-                            Space::with_height(25),
-                            Container::new(
-                                scrollable(row!(
-                                    Space::with_width(Length::FillPortion(1)),
-                                    column!(Space::with_height(Length::Fixed(150.0)), content)
-                                        .width(Length::FillPortion(8))
-                                        .max_width(1500),
-                                    Space::with_width(Length::FillPortion(1)),
-                                ))
-                                .on_scroll(|w| Message::Scroll(w.absolute_offset().y)),
-                            )
-                            .center_x(Length::Fill)
-                            .style(theme::container::panel_background)
-                            .height(Length::Fill)
-                        ])
-                        .style(theme::container::sidebar),
-                    )
-                    .width(Length::Fill),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+    // The probe's closure fires during iced's layout pass, not synchronously
+    // here, so `sidebar_width` below always reads the size cached by the
+    // *previous* frame's layout. One-frame lag on resize is expected.
+    let pane_size_cell = &cache.pane_size;
+    let probe: Element<'a, Message> = responsive(move |size| {
+        pane_size_cell.set(size);
+        Space::new(Length::Fill, Length::Fill).into()
     })
-    .into()
+    .into();
+
+    let sidebar_width = MenuWidth::from_pane_width(cache.pane_size.get().width);
+
+    let view: Element<'a, Message> = Row::new()
+        .push(
+            sidebar(menu, cache, sidebar_width)
+                .height(Length::Fill)
+                .width(Length::Fixed(sidebar_width.into())),
+        )
+        .push(
+            Column::new()
+                .push(warn(warning))
+                .push(
+                    Container::new(column![
+                        Space::with_height(25),
+                        Container::new(
+                            scrollable(row!(
+                                Space::with_width(Length::FillPortion(1)),
+                                column!(Space::with_height(Length::Fixed(150.0)), content.into())
+                                    .width(Length::FillPortion(8))
+                                    .max_width(1500),
+                                Space::with_width(Length::FillPortion(1)),
+                            ))
+                            .on_scroll(|w| Message::Scroll(w.absolute_offset().y)),
+                        )
+                        .center_x(Length::Fill)
+                        .style(theme::container::panel_background)
+                        .height(Length::Fill)
+                    ])
+                    .style(theme::container::sidebar),
+                )
+                .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into();
+
+    stack![probe, view].into()
 }
 
 pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
