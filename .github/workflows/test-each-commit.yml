@@ -1,0 +1,82 @@
+name: Commit history check
+on:
+  pull_request:
+
+jobs:
+  # first we list all commits
+  list-commits:
+    if: github.event.pull_request.commits > 1
+    runs-on: ubuntu-latest
+    outputs:
+      commits: ${{ steps.list.outputs.commits }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Fetch base branch
+        run: |
+          git fetch --no-tags --prune --depth=1 origin \
+            "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
+
+      - id: list
+        name: List intermediate commits
+        run: |
+          # HEAD is the PR tip -- already covered by main.yml.
+          range="origin/${GITHUB_BASE_REF}..HEAD~"
+          # Emit "<full sha>\t<short sha> <subject>" per commit, then turn
+          # it into a JSON array of {sha, name} objects for matrix.include.
+          commits=$(git log --reverse --format='%H%x09%h %s' "$range" \
+            | jq -R -s -c '
+                split("\n")
+                | map(select(length > 0))
+                | map(split("\t"))
+                | map({sha: .[0], name: .[1]})
+              ')
+          echo "Intermediate commits: $commits"
+          echo "commits=$commits" >> "$GITHUB_OUTPUT"
+
+  # second we start one CI task per commit
+  check-commit:
+    needs: list-commits
+    if: needs.list-commits.outputs.commits != '[]' && needs.list-commits.outputs.commits != ''
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # MAX 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.list-commits.outputs.commits) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ matrix.sha }}
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.85
+          components: rustfmt, clippy
+          override: true
+          profile: minimal
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
+
+      - name: Show commit
+        run: git log -1 --oneline
+
+      - name: fmt check
+        run: cargo fmt -- --check
+
+      - name: clippy
+        run: cargo clippy --all-features --all-targets -- -D warnings
+
+      - name: tests
+        run: cargo test --verbose --color always -- --nocapture
+
+      - name: build
+        run: cargo build --release
