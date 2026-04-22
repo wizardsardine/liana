@@ -218,7 +218,6 @@ impl Panels {
             // remaining panels
             buy_sell: None,
             connect: ConnectPanel::new(
-                breez_client.clone(),
                 spark_backend.as_ref().map(|b| b.client().clone()),
                 cube_id.clone(),
                 cube_name,
@@ -365,7 +364,6 @@ impl Panels {
                 config.clone(),
             )),
             connect: ConnectPanel::new(
-                breez_client.clone(),
                 spark_backend.as_ref().map(|b| b.client().clone()),
                 cube_id.clone(),
                 cube_name,

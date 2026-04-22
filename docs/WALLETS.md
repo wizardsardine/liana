@@ -72,7 +72,7 @@ When future routing decisions arise (BOLT12 → Liquid, cross-chain → SideShif
 
 The Liquid and Spark wrapper crates deliberately don't share a `WalletBackend` trait:
 
-- **Liquid** (`breez_liquid/`) is sync/local — `BreezClient` holds `Arc<LiquidSdk>` directly, implements the `breez_sdk_liquid::Signer` trait through a `MasterSignerAdapter` so the mnemonic never leaves the MasterSigner, and exposes a rich set of methods including swap refunds, L-BTC/USDt asset handling, and BOLT12/BIP353 receive.
+- **Liquid** (`breez_liquid/`) is sync/local — `BreezClient` holds `Arc<LiquidSdk>` directly, implements the `breez_sdk_liquid::Signer` trait through a `MasterSignerAdapter` so the mnemonic never leaves the MasterSigner, and handles sends (Lightning via `lnurl_pay`, BOLT11, on-chain, Liquid-native) plus on-chain / Liquid-native receive. Lightning Address receive lives on Spark; Liquid no longer mints BOLT12 offers.
 - **Spark** (`breez_spark/`) is async/IPC — `SparkClient` spawns a sibling binary and JSON-RPCs over stdio. Cheap operations round-trip in a few ms; expensive ones live in the bridge. The bridge holds the mnemonic in its own address space.
 
 A premature trait would paper over those differences. Instead, `WalletRegistry` is the enum-dispatch site: callers that need "a backend" branch on `WalletKind` and pick a concrete handle, and the domain types in `wallets/types.rs` carry the shared UI-facing shape. Extract a trait only when a **third** backend appears and you can see the common surface empirically — not before.

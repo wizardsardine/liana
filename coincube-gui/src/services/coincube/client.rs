@@ -1,14 +1,13 @@
 use super::{
     get_countries, AddVaultMemberRequest, ApiResponse, AvatarGenerateData, AvatarGenerateRequest,
     AvatarSelectData, AvatarSelectRequest, BillingHistoryEntry, ChargeStatusResponse,
-    CheckoutRequest, CheckoutResponse, CoincubeError, ConfirmLightningAddressRequest, ConnectPlan,
-    ConnectVaultResponse, Contact, ContactCube, Country, CreateConnectVaultRequest,
-    CreateInviteRequest, CubeInviteOrAddResult, CubeKeyRaw, CubeLimitsResponse, CubeResponse,
-    DownloadStats, FeaturesResponse, GetAvatarData, Invite, LightningAddress, LoginActivity,
-    LoginResponse, OtpRequest, OtpVerifyRequest, PublicAvatarData, RefreshTokenRequest,
-    RegenerationData, RegisterCubeRequest, ReserveLightningAddressRequest, SaveQuoteRequest,
-    SaveQuoteResponse, StatsPeriod, TimeseriesResponse, TodayStats, UpdateCubeRequest, User,
-    VaultMemberResponse, VerifiedDevice,
+    CheckoutRequest, CheckoutResponse, CoincubeError, ConnectPlan, ConnectVaultResponse, Contact,
+    ContactCube, Country, CreateConnectVaultRequest, CreateInviteRequest, CubeInviteOrAddResult,
+    CubeKeyRaw, CubeLimitsResponse, CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData,
+    Invite, LightningAddress, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
+    PublicAvatarData, RefreshTokenRequest, RegenerationData, RegisterCubeRequest,
+    ReserveLightningAddressRequest, SaveQuoteRequest, SaveQuoteResponse, StatsPeriod,
+    TimeseriesResponse, TodayStats, UpdateCubeRequest, User, VaultMemberResponse, VerifiedDevice,
 };
 use reqwest::{Client, Method};
 use serde::Deserialize;
@@ -393,18 +392,18 @@ impl CoincubeClient {
 
     /// Phase 4g step 3: commit the reservation. Called after the
     /// Spark SDK has successfully registered the username with the
-    /// Breez-hosted LNURL server. The API persists the BIP353 TXT
-    /// record and stores the supplied BOLT12 offer.
+    /// Breez-hosted LNURL server. Body is empty — the API stamps
+    /// `lightning_address_confirmed_at = now()` on the existing
+    /// reservation, turning it permanent. No DNS work happens.
     pub async fn confirm_lightning_address(
         &self,
         cube_id: &str,
-        req: ConfirmLightningAddressRequest,
     ) -> Result<LightningAddress, CoincubeError> {
         let url = format!(
             "{}/api/v1/connect/cubes/{}/lightning-address/confirm",
             self.base_url, cube_id
         );
-        let res = self.client.post(&url).json(&req).send().await?;
+        let res = self.client.post(&url).send().await?;
         let res = res.check_success().await?;
         let resp: ApiResponse<LightningAddress> = res.json().await?;
         Ok(resp.data)

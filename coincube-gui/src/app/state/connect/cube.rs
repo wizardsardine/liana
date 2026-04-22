@@ -6,14 +6,13 @@ use iced::task::Handle as TaskHandle;
 
 use crate::{
     app::{
-        breez_liquid::BreezClient,
         breez_spark::SparkClient,
         message::Message,
         view::{self, ConnectCubeMessage},
     },
     services::coincube::{
         AvatarGenerateRequest, AvatarSelectRequest, AvatarUserTraits, CoincubeClient,
-        ConfirmLightningAddressRequest, LightningAddress, RegisterCubeRequest,
+        LightningAddress, RegisterCubeRequest,
     },
 };
 
@@ -117,7 +116,6 @@ pub struct ConnectCubePanel {
     pub ln_checking: bool,
     ln_check_version: u32,
     ln_check_abort: Option<TaskHandle>,
-    breez_client: Arc<BreezClient>,
     /// Spark subprocess client. Phase 4g routes the Lightning
     /// Address claim flow through `register_lightning_address` on
     /// the Breez-hosted LNURL server; the API's own reserve/confirm
@@ -149,7 +147,6 @@ pub struct ConnectCubePanel {
 
 impl ConnectCubePanel {
     pub fn new(
-        breez_client: Arc<BreezClient>,
         spark_client: Option<Arc<SparkClient>>,
         cube_uuid: String,
         cube_name: String,
@@ -170,7 +167,6 @@ impl ConnectCubePanel {
             ln_checking: false,
             ln_check_version: 0,
             ln_check_abort: None,
-            breez_client,
             spark_client,
             ln_reconcile_needs_reregister: None,
             client: None,
@@ -311,7 +307,6 @@ impl ConnectCubePanel {
                         if cube_resp.lightning_address.is_some() {
                             self.lightning_address = Some(LightningAddress {
                                 lightning_address: cube_resp.lightning_address,
-                                bolt12_offer: cube_resp.bolt12_offer,
                             });
                         } else {
                             self.lightning_address = None;
@@ -446,7 +441,6 @@ impl ConnectCubePanel {
                     );
                     return iced::Task::none();
                 };
-                let breez = self.breez_client.clone();
                 return iced::Task::perform(
                     async move {
                         // Step 1: reserve in our DB. If the username is
@@ -469,42 +463,13 @@ impl ConnectCubePanel {
                             return Err(format!("Register failed: {}{}", e, rb_note));
                         }
 
-                        // Step 3: grab the Liquid BOLT12 offer. If this
-                        // fails we must roll back both the SDK
-                        // registration and the API reservation.
-                        let bolt12_offer = match breez.receive_bolt12_offer().await {
-                            Ok(offer) => offer,
-                            Err(e) => {
-                                let rb_note = rollback_partial_claim(
-                                    &client,
-                                    Some(&spark),
-                                    &cube_id,
-                                    &username,
-                                )
-                                .await;
-                                return Err(format!(
-                                    "Failed to generate BOLT12 offer. \
-                                     The Lightning wallet may still be syncing. \
-                                     Please try again in a moment. ({}){}",
-                                    e, rb_note
-                                ));
-                            }
-                        };
-
-                        // Step 4: commit. The API publishes the BIP353 TXT
-                        // record and stores the BOLT12 offer. On failure
-                        // roll back both the SDK registration and the
-                        // reservation.
-                        match client
-                            .confirm_lightning_address(
-                                &cube_id,
-                                ConfirmLightningAddressRequest {
-                                    username: username.clone(),
-                                    bolt12_offer,
-                                },
-                            )
-                            .await
-                        {
+                        // Step 3: commit. API stamps
+                        // `lightning_address_confirmed_at` on the
+                        // existing reservation. Empty body — no
+                        // BOLT12 offer, no DNS work. On failure
+                        // roll back both the SDK registration and
+                        // the reservation.
+                        match client.confirm_lightning_address(&cube_id).await {
                             Ok(ln_addr) => Ok(ln_addr),
                             Err(e) => {
                                 let rb_note = rollback_partial_claim(
@@ -547,20 +512,12 @@ impl ConnectCubePanel {
                         // realtime-sync replay. Mirror the address
                         // string into the panel's displayed state so
                         // the sidebar + settings view pick it up.
-                        // `bolt12_offer` isn't in the SDK event and
-                        // isn't read by any display path — preserve
-                        // whatever CubeRegistered populated.
                         log::info!(
                             "[CONNECT-CUBE] Spark lightning address updated: {}",
                             info.lightning_address
                         );
-                        let existing_bolt12 = self
-                            .lightning_address
-                            .as_ref()
-                            .and_then(|la| la.bolt12_offer.clone());
                         self.lightning_address = Some(LightningAddress {
                             lightning_address: Some(info.lightning_address),
-                            bolt12_offer: existing_bolt12,
                         });
                         // SDK is now bound — any stale "needs
                         // re-registration" state is resolved.
