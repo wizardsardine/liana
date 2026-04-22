@@ -56,6 +56,7 @@ pub enum PsbtModal {
     Save(SaveModal),
     Sign(SignModal),
     Broadcast(BroadcastModal),
+    SendPayjoin(SendPayjoinModal),
     Delete(DeleteModal),
     Export(ExportModal),
 }
@@ -66,6 +67,7 @@ impl<'a> AsRef<dyn Modal + 'a> for PsbtModal {
             Self::Save(a) => a,
             Self::Sign(a) => a,
             Self::Broadcast(a) => a,
+            Self::SendPayjoin(a) => a,
             Self::Delete(a) => a,
             Self::Export(a) => a,
         }
@@ -78,6 +80,7 @@ impl<'a> AsMut<dyn Modal + 'a> for PsbtModal {
             Self::Save(a) => a,
             Self::Sign(a) => a,
             Self::Broadcast(a) => a,
+            Self::SendPayjoin(a) => a,
             Self::Delete(a) => a,
             Self::Export(a) => a,
         }
@@ -201,23 +204,34 @@ impl PsbtState {
                 return cmd;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::SendPayjoin)) => {
-                let daemon = daemon.clone();
-                let txid = self.tx.psbt.unsigned_tx.compute_txid();
                 self.warning = None;
+                self.modal = Some(PsbtModal::SendPayjoin(SendPayjoinModal::default()));
+            }
+            Message::View(view::Message::Spend(view::SpendTxMessage::BroadcastPjFallback)) => {
+                let outpoints: Vec<_> = self.tx.coins.keys().cloned().collect();
                 return Task::perform(
                     async move {
                         daemon
-                            .send_payjoin_proposal(&txid)
+                            .list_coins(&[CoinStatus::Spending], &outpoints)
                             .await
-                            .map(|_| txid.to_string())
+                            .map(|res| {
+                                res.coins
+                                    .iter()
+                                    .filter_map(|c| c.spend_info.map(|info| info.txid))
+                                    .collect()
+                            })
                             .map_err(|e| e.into())
                     },
-                    Message::PayjoinInitiated,
+                    Message::BroadcastPjFallbackModal,
                 );
             }
-            Message::PayjoinInitiated(res) => match res {
-                Ok(_) => {
-                    self.tx.payjoin_status = Some(lianad::payjoin::types::PayjoinStatus::Success);
+            Message::BroadcastPjFallbackModal(res) => match res {
+                Ok(conflicting_txids) => {
+                    self.modal = Some(PsbtModal::Broadcast(BroadcastModal {
+                        conflicting_txids,
+                        is_payjoin_fallback: true,
+                        ..Default::default()
+                    }));
                 }
                 Err(e) => {
                     self.warning = Some(e);
@@ -378,6 +392,9 @@ pub struct BroadcastModal {
     error: Option<Error>,
     /// IDs of any directly conflicting transactions.
     conflicting_txids: HashSet<Txid>,
+    /// If true, cancel the payjoin receiver session and broadcast its
+    /// fallback transaction instead of the stored PSBT.
+    is_payjoin_fallback: bool,
 }
 
 impl Modal for BroadcastModal {
@@ -390,14 +407,19 @@ impl Modal for BroadcastModal {
         match message {
             Message::View(view::Message::Spend(view::SpendTxMessage::Confirm)) => {
                 let daemon = daemon.clone();
-                let psbt = tx.psbt.clone();
+                let txid = tx.psbt.unsigned_tx.compute_txid();
                 self.error = None;
+                let is_payjoin_fallback = self.is_payjoin_fallback;
                 return Task::perform(
                     async move {
-                        daemon
-                            .broadcast_spend_tx(&psbt.unsigned_tx.compute_txid())
-                            .await
-                            .map_err(|e| e.into())
+                        if is_payjoin_fallback {
+                            daemon
+                                .broadcast_payjoin_fallback(&txid)
+                                .await
+                                .map_err(|e| e.into())
+                        } else {
+                            daemon.broadcast_spend_tx(&txid).await.map_err(|e| e.into())
+                        }
                     },
                     Message::Updated,
                 );
@@ -405,6 +427,9 @@ impl Modal for BroadcastModal {
             Message::Updated(res) => match res {
                 Ok(()) => {
                     tx.status = SpendStatus::Broadcast;
+                    if self.is_payjoin_fallback {
+                        tx.payjoin_status = Some(lianad::payjoin::types::PayjoinStatus::Failed);
+                    }
                     self.broadcast = true;
                 }
                 Err(e) => self.error = Some(e),
@@ -421,6 +446,56 @@ impl Modal for BroadcastModal {
                 self.error.as_ref(),
                 self.broadcast,
             ),
+        )
+        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+        .into()
+    }
+}
+
+#[derive(Default)]
+pub struct SendPayjoinModal {
+    sent: bool,
+    error: Option<Error>,
+}
+
+impl Modal for SendPayjoinModal {
+    fn update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        message: Message,
+        tx: &mut SpendTx,
+    ) -> Task<Message> {
+        match message {
+            Message::View(view::Message::Spend(view::SpendTxMessage::Confirm)) => {
+                let daemon = daemon.clone();
+                let txid = tx.psbt.unsigned_tx.compute_txid();
+                self.error = None;
+                return Task::perform(
+                    async move {
+                        daemon
+                            .send_payjoin_proposal(&txid)
+                            .await
+                            .map(|_| txid.to_string())
+                            .map_err(|e| e.into())
+                    },
+                    Message::PayjoinInitiated,
+                );
+            }
+            Message::PayjoinInitiated(res) => match res {
+                Ok(_) => {
+                    tx.payjoin_status = Some(lianad::payjoin::types::PayjoinStatus::Monitoring);
+                    self.sent = true;
+                }
+                Err(e) => self.error = Some(e),
+            },
+            _ => {}
+        }
+        Task::none()
+    }
+    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
+        modal::Modal::new(
+            content,
+            view::psbt::send_payjoin_action(self.error.as_ref(), self.sent),
         )
         .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
         .into()

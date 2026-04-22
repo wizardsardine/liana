@@ -39,7 +39,8 @@ pub(crate) fn fetch_ohttp_keys(
         .into_url()
         .map_err(|_| FetchOhttpKeysError::InvalidUrl(payjoin_directory_str.clone()))?
         .join("/.well-known/ohttp-gateway")
-        .map_err(|_| FetchOhttpKeysError::UrlParseError)?;
+        .map_err(|_| FetchOhttpKeysError::UrlParseError)?
+        .to_string();
 
     let ohttp_relay_str = ohttp_relay.as_str().to_string();
     let proxy = Proxy::all(
@@ -79,7 +80,7 @@ pub(crate) fn post_request(
     req: payjoin::Request,
 ) -> Result<reqwest::blocking::Response, reqwest::Error> {
     let http = http_agent();
-    http.post(req.url)
+    http.post(req.url.to_string())
         .header("Content-Type", req.content_type)
         .body(req.body)
         .timeout(Duration::from_secs(10))

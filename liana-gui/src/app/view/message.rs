@@ -83,6 +83,7 @@ pub enum SpendTxMessage {
     Delete,
     Sign,
     Broadcast,
+    BroadcastPjFallback,
     Save,
     Confirm,
     Cancel,

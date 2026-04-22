@@ -126,6 +126,12 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
         Ok(())
     }
 
+    async fn broadcast_payjoin_fallback(&self, txid: &Txid) -> Result<(), DaemonError> {
+        let _res: serde_json::value::Value =
+            self.call("broadcastpayjoinfallback", Some(vec![txid.to_string()]))?;
+        Ok(())
+    }
+
     async fn update_deriv_indexes(
         &self,
         receive: Option<u32>,

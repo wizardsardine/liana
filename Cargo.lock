@@ -4493,9 +4493,8 @@ checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
 name = "payjoin"
-version = "1.0.0-rc.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e20b76ae28f1420a918e8051681fc9669ed7273e542e515baa329be78c3255a"
+version = "0.25.0"
+source = "git+https://github.com/payjoin/rust-payjoin.git?rev=7f8ec333a79aa4c0a6d5be437dd858452d45bd64#7f8ec333a79aa4c0a6d5be437dd858452d45bd64"
 dependencies = [
  "bhttp",
  "bitcoin",
@@ -4503,11 +4502,12 @@ dependencies = [
  "bitcoin-ohttp",
  "bitcoin_uri",
  "http 1.4.0",
+ "percent-encoding-rfc3986",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tracing",
- "url",
+ "web-time",
 ]
 
 [[package]]

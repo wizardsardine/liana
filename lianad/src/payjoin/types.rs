@@ -6,6 +6,7 @@ pub enum PayjoinStatus {
     Pending,
     WaitingToSign,
     ReadyToSend,
+    Monitoring,
     Success,
     Failed,
     Expired,
@@ -30,7 +31,7 @@ impl From<ReceiveSession> for PayjoinStatus {
                 ReceiveSessionOutcome::Success(_) => PayjoinStatus::Success,
                 _ => PayjoinStatus::Failed,
             },
-            ReceiveSession::Monitor(_) => PayjoinStatus::Unknown,
+            ReceiveSession::Monitor(_) => PayjoinStatus::Monitoring,
         }
     }
 }

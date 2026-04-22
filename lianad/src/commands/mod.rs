@@ -12,7 +12,7 @@ use crate::{
     payjoin::{
         db::ReceiverPersister,
         helpers::{fetch_ohttp_keys, FetchOhttpKeysError},
-        receiver::{find_session_id_by_txid, send_payjoin_for_session},
+        receiver::{cancel_payjoin_for_session, find_session_id_by_txid, send_payjoin_for_session},
         types::PayjoinStatus,
     },
     poller::PollerMessage,
@@ -89,6 +89,8 @@ pub enum CommandError {
     IntoUrlError(String),
     NoPayjoinSessionForTxid(bitcoin::Txid),
     SendPayjoinFailed(String),
+    CancelPayjoinFailed(String),
+    NoPayjoinFallback(bitcoin::Txid),
 }
 
 impl fmt::Display for CommandError {
@@ -162,6 +164,16 @@ impl fmt::Display for CommandError {
             }
             Self::SendPayjoinFailed(e) => {
                 write!(f, "Failed to send payjoin proposal: '{}'.", e)
+            }
+            Self::CancelPayjoinFailed(e) => {
+                write!(f, "Failed to cancel payjoin session: '{}'.", e)
+            }
+            Self::NoPayjoinFallback(txid) => {
+                write!(
+                    f,
+                    "No fallback transaction available for payjoin session '{}'.",
+                    txid
+                )
             }
         }
     }
@@ -472,6 +484,28 @@ impl DaemonControl {
             .ok_or(CommandError::NoPayjoinSessionForTxid(*txid))?;
         send_payjoin_for_session(&self.db, session_id, &self.secp)
             .map_err(|e| CommandError::SendPayjoinFailed(e.to_string()))
+    }
+
+    /// Cancel the payjoin receiver session associated with the given txid and immediately
+    /// broadcast the sender's original (non-payjoin) fallback transaction.
+    pub fn broadcast_payjoin_fallback(&self, txid: &bitcoin::Txid) -> Result<(), CommandError> {
+        let session_id = find_session_id_by_txid(&self.db, txid)
+            .ok_or(CommandError::NoPayjoinSessionForTxid(*txid))?;
+        let fallback = cancel_payjoin_for_session(&self.db, session_id)
+            .map_err(|e| CommandError::CancelPayjoinFailed(e.to_string()))?
+            .ok_or(CommandError::NoPayjoinFallback(*txid))?;
+        self.bitcoin
+            .broadcast_tx(&fallback)
+            .map_err(CommandError::TxBroadcast)?;
+
+        let (tx, rx) = mpsc::sync_channel(0);
+        if let Err(e) = self.poller_sender.send(PollerMessage::PollNow(tx)) {
+            log::error!("Error requesting update from poller: {}", e);
+        }
+        if let Err(e) = rx.recv() {
+            log::error!("Error receiving completion signal from poller: {}", e);
+        }
+        Ok(())
     }
 
     /// Get all active payjoin receiver sessions with their derivation indexes

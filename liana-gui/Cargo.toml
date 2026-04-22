@@ -65,7 +65,7 @@ open = { workspace = true }
 encrypted_backup = { workspace = true }
 
 # payjoin
-payjoin = { version = "1.0.0-rc.1", features = ["v2", "io"] }
+payjoin = { git = "https://github.com/payjoin/rust-payjoin.git", rev = "7f8ec333a79aa4c0a6d5be437dd858452d45bd64", features = ["v2", "io"] }
 
 [target.'cfg(windows)'.dependencies]
 zip = { workspace = true, default-features = false, features = ["bzip2", "deflate"] }

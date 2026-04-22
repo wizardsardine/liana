@@ -359,6 +359,47 @@ pub(crate) fn find_session_id_by_txid(
     None
 }
 
+/// Cancel the payjoin receiver session associated with the given txid and return the
+/// sender's original (non-payjoin) transaction, if one was ever received. Closes the
+/// session via the persister as a terminal transition.
+pub(crate) fn cancel_payjoin_for_session(
+    db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
+    session_id: SessionId,
+) -> Result<Option<bitcoin::Transaction>, Box<dyn Error>> {
+    let persister = ReceiverPersister::from_id(Arc::new(db.clone()), session_id.clone());
+    let (state, _) = match replay_event_log(&persister) {
+        Ok(v) => v,
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("expired") {
+                log::info!(
+                    "Payjoin session {:?} expired during cancel, marking closed",
+                    session_id
+                );
+                let _ = persister.close();
+                return Err("Payjoin session expired.".into());
+            }
+            return Err(format!("Failed to replay receiver event log: {:?}", e).into());
+        }
+    };
+    let fallback = match state {
+        ReceiveSession::Initialized(r) => r.cancel().save(&persister)?,
+        ReceiveSession::UncheckedOriginalPayload(r) => r.cancel().save(&persister)?,
+        ReceiveSession::MaybeInputsOwned(r) => r.cancel().save(&persister)?,
+        ReceiveSession::MaybeInputsSeen(r) => r.cancel().save(&persister)?,
+        ReceiveSession::OutputsUnknown(r) => r.cancel().save(&persister)?,
+        ReceiveSession::WantsOutputs(r) => r.cancel().save(&persister)?,
+        ReceiveSession::WantsInputs(r) => r.cancel().save(&persister)?,
+        ReceiveSession::WantsFeeRange(r) => r.cancel().save(&persister)?,
+        ReceiveSession::ProvisionalProposal(r) => r.cancel().save(&persister)?,
+        ReceiveSession::PayjoinProposal(r) => r.cancel().save(&persister)?,
+        ReceiveSession::HasReplyableError(r) => r.cancel().save(&persister)?,
+        ReceiveSession::Monitor(r) => r.cancel().save(&persister)?,
+        ReceiveSession::Closed(_) => return Err("Payjoin session already closed.".into()),
+    };
+    Ok(fallback)
+}
+
 /// Manually send the payjoin proposal for a given session. If the session is still in the
 /// `ProvisionalProposal` state and the stored PSBT is signed, it is finalized first.
 pub(crate) fn send_payjoin_for_session(

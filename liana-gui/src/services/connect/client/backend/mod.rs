@@ -671,6 +671,10 @@ impl Daemon for BackendWalletClient {
         unimplemented!()
     }
 
+    async fn broadcast_payjoin_fallback(&self, _txid: &Txid) -> Result<(), DaemonError> {
+        unimplemented!()
+    }
+
     async fn update_deriv_indexes(
         &self,
         _receive: Option<u32>,
