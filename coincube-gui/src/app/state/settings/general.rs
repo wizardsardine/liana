@@ -521,7 +521,40 @@ fn load_mnemonic_words(
     Ok(signer.words().iter().map(|w| (*w).to_string()).collect())
 }
 
+impl GeneralSettingsState {
+    /// Variant of `view` that also threads the Cube Recovery Kit
+    /// status through so the "Back up your Recovery Kit" card can
+    /// render. `SettingsState::view` (the outer wrapper) calls this
+    /// after downcasting via `as_any`; the plain `State::view` impl
+    /// below falls back to rendering without the card for callers
+    /// that don't have the recovery-kit data on hand.
+    pub fn view_with_recovery_kit<'a>(
+        &'a self,
+        menu: &'a Menu,
+        cache: &'a Cache,
+        rk: &'a super::recovery_kit::RecoveryKit,
+    ) -> Element<'a, view::Message> {
+        crate::app::view::settings::general::general_section(
+            menu,
+            cache,
+            &self.new_price_setting,
+            &self.new_unit_setting,
+            &self.currencies,
+            self.developer_mode,
+            self.show_direction_badges,
+            &self.backup_state,
+            &self.backup_pin,
+            self.backup_mnemonic.as_deref().map(|v| v.as_slice()),
+            Some(rk),
+        )
+    }
+}
+
 impl State for GeneralSettingsState {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         crate::app::view::settings::general::general_section(
             menu,
@@ -534,6 +567,7 @@ impl State for GeneralSettingsState {
             &self.backup_state,
             &self.backup_pin,
             self.backup_mnemonic.as_deref().map(|v| v.as_slice()),
+            None,
         )
     }
 

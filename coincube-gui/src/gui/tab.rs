@@ -1140,6 +1140,11 @@ pub fn create_app_with_remote_backend(
             show_direction_badges: true,
             lightning_address: None,
             cube_id: cube_settings.id.clone(),
+            current_cube_server_id: None,
+            current_descriptor_fingerprint: None,
+            recovery_kit_last_backed_up_descriptor_fingerprint: cube_settings
+                .recovery_kit_last_backed_up_descriptor_fingerprint
+                .clone(),
             default_lightning_backend: cube_settings.default_lightning_backend,
         },
         Arc::new(

@@ -142,6 +142,23 @@ pub fn import_export<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Messag
         ))
         .push(Space::new().width(Length::Fill));
 
+    // Nudges users toward Connect-hosted backup first — this is the
+    // disaster-recovery path the product pushes new users onto. Firing
+    // `Start(Create)` is safe regardless of current kit state because
+    // `put_recovery_kit` is a status-first upsert under the hood (POST
+    // vs PUT decided at dispatch time), and the wizard's password
+    // screen re-encrypts all present halves, which is equivalent to
+    // Rotate / AddDescriptor / AddSeed for a completed kit.
+    let backup_to_connect = export_section(
+        "Connect Recovery Kit",
+        "Back up your Wallet Descriptor (and Master Seed Phrase) to your Connect account. \
+         Encrypted on-device with a password you choose.",
+        icon::backup_icon(),
+        Message::Settings(SettingsMessage::RecoveryKit(RecoveryKitMessage::Start(
+            RecoveryKitMode::Create,
+        ))),
+    );
+
     let export_encrypted_descriptor = export_section(
         "Encrypted descriptor",
         ".bed file, can be decrypted with one of your signing devices or xpubs.",
@@ -199,6 +216,7 @@ pub fn import_export<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Messag
             .spacing(20)
             .push(header)
             .push(description)
+            .push(backup_to_connect)
             .push(export_encrypted_descriptor)
             .push(export_wallet)
             .push(import_wallet)

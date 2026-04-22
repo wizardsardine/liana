@@ -624,6 +624,12 @@ pub async fn load_application(
         show_direction_badges: true,
         lightning_address: None,
         cube_id: config.cube_settings.id.clone(),
+        current_cube_server_id: None,
+        current_descriptor_fingerprint: None,
+        recovery_kit_last_backed_up_descriptor_fingerprint: config
+            .cube_settings
+            .recovery_kit_last_backed_up_descriptor_fingerprint
+            .clone(),
         default_lightning_backend: config.cube_settings.default_lightning_backend,
     };
 

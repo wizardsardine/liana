@@ -213,6 +213,15 @@ pub struct CubeSettings {
     /// sessions so users don't have to re-hide on every launch.
     #[serde(default)]
     pub balance_masked: bool,
+    /// SHA-256 fingerprint (hex) of the `DescriptorBlob` plaintext that
+    /// was last successfully pushed to this Cube's Connect Recovery Kit.
+    /// `None` when no descriptor has ever been backed up. Used by W12 to
+    /// detect drift: if the live vault's descriptor/signers now hash to
+    /// a different value, the Settings card shows "descriptor changed
+    /// since last backup — update now." Cleared on vault deletion and
+    /// on `delete_recovery_kit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_kit_last_backed_up_descriptor_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -245,6 +254,7 @@ impl CubeSettings {
             passkey_metadata: None,
             allow_random_grid_phrase: false,
             balance_masked: false,
+            recovery_kit_last_backed_up_descriptor_fingerprint: None,
         }
     }
 

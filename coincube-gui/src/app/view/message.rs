@@ -259,6 +259,11 @@ pub enum SettingsMessage {
     /// Master seed backup flow (moved from Liquid Settings to Cube/General Settings).
     BackupMasterSeed(BackupWalletMessage),
     BackupMasterSeedUpdated,
+    /// Cube Recovery Kit — Connect-hosted encrypted backup of the seed
+    /// and/or wallet descriptor. See `PLAN-cube-recovery-kit-desktop.md`.
+    /// Coexists with `BackupMasterSeed` above (the local paper-phrase
+    /// backup), it does not replace it.
+    RecoveryKit(RecoveryKitMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -691,6 +696,144 @@ impl std::fmt::Debug for BackupWalletMessage {
                 .field(&Err::<(), _>(e))
                 .finish(),
             Self::BackupSaveResult(res) => f.debug_tuple("BackupSaveResult").field(res).finish(),
+        }
+    }
+}
+
+/// Which Recovery-Kit mode the user entered the wizard under. Carried
+/// inside `RecoveryKitMessage::Start` so the wizard knows whether to
+/// prompt for the PIN (mnemonic cubes uploading the seed half) or
+/// skip straight to the password screen (passkey cubes, which can
+/// only back up the wallet descriptor). Mirrors the plan §2.3 mode
+/// matrix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryKitMode {
+    /// No server-side kit yet — create the first one. For mnemonic
+    /// cubes this uploads the seed blob plus (when a Vault exists)
+    /// the descriptor blob. For passkey cubes it's descriptor-only.
+    Create,
+    /// An existing kit has a seed but no descriptor; add the
+    /// descriptor half (and re-encrypt the seed with the new
+    /// password, per plan §5).
+    AddDescriptor,
+    /// An existing kit has a descriptor but no seed; add the seed
+    /// half. Not reachable for passkey cubes.
+    AddSeed,
+    /// Re-encrypt the existing kit under a new password. Keeps both
+    /// halves that are present; doesn't add missing halves.
+    Rotate,
+}
+
+/// Messages driving the Cube Recovery Kit flow. Mirrors the shape of
+/// `BackupWalletMessage` — a Debug impl below redacts every variant
+/// that carries key material (mnemonic, password, ciphertext) so the
+/// tracing subscriber can still dump messages without leaking.
+#[derive(Clone)]
+pub enum RecoveryKitMessage {
+    /// Fire a `get_recovery_kit_status` request to refresh the cached
+    /// status used to render the Settings card. Emitted on page entry
+    /// and after any local change that could invalidate the cache
+    /// (rotate/remove).
+    LoadStatus,
+    /// Async result of `LoadStatus`. `Ok(None)` means the backend
+    /// returned 404 (no kit on this cube yet).
+    StatusLoaded(Result<Option<crate::services::coincube::RecoveryKitStatus>, String>),
+    /// User clicked the card CTA — enter the wizard in the given
+    /// mode. Kicks off PIN entry for mnemonic cubes or jumps
+    /// straight to password entry for passkey cubes.
+    Start(RecoveryKitMode),
+    /// User hit "Cancel" or back-arrow inside the wizard — drop
+    /// transient state (PIN, password, decrypted mnemonic) and
+    /// return to the card view.
+    Cancel,
+    /// Digit entry in the PIN re-verification gate (mnemonic cubes
+    /// only — the PIN unlocks the on-disk encrypted mnemonic so the
+    /// seed blob can be built).
+    PinInput(crate::pin_input::Message),
+    /// User submitted the PIN.
+    VerifyPin,
+    /// Async result: `Ok(words)` on correct PIN + successful
+    /// decryption; `Err(msg)` on wrong PIN or disk error.
+    PinVerified(Result<Vec<String>, String>),
+    /// Recovery password input changed.
+    PasswordChanged(String),
+    /// "Confirm recovery password" input changed.
+    ConfirmChanged(String),
+    /// User toggled the "I've written this down" gate on the password
+    /// screen. Submit is inert until this is true.
+    AcknowledgeToggled(bool),
+    /// User clicked Submit on the password screen. Triggers the
+    /// build-blob → encrypt → upload async task.
+    SubmitPassword,
+    /// Async result of the encrypt+upload round-trip. The payload is
+    /// the `(updated_at, descriptor_fingerprint_hex)` tuple the
+    /// settings state needs to cache.
+    UploadResult(Result<RecoveryKitUploadOutcome, String>),
+    /// User dismissed the Completed screen — return to card view and
+    /// trigger a fresh `LoadStatus`.
+    DismissCompleted,
+    /// User clicked Remove. Fires `delete_recovery_kit`.
+    Remove,
+    /// Async result of Remove.
+    RemoveResult(Result<(), String>),
+}
+
+/// What the upload handler hands back to the state machine on success.
+/// We only carry the fields the state needs to render the Completed
+/// screen and persist the drift-fingerprint cache.
+#[derive(Debug, Clone)]
+pub struct RecoveryKitUploadOutcome {
+    /// RFC 3339 timestamp from the server's `updatedAt` field. Shown
+    /// in the Completed screen's "Last updated" line.
+    pub updated_at: String,
+    /// `has_encrypted_seed` per the server's response (so the card
+    /// can pick the right next-state copy without a second round-trip).
+    pub now_has_seed: bool,
+    /// `has_encrypted_wallet_descriptor` per the server's response.
+    pub now_has_descriptor: bool,
+    /// SHA-256 (hex) over the `DescriptorBlob` plaintext we just
+    /// uploaded. `None` when the upload didn't include a descriptor
+    /// blob. Settings state persists this into
+    /// `CubeSettings::recovery_kit_last_backed_up_descriptor_fingerprint`
+    /// for drift detection (W12).
+    pub descriptor_fingerprint: Option<String>,
+}
+
+// Manual Debug: every variant that could carry mnemonic, password,
+// or ciphertext bytes is redacted. Matches `BackupWalletMessage`'s
+// pattern above — losing a tracing snapshot must not leak the kit.
+impl std::fmt::Debug for RecoveryKitMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LoadStatus => write!(f, "LoadStatus"),
+            Self::StatusLoaded(r) => f.debug_tuple("StatusLoaded").field(r).finish(),
+            Self::Start(m) => f.debug_tuple("Start").field(m).finish(),
+            Self::Cancel => write!(f, "Cancel"),
+            Self::PinInput(_) => f.debug_tuple("PinInput").field(&"<redacted>").finish(),
+            Self::VerifyPin => write!(f, "VerifyPin"),
+            Self::PinVerified(Ok(_)) => write!(f, "PinVerified(Ok(<redacted>))"),
+            Self::PinVerified(Err(e)) => f
+                .debug_tuple("PinVerified")
+                .field(&Err::<(), _>(e))
+                .finish(),
+            Self::PasswordChanged(_) => f
+                .debug_tuple("PasswordChanged")
+                .field(&"<redacted>")
+                .finish(),
+            Self::ConfirmChanged(_) => f
+                .debug_tuple("ConfirmChanged")
+                .field(&"<redacted>")
+                .finish(),
+            Self::AcknowledgeToggled(b) => f.debug_tuple("AcknowledgeToggled").field(b).finish(),
+            Self::SubmitPassword => write!(f, "SubmitPassword"),
+            Self::UploadResult(Ok(o)) => f.debug_tuple("UploadResult(Ok)").field(o).finish(),
+            Self::UploadResult(Err(e)) => f
+                .debug_tuple("UploadResult")
+                .field(&Err::<(), _>(e))
+                .finish(),
+            Self::DismissCompleted => write!(f, "DismissCompleted"),
+            Self::Remove => write!(f, "Remove"),
+            Self::RemoveResult(r) => f.debug_tuple("RemoveResult").field(r).finish(),
         }
     }
 }

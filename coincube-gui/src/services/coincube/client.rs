@@ -6,12 +6,14 @@ use super::{
     ContactCube, Country, CreateConnectVaultRequest, CreateInviteRequest, CubeInviteOrAddResult,
     CubeKeyRaw, CubeLimitsResponse, CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData,
     Invite, LightningAddress, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
-    PublicAvatarData, RefreshTokenRequest, RegenerationData, RegisterCubeRequest, SaveQuoteRequest,
-    SaveQuoteResponse, StatsPeriod, TimeseriesResponse, TodayStats, UpdateCubeRequest, User,
-    VaultMemberResponse, VerifiedDevice,
+    PublicAvatarData, RecoveryKit, RecoveryKitStatus, RefreshTokenRequest, RegenerationData,
+    RegisterCubeRequest, SaveQuoteRequest, SaveQuoteResponse, StatsPeriod, TimeseriesResponse,
+    TodayStats, UpdateCubeRequest, UpsertRecoveryKitRequest, User, VaultMemberResponse,
+    VerifiedDevice,
 };
 use reqwest::{Client, Method};
 use serde::Deserialize;
+use std::time::Duration;
 
 use crate::services::http::ResponseExt;
 
@@ -822,6 +824,550 @@ impl CoincubeClient {
         let res = self.client.delete(&url).send().await?;
         res.check_success().await?;
         Ok(())
+    }
+}
+
+// =============================================================================
+// Cube Recovery Kit (W7)
+// =============================================================================
+//
+// Unlike the rest of the client, these methods intercept 404 / 429 before
+// `check_success` drains the response body, because:
+//
+// - 404 is not an error for the state machine driving the Settings card —
+//   a fresh cube legitimately has no kit yet, and the card uses that to
+//   pick the "Create Recovery Kit" copy. Surfacing it as the typed
+//   `CoincubeError::NotFound` lets callers match directly instead of
+//   pattern-matching on `Unsuccessful { status_code: 404, .. }`.
+//
+// - 429 carries a `Retry-After` header the UI needs to show a cooldown.
+//   `check_success` consumes the whole response, so the header is parsed
+//   before the body.
+//
+// Every other status follows the established flow (`check_success` →
+// `Unsuccessful` → existing error rendering).
+
+impl CoincubeClient {
+    /// Parses a recovery-kit response into either the expected success
+    /// body or one of the typed error variants (`NotFound`, `RateLimited`,
+    /// auth errors via `Unsuccessful`, etc.). Body is only read on the
+    /// non-NotFound failure paths.
+    async fn parse_recovery_response<T: serde::de::DeserializeOwned>(
+        res: reqwest::Response,
+    ) -> Result<T, CoincubeError> {
+        let status = res.status();
+        if status.is_success() {
+            let resp: ApiResponse<T> = res.json().await?;
+            return Ok(resp.data);
+        }
+        match status.as_u16() {
+            404 => Err(CoincubeError::NotFound),
+            429 => {
+                // Retry-After (seconds form). Falls back to 60s when the
+                // header is missing or malformed — the UI still gets a
+                // usable cooldown value instead of panicking.
+                let retry_after = res
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+                    .map(Duration::from_secs)
+                    .unwrap_or_else(|| Duration::from_secs(60));
+                Err(CoincubeError::RateLimited { retry_after })
+            }
+            _ => Err(CoincubeError::Unsuccessful(
+                crate::services::http::NotSuccessResponseInfo {
+                    status_code: status.as_u16(),
+                    text: res.text().await.unwrap_or_default(),
+                },
+            )),
+        }
+    }
+
+    /// GET /api/v1/connect/cubes/{cubeId}/recovery-kit/status — lightweight
+    /// existence/presence probe used to drive the Settings card copy. Never
+    /// returns the ciphertext.
+    pub async fn get_recovery_kit_status(
+        &self,
+        cube_id: u64,
+    ) -> Result<RecoveryKitStatus, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/recovery-kit/status",
+            self.base_url, cube_id
+        );
+        let res = self.client.get(&url).send().await?;
+        Self::parse_recovery_response(res).await
+    }
+
+    /// GET /api/v1/connect/cubes/{cubeId}/recovery-kit — fetch the
+    /// ciphertext envelopes for restore. 404 → `CoincubeError::NotFound`;
+    /// 429 → `CoincubeError::RateLimited` with parsed `Retry-After`.
+    pub async fn get_recovery_kit(&self, cube_id: u64) -> Result<RecoveryKit, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/recovery-kit",
+            self.base_url, cube_id
+        );
+        let res = self.client.get(&url).send().await?;
+        Self::parse_recovery_response(res).await
+    }
+
+    /// Upsert the kit: creates via POST when no kit exists on the server,
+    /// otherwise updates via PUT. The status-check is a separate cheap
+    /// round-trip; the state machine (§2.4) already has a cached status
+    /// by the time it reaches this call path.
+    ///
+    /// `encrypted_cube_seed` / `encrypted_wallet_descriptor` are opaque
+    /// base64 envelopes from `services::recovery::envelope::encrypt`; pass
+    /// `None` for a half that isn't being touched this call (e.g. a
+    /// passkey cube never uploads a seed envelope).
+    pub async fn put_recovery_kit(
+        &self,
+        cube_id: u64,
+        encrypted_cube_seed: Option<&str>,
+        encrypted_wallet_descriptor: Option<&str>,
+        encryption_scheme: &str,
+    ) -> Result<RecoveryKit, CoincubeError> {
+        let method = match self.get_recovery_kit_status(cube_id).await {
+            Ok(s) if s.has_recovery_kit => Method::PUT,
+            Ok(_) => Method::POST,
+            // Treat a missing status endpoint the same as "no kit" — the
+            // backend PR 1 relaxed-create allows POSTing partial fields.
+            Err(CoincubeError::NotFound) => Method::POST,
+            Err(e) => return Err(e),
+        };
+
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/recovery-kit",
+            self.base_url, cube_id
+        );
+        let body = UpsertRecoveryKitRequest {
+            encrypted_cube_seed,
+            encrypted_wallet_descriptor,
+            encryption_scheme,
+        };
+        let res = self.client.request(method, &url).json(&body).send().await?;
+        Self::parse_recovery_response(res).await
+    }
+
+    /// DELETE /api/v1/connect/cubes/{cubeId}/recovery-kit — tears down the
+    /// server-side kit. The caller is responsible for clearing any local
+    /// drift-fingerprint cache (§2.7) on success.
+    pub async fn delete_recovery_kit(&self, cube_id: u64) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/recovery-kit",
+            self.base_url, cube_id
+        );
+        let res = self.client.delete(&url).send().await?;
+        let status = res.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        match status.as_u16() {
+            404 => Err(CoincubeError::NotFound),
+            429 => {
+                let retry_after = res
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+                    .map(Duration::from_secs)
+                    .unwrap_or_else(|| Duration::from_secs(60));
+                Err(CoincubeError::RateLimited { retry_after })
+            }
+            _ => Err(CoincubeError::Unsuccessful(
+                crate::services::http::NotSuccessResponseInfo {
+                    status_code: status.as_u16(),
+                    text: res.text().await.unwrap_or_default(),
+                },
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod recovery_kit_tests {
+    use super::*;
+    use crate::services::coincube::RECOVERY_KIT_SCHEME_AES_256_GCM;
+    use httpmock::{Method as MockMethod, MockServer};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn get_recovery_kit_status_200_returns_flags() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/status");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "hasRecoveryKit": true,
+                        "hasEncryptedSeed": true,
+                        "hasEncryptedWalletDescriptor": false,
+                        "encryptionScheme": "aes-256-gcm",
+                        "createdAt": "2026-04-22T00:00:00Z",
+                        "updatedAt": "2026-04-22T00:00:00Z"
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let status = client
+            .get_recovery_kit_status(42)
+            .await
+            .expect("status should succeed");
+        mock.assert();
+        assert!(status.has_recovery_kit);
+        assert!(status.has_encrypted_seed);
+        assert!(!status.has_encrypted_wallet_descriptor);
+        assert_eq!(status.encryption_scheme, "aes-256-gcm");
+    }
+
+    #[tokio::test]
+    async fn get_recovery_kit_status_404_maps_to_not_found() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/status");
+            then.status(404)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": false,
+                    "error": { "code": "CUBE_NOT_FOUND", "message": "no such cube" }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .get_recovery_kit_status(42)
+            .await
+            .expect_err("expected NotFound");
+        mock.assert();
+        assert!(err.is_not_found(), "expected is_not_found, got {:?}", err);
+    }
+
+    #[tokio::test]
+    async fn get_recovery_kit_status_403_maps_to_auth_error() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/status");
+            then.status(403)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": false,
+                    "error": { "code": "FORBIDDEN", "message": "not your cube" }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .get_recovery_kit_status(42)
+            .await
+            .expect_err("expected 403");
+        mock.assert();
+        assert!(err.is_auth_error(), "expected auth error, got {:?}", err);
+    }
+
+    #[tokio::test]
+    async fn get_recovery_kit_429_parses_retry_after() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(429)
+                .header("content-type", "application/json")
+                .header("Retry-After", "90")
+                .json_body(json!({
+                    "success": false,
+                    "error": { "code": "RATE_LIMITED", "message": "slow down" }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client.get_recovery_kit(42).await.expect_err("expected 429");
+        mock.assert();
+
+        let retry = err
+            .rate_limit_retry_after()
+            .expect("expected RateLimited with Retry-After");
+        assert_eq!(retry, Duration::from_secs(90));
+    }
+
+    #[tokio::test]
+    async fn get_recovery_kit_429_without_header_falls_back_to_60s() {
+        // The server may omit `Retry-After` entirely; the client should
+        // still yield a typed RateLimited error rather than propagating
+        // `Unsuccessful`. This keeps the state-machine pattern match
+        // simple.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(429)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": false,
+                    "error": { "code": "RATE_LIMITED", "message": "slow down" }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client.get_recovery_kit(42).await.expect_err("expected 429");
+        mock.assert();
+        assert_eq!(
+            err.rate_limit_retry_after().unwrap(),
+            Duration::from_secs(60)
+        );
+    }
+
+    #[tokio::test]
+    async fn get_recovery_kit_200_returns_ciphertext() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 5,
+                        "cubeId": 42,
+                        "encryptedCubeSeed": "AAECAwQF...",
+                        "encryptedWalletDescriptor": "",
+                        "encryptionScheme": "aes-256-gcm",
+                        "createdAt": "2026-04-22T00:00:00Z",
+                        "updatedAt": "2026-04-22T00:00:00Z"
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let kit = client
+            .get_recovery_kit(42)
+            .await
+            .expect("get_recovery_kit should succeed");
+        mock.assert();
+        assert_eq!(kit.id, 5);
+        assert_eq!(kit.cube_id, 42);
+        assert_eq!(kit.encrypted_cube_seed, "AAECAwQF...");
+        assert!(kit.encrypted_wallet_descriptor.is_empty());
+    }
+
+    #[tokio::test]
+    async fn put_recovery_kit_posts_when_no_existing_kit() {
+        // Status says `hasRecoveryKit: false` → upsert must POST, not PUT.
+        let server = MockServer::start();
+        let status_mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/status");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "hasRecoveryKit": false,
+                        "hasEncryptedSeed": false,
+                        "hasEncryptedWalletDescriptor": false,
+                        "encryptionScheme": ""
+                    }
+                }));
+        });
+        let post_mock = server.mock(|when, then| {
+            when.method(MockMethod::POST)
+                .path("/api/v1/connect/cubes/42/recovery-kit")
+                .json_body(json!({
+                    "encryptedCubeSeed": "CIPHER_A",
+                    "encryptionScheme": "aes-256-gcm"
+                }));
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 5,
+                        "cubeId": 42,
+                        "encryptedCubeSeed": "CIPHER_A",
+                        "encryptedWalletDescriptor": "",
+                        "encryptionScheme": "aes-256-gcm",
+                        "createdAt": "2026-04-22T00:00:00Z",
+                        "updatedAt": "2026-04-22T00:00:00Z"
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let kit = client
+            .put_recovery_kit(42, Some("CIPHER_A"), None, RECOVERY_KIT_SCHEME_AES_256_GCM)
+            .await
+            .expect("upsert should succeed");
+        status_mock.assert();
+        post_mock.assert();
+        assert_eq!(kit.encrypted_cube_seed, "CIPHER_A");
+    }
+
+    #[tokio::test]
+    async fn put_recovery_kit_puts_when_kit_exists() {
+        let server = MockServer::start();
+        let status_mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/status");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "hasRecoveryKit": true,
+                        "hasEncryptedSeed": true,
+                        "hasEncryptedWalletDescriptor": false,
+                        "encryptionScheme": "aes-256-gcm",
+                        "createdAt": "2026-04-22T00:00:00Z",
+                        "updatedAt": "2026-04-22T00:00:00Z"
+                    }
+                }));
+        });
+        // Adding the wallet descriptor half. Seed field is omitted from
+        // the body (partial-field update, matches backend PR 1 behaviour).
+        let put_mock = server.mock(|when, then| {
+            when.method(MockMethod::PUT)
+                .path("/api/v1/connect/cubes/42/recovery-kit")
+                .json_body(json!({
+                    "encryptedWalletDescriptor": "CIPHER_D",
+                    "encryptionScheme": "aes-256-gcm"
+                }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 5,
+                        "cubeId": 42,
+                        "encryptedCubeSeed": "CIPHER_A",
+                        "encryptedWalletDescriptor": "CIPHER_D",
+                        "encryptionScheme": "aes-256-gcm",
+                        "createdAt": "2026-04-22T00:00:00Z",
+                        "updatedAt": "2026-04-22T00:01:00Z"
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let kit = client
+            .put_recovery_kit(42, None, Some("CIPHER_D"), RECOVERY_KIT_SCHEME_AES_256_GCM)
+            .await
+            .expect("upsert should succeed");
+        status_mock.assert();
+        put_mock.assert();
+        assert_eq!(kit.encrypted_wallet_descriptor, "CIPHER_D");
+    }
+
+    #[tokio::test]
+    async fn put_recovery_kit_propagates_status_429() {
+        let server = MockServer::start();
+        let status_mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/status");
+            then.status(429)
+                .header("content-type", "application/json")
+                .header("Retry-After", "15")
+                .json_body(json!({
+                    "success": false,
+                    "error": { "code": "RATE_LIMITED", "message": "" }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .put_recovery_kit(42, Some("X"), None, RECOVERY_KIT_SCHEME_AES_256_GCM)
+            .await
+            .expect_err("expected 429");
+        status_mock.assert();
+        assert_eq!(
+            err.rate_limit_retry_after().unwrap(),
+            Duration::from_secs(15)
+        );
+    }
+
+    #[tokio::test]
+    async fn put_recovery_kit_404_on_status_still_posts() {
+        // If the backend serves 404 on the status endpoint (e.g. the
+        // endpoint isn't deployed yet on this tenant), the client should
+        // optimistically treat it as "no kit" and try POST. That keeps
+        // the backend PR rollout ordering flexible.
+        let server = MockServer::start();
+        let status_mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/42/recovery-kit/status");
+            then.status(404);
+        });
+        let post_mock = server.mock(|when, then| {
+            when.method(MockMethod::POST)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(201)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 1,
+                        "cubeId": 42,
+                        "encryptedCubeSeed": "X",
+                        "encryptedWalletDescriptor": "",
+                        "encryptionScheme": "aes-256-gcm",
+                        "createdAt": "2026-04-22T00:00:00Z",
+                        "updatedAt": "2026-04-22T00:00:00Z"
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        client
+            .put_recovery_kit(42, Some("X"), None, RECOVERY_KIT_SCHEME_AES_256_GCM)
+            .await
+            .expect("upsert should succeed");
+        status_mock.assert();
+        post_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn delete_recovery_kit_ok_on_200() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({ "success": true, "data": { "status": "deleted" } }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        client
+            .delete_recovery_kit(42)
+            .await
+            .expect("delete should succeed");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn delete_recovery_kit_404_maps_to_not_found() {
+        // A second DELETE should be idempotent from the caller's
+        // perspective — but the server is free to 404; we surface
+        // that typed so the UI can treat it as "already gone".
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::DELETE)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(404);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .delete_recovery_kit(42)
+            .await
+            .expect_err("expected NotFound");
+        mock.assert();
+        assert!(err.is_not_found());
     }
 }
 

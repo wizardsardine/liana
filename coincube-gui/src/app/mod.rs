@@ -875,6 +875,9 @@ impl App {
             current_cube_backed_up: cube_settings.backed_up,
             current_cube_is_passkey: cube_settings.is_passkey_cube(),
             cube_id: cube_settings.id.clone(),
+            recovery_kit_last_backed_up_descriptor_fingerprint: cube_settings
+                .recovery_kit_last_backed_up_descriptor_fingerprint
+                .clone(),
             default_lightning_backend: cube_settings.default_lightning_backend,
             ..Default::default()
         };
@@ -1495,6 +1498,31 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        // Cheap per-tick sync: mirror the authoritative server cube id
+        // off ConnectPanel into Cache so view layers (Recovery-Kit card,
+        // future dashboards) and `State::reload()` callbacks can see
+        // it without reaching into the panel hierarchy. Set to `None`
+        // until `CubeRegistered(Ok)` populates the id on the panel.
+        self.cache.current_cube_server_id = self.panels.connect.cube.server_cube_id;
+
+        // W12 drift detection: recompute the live descriptor fingerprint
+        // off the loaded wallet. This is a SHA-256 over a JSON blob —
+        // microseconds — so running it every tick is fine and avoids a
+        // separate invalidation pathway tied to wallet changes. When
+        // the wallet is absent (no Vault yet) the fingerprint is
+        // `None`, which the card treats as "nothing to drift against".
+        self.cache.current_descriptor_fingerprint = self.wallet.as_ref().and_then(|w| {
+            use crate::app::state::settings::recovery_kit as rk;
+            let network = match self.cache.network {
+                coincube_core::miniscript::bitcoin::Network::Bitcoin => "bitcoin",
+                coincube_core::miniscript::bitcoin::Network::Testnet => "testnet",
+                coincube_core::miniscript::bitcoin::Network::Signet => "signet",
+                coincube_core::miniscript::bitcoin::Network::Regtest => "regtest",
+                _ => "unknown",
+            };
+            rk::live_descriptor_fingerprint(w.as_ref(), &self.cube_settings.id, network)
+        });
+
         match message {
             Message::View(view::Message::DismissToast(id)) => {
                 self.errors.retain(|(i, ..)| *i != id);
@@ -1669,6 +1697,17 @@ impl App {
                         self.cube_settings.default_lightning_backend =
                             cube.default_lightning_backend;
                         self.cache.default_lightning_backend = cube.default_lightning_backend;
+                        // Mirror the drift fingerprint cache (W12). Refreshing
+                        // on every SettingsSaved keeps the Recovery-Kit card
+                        // in sync after a successful upload or remove.
+                        self.cache
+                            .recovery_kit_last_backed_up_descriptor_fingerprint = cube
+                            .recovery_kit_last_backed_up_descriptor_fingerprint
+                            .clone();
+                        self.cube_settings
+                            .recovery_kit_last_backed_up_descriptor_fingerprint = cube
+                            .recovery_kit_last_backed_up_descriptor_fingerprint
+                            .clone();
 
                         // Clear cached fiat display price if disabled.
                         // Note: btc_usd_price is NOT cleared — it's needed for
@@ -1885,6 +1924,61 @@ impl App {
                             self.breez_client.clone(),
                         );
                     }
+
+                    // W10 — nudge the user to back up the freshly-created
+                    // Vault to their Connect Recovery Kit. Gated on
+                    // Connect auth + "no recovery kit yet" so we don't
+                    // nag users who've already backed up (e.g. on
+                    // subsequent app restarts where this transition
+                    // also fires). `LoadStatus` is fired either way so
+                    // the card in Settings is fresh when the user
+                    // navigates there.
+                    let mut tasks: Vec<Task<Message>> = vec![Task::done(Message::View(
+                        view::Message::Settings(view::SettingsMessage::RecoveryKit(
+                            view::RecoveryKitMessage::LoadStatus,
+                        )),
+                    ))];
+                    if self.panels.connect.account.is_authenticated() {
+                        let kit_absent = self
+                            .panels
+                            .global_settings
+                            .recovery_kit
+                            .status
+                            .as_ref()
+                            .map(|s| !s.has_recovery_kit || !s.has_encrypted_wallet_descriptor)
+                            .unwrap_or(true);
+                        if kit_absent {
+                            tasks.push(Task::done(Message::View(view::Message::ShowToast(
+                                log::Level::Info,
+                                "Your new Vault is ready — back up your Wallet Descriptor in \
+                                 Settings → General → Cube Recovery Kit."
+                                    .to_string(),
+                            ))));
+                        }
+                    }
+                    // Fire the nudge + status refresh, then let the
+                    // normal "forward to current panel" path below
+                    // also run by re-entering `update`. Using
+                    // `Task::batch` here would bypass the panel
+                    // notification — instead return after the panel
+                    // forward further down.
+                    // We batch with the forward task below by stashing
+                    // the nudge tasks into a closure; but simplest:
+                    // issue them now via the Iced task pipeline by
+                    // chaining onto the return.
+                    let nudge_task = Task::batch(tasks);
+                    // Forward to the current panel _and_ fire the nudge.
+                    if let (Some(daemon), Some(panel)) =
+                        (self.daemon.clone(), self.panels.current_mut())
+                    {
+                        let panel_task = panel.update(
+                            Some(daemon),
+                            &self.cache,
+                            Message::WalletUpdated(Ok(wallet)),
+                        );
+                        return Task::batch([panel_task, nudge_task]);
+                    }
+                    return nudge_task;
                 }
 
                 // Forward the message to the current panel
@@ -2369,6 +2463,34 @@ impl App {
                     .panels
                     .global_settings
                     .update(self.daemon.clone(), &self.cache, msg);
+            }
+
+            // Cube Recovery Kit dispatch. Handled at App level because
+            // the handler needs the authenticated CoincubeClient, the
+            // Connect numeric cube id, and the live Wallet — none of
+            // which are plumbed through `State::update`. Mirrors the
+            // `cube_members::update(state, msg, client, cube_id)`
+            // pattern at `state/connect/cube_members.rs:79`.
+            Message::View(view::Message::Settings(view::SettingsMessage::RecoveryKit(msg))) => {
+                let seed_source = if self.cube_settings.is_passkey_cube() {
+                    crate::app::state::settings::recovery_kit::SeedSource::Passkey
+                } else {
+                    crate::app::state::settings::recovery_kit::SeedSource::Mnemonic
+                };
+                let client = self.authenticated_coincube_client();
+                let server_cube_id = self.panels.connect.cube.server_cube_id;
+                let wallet = self.wallet.clone();
+                let local_cube_id = self.cube_settings.id.clone();
+                return crate::app::state::settings::recovery_kit::update(
+                    &mut self.panels.global_settings.recovery_kit,
+                    msg,
+                    &self.cache,
+                    &local_cube_id,
+                    seed_source,
+                    client,
+                    server_cube_id,
+                    wallet,
+                );
             }
 
             // Route refundables updates directly to LiquidTransactions so that

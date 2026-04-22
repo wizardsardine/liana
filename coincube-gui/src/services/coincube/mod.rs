@@ -31,6 +31,17 @@ pub enum CoincubeError {
     VaultKeyholderLocked {
         vault_id: u64,
     },
+    /// 404 from an endpoint where the caller expects the resource may
+    /// legitimately be absent (e.g. `get_recovery_kit` when no kit exists
+    /// yet). Only the recovery-kit methods emit this variant today; other
+    /// callers continue to route 404 through `Unsuccessful` as before.
+    NotFound,
+    /// 429 from a rate-limited endpoint. `retry_after` is parsed from the
+    /// `Retry-After` response header (seconds form); falls back to 60s
+    /// when the header is missing or unparsable.
+    RateLimited {
+        retry_after: std::time::Duration,
+    },
 }
 
 impl From<serde_json::Error> for CoincubeError {
@@ -76,6 +87,12 @@ impl std::fmt::Display for CoincubeError {
                 "Can't add a keyholder to Vault #{} — the signing quorum is fixed at build time.",
                 vault_id
             ),
+            CoincubeError::NotFound => write!(f, "Not found"),
+            CoincubeError::RateLimited { retry_after } => write!(
+                f,
+                "Rate limited — retry after {}s",
+                retry_after.as_secs()
+            ),
         }
     }
 }
@@ -93,6 +110,24 @@ impl CoincubeError {
                 ..
             })
         )
+    }
+
+    /// True when the error is the typed 404 variant. Today only the
+    /// recovery-kit endpoints produce this; generic 404s still surface
+    /// as `Unsuccessful`.
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, CoincubeError::NotFound)
+    }
+
+    /// When the error is a typed 429 rate-limit, returns the server's
+    /// `Retry-After` duration (falling back to 60s when the header was
+    /// missing). Callers can use this to delay a retry or to display a
+    /// cooldown counter to the user.
+    pub fn rate_limit_retry_after(&self) -> Option<std::time::Duration> {
+        match self {
+            CoincubeError::RateLimited { retry_after } => Some(*retry_after),
+            _ => None,
+        }
     }
 }
 
@@ -1203,4 +1238,64 @@ impl CoincubeError {
         }
         false
     }
+}
+
+// =============================================================================
+// Cube Recovery Kit (W7)
+// =============================================================================
+//
+// Backs the Settings → "Cube Recovery Kit" card and the installer restore
+// flow. See `plans/PLAN-cube-recovery-kit-desktop.md` §2.2.
+//
+// The `encrypted_*` fields are opaque base64 envelopes produced by
+// `services::recovery::envelope::encrypt`; the server stores and
+// returns them verbatim.
+
+/// Identifier for the only envelope scheme this client speaks today.
+/// Sent to the backend on upsert so the server can refuse kits it can't
+/// later hand back to older clients if the scheme ever changes.
+pub const RECOVERY_KIT_SCHEME_AES_256_GCM: &str = "aes-256-gcm";
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryKitStatus {
+    pub has_recovery_kit: bool,
+    pub has_encrypted_seed: bool,
+    pub has_encrypted_wallet_descriptor: bool,
+    pub encryption_scheme: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryKit {
+    pub id: u64,
+    pub cube_id: u64,
+    /// May be the empty string when the kit is descriptor-only (e.g. a
+    /// passkey-seed cube backs up its wallet descriptor without the
+    /// seed, which it cannot extract).
+    pub encrypted_cube_seed: String,
+    /// May be the empty string when the kit is seed-only (no Vault
+    /// created yet, or the Vault wizard "skip" path).
+    pub encrypted_wallet_descriptor: String,
+    pub encryption_scheme: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Body for POST / PUT `/api/v1/connect/cubes/{cubeId}/recovery-kit`. Omits
+/// `encryptedCubeSeed` / `encryptedWalletDescriptor` when `None`, which
+/// the backend's partial-field create path (backend PR 1) uses to decide
+/// which half of the kit the caller is touching.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpsertRecoveryKitRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_cube_seed: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_wallet_descriptor: Option<&'a str>,
+    pub encryption_scheme: &'a str,
 }
