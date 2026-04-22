@@ -58,6 +58,15 @@ At runtime the gui locates the bridge binary in this order:
 Spark support is currently limited to Bitcoin mainnet and Regtest; on other
 networks the bridge is skipped and the Spark panels stay disconnected.
 
+#### Environment variables
+
+- `$COINCUBE_SPARK_BRIDGE_PATH` — absolute path to the bridge binary, takes
+  precedence over the discovery order above.
+- `$COINCUBE_LNURL_DOMAIN` — LNURL domain the bridge registers Lightning
+  Addresses against via the Breez-hosted LNURL server. Defaults to
+  `coincube.io`. Set to an allowlisted staging domain (e.g.
+  `dev.coincube.io`) for non-production builds.
+
 ## Regtest
 In order to test out the "Liquid" wallet which utilizes the Breez Liquid SDK, please follow these directions [Breez SDK Regtest Setup](/docs/BREEZ_SDK_REGTEST.md)
 

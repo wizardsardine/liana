@@ -116,6 +116,25 @@ pub enum Method {
     /// at init time in [`coincube-spark-bridge`]; it's internal
     /// plumbing and never surfaces in the gui.
     SetStableBalance(SetStableBalanceParams),
+    /// Phase 4g: check whether a Lightning Address username is
+    /// available on the configured LNURL server. UX nicety during
+    /// typing — the authoritative uniqueness check is still done
+    /// server-side by our API on reservation.
+    CheckLightningAddressAvailable(CheckLightningAddressAvailableParams),
+    /// Phase 4g: register a Lightning Address `<username>@<lnurl_domain>`
+    /// with the Breez-hosted LNURL server. The SDK persists the
+    /// address in local storage and binds it to this wallet's Spark
+    /// leaf so incoming LNURL-pay payments settle server-side.
+    RegisterLightningAddress(RegisterLightningAddressParams),
+    /// Phase 4g: fetch the Lightning Address currently bound to this
+    /// wallet (from the SDK's local cache, falling back to a
+    /// server-side recovery when the cache is empty). Returns
+    /// `None` when no address is registered.
+    GetLightningAddress,
+    /// Phase 4g: unregister the Lightning Address bound to this
+    /// wallet. Idempotent — returns Ok even when no address is
+    /// registered.
+    DeleteLightningAddress,
     /// Gracefully disconnect and exit the bridge.
     Shutdown,
 }
@@ -217,6 +236,22 @@ pub struct SetStableBalanceParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckLightningAddressAvailableParams {
+    /// The username portion of `<username>@<lnurl_domain>`.
+    pub username: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterLightningAddressParams {
+    /// The username portion of `<username>@<lnurl_domain>`.
+    pub username: String,
+    /// Payer-visible description. `None` tells the SDK to default
+    /// to `"Pay to <username>@<domain>"`.
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrepareLnurlPayParams {
     /// The LNURL-pay or Lightning-address destination. The bridge
     /// re-parses this internally via `BreezSdk::parse` to recover the
@@ -270,6 +305,10 @@ pub enum OkPayload {
     ClaimDeposit(ClaimDepositOk),
     GetUserSettings(GetUserSettingsOk),
     SetStableBalance {},
+    CheckLightningAddressAvailable(CheckLightningAddressAvailableOk),
+    RegisterLightningAddress(RegisterLightningAddressOk),
+    GetLightningAddress(GetLightningAddressOk),
+    DeleteLightningAddress {},
     Shutdown {},
 }
 
@@ -479,6 +518,48 @@ pub struct GetUserSettingsOk {
     pub private_mode_enabled: bool,
 }
 
+/// Phase 4g: Lightning Address record as reported by the Breez-hosted
+/// LNURL server via the Spark SDK. Flat mirror of the SDK's
+/// `LightningAddressInfo` (with the nested `LnurlInfo { url, bech32 }`
+/// inlined) so the JSON wire format is self-describing and the gui
+/// doesn't have to know about `LnurlInfo`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LightningAddressInfo {
+    /// Full `<username>@<lnurl_domain>` string.
+    pub lightning_address: String,
+    /// Username portion — the part to the left of `@`.
+    pub username: String,
+    /// Payer-visible description. `None` if the caller didn't
+    /// supply one and the SDK's default wasn't retained in the
+    /// local cache.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// `https://<lnurl_domain>/.well-known/lnurlp/<username>` — the
+    /// LUD-06 callback URL the payer's wallet resolves to.
+    pub lnurl_url: String,
+    /// Bech32-encoded `lnurl1...` form of `lnurl_url` — what a QR
+    /// code scanner would read.
+    pub lnurl_bech32: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckLightningAddressAvailableOk {
+    /// `true` when the LNURL server considers the username free.
+    pub available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterLightningAddressOk {
+    #[serde(flatten)]
+    pub info: LightningAddressInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetLightningAddressOk {
+    /// `None` when no address is currently registered on this wallet.
+    pub info: Option<LightningAddressInfo>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorPayload {
     pub kind: ErrorKind,
@@ -568,6 +649,15 @@ pub enum Event {
     /// `NewDeposits`, `ClaimedDeposits`) into a single coalesced
     /// signal because the gui treats them all as "refresh the list."
     DepositsChanged,
+    /// Phase 4g: the Lightning Address bound to this wallet changed
+    /// on the LNURL server — either a register (payload `Some`),
+    /// an unregister (payload `None`), or a cross-device sync via
+    /// realtime-sync. The gui refreshes its settings view in
+    /// response; a `None` state it didn't initiate triggers
+    /// auto-re-register from the DB-reserved username.
+    LightningAddressChanged {
+        info: Option<LightningAddressInfo>,
+    },
 }
 
 /// The top-level message envelope written/read on the wire. We use a single

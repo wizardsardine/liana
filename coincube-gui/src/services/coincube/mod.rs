@@ -617,9 +617,24 @@ pub struct ApiErrorDetail {
     pub message: String,
 }
 
+/// Reserve-only step of the Phase 4g claim flow. Body mirrors the
+/// Go API's `reserve` shape — the server stores the pending username
+/// against the cube but does NOT publish BIP353 / commit the record
+/// until a follow-up `/confirm` call lands (see
+/// [`ConfirmLightningAddressRequest`]).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ClaimLightningAddressRequest {
+pub struct ReserveLightningAddressRequest {
+    pub username: String,
+}
+
+/// Commit step of the Phase 4g claim flow. Sent after the Spark SDK
+/// has successfully registered `username` against the Breez LNURL
+/// server — the API persists the BIP353 TXT record and stores the
+/// BOLT12 offer against the cube.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmLightningAddressRequest {
     pub username: String,
     pub bolt12_offer: String,
 }

@@ -22,6 +22,7 @@ use std::sync::Arc;
 use crate::{
     app::{
         breez_liquid::BreezClient,
+        breez_spark::SparkClient,
         cache::Cache,
         menu::Menu,
         message::Message,
@@ -56,6 +57,7 @@ pub struct ConnectPanel {
 impl ConnectPanel {
     pub fn new(
         breez_client: Arc<BreezClient>,
+        spark_client: Option<Arc<SparkClient>>,
         cube_uuid: String,
         cube_name: String,
         cube_network: String,
@@ -67,7 +69,13 @@ impl ConnectPanel {
         account.set_active_network(Some(cube_network.clone()));
         ConnectPanel {
             account,
-            cube: ConnectCubePanel::new(breez_client, cube_uuid, cube_name, cube_network),
+            cube: ConnectCubePanel::new(
+                breez_client,
+                spark_client,
+                cube_uuid,
+                cube_name,
+                cube_network,
+            ),
         }
     }
 

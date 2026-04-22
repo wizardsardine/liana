@@ -6,7 +6,6 @@ pub mod http;
 pub mod keys;
 
 pub mod coincube;
-pub mod lnurl;
 pub mod mavapay;
 pub mod meld;
 pub mod passkey;

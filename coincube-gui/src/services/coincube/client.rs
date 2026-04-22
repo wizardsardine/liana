@@ -2,13 +2,13 @@ use super::{
     get_countries, AddVaultMemberRequest, ApiErrorResponse, ApiResponse, AvatarGenerateData,
     AvatarGenerateRequest, AvatarSelectData, AvatarSelectRequest, BillingHistoryEntry,
     ChargeStatusResponse, CheckUsernameResponse, CheckoutRequest, CheckoutResponse,
-    ClaimLightningAddressRequest, CoincubeError, ConnectPlan, ConnectVaultResponse, Contact,
+    CoincubeError, ConfirmLightningAddressRequest, ConnectPlan, ConnectVaultResponse, Contact,
     ContactCube, Country, CreateConnectVaultRequest, CreateInviteRequest, CubeInviteOrAddResult,
     CubeKeyRaw, CubeLimitsResponse, CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData,
     Invite, LightningAddress, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
-    PublicAvatarData, RefreshTokenRequest, RegenerationData, RegisterCubeRequest, SaveQuoteRequest,
-    SaveQuoteResponse, StatsPeriod, TimeseriesResponse, TodayStats, UpdateCubeRequest, User,
-    VaultMemberResponse, VerifiedDevice,
+    PublicAvatarData, RefreshTokenRequest, RegenerationData, RegisterCubeRequest,
+    ReserveLightningAddressRequest, SaveQuoteRequest, SaveQuoteResponse, StatsPeriod,
+    TimeseriesResponse, TodayStats, UpdateCubeRequest, User, VaultMemberResponse, VerifiedDevice,
 };
 use reqwest::{Client, Method};
 use serde::Deserialize;
@@ -406,19 +406,62 @@ impl CoincubeClient {
         }
     }
 
-    pub async fn claim_lightning_address(
+    /// Phase 4g step 1: reserve `username` against the cube. The API
+    /// persists the pending record but does NOT publish the BIP353
+    /// TXT yet — that lands in the [`Self::confirm_lightning_address`]
+    /// step after the Spark SDK has registered the username with the
+    /// Breez-hosted LNURL server.
+    pub async fn reserve_lightning_address(
         &self,
         cube_id: &str,
-        req: ClaimLightningAddressRequest,
+        username: &str,
     ) -> Result<LightningAddress, CoincubeError> {
         let url = format!(
             "{}/api/v1/connect/cubes/{}/lightning-address",
+            self.base_url, cube_id
+        );
+        let req = ReserveLightningAddressRequest {
+            username: username.to_string(),
+        };
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<LightningAddress> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// Phase 4g step 3: commit the reservation. Called after the
+    /// Spark SDK has successfully registered the username with the
+    /// Breez-hosted LNURL server. The API persists the BIP353 TXT
+    /// record and stores the supplied BOLT12 offer.
+    pub async fn confirm_lightning_address(
+        &self,
+        cube_id: &str,
+        req: ConfirmLightningAddressRequest,
+    ) -> Result<LightningAddress, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/lightning-address/confirm",
             self.base_url, cube_id
         );
         let res = self.client.post(&url).json(&req).send().await?;
         let res = res.check_success().await?;
         let resp: ApiResponse<LightningAddress> = res.json().await?;
         Ok(resp.data)
+    }
+
+    /// Phase 4g cleanup: release a reservation on failure of the
+    /// SDK-register or /confirm steps, or drop a confirmed address
+    /// when the user asks to give up their Lightning Address.
+    pub async fn delete_lightning_address(
+        &self,
+        cube_id: &str,
+    ) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/lightning-address",
+            self.base_url, cube_id
+        );
+        let res = self.client.delete(&url).send().await?;
+        let _ = res.check_success().await?;
+        Ok(())
     }
 }
 
