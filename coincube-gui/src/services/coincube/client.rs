@@ -1,14 +1,14 @@
 use super::{
-    get_countries, AddVaultMemberRequest, ApiErrorResponse, ApiResponse, AvatarGenerateData,
-    AvatarGenerateRequest, AvatarSelectData, AvatarSelectRequest, BillingHistoryEntry,
-    ChargeStatusResponse, CheckUsernameResponse, CheckoutRequest, CheckoutResponse,
-    CoincubeError, ConfirmLightningAddressRequest, ConnectPlan, ConnectVaultResponse, Contact,
-    ContactCube, Country, CreateConnectVaultRequest, CreateInviteRequest, CubeInviteOrAddResult,
-    CubeKeyRaw, CubeLimitsResponse, CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData,
-    Invite, LightningAddress, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
-    PublicAvatarData, RefreshTokenRequest, RegenerationData, RegisterCubeRequest,
-    ReserveLightningAddressRequest, SaveQuoteRequest, SaveQuoteResponse, StatsPeriod,
-    TimeseriesResponse, TodayStats, UpdateCubeRequest, User, VaultMemberResponse, VerifiedDevice,
+    get_countries, AddVaultMemberRequest, ApiResponse, AvatarGenerateData, AvatarGenerateRequest,
+    AvatarSelectData, AvatarSelectRequest, BillingHistoryEntry, ChargeStatusResponse,
+    CheckoutRequest, CheckoutResponse, CoincubeError, ConfirmLightningAddressRequest, ConnectPlan,
+    ConnectVaultResponse, Contact, ContactCube, Country, CreateConnectVaultRequest,
+    CreateInviteRequest, CubeInviteOrAddResult, CubeKeyRaw, CubeLimitsResponse, CubeResponse,
+    DownloadStats, FeaturesResponse, GetAvatarData, Invite, LightningAddress, LoginActivity,
+    LoginResponse, OtpRequest, OtpVerifyRequest, PublicAvatarData, RefreshTokenRequest,
+    RegenerationData, RegisterCubeRequest, ReserveLightningAddressRequest, SaveQuoteRequest,
+    SaveQuoteResponse, StatsPeriod, TimeseriesResponse, TodayStats, UpdateCubeRequest, User,
+    VaultMemberResponse, VerifiedDevice,
 };
 use reqwest::{Client, Method};
 use serde::Deserialize;
@@ -368,44 +368,6 @@ impl CoincubeClient {
         Ok(resp.data)
     }
 
-    pub async fn check_lightning_address(
-        &self,
-        cube_id: &str,
-        username: &str,
-    ) -> Result<CheckUsernameResponse, CoincubeError> {
-        let url = format!(
-            "{}/api/v1/connect/cubes/{}/lightning-address/check",
-            self.base_url, cube_id
-        );
-        let res = self
-            .client
-            .get(&url)
-            .query(&[("username", username)])
-            .send()
-            .await?;
-        let status = res.status();
-        let body = res.text().await.map_err(CoincubeError::Network)?;
-
-        if status.is_success() {
-            let resp: ApiResponse<CheckUsernameResponse> = serde_json::from_str(&body)?;
-            Ok(resp.data)
-        } else if status.is_client_error() && !matches!(status.as_u16(), 401 | 403) {
-            // Validation errors (400, 409, 422, etc.) — treat as "not available"
-            if let Ok(err_resp) = serde_json::from_str::<ApiErrorResponse>(&body) {
-                Ok(CheckUsernameResponse {
-                    available: false,
-                    username: username.to_string(),
-                    error_message: Some(err_resp.error.message),
-                })
-            } else {
-                Err(CoincubeError::Api(body))
-            }
-        } else {
-            // Auth errors (401/403), server errors (5xx), etc.
-            Err(CoincubeError::Api(body))
-        }
-    }
-
     /// Phase 4g step 1: reserve `username` against the cube. The API
     /// persists the pending record but does NOT publish the BIP353
     /// TXT yet — that lands in the [`Self::confirm_lightning_address`]
@@ -451,10 +413,7 @@ impl CoincubeClient {
     /// Phase 4g cleanup: release a reservation on failure of the
     /// SDK-register or /confirm steps, or drop a confirmed address
     /// when the user asks to give up their Lightning Address.
-    pub async fn delete_lightning_address(
-        &self,
-        cube_id: &str,
-    ) -> Result<(), CoincubeError> {
+    pub async fn delete_lightning_address(&self, cube_id: &str) -> Result<(), CoincubeError> {
         let url = format!(
             "{}/api/v1/connect/cubes/{}/lightning-address",
             self.base_url, cube_id

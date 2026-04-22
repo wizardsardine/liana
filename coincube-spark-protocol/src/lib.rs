@@ -655,9 +655,7 @@ pub enum Event {
     /// realtime-sync. The gui refreshes its settings view in
     /// response; a `None` state it didn't initiate triggers
     /// auto-re-register from the DB-reserved username.
-    LightningAddressChanged {
-        info: Option<LightningAddressInfo>,
-    },
+    LightningAddressChanged { info: Option<LightningAddressInfo> },
 }
 
 /// The top-level message envelope written/read on the wire. We use a single

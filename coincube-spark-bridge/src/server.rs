@@ -556,14 +556,11 @@ async fn handle_send_payment(
     // and dispatch to `sdk.lnurl_pay` instead of `sdk.send_payment`.
     let handle = params.prepare_handle;
 
-    if let Some((_inserted_at, prepare)) =
-        state.pending_prepares.lock().await.remove(&handle)
-    {
+    if let Some((_inserted_at, prepare)) = state.pending_prepares.lock().await.remove(&handle) {
         return execute_regular_send(id, sdk, prepare).await;
     }
 
-    if let Some((_inserted_at, prepare)) =
-        state.pending_lnurl_prepares.lock().await.remove(&handle)
+    if let Some((_inserted_at, prepare)) = state.pending_lnurl_prepares.lock().await.remove(&handle)
     {
         return execute_lnurl_send(id, sdk, prepare).await;
     }
@@ -622,11 +619,7 @@ async fn execute_regular_send(
     }
 }
 
-async fn execute_lnurl_send(
-    id: u64,
-    sdk: SdkHandle,
-    prepare: PrepareLnurlPayResponse,
-) -> Response {
+async fn execute_lnurl_send(id: u64, sdk: SdkHandle, prepare: PrepareLnurlPayResponse) -> Response {
     // The LNURL prepare response carries its own top-level
     // `amount_sats` / `fee_sats` fields (u64, already in sats — no
     // u128 clamping needed here). Snapshot them for the send response.
@@ -895,11 +888,7 @@ async fn handle_prepare_lnurl_pay(
                 }),
             )
         }
-        Err(e) => Response::err(
-            id,
-            ErrorKind::Sdk,
-            format!("prepare_lnurl_pay failed: {e}"),
-        ),
+        Err(e) => Response::err(id, ErrorKind::Sdk, format!("prepare_lnurl_pay failed: {e}")),
     }
 }
 

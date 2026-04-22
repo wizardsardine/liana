@@ -63,10 +63,16 @@ pub fn mainnet_config(api_key: String) -> breez_sdk_spark::Config {
         threshold_sats: None,
         max_slippage_bps: None,
     });
-    config.lnurl_domain = Some(
-        std::env::var("COINCUBE_LNURL_DOMAIN")
-            .unwrap_or_else(|_| DEFAULT_LNURL_DOMAIN.to_string()),
-    );
+    // Treat an unset / empty / whitespace-only env var as "not
+    // configured" and fall back to the default. An empty string
+    // would otherwise be handed to the SDK as a valid domain and
+    // produce nonsense Lightning Addresses like `user@`.
+    let lnurl_domain = std::env::var("COINCUBE_LNURL_DOMAIN")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_LNURL_DOMAIN.to_string());
+    config.lnurl_domain = Some(lnurl_domain);
     config
 }
 

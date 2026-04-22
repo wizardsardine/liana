@@ -856,13 +856,12 @@ pub enum ConnectCubeMessage {
     /// cross-device sync replay via realtime-sync. `None` with a
     /// populated DB reservation triggers auto-re-register.
     SparkLightningAddressChanged(Option<coincube_spark_protocol::LightningAddressInfo>),
-    /// Phase 4g: outcome of the startup auto-reconcile. Fired
-    /// internally after `get_lightning_address()` finishes; the
-    /// handler decides whether to invoke `register_lightning_address`
-    /// to bind the DB-reserved username on this device.
-    LightningAddressReconciled(
-        Result<Option<coincube_spark_protocol::LightningAddressInfo>, String>,
-    ),
+    /// Phase 4g: outcome of the startup auto-reconcile. The
+    /// [`crate::app::state::connect::cube::ReconcileOutcome`]
+    /// payload distinguishes "already in sync / fixed it" from a
+    /// transient query failure and from a persistent API↔SDK
+    /// divergence that needs the user's attention.
+    LightningAddressReconciled(crate::app::state::connect::cube::ReconcileOutcome),
     /// Result of registering the cube with the backend (POST /connect/cubes).
     CubeRegistered(Result<crate::services::coincube::CubeResponse, String>),
     /// Retry a previously failed cube registration.

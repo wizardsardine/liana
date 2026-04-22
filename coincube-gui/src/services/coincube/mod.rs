@@ -596,15 +596,6 @@ pub struct LightningAddress {
     pub bolt12_offer: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct CheckUsernameResponse {
-    pub available: bool,
-    pub username: String,
-    /// Set when the API returns an error (e.g. reserved/invalid username)
-    #[serde(default)]
-    pub error_message: Option<String>,
-}
-
 /// Error response shape: `{ "success": false, "error": { "code": "...", "message": "..." } }`
 #[derive(Debug, Clone, Deserialize)]
 pub struct ApiErrorResponse {
