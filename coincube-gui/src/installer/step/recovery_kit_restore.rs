@@ -36,7 +36,10 @@ use crate::{
         view,
     },
     services::{
-        coincube::{CoincubeClient, CubeResponse, OtpRequest, OtpVerifyRequest, RecoveryKitStatus},
+        coincube::{
+            CoincubeClient, CoincubeError, CubeResponse, OtpRequest, OtpVerifyRequest,
+            RecoveryKitStatus,
+        },
         recovery::{
             restore::{fetch_and_decrypt_kit, DecryptedKit, RestoreError},
             score_password, DescriptorBlob, PasswordStrength, SeedBlob,
@@ -214,8 +217,20 @@ impl RecoveryKitRestoreStep {
                     all.into_iter().filter(|c| c.network == network).collect();
                 let mut out = Vec::with_capacity(matches.len());
                 for cube in matches {
-                    let status = client.get_recovery_kit_status(cube.id).await.unwrap_or(
-                        RecoveryKitStatus {
+                    // Only NotFound is a signal that this particular
+                    // cube has no kit yet — that's a legitimate state
+                    // and we render it as a disabled row in the picker.
+                    // Auth / rate-limit / 5xx / network errors are
+                    // *probe failures*, not "no kit"; silently
+                    // mapping them to `has_recovery_kit: false` would
+                    // mislead the user into thinking they need to
+                    // back up on a different device when the real
+                    // issue is transient. Surface those instead so
+                    // the picker's error path (`Phase::Error`) can
+                    // show the cause and let the user retry.
+                    let status = match client.get_recovery_kit_status(cube.id).await {
+                        Ok(s) => s,
+                        Err(CoincubeError::NotFound) => RecoveryKitStatus {
                             has_recovery_kit: false,
                             has_encrypted_seed: false,
                             has_encrypted_wallet_descriptor: false,
@@ -223,7 +238,13 @@ impl RecoveryKitRestoreStep {
                             created_at: None,
                             updated_at: None,
                         },
-                    );
+                        Err(e) => {
+                            return Err(format!(
+                                "Couldn't load Recovery Kit status for \"{}\": {}",
+                                cube.name, e
+                            ));
+                        }
+                    };
                     out.push(RestoreCubeCandidate {
                         id: cube.id,
                         uuid: cube.uuid,
@@ -245,22 +266,81 @@ impl RecoveryKitRestoreStep {
         let password = Zeroizing::new(self.password.to_string());
         Task::perform(
             async move {
+                // Pass the typed `RestoreError` through unchanged so
+                // the handler (see `DecryptResult` arm in `update`)
+                // can branch on `BadPasswordOrCorrupt` vs. terminal
+                // variants like `RateLimited` / `Api` / `NotFound` /
+                // `BlobParse`. Stringifying here would collapse them
+                // into an untyped bag and force the wrong UX.
                 fetch_and_decrypt_kit(&client, cube_id, &password)
                     .await
                     .map(|DecryptedKit { seed, descriptor }| (seed, descriptor))
-                    .map_err(map_restore_error)
             },
             |res| Message::RecoveryKitRestore(RecoveryKitRestoreMsg::DecryptResult(res)),
         )
     }
 }
 
-fn map_restore_error(e: RestoreError) -> String {
-    // `RestoreError` already formats cleanly — just stringify. The
-    // UI uses the string for the inline banner; typed branching on
-    // specific errors (retry_after, bad password) happens at the
-    // message dispatch level if we want to add it later.
-    e.to_string()
+/// Classify a decrypt error for UI routing. Returns `true` iff the
+/// error is one the user can fix by retyping the password — i.e.,
+/// `BadPasswordOrCorrupt`, the only variant where keeping the user
+/// on the `PasswordEntry` screen with an inline banner is the right
+/// UX. Every other variant (`RateLimited`, `Api`, `NotFound`,
+/// `BlobParse`, `HalfMissing`) is terminal for this attempt and
+/// routes to `Phase::Error`, because retyping the password won't
+/// help.
+fn is_retryable_on_password_screen(e: &RestoreError) -> bool {
+    matches!(e, RestoreError::BadPasswordOrCorrupt)
+}
+
+/// After decrypting a kit, verify that any blobs we got back are
+/// actually for the cube the user picked. The blob plaintexts carry
+/// their own `cube.uuid` + `cube.network` identifiers — if either
+/// disagrees with `selected`, something upstream is misrouted
+/// (wrong kit served for a cube id, cross-device mix-up) and we
+/// should refuse to apply the payload.
+///
+/// Returns `Ok(())` when every present blob matches, `Err(message)`
+/// with a user-visible string otherwise.
+fn validate_blobs_match_selected(
+    seed: Option<&SeedBlob>,
+    descriptor: Option<&DescriptorBlob>,
+    selected: &RestoreCubeCandidate,
+) -> Result<(), String> {
+    let mismatch_msg = || {
+        "This Recovery Kit contains data for a different Cube or network. \
+         Sign out and retry — or contact support if the problem persists."
+            .to_string()
+    };
+    if let Some(s) = seed {
+        if s.cube.uuid != selected.uuid || s.cube.network != selected.network {
+            return Err(mismatch_msg());
+        }
+    }
+    if let Some(d) = descriptor {
+        if d.cube.uuid != selected.uuid || d.cube.network != selected.network {
+            return Err(mismatch_msg());
+        }
+    }
+    Ok(())
+}
+
+/// Does `c` carry the specific encrypted half this restore flow
+/// needs? `has_recovery_kit` alone isn't enough — a cube can have
+/// a seed-only kit (mnemonic cube without a Vault when the backup
+/// was made) or a descriptor-only kit (passkey cube, or the
+/// descriptor half uploaded first). Routing a Full restore to a
+/// descriptor-only kit, or a DescriptorOnly restore to a seed-only
+/// kit, would decrypt successfully and then hit the post-decrypt
+/// `missing_half` guard — making the user enter their password
+/// only to be told the kit can't satisfy this flow. Gating at
+/// selection time catches it up front.
+fn has_required_half(scope: RestoreScope, c: &RestoreCubeCandidate) -> bool {
+    c.status.has_recovery_kit
+        && match scope {
+            RestoreScope::Full => c.status.has_encrypted_seed,
+            RestoreScope::DescriptorOnly => c.status.has_encrypted_wallet_descriptor,
+        }
 }
 
 /// Transition function called after `list_cubes` + per-cube status
@@ -269,29 +349,43 @@ fn map_restore_error(e: RestoreError) -> String {
 /// without standing up the whole installer step.
 ///
 /// Branches:
-/// - Exactly one cube with a kit → auto-select it (common restore path)
-/// - Exactly one cube **without** a kit → `Phase::Error` with a
-///   specific message; the picker's "no kit (disabled)" affordance
-///   doesn't help when there's only one row
+/// - Exactly one cube with the required half → auto-select it
+///   (common restore path)
+/// - Exactly one cube **without** the required half → `Phase::Error`
+///   with a specific message naming the missing half; the picker's
+///   disabled-row affordance doesn't help when there's only one row
 /// - Zero or 2+ cubes → `Phase::CubePicker` (the picker view already
-///   handles the empty-list and mixed-kit cases cleanly)
-fn phase_after_cubes_loaded(cubes: Vec<RestoreCubeCandidate>) -> Phase {
+///   handles the empty-list and mixed-kit cases cleanly, and the
+///   picker's per-row availability label narrates scope mismatches)
+fn phase_after_cubes_loaded(scope: RestoreScope, cubes: Vec<RestoreCubeCandidate>) -> Phase {
     if cubes.len() == 1 {
         // Can't `into_iter().next().unwrap()` inside the `if` guard
         // without moving; handle with `match` on length-1 form.
         let c = cubes.into_iter().next().expect("len == 1");
-        if c.status.has_recovery_kit {
+        if has_required_half(scope, &c) {
             Phase::PasswordEntry {
                 selected: c,
                 attempts: 0,
             }
         } else {
+            let (needed, hint) = match scope {
+                RestoreScope::Full => (
+                    "a Master Seed Phrase",
+                    "the kit was backed up without the seed half (passkey Cubes can't \
+                     include it), and Full restore needs it",
+                ),
+                RestoreScope::DescriptorOnly => (
+                    "a Wallet Descriptor",
+                    "the kit was backed up seed-only (the Cube had no Vault at backup \
+                     time)",
+                ),
+            };
             Phase::Error {
                 message: format!(
-                    "\"{}\" doesn't have a Recovery Kit backed up on Connect. Back up \
-                     the kit first from a device where the Cube is already installed, \
-                     then return here to restore.",
-                    c.name
+                    "\"{}\" doesn't have {} backed up on Connect — {}. Finish the \
+                     backup from a device where the Cube is already installed, then \
+                     return here to restore.",
+                    c.name, needed, hint,
                 ),
             }
         }
@@ -310,6 +404,63 @@ impl From<RecoveryKitRestoreStep> for Box<dyn Step> {
 }
 
 impl Step for RecoveryKitRestoreStep {
+    /// Pick up an already-authenticated Connect session from
+    /// `Context` the first time this step becomes active.
+    ///
+    /// Today the Recovery-Kit restore flow is typically launched from
+    /// a launcher row whose "remote cubes" list only exists because
+    /// the user already signed into Connect. That session lives on
+    /// the launcher's `ConnectAccountPanel` and gets forwarded into
+    /// the installer as `ctx.coincube_client`. Without this hook the
+    /// step would start at `Phase::Email` and ask the user to retype
+    /// their email + OTP for the same account — the "two sign-ins"
+    /// bug reported in the app.
+    ///
+    /// Guards:
+    ///   * Only triggers on the *initial* `Phase::Email` and when we
+    ///     haven't captured our own JWT yet (i.e. the user hasn't
+    ///     already completed the in-step auth form). That means a
+    ///     late `load_context` — e.g. after the user hit
+    ///     `RetryFromStart`, which re-enters `Phase::Email` on
+    ///     purpose — won't silently teleport them back into
+    ///     `LoadingCubes` with whatever stale client `ctx` still
+    ///     carries.
+    ///   * Requires `client.token().is_some()` because an
+    ///     unauthenticated `CoincubeClient` is useless for
+    ///     `list_cubes` and would just surface as a 401 further down.
+    fn load_context(&mut self, ctx: &Context) {
+        if !matches!(self.phase, Phase::Email) || self.jwt.is_some() {
+            return;
+        }
+        let Some(client) = &ctx.coincube_client else {
+            return;
+        };
+        let Some(token) = client.token() else {
+            return;
+        };
+        // Clone the client (not just the token) so we inherit whatever
+        // base URL / HTTP plumbing the launcher has already configured.
+        // Stash the JWT in `Zeroizing` so it gets scrubbed from the
+        // heap when the step drops — matches the handling of tokens
+        // captured via the in-step OTP path.
+        self.client = client.clone();
+        self.jwt = Some(Zeroizing::new(token.to_string()));
+        self.set_phase(Phase::LoadingCubes);
+    }
+
+    /// Kick off the cube-list fetch as soon as we've been promoted
+    /// into `Phase::LoadingCubes` by `load_context`. Without this the
+    /// UI would sit on a loading spinner indefinitely — the step
+    /// machine otherwise relies on user-driven messages to fire tasks
+    /// (OTP submit etc.), which this pre-authed path skips entirely.
+    fn load(&self) -> Task<Message> {
+        if matches!(self.phase, Phase::LoadingCubes) {
+            self.list_cubes_task()
+        } else {
+            Task::none()
+        }
+    }
+
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         let Message::RecoveryKitRestore(msg) = message else {
             return Task::none();
@@ -376,7 +527,7 @@ impl Step for RecoveryKitRestoreStep {
             }
             RecoveryKitRestoreMsg::CubesLoaded(res) => {
                 match res {
-                    Ok(cubes) => self.set_phase(phase_after_cubes_loaded(cubes)),
+                    Ok(cubes) => self.set_phase(phase_after_cubes_loaded(self.scope, cubes)),
                     Err(e) => {
                         self.set_phase(Phase::Error {
                             message: format!("Couldn't load cubes: {}", e),
@@ -387,7 +538,16 @@ impl Step for RecoveryKitRestoreStep {
             }
             RecoveryKitRestoreMsg::SelectCube(id) => {
                 if let Phase::CubePicker { cubes, .. } = &self.phase {
-                    if let Some(c) = cubes.iter().find(|c| c.id == id).cloned() {
+                    // Re-check `has_required_half` in case the view's
+                    // disabled-row rendering ever falls out of sync
+                    // with the state-machine gate. Defensive — the
+                    // picker's `on_press` is gated on the same
+                    // predicate.
+                    if let Some(c) = cubes
+                        .iter()
+                        .find(|c| c.id == id && has_required_half(self.scope, c))
+                        .cloned()
+                    {
                         self.set_phase(Phase::PasswordEntry {
                             selected: c,
                             attempts: 0,
@@ -452,6 +612,24 @@ impl Step for RecoveryKitRestoreStep {
                             });
                             return Task::none();
                         }
+                        // Cross-check the decrypted blob(s) against the
+                        // cube the user picked: the blob carries its
+                        // own `cube.uuid` + `cube.network` in plaintext,
+                        // and either mismatching those would mean we're
+                        // about to restore data belonging to a different
+                        // Cube/network. AES-GCM authentication already
+                        // ruled out tampering of *our* blob, but a
+                        // backend routing bug (wrong kit served for a
+                        // cube id) could still ship us the wrong payload;
+                        // the defensive identity check costs ~nothing.
+                        if let Err(msg) = validate_blobs_match_selected(
+                            seed.as_ref(),
+                            descriptor.as_ref(),
+                            &selected,
+                        ) {
+                            self.set_phase(Phase::Error { message: msg });
+                            return Task::none();
+                        }
                         self.set_phase(Phase::Ready {
                             selected,
                             seed,
@@ -463,13 +641,17 @@ impl Step for RecoveryKitRestoreStep {
                         Task::done(Message::Next)
                     }
                     Err(e) => {
-                        // Wrong password / corrupt envelope — keep the
-                        // user on PasswordEntry with an inline banner.
-                        self.set_phase(Phase::PasswordEntry {
-                            selected,
-                            attempts: 1, // TODO wire backoff counter
-                        });
-                        self.error = Some(e);
+                        if is_retryable_on_password_screen(&e) {
+                            self.set_phase(Phase::PasswordEntry {
+                                selected,
+                                attempts: 1, // TODO wire backoff counter
+                            });
+                            self.error = Some(e.to_string());
+                        } else {
+                            self.set_phase(Phase::Error {
+                                message: e.to_string(),
+                            });
+                        }
                         Task::none()
                     }
                 }
@@ -517,15 +699,17 @@ impl Step for RecoveryKitRestoreStep {
             return false;
         };
 
-        // Apply the descriptor blob. The blob carries the full
-        // descriptor string including inline xpubs, so parsing it
-        // rebuilds a live `CoincubeDescriptor` without needing the
-        // signer set yet.
-        if let Some(desc_blob) = descriptor {
-            match desc_blob.vault.descriptor.parse::<CoincubeDescriptor>() {
-                Ok(parsed) => {
-                    ctx.descriptor = Some(parsed);
-                }
+        // Stage 1 — parse the descriptor into a local. If this fails
+        // we transition to `Phase::Error` and bail without touching
+        // `ctx`. Keeping the parse result in a local instead of
+        // writing it straight through to `ctx.descriptor` means a
+        // subsequent seed-derivation failure won't leave a partially-
+        // applied context behind, which would survive until the user
+        // re-enters the step and could be picked up by a downstream
+        // step that wasn't expecting a populated `ctx.descriptor`.
+        let staged_descriptor: Option<CoincubeDescriptor> = match descriptor {
+            Some(desc_blob) => match desc_blob.vault.descriptor.parse::<CoincubeDescriptor>() {
+                Ok(parsed) => Some(parsed),
                 Err(e) => {
                     self.set_phase(Phase::Error {
                         message: format!(
@@ -536,13 +720,13 @@ impl Step for RecoveryKitRestoreStep {
                     });
                     return false;
                 }
-            }
-        }
+            },
+            None => None,
+        };
 
-        // Apply the seed blob (W13 only). We install the mnemonic into
-        // a fresh `MasterSigner` and stash it on the context the same
-        // way `RecoverMnemonic::apply` does for a typed-in mnemonic.
-        if matches!(self.scope, RestoreScope::Full) {
+        // Stage 2 — derive the seed signer into a local (W13 only).
+        // Same all-or-nothing discipline as stage 1.
+        let staged_signer: Option<Signer> = if matches!(self.scope, RestoreScope::Full) {
             let Some(seed_blob) = seed else {
                 // `Ready` phase should have had the seed already —
                 // defensive check in case the phase was populated
@@ -553,10 +737,7 @@ impl Step for RecoveryKitRestoreStep {
                 return false;
             };
             match MasterSigner::from_str(ctx.bitcoin_config.network, &seed_blob.mnemonic.phrase) {
-                Ok(master) => {
-                    let signer = Signer::new(master);
-                    ctx.recovered_signer = Some(Arc::new(signer));
-                }
+                Ok(master) => Some(Signer::new(master)),
                 Err(e) => {
                     self.set_phase(Phase::Error {
                         message: format!("Restored mnemonic failed to derive a signer: {}", e),
@@ -564,6 +745,37 @@ impl Step for RecoveryKitRestoreStep {
                     return false;
                 }
             }
+        } else {
+            None
+        };
+
+        // Stage 3 — commit both results atomically. We only reach
+        // here after every fallible step above succeeded, so `ctx`
+        // transitions from "nothing applied" to "fully applied" in
+        // one go. `Arc::new` happens here rather than at staging so
+        // we don't allocate the refcounted handle for a signer that
+        // ultimately gets dropped on the error path.
+        if let Some(d) = staged_descriptor {
+            ctx.descriptor = Some(d);
+        }
+        if let Some(s) = staged_signer {
+            ctx.recovered_signer = Some(Arc::new(s));
+        }
+
+        // Thread the JWT we captured during the OTP step into the
+        // context so the downstream `CoincubeConnectStep` can skip
+        // re-authentication. Without this, the user has to type their
+        // email + OTP a second time — same account, same session —
+        // which is both confusing and a soft footgun (users can
+        // accidentally auth as a different account and register the
+        // restored Cube under the wrong Connect user).
+        //
+        // JWT is only present when we went through the successful
+        // `Phase::Ready` path above; the `skipped` branch short-circuits
+        // before reaching here so we never push a stale/empty JWT.
+        if let Some(jwt) = &self.jwt {
+            ctx.connect_jwt = Some(jwt.to_string());
+            ctx.use_coincube_connect = true;
         }
 
         true
@@ -579,6 +791,14 @@ impl Step for RecoveryKitRestoreStep {
         // later step through this one, keeping a stale descriptor would
         // leak into a subsequent decision.
         ctx.descriptor = None;
+        // Also drop the Connect auth bits we pushed in `apply`.
+        // `CoincubeConnectStep` skips itself when `connect_jwt` is
+        // `Some`, so failing to clear here would "teleport" the user
+        // past the auth step on a subsequent forward pass with a stale
+        // token. Clearing is harmless when this step never populated
+        // them (idempotent).
+        ctx.connect_jwt = None;
+        ctx.use_coincube_connect = false;
     }
 
     fn view<'a>(
@@ -640,6 +860,27 @@ mod tests {
         }
     }
 
+    /// Fine-grained variant of `candidate` that lets tests control
+    /// each half independently — needed to exercise the scope-aware
+    /// gating where `has_recovery_kit` is true but only one half is
+    /// present.
+    fn candidate_halves(name: &str, has_seed: bool, has_descriptor: bool) -> RestoreCubeCandidate {
+        RestoreCubeCandidate {
+            id: 1,
+            uuid: "uuid".to_string(),
+            name: name.to_string(),
+            network: "mainnet".to_string(),
+            status: RecoveryKitStatus {
+                has_recovery_kit: has_seed || has_descriptor,
+                has_encrypted_seed: has_seed,
+                has_encrypted_wallet_descriptor: has_descriptor,
+                encryption_scheme: "aes-256-gcm".to_string(),
+                created_at: None,
+                updated_at: None,
+            },
+        }
+    }
+
     // Regression tests for the auto-select-skips-kit-check bug. Before
     // this fix, a single cube without a kit would land the user on
     // the password screen, which would then 404 at decrypt time —
@@ -647,7 +888,7 @@ mod tests {
 
     #[test]
     fn single_cube_with_kit_auto_advances_to_password() {
-        let phase = phase_after_cubes_loaded(vec![candidate("My Cube", true)]);
+        let phase = phase_after_cubes_loaded(RestoreScope::Full, vec![candidate("My Cube", true)]);
         match phase {
             Phase::PasswordEntry { selected, attempts } => {
                 assert_eq!(selected.name, "My Cube");
@@ -659,7 +900,7 @@ mod tests {
 
     #[test]
     fn single_cube_without_kit_surfaces_error_not_password_screen() {
-        let phase = phase_after_cubes_loaded(vec![candidate("My Cube", false)]);
+        let phase = phase_after_cubes_loaded(RestoreScope::Full, vec![candidate("My Cube", false)]);
         match phase {
             Phase::Error { message } => {
                 assert!(
@@ -668,7 +909,7 @@ mod tests {
                     message
                 );
                 assert!(
-                    message.contains("doesn't have a Recovery Kit"),
+                    message.contains("doesn't have"),
                     "error message should explain the cause, got: {}",
                     message
                 );
@@ -677,13 +918,231 @@ mod tests {
         }
     }
 
+    // Regression tests for the scope-aware half-gating: a kit that
+    // exists but lacks the required half must NOT advance to the
+    // password screen. Without this gate, a Full-scope restore
+    // against a descriptor-only kit (or DescriptorOnly against a
+    // seed-only kit) would silently decrypt, land on `Ready`, and
+    // only then hit the post-decrypt `missing_half` error — making
+    // the user re-enter their password for nothing.
+
+    #[test]
+    fn full_scope_on_descriptor_only_kit_routes_to_error() {
+        // Kit has descriptor but not seed; Full restore needs seed.
+        let phase = phase_after_cubes_loaded(
+            RestoreScope::Full,
+            vec![candidate_halves("Passkey Cube", false, true)],
+        );
+        match phase {
+            Phase::Error { message } => {
+                assert!(message.contains("Passkey Cube"));
+                assert!(
+                    message.contains("Master Seed"),
+                    "error should name the missing half (seed): {}",
+                    message
+                );
+            }
+            other => panic!("expected Error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn descriptor_only_scope_on_seed_only_kit_routes_to_error() {
+        // Kit has seed but no descriptor; DescriptorOnly needs descriptor.
+        let phase = phase_after_cubes_loaded(
+            RestoreScope::DescriptorOnly,
+            vec![candidate_halves("No-Vault Cube", true, false)],
+        );
+        match phase {
+            Phase::Error { message } => {
+                assert!(message.contains("No-Vault Cube"));
+                assert!(
+                    message.contains("Wallet Descriptor"),
+                    "error should name the missing half (descriptor): {}",
+                    message
+                );
+            }
+            other => panic!("expected Error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn has_required_half_matches_scope() {
+        let seed_only = candidate_halves("s", true, false);
+        let desc_only = candidate_halves("d", false, true);
+        let both = candidate_halves("b", true, true);
+        let none = candidate_halves("n", false, false);
+
+        assert!(has_required_half(RestoreScope::Full, &seed_only));
+        assert!(!has_required_half(RestoreScope::Full, &desc_only));
+        assert!(has_required_half(RestoreScope::Full, &both));
+        assert!(!has_required_half(RestoreScope::Full, &none));
+
+        assert!(!has_required_half(RestoreScope::DescriptorOnly, &seed_only));
+        assert!(has_required_half(RestoreScope::DescriptorOnly, &desc_only));
+        assert!(has_required_half(RestoreScope::DescriptorOnly, &both));
+        assert!(!has_required_half(RestoreScope::DescriptorOnly, &none));
+    }
+
+    // Regression tests for the decrypt-error branching: the
+    // handler must route `BadPasswordOrCorrupt` back to the
+    // password screen (retryable) but every other variant to
+    // `Phase::Error` (terminal for this attempt). Before this
+    // fix the handler stringified all errors and treated them
+    // uniformly as "keep the user on PasswordEntry", which made
+    // rate limits / NotFound / BlobParse read as wrong-password
+    // errors that retyping couldn't fix.
+
+    #[test]
+    fn bad_password_is_retryable_on_password_screen() {
+        assert!(is_retryable_on_password_screen(
+            &RestoreError::BadPasswordOrCorrupt
+        ));
+    }
+
+    #[test]
+    fn rate_limited_is_not_retryable_on_password_screen() {
+        assert!(!is_retryable_on_password_screen(
+            &RestoreError::RateLimited {
+                retry_after: std::time::Duration::from_secs(30)
+            }
+        ));
+    }
+
+    #[test]
+    fn not_found_is_not_retryable_on_password_screen() {
+        assert!(!is_retryable_on_password_screen(&RestoreError::NotFound));
+    }
+
+    #[test]
+    fn api_error_is_not_retryable_on_password_screen() {
+        assert!(!is_retryable_on_password_screen(&RestoreError::Api(
+            "5xx".to_string()
+        )));
+    }
+
+    #[test]
+    fn blob_parse_is_not_retryable_on_password_screen() {
+        assert!(!is_retryable_on_password_screen(&RestoreError::BlobParse(
+            "future version".to_string()
+        )));
+    }
+
+    #[test]
+    fn half_missing_is_not_retryable_on_password_screen() {
+        // HalfMissing gets its own dedicated pre-check elsewhere
+        // (the `missing_half` guard) so it shouldn't normally reach
+        // this branch; pinning the non-retryable classification
+        // here guards against a future refactor that collapses the
+        // two sites.
+        assert!(!is_retryable_on_password_screen(&RestoreError::HalfMissing));
+    }
+
+    // Regression tests for the cube-identity cross-check performed
+    // after decrypt. The blob plaintext carries `cube.uuid` +
+    // `cube.network`; if those disagree with the cube the user
+    // picked, we refuse to restore — this catches backend
+    // misrouting and any future class of "wrong kit served for
+    // this cube id" bugs before on-disk state gets corrupted.
+
+    fn seed_blob_for(uuid: &str, network: &str) -> crate::services::recovery::SeedBlob {
+        use crate::services::recovery::{
+            plaintext::BLOB_VERSION, SeedBlob, SeedBlobCube, SeedBlobMnemonic,
+        };
+        SeedBlob {
+            version: BLOB_VERSION,
+            cube: SeedBlobCube {
+                uuid: uuid.to_string(),
+                name: "name".to_string(),
+                network: network.to_string(),
+                created_at: "2026-04-23T00:00:00Z".to_string(),
+                lightning_address: None,
+            },
+            mnemonic: SeedBlobMnemonic {
+                phrase: "word ".repeat(12).trim().to_string(),
+                language: "en".to_string(),
+            },
+        }
+    }
+
+    fn descriptor_blob_for(uuid: &str, network: &str) -> crate::services::recovery::DescriptorBlob {
+        use crate::services::recovery::{
+            plaintext::BLOB_VERSION, DescriptorBlob, DescriptorBlobCube, DescriptorBlobVault,
+        };
+        DescriptorBlob {
+            version: BLOB_VERSION,
+            cube: DescriptorBlobCube {
+                uuid: uuid.to_string(),
+                network: network.to_string(),
+            },
+            vault: DescriptorBlobVault {
+                name: "v".into(),
+                descriptor: "d".into(),
+                change_descriptor: None,
+                signers: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn validate_passes_when_both_blobs_match_selected() {
+        let sel = candidate("My Cube", true);
+        let s = seed_blob_for(&sel.uuid, &sel.network);
+        let d = descriptor_blob_for(&sel.uuid, &sel.network);
+        assert!(validate_blobs_match_selected(Some(&s), Some(&d), &sel).is_ok());
+    }
+
+    #[test]
+    fn validate_passes_when_only_one_blob_present_and_matches() {
+        let sel = candidate("My Cube", true);
+        let d = descriptor_blob_for(&sel.uuid, &sel.network);
+        assert!(validate_blobs_match_selected(None, Some(&d), &sel).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_seed_blob_with_wrong_uuid() {
+        let sel = candidate("My Cube", true);
+        let s = seed_blob_for("some-other-uuid", &sel.network);
+        let err = validate_blobs_match_selected(Some(&s), None, &sel)
+            .expect_err("expected mismatch error");
+        assert!(err.contains("different Cube"), "got: {}", err);
+    }
+
+    #[test]
+    fn validate_rejects_descriptor_blob_with_wrong_network() {
+        let sel = candidate("My Cube", true);
+        // selected is "mainnet"; blob is on testnet — legitimate
+        // cross-cube mixup we must refuse (e.g. the cube-picker
+        // filter failed upstream, or backend misrouted).
+        let d = descriptor_blob_for(&sel.uuid, "testnet");
+        assert!(validate_blobs_match_selected(None, Some(&d), &sel).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_when_either_blob_mismatches() {
+        let sel = candidate("My Cube", true);
+        // Seed matches but descriptor doesn't — still a reject.
+        let s = seed_blob_for(&sel.uuid, &sel.network);
+        let d = descriptor_blob_for("different-uuid", &sel.network);
+        assert!(validate_blobs_match_selected(Some(&s), Some(&d), &sel).is_err());
+    }
+
+    #[test]
+    fn validate_passes_when_both_blobs_absent() {
+        // Trivial case — no blobs to mismatch against.
+        let sel = candidate("My Cube", true);
+        assert!(validate_blobs_match_selected(None, None, &sel).is_ok());
+    }
+
     #[test]
     fn multiple_cubes_route_to_picker_regardless_of_kit_status() {
         // The picker view itself disables no-kit rows; we hand the
         // whole list through so the user can see context (e.g.
         // "that one's the one without a kit").
-        let phase =
-            phase_after_cubes_loaded(vec![candidate("Alice", true), candidate("Bob", false)]);
+        let phase = phase_after_cubes_loaded(
+            RestoreScope::Full,
+            vec![candidate("Alice", true), candidate("Bob", false)],
+        );
         match phase {
             Phase::CubePicker { cubes, selected } => {
                 assert_eq!(cubes.len(), 2);
@@ -698,7 +1157,7 @@ mod tests {
         // Empty picker is the right surface — the picker view
         // renders "No Cubes found on this Connect account..." which
         // is more actionable than a generic error.
-        let phase = phase_after_cubes_loaded(vec![]);
+        let phase = phase_after_cubes_loaded(RestoreScope::Full, vec![]);
         match phase {
             Phase::CubePicker { cubes, .. } => assert!(cubes.is_empty()),
             other => panic!("expected CubePicker, got {:?}", other),

@@ -6,6 +6,7 @@ mod coincube_connect;
 mod mnemonic;
 pub(crate) mod node;
 pub mod recovery_kit_restore;
+pub mod restore_pin_setup;
 mod share_xpubs;
 mod wallet_alias;
 
@@ -26,6 +27,7 @@ pub use backend::{ChooseBackend, ImportRemoteWallet, RemoteBackendLogin};
 pub use coincube_connect::CoincubeConnectStep;
 pub use mnemonic::{BackupMnemonic, RecoverMnemonic};
 pub use recovery_kit_restore::{RecoveryKitRestoreStep, RestoreScope};
+pub use restore_pin_setup::RestorePinSetupStep;
 pub use share_xpubs::ShareXpubs;
 use tracing::warn;
 pub use wallet_alias::WalletAlias;

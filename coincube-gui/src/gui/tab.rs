@@ -172,7 +172,7 @@ impl Tab {
         use crate::app::settings::global::GlobalSettings;
         let result = match (&mut self.state, message) {
             (State::Launcher(l), Message::Launch(msg)) => match msg {
-                launcher::Message::Install(datadir, network, init) => {
+                launcher::Message::Install(datadir, network, init, coincube_client) => {
                     if !datadir.exists() {
                         // datadir is created right before launching the installer
                         // so logs can go in <datadir_path>/installer.log
@@ -185,9 +185,23 @@ impl Tab {
                             );
                         }
                     }
+                    // `coincube_client` is populated when the launcher
+                    // already holds an authenticated Connect session (today
+                    // the Recovery-Kit restore path forwards it so the
+                    // installer step can skip a redundant email+OTP). Other
+                    // launcher entry points pass `None` and the relevant
+                    // installer step runs its own auth form as before.
                     let (install, command) = Installer::new(
-                        datadir, network, None, init, false, None, None, None, false,
-                        None, // No coincube_client from launcher
+                        datadir,
+                        network,
+                        None,
+                        init,
+                        false,
+                        None,
+                        None,
+                        None,
+                        false,
+                        coincube_client,
                     );
                     self.state = State::Installer(install);
                     command.map(Message::Install)
@@ -325,16 +339,91 @@ impl Tab {
             },
             (State::Installer(i), Message::Install(msg)) => {
                 if let installer::Message::Exit(settings, internal_bitcoind) = msg {
-                    // Associate wallet with cube
+                    // Associate wallet with cube, and — for the Recovery
+                    // Kit restore flow specifically — build the
+                    // BreezClient in the same async task so the loader
+                    // doesn't hit the "missing pre-loaded BreezClient"
+                    // error path and hang on "Starting daemon…".
                     let network_dir = i.datadir.network_directory(i.network);
+                    let datadir = i.datadir.clone();
                     let wallet_id = settings.wallet_id();
                     let wallet_alias = settings.alias.clone();
                     let network = i.network;
 
+                    // Capture restore-flow state up-front. Cloning the
+                    // `Zeroizing<String>` here means the PIN copy
+                    // carried into the Task is its own heap-zeroing
+                    // value — it's dropped (and zeroed) once the task
+                    // completes.
+                    let restore_seed = match (
+                        i.context.restore_pin.clone(),
+                        i.context.recovered_signer.as_ref().map(|s| s.fingerprint()),
+                    ) {
+                        (Some(pin), Some(fp)) => Some(RestoreCubeSeed {
+                            pin,
+                            master_signer_fingerprint: fp,
+                        }),
+                        _ => None,
+                    };
+
                     Task::perform(
                         async move {
-                            find_or_create_cube(&network_dir, &wallet_id, &wallet_alias, network)
+                            let cube = find_or_create_cube(
+                                &network_dir,
+                                &wallet_id,
+                                &wallet_alias,
+                                network,
+                                restore_seed.as_ref(),
+                            )
+                            .await?;
+
+                            // Only the restore path needs to build a
+                            // BreezClient up-front — fresh-install +
+                            // remote-backend flows build it at PIN
+                            // entry / login. Also gate on the network
+                            // actually being supported; `load_breez_client`
+                            // returns `NetworkNotSupported` on
+                            // testnet/signet which we want to treat as
+                            // a legit "no client" rather than a hard
+                            // error.
+                            let breez_client = if let Some(seed) = &restore_seed {
+                                match breez_liquid::load_breez_client(
+                                    datadir.path(),
+                                    network,
+                                    seed.master_signer_fingerprint,
+                                    seed.pin.as_str(),
+                                )
                                 .await
+                                {
+                                    Ok(c) => Some(c),
+                                    Err(breez_liquid::BreezError::NetworkNotSupported(n)) => {
+                                        info!(
+                                            "BreezClient not loaded for restored Cube: \
+                                             network {} is not supported by Breez SDK",
+                                            n
+                                        );
+                                        None
+                                    }
+                                    Err(e) => {
+                                        // A non-network failure here
+                                        // means the mnemonic is on disk
+                                        // but we can't decrypt/connect.
+                                        // Roll the whole post-install
+                                        // into an error so the user
+                                        // sees something actionable
+                                        // rather than silently landing
+                                        // on a broken Loader.
+                                        return Err(format!(
+                                            "Failed to load BreezClient after restore: {}",
+                                            e
+                                        ));
+                                    }
+                                }
+                            } else {
+                                None
+                            };
+
+                            Ok((cube, breez_client))
                         },
                         move |result| {
                             Message::Install(installer::Message::CubeSaved(
@@ -348,8 +437,8 @@ impl Tab {
                     msg
                 {
                     // Handle cube save failure
-                    let cube = match result {
-                        Ok(c) => c,
+                    let (cube, restored_breez_client) = match result {
+                        Ok(pair) => pair,
                         Err(err) => {
                             error!("Aborting loader transition due to cube save failure");
                             return i
@@ -363,7 +452,10 @@ impl Tab {
                             i.datadir.clone(),
                             i.network,
                             *settings,
-                            i.breez_client.clone(),
+                            // Prefer the just-loaded BreezClient from
+                            // the restore path; fall back to whatever
+                            // the installer was launched with.
+                            restored_breez_client.or_else(|| i.breez_client.clone()),
                         );
                         self.state = State::Login(login);
                         command.map(Message::Login)
@@ -384,7 +476,11 @@ impl Tab {
                             i.context.backup.clone(),
                             Some(*settings),
                             cube.clone(),
-                            i.breez_client.clone(), // Pass pre-loaded BreezClient from installer
+                            // Same preference chain as the Login arm —
+                            // the restored BreezClient (built against
+                            // the user's new PIN) wins over the
+                            // installer-launched one.
+                            restored_breez_client.or_else(|| i.breez_client.clone()),
                             None, // Installer path doesn't plumb Spark yet — follow-up
                         );
                         self.state = State::Loader(loader);
@@ -955,15 +1051,45 @@ async fn save_cube_settings(
     }
 }
 
+/// Bundle of restore-flow context that lets `find_or_create_cube`
+/// mint a `CubeSettings` with the same shape a fresh-install Cube
+/// produces: a PIN hash + master-signer fingerprint. Populated only
+/// for `UserFlow::RestoreFromRecoveryKit` after `RestorePinSetupStep`;
+/// `None` for every other flow preserves the previous behaviour.
+struct RestoreCubeSeed {
+    pin: zeroize::Zeroizing<String>,
+    master_signer_fingerprint: bitcoin::bip32::Fingerprint,
+}
+
 async fn find_or_create_cube(
     network_dir: &NetworkDirectory,
     wallet_id: &WalletId,
     wallet_alias: &Option<String>,
     network: bitcoin::Network,
+    restore_seed: Option<&RestoreCubeSeed>,
 ) -> Result<app::settings::CubeSettings, String> {
+    // Helper: decorate a freshly-minted CubeSettings with
+    // PIN + master-signer-fingerprint when we're on the restore path.
+    // Pulled out so the three "new cube" branches share one code path.
+    let decorate_new =
+        |mut cube: app::settings::CubeSettings| -> Result<app::settings::CubeSettings, String> {
+            if let Some(seed) = restore_seed {
+                cube = cube.with_master_signer(seed.master_signer_fingerprint);
+                cube = cube
+                    .with_pin(seed.pin.as_str())
+                    .map_err(|e| format!("Failed to set PIN on restored cube: {}", e))?;
+            }
+            Ok(cube)
+        };
+
     match app::settings::Settings::from_file(network_dir) {
         Ok(mut settings_data) => {
-            // First, check if a cube already has this wallet
+            // First, check if a cube already has this wallet.
+            // We don't decorate existing cubes with the restore PIN —
+            // if the cube already has a PIN hash / fingerprint those
+            // are its source of truth. The restore flow only overwrites
+            // Cube-level credentials when we're actually minting a new
+            // Cube for the restored wallet.
             if let Some(existing_cube) = settings_data
                 .cubes
                 .iter()
@@ -972,14 +1098,35 @@ async fn find_or_create_cube(
                 return Ok(existing_cube.clone());
             }
 
-            // Second, find a cube without a vault and associate this wallet with it
-            if let Some(empty_cube) = settings_data
+            // Second, find a cube without a vault and associate this wallet with it.
+            // Find by index so we can overwrite with a decorated clone without
+            // fighting the borrow checker over a mutable reference that would
+            // otherwise need `mem::take` (and `CubeSettings` doesn't implement
+            // `Default`).
+            if let Some(empty_idx) = settings_data
                 .cubes
-                .iter_mut()
-                .find(|c| c.vault_wallet_id.is_none())
+                .iter()
+                .position(|c| c.vault_wallet_id.is_none())
             {
+                let mut empty_cube = settings_data.cubes[empty_idx].clone();
                 empty_cube.vault_wallet_id = Some(wallet_id.clone());
-                let cube_clone = empty_cube.clone();
+                if let Some(seed) = restore_seed {
+                    empty_cube.master_signer_fingerprint = Some(seed.master_signer_fingerprint);
+                    // `with_pin` is the sanctioned path for setting
+                    // the Argon2id hash; go through it even when the
+                    // Cube already exists so the restored Cube has a
+                    // usable PIN hash. If the Cube had its own
+                    // `security_pin_hash`, this replaces it with one
+                    // derived from the PIN the user just chose —
+                    // consistent with the newly-encrypted mnemonic on
+                    // disk (otherwise PIN entry against the old hash
+                    // would silently succeed but fail to decrypt the
+                    // mnemonic).
+                    empty_cube = empty_cube
+                        .with_pin(seed.pin.as_str())
+                        .map_err(|e| format!("Failed to set PIN on restored cube: {}", e))?;
+                }
+                settings_data.cubes[empty_idx] = empty_cube.clone();
                 let cube_name = empty_cube.name.clone();
 
                 info!(
@@ -987,17 +1134,19 @@ async fn find_or_create_cube(
                     wallet_id, cube_name, network
                 );
 
-                return save_cube_settings(network_dir, cube_clone, network, settings_data).await;
+                return save_cube_settings(network_dir, empty_cube, network, settings_data).await;
             }
 
             // Third, create a new cube for this wallet
-            let cube = app::settings::CubeSettings::new(
-                wallet_alias
-                    .clone()
-                    .unwrap_or_else(|| format!("My {} Cube", network)),
-                network,
-            )
-            .with_vault(wallet_id.clone());
+            let cube = decorate_new(
+                app::settings::CubeSettings::new(
+                    wallet_alias
+                        .clone()
+                        .unwrap_or_else(|| format!("My {} Cube", network)),
+                    network,
+                )
+                .with_vault(wallet_id.clone()),
+            )?;
             let cube_name = cube.name.clone();
 
             info!(
@@ -1010,13 +1159,15 @@ async fn find_or_create_cube(
         }
         Err(_) => {
             // No settings file yet, create first cube
-            let cube = app::settings::CubeSettings::new(
-                wallet_alias
-                    .clone()
-                    .unwrap_or_else(|| format!("My {} Cube", network)),
-                network,
-            )
-            .with_vault(wallet_id.clone());
+            let cube = decorate_new(
+                app::settings::CubeSettings::new(
+                    wallet_alias
+                        .clone()
+                        .unwrap_or_else(|| format!("My {} Cube", network)),
+                    network,
+                )
+                .with_vault(wallet_id.clone()),
+            )?;
             let cube_name = cube.name.clone();
 
             info!(

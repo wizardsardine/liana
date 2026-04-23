@@ -21,14 +21,37 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// is safe.
 pub const BLOB_VERSION: u8 = 1;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+/// `Debug` is implemented manually — the derived version would
+/// recursively print `cube` and `mnemonic`, exposing PII (cube
+/// name, UUID, Lightning address) and the mnemonic phrase through
+/// any `{:?}` site. Keep the manual impl in sync with the struct
+/// fields.
+#[derive(Serialize, Deserialize, Clone)]
 pub struct SeedBlob {
     pub version: u8,
     pub cube: SeedBlobCube,
     pub mnemonic: SeedBlobMnemonic,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+impl std::fmt::Debug for SeedBlob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Preserve `version` — it's non-sensitive and useful when
+        // diagnosing a version-mismatch rejection. Delegate the
+        // other two fields to their own redacting Debug impls.
+        f.debug_struct("SeedBlob")
+            .field("version", &self.version)
+            .field("cube", &self.cube)
+            .field("mnemonic", &self.mnemonic)
+            .finish()
+    }
+}
+
+/// Cube-scoped metadata on `SeedBlob`. `Debug` is manual to avoid
+/// leaking the UUID (cube identifier), user-chosen `name`, and
+/// `lightning_address` (directly identifying) via any `{:?}` site.
+/// Non-sensitive fields (`network`, `created_at`) stay visible
+/// because they're useful diagnostic context.
+#[derive(Serialize, Deserialize, Clone)]
 pub struct SeedBlobCube {
     pub uuid: String,
     pub name: String,
@@ -38,6 +61,21 @@ pub struct SeedBlobCube {
     pub created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lightning_address: Option<String>,
+}
+
+impl std::fmt::Debug for SeedBlobCube {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SeedBlobCube")
+            .field("uuid", &"<redacted>")
+            .field("name", &"<redacted>")
+            .field("network", &self.network)
+            .field("created_at", &self.created_at)
+            .field(
+                "lightning_address",
+                &self.lightning_address.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 /// Wraps the mnemonic phrase in its own struct with `ZeroizeOnDrop` so
@@ -67,20 +105,49 @@ impl std::fmt::Debug for SeedBlobMnemonic {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+/// Top-level descriptor blob. Manual `Debug` so the recursive
+/// formatters never print the raw descriptor string or xpubs. The
+/// `version` field is preserved — useful for diagnosing a
+/// version-mismatch rejection.
+#[derive(Serialize, Deserialize, Clone)]
 pub struct DescriptorBlob {
     pub version: u8,
     pub cube: DescriptorBlobCube,
     pub vault: DescriptorBlobVault,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+impl std::fmt::Debug for DescriptorBlob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DescriptorBlob")
+            .field("version", &self.version)
+            .field("cube", &self.cube)
+            .field("vault", &self.vault)
+            .finish()
+    }
+}
+
+/// Cube-scoped metadata on `DescriptorBlob`. Manual `Debug` redacts
+/// the UUID; `network` stays visible (non-sensitive).
+#[derive(Serialize, Deserialize, Clone)]
 pub struct DescriptorBlobCube {
     pub uuid: String,
     pub network: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+impl std::fmt::Debug for DescriptorBlobCube {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DescriptorBlobCube")
+            .field("uuid", &"<redacted>")
+            .field("network", &self.network)
+            .finish()
+    }
+}
+
+/// Wallet contents. Manual `Debug` redacts the descriptor (which
+/// contains xpubs inline), the change descriptor, and the vault
+/// `name`. Exposes the signer count so a `{:?}` dump still conveys
+/// "this is a 2-of-3 with two signers" at a glance for diagnostics.
+#[derive(Serialize, Deserialize, Clone)]
 pub struct DescriptorBlobVault {
     pub name: String,
     pub descriptor: String,
@@ -89,12 +156,42 @@ pub struct DescriptorBlobVault {
     pub signers: Vec<DescriptorBlobSigner>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+impl std::fmt::Debug for DescriptorBlobVault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DescriptorBlobVault")
+            .field("name", &"<redacted>")
+            .field("descriptor", &"<redacted>")
+            .field(
+                "change_descriptor",
+                &self.change_descriptor.as_ref().map(|_| "<redacted>"),
+            )
+            .field("signers", &self.signers) // delegates to redacting impl
+            .finish()
+    }
+}
+
+/// Per-signer metadata. Manual `Debug` redacts the user-chosen `name`
+/// and the `xpub` (extended public key — watch-only spend access to
+/// every historical and future address). The `fingerprint` stays
+/// visible: it's a 4-byte hash of the xpub, commonly shown in UIs
+/// (hardware wallet displays, descriptor listings) and useful for
+/// identifying which signer a log line refers to.
+#[derive(Serialize, Deserialize, Clone)]
 pub struct DescriptorBlobSigner {
     pub name: String,
     /// Lowercase hex, no `0x` prefix, 8 chars — master key fingerprint.
     pub fingerprint: String,
     pub xpub: String,
+}
+
+impl std::fmt::Debug for DescriptorBlobSigner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DescriptorBlobSigner")
+            .field("name", &"<redacted>")
+            .field("fingerprint", &self.fingerprint)
+            .field("xpub", &"<redacted>")
+            .finish()
+    }
 }
 
 #[cfg(test)]
@@ -153,6 +250,150 @@ mod tests {
             "SeedBlob Debug leaked the phrase: {}",
             rendered,
         );
+    }
+
+    // Regression tests for the PII / wallet-privacy redaction in
+    // `SeedBlobCube` / `DescriptorBlob*`. Each uses a canary value
+    // that shouldn't appear in Debug output; the redacting impls
+    // preserve non-sensitive metadata (network, version, signer
+    // fingerprint) for diagnostic value.
+
+    #[test]
+    fn seed_blob_cube_debug_redacts_uuid_name_lightning() {
+        let cube = SeedBlobCube {
+            uuid: "uuid-canary-XYZZY".into(),
+            name: "name-canary-XYZZY".into(),
+            network: "mainnet".into(),
+            created_at: "2026-04-23T00:00:00Z".into(),
+            lightning_address: Some("lightning-canary-XYZZY@example".into()),
+        };
+        let r = format!("{:?}", cube);
+        assert!(!r.contains("uuid-canary-XYZZY"), "uuid leaked: {}", r);
+        assert!(!r.contains("name-canary-XYZZY"), "name leaked: {}", r);
+        assert!(
+            !r.contains("lightning-canary-XYZZY"),
+            "lightning address leaked: {}",
+            r
+        );
+        // Non-sensitive fields are preserved for diagnostics.
+        assert!(
+            r.contains("\"mainnet\""),
+            "network should be visible: {}",
+            r
+        );
+        assert!(
+            r.contains("2026-04-23T00:00:00Z"),
+            "created_at should be visible: {}",
+            r
+        );
+    }
+
+    #[test]
+    fn seed_blob_cube_debug_none_lightning_renders_as_none() {
+        let cube = SeedBlobCube {
+            uuid: "u".into(),
+            name: "n".into(),
+            network: "mainnet".into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+            lightning_address: None,
+        };
+        let r = format!("{:?}", cube);
+        // Absent address → `None`, not `Some(<redacted>)`.
+        assert!(r.contains("None"), "got: {}", r);
+    }
+
+    #[test]
+    fn descriptor_blob_cube_debug_redacts_uuid() {
+        let c = DescriptorBlobCube {
+            uuid: "uuid-canary-XYZZY".into(),
+            network: "mainnet".into(),
+        };
+        let r = format!("{:?}", c);
+        assert!(!r.contains("uuid-canary-XYZZY"), "uuid leaked: {}", r);
+        assert!(r.contains("\"mainnet\""));
+    }
+
+    #[test]
+    fn descriptor_blob_vault_debug_redacts_name_and_descriptors() {
+        let v = DescriptorBlobVault {
+            name: "vault-name-canary-XYZZY".into(),
+            descriptor: "wsh(descriptor-canary-XYZZY)".into(),
+            change_descriptor: Some("wsh(change-canary-XYZZY)".into()),
+            signers: vec![],
+        };
+        let r = format!("{:?}", v);
+        assert!(!r.contains("vault-name-canary-XYZZY"), "name leaked: {}", r);
+        assert!(
+            !r.contains("descriptor-canary-XYZZY"),
+            "descriptor leaked: {}",
+            r
+        );
+        assert!(
+            !r.contains("change-canary-XYZZY"),
+            "change_descriptor leaked: {}",
+            r
+        );
+    }
+
+    #[test]
+    fn descriptor_blob_signer_debug_redacts_name_and_xpub_but_keeps_fingerprint() {
+        let s = DescriptorBlobSigner {
+            name: "signer-name-canary-XYZZY".into(),
+            fingerprint: "deadbeef".into(),
+            xpub: "xpub-canary-XYZZY".into(),
+        };
+        let r = format!("{:?}", s);
+        assert!(
+            !r.contains("signer-name-canary-XYZZY"),
+            "name leaked: {}",
+            r
+        );
+        assert!(!r.contains("xpub-canary-XYZZY"), "xpub leaked: {}", r);
+        // Fingerprint is the low-entropy 4-byte identifier; exposing
+        // it aligns with hardware-wallet UI conventions and gives
+        // `{:?}` dumps enough context to distinguish signers.
+        assert!(
+            r.contains("deadbeef"),
+            "fingerprint should be visible: {}",
+            r
+        );
+    }
+
+    #[test]
+    fn descriptor_blob_debug_propagates_redaction_through_children() {
+        // Composite Debug on the top-level blob must delegate to
+        // the redacting child impls, not leak through a derived
+        // impl that went stale.
+        let blob = DescriptorBlob {
+            version: BLOB_VERSION,
+            cube: DescriptorBlobCube {
+                uuid: "uuid-canary-XYZZY".into(),
+                network: "mainnet".into(),
+            },
+            vault: DescriptorBlobVault {
+                name: "vault-canary-XYZZY".into(),
+                descriptor: "descriptor-canary-XYZZY".into(),
+                change_descriptor: None,
+                signers: vec![DescriptorBlobSigner {
+                    name: "signer-canary-XYZZY".into(),
+                    fingerprint: "deadbeef".into(),
+                    xpub: "xpub-canary-XYZZY".into(),
+                }],
+            },
+        };
+        let r = format!("{:?}", blob);
+        for canary in [
+            "uuid-canary-XYZZY",
+            "vault-canary-XYZZY",
+            "descriptor-canary-XYZZY",
+            "signer-canary-XYZZY",
+            "xpub-canary-XYZZY",
+        ] {
+            assert!(!r.contains(canary), "{} leaked: {}", canary, r);
+        }
+        // Version and fingerprint are preserved diagnostics.
+        assert!(r.contains("version: 1"), "version missing: {}", r);
+        assert!(r.contains("deadbeef"), "fingerprint missing: {}", r);
     }
 
     #[test]

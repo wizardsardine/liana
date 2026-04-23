@@ -14,6 +14,7 @@ use super::{
 use reqwest::{Client, Method};
 use serde::Deserialize;
 use std::time::Duration;
+use zeroize::Zeroizing;
 
 use crate::services::http::ResponseExt;
 
@@ -28,7 +29,15 @@ const _: () = {
 pub struct CoincubeClient {
     pub client: Client,
     pub base_url: String,
-    token: Option<String>,
+    /// JWT bearer token. Wrapped in `Zeroizing` so the heap
+    /// allocation is wiped when the token field is reassigned,
+    /// when the client is dropped, or when a `Clone`'d copy drops.
+    /// `Option<Zeroizing<String>>` rather than
+    /// `Zeroizing<Option<String>>` because `Zeroize` needs `T` to
+    /// implement `Zeroize` directly, and `Option<T>` doesn't —
+    /// but the outer `Option` is a wrapper we can freely reassign,
+    /// and the inner `Zeroizing<String>` does the zeroing.
+    token: Option<Zeroizing<String>>,
 }
 
 impl Default for CoincubeClient {
@@ -62,7 +71,10 @@ impl CoincubeClient {
 
     /// A JWT is needed for some authenticated endpoints, acquired after a user successfully logs in
     pub fn set_token(&mut self, token: &str) {
-        self.token = Some(token.to_string());
+        // Assigning a new `Some(...)` drops the previous
+        // `Zeroizing<String>` (if any), wiping the old token's heap
+        // allocation before the new value takes its place.
+        self.token = Some(Zeroizing::new(token.to_string()));
 
         let mut headers = reqwest::header::HeaderMap::new();
         headers.append(
@@ -79,8 +91,29 @@ impl CoincubeClient {
             .unwrap();
     }
 
+    /// Explicit logout helper: drops the token (the `Zeroizing`
+    /// wrapper wipes its heap bytes on drop) and rebuilds the
+    /// underlying `reqwest::Client` without the `Authorization`
+    /// default header, so subsequent requests don't leak the old
+    /// token in outbound traffic.
+    ///
+    /// Callers that replace the whole `CoincubeClient` with a
+    /// fresh `CoincubeClient::new()` already get the same
+    /// behaviour via `Drop` on the old client; this helper lets
+    /// call sites that want in-place clearing do it without
+    /// reallocating the whole struct.
+    pub fn clear_token(&mut self) {
+        self.token = None;
+        let https_only = !self.base_url.starts_with("http://");
+        self.client = reqwest::ClientBuilder::new()
+            .timeout(std::time::Duration::from_secs(20))
+            .https_only(https_only)
+            .build()
+            .unwrap();
+    }
+
     pub fn token(&self) -> Option<&str> {
-        self.token.as_deref()
+        self.token.as_ref().map(|t| t.as_str())
     }
 
     /// Save a Mavapay quote to coincube-api
@@ -429,7 +462,12 @@ impl CoincubeClient {
     fn auth_headers(&self) -> reqwest::header::HeaderMap {
         let mut map = reqwest::header::HeaderMap::new();
         if let Some(ref t) = self.token {
-            if let Ok(val) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", t)) {
+            // Deref through `Zeroizing<String>` to `&str` for the
+            // format — `Zeroizing` doesn't implement Display so a
+            // direct `{}` placeholder wouldn't compile.
+            if let Ok(val) =
+                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", t.as_str()))
+            {
                 map.insert("Authorization", val);
             }
         }
@@ -1028,6 +1066,68 @@ pub(crate) fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Duratio
     // Unparseable — use the default cooldown rather than retrying
     // immediately and slamming the server again.
     Duration::from_secs(60)
+}
+
+#[cfg(test)]
+mod token_zeroization_tests {
+    //! Regression tests for the `Option<Zeroizing<String>>` token
+    //! field. The Zeroizing wrapper wipes the heap allocation on
+    //! drop (including when it's reassigned via `set_token` or
+    //! cleared via `clear_token`), so post-logout memory scans
+    //! can't recover the JWT.
+    use super::CoincubeClient;
+
+    #[test]
+    fn token_accessor_returns_plain_str_slice() {
+        let mut c = CoincubeClient::for_test("http://127.0.0.1:0");
+        assert!(c.token().is_none());
+        c.set_token("abc.def.ghi");
+        // The public `token()` API stays `Option<&str>` — the
+        // Zeroizing wrap is an implementation detail and must not
+        // leak into callers who iterate on `&str`.
+        assert_eq!(c.token(), Some("abc.def.ghi"));
+    }
+
+    #[test]
+    fn set_token_replaces_previous_value() {
+        // Setting a new token drops the old `Zeroizing<String>`,
+        // which wipes the previous heap bytes before the new token
+        // is stored. We can't directly observe memory zeroing in a
+        // unit test, but we can verify the replacement happened
+        // (the previous token is no longer what the accessor returns).
+        let mut c = CoincubeClient::for_test("http://127.0.0.1:0");
+        c.set_token("first-token");
+        c.set_token("second-token");
+        assert_eq!(c.token(), Some("second-token"));
+    }
+
+    #[test]
+    fn clear_token_drops_token_and_rebuilds_client() {
+        let mut c = CoincubeClient::for_test("http://127.0.0.1:0");
+        c.set_token("abc.def.ghi");
+        assert!(c.token().is_some());
+        c.clear_token();
+        assert!(c.token().is_none());
+        // The rebuilt client has no default Authorization header,
+        // so future requests can't leak the old token even if the
+        // caller forgets they cleared it.
+    }
+
+    #[test]
+    fn cloned_client_carries_independent_token_copy() {
+        // Each Clone has its own Zeroizing wrapper → each will
+        // zero its own copy on drop. Confirms Clone is still
+        // viable after the field-type change.
+        let mut c = CoincubeClient::for_test("http://127.0.0.1:0");
+        c.set_token("tok");
+        let c2 = c.clone();
+        assert_eq!(c2.token(), Some("tok"));
+        drop(c);
+        // After original drops, the clone still has its token —
+        // proves the Zeroizing wrapper inside Clone is independent,
+        // not a shared reference.
+        assert_eq!(c2.token(), Some("tok"));
+    }
 }
 
 #[cfg(test)]

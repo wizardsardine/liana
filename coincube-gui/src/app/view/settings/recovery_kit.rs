@@ -21,7 +21,7 @@ use iced::{Alignment, Length};
 use crate::app::state::settings::recovery_kit::RecoveryKitState;
 use crate::app::view::message::{Message, RecoveryKitMessage, SettingsMessage};
 use crate::pin_input::PinInput;
-use crate::services::recovery::{score_password, PasswordStrength};
+use crate::services::recovery::{score_password, MIN_PASSWORD_LEN};
 use zeroize::Zeroizing;
 
 fn wrap(msg: RecoveryKitMessage) -> Message {
@@ -142,7 +142,15 @@ pub fn password_entry_view<'a>(
     let (strength, hint) = score_password(password, &[]);
     let strength_label = strength.label();
     let strength_fraction = strength.fraction();
-    let can_submit = !password.is_empty()
+    // Mirror the gates that `submit_password` enforces server-side
+    // (state/settings/recovery_kit.rs), in the same order. A short
+    // but otherwise-varied password can clear `is_acceptable()`
+    // (zxcvbn rates complexity, not length) while still failing the
+    // `MIN_PASSWORD_LEN` floor — without the explicit length check
+    // here, the Submit button would light up and then the handler
+    // would bounce the user back with "Password must be at least
+    // 12 characters", which reads as a bug.
+    let can_submit = password.len() >= MIN_PASSWORD_LEN
         && password.as_str() == confirm.as_str()
         && strength.is_acceptable()
         && acknowledged;
@@ -298,7 +306,6 @@ pub fn password_entry_view<'a>(
             .push(Space::new().width(Length::Fill)),
     );
 
-    let _ = PasswordStrength::VeryStrong; // silence unused import warning if strength bands shift
     col.into()
 }
 

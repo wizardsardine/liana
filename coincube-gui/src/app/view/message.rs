@@ -759,8 +759,13 @@ pub enum RecoveryKitMessage {
     /// User submitted the PIN.
     VerifyPin,
     /// Async result: `Ok(words)` on correct PIN + successful
-    /// decryption; `Err(msg)` on wrong PIN or disk error.
-    PinVerified(Result<Vec<String>, String>),
+    /// decryption; `Err(msg)` on wrong PIN or disk error. The
+    /// mnemonic is wrapped in `Zeroizing` so every in-flight copy
+    /// of this message (Iced's runtime may clone between the
+    /// update handler, task, and view) is wiped on drop. Without
+    /// the wrap, a plain `Vec<String>` with the phrase bytes would
+    /// linger on the heap past the message cycle.
+    PinVerified(Result<zeroize::Zeroizing<Vec<String>>, String>),
     /// Recovery password input changed.
     PasswordChanged(String),
     /// "Confirm recovery password" input changed.

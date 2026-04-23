@@ -509,7 +509,12 @@ impl GeneralSettingsState {
 /// Load the encrypted mnemonic from the datadir and return the 12 words
 /// as a `Vec<String>`. The password is verified by the decryption step —
 /// if the PIN is wrong, decryption returns an error.
-fn load_mnemonic_words(
+///
+/// Visible to sibling modules under `settings::` (specifically
+/// `recovery_kit.rs`, which reuses this helper for the same PIN →
+/// mnemonic path). Kept here rather than hoisted to `mod.rs` because
+/// this is where the backup flow's PIN gate already lives.
+pub(super) fn load_mnemonic_words(
     datadir: &std::path::Path,
     network: Network,
     fingerprint: Fingerprint,

@@ -65,8 +65,8 @@ use step::{
     BackupDescriptor, BackupMnemonic, ChooseBackend, ChooseDescriptorTemplate, CoincubeConnectStep,
     DefineDescriptor, DefineNode, DescriptorTemplateDescription, Final, ImportDescriptor,
     ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic, RecoveryKitRestoreStep,
-    RegisterDescriptor, RemoteBackendLogin, RestoreScope, SelectBitcoindTypeStep, ShareXpubs, Step,
-    WalletAlias,
+    RegisterDescriptor, RemoteBackendLogin, RestorePinSetupStep, RestoreScope,
+    SelectBitcoindTypeStep, ShareXpubs, Step, WalletAlias,
 };
 
 #[derive(Debug, Clone)]
@@ -193,6 +193,17 @@ impl Installer {
                     match (&user_flow, network) {
                         // CreateWallet no longer has a ChooseBackend step; always local.
                         (UserFlow::CreateWallet, _) => RemoteBackend::None,
+                        // Restore flows also have no ChooseBackend step — the
+                        // user is restoring a descriptor (and optionally a
+                        // seed) into a fresh local install. Connect auth still
+                        // happens via the `CoincubeConnectStep` further down
+                        // the flow, which sets `ctx.connect_jwt` and lets
+                        // Final idempotently re-register the Cube. Without
+                        // this match arm `ctx.remote_backend` stays at
+                        // `Undefined` and the `Message::Install` match panics
+                        // with `unreachable!("Must be defined at this point")`.
+                        (UserFlow::RestoreFromRecoveryKit, _)
+                        | (UserFlow::RestoreVaultFromRecoveryKit, _) => RemoteBackend::None,
                         // AddWallet still has ChooseBackend which transitions away from Undefined.
                         (_, Network::Bitcoin | Network::Signet) => RemoteBackend::Undefined,
                         // Non-mainnet/signet AddWallet skips backend choice.
@@ -269,6 +280,17 @@ impl Installer {
                     // only make sense for a fresh install.
                     UserFlow::RestoreFromRecoveryKit => vec![
                         RecoveryKitRestoreStep::new(RestoreScope::Full, network_str.clone()).into(),
+                        // Collect a PIN *after* the kit is decrypted
+                        // (so `ctx.recovered_signer` is populated and
+                        // the step's `skip()` doesn't short-circuit)
+                        // but *before* node setup — the PIN ends up
+                        // encrypting the restored mnemonic in
+                        // `install_local_wallet` and seeding
+                        // `CubeSettings.security_pin_hash` in the
+                        // tab-level `CubeSaved` handler, matching the
+                        // fresh-install Cube layout so BreezClient
+                        // decrypt-on-open works.
+                        RestorePinSetupStep::new().into(),
                         CoincubeConnectStep::new().into(),
                         SelectBitcoindTypeStep::new().into(),
                         InternalBitcoindStep::new(&context.coincube_directory).into(),
@@ -624,18 +646,40 @@ pub async fn install_local_wallet(
     }
 
     if let Some(signer) = &ctx.recovered_signer {
-        signer
-            .store(
-                &ctx.coincube_directory,
-                cfg.bitcoin_config.network,
-                &wallet_id.descriptor_checksum,
-                wallet_id
-                    .timestamp
-                    .expect("Every new wallet have now a timestamp"),
-            )
-            .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
-
-        info!("Recovered signer mnemonic stored");
+        let timestamp = wallet_id
+            .timestamp
+            .expect("Every new wallet have now a timestamp");
+        // Recovery Kit restore: encrypt the mnemonic with the PIN the
+        // user chose in `RestorePinSetupStep` so the on-disk layout
+        // matches what a fresh-install Cube produces. If `restore_pin`
+        // is absent (e.g. `RestoreVaultFromRecoveryKit` or an older
+        // flow) fall back to the unencrypted path — that path keeps
+        // the legacy AddWallet recovery behaviour working, where the
+        // user's existing Cube already holds its PIN-encrypted seed.
+        if let Some(pin) = ctx.restore_pin.as_ref() {
+            signer
+                .store_encrypted(
+                    &ctx.coincube_directory,
+                    cfg.bitcoin_config.network,
+                    &wallet_id.descriptor_checksum,
+                    timestamp,
+                    pin.as_str(),
+                )
+                .map_err(|e| {
+                    Error::Unexpected(format!("Failed to store encrypted mnemonic: {}", e))
+                })?;
+            info!("Recovered signer mnemonic stored (PIN-encrypted)");
+        } else {
+            signer
+                .store(
+                    &ctx.coincube_directory,
+                    cfg.bitcoin_config.network,
+                    &wallet_id.descriptor_checksum,
+                    timestamp,
+                )
+                .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
+            info!("Recovered signer mnemonic stored");
+        }
     }
 
     // create coincube GUI configuration file

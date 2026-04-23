@@ -16,7 +16,6 @@
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::Network;
-use coincube_core::signer::MasterSigner;
 use iced::Task;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
@@ -302,9 +301,12 @@ pub fn update(
             };
             match res {
                 Ok(words) => {
+                    // `words: Zeroizing<Vec<String>>` — the wrap
+                    // already happened at the async boundary in
+                    // `verify_pin`'s task. Just move it into state.
                     rk.flow = RecoveryKitState::PasswordEntry {
                         mode,
-                        mnemonic: Some(Zeroizing::new(words)),
+                        mnemonic: Some(words),
                         password: Zeroizing::new(String::new()),
                         confirm: Zeroizing::new(String::new()),
                         acknowledged: false,
@@ -512,11 +514,22 @@ fn verify_pin(rk: &mut RecoveryKit, cache: &Cache, local_cube_id: &str) -> Task<
 
     Task::perform(
         async move {
+            // Wrap the decrypted mnemonic in `Zeroizing` at the
+            // async boundary — before the value enters the message
+            // queue — so every in-flight copy of the subsequent
+            // `PinVerified` message gets wiped on drop, not just
+            // the final one stashed in state. `load_mnemonic_words`
+            // returns a plain `Vec<String>` because the local
+            // paper-backup flow doesn't need Zeroizing wrapping
+            // (its final consumer is a `Zeroizing<Vec<String>>`
+            // state field); here we promote at the earliest
+            // reachable point.
             tokio::task::spawn_blocking(move || {
                 if !cube.verify_pin(&pin) {
                     return Err("Incorrect PIN. Please try again.".to_string());
                 }
-                load_mnemonic_words(&datadir, network, fingerprint, &pin)
+                super::general::load_mnemonic_words(&datadir, network, fingerprint, &pin)
+                    .map(Zeroizing::new)
             })
             .await
             .map_err(|e| format!("PIN verification task failed: {}", e))?
@@ -527,18 +540,6 @@ fn verify_pin(rk: &mut RecoveryKit, cache: &Cache, local_cube_id: &str) -> Task<
             )))
         },
     )
-}
-
-fn load_mnemonic_words(
-    datadir: &std::path::Path,
-    network: Network,
-    fingerprint: coincube_core::miniscript::bitcoin::bip32::Fingerprint,
-    pin: &str,
-) -> Result<Vec<String>, String> {
-    let signer =
-        MasterSigner::from_datadir_by_fingerprint(datadir, network, fingerprint, Some(pin))
-            .map_err(|e| e.to_string())?;
-    Ok(signer.words().iter().map(|w| (*w).to_string()).collect())
 }
 
 fn submit_password(

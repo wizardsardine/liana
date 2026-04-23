@@ -2539,6 +2539,63 @@ pub const REMOTE_BACKEND_DESC: &str = "Use Wizardsardine service to instantly be
 
 pub const LOCAL_WALLET_DESC: &str = "Use your already existing Bitcoin node or automatically install one. The Vault wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet.";
 
+/// View for `RestorePinSetupStep`. Two `PinInput` pads stacked
+/// vertically, an optional inline error under the confirm pad, and a
+/// Next button gated on both pads being complete + matching.
+///
+/// The `ready` flag is computed in the step (not here) so the view
+/// stays dumb — the caller owns the matching rule.
+pub fn restore_pin_setup<'a>(
+    progress: (usize, usize),
+    email: Option<&'a str>,
+    entry: &'a crate::pin_input::PinInput,
+    confirm: &'a crate::pin_input::PinInput,
+    error: Option<&'static str>,
+    ready: bool,
+) -> Element<'a, Message> {
+    use message::{PinField, RestorePinSetupMsg};
+
+    let entry_view = entry
+        .view()
+        .map(|m| Message::RestorePinSetup(RestorePinSetupMsg::Pin(PinField::Entry, m)));
+    let confirm_view = confirm
+        .view()
+        .map(|m| Message::RestorePinSetup(RestorePinSetupMsg::Pin(PinField::Confirm, m)));
+
+    layout(
+        progress,
+        email,
+        "Create a PIN to secure your restored Cube",
+        Column::new()
+            .spacing(40)
+            .push(p2_regular(
+                "Your Cube's mnemonic will be encrypted with this PIN on disk. \
+                 You'll enter it every time you open this Cube — the PIN is \
+                 what lets the Liquid and Spark wallets decrypt your keys.",
+            ))
+            .push(
+                Column::new()
+                    .spacing(15)
+                    .push(p1_bold("Enter a 4-digit PIN:"))
+                    .push(entry_view),
+            )
+            .push(
+                Column::new()
+                    .spacing(15)
+                    .push(p1_bold("Confirm PIN:"))
+                    .push(confirm_view)
+                    .push(error.map(|e| p2_regular(e).style(theme::text::error))),
+            )
+            .push(
+                button::secondary(None, "Next")
+                    .width(Length::Fixed(200.0))
+                    .on_press_maybe(if ready { Some(Message::Next) } else { None }),
+            ),
+        true,
+        Some(Message::Previous),
+    )
+}
+
 pub fn wallet_alias<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
@@ -2730,13 +2787,36 @@ pub fn recovery_kit_restore<'a>(
                 ));
             } else {
                 for c in cubes {
-                    let label = if c.status.has_recovery_kit {
+                    // Scope-aware availability: a descriptor-only
+                    // kit can't satisfy a Full restore, and a
+                    // seed-only kit can't satisfy DescriptorOnly.
+                    // Disable the row (and say why) rather than
+                    // let the user click through to a post-decrypt
+                    // "missing half" error.
+                    let available = c.status.has_recovery_kit
+                        && match scope {
+                            crate::installer::step::RestoreScope::Full => {
+                                c.status.has_encrypted_seed
+                            }
+                            crate::installer::step::RestoreScope::DescriptorOnly => {
+                                c.status.has_encrypted_wallet_descriptor
+                            }
+                        };
+                    let label = if available {
                         format!("{} — kit available", c.name)
-                    } else {
+                    } else if !c.status.has_recovery_kit {
                         format!("{} — no kit (disabled)", c.name)
+                    } else {
+                        match scope {
+                            crate::installer::step::RestoreScope::Full => {
+                                format!("{} — no seed in kit (disabled)", c.name)
+                            }
+                            crate::installer::step::RestoreScope::DescriptorOnly => {
+                                format!("{} — no descriptor in kit (disabled)", c.name)
+                            }
+                        }
                     };
                     let id = c.id;
-                    let has_kit = c.status.has_recovery_kit;
                     // Raw `iced::widget::Button` because the labels are
                     // built from dynamic `String`s — `button::secondary`
                     // requires `&'static str`.
@@ -2744,7 +2824,7 @@ pub fn recovery_kit_restore<'a>(
                         .width(Length::Fixed(360.0))
                         .padding([8, 16])
                         .style(theme::button::secondary);
-                    if has_kit {
+                    if available {
                         btn = btn.on_press(Message::RecoveryKitRestore(
                             RecoveryKitRestoreMsg::SelectCube(id),
                         ));

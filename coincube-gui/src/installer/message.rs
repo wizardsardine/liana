@@ -78,8 +78,25 @@ pub enum Message {
     SelectKeySource(SelectKeySourceMessage),
     EditKeyAlias(EditKeyAliasMessage),
     Decrypt(Decrypt),
+    /// Post-install orchestration completed. The first field pairs the
+    /// saved/found `CubeSettings` with an optional pre-loaded
+    /// `BreezClient`.
+    ///
+    /// The BreezClient slot is populated only for the Recovery Kit
+    /// restore flow, where the new PIN-setup step lets us build the
+    /// client up-front against the just-encrypted mnemonic — matching
+    /// what fresh-install + pre-existing-Cube opens already do. For
+    /// every other flow (fresh install, remote backend, etc.) the
+    /// client is built downstream (PIN entry, login) and this slot
+    /// stays `None`.
     CubeSaved(
-        Result<CubeSettings, String>,
+        Result<
+            (
+                CubeSettings,
+                Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+            ),
+            String,
+        >,
         Box<settings::WalletSettings>,
         Option<Bitcoind>,
     ),
@@ -92,6 +109,13 @@ pub enum Message {
         Result<super::connect_vault::ConnectVaultOutcome, super::connect_vault::ConnectVaultError>,
     ),
     CoincubeConnect(CoincubeConnectMsg),
+    /// PIN-setup step that runs after a full Recovery Kit restore
+    /// (`UserFlow::RestoreFromRecoveryKit`). Collects a 4-digit PIN
+    /// used to AES-encrypt the restored mnemonic on disk and to seed
+    /// `CubeSettings.security_pin_hash`, bringing the restore flow in
+    /// line with fresh-install Cubes so the Liquid/Spark BreezClient
+    /// can decrypt the mnemonic on later opens.
+    RestorePinSetup(RestorePinSetupMsg),
     /// Cube Recovery Kit restore step (W13 / W14 / W15).
     RecoveryKitRestore(RecoveryKitRestoreMsg),
     BorderWalletWizard(
@@ -224,13 +248,20 @@ pub enum RecoveryKitRestoreMsg {
     SelectCube(u64),
     PasswordEdited(zeroize::Zeroizing<String>),
     SubmitPassword,
+    /// Carries the typed `RestoreError` rather than a flattened
+    /// `String` so the UI can branch on variants — `BadPasswordOrCorrupt`
+    /// keeps the user on `PasswordEntry` for a retry, while
+    /// `RateLimited` / `NotFound` / `BlobParse` / `Api` are terminal
+    /// and route to `Phase::Error`. A stringified error here would
+    /// collapse those cases and produce wrong UX (e.g. rate-limit
+    /// cooldowns treated as retryable password errors).
     DecryptResult(
         Result<
             (
                 Option<crate::services::recovery::SeedBlob>,
                 Option<crate::services::recovery::DescriptorBlob>,
             ),
-            String,
+            crate::services::recovery::restore::RestoreError,
         >,
     ),
     RetryFromStart,
@@ -263,6 +294,46 @@ impl std::fmt::Debug for RecoveryKitRestoreMsg {
                 .finish(),
             Self::RetryFromStart => write!(f, "RetryFromStart"),
             Self::Skip => write!(f, "Skip"),
+        }
+    }
+}
+
+/// Messages driving the PIN-setup step that runs in between the
+/// Recovery Kit restore step and the node-setup steps in
+/// `UserFlow::RestoreFromRecoveryKit`. Manual `Debug` redacts the PIN
+/// payloads so tracing dumps don't leak them — see the analogous
+/// pattern on `RecoveryKitRestoreMsg`.
+///
+/// The step holds *two* `PinInput` widgets (entry + confirmation), so
+/// the digit/toggle variants carry a `PinField` discriminator rather
+/// than threading separate message trees through the view.
+#[derive(Clone)]
+pub enum RestorePinSetupMsg {
+    /// A digit was typed in one of the PIN fields. `pin_input::Message`
+    /// uses the derived `Debug` which includes the typed digit — our
+    /// outer `Debug` impl below replaces the inner message with
+    /// `<redacted>` so tracing dumps don't reveal keystrokes.
+    Pin(PinField, crate::pin_input::Message),
+    Submit,
+}
+
+/// Identifier for which `PinInput` widget a `RestorePinSetupMsg::Pin`
+/// refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinField {
+    Entry,
+    Confirm,
+}
+
+impl std::fmt::Debug for RestorePinSetupMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pin(field, _) => f
+                .debug_tuple("Pin")
+                .field(field)
+                .field(&"<redacted>")
+                .finish(),
+            Self::Submit => write!(f, "Submit"),
         }
     }
 }

@@ -22,7 +22,11 @@ use crate::services::coincube::{CoincubeClient, CoincubeError};
 /// Errors produced by the restore helpers. Collapses coincube-client,
 /// envelope-decrypt, and JSON parse errors into a single enum so UI
 /// code can pattern-match without touching three sub-types.
-#[derive(Debug)]
+// `Clone` is required for Iced messages (the runtime clones between
+// update, task, and view); every variant is trivially clonable. `Debug`
+// is the stdlib derive — the variants don't carry secrets, only
+// metadata (Duration, error strings from the API).
+#[derive(Debug, Clone)]
 pub enum RestoreError {
     /// The Cube has no kit on Connect (backend 404). UI should
     /// surface as "No backup found for this Cube".

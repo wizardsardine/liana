@@ -16,7 +16,7 @@ use tokio::runtime::Handle;
 use crate::feature_flags;
 use crate::pin_input;
 use crate::services::coincube::{
-    CubeLimitsResponse, CubeResponse, RegisterCubeRequest, UpdateCubeRequest,
+    CoincubeClient, CubeLimitsResponse, CubeResponse, RegisterCubeRequest, UpdateCubeRequest,
 };
 #[cfg(not(target_os = "macos"))]
 use crate::services::passkey::CeremonyMode;
@@ -283,25 +283,38 @@ impl Launcher {
                 let datadir_path = self.datadir_path.clone();
                 let network = self.network;
                 Task::perform(async move { (datadir_path, network) }, |(d, n)| {
-                    Message::Install(d, n, UserFlow::AddWallet)
+                    Message::Install(d, n, UserFlow::AddWallet, None)
                 })
             }
             Message::View(ViewMessage::CreateWallet) => {
                 let datadir_path = self.datadir_path.clone();
                 let network = self.network;
                 Task::perform(async move { (datadir_path, network) }, |(d, n)| {
-                    Message::Install(d, n, UserFlow::CreateWallet)
+                    Message::Install(d, n, UserFlow::CreateWallet, None)
                 })
             }
             Message::View(ViewMessage::RestoreFromRecoveryKit) => {
                 // W13 — same launch shape as CreateWallet; the
                 // installer picks the Recovery-Kit step sequence off
                 // the UserFlow.
+                //
+                // Forward the launcher's already-authenticated Connect
+                // client so `RecoveryKitRestoreStep` can skip its own
+                // email + OTP form (the user already signed in to see
+                // the list of remote cubes on this very screen —
+                // re-prompting them for the same credentials right
+                // after they clicked "restore this one" is pure churn).
+                // Falls back to `None` when the session isn't active
+                // yet (developer-mode path, or stale cached launcher
+                // state), in which case the step's own auth form
+                // kicks in.
                 let datadir_path = self.datadir_path.clone();
                 let network = self.network;
-                Task::perform(async move { (datadir_path, network) }, |(d, n)| {
-                    Message::Install(d, n, UserFlow::RestoreFromRecoveryKit)
-                })
+                let client = self.connect_account.authenticated_client();
+                Task::perform(
+                    async move { (datadir_path, network, client) },
+                    |(d, n, c)| Message::Install(d, n, UserFlow::RestoreFromRecoveryKit, c),
+                )
             }
             Message::View(ViewMessage::ShareXpubs) => {
                 if !self.developer_mode {
@@ -313,7 +326,7 @@ impl Launcher {
                 let datadir_path = self.datadir_path.clone();
                 let network = self.network;
                 Task::perform(async move { (datadir_path, network) }, |(d, n)| {
-                    Message::Install(d, n, UserFlow::ShareXpubs)
+                    Message::Install(d, n, UserFlow::ShareXpubs, None)
                 })
             }
             Message::View(ViewMessage::ShowCreateCube(show)) => {
@@ -2635,7 +2648,13 @@ fn map_connect_task(task: Task<app::message::Message>) -> Task<Message> {
 #[derive(Debug, Clone)]
 pub enum Message {
     View(ViewMessage),
-    Install(CoincubeDirectory, Network, UserFlow),
+    /// Launch the installer. The trailing `Option<CoincubeClient>`
+    /// forwards the launcher's already-authenticated Connect session
+    /// into the installer so steps like `RecoveryKitRestoreStep` don't
+    /// demand the user retype email + OTP a second time. `None` means
+    /// "launcher had no Connect session" — the relevant installer step
+    /// then falls back to its own auth form.
+    Install(CoincubeDirectory, Network, UserFlow, Option<CoincubeClient>),
     Checked(Result<State, String>),
     Run(
         CoincubeDirectory,

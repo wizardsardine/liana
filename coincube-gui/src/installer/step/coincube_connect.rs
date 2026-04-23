@@ -71,6 +71,14 @@ impl Step for CoincubeConnectStep {
     fn skip(&self, ctx: &Context) -> bool {
         ctx.network == coincube_core::miniscript::bitcoin::Network::Regtest
             || ctx.remote_backend.is_some()
+            // An earlier step (today: `RecoveryKitRestoreStep`) has
+            // already collected the user's JWT for the same Connect
+            // account, so re-authenticating here would just be a
+            // second email + OTP round on the same session. Honor the
+            // existing token and move on. Revert paths upstream clear
+            // `connect_jwt` back to `None`, so navigating backward
+            // through this step won't strand a stale token.
+            || ctx.connect_jwt.is_some()
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {

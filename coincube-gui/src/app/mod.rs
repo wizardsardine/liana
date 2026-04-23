@@ -1498,30 +1498,48 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
-        // Cheap per-tick sync: mirror the authoritative server cube id
-        // off ConnectPanel into Cache so view layers (Recovery-Kit card,
-        // future dashboards) and `State::reload()` callbacks can see
-        // it without reaching into the panel hierarchy. Set to `None`
-        // until `CubeRegistered(Ok)` populates the id on the panel.
+        let task = self.update_dispatch(message);
+        // Sync *after* dispatch: if this update just mutated
+        // `self.panels.connect.cube.server_cube_id` (e.g. a
+        // `CubeRegistered(Ok)` result) or loaded a wallet, the cache
+        // must reflect that by the time the next view render runs.
+        // A pre-dispatch sync would miss those same-call mutations
+        // and leave view layers one full message cycle behind.
+        self.sync_panel_derived_cache_fields();
+        task
+    }
+
+    /// Mirrors panel-owned state into `Cache` for cheap read access
+    /// by view layers and `State::reload()` callbacks that don't
+    /// reach into the panel hierarchy. Runs after every `update`
+    /// dispatch so same-tick mutations are observable by the next
+    /// render.
+    fn sync_panel_derived_cache_fields(&mut self) {
+        // Authoritative server cube id lives on ConnectPanel; views
+        // (Recovery-Kit card, future dashboards) read the Cache
+        // mirror. `None` until `CubeRegistered(Ok)` populates the
+        // panel's id.
         self.cache.current_cube_server_id = self.panels.connect.cube.server_cube_id;
 
-        // W12 drift detection: recompute the live descriptor fingerprint
-        // off the loaded wallet. This is a SHA-256 over a JSON blob —
-        // microseconds — so running it every tick is fine and avoids a
-        // separate invalidation pathway tied to wallet changes. When
-        // the wallet is absent (no Vault yet) the fingerprint is
-        // `None`, which the card treats as "nothing to drift against".
+        // W12 drift detection: SHA-256 over a JSON blob —
+        // microseconds — so running it every tick is fine and
+        // avoids a separate invalidation pathway tied to wallet
+        // changes. When the wallet is absent (no Vault yet) the
+        // fingerprint is `None`, which the card treats as "nothing
+        // to drift against".
         self.cache.current_descriptor_fingerprint = self.wallet.as_ref().and_then(|w| {
             use crate::app::state::settings::recovery_kit as rk;
             // Canonical API string ("mainnet" for Bitcoin mainnet) —
-            // the fingerprint inputs must agree byte-for-byte with the
-            // string used at backup time (see `network_str` in
+            // the fingerprint inputs must agree byte-for-byte with
+            // the string used at backup time (see `network_str` in
             // `state::settings::recovery_kit`). Any divergence here
             // would make every tick report a spurious drift.
             let network = settings::network_to_api_string(self.cache.network);
             rk::live_descriptor_fingerprint(w.as_ref(), &self.cube_settings.id, &network)
         });
+    }
 
+    fn update_dispatch(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::View(view::Message::DismissToast(id)) => {
                 self.errors.retain(|(i, ..)| *i != id);
