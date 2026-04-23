@@ -39,7 +39,7 @@ use crate::{
         coincube::{CoincubeClient, CubeResponse, OtpRequest, OtpVerifyRequest, RecoveryKitStatus},
         recovery::{
             restore::{fetch_and_decrypt_kit, DecryptedKit, RestoreError},
-            score_password, DescriptorBlob, PasswordStrength, SeedBlob, MIN_PASSWORD_LEN,
+            score_password, DescriptorBlob, PasswordStrength, SeedBlob,
         },
     },
     signer::Signer,
@@ -382,16 +382,17 @@ impl Step for RecoveryKitRestoreStep {
                 if self.processing {
                     return Task::none();
                 }
-                // Basic client-side sanity: a recovery password can't
-                // be shorter than the minimum we enforce on backup.
-                // Avoids a round-trip for an obvious typo.
-                if self.password.len() < MIN_PASSWORD_LEN {
-                    self.error = Some(format!(
-                        "Password must be at least {} characters.",
-                        MIN_PASSWORD_LEN
-                    ));
-                    return Task::none();
-                }
+                // Do NOT enforce `MIN_PASSWORD_LEN` here. That floor
+                // belongs on the backup side — it's about picking a
+                // strong password. On restore the user enters what
+                // they chose at backup time, which may pre-date this
+                // client's minimum (or come from another client with
+                // different rules). A hardcoded gate here silently
+                // blocks a correct password from ever reaching the
+                // AES-GCM tag check, which is the only authoritative
+                // validator of "is this the right password". The
+                // view disables Submit when the input is empty, so
+                // no input-required guard is needed here either.
                 let Phase::PasswordEntry { selected, attempts } = &self.phase else {
                     return Task::none();
                 };
@@ -400,7 +401,6 @@ impl Step for RecoveryKitRestoreStep {
                 let _ = attempts; // reserved for future backoff UI
                 self.processing = true;
                 self.set_phase(Phase::Decrypting { selected });
-                self.processing = true;
                 self.decrypt_task(cube_id)
             }
             RecoveryKitRestoreMsg::DecryptResult(res) => {

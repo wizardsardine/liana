@@ -490,18 +490,24 @@ fn descriptor_drift(server_has_descriptor: bool, live: Option<&str>, cached: Opt
         return false;
     }
     match (live, cached) {
-        // Both present — direct comparison.
+        // Both present — direct comparison. This is the only branch
+        // with positive evidence of drift; everything else is
+        // absence-of-evidence and must not fire the banner.
         (Some(live), Some(cached)) => live != cached,
-        // Live wallet descriptor loaded but no local fingerprint to
-        // compare against (cache cleared, restored from a different
-        // install, descriptor uploaded from another device). The
-        // server says a descriptor is backed up; we can't verify it
-        // matches what this device would now upload, so nudge the
-        // user to resync.
-        (Some(_), None) => true,
-        // Any case where the live fingerprint isn't computable (no
-        // Vault loaded yet) can't produce a meaningful comparison;
-        // avoid a false positive.
+        // Live descriptor known, no cached hash. This happens for:
+        // kit restored onto this device (we never re-uploaded so
+        // never populated the cache), kit uploaded from a different
+        // device, and installs that pre-date the cache field. In
+        // all three, the server's `has_encrypted_wallet_descriptor`
+        // flag already tells us a backup exists — firing the banner
+        // here produces a *permanent* false positive that stays up
+        // until the user manually re-uploads, training them to
+        // ignore the signal entirely (banner blindness). The
+        // always-visible "Update" CTA on the card is the right
+        // affordance for users who want to force a refresh; the
+        // banner is reserved for confirmed drift.
+        (Some(_), None) => false,
+        // No live fingerprint (no Vault loaded yet) → can't compare.
         _ => false,
     }
 }
@@ -530,12 +536,16 @@ mod tests {
     }
 
     #[test]
-    fn drift_when_cached_missing_but_live_present() {
-        // Regression: previously swallowed by `_ => false`. Server
-        // reports a descriptor, live wallet is loaded, but we have
-        // no local cache to compare against — the conservative call
-        // is to flag drift so the user resyncs.
-        assert!(descriptor_drift(true, Some("a"), None));
+    fn no_drift_when_cached_missing_but_live_present() {
+        // The drift banner must fire only on *positive evidence* of
+        // drift (cached hash known + different). Absence of a local
+        // cached fingerprint is the normal state after a kit is
+        // restored to this device, uploaded from another device, or
+        // created by a client version predating the cache field.
+        // The server's `has_encrypted_wallet_descriptor=true` is the
+        // authoritative signal that a backup exists; firing a
+        // permanent banner here would train users to tune it out.
+        assert!(!descriptor_drift(true, Some("a"), None));
     }
 
     #[test]
