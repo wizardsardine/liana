@@ -479,68 +479,53 @@ pub fn signatures<'a>(
             )
             .padding(15)
         } else {
-            Container::new(Collapse::new(
-                move || {
-                    Button::new(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .spacing(20)
-                            .push(p1_bold("Status"))
-                            .push(
-                                Row::new()
-                                    .spacing(5)
-                                    .align_y(Alignment::Center)
-                                    .push(icon::circle_cross_icon().style(theme::text::error))
-                                    .push(text("Not ready").style(theme::text::error))
-                                    .width(Length::Fill),
-                            )
-                            .push(icon::collapse_icon()),
-                    )
-                    .padding(15)
-                    .width(Length::Fill)
-                    .style(theme::button::transparent_border)
-                },
-                move || {
-                    Button::new(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .spacing(20)
-                            .push(p1_bold("Status"))
-                            .push(
-                                Row::new()
-                                    .spacing(5)
-                                    .align_y(Alignment::Center)
-                                    .push(icon::circle_cross_icon().style(theme::text::error))
-                                    .push(text("Not ready").style(theme::text::error))
-                                    .width(Length::Fill),
-                            )
-                            .push(icon::collapsed_icon()),
-                    )
-                    .padding(15)
-                    .width(Length::Fill)
-                    .style(theme::button::transparent_border)
-                },
-                move || {
-                    Into::<Element<'a, Message>>::into(
-                        Column::new()
-                            .padding(15)
-                            .spacing(10)
-                            .push(text("Finalizing this transaction requires:"))
-                            .push_maybe(if tx.sigs.recovery_paths().is_empty() {
-                                Some(path_view(
-                                    desc_info.primary_path(),
-                                    tx.sigs.primary_path(),
-                                    keys_aliases,
-                                ))
-                            } else {
-                                tx.sigs.recovery_paths().iter().last().map(|(seq, path)| {
-                                    let keys = &desc_info.recovery_paths()[seq];
-                                    path_view(keys, path, keys_aliases)
-                                })
-                            }),
-                    )
-                },
-            ))
+            Container::new(
+                Collapse::new(
+                    Row::new()
+                        .align_y(Alignment::Center)
+                        .spacing(20)
+                        .push(p1_bold("Status"))
+                        .push(
+                            Row::new()
+                                .spacing(5)
+                                .align_y(Alignment::Center)
+                                .push(icon::circle_cross_icon().style(theme::text::error))
+                                .push(text("Not ready").style(theme::text::error))
+                                .width(Length::Fill),
+                        )
+                        .push(icon::collapse_icon()),
+                    Row::new()
+                        .align_y(Alignment::Center)
+                        .spacing(20)
+                        .push(p1_bold("Status"))
+                        .push(
+                            Row::new()
+                                .spacing(5)
+                                .align_y(Alignment::Center)
+                                .push(icon::circle_cross_icon().style(theme::text::error))
+                                .push(text("Not ready").style(theme::text::error))
+                                .width(Length::Fill),
+                        )
+                        .push(icon::collapsed_icon()),
+                    Column::new()
+                        .padding(15)
+                        .spacing(10)
+                        .push(text("Finalizing this transaction requires:"))
+                        .push_maybe(if tx.sigs.recovery_paths().is_empty() {
+                            Some(path_view(
+                                desc_info.primary_path(),
+                                tx.sigs.primary_path(),
+                                keys_aliases,
+                            ))
+                        } else {
+                            tx.sigs.recovery_paths().iter().last().map(|(seq, path)| {
+                                let keys = &desc_info.recovery_paths()[seq];
+                                path_view(keys, path, keys_aliases)
+                            })
+                        }),
+                )
+                .padding(15),
+            )
         })
         .into()
 }
@@ -642,60 +627,44 @@ pub fn inputs_view<'a>(
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
-    Container::new(Collapse::new(
-        move || {
-            Button::new(
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .push(
-                        h4_bold(format!(
-                            "{} coin{} spent",
-                            tx.input.len(),
-                            if tx.input.len() == 1 { "" } else { "s" }
-                        ))
-                        .width(Length::Fill),
-                    )
-                    .push(icon::collapse_icon()),
-            )
-            .padding(20)
-            .width(Length::Fill)
-            .style(theme::button::transparent_border)
-        },
-        move || {
-            Button::new(
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .push(
-                        h4_bold(format!(
-                            "{} coin{} spent",
-                            tx.input.len(),
-                            if tx.input.len() == 1 { "" } else { "s" }
-                        ))
-                        .width(Length::Fill),
-                    )
-                    .push(icon::collapsed_icon()),
-            )
-            .padding(20)
-            .width(Length::Fill)
-            .style(theme::button::transparent_border)
-        },
-        move || {
-            tx.input
-                .iter()
-                .fold(
-                    Column::new().spacing(10).padding(20),
-                    |col: Column<'a, Message>, input| {
-                        col.push(input_view(
-                            &input.previous_output,
-                            coins.get(&input.previous_output),
-                            labels,
-                            labels_editing,
-                        ))
-                    },
+    Container::new(
+        Collapse::new(
+            Row::new()
+                .align_y(Alignment::Center)
+                .push(
+                    h4_bold(format!(
+                        "{} coin{} spent",
+                        tx.input.len(),
+                        if tx.input.len() == 1 { "" } else { "s" }
+                    ))
+                    .width(Length::Fill),
                 )
-                .into()
-        },
-    ))
+                .push(icon::collapse_icon()),
+            Row::new()
+                .align_y(Alignment::Center)
+                .push(
+                    h4_bold(format!(
+                        "{} coin{} spent",
+                        tx.input.len(),
+                        if tx.input.len() == 1 { "" } else { "s" }
+                    ))
+                    .width(Length::Fill),
+                )
+                .push(icon::collapsed_icon()),
+            tx.input.iter().fold(
+                Column::new().spacing(10).padding(20),
+                |col: Column<'a, Message>, input| {
+                    col.push(input_view(
+                        &input.previous_output,
+                        coins.get(&input.previous_output),
+                        labels,
+                        labels_editing,
+                    ))
+                },
+            ),
+        )
+        .padding(20),
+    )
     .style(theme::card::button_simple)
     .into()
 }
@@ -719,44 +688,30 @@ pub fn outputs_view<'a>(
                 .filter(|(i, _)| is_external || !change_indexes.contains(i))
                 .count();
             if count > 0 {
-                Container::new(Collapse::new(
-                    move || {
-                        Button::new(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .push(
-                                    h4_bold(format!(
-                                        "{} payment{}",
-                                        count,
-                                        if count == 1 { "" } else { "s" }
-                                    ))
-                                    .width(Length::Fill),
-                                )
-                                .push(icon::collapse_icon()),
-                        )
-                        .padding(20)
-                        .width(Length::Fill)
-                        .style(theme::button::transparent_border)
-                    },
-                    move || {
-                        Button::new(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .push(
-                                    h4_bold(format!(
-                                        "{} payment{}",
-                                        count,
-                                        if count == 1 { "" } else { "s" }
-                                    ))
-                                    .width(Length::Fill),
-                                )
-                                .push(icon::collapsed_icon()),
-                        )
-                        .padding(20)
-                        .width(Length::Fill)
-                        .style(theme::button::transparent_border)
-                    },
-                    move || {
+                Container::new(
+                    Collapse::new(
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .push(
+                                h4_bold(format!(
+                                    "{} payment{}",
+                                    count,
+                                    if count == 1 { "" } else { "s" }
+                                ))
+                                .width(Length::Fill),
+                            )
+                            .push(icon::collapse_icon()),
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .push(
+                                h4_bold(format!(
+                                    "{} payment{}",
+                                    count,
+                                    if count == 1 { "" } else { "s" }
+                                ))
+                                .width(Length::Fill),
+                            )
+                            .push(icon::collapsed_icon()),
                         tx.output
                             .iter()
                             .enumerate()
@@ -775,10 +730,10 @@ pub fn outputs_view<'a>(
                                         !is_external || change_indexes.contains(&i),
                                     ))
                                 },
-                            )
-                            .into()
-                    },
-                ))
+                            ),
+                    )
+                    .padding(20),
+                )
             } else {
                 Container::new(h4_bold("0 payment").style(|t| {
                     theme::text::custom(t.colors.buttons.transparent_border.active.text)
@@ -790,30 +745,16 @@ pub fn outputs_view<'a>(
         })
         .push_maybe(if !is_external && !change_indexes.is_empty() {
             Some(
-                Container::new(Collapse::new(
-                    move || {
-                        Button::new(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .push(h4_bold("Change").width(Length::Fill))
-                                .push(icon::collapse_icon()),
-                        )
-                        .padding(20)
-                        .width(Length::Fill)
-                        .style(theme::button::transparent_border)
-                    },
-                    move || {
-                        Button::new(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .push(h4_bold("Change").width(Length::Fill))
-                                .push(icon::collapsed_icon()),
-                        )
-                        .padding(20)
-                        .width(Length::Fill)
-                        .style(theme::button::transparent_border)
-                    },
-                    move || {
+                Container::new(
+                    Collapse::new(
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .push(h4_bold("Change").width(Length::Fill))
+                            .push(icon::collapse_icon()),
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .push(h4_bold("Change").width(Length::Fill))
+                            .push(icon::collapsed_icon()),
                         tx.output
                             .iter()
                             .enumerate()
@@ -823,10 +764,10 @@ pub fn outputs_view<'a>(
                                 |col: Column<'a, Message>, (_, output)| {
                                     col.spacing(10).push(change_view(output, network))
                                 },
-                            )
-                            .into()
-                    },
-                ))
+                            ),
+                    )
+                    .padding(20),
+                )
                 .style(theme::card::button_simple),
             )
         } else {
