@@ -286,19 +286,22 @@ pub fn create_spend_tx<'a>(
         .push_maybe(selected_amount)
         .push_maybe(hint)
         .width(Length::Fill);
-    let coins = Container::new(scrollable(coins.iter().enumerate().fold(
-        Column::new().spacing(10),
-        |col, (i, (coin, selected))| {
-            col.push(coin_list_view(
-                i,
-                coin,
-                coins_labels,
-                timelock,
-                cache.blockheight() as u32,
-                *selected,
-            ))
-        },
-    )))
+    let coins = Container::new(
+        scrollable(coins.iter().enumerate().fold(
+            Column::new().spacing(10),
+            |col, (i, (coin, selected))| {
+                col.push(coin_list_view(
+                    i,
+                    coin,
+                    coins_labels,
+                    timelock,
+                    cache.blockheight() as u32,
+                    *selected,
+                ))
+            },
+        ))
+        .spacing(5),
+    )
     .max_height(300);
     let coin_selection = Container::new(
         Column::new()
