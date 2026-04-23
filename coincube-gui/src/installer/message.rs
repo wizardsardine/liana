@@ -92,6 +92,8 @@ pub enum Message {
         Result<super::connect_vault::ConnectVaultOutcome, super::connect_vault::ConnectVaultError>,
     ),
     CoincubeConnect(CoincubeConnectMsg),
+    /// Cube Recovery Kit restore step (W13 / W14 / W15).
+    RecoveryKitRestore(RecoveryKitRestoreMsg),
     BorderWalletWizard(
         super::step::descriptor::editor::border_wallet_wizard::BorderWalletWizardMessage,
     ),
@@ -195,6 +197,63 @@ pub enum CoincubeConnectMsg {
     ResendOtp,
     OtpResent(Result<(), String>),
     Skip,
+}
+
+/// Messages driving the Cube Recovery Kit restore step. Manual
+/// `Debug` redacts every variant that carries password, OTP, or
+/// mnemonic material — tracing dumps don't leak the kit.
+#[derive(Clone)]
+pub enum RecoveryKitRestoreMsg {
+    EmailEdited(String),
+    RequestOtp,
+    OtpSent(Result<(), String>),
+    OtpEdited(String),
+    OtpVerified(Result<String, String>),
+    CubesLoaded(Result<Vec<super::step::recovery_kit_restore::RestoreCubeCandidate>, String>),
+    SelectCube(u64),
+    PasswordEdited(String),
+    SubmitPassword,
+    DecryptResult(
+        Result<
+            (
+                Option<crate::services::recovery::SeedBlob>,
+                Option<crate::services::recovery::DescriptorBlob>,
+            ),
+            String,
+        >,
+    ),
+    RetryFromStart,
+    Skip,
+}
+
+impl std::fmt::Debug for RecoveryKitRestoreMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmailEdited(_) => f.debug_tuple("EmailEdited").field(&"<redacted>").finish(),
+            Self::RequestOtp => write!(f, "RequestOtp"),
+            Self::OtpSent(r) => f.debug_tuple("OtpSent").field(r).finish(),
+            Self::OtpEdited(_) => f.debug_tuple("OtpEdited").field(&"<redacted>").finish(),
+            Self::OtpVerified(Ok(_)) => write!(f, "OtpVerified(Ok(<redacted>))"),
+            Self::OtpVerified(Err(e)) => f
+                .debug_tuple("OtpVerified")
+                .field(&Err::<(), _>(e))
+                .finish(),
+            Self::CubesLoaded(r) => f.debug_tuple("CubesLoaded").field(r).finish(),
+            Self::SelectCube(id) => f.debug_tuple("SelectCube").field(id).finish(),
+            Self::PasswordEdited(_) => f
+                .debug_tuple("PasswordEdited")
+                .field(&"<redacted>")
+                .finish(),
+            Self::SubmitPassword => write!(f, "SubmitPassword"),
+            Self::DecryptResult(Ok(_)) => write!(f, "DecryptResult(Ok(<redacted>))"),
+            Self::DecryptResult(Err(e)) => f
+                .debug_tuple("DecryptResult")
+                .field(&Err::<(), _>(e))
+                .finish(),
+            Self::RetryFromStart => write!(f, "RetryFromStart"),
+            Self::Skip => write!(f, "Skip"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -147,10 +147,7 @@ impl State for SettingsState {
         use iced::widget::Column;
         // Recovery-Kit wizard takes over the entire settings page
         // when active, the same way `BackupSeedState != None` does.
-        if !matches!(
-            self.recovery_kit.flow,
-            recovery_kit::RecoveryKitState::None
-        ) {
+        if !matches!(self.recovery_kit.flow, recovery_kit::RecoveryKitState::None) {
             if let Some(wizard) = crate::app::view::settings::recovery_kit::dispatch(
                 &self.recovery_kit.flow,
                 &self.recovery_kit.pin,

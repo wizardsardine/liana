@@ -74,7 +74,10 @@ impl PasswordStrength {
 /// knows (the user's email, the cube name). Callers should include
 /// anything an attacker could trivially guess — that's exactly what
 /// zxcvbn is designed to down-weight.
-pub fn score(password: &Zeroizing<String>, user_inputs: &[&str]) -> (PasswordStrength, Option<String>) {
+pub fn score(
+    password: &Zeroizing<String>,
+    user_inputs: &[&str],
+) -> (PasswordStrength, Option<String>) {
     if password.is_empty() {
         return (PasswordStrength::VeryWeak, None);
     }
@@ -90,17 +93,15 @@ pub fn score(password: &Zeroizing<String>, user_inputs: &[&str]) -> (PasswordStr
         // downgrading to VeryWeak on an upgrade.
         _ => PasswordStrength::VeryStrong,
     };
-    let hint = est
-        .feedback()
-        .and_then(|f| {
-            // Prefer a warning (specific failure mode) over the more
-            // generic suggestions when both are present.
-            if let Some(w) = f.warning() {
-                Some(w.to_string())
-            } else {
-                f.suggestions().first().map(|s| s.to_string())
-            }
-        });
+    let hint = est.feedback().and_then(|f| {
+        // Prefer a warning (specific failure mode) over the more
+        // generic suggestions when both are present.
+        if let Some(w) = f.warning() {
+            Some(w.to_string())
+        } else {
+            f.suggestions().first().map(|s| s.to_string())
+        }
+    });
     (strength, hint)
 }
 

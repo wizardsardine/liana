@@ -261,10 +261,7 @@ pub fn update(
         }
 
         RecoveryKitMessage::ConfirmChanged(value) => {
-            if let RecoveryKitState::PasswordEntry {
-                confirm, error, ..
-            } = &mut rk.flow
-            {
+            if let RecoveryKitState::PasswordEntry { confirm, error, .. } = &mut rk.flow {
                 *confirm = Zeroizing::new(value);
                 *error = None;
             }
@@ -278,7 +275,9 @@ pub fn update(
             Task::none()
         }
 
-        RecoveryKitMessage::SubmitPassword => submit_password(rk, cache, client, server_cube_id, wallet),
+        RecoveryKitMessage::SubmitPassword => {
+            submit_password(rk, cache, client, server_cube_id, wallet)
+        }
 
         RecoveryKitMessage::UploadResult(res) => {
             match res {
@@ -332,7 +331,12 @@ pub fn update(
             };
             rk.flow = RecoveryKitState::Removing;
             Task::perform(
-                async move { client.delete_recovery_kit(cube_id).await.map_err(|e| e.to_string()) },
+                async move {
+                    client
+                        .delete_recovery_kit(cube_id)
+                        .await
+                        .map_err(|e| e.to_string())
+                },
                 |res| {
                     Message::View(view::Message::Settings(view::SettingsMessage::RecoveryKit(
                         RecoveryKitMessage::RemoveResult(res),
@@ -518,10 +522,7 @@ fn submit_password(
                 return Task::none();
             }
             if !*acknowledged {
-                set_pw_error(
-                    rk,
-                    "Please confirm that you've written down this password.",
-                );
+                set_pw_error(rk, "Please confirm that you've written down this password.");
                 return Task::none();
             }
 
@@ -562,7 +563,9 @@ fn submit_password(
     };
 
     // Build descriptor blob when we have a live wallet.
-    let descriptor_blob = wallet.as_ref().map(|w| descriptor_blob_from_wallet(w, &cube_uuid, &network));
+    let descriptor_blob = wallet
+        .as_ref()
+        .map(|w| descriptor_blob_from_wallet(w, &cube_uuid, &network));
 
     rk.flow = RecoveryKitState::Uploading;
 
@@ -669,22 +672,37 @@ pub fn live_descriptor_fingerprint(
     descriptor_blob_fingerprint(&blob)
 }
 
+/// Decide which halves to include in the upload. Per master plan §5,
+/// every update re-encrypts **all present blobs** under the new
+/// password — otherwise the kit's two halves end up encrypted under
+/// different passwords and a single-password restore becomes
+/// impossible. The mode is therefore **not** a filter here: it only
+/// gates earlier UI decisions (whether to prompt for PIN, wizard
+/// copy). At upload time we always send every half for which we have
+/// plaintext available.
+///
+/// - `mnemonic.is_some()` → we have a mnemonic (mnemonic cubes after
+///   PIN verify). Passkey cubes never reach this branch because they
+///   never populate `mnemonic` in state.
+/// - `descriptor_blob.is_some()` → a live Vault exists on this
+///   device. Cubes without a Vault legitimately upload seed-only.
+fn include_halves(
+    mnemonic: &Option<Zeroizing<Vec<String>>>,
+    descriptor_blob: &Option<DescriptorBlob>,
+) -> (bool, bool) {
+    (mnemonic.is_some(), descriptor_blob.is_some())
+}
+
 async fn encrypt_and_upload(
     client: CoincubeClient,
     cube_id_num: u64,
-    mode: RecoveryKitMode,
+    _mode: RecoveryKitMode,
     mnemonic: Option<Zeroizing<Vec<String>>>,
     descriptor_blob: Option<DescriptorBlob>,
     cube_meta: SeedBlobCube,
     password: Zeroizing<String>,
 ) -> Result<RecoveryKitUploadOutcome, String> {
-    // Decide which halves to include based on mode + available data.
-    let include_seed = matches!(
-        mode,
-        RecoveryKitMode::Create | RecoveryKitMode::AddSeed | RecoveryKitMode::Rotate
-    ) && mnemonic.is_some();
-    let include_descriptor = descriptor_blob.is_some()
-        && !matches!(mode, RecoveryKitMode::AddSeed);
+    let (include_seed, include_descriptor) = include_halves(&mnemonic, &descriptor_blob);
 
     if !include_seed && !include_descriptor {
         return Err(
@@ -717,8 +735,7 @@ async fn encrypt_and_upload(
     // Descriptor blob.
     let (desc_ct, desc_fp) = if include_descriptor {
         let blob = descriptor_blob.as_ref().unwrap();
-        let bytes =
-            serde_json::to_vec(blob).map_err(|e| format!("serialize descriptor: {}", e))?;
+        let bytes = serde_json::to_vec(blob).map_err(|e| format!("serialize descriptor: {}", e))?;
         let ct = recovery::encrypt(&bytes, &password, KdfParams::DEFAULT_V1)
             .map_err(|e| format!("encrypt descriptor: {}", e))?;
         let fp = descriptor_blob_fingerprint(blob);
@@ -730,7 +747,12 @@ async fn encrypt_and_upload(
     let seed_ref = seed_ct.as_deref();
     let desc_ref = desc_ct.as_deref();
     let kit: ApiRecoveryKit = client
-        .put_recovery_kit(cube_id_num, seed_ref, desc_ref, RECOVERY_KIT_SCHEME_AES_256_GCM)
+        .put_recovery_kit(
+            cube_id_num,
+            seed_ref,
+            desc_ref,
+            RECOVERY_KIT_SCHEME_AES_256_GCM,
+        )
         .await
         .map_err(|e| e.to_string())?;
 
@@ -797,6 +819,80 @@ mod tests {
         let b = descriptor_blob_fingerprint(&blob).unwrap();
         assert_eq!(a, b, "fingerprint must be deterministic");
         assert_eq!(a.len(), 64, "SHA-256 hex is 64 chars");
+    }
+
+    fn mnemonic_some() -> Option<Zeroizing<Vec<String>>> {
+        Some(Zeroizing::new(vec!["word".to_string(); 12]))
+    }
+
+    fn descriptor_some() -> Option<DescriptorBlob> {
+        Some(DescriptorBlob {
+            version: BLOB_VERSION,
+            cube: DescriptorBlobCube {
+                uuid: "u".into(),
+                network: "bitcoin".into(),
+            },
+            vault: DescriptorBlobVault {
+                name: "n".into(),
+                descriptor: "d".into(),
+                change_descriptor: None,
+                signers: vec![],
+            },
+        })
+    }
+
+    // Regression tests for the AddDescriptor/AddSeed re-encryption
+    // bug: the upload decision must NOT be gated on mode, otherwise
+    // the two halves end up encrypted under different passwords.
+    // Plan §5 requires every update to re-encrypt all present blobs
+    // under the new password.
+
+    #[test]
+    fn include_halves_add_descriptor_uploads_seed_too() {
+        // User is in AddDescriptor mode on a mnemonic cube. The PIN
+        // verify populated `mnemonic`, and the local Vault provides
+        // `descriptor_blob`. Both halves must go up so the server
+        // state ends up with BOTH encrypted under the new password.
+        let m = mnemonic_some();
+        let d = descriptor_some();
+        assert_eq!(include_halves(&m, &d), (true, true));
+    }
+
+    #[test]
+    fn include_halves_add_seed_uploads_descriptor_too() {
+        // User is in AddSeed mode on a mnemonic cube with a Vault.
+        // Both halves must go up — the seed under the new password
+        // (the whole point of AddSeed) AND the descriptor re-encrypted
+        // from the live wallet under the new password.
+        let m = mnemonic_some();
+        let d = descriptor_some();
+        assert_eq!(include_halves(&m, &d), (true, true));
+    }
+
+    #[test]
+    fn include_halves_passkey_no_seed() {
+        // Passkey cubes never populate the mnemonic — the seed is
+        // unextractable on-device. Only the descriptor goes up.
+        let m: Option<Zeroizing<Vec<String>>> = None;
+        let d = descriptor_some();
+        assert_eq!(include_halves(&m, &d), (false, true));
+    }
+
+    #[test]
+    fn include_halves_no_vault_seed_only() {
+        // Mnemonic cube without a Vault (or user hasn't created one
+        // yet). Seed goes up alone; descriptor will be added later
+        // via AddDescriptor.
+        let m = mnemonic_some();
+        let d: Option<DescriptorBlob> = None;
+        assert_eq!(include_halves(&m, &d), (true, false));
+    }
+
+    #[test]
+    fn include_halves_nothing_is_rejected() {
+        let m: Option<Zeroizing<Vec<String>>> = None;
+        let d: Option<DescriptorBlob> = None;
+        assert_eq!(include_halves(&m, &d), (false, false));
     }
 
     #[test]

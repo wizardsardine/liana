@@ -197,10 +197,7 @@ pub fn password_entry_view<'a>(
                 .width(Length::Fill),
         )
         .push(Space::new().height(Length::Fixed(8.0)))
-        .push(
-            progress_bar(0.0..=1.0, strength_fraction)
-                .style(theme::progress_bar::primary),
-        )
+        .push(progress_bar(0.0..=1.0, strength_fraction).style(theme::progress_bar::primary))
         .push({
             let mut r = Row::new()
                 .width(Length::Fill)
@@ -316,10 +313,7 @@ pub fn uploading_view() -> Element<'static, Message> {
         .push(icon::backup_icon().size(100).color(color::ORANGE))
         .push(Space::new().height(Length::Fixed(16.0)))
         .push(text("Encrypting and uploading…").size(20))
-        .push(
-            text("This takes a moment — Argon2id key derivation is intentionally slow.")
-                .size(14),
-        )
+        .push(text("This takes a moment — Argon2id key derivation is intentionally slow.").size(14))
         .into()
 }
 
@@ -361,8 +355,12 @@ pub fn completed_view(
         .push(Space::new().height(Length::Fixed(16.0)))
         .push(text("Recovery Kit backed up").size(24).bold())
         .push(
-            Container::new(text(subtitle).size(16).align_x(iced::alignment::Horizontal::Center))
-                .width(Length::Fixed(600.0)),
+            Container::new(
+                text(subtitle)
+                    .size(16)
+                    .align_x(iced::alignment::Horizontal::Center),
+            )
+            .width(Length::Fixed(600.0)),
         )
         .push(Space::new().height(Length::Fixed(8.0)))
         .push(text(format!("Last updated: {}", updated_at)).size(14))
@@ -384,7 +382,11 @@ pub fn error_view(message: &str) -> Element<'static, Message> {
         .push(Space::new().height(Length::Fixed(40.0)))
         .push(icon::warning_icon().size(80).color(color::RED))
         .push(Space::new().height(Length::Fixed(16.0)))
-        .push(text("Couldn't complete Recovery Kit action").size(20).bold())
+        .push(
+            text("Couldn't complete Recovery Kit action")
+                .size(20)
+                .bold(),
+        )
         .push(
             Container::new(
                 text(message.to_string())
@@ -411,9 +413,7 @@ pub fn dispatch<'a>(
 ) -> Option<Element<'a, Message>> {
     match state {
         RecoveryKitState::None => None,
-        RecoveryKitState::PinEntry { error, .. } => {
-            Some(pin_entry_view(pin, error.as_deref()))
-        }
+        RecoveryKitState::PinEntry { error, .. } => Some(pin_entry_view(pin, error.as_deref())),
         RecoveryKitState::PasswordEntry {
             password,
             confirm,
@@ -432,7 +432,11 @@ pub fn dispatch<'a>(
             updated_at,
             now_has_seed,
             now_has_descriptor,
-        } => Some(completed_view(updated_at, *now_has_seed, *now_has_descriptor)),
+        } => Some(completed_view(
+            updated_at,
+            *now_has_seed,
+            *now_has_descriptor,
+        )),
         RecoveryKitState::Error { message } => Some(error_view(message)),
     }
 }

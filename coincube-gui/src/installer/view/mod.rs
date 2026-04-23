@@ -2644,3 +2644,185 @@ fn layout<'a>(
     .style(theme::container::background)
     .into()
 }
+
+/// Placeholder view for the Cube Recovery Kit restore step (W13/W14/W15).
+/// Renders a minimal but complete UI so every Phase has a reachable
+/// interaction. A design pass is expected as a follow-up.
+///
+/// The scope arg changes the headline copy and hides "Skip" when
+/// the flow is `Full` (W13 — the restore IS the point of the flow).
+#[allow(clippy::too_many_arguments)]
+pub fn recovery_kit_restore<'a>(
+    progress: (usize, usize),
+    scope: crate::installer::step::RestoreScope,
+    phase: &'a crate::installer::step::recovery_kit_restore::RestorePhase,
+    email: &'a form::Value<String>,
+    otp: &'a form::Value<String>,
+    password: &'a str,
+    processing: bool,
+    error: Option<&'a str>,
+) -> Element<'a, Message> {
+    use crate::installer::message::RecoveryKitRestoreMsg;
+    use crate::installer::step::recovery_kit_restore::RestorePhase;
+
+    let title = match scope {
+        crate::installer::step::RestoreScope::Full => "Restore from Connect Recovery Kit",
+        crate::installer::step::RestoreScope::DescriptorOnly => {
+            "Restore Wallet Descriptor from Connect"
+        }
+    };
+
+    let mut content: Column<'a, Message> = Column::new().spacing(20).width(Length::Fill);
+
+    match phase {
+        RestorePhase::Email => {
+            content = content
+                .push(text::text(
+                    "Sign in to your Connect account to fetch your Cube Recovery Kit.",
+                ))
+                .push(
+                    form::Form::new_trimmed("you@example.com", email, |v| {
+                        Message::RecoveryKitRestore(RecoveryKitRestoreMsg::EmailEdited(v))
+                    })
+                    .warning("Email is invalid")
+                    .size(16)
+                    .padding(10),
+                )
+                .push({
+                    let btn = button::primary(None, "Send code")
+                        .width(Length::Fixed(220.0))
+                        .padding([10, 20]);
+                    if email.valid && !processing {
+                        btn.on_press(Message::RecoveryKitRestore(
+                            RecoveryKitRestoreMsg::RequestOtp,
+                        ))
+                    } else {
+                        btn
+                    }
+                });
+        }
+        RestorePhase::OtpEntry => {
+            content = content
+                .push(text::text("Enter the 6-digit code we sent to your email."))
+                .push(
+                    form::Form::new_trimmed("123456", otp, |v| {
+                        Message::RecoveryKitRestore(RecoveryKitRestoreMsg::OtpEdited(v))
+                    })
+                    .warning("Invalid code")
+                    .size(16)
+                    .padding(10),
+                );
+        }
+        RestorePhase::LoadingCubes => {
+            content = content.push(text::text("Loading your Cubes from Connect…"));
+        }
+        RestorePhase::CubePicker { cubes, .. } => {
+            let mut col = Column::new().spacing(10);
+            if cubes.is_empty() {
+                col = col.push(text::text(
+                    "No Cubes found on this Connect account for the current network.",
+                ));
+            } else {
+                for c in cubes {
+                    let label = if c.status.has_recovery_kit {
+                        format!("{} — kit available", c.name)
+                    } else {
+                        format!("{} — no kit (disabled)", c.name)
+                    };
+                    let id = c.id;
+                    let has_kit = c.status.has_recovery_kit;
+                    // Raw `iced::widget::Button` because the labels are
+                    // built from dynamic `String`s — `button::secondary`
+                    // requires `&'static str`.
+                    let mut btn = Button::new(text::text(label))
+                        .width(Length::Fixed(360.0))
+                        .padding([8, 16])
+                        .style(theme::button::secondary);
+                    if has_kit {
+                        btn = btn.on_press(Message::RecoveryKitRestore(
+                            RecoveryKitRestoreMsg::SelectCube(id),
+                        ));
+                    }
+                    col = col.push(btn);
+                }
+            }
+            content = content.push(col);
+        }
+        RestorePhase::PasswordEntry { selected, .. } => {
+            content = content
+                .push(text::text(format!(
+                    "Enter the recovery password for \"{}\".",
+                    selected.name
+                )))
+                .push(
+                    TextInput::new("Recovery password", password)
+                        .on_input(|v| {
+                            Message::RecoveryKitRestore(RecoveryKitRestoreMsg::PasswordEdited(v))
+                        })
+                        .secure(true)
+                        .size(16)
+                        .padding(12)
+                        .width(Length::Fixed(400.0)),
+                )
+                .push({
+                    let btn = button::primary(None, "Restore")
+                        .width(Length::Fixed(220.0))
+                        .padding([10, 20]);
+                    if !password.is_empty() && !processing {
+                        btn.on_press(Message::RecoveryKitRestore(
+                            RecoveryKitRestoreMsg::SubmitPassword,
+                        ))
+                    } else {
+                        btn
+                    }
+                });
+        }
+        RestorePhase::Decrypting { .. } => {
+            content = content.push(text::text(
+                "Decrypting your Recovery Kit. This takes a moment — \
+                 Argon2id key derivation is intentionally slow.",
+            ));
+        }
+        RestorePhase::Ready { selected, .. } => {
+            content = content.push(text::text(format!(
+                "Ready to restore from \"{}\". Click Next to continue.",
+                selected.name
+            )));
+        }
+        RestorePhase::Error { message } => {
+            content = content
+                .push(text::text(message.clone()).style(theme::text::warning))
+                .push(
+                    button::secondary(None, "Try again")
+                        .on_press(Message::RecoveryKitRestore(
+                            RecoveryKitRestoreMsg::RetryFromStart,
+                        ))
+                        .width(Length::Fixed(220.0))
+                        .padding([10, 20]),
+                );
+        }
+    }
+
+    if let Some(e) = error {
+        content = content.push(text::text(e.to_string()).style(theme::text::warning));
+    }
+
+    // Skip button — only for DescriptorOnly scopes.
+    if matches!(scope, crate::installer::step::RestoreScope::DescriptorOnly) {
+        content = content.push(
+            button::secondary(None, "Skip — restore later")
+                .on_press(Message::RecoveryKitRestore(RecoveryKitRestoreMsg::Skip))
+                .width(Length::Fixed(220.0))
+                .padding([10, 20]),
+        );
+    }
+
+    layout(
+        progress,
+        None,
+        title,
+        content,
+        true,
+        Some(Message::Previous),
+    )
+}

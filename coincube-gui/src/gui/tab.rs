@@ -603,6 +603,27 @@ impl Tab {
                         self.state = State::Installer(install);
                         command.map(Message::Install)
                     }
+                    app::Message::View(app::view::Message::SetupVaultRestoreFromKit) => {
+                        // W15 — same installer launch path as SetupVault,
+                        // but starts in the Recovery-Kit restore flow
+                        // instead of the new-vault descriptor editor.
+                        let (install, command) = Installer::new(
+                            app.datadir().clone(),
+                            app.cache().network,
+                            None,
+                            UserFlow::RestoreVaultFromRecoveryKit,
+                            true,
+                            Some(app.cube_settings().clone()),
+                            Some(app.breez_client()),
+                            app.spark_backend(),
+                            GlobalSettings::load_developer_mode(&GlobalSettings::path(
+                                app.datadir(),
+                            )),
+                            app.authenticated_coincube_client(),
+                        );
+                        self.state = State::Installer(install);
+                        command.map(Message::Install)
+                    }
                     app::Message::View(app::view::Message::ToggleTheme) => {
                         Task::done(Message::ToggleTheme)
                     }

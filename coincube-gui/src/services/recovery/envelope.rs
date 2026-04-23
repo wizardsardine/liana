@@ -292,7 +292,10 @@ mod tests {
         raw[0] = 0x99;
         let mutated = base64::engine::general_purpose::STANDARD.encode(raw);
         let err = decrypt(&mutated, &pw("pw")).unwrap_err();
-        assert!(matches!(err, RecoveryError::Unsupported { version: 0x99, .. }));
+        assert!(matches!(
+            err,
+            RecoveryError::Unsupported { version: 0x99, .. }
+        ));
     }
 
     #[test]
@@ -304,7 +307,10 @@ mod tests {
         raw[1] = 0xFE;
         let mutated = base64::engine::general_purpose::STANDARD.encode(raw);
         let err = decrypt(&mutated, &pw("pw")).unwrap_err();
-        assert!(matches!(err, RecoveryError::Unsupported { kdf_id: 0xFE, .. }));
+        assert!(matches!(
+            err,
+            RecoveryError::Unsupported { kdf_id: 0xFE, .. }
+        ));
     }
 
     #[test]

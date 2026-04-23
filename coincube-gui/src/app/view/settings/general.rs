@@ -175,10 +175,7 @@ fn recovery_kit_card<'a>(
         match status {
             Some(s) if s.has_encrypted_wallet_descriptor => (
                 "Wallet Descriptor backed up",
-                format!(
-                    "Last updated {}.",
-                    s.updated_at.as_deref().unwrap_or("—")
-                ),
+                format!("Last updated {}.", s.updated_at.as_deref().unwrap_or("—")),
                 "Update",
                 RecoveryKitMode::Rotate,
             ),
@@ -218,10 +215,7 @@ fn recovery_kit_card<'a>(
             ),
             Some(s) => (
                 "Recovery Kit backed up",
-                format!(
-                    "Last updated {}.",
-                    s.updated_at.as_deref().unwrap_or("—")
-                ),
+                format!("Last updated {}.", s.updated_at.as_deref().unwrap_or("—")),
                 "Update",
                 RecoveryKitMode::Rotate,
             ),
@@ -256,9 +250,7 @@ fn recovery_kit_card<'a>(
         button::primary(None, primary_label)
             .padding([8, 16])
             .width(Length::Fixed(220.0))
-            .on_press(
-                SettingsMessage::RecoveryKit(RecoveryKitMessage::Start(primary_mode)).into(),
-            ),
+            .on_press(SettingsMessage::RecoveryKit(RecoveryKitMessage::Start(primary_mode)).into()),
     );
     if has_kit {
         actions = actions.push(

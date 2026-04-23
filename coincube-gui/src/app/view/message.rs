@@ -59,6 +59,12 @@ pub enum Message {
     Clipboard(String),
     Menu(Menu),
     SetupVault,
+    /// W15 — launch the vault installer in "restore from Connect
+    /// Recovery Kit" mode. Branches off the same button the default
+    /// `SetupVault` goes through, but flags the installer to use
+    /// `UserFlow::RestoreVaultFromRecoveryKit` instead of
+    /// `CreateWallet`.
+    SetupVaultRestoreFromKit,
     Close,
     Select(usize),
     SelectRefundable(usize),

@@ -52,11 +52,9 @@ impl std::fmt::Display for RestoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotFound => write!(f, "No Recovery Kit found on Connect for this Cube."),
-            Self::RateLimited { retry_after } => write!(
-                f,
-                "Rate limited — try again in {}s.",
-                retry_after.as_secs()
-            ),
+            Self::RateLimited { retry_after } => {
+                write!(f, "Rate limited — try again in {}s.", retry_after.as_secs())
+            }
             Self::Api(msg) => write!(f, "Connect error: {}", msg),
             Self::BadPasswordOrCorrupt => write!(
                 f,

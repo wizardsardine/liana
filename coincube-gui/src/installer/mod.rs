@@ -64,8 +64,9 @@ pub use message::Message;
 use step::{
     BackupDescriptor, BackupMnemonic, ChooseBackend, ChooseDescriptorTemplate, CoincubeConnectStep,
     DefineDescriptor, DefineNode, DescriptorTemplateDescription, Final, ImportDescriptor,
-    ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic, RegisterDescriptor,
-    RemoteBackendLogin, SelectBitcoindTypeStep, ShareXpubs, Step, WalletAlias,
+    ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic, RecoveryKitRestoreStep,
+    RegisterDescriptor, RemoteBackendLogin, RestoreScope, SelectBitcoindTypeStep, ShareXpubs, Step,
+    WalletAlias,
 };
 
 #[derive(Debug, Clone)]
@@ -73,6 +74,18 @@ pub enum UserFlow {
     CreateWallet,
     AddWallet,
     ShareXpubs,
+    /// W13 — full install restore from a Connect Recovery Kit.
+    /// Skips the descriptor-editor, backup-mnemonic, and register-
+    /// descriptor steps because the kit provides both the seed and
+    /// the descriptor. The flow is: RecoveryKitRestore(Full) →
+    /// CoincubeConnect (noop — already authed) → Node setup →
+    /// WalletAlias → Final.
+    RestoreFromRecoveryKit,
+    /// W15 — restore the Wallet Descriptor only, from a running
+    /// Cube. Assumes the Cube's seed is already on disk (the user
+    /// just needs to rehydrate the vault). Launched from the
+    /// running app's "Create Vault" menu.
+    RestoreVaultFromRecoveryKit,
 }
 
 pub struct Installer {
@@ -198,37 +211,94 @@ impl Installer {
             cube_settings,
             breez_client,
             spark_backend,
-            steps: match user_flow {
-                UserFlow::CreateWallet => vec![
-                    ChooseDescriptorTemplate::default().into(),
-                    DescriptorTemplateDescription::default().into(),
-                    DefineDescriptor::new(network, signer.clone()).into(),
-                    BackupMnemonic::new(signer.clone()).into(),
-                    BackupDescriptor::default().into(),
-                    RegisterDescriptor::new_create_wallet().into(),
-                    CoincubeConnectStep::new().into(),
-                    SelectBitcoindTypeStep::new().into(),
-                    InternalBitcoindStep::new(&context.coincube_directory).into(),
-                    DefineNode::new(crate::node::NodeType::Esplora).into(),
-                    WalletAlias::default().into(),
-                    Final::new().into(),
-                ],
-                UserFlow::ShareXpubs => vec![ShareXpubs::new(network, signer.clone()).into()],
-                UserFlow::AddWallet => vec![
-                    ChooseBackend::new(network).into(),
-                    RemoteBackendLogin::new(network, destination_path.network_directory(network))
+            steps: {
+                // Network string used as a filter by the restore step's
+                // cube-picker. The backend accepts the canonical lowercase
+                // names rather than `Network::Display`'s output.
+                let network_str = match network {
+                    Network::Bitcoin => "bitcoin",
+                    Network::Testnet => "testnet",
+                    Network::Signet => "signet",
+                    Network::Regtest => "regtest",
+                    _ => "bitcoin",
+                }
+                .to_string();
+                match user_flow {
+                    UserFlow::CreateWallet => vec![
+                        ChooseDescriptorTemplate::default().into(),
+                        DescriptorTemplateDescription::default().into(),
+                        DefineDescriptor::new(network, signer.clone()).into(),
+                        BackupMnemonic::new(signer.clone()).into(),
+                        BackupDescriptor::default().into(),
+                        RegisterDescriptor::new_create_wallet().into(),
+                        CoincubeConnectStep::new().into(),
+                        SelectBitcoindTypeStep::new().into(),
+                        InternalBitcoindStep::new(&context.coincube_directory).into(),
+                        DefineNode::new(crate::node::NodeType::Esplora).into(),
+                        WalletAlias::default().into(),
+                        Final::new().into(),
+                    ],
+                    UserFlow::ShareXpubs => vec![ShareXpubs::new(network, signer.clone()).into()],
+                    UserFlow::AddWallet => vec![
+                        ChooseBackend::new(network).into(),
+                        RemoteBackendLogin::new(
+                            network,
+                            destination_path.network_directory(network),
+                        )
                         .into(),
-                    ImportRemoteWallet::new(network).into(),
-                    ImportDescriptor::new(network).into(),
-                    RecoverMnemonic::default().into(),
-                    RegisterDescriptor::new_import_wallet().into(),
-                    CoincubeConnectStep::new().into(),
-                    SelectBitcoindTypeStep::new().into(),
-                    InternalBitcoindStep::new(&context.coincube_directory).into(),
-                    DefineNode::default().into(),
-                    WalletAlias::default().into(),
-                    Final::new().into(),
-                ],
+                        ImportRemoteWallet::new(network).into(),
+                        ImportDescriptor::new(network).into(),
+                        RecoverMnemonic::default().into(),
+                        // W14 — offer to pull the descriptor from Connect
+                        // after the user confirms their mnemonic. The step
+                        // is skippable; `apply(skipped)` leaves the
+                        // context alone so the file-imported descriptor
+                        // (from `ImportDescriptor` above) stays in place.
+                        RecoveryKitRestoreStep::new(
+                            RestoreScope::DescriptorOnly,
+                            network_str.clone(),
+                        )
+                        .into(),
+                        RegisterDescriptor::new_import_wallet().into(),
+                        CoincubeConnectStep::new().into(),
+                        SelectBitcoindTypeStep::new().into(),
+                        InternalBitcoindStep::new(&context.coincube_directory).into(),
+                        DefineNode::default().into(),
+                        WalletAlias::default().into(),
+                        Final::new().into(),
+                    ],
+                    // W13 — full restore: the kit carries both the seed
+                    // and the descriptor, so the flow skips the editor +
+                    // register-descriptor + backup-mnemonic steps that
+                    // only make sense for a fresh install.
+                    UserFlow::RestoreFromRecoveryKit => vec![
+                        RecoveryKitRestoreStep::new(RestoreScope::Full, network_str.clone()).into(),
+                        CoincubeConnectStep::new().into(),
+                        SelectBitcoindTypeStep::new().into(),
+                        InternalBitcoindStep::new(&context.coincube_directory).into(),
+                        DefineNode::new(crate::node::NodeType::Esplora).into(),
+                        WalletAlias::default().into(),
+                        Final::new().into(),
+                    ],
+                    // W15 — running-app Vault restore: the current Cube
+                    // already has its seed on disk, we just need the
+                    // descriptor. Launched with `launched_from_app = true`
+                    // so `previous()` at step 0 returns to App rather
+                    // than exiting the installer.
+                    UserFlow::RestoreVaultFromRecoveryKit => vec![
+                        RecoveryKitRestoreStep::new(
+                            RestoreScope::DescriptorOnly,
+                            network_str.clone(),
+                        )
+                        .into(),
+                        RegisterDescriptor::new_import_wallet().into(),
+                        SelectBitcoindTypeStep::new().into(),
+                        InternalBitcoindStep::new(&context.coincube_directory).into(),
+                        DefineNode::default().into(),
+                        WalletAlias::default().into(),
+                        Final::new().into(),
+                    ],
+                }
             },
             context,
             signer,

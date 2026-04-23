@@ -294,6 +294,16 @@ impl Launcher {
                     Message::Install(d, n, UserFlow::CreateWallet)
                 })
             }
+            Message::View(ViewMessage::RestoreFromRecoveryKit) => {
+                // W13 — same launch shape as CreateWallet; the
+                // installer picks the Recovery-Kit step sequence off
+                // the UserFlow.
+                let datadir_path = self.datadir_path.clone();
+                let network = self.network;
+                Task::perform(async move { (datadir_path, network) }, |(d, n)| {
+                    Message::Install(d, n, UserFlow::RestoreFromRecoveryKit)
+                })
+            }
             Message::View(ViewMessage::ShareXpubs) => {
                 if !self.developer_mode {
                     tracing::debug!(
@@ -2660,6 +2670,10 @@ pub enum Message {
 pub enum ViewMessage {
     ImportWallet,
     CreateWallet,
+    /// W13 — launch the installer in "restore from Connect Recovery
+    /// Kit" mode. Sibling to `CreateWallet` / `ImportWallet` in the
+    /// cube-setup menu.
+    RestoreFromRecoveryKit,
     ShowCreateCube(bool),
     CubeNameEdited(String),
     CreateCube,

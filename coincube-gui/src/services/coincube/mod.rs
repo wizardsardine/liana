@@ -88,11 +88,9 @@ impl std::fmt::Display for CoincubeError {
                 vault_id
             ),
             CoincubeError::NotFound => write!(f, "Not found"),
-            CoincubeError::RateLimited { retry_after } => write!(
-                f,
-                "Rate limited — retry after {}s",
-                retry_after.as_secs()
-            ),
+            CoincubeError::RateLimited { retry_after } => {
+                write!(f, "Rate limited — retry after {}s", retry_after.as_secs())
+            }
         }
     }
 }
