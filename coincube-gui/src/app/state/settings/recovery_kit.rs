@@ -47,6 +47,20 @@ pub enum SeedSource {
     Passkey,
 }
 
+/// Snapshot of the user's `PasswordEntry` inputs at the moment they
+/// hit Submit. Carried through `Uploading` so a transient upload
+/// failure can restore the entry screen without making the user
+/// re-type their password (and, for mnemonic cubes, re-enter their
+/// PIN to re-decrypt the mnemonic).
+#[derive(Debug)]
+pub struct PasswordEntryPending {
+    pub mode: RecoveryKitMode,
+    pub mnemonic: Option<Zeroizing<Vec<String>>>,
+    pub password: Zeroizing<String>,
+    pub confirm: Zeroizing<String>,
+    pub acknowledged: bool,
+}
+
 /// The actual UI state of the wizard. `None` = card view; any other
 /// variant = wizard is taking over the settings page.
 #[derive(Debug)]
@@ -67,7 +81,13 @@ pub enum RecoveryKitState {
         acknowledged: bool,
         error: Option<String>,
     },
-    Uploading,
+    /// In-flight upload. Carries the pending `PasswordEntry` snapshot
+    /// so we can restore the entry screen intact if the upload fails —
+    /// previously the user had to re-type their password (and PIN) on
+    /// every transient network error.
+    Uploading {
+        pending: PasswordEntryPending,
+    },
     Completed {
         updated_at: String,
         now_has_seed: bool,
@@ -358,15 +378,12 @@ pub fn update(
                     }
                 }
                 Err(e) => {
-                    // Preserve any already-entered password so the user
-                    // doesn't have to retype it. Error shows inline.
-                    if let RecoveryKitState::PasswordEntry { error, .. } = &mut rk.flow {
-                        *error = Some(e.clone());
-                    } else {
-                        // Mid-flight cancel or state drift — fall back
-                        // to the Error screen.
-                        rk.flow = RecoveryKitState::Error { message: e.clone() };
-                    }
+                    // Restore the user's password-entry inputs from
+                    // the `Uploading` snapshot so a transient network
+                    // failure doesn't force them to retype their
+                    // password (and re-enter their PIN to decrypt
+                    // the mnemonic again). See `restore_entry_on_upload_error`.
+                    restore_entry_on_upload_error(&mut rk.flow, &e);
                     Task::done(Message::View(view::Message::ShowError(e)))
                 }
             }
@@ -391,12 +408,7 @@ pub fn update(
             };
             rk.flow = RecoveryKitState::Removing;
             Task::perform(
-                async move {
-                    client
-                        .delete_recovery_kit(cube_id)
-                        .await
-                        .map_err(|e| e.to_string())
-                },
+                async move { normalize_delete_result(client.delete_recovery_kit(cube_id).await) },
                 |res| {
                     Message::View(view::Message::Settings(view::SettingsMessage::RecoveryKit(
                         RecoveryKitMessage::RemoveResult(res),
@@ -537,9 +549,13 @@ fn submit_password(
     wallet: Option<Arc<Wallet>>,
 ) -> Task<Message> {
     // Pull validation + cloneable inputs out of the state without
-    // moving fields — we'll set `rk.flow = Uploading` once all checks
-    // pass and the task is on its way.
-    let (mode, password_copy, mnemonic_clone_opt) = match &rk.flow {
+    // moving fields — we'll set `rk.flow = Uploading { pending }`
+    // once all checks pass and the task is on its way. The `pending`
+    // snapshot lets us restore `PasswordEntry` intact if the upload
+    // fails, so a transient network error doesn't force the user to
+    // re-type their password (and re-enter their PIN to unlock the
+    // mnemonic again).
+    let (mode, password_copy, mnemonic_clone_opt, pending) = match &rk.flow {
         RecoveryKitState::PasswordEntry {
             mode: m,
             mnemonic,
@@ -574,7 +590,19 @@ fn submit_password(
                 set_pw_error(rk, "Please confirm that you've written down this password.");
                 return Task::none();
             }
-            (*m, Zeroizing::new(password.to_string()), mnemonic.clone())
+            let pending = PasswordEntryPending {
+                mode: *m,
+                mnemonic: mnemonic.clone(),
+                password: password.clone(),
+                confirm: confirm.clone(),
+                acknowledged: *acknowledged,
+            };
+            (
+                *m,
+                Zeroizing::new(password.to_string()),
+                mnemonic.clone(),
+                pending,
+            )
         }
         _ => return Task::none(),
     };
@@ -611,7 +639,7 @@ fn submit_password(
         .as_ref()
         .map(|w| descriptor_blob_from_wallet(w, &cube_uuid, &network));
 
-    rk.flow = RecoveryKitState::Uploading;
+    rk.flow = RecoveryKitState::Uploading { pending };
 
     let mnemonic = mnemonic_clone_opt;
     Task::perform(
@@ -721,8 +749,17 @@ fn descriptor_blob_from_wallet(wallet: &Wallet, cube_uuid: &str, network: &str) 
     // restorer from the descriptor itself. Leaving `xpub` empty here
     // is deliberate: we'd need a miniscript-level traversal to pull
     // per-fingerprint xpubs out cleanly, which is a larger change.
-    let signers: Vec<DescriptorBlobSigner> = wallet
-        .descriptor_keys()
+    //
+    // `descriptor_keys()` returns a `HashSet`, whose iteration order
+    // is randomised per-process by Rust's default hasher. We sort
+    // the fingerprints by their lowercase hex form before building
+    // the `DescriptorBlobSigner` list — otherwise every `App` tick
+    // serialises `signers` in a different order, making the
+    // SHA-256 descriptor fingerprint (W12 drift detection) flip
+    // randomly and fire a bogus drift banner on every refresh.
+    let mut fps: Vec<_> = wallet.descriptor_keys().into_iter().collect();
+    fps.sort_by_key(|fp| format!("{}", fp).to_lowercase());
+    let signers: Vec<DescriptorBlobSigner> = fps
         .into_iter()
         .map(|fp| DescriptorBlobSigner {
             name: wallet
@@ -792,6 +829,56 @@ fn include_halves(
     (mnemonic.is_some(), descriptor_blob.is_some())
 }
 
+/// Treat a `CoincubeError::NotFound` from `delete_recovery_kit` as
+/// success — the server state we wanted (no kit) is already what the
+/// server reports, so DELETE is idempotent from the caller's
+/// perspective. This lets the `RemoveResult(Ok)` branch run
+/// `persist_descriptor_fingerprint(None)` + `load_status(...)` just
+/// as it would on a first-time-successful delete, instead of hitting
+/// the Error screen and leaving a stale local fingerprint cache
+/// behind. Other errors (auth, 429, 5xx) propagate as `Err(String)`
+/// so the user can retry.
+fn normalize_delete_result(res: Result<(), CoincubeError>) -> Result<(), String> {
+    match res {
+        Ok(()) | Err(CoincubeError::NotFound) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// On upload failure, restore the `PasswordEntry` screen from the
+/// snapshot we stashed inside `Uploading { pending }` at submit
+/// time. The user keeps their password, confirm, acknowledge flag,
+/// and (for mnemonic cubes) the decrypted mnemonic — so a transient
+/// network error doesn't throw away their PIN-decryption work.
+///
+/// Uses `mem::replace` so the `Zeroizing`-wrapped fields stay
+/// wrapped the whole time (no plain-`String` copy on the stack).
+///
+/// If the incoming state isn't `Uploading` — which would only
+/// happen on a stale message arriving after `Cancel` or similar —
+/// we fall back to a terminal `Error` screen, preserving the old
+/// behavior for the edge case.
+fn restore_entry_on_upload_error(flow: &mut RecoveryKitState, err: &str) {
+    let prev = std::mem::replace(
+        flow,
+        RecoveryKitState::Error {
+            message: err.to_string(),
+        },
+    );
+    if let RecoveryKitState::Uploading { pending } = prev {
+        *flow = RecoveryKitState::PasswordEntry {
+            mode: pending.mode,
+            mnemonic: pending.mnemonic,
+            password: pending.password,
+            confirm: pending.confirm,
+            acknowledged: pending.acknowledged,
+            error: Some(err.to_string()),
+        };
+    }
+    // Otherwise `flow` has already been set to the Error variant by
+    // the `mem::replace` above — leave it.
+}
+
 async fn encrypt_and_upload(
     client: CoincubeClient,
     cube_id_num: u64,
@@ -810,19 +897,34 @@ async fn encrypt_and_upload(
         );
     }
 
-    // Seed blob.
+    // Seed blob. Zeroisation invariants we maintain here:
+    //
+    // 1. The `phrase` string is constructed inline into the
+    //    `SeedBlobMnemonic` initializer (no named binding) so it
+    //    moves straight into the field. `SeedBlobMnemonic` derives
+    //    `ZeroizeOnDrop`, so when `blob` drops at the end of this
+    //    block the phrase's heap allocation is wiped.
+    //
+    // 2. `serde_json::to_vec` returns a plain `Vec<u8>` containing
+    //    the JSON-serialised mnemonic — i.e. a second copy of the
+    //    phrase bytes. Wrapping in `Zeroizing<Vec<u8>>` ensures those
+    //    bytes are also wiped on drop. Without this wrap the JSON
+    //    copy would linger on the heap past the end of this scope.
+    //    `recovery::encrypt` takes `&[u8]` and `Zeroizing<Vec<u8>>`
+    //    derefs cleanly.
     let seed_ct = if include_seed {
         let words = mnemonic.as_ref().unwrap();
-        let phrase = words.join(" ");
         let blob = SeedBlob {
             version: BLOB_VERSION,
             cube: cube_meta.clone(),
             mnemonic: SeedBlobMnemonic {
-                phrase,
+                phrase: words.join(" "),
                 language: "en".to_string(),
             },
         };
-        let bytes = serde_json::to_vec(&blob).map_err(|e| format!("serialize seed: {}", e))?;
+        let bytes: Zeroizing<Vec<u8>> = Zeroizing::new(
+            serde_json::to_vec(&blob).map_err(|e| format!("serialize seed: {}", e))?,
+        );
         Some(
             recovery::encrypt(&bytes, &password, KdfParams::DEFAULT_V1)
                 .map_err(|e| format!("encrypt seed: {}", e))?,
@@ -926,6 +1028,96 @@ mod tests {
             created_at: None,
             updated_at: None,
         }
+    }
+
+    // Regression tests for the delete-is-idempotent behaviour: a
+    // second delete of a already-removed kit (or any race where the
+    // server no longer has the kit) should count as success so the
+    // local-fingerprint cache gets cleared and the card refreshes —
+    // not dead-end on an error screen that would leave a stale cache.
+
+    #[test]
+    fn normalize_delete_ok_stays_ok() {
+        assert!(matches!(normalize_delete_result(Ok(())), Ok(())));
+    }
+
+    #[test]
+    fn normalize_delete_not_found_becomes_ok() {
+        // Second-delete / race case — treat as the desired end state.
+        assert!(matches!(
+            normalize_delete_result(Err(CoincubeError::NotFound)),
+            Ok(())
+        ));
+    }
+
+    #[test]
+    fn normalize_delete_rate_limited_propagates() {
+        // Server is asking us to back off — not idempotent success.
+        let err = normalize_delete_result(Err(CoincubeError::RateLimited {
+            retry_after: std::time::Duration::from_secs(30),
+        }));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn normalize_delete_api_error_propagates() {
+        let err = normalize_delete_result(Err(CoincubeError::Api("boom".to_string())));
+        assert!(matches!(err, Err(ref msg) if msg.contains("boom")));
+    }
+
+    // Regression tests for the upload-error-preserves-password-entry
+    // flow: a transient upload failure must restore the user's
+    // `PasswordEntry` screen with inputs intact, not drop them on
+    // the floor and force a full PIN + password re-type.
+
+    fn sample_pending() -> PasswordEntryPending {
+        PasswordEntryPending {
+            mode: RecoveryKitMode::Create,
+            mnemonic: Some(Zeroizing::new(vec!["abandon".to_string(); 12])),
+            password: Zeroizing::new("correct-horse-battery-staple".to_string()),
+            confirm: Zeroizing::new("correct-horse-battery-staple".to_string()),
+            acknowledged: true,
+        }
+    }
+
+    #[test]
+    fn upload_error_restores_password_entry_from_uploading_snapshot() {
+        let mut flow = RecoveryKitState::Uploading {
+            pending: sample_pending(),
+        };
+        restore_entry_on_upload_error(&mut flow, "Connect timed out");
+        match flow {
+            RecoveryKitState::PasswordEntry {
+                mode,
+                mnemonic,
+                password,
+                confirm,
+                acknowledged,
+                error,
+            } => {
+                assert_eq!(mode, RecoveryKitMode::Create);
+                assert!(mnemonic.is_some(), "mnemonic must survive the round-trip");
+                assert_eq!(mnemonic.as_ref().unwrap().len(), 12);
+                assert_eq!(password.as_str(), "correct-horse-battery-staple");
+                assert_eq!(confirm.as_str(), "correct-horse-battery-staple");
+                assert!(acknowledged);
+                assert_eq!(error.as_deref(), Some("Connect timed out"));
+            }
+            other => panic!("expected PasswordEntry, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn upload_error_from_non_uploading_state_falls_back_to_error() {
+        // State drift — e.g. a stale `UploadResult` arrives after
+        // the user hit Cancel and the flow is already `None`.
+        // Don't crash or silently revert; surface the error.
+        let mut flow = RecoveryKitState::None;
+        restore_entry_on_upload_error(&mut flow, "stale upload result");
+        assert!(matches!(
+            flow,
+            RecoveryKitState::Error { ref message } if message == "stale upload result"
+        ));
     }
 
     // Regression tests for the Start-handler auth gate: the wizard
@@ -1151,5 +1343,86 @@ mod tests {
         blob.vault.descriptor = "different".into();
         let after = descriptor_blob_fingerprint(&blob).unwrap();
         assert_ne!(before, after);
+    }
+
+    // Regression test for the HashSet-order determinism bug:
+    // `Wallet::descriptor_keys()` returns a `HashSet<Fingerprint>`
+    // whose iteration order is randomised per-process. If
+    // `descriptor_blob_from_wallet` had serialised signers in
+    // HashSet order, each App tick would compute a different
+    // fingerprint and fire spurious W12 drift banners every time
+    // the live fingerprint was re-hashed. The fix is to sort the
+    // fingerprints by lowercase hex before building the signer
+    // list; this test pins the underlying invariant that justifies
+    // that sort.
+    fn signer(fp_hex: &str) -> DescriptorBlobSigner {
+        DescriptorBlobSigner {
+            name: "Signer".into(),
+            fingerprint: fp_hex.to_string(),
+            xpub: String::new(),
+        }
+    }
+
+    #[test]
+    fn descriptor_fingerprint_depends_on_signer_order() {
+        // Two blobs with identical signer *sets* but different
+        // orderings must produce different fingerprints — this is
+        // precisely why `descriptor_blob_from_wallet` sorts before
+        // building the list.
+        let base_vault = DescriptorBlobVault {
+            name: "n".into(),
+            descriptor: "d".into(),
+            change_descriptor: None,
+            signers: vec![signer("aaaaaaaa"), signer("bbbbbbbb")],
+        };
+        let a = DescriptorBlob {
+            version: BLOB_VERSION,
+            cube: DescriptorBlobCube {
+                uuid: "u".into(),
+                network: "bitcoin".into(),
+            },
+            vault: base_vault.clone(),
+        };
+        let mut b = a.clone();
+        b.vault.signers.reverse();
+        assert_ne!(
+            descriptor_blob_fingerprint(&a).unwrap(),
+            descriptor_blob_fingerprint(&b).unwrap(),
+            "signer order changes the fingerprint — production must sort before hashing",
+        );
+    }
+
+    #[test]
+    fn descriptor_fingerprint_stable_when_signers_are_presented_in_sorted_order() {
+        // Two independent Vec<DescriptorBlobSigner> constructions
+        // that both follow the "sort by lowercase hex" convention
+        // produce identical fingerprints — confirms the sort
+        // strategy used by `descriptor_blob_from_wallet`.
+        fn build_sorted(fps: &[&str]) -> DescriptorBlob {
+            let mut v: Vec<&str> = fps.to_vec();
+            v.sort_by_key(|s| s.to_lowercase());
+            DescriptorBlob {
+                version: BLOB_VERSION,
+                cube: DescriptorBlobCube {
+                    uuid: "u".into(),
+                    network: "bitcoin".into(),
+                },
+                vault: DescriptorBlobVault {
+                    name: "n".into(),
+                    descriptor: "d".into(),
+                    change_descriptor: None,
+                    signers: v.into_iter().map(signer).collect(),
+                },
+            }
+        }
+        // Two callers pass fingerprints in different "observed"
+        // orderings (simulating two HashSet iteration orders), but
+        // both sort before building — fingerprints must match.
+        let a = build_sorted(&["cafebabe", "deadbeef", "aabbccdd"]);
+        let b = build_sorted(&["aabbccdd", "deadbeef", "cafebabe"]);
+        assert_eq!(
+            descriptor_blob_fingerprint(&a).unwrap(),
+            descriptor_blob_fingerprint(&b).unwrap(),
+        );
     }
 }

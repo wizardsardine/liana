@@ -1,12 +1,11 @@
 use iced::{
     alignment::Horizontal,
-    widget::{pick_list, scrollable, Button, Space, Stack, Toggler},
+    widget::{pick_list, scrollable, tooltip as iced_tooltip, Button, Space, Stack, Toggler},
     Alignment, Length, Subscription, Task,
 };
 
 use coincube_core::{bip39, miniscript::bitcoin::Network};
 use coincube_ui::{
-    color,
     component::{button, card, network_banner, notification, spinner, text::*},
     icon, image, theme,
     widget::{modal::Modal, CheckBox, Column, Container, Element, Row},
@@ -2379,36 +2378,43 @@ fn cubes_list_item<'a>(cube: &'a CubeSettings, i: usize) -> Element<'a, ViewMess
 }
 
 fn remote_cube_list_item<'a>(cube: &'a RemoteCube) -> Element<'a, ViewMessage> {
-    let disabled_style = |_t: &theme::Theme| theme::text::custom(color::GREY_3);
+    // Render the cube-name area as a plain card, NOT a Button. Using a
+    // Button without `.on_press` makes Iced render it in
+    // `Status::Disabled` (alpha 0.2 on the text), which made the whole
+    // row read as "disabled" to users and obscured the fact that the
+    // cloud-download icon on the right is an active restore trigger.
+    let card = Container::new(
+        Column::new().spacing(4).push(p1_bold(&cube.name)).push(
+            p1_regular("On another device — click the download icon to restore")
+                .style(theme::text::secondary),
+        ),
+    )
+    .padding(15)
+    .width(Length::Fixed(500.0))
+    .style(theme::card::simple);
+
+    // W13 entry point on the launcher: clicking cloud-arrow-down on a
+    // remote-only cube kicks off the Connect-Recovery-Kit restore flow.
+    // The flow's cube picker (`RecoveryKitRestoreStep`) lets the user
+    // confirm which cube to restore; pre-selecting by `cube.uuid` here
+    // is a future refinement.
+    let restore_button = iced_tooltip::Tooltip::new(
+        Button::new(icon::cloud_arrow_down_icon())
+            .style(theme::button::secondary)
+            .padding(10)
+            .on_press(ViewMessage::RestoreFromRecoveryKit),
+        Container::new(p1_regular("Restore this Cube from your Recovery Kit"))
+            .padding(8)
+            .style(theme::card::simple),
+        iced_tooltip::Position::Bottom,
+    );
+
     Container::new(
         Row::new()
             .align_y(Alignment::Center)
             .spacing(20)
-            .push(
-                Container::new(
-                    Button::new(
-                        Column::new()
-                            .push(p1_bold(&cube.name).style(disabled_style))
-                            .push(p1_regular("On another device").style(disabled_style)),
-                    )
-                    .padding(15)
-                    .style(theme::button::container_border)
-                    .width(Length::Fixed(500.0)),
-                )
-                .style(theme::card::simple),
-            )
-            .push(
-                // W13 entry point on the launcher: clicking
-                // cloud-arrow-down on a remote-only cube kicks off
-                // the Connect-Recovery-Kit restore flow. The flow's
-                // cube picker (`RecoveryKitRestoreStep`) lets the
-                // user confirm which cube to restore; pre-selecting
-                // by `cube.uuid` here is a future refinement.
-                Button::new(icon::cloud_arrow_down_icon())
-                    .style(theme::button::secondary)
-                    .padding(10)
-                    .on_press(ViewMessage::RestoreFromRecoveryKit),
-            )
+            .push(card)
+            .push(restore_button)
             .push(
                 Button::new(icon::trash_icon())
                     .style(theme::button::secondary)

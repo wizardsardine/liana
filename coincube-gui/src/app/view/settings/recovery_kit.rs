@@ -426,7 +426,7 @@ pub fn dispatch<'a>(
             *acknowledged,
             error.as_deref(),
         )),
-        RecoveryKitState::Uploading => Some(uploading_view()),
+        RecoveryKitState::Uploading { .. } => Some(uploading_view()),
         RecoveryKitState::Removing => Some(removing_view()),
         RecoveryKitState::Completed {
             updated_at,

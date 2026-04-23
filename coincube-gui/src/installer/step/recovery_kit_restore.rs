@@ -263,6 +263,46 @@ fn map_restore_error(e: RestoreError) -> String {
     e.to_string()
 }
 
+/// Transition function called after `list_cubes` + per-cube status
+/// probes resolve. Extracted as a pure function over the Phase enum
+/// so the auto-select vs picker vs error decision is unit-testable
+/// without standing up the whole installer step.
+///
+/// Branches:
+/// - Exactly one cube with a kit → auto-select it (common restore path)
+/// - Exactly one cube **without** a kit → `Phase::Error` with a
+///   specific message; the picker's "no kit (disabled)" affordance
+///   doesn't help when there's only one row
+/// - Zero or 2+ cubes → `Phase::CubePicker` (the picker view already
+///   handles the empty-list and mixed-kit cases cleanly)
+fn phase_after_cubes_loaded(cubes: Vec<RestoreCubeCandidate>) -> Phase {
+    if cubes.len() == 1 {
+        // Can't `into_iter().next().unwrap()` inside the `if` guard
+        // without moving; handle with `match` on length-1 form.
+        let c = cubes.into_iter().next().expect("len == 1");
+        if c.status.has_recovery_kit {
+            Phase::PasswordEntry {
+                selected: c,
+                attempts: 0,
+            }
+        } else {
+            Phase::Error {
+                message: format!(
+                    "\"{}\" doesn't have a Recovery Kit backed up on Connect. Back up \
+                     the kit first from a device where the Cube is already installed, \
+                     then return here to restore.",
+                    c.name
+                ),
+            }
+        }
+    } else {
+        Phase::CubePicker {
+            cubes,
+            selected: None,
+        }
+    }
+}
+
 impl From<RecoveryKitRestoreStep> for Box<dyn Step> {
     fn from(s: RecoveryKitRestoreStep) -> Box<dyn Step> {
         Box::new(s)
@@ -336,22 +376,7 @@ impl Step for RecoveryKitRestoreStep {
             }
             RecoveryKitRestoreMsg::CubesLoaded(res) => {
                 match res {
-                    Ok(cubes) => {
-                        if cubes.len() == 1 {
-                            // Auto-select the unambiguous case and
-                            // immediately advance to password entry.
-                            let c = cubes.into_iter().next().unwrap();
-                            self.set_phase(Phase::PasswordEntry {
-                                selected: c,
-                                attempts: 0,
-                            });
-                        } else {
-                            self.set_phase(Phase::CubePicker {
-                                cubes,
-                                selected: None,
-                            });
-                        }
-                    }
+                    Ok(cubes) => self.set_phase(phase_after_cubes_loaded(cubes)),
                     Err(e) => {
                         self.set_phase(Phase::Error {
                             message: format!("Couldn't load cubes: {}", e),
@@ -592,4 +617,91 @@ pub use self::Phase as RestorePhase;
 pub fn classify_password(password: &str) -> PasswordStrength {
     let z = Zeroizing::new(password.to_string());
     score_password(&z, &[]).0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate(name: &str, has_kit: bool) -> RestoreCubeCandidate {
+        RestoreCubeCandidate {
+            id: 1,
+            uuid: "uuid".to_string(),
+            name: name.to_string(),
+            network: "mainnet".to_string(),
+            status: RecoveryKitStatus {
+                has_recovery_kit: has_kit,
+                has_encrypted_seed: has_kit,
+                has_encrypted_wallet_descriptor: has_kit,
+                encryption_scheme: "aes-256-gcm".to_string(),
+                created_at: None,
+                updated_at: None,
+            },
+        }
+    }
+
+    // Regression tests for the auto-select-skips-kit-check bug. Before
+    // this fix, a single cube without a kit would land the user on
+    // the password screen, which would then 404 at decrypt time —
+    // a worse UX than a direct "no kit yet" message up front.
+
+    #[test]
+    fn single_cube_with_kit_auto_advances_to_password() {
+        let phase = phase_after_cubes_loaded(vec![candidate("My Cube", true)]);
+        match phase {
+            Phase::PasswordEntry { selected, attempts } => {
+                assert_eq!(selected.name, "My Cube");
+                assert_eq!(attempts, 0);
+            }
+            other => panic!("expected PasswordEntry, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn single_cube_without_kit_surfaces_error_not_password_screen() {
+        let phase = phase_after_cubes_loaded(vec![candidate("My Cube", false)]);
+        match phase {
+            Phase::Error { message } => {
+                assert!(
+                    message.contains("My Cube"),
+                    "error message should name the cube, got: {}",
+                    message
+                );
+                assert!(
+                    message.contains("doesn't have a Recovery Kit"),
+                    "error message should explain the cause, got: {}",
+                    message
+                );
+            }
+            other => panic!("expected Error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn multiple_cubes_route_to_picker_regardless_of_kit_status() {
+        // The picker view itself disables no-kit rows; we hand the
+        // whole list through so the user can see context (e.g.
+        // "that one's the one without a kit").
+        let phase =
+            phase_after_cubes_loaded(vec![candidate("Alice", true), candidate("Bob", false)]);
+        match phase {
+            Phase::CubePicker { cubes, selected } => {
+                assert_eq!(cubes.len(), 2);
+                assert!(selected.is_none());
+            }
+            other => panic!("expected CubePicker, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn zero_cubes_route_to_picker_which_renders_empty_state() {
+        // Empty picker is the right surface — the picker view
+        // renders "No Cubes found on this Connect account..." which
+        // is more actionable than a generic error.
+        let phase = phase_after_cubes_loaded(vec![]);
+        match phase {
+            Phase::CubePicker { cubes, .. } => assert!(cubes.is_empty()),
+            other => panic!("expected CubePicker, got {:?}", other),
+        }
+    }
 }

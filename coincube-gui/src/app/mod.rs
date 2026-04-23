@@ -1934,16 +1934,29 @@ impl App {
                     // here (pre-fetch) would misfire: on app startup
                     // and after Connect sign-out the cached value is
                     // `None` even for users whose kit is complete.
-                    if self.panels.connect.account.is_authenticated() {
-                        self.panels
-                            .global_settings
-                            .recovery_kit
-                            .nudge_on_next_status_load = true;
-                    }
-                    let nudge_task = Task::done(Message::View(view::Message::Settings(
-                        view::SettingsMessage::RecoveryKit(view::RecoveryKitMessage::LoadStatus),
-                    )));
-                    // Forward to the current panel _and_ fire the nudge.
+                    //
+                    // Both the flag and the `LoadStatus` dispatch are
+                    // gated on auth — unauthenticated users have no
+                    // Connect account to fetch against, and dispatching
+                    // the message anyway would just round-trip through
+                    // `load_status`'s early-return. Skipping saves the
+                    // message-queue hop and keeps the intent obvious.
+                    let nudge_task: Option<Task<Message>> =
+                        if self.panels.connect.account.is_authenticated() {
+                            self.panels
+                                .global_settings
+                                .recovery_kit
+                                .nudge_on_next_status_load = true;
+                            Some(Task::done(Message::View(view::Message::Settings(
+                                view::SettingsMessage::RecoveryKit(
+                                    view::RecoveryKitMessage::LoadStatus,
+                                ),
+                            ))))
+                        } else {
+                            None
+                        };
+                    // Forward to the current panel; batch the nudge in
+                    // only when we actually constructed one.
                     if let (Some(daemon), Some(panel)) =
                         (self.daemon.clone(), self.panels.current_mut())
                     {
@@ -1952,9 +1965,12 @@ impl App {
                             &self.cache,
                             Message::WalletUpdated(Ok(wallet)),
                         );
-                        return Task::batch([panel_task, nudge_task]);
+                        return match nudge_task {
+                            Some(nudge) => Task::batch([panel_task, nudge]),
+                            None => panel_task,
+                        };
                     }
-                    return nudge_task;
+                    return nudge_task.unwrap_or_else(Task::none);
                 }
 
                 // Forward the message to the current panel
