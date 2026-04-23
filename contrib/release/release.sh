@@ -42,8 +42,10 @@ fi
 if git describe --tags --exact-match --match "$TAG_PATTERN" >/dev/null 2>&1; then
     VERSION="$(git describe --tags --exact-match --match "$TAG_PATTERN" | sed "s/^${TAG_PREFIX}//")"
 else
-    # Find latest matching tag by version sorting (works even if tag is not an ancestor of HEAD)
-    LATEST_TAG="$(git tag --sort=-v:refname --list "$TAG_PATTERN" | head -1)"
+    # Find latest matching tag by version sorting (works even if tag is not an ancestor of HEAD).
+    # Use versionsort.suffix to ensure release candidates sort before their final release
+    # (e.g., v14.0 > v14.0rc1 > v13.1).
+    LATEST_TAG="$(git -c versionsort.suffix=rc tag --sort=-v:refname --list "$TAG_PATTERN" | head -1)"
     if [ -n "$LATEST_TAG" ]; then
         VERSION="$(echo "$LATEST_TAG" | sed "s/^${TAG_PREFIX}//")-$(git rev-parse --short HEAD)"
     else
