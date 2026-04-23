@@ -227,15 +227,23 @@ pub fn receive<'a>(
                         .style(theme::button::clickable_card)
                     } else {
                         // Continue the row index from those of generated addresses above.
-                        Button::new(address_card(
+                        let addr_str = address.to_string();
+                        let is_editing = labels_editing.contains_key(&addr_str);
+                        let btn = Button::new(address_card(
                             addresses_count + i,
                             address,
                             prev_labels,
                             labels_editing,
                         ))
                         .padding(0) // so that button & card borders match
-                        .on_press(Message::SelectAddress(address.clone()))
-                        .style(theme::button::clickable_card)
+                        .style(theme::button::clickable_card);
+                        // Do not set on_press while editing label so that
+                        // clicking the form does not collapse the card.
+                        if is_editing {
+                            btn
+                        } else {
+                            btn.on_press(Message::SelectAddress(address.clone()))
+                        }
                     })
                 },
             ),
