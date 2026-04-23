@@ -202,16 +202,27 @@ pub enum CoincubeConnectMsg {
 /// Messages driving the Cube Recovery Kit restore step. Manual
 /// `Debug` redacts every variant that carries password, OTP, or
 /// mnemonic material — tracing dumps don't leak the kit.
+///
+/// Sensitive payloads (`OtpEdited`, `OtpVerified` JWT,
+/// `PasswordEdited`) are wrapped in `Zeroizing<String>` so each
+/// in-flight copy zeroes its heap allocation on drop, not just the
+/// copy stored on the step's state. Iced's runtime may hold several
+/// message copies simultaneously (update → task → view round-trip),
+/// so wrapping at the message level — not just at the state field —
+/// is what prevents key material from lingering after the flow
+/// completes. `EmailEdited` stays as plain `String`: the email is
+/// already surfaced elsewhere in the UI (header caption) and isn't
+/// a credential.
 #[derive(Clone)]
 pub enum RecoveryKitRestoreMsg {
     EmailEdited(String),
     RequestOtp,
     OtpSent(Result<(), String>),
-    OtpEdited(String),
-    OtpVerified(Result<String, String>),
+    OtpEdited(zeroize::Zeroizing<String>),
+    OtpVerified(Result<zeroize::Zeroizing<String>, String>),
     CubesLoaded(Result<Vec<super::step::recovery_kit_restore::RestoreCubeCandidate>, String>),
     SelectCube(u64),
-    PasswordEdited(String),
+    PasswordEdited(zeroize::Zeroizing<String>),
     SubmitPassword,
     DecryptResult(
         Result<

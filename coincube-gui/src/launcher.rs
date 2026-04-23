@@ -2398,9 +2398,16 @@ fn remote_cube_list_item<'a>(cube: &'a RemoteCube) -> Element<'a, ViewMessage> {
                 .style(theme::card::simple),
             )
             .push(
+                // W13 entry point on the launcher: clicking
+                // cloud-arrow-down on a remote-only cube kicks off
+                // the Connect-Recovery-Kit restore flow. The flow's
+                // cube picker (`RecoveryKitRestoreStep`) lets the
+                // user confirm which cube to restore; pre-selecting
+                // by `cube.uuid` here is a future refinement.
                 Button::new(icon::cloud_arrow_down_icon())
                     .style(theme::button::secondary)
-                    .padding(10),
+                    .padding(10)
+                    .on_press(ViewMessage::RestoreFromRecoveryKit),
             )
             .push(
                 Button::new(icon::trash_icon())

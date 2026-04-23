@@ -213,16 +213,12 @@ impl Installer {
             spark_backend,
             steps: {
                 // Network string used as a filter by the restore step's
-                // cube-picker. The backend accepts the canonical lowercase
-                // names rather than `Network::Display`'s output.
-                let network_str = match network {
-                    Network::Bitcoin => "bitcoin",
-                    Network::Testnet => "testnet",
-                    Network::Signet => "signet",
-                    Network::Regtest => "regtest",
-                    _ => "bitcoin",
-                }
-                .to_string();
+                // cube-picker. Must match the Connect API's canonical
+                // form (`"mainnet"` for Bitcoin mainnet) — `CubeResponse.network`
+                // comes straight from the backend which uses that shape.
+                // Using any other form here silently filters out every
+                // server-side cube on mainnet.
+                let network_str = crate::app::settings::network_to_api_string(network);
                 match user_flow {
                     UserFlow::CreateWallet => vec![
                         ChooseDescriptorTemplate::default().into(),

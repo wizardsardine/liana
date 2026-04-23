@@ -43,12 +43,28 @@ pub struct SeedBlobCube {
 /// Wraps the mnemonic phrase in its own struct with `ZeroizeOnDrop` so
 /// that even if `SeedBlob` leaks through state cloning (e.g. Iced message
 /// snapshots), the phrase material is wiped when the clone drops.
-#[derive(Serialize, Deserialize, Debug, Clone, Zeroize, ZeroizeOnDrop)]
+///
+/// `Debug` is implemented manually below with the `phrase` field
+/// redacted. **Do not `#[derive(Debug)]`** — the derived impl would
+/// print the mnemonic in plaintext to any `{:?}` format, tracing
+/// subscriber, or debugger watch-window, defeating the whole point of
+/// the zeroize wrapping. The manual impl below is the only `Debug`
+/// for this type; keep it that way.
+#[derive(Serialize, Deserialize, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct SeedBlobMnemonic {
     pub phrase: String,
     /// BIP39 wordlist language, e.g. "en". Persisted so restore doesn't
     /// have to guess.
     pub language: String,
+}
+
+impl std::fmt::Debug for SeedBlobMnemonic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SeedBlobMnemonic")
+            .field("phrase", &"<redacted>")
+            .field("language", &self.language)
+            .finish()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -84,6 +100,60 @@ pub struct DescriptorBlobSigner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Canary string unlikely to appear anywhere else in the
+    /// `Debug` output (field names, "<redacted>" marker, etc.).
+    /// If this ever surfaces in a `{:?}` dump, the redacting
+    /// `Debug` impl has regressed.
+    const CANARY_PHRASE: &str = "sentinel-mnemonic-canary-word-sequence-XYZZY";
+
+    #[test]
+    fn seed_blob_mnemonic_debug_redacts_phrase() {
+        let m = SeedBlobMnemonic {
+            phrase: CANARY_PHRASE.to_string(),
+            language: "en".to_string(),
+        };
+        let rendered = format!("{:?}", m);
+        assert!(
+            !rendered.contains(CANARY_PHRASE),
+            "mnemonic phrase must not appear in Debug output, got: {}",
+            rendered,
+        );
+        assert!(
+            rendered.contains("<redacted>"),
+            "expected '<redacted>' marker in Debug output, got: {}",
+            rendered,
+        );
+        // Language is fine to leak — it's "en", not secret.
+        assert!(rendered.contains("\"en\""));
+    }
+
+    #[test]
+    fn seed_blob_debug_does_not_leak_mnemonic_through_parent() {
+        // The `SeedBlob` parent still derives `Debug`; verify the
+        // redacting impl on the child propagates cleanly so printing
+        // the whole blob doesn't accidentally re-expose the phrase.
+        let blob = SeedBlob {
+            version: BLOB_VERSION,
+            cube: SeedBlobCube {
+                uuid: "u".into(),
+                name: "n".into(),
+                network: "bitcoin".into(),
+                created_at: "2026-04-23T00:00:00Z".into(),
+                lightning_address: None,
+            },
+            mnemonic: SeedBlobMnemonic {
+                phrase: CANARY_PHRASE.to_string(),
+                language: "en".to_string(),
+            },
+        };
+        let rendered = format!("{:?}", blob);
+        assert!(
+            !rendered.contains(CANARY_PHRASE),
+            "SeedBlob Debug leaked the phrase: {}",
+            rendered,
+        );
+    }
 
     #[test]
     fn seed_blob_roundtrip_json() {

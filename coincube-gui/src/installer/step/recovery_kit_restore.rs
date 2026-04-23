@@ -2,18 +2,18 @@
 //!
 //! Mounts into three entry points:
 //!   * W13 — full restore from scratch (fresh install, no local state).
-//!           The step populates `ctx.recovered_signer` + `ctx.descriptor`
-//!           from the decrypted blobs. Runs inside
-//!           `UserFlow::RestoreFromRecoveryKit`.
+//!     The step populates `ctx.recovered_signer` + `ctx.descriptor`
+//!     from the decrypted blobs. Runs inside
+//!     `UserFlow::RestoreFromRecoveryKit`.
 //!   * W14 — after the user enters a mnemonic in `AddWallet`, offer to
-//!           fetch the wallet descriptor from Connect instead of (or in
-//!           addition to) importing from a file. Only the descriptor
-//!           half is applied; the seed half is ignored because the user
-//!           just retyped their mnemonic.
+//!     fetch the wallet descriptor from Connect instead of (or in
+//!     addition to) importing from a file. Only the descriptor
+//!     half is applied; the seed half is ignored because the user
+//!     just retyped their mnemonic.
 //!   * W15 — running-app "Restore Vault from Connect". Same shape as
-//!           W14 but without an accompanying mnemonic entry — the
-//!           current Cube already has its seed on disk; we just need
-//!           the descriptor.
+//!     W14 but without an accompanying mnemonic entry — the
+//!     current Cube already has its seed on disk; we just need
+//!     the descriptor.
 //!
 //! The step is a single Iced `Step` with an internal state machine
 //! (`Phase`). It reuses the reusable restore helpers in
@@ -127,7 +127,11 @@ pub struct RecoveryKitRestoreStep {
     skipped: bool,
     processing: bool,
     error: Option<String>,
-    jwt: Option<String>,
+    /// JWT bearer token captured on successful OTP verify. Stays
+    /// valid for the session, so wrapping it in `Zeroizing` is the
+    /// difference between key material lingering on the heap after
+    /// this step drops versus being scrubbed on drop.
+    jwt: Option<Zeroizing<String>>,
 }
 
 impl RecoveryKitRestoreStep {
@@ -189,7 +193,7 @@ impl RecoveryKitRestoreStep {
                 client
                     .login_verify_otp(OtpVerifyRequest { email, otp })
                     .await
-                    .map(|r| r.token)
+                    .map(|r| Zeroizing::new(r.token))
                     .map_err(|e| e.to_string())
             },
             |res| Message::RecoveryKitRestore(RecoveryKitRestoreMsg::OtpVerified(res)),
@@ -244,7 +248,7 @@ impl RecoveryKitRestoreStep {
                 fetch_and_decrypt_kit(&client, cube_id, &password)
                     .await
                     .map(|DecryptedKit { seed, descriptor }| (seed, descriptor))
-                    .map_err(|e| map_restore_error(e))
+                    .map_err(map_restore_error)
             },
             |res| Message::RecoveryKitRestore(RecoveryKitRestoreMsg::DecryptResult(res)),
         )
@@ -295,6 +299,10 @@ impl Step for RecoveryKitRestoreStep {
                 Task::none()
             }
             RecoveryKitRestoreMsg::OtpEdited(value) => {
+                // Trim-and-store at the form level. The message-level
+                // Zeroizing wrapper protected the in-flight copies;
+                // the step state holds only the trimmed value briefly
+                // until auto-submit or clear-on-verify.
                 self.otp.value = value.trim().to_string();
                 self.otp.valid = self.otp.value.len() == 6;
                 // Auto-submit when 6 digits — matches
@@ -310,7 +318,11 @@ impl Step for RecoveryKitRestoreStep {
                 self.processing = false;
                 match res {
                     Ok(token) => {
-                        self.client.set_token(&token);
+                        // `token` is `Zeroizing<String>` — deref to
+                        // `&str` for `set_token`, then stash the
+                        // Zeroizing wrapper so the JWT heap bytes are
+                        // wiped when the step drops or re-auths.
+                        self.client.set_token(token.as_str());
                         self.jwt = Some(token);
                         self.set_phase(Phase::LoadingCubes);
                         self.list_cubes_task()
@@ -360,7 +372,10 @@ impl Step for RecoveryKitRestoreStep {
                 Task::none()
             }
             RecoveryKitRestoreMsg::PasswordEdited(v) => {
-                self.password = Zeroizing::new(v);
+                // Move the `Zeroizing<String>` wrapper straight into
+                // state; the old `self.password` is dropped here
+                // (its heap zeroes via Zeroizing's Drop).
+                self.password = v;
                 Task::none()
             }
             RecoveryKitRestoreMsg::SubmitPassword => {

@@ -16,7 +16,7 @@
 
 use zeroize::Zeroizing;
 
-use super::{decrypt, DescriptorBlob, RecoveryError, SeedBlob};
+use super::{decrypt, DescriptorBlob, RecoveryError, SeedBlob, BLOB_VERSION};
 use crate::services::coincube::{CoincubeClient, CoincubeError};
 
 /// Errors produced by the restore helpers. Collapses coincube-client,
@@ -113,6 +113,7 @@ pub fn decrypt_seed_blob(
     let bytes = decrypt(ciphertext_b64, password)?;
     let blob: SeedBlob = serde_json::from_slice(&bytes)
         .map_err(|e| RestoreError::BlobParse(format!("seed blob: {}", e)))?;
+    check_blob_version("seed blob", blob.version)?;
     Ok(blob)
 }
 
@@ -126,7 +127,25 @@ pub fn decrypt_descriptor_blob(
     let bytes = decrypt(ciphertext_b64, password)?;
     let blob: DescriptorBlob = serde_json::from_slice(&bytes)
         .map_err(|e| RestoreError::BlobParse(format!("descriptor blob: {}", e)))?;
+    check_blob_version("descriptor blob", blob.version)?;
     Ok(blob)
+}
+
+/// Rejects blobs whose `version` field doesn't match the constant
+/// this client is built against. Keeps the plaintext module's
+/// promise ("the reader should refuse unknown versions") honest —
+/// a newer-schema blob can silently deserialise into the v1 shape
+/// if it kept the old fields, hiding the mismatch until it produces
+/// wrong on-chain behaviour at restore. Fail loud and early instead.
+fn check_blob_version(kind: &'static str, seen: u8) -> Result<(), RestoreError> {
+    if seen == BLOB_VERSION {
+        return Ok(());
+    }
+    Err(RestoreError::BlobParse(format!(
+        "{} version {} not supported by this client (expected {}). \
+         Update your Cube app to the latest version.",
+        kind, seen, BLOB_VERSION,
+    )))
 }
 
 /// Fetches the kit from Connect and decrypts whichever halves it
@@ -252,6 +271,66 @@ mod tests {
         let got = decrypt_seed_blob(&envelope, &password).unwrap();
         assert_eq!(got.cube.uuid, blob.cube.uuid);
         assert_eq!(got.mnemonic.phrase, blob.mnemonic.phrase);
+    }
+
+    // Regression tests for the blob-version gate. The plaintext
+    // module promises "the reader should refuse unknown versions";
+    // before this gate, a future-schema blob that still carried the
+    // v1 fields would silently deserialise and could produce wrong
+    // on-chain behaviour at restore.
+
+    #[test]
+    fn decrypt_seed_blob_rejects_unknown_version() {
+        let password = pw("pw");
+        let mut blob = sample_seed_blob();
+        blob.version = BLOB_VERSION + 1;
+        let bytes = serde_json::to_vec(&blob).unwrap();
+        let envelope = encrypt(&bytes, &password, TEST_PARAMS).unwrap();
+
+        let err = decrypt_seed_blob(&envelope, &password).expect_err("expected version rejection");
+        match err {
+            RestoreError::BlobParse(msg) => {
+                assert!(msg.contains("not supported"), "got: {}", msg);
+                assert!(msg.contains("seed blob"), "got: {}", msg);
+            }
+            other => panic!("expected BlobParse, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decrypt_descriptor_blob_rejects_unknown_version() {
+        let password = pw("pw");
+        let mut blob = sample_descriptor_blob();
+        blob.version = BLOB_VERSION + 1;
+        let bytes = serde_json::to_vec(&blob).unwrap();
+        let envelope = encrypt(&bytes, &password, TEST_PARAMS).unwrap();
+
+        let err =
+            decrypt_descriptor_blob(&envelope, &password).expect_err("expected version rejection");
+        match err {
+            RestoreError::BlobParse(msg) => {
+                assert!(msg.contains("not supported"), "got: {}", msg);
+                assert!(msg.contains("descriptor blob"), "got: {}", msg);
+            }
+            other => panic!("expected BlobParse, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decrypt_seed_blob_rejects_version_zero() {
+        // A v0 blob is just as unsupported as a future version.
+        // Covers the "older than us" branch (not reachable today,
+        // since we're already at v1, but the gate enforces it).
+        let password = pw("pw");
+        let mut blob = sample_seed_blob();
+        blob.version = 0;
+        let bytes = serde_json::to_vec(&blob).unwrap();
+        let envelope = encrypt(&bytes, &password, TEST_PARAMS).unwrap();
+
+        assert!(matches!(
+            decrypt_seed_blob(&envelope, &password),
+            Err(RestoreError::BlobParse(_))
+        ));
     }
 
     #[test]

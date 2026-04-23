@@ -96,6 +96,14 @@ pub struct RecoveryKit {
     /// they won't be, but keeping them isolated avoids accidental
     /// coupling).
     pub pin: PinInput,
+    /// One-shot flag: when the next `StatusLoaded` message resolves
+    /// (regardless of which code path fired the corresponding
+    /// `LoadStatus`), emit the post-vault-creation nudge toast iff
+    /// the loaded status indicates the user doesn't yet have a
+    /// descriptor backed up. Set by the W10 code path in
+    /// `App::update`; cleared on handle so subsequent Settings-page
+    /// entries don't re-nag.
+    pub nudge_on_next_status_load: bool,
 }
 
 impl RecoveryKit {
@@ -105,6 +113,7 @@ impl RecoveryKit {
             status_loading: false,
             flow: RecoveryKitState::None,
             pin: PinInput::new(),
+            nudge_on_next_status_load: false,
         }
     }
 
@@ -163,11 +172,29 @@ pub fn update(
                     tracing::warn!("get_recovery_kit_status failed: {}", e);
                     // Keep the prior cached status (if any) so the
                     // card doesn't flicker; surface a toast only —
-                    // no state transition.
+                    // no state transition. Also clear the nudge
+                    // flag — we don't want to defer the toast
+                    // indefinitely because of a transient error.
+                    rk.nudge_on_next_status_load = false;
                     return Task::done(Message::View(view::Message::ShowError(format!(
                         "Couldn't load Recovery Kit status: {}",
                         e
                     ))));
+                }
+            }
+            // W10 post-vault-creation nudge: fires only against a
+            // freshly-loaded status so we don't nag users whose kit
+            // already has a descriptor backed up. One-shot flag is
+            // cleared here regardless of outcome.
+            if rk.nudge_on_next_status_load {
+                rk.nudge_on_next_status_load = false;
+                if should_nudge_for_status(rk.status.as_ref()) {
+                    return Task::done(Message::View(view::Message::ShowToast(
+                        log::Level::Info,
+                        "Your new Vault is ready — back up your Wallet Descriptor in \
+                         Settings → General → Cube Recovery Kit."
+                            .to_string(),
+                    )));
                 }
             }
             Task::none()
@@ -175,6 +202,31 @@ pub fn update(
 
         RecoveryKitMessage::Start(mode) => {
             rk.pin.clear();
+            // Gate the whole wizard on Connect auth + cube
+            // registration *before* we collect anything sensitive
+            // (PIN, password). Without those, the final upload in
+            // `submit_password` would always fail — and the user
+            // would've re-entered their PIN and typed a password
+            // for nothing. Fail fast and point them at sign-in.
+            match start_guard(client.as_ref(), server_cube_id) {
+                StartGuard::Ok => {}
+                StartGuard::NotSignedIn => {
+                    rk.flow = RecoveryKitState::Error {
+                        message: "Sign in to Connect to back up your Recovery Kit. \
+                                  You can sign in from Settings → Connect."
+                            .to_string(),
+                    };
+                    return Task::none();
+                }
+                StartGuard::CubeNotRegistered => {
+                    rk.flow = RecoveryKitState::Error {
+                        message: "This Cube isn't registered with Connect yet. \
+                                  Open the Connect panel to finish setup, then try again."
+                            .to_string(),
+                    };
+                    return Task::none();
+                }
+            }
             match seed_source {
                 SeedSource::Mnemonic => {
                     rk.flow = RecoveryKitState::PinEntry { mode, error: None };
@@ -285,17 +337,25 @@ pub fn update(
                     let updated_at = outcome.updated_at.clone();
                     let now_has_seed = outcome.now_has_seed;
                     let now_has_descriptor = outcome.now_has_descriptor;
-                    let persist_fp_task = persist_descriptor_fingerprint(
-                        cache,
-                        local_cube_id,
-                        outcome.descriptor_fingerprint,
-                    );
+                    // Only refresh the cached drift fingerprint when
+                    // *this* upload actually included a descriptor half.
+                    // Passing through `None` would wipe a previously-
+                    // stored fingerprint on a seed-only upload (e.g.
+                    // `AddSeed`), which then silently disables drift
+                    // detection for the descriptor that's still on
+                    // the server. The `Remove` path clears the
+                    // fingerprint through its own dedicated call.
+                    let fp_to_persist = next_fingerprint_to_persist(&outcome);
                     rk.flow = RecoveryKitState::Completed {
                         updated_at,
                         now_has_seed,
                         now_has_descriptor,
                     };
-                    persist_fp_task
+                    if let Some(fp) = fp_to_persist {
+                        persist_descriptor_fingerprint(cache, local_cube_id, Some(fp))
+                    } else {
+                        Task::none()
+                    }
                 }
                 Err(e) => {
                     // Preserve any already-entered password so the user
@@ -476,20 +536,10 @@ fn submit_password(
     server_cube_id: Option<u64>,
     wallet: Option<Arc<Wallet>>,
 ) -> Task<Message> {
-    // Destructure without moving fields out of the state — we'll set
-    // rk.flow to `Uploading` if all validation passes.
-    let (
-        mode,
-        mnemonic_opt,
-        password_copy,
-        mnemonic_clone_opt,
-        cube_uuid,
-        cube_name,
-        network,
-        lightning_address,
-        created_at_str,
-    );
-    match &rk.flow {
+    // Pull validation + cloneable inputs out of the state without
+    // moving fields — we'll set `rk.flow = Uploading` once all checks
+    // pass and the task is on its way.
+    let (mode, password_copy, mnemonic_clone_opt) = match &rk.flow {
         RecoveryKitState::PasswordEntry {
             mode: m,
             mnemonic,
@@ -498,7 +548,6 @@ fn submit_password(
             acknowledged,
             ..
         } => {
-            // Validate.
             if password.as_str() != confirm.as_str() {
                 set_pw_error(rk, "Passwords don't match.");
                 return Task::none();
@@ -525,15 +574,10 @@ fn submit_password(
                 set_pw_error(rk, "Please confirm that you've written down this password.");
                 return Task::none();
             }
-
-            mode = *m;
-            mnemonic_opt = mnemonic.as_ref().map(|z| z.to_vec());
-            mnemonic_clone_opt = mnemonic.clone();
-            password_copy = Zeroizing::new(password.to_string());
+            (*m, Zeroizing::new(password.to_string()), mnemonic.clone())
         }
         _ => return Task::none(),
-    }
-    let _ = mnemonic_opt; // silence unused warning before shadowing below
+    };
 
     // Pull cube-scoped metadata from settings so the blob is complete.
     let network_dir = cache.datadir_path.network_directory(cache.network);
@@ -545,11 +589,11 @@ fn submit_password(
         set_pw_error(rk, "Cube not found in settings.");
         return Task::none();
     };
-    cube_uuid = cube.id.clone();
-    cube_name = cube.name.clone();
-    network = network_str(cube.network);
-    lightning_address = cache.lightning_address.clone();
-    created_at_str = chrono::DateTime::<chrono::Utc>::from_timestamp(cube.created_at, 0)
+    let cube_uuid = cube.id.clone();
+    let cube_name = cube.name.clone();
+    let network = network_str(cube.network);
+    let lightning_address = cache.lightning_address.clone();
+    let created_at_str = chrono::DateTime::<chrono::Utc>::from_timestamp(cube.created_at, 0)
         .map(|t| t.to_rfc3339())
         .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
 
@@ -603,15 +647,70 @@ fn set_pw_error(rk: &mut RecoveryKit, msg: &str) {
     }
 }
 
+/// Network string used inside `SeedBlob`/`DescriptorBlob`. Routed
+/// through the canonical `settings::network_to_api_string` so blobs
+/// written here agree with the Connect API's convention (`"mainnet"`
+/// for Bitcoin mainnet). A mismatch would leak into `DescriptorBlob.
+/// cube.network`, the fingerprint hash, and the restore-side
+/// network-filter — and silently break cross-client interop.
 fn network_str(n: Network) -> String {
-    match n {
-        Network::Bitcoin => "bitcoin",
-        Network::Testnet => "testnet",
-        Network::Signet => "signet",
-        Network::Regtest => "regtest",
-        _ => "unknown",
+    settings::network_to_api_string(n)
+}
+
+/// Result of the pre-flight check run at the top of
+/// `RecoveryKitMessage::Start`. Split out so the branch table is
+/// unit-testable without an authenticated Connect client or a full
+/// `App` instance.
+#[derive(Debug, PartialEq, Eq)]
+enum StartGuard {
+    /// User is signed in and the cube is registered with Connect —
+    /// proceed into the PIN/password wizard.
+    Ok,
+    /// No authenticated client available. Before we collect any
+    /// secrets (PIN, password), route the user to sign in.
+    NotSignedIn,
+    /// User is signed in but this Cube hasn't been registered with
+    /// Connect yet (missing `server_cube_id`). Rare — happens when
+    /// the `register_cube` call is still pending at the time the
+    /// user hits the Recovery-Kit CTA.
+    CubeNotRegistered,
+}
+
+fn start_guard(client: Option<&CoincubeClient>, server_cube_id: Option<u64>) -> StartGuard {
+    if client.is_none() {
+        return StartGuard::NotSignedIn;
     }
-    .to_string()
+    if server_cube_id.is_none() {
+        return StartGuard::CubeNotRegistered;
+    }
+    StartGuard::Ok
+}
+
+/// After a successful upload, what fingerprint (if any) should be
+/// written to the local drift cache? `None` means "leave the existing
+/// cache untouched" — the key distinction from "clear it", which the
+/// Remove path handles explicitly via `persist_descriptor_fingerprint(
+/// ..., None)`. Seed-only uploads don't compute a descriptor
+/// fingerprint, so they must not overwrite the previously-stored one
+/// — otherwise the still-on-server descriptor would become invisible
+/// to drift detection.
+fn next_fingerprint_to_persist(outcome: &RecoveryKitUploadOutcome) -> Option<String> {
+    outcome.descriptor_fingerprint.clone()
+}
+
+/// Should the post-vault-creation nudge toast be shown, given a
+/// `RecoveryKitStatus` loaded fresh from Connect?
+///
+/// Returns `true` when the user clearly needs to back up a descriptor:
+/// no kit at all, or a kit without the descriptor half. `None` is
+/// treated as "needs nudge" — the only way to reach `None` after a
+/// successful `StatusLoaded(Ok(...))` is if the in-memory slot was
+/// never populated, which means the 404 fallback also didn't fire,
+/// and nudging is the conservative choice.
+fn should_nudge_for_status(status: Option<&RecoveryKitStatus>) -> bool {
+    status
+        .map(|s| !s.has_recovery_kit || !s.has_encrypted_wallet_descriptor)
+        .unwrap_or(true)
 }
 
 fn descriptor_blob_from_wallet(wallet: &Wallet, cube_uuid: &str, network: &str) -> DescriptorBlob {
@@ -795,6 +894,144 @@ mod tests {
     use crate::services::recovery::{
         DescriptorBlob, DescriptorBlobCube, DescriptorBlobSigner, DescriptorBlobVault,
     };
+
+    fn status_complete() -> RecoveryKitStatus {
+        RecoveryKitStatus {
+            has_recovery_kit: true,
+            has_encrypted_seed: true,
+            has_encrypted_wallet_descriptor: true,
+            encryption_scheme: "aes-256-gcm".into(),
+            created_at: Some("2026-04-23T00:00:00Z".into()),
+            updated_at: Some("2026-04-23T00:00:00Z".into()),
+        }
+    }
+
+    fn status_seed_only() -> RecoveryKitStatus {
+        RecoveryKitStatus {
+            has_recovery_kit: true,
+            has_encrypted_seed: true,
+            has_encrypted_wallet_descriptor: false,
+            encryption_scheme: "aes-256-gcm".into(),
+            created_at: Some("2026-04-23T00:00:00Z".into()),
+            updated_at: Some("2026-04-23T00:00:00Z".into()),
+        }
+    }
+
+    fn status_absent() -> RecoveryKitStatus {
+        RecoveryKitStatus {
+            has_recovery_kit: false,
+            has_encrypted_seed: false,
+            has_encrypted_wallet_descriptor: false,
+            encryption_scheme: String::new(),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    // Regression tests for the Start-handler auth gate: the wizard
+    // must not push the user into PIN/password entry when the
+    // upload is guaranteed to fail at the end (not signed in, or
+    // the Cube isn't registered yet). Without these, users waste
+    // re-entering their PIN + typing a password only to hit "Sign
+    // in to Connect" on Submit.
+
+    #[test]
+    fn start_guard_fails_without_client() {
+        assert_eq!(start_guard(None, Some(42)), StartGuard::NotSignedIn);
+        assert_eq!(start_guard(None, None), StartGuard::NotSignedIn);
+    }
+
+    #[test]
+    fn start_guard_fails_without_cube_id() {
+        let client = CoincubeClient::for_test("http://localhost");
+        assert_eq!(
+            start_guard(Some(&client), None),
+            StartGuard::CubeNotRegistered
+        );
+    }
+
+    #[test]
+    fn start_guard_ok_when_authed_and_registered() {
+        let client = CoincubeClient::for_test("http://localhost");
+        assert_eq!(start_guard(Some(&client), Some(42)), StartGuard::Ok);
+    }
+
+    // Regression tests for the seed-only-upload fingerprint-clobber
+    // bug: a seed-only upload (AddSeed mode on a mnemonic cube) must
+    // not wipe a previously-stored drift fingerprint. Otherwise the
+    // descriptor that's still on the server becomes invisible to
+    // W12 drift detection.
+
+    #[test]
+    fn next_fingerprint_none_on_seed_only_upload() {
+        let outcome = RecoveryKitUploadOutcome {
+            updated_at: "2026-04-23T00:00:00Z".into(),
+            now_has_seed: true,
+            now_has_descriptor: false,
+            descriptor_fingerprint: None,
+        };
+        assert!(
+            next_fingerprint_to_persist(&outcome).is_none(),
+            "seed-only upload must signal 'skip persist' so the \
+             previously-stored fingerprint is preserved",
+        );
+    }
+
+    #[test]
+    fn next_fingerprint_some_when_descriptor_uploaded() {
+        let outcome = RecoveryKitUploadOutcome {
+            updated_at: "2026-04-23T00:00:00Z".into(),
+            now_has_seed: true,
+            now_has_descriptor: true,
+            descriptor_fingerprint: Some("a".repeat(64)),
+        };
+        assert_eq!(next_fingerprint_to_persist(&outcome), Some("a".repeat(64)));
+    }
+
+    // Regression tests for the W10 post-vault-creation nudge: the
+    // decision must be based on a *freshly-loaded* status, not the
+    // in-memory cache at the moment the vault transition fires. A
+    // pre-fetch `None` used to produce a spurious nudge for users
+    // with a complete kit.
+
+    #[test]
+    fn nudge_when_no_kit_on_server() {
+        assert!(should_nudge_for_status(Some(&status_absent())));
+    }
+
+    #[test]
+    fn nudge_when_kit_has_seed_but_no_descriptor() {
+        assert!(should_nudge_for_status(Some(&status_seed_only())));
+    }
+
+    #[test]
+    fn no_nudge_when_kit_already_has_descriptor() {
+        assert!(!should_nudge_for_status(Some(&status_complete())));
+    }
+
+    #[test]
+    fn nudge_when_status_is_none_defensively() {
+        // `None` should not normally reach this function after a
+        // successful `StatusLoaded(Ok(_))` (the handler assigns
+        // `rk.status` before calling). Defensive default is to
+        // nudge rather than silently drop.
+        assert!(should_nudge_for_status(None));
+    }
+
+    // Regression test for the Bitcoin-mainnet restore bug: the local
+    // network string used by the restore step's cube-picker filter
+    // (and by blob content) must match the Connect API's canonical
+    // form — otherwise mainnet users see zero matching cubes when
+    // trying to restore.
+    #[test]
+    fn network_str_matches_api_for_all_networks() {
+        use coincube_core::miniscript::bitcoin::Network as BtcNet;
+        assert_eq!(network_str(BtcNet::Bitcoin), "mainnet");
+        assert_eq!(network_str(BtcNet::Testnet), "testnet");
+        assert_eq!(network_str(BtcNet::Testnet4), "testnet4");
+        assert_eq!(network_str(BtcNet::Signet), "signet");
+        assert_eq!(network_str(BtcNet::Regtest), "regtest");
+    }
 
     #[test]
     fn descriptor_fingerprint_is_deterministic() {

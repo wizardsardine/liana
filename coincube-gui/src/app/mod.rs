@@ -1513,14 +1513,13 @@ impl App {
         // `None`, which the card treats as "nothing to drift against".
         self.cache.current_descriptor_fingerprint = self.wallet.as_ref().and_then(|w| {
             use crate::app::state::settings::recovery_kit as rk;
-            let network = match self.cache.network {
-                coincube_core::miniscript::bitcoin::Network::Bitcoin => "bitcoin",
-                coincube_core::miniscript::bitcoin::Network::Testnet => "testnet",
-                coincube_core::miniscript::bitcoin::Network::Signet => "signet",
-                coincube_core::miniscript::bitcoin::Network::Regtest => "regtest",
-                _ => "unknown",
-            };
-            rk::live_descriptor_fingerprint(w.as_ref(), &self.cube_settings.id, network)
+            // Canonical API string ("mainnet" for Bitcoin mainnet) —
+            // the fingerprint inputs must agree byte-for-byte with the
+            // string used at backup time (see `network_str` in
+            // `state::settings::recovery_kit`). Any divergence here
+            // would make every tick report a spurious drift.
+            let network = settings::network_to_api_string(self.cache.network);
+            rk::live_descriptor_fingerprint(w.as_ref(), &self.cube_settings.id, &network)
         });
 
         match message {
@@ -1926,47 +1925,24 @@ impl App {
                     }
 
                     // W10 — nudge the user to back up the freshly-created
-                    // Vault to their Connect Recovery Kit. Gated on
-                    // Connect auth + "no recovery kit yet" so we don't
-                    // nag users who've already backed up (e.g. on
-                    // subsequent app restarts where this transition
-                    // also fires). `LoadStatus` is fired either way so
-                    // the card in Settings is fresh when the user
-                    // navigates there.
-                    let mut tasks: Vec<Task<Message>> = vec![Task::done(Message::View(
-                        view::Message::Settings(view::SettingsMessage::RecoveryKit(
-                            view::RecoveryKitMessage::LoadStatus,
-                        )),
-                    ))];
+                    // Vault to their Connect Recovery Kit. Fires
+                    // `LoadStatus` now; the `StatusLoaded` handler in
+                    // `state::settings::recovery_kit` reads this flag
+                    // and emits the toast only if the freshly-loaded
+                    // status shows the descriptor isn't already
+                    // backed up. Gating on the in-memory `status`
+                    // here (pre-fetch) would misfire: on app startup
+                    // and after Connect sign-out the cached value is
+                    // `None` even for users whose kit is complete.
                     if self.panels.connect.account.is_authenticated() {
-                        let kit_absent = self
-                            .panels
+                        self.panels
                             .global_settings
                             .recovery_kit
-                            .status
-                            .as_ref()
-                            .map(|s| !s.has_recovery_kit || !s.has_encrypted_wallet_descriptor)
-                            .unwrap_or(true);
-                        if kit_absent {
-                            tasks.push(Task::done(Message::View(view::Message::ShowToast(
-                                log::Level::Info,
-                                "Your new Vault is ready — back up your Wallet Descriptor in \
-                                 Settings → General → Cube Recovery Kit."
-                                    .to_string(),
-                            ))));
-                        }
+                            .nudge_on_next_status_load = true;
                     }
-                    // Fire the nudge + status refresh, then let the
-                    // normal "forward to current panel" path below
-                    // also run by re-entering `update`. Using
-                    // `Task::batch` here would bypass the panel
-                    // notification — instead return after the panel
-                    // forward further down.
-                    // We batch with the forward task below by stashing
-                    // the nudge tasks into a closure; but simplest:
-                    // issue them now via the Iced task pipeline by
-                    // chaining onto the return.
-                    let nudge_task = Task::batch(tasks);
+                    let nudge_task = Task::done(Message::View(view::Message::Settings(
+                        view::SettingsMessage::RecoveryKit(view::RecoveryKitMessage::LoadStatus),
+                    )));
                     // Forward to the current panel _and_ fire the nudge.
                     if let (Some(daemon), Some(panel)) =
                         (self.daemon.clone(), self.panels.current_mut())

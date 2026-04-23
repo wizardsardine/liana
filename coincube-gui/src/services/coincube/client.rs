@@ -862,19 +862,9 @@ impl CoincubeClient {
         }
         match status.as_u16() {
             404 => Err(CoincubeError::NotFound),
-            429 => {
-                // Retry-After (seconds form). Falls back to 60s when the
-                // header is missing or malformed — the UI still gets a
-                // usable cooldown value instead of panicking.
-                let retry_after = res
-                    .headers()
-                    .get(reqwest::header::RETRY_AFTER)
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.trim().parse::<u64>().ok())
-                    .map(Duration::from_secs)
-                    .unwrap_or_else(|| Duration::from_secs(60));
-                Err(CoincubeError::RateLimited { retry_after })
-            }
+            429 => Err(CoincubeError::RateLimited {
+                retry_after: parse_retry_after(res.headers()),
+            }),
             _ => Err(CoincubeError::Unsuccessful(
                 crate::services::http::NotSuccessResponseInfo {
                     status_code: status.as_u16(),
@@ -927,15 +917,12 @@ impl CoincubeClient {
         encrypted_wallet_descriptor: Option<&str>,
         encryption_scheme: &str,
     ) -> Result<RecoveryKit, CoincubeError> {
-        let method = match self.get_recovery_kit_status(cube_id).await {
-            Ok(s) if s.has_recovery_kit => Method::PUT,
-            Ok(_) => Method::POST,
-            // Treat a missing status endpoint the same as "no kit" — the
-            // backend PR 1 relaxed-create allows POSTing partial fields.
-            Err(CoincubeError::NotFound) => Method::POST,
-            Err(e) => return Err(e),
-        };
-
+        // Try PUT first (the common case: users who back up a second
+        // time already have a kit on the server), then fall back to
+        // POST on 404. This skips the pre-upsert `status` probe —
+        // which cost an extra round-trip and opened a race window
+        // (kit could be deleted/created between probe and write) —
+        // without changing the outward-facing method signature.
         let url = format!(
             "{}/api/v1/connect/cubes/{}/recovery-kit",
             self.base_url, cube_id
@@ -945,8 +932,30 @@ impl CoincubeClient {
             encrypted_wallet_descriptor,
             encryption_scheme,
         };
-        let res = self.client.request(method, &url).json(&body).send().await?;
-        Self::parse_recovery_response(res).await
+
+        let put_res = self
+            .client
+            .request(Method::PUT, &url)
+            .json(&body)
+            .send()
+            .await?;
+        match Self::parse_recovery_response::<RecoveryKit>(put_res).await {
+            Ok(kit) => Ok(kit),
+            // 404 on PUT → no kit exists yet. Fall back to POST
+            // once to create it. Any other error (auth, 429, 5xx)
+            // propagates untouched so retries are the caller's
+            // decision.
+            Err(CoincubeError::NotFound) => {
+                let post_res = self
+                    .client
+                    .request(Method::POST, &url)
+                    .json(&body)
+                    .send()
+                    .await?;
+                Self::parse_recovery_response(post_res).await
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// DELETE /api/v1/connect/cubes/{cubeId}/recovery-kit — tears down the
@@ -964,16 +973,9 @@ impl CoincubeClient {
         }
         match status.as_u16() {
             404 => Err(CoincubeError::NotFound),
-            429 => {
-                let retry_after = res
-                    .headers()
-                    .get(reqwest::header::RETRY_AFTER)
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.trim().parse::<u64>().ok())
-                    .map(Duration::from_secs)
-                    .unwrap_or_else(|| Duration::from_secs(60));
-                Err(CoincubeError::RateLimited { retry_after })
-            }
+            429 => Err(CoincubeError::RateLimited {
+                retry_after: parse_retry_after(res.headers()),
+            }),
             _ => Err(CoincubeError::Unsuccessful(
                 crate::services::http::NotSuccessResponseInfo {
                     status_code: status.as_u16(),
@@ -981,6 +983,110 @@ impl CoincubeClient {
                 },
             )),
         }
+    }
+}
+
+/// Parses a response's `Retry-After` header per RFC 7231 §7.1.3.
+///
+/// Accepts both documented forms:
+///   - *delta-seconds*: e.g. `Retry-After: 60`
+///   - *HTTP-date* (IMF-fixdate): e.g.
+///     `Retry-After: Wed, 21 Oct 2026 07:28:00 GMT`. The returned
+///     `Duration` is `date - now()`, clamped to zero when the date
+///     has already passed (the server is saying "retry whenever").
+///
+/// Falls back to 60 seconds when the header is missing or doesn't
+/// parse either form, so the UI always has a usable cooldown to
+/// render rather than panicking or hanging.
+pub(crate) fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Duration {
+    let raw = match headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+    {
+        Some(s) => s.trim(),
+        None => return Duration::from_secs(60),
+    };
+
+    // Form 1: delta-seconds. The common case — every Cloudflare /
+    // nginx rate limiter emits this shape.
+    if let Ok(secs) = raw.parse::<u64>() {
+        return Duration::from_secs(secs);
+    }
+
+    // Form 2: HTTP-date (IMF-fixdate). `DateTime::parse_from_rfc2822`
+    // accepts the fixed-length IMF subset that RFC 7231 requires.
+    if let Ok(at) = chrono::DateTime::parse_from_rfc2822(raw) {
+        let now = chrono::Utc::now();
+        let delta = at.with_timezone(&chrono::Utc) - now;
+        // Negative or zero → the date is in the past or now.
+        // `std::time::Duration` is unsigned, so `to_std` errors on
+        // a negative `chrono::Duration`; that's the clamp-to-zero
+        // case.
+        return delta.to_std().unwrap_or_else(|_| Duration::from_secs(0));
+    }
+
+    // Unparseable — use the default cooldown rather than retrying
+    // immediately and slamming the server again.
+    Duration::from_secs(60)
+}
+
+#[cfg(test)]
+mod retry_after_tests {
+    use super::parse_retry_after;
+    use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
+    use std::time::Duration;
+
+    fn hdr(value: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(RETRY_AFTER, HeaderValue::from_str(value).unwrap());
+        h
+    }
+
+    #[test]
+    fn delta_seconds_form() {
+        assert_eq!(parse_retry_after(&hdr("90")), Duration::from_secs(90));
+        // Whitespace permitted per HTTP header conventions.
+        assert_eq!(parse_retry_after(&hdr("  15  ")), Duration::from_secs(15));
+    }
+
+    #[test]
+    fn http_date_form_parses_future_date() {
+        // Regression test for the RFC 7231 IMF-fixdate branch that
+        // was previously unreachable — the old implementation only
+        // accepted delta-seconds. We build the header from "now + 30s"
+        // so the assertion is deterministic even though wall-clock
+        // time advances during the test.
+        let at = chrono::Utc::now() + chrono::Duration::seconds(30);
+        let hdr_value = at.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        let d = parse_retry_after(&hdr(&hdr_value));
+        // Allow a generous lower bound for test-runner scheduling
+        // jitter; the upper bound is our "now + 30s" ceiling.
+        assert!(
+            d >= Duration::from_secs(25) && d <= Duration::from_secs(30),
+            "expected ~30s, got {}s",
+            d.as_secs(),
+        );
+    }
+
+    #[test]
+    fn http_date_in_the_past_clamps_to_zero() {
+        let at = chrono::Utc::now() - chrono::Duration::seconds(60);
+        let hdr_value = at.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        assert_eq!(parse_retry_after(&hdr(&hdr_value)), Duration::from_secs(0));
+    }
+
+    #[test]
+    fn missing_header_falls_back_to_60s() {
+        assert_eq!(
+            parse_retry_after(&HeaderMap::new()),
+            Duration::from_secs(60)
+        );
+    }
+
+    #[test]
+    fn malformed_header_falls_back_to_60s() {
+        // Neither a valid delta-seconds nor an IMF-fixdate.
+        assert_eq!(parse_retry_after(&hdr("soon-ish")), Duration::from_secs(60));
     }
 }
 
@@ -1157,23 +1263,61 @@ mod recovery_kit_tests {
     }
 
     #[tokio::test]
-    async fn put_recovery_kit_posts_when_no_existing_kit() {
-        // Status says `hasRecoveryKit: false` → upsert must POST, not PUT.
+    async fn put_recovery_kit_put_returns_kit_without_fallback() {
+        // Common case — kit already exists on the server. A single
+        // PUT succeeds and no POST is issued. Race-free by design:
+        // no pre-upsert status probe.
         let server = MockServer::start();
-        let status_mock = server.mock(|when, then| {
-            when.method(MockMethod::GET)
-                .path("/api/v1/connect/cubes/42/recovery-kit/status");
+        let put_mock = server.mock(|when, then| {
+            when.method(MockMethod::PUT)
+                .path("/api/v1/connect/cubes/42/recovery-kit")
+                .json_body(json!({
+                    "encryptedWalletDescriptor": "CIPHER_D",
+                    "encryptionScheme": "aes-256-gcm"
+                }));
             then.status(200)
                 .header("content-type", "application/json")
                 .json_body(json!({
                     "success": true,
                     "data": {
-                        "hasRecoveryKit": false,
-                        "hasEncryptedSeed": false,
-                        "hasEncryptedWalletDescriptor": false,
-                        "encryptionScheme": ""
+                        "id": 5,
+                        "cubeId": 42,
+                        "encryptedCubeSeed": "CIPHER_A",
+                        "encryptedWalletDescriptor": "CIPHER_D",
+                        "encryptionScheme": "aes-256-gcm",
+                        "createdAt": "2026-04-22T00:00:00Z",
+                        "updatedAt": "2026-04-22T00:01:00Z"
                     }
                 }));
+        });
+        // POST mock with no matcher beyond path — if the code
+        // incorrectly fires POST, this will record a hit that we
+        // assert below = 0.
+        let post_mock = server.mock(|when, then| {
+            when.method(MockMethod::POST)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(500);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let kit = client
+            .put_recovery_kit(42, None, Some("CIPHER_D"), RECOVERY_KIT_SCHEME_AES_256_GCM)
+            .await
+            .expect("upsert should succeed");
+        put_mock.assert();
+        assert_eq!(post_mock.hits(), 0, "should not fall back to POST");
+        assert_eq!(kit.encrypted_wallet_descriptor, "CIPHER_D");
+    }
+
+    #[tokio::test]
+    async fn put_recovery_kit_falls_back_to_post_on_put_404() {
+        // First-time backup: no kit on the server yet. PUT 404s;
+        // client falls back to POST to create it.
+        let server = MockServer::start();
+        let put_mock = server.mock(|when, then| {
+            when.method(MockMethod::PUT)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(404);
         });
         let post_mock = server.mock(|when, then| {
             when.method(MockMethod::POST)
@@ -1203,79 +1347,26 @@ mod recovery_kit_tests {
             .put_recovery_kit(42, Some("CIPHER_A"), None, RECOVERY_KIT_SCHEME_AES_256_GCM)
             .await
             .expect("upsert should succeed");
-        status_mock.assert();
+        put_mock.assert();
         post_mock.assert();
         assert_eq!(kit.encrypted_cube_seed, "CIPHER_A");
     }
 
     #[tokio::test]
-    async fn put_recovery_kit_puts_when_kit_exists() {
+    async fn put_recovery_kit_propagates_429_without_fallback() {
+        // A 429 on PUT is NOT a signal to fall back to POST — the
+        // server is asking us to back off, not telling us to change
+        // method. Propagate the typed `RateLimited` error intact.
         let server = MockServer::start();
-        let status_mock = server.mock(|when, then| {
-            when.method(MockMethod::GET)
-                .path("/api/v1/connect/cubes/42/recovery-kit/status");
-            then.status(200)
-                .header("content-type", "application/json")
-                .json_body(json!({
-                    "success": true,
-                    "data": {
-                        "hasRecoveryKit": true,
-                        "hasEncryptedSeed": true,
-                        "hasEncryptedWalletDescriptor": false,
-                        "encryptionScheme": "aes-256-gcm",
-                        "createdAt": "2026-04-22T00:00:00Z",
-                        "updatedAt": "2026-04-22T00:00:00Z"
-                    }
-                }));
-        });
-        // Adding the wallet descriptor half. Seed field is omitted from
-        // the body (partial-field update, matches backend PR 1 behaviour).
         let put_mock = server.mock(|when, then| {
             when.method(MockMethod::PUT)
-                .path("/api/v1/connect/cubes/42/recovery-kit")
-                .json_body(json!({
-                    "encryptedWalletDescriptor": "CIPHER_D",
-                    "encryptionScheme": "aes-256-gcm"
-                }));
-            then.status(200)
-                .header("content-type", "application/json")
-                .json_body(json!({
-                    "success": true,
-                    "data": {
-                        "id": 5,
-                        "cubeId": 42,
-                        "encryptedCubeSeed": "CIPHER_A",
-                        "encryptedWalletDescriptor": "CIPHER_D",
-                        "encryptionScheme": "aes-256-gcm",
-                        "createdAt": "2026-04-22T00:00:00Z",
-                        "updatedAt": "2026-04-22T00:01:00Z"
-                    }
-                }));
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(429).header("Retry-After", "15");
         });
-
-        let client = CoincubeClient::for_test(server.base_url());
-        let kit = client
-            .put_recovery_kit(42, None, Some("CIPHER_D"), RECOVERY_KIT_SCHEME_AES_256_GCM)
-            .await
-            .expect("upsert should succeed");
-        status_mock.assert();
-        put_mock.assert();
-        assert_eq!(kit.encrypted_wallet_descriptor, "CIPHER_D");
-    }
-
-    #[tokio::test]
-    async fn put_recovery_kit_propagates_status_429() {
-        let server = MockServer::start();
-        let status_mock = server.mock(|when, then| {
-            when.method(MockMethod::GET)
-                .path("/api/v1/connect/cubes/42/recovery-kit/status");
-            then.status(429)
-                .header("content-type", "application/json")
-                .header("Retry-After", "15")
-                .json_body(json!({
-                    "success": false,
-                    "error": { "code": "RATE_LIMITED", "message": "" }
-                }));
+        let post_mock = server.mock(|when, then| {
+            when.method(MockMethod::POST)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
+            then.status(500);
         });
 
         let client = CoincubeClient::for_test(server.base_url());
@@ -1283,7 +1374,8 @@ mod recovery_kit_tests {
             .put_recovery_kit(42, Some("X"), None, RECOVERY_KIT_SCHEME_AES_256_GCM)
             .await
             .expect_err("expected 429");
-        status_mock.assert();
+        put_mock.assert();
+        assert_eq!(post_mock.hits(), 0, "429 must not trigger a POST fallback");
         assert_eq!(
             err.rate_limit_retry_after().unwrap(),
             Duration::from_secs(15)
@@ -1291,43 +1383,35 @@ mod recovery_kit_tests {
     }
 
     #[tokio::test]
-    async fn put_recovery_kit_404_on_status_still_posts() {
-        // If the backend serves 404 on the status endpoint (e.g. the
-        // endpoint isn't deployed yet on this tenant), the client should
-        // optimistically treat it as "no kit" and try POST. That keeps
-        // the backend PR rollout ordering flexible.
+    async fn put_recovery_kit_propagates_post_errors_after_put_404() {
+        // If the fallback POST fails, surface *that* error — not the
+        // PUT 404. Simulates a bad-request from the backend's
+        // partial-field validator.
         let server = MockServer::start();
-        let status_mock = server.mock(|when, then| {
-            when.method(MockMethod::GET)
-                .path("/api/v1/connect/cubes/42/recovery-kit/status");
+        let put_mock = server.mock(|when, then| {
+            when.method(MockMethod::PUT)
+                .path("/api/v1/connect/cubes/42/recovery-kit");
             then.status(404);
         });
         let post_mock = server.mock(|when, then| {
             when.method(MockMethod::POST)
                 .path("/api/v1/connect/cubes/42/recovery-kit");
-            then.status(201)
+            then.status(403)
                 .header("content-type", "application/json")
                 .json_body(json!({
-                    "success": true,
-                    "data": {
-                        "id": 1,
-                        "cubeId": 42,
-                        "encryptedCubeSeed": "X",
-                        "encryptedWalletDescriptor": "",
-                        "encryptionScheme": "aes-256-gcm",
-                        "createdAt": "2026-04-22T00:00:00Z",
-                        "updatedAt": "2026-04-22T00:00:00Z"
-                    }
+                    "success": false,
+                    "error": { "code": "FORBIDDEN", "message": "not your cube" }
                 }));
         });
 
         let client = CoincubeClient::for_test(server.base_url());
-        client
+        let err = client
             .put_recovery_kit(42, Some("X"), None, RECOVERY_KIT_SCHEME_AES_256_GCM)
             .await
-            .expect("upsert should succeed");
-        status_mock.assert();
+            .expect_err("expected 403");
+        put_mock.assert();
         post_mock.assert();
+        assert!(err.is_auth_error(), "expected auth error, got {:?}", err);
     }
 
     #[tokio::test]

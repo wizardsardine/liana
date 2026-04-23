@@ -2706,7 +2706,13 @@ pub fn recovery_kit_restore<'a>(
                 .push(text::text("Enter the 6-digit code we sent to your email."))
                 .push(
                     form::Form::new_trimmed("123456", otp, |v| {
-                        Message::RecoveryKitRestore(RecoveryKitRestoreMsg::OtpEdited(v))
+                        // Wrap immediately — the `String` from iced's
+                        // input callback is the last unprotected copy
+                        // in our code path; from here it lives inside
+                        // `Zeroizing` all the way to the async task.
+                        Message::RecoveryKitRestore(RecoveryKitRestoreMsg::OtpEdited(
+                            zeroize::Zeroizing::new(v),
+                        ))
                     })
                     .warning("Invalid code")
                     .size(16)
@@ -2757,7 +2763,15 @@ pub fn recovery_kit_restore<'a>(
                 .push(
                     TextInput::new("Recovery password", password)
                         .on_input(|v| {
-                            Message::RecoveryKitRestore(RecoveryKitRestoreMsg::PasswordEdited(v))
+                            // Wrap the password in `Zeroizing` before
+                            // it enters the message queue — see
+                            // `RecoveryKitRestoreMsg` doc. The `String`
+                            // from iced's callback is the last plain
+                            // copy; every subsequent clone is
+                            // auto-zeroed on drop.
+                            Message::RecoveryKitRestore(RecoveryKitRestoreMsg::PasswordEdited(
+                                zeroize::Zeroizing::new(v),
+                            ))
                         })
                         .secure(true)
                         .size(16)
@@ -2784,10 +2798,22 @@ pub fn recovery_kit_restore<'a>(
             ));
         }
         RestorePhase::Ready { selected, .. } => {
-            content = content.push(text::text(format!(
-                "Ready to restore from \"{}\". Click Next to continue.",
-                selected.name
-            )));
+            // The happy path after a successful decrypt fires
+            // `Message::Next` automatically, so the user rarely
+            // lingers on this screen. But a user can land here
+            // again by navigating back through the installer —
+            // without an explicit Next button they'd be stuck.
+            content = content
+                .push(text::text(format!(
+                    "Ready to restore from \"{}\". Click Next to continue.",
+                    selected.name
+                )))
+                .push(
+                    button::primary(None, "Next")
+                        .on_press(Message::Next)
+                        .width(Length::Fixed(220.0))
+                        .padding([10, 20]),
+                );
         }
         RestorePhase::Error { message } => {
             content = content

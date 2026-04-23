@@ -69,14 +69,13 @@ pub fn general_section<'a>(
             .as_ref()
             .map(|s| s.has_encrypted_wallet_descriptor)
             .unwrap_or(false);
-        let drift = server_has_descriptor
-            && match (
-                &cache.current_descriptor_fingerprint,
-                &cache.recovery_kit_last_backed_up_descriptor_fingerprint,
-            ) {
-                (Some(live), Some(cached)) => live != cached,
-                _ => false,
-            };
+        let drift = descriptor_drift(
+            server_has_descriptor,
+            cache.current_descriptor_fingerprint.as_deref(),
+            cache
+                .recovery_kit_last_backed_up_descriptor_fingerprint
+                .as_deref(),
+        );
         col = col.push(recovery_kit_card(
             cache.current_cube_is_passkey,
             cache.has_vault,
@@ -472,4 +471,80 @@ pub fn fiat_price<'a>(
     )
     .width(Length::Fill)
     .into()
+}
+
+/// Decide whether the Recovery-Kit card should flag "descriptor
+/// drift". Split out of `general_section` so the branch table is
+/// testable without standing up a full `Cache`.
+///
+/// - `server_has_descriptor`: the Connect-side `RecoveryKitStatus`
+///   reports a descriptor half is backed up.
+/// - `live`: SHA-256 of what the live wallet would currently upload
+///   (`None` when no Vault is loaded).
+/// - `cached`: SHA-256 of what this device last uploaded
+///   (`None` when the local cache was cleared, the kit was made from
+///   a different install, or the backup happened before the cache
+///   field existed).
+fn descriptor_drift(server_has_descriptor: bool, live: Option<&str>, cached: Option<&str>) -> bool {
+    if !server_has_descriptor {
+        return false;
+    }
+    match (live, cached) {
+        // Both present — direct comparison.
+        (Some(live), Some(cached)) => live != cached,
+        // Live wallet descriptor loaded but no local fingerprint to
+        // compare against (cache cleared, restored from a different
+        // install, descriptor uploaded from another device). The
+        // server says a descriptor is backed up; we can't verify it
+        // matches what this device would now upload, so nudge the
+        // user to resync.
+        (Some(_), None) => true,
+        // Any case where the live fingerprint isn't computable (no
+        // Vault loaded yet) can't produce a meaningful comparison;
+        // avoid a false positive.
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_drift_when_server_has_no_descriptor() {
+        // Card's "incomplete" copy already covers this case; drift
+        // must not double up the signal.
+        assert!(!descriptor_drift(false, Some("a"), Some("b")));
+        assert!(!descriptor_drift(false, Some("a"), None));
+        assert!(!descriptor_drift(false, None, Some("b")));
+    }
+
+    #[test]
+    fn drift_when_live_and_cached_differ() {
+        assert!(descriptor_drift(true, Some("a"), Some("b")));
+    }
+
+    #[test]
+    fn no_drift_when_live_and_cached_match() {
+        assert!(!descriptor_drift(true, Some("a"), Some("a")));
+    }
+
+    #[test]
+    fn drift_when_cached_missing_but_live_present() {
+        // Regression: previously swallowed by `_ => false`. Server
+        // reports a descriptor, live wallet is loaded, but we have
+        // no local cache to compare against — the conservative call
+        // is to flag drift so the user resyncs.
+        assert!(descriptor_drift(true, Some("a"), None));
+    }
+
+    #[test]
+    fn no_drift_when_live_missing() {
+        // No Vault loaded yet — can't compute a comparison.
+        // `server_has_descriptor` being true here means another
+        // device backed up the descriptor; we can't usefully flag
+        // drift until this device has a wallet to diff against.
+        assert!(!descriptor_drift(true, None, Some("b")));
+        assert!(!descriptor_drift(true, None, None));
+    }
 }
