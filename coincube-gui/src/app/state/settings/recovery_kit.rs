@@ -427,7 +427,7 @@ pub fn update(
         }
 
         RecoveryKitMessage::SubmitPassword => {
-            submit_password(rk, cache, client, server_cube_id, wallet)
+            submit_password(rk, cache, local_cube_id, client, server_cube_id, wallet)
         }
 
         RecoveryKitMessage::UploadResult(res) => {
@@ -622,6 +622,15 @@ fn verify_pin(rk: &mut RecoveryKit, cache: &Cache, local_cube_id: &str) -> Task<
 fn submit_password(
     rk: &mut RecoveryKit,
     cache: &Cache,
+    // Use the dispatcher-injected local cube id rather than
+    // `cache.cube_id`. Both come from `self.cube_settings.id` today,
+    // but they refresh on different cadences — routing everything in
+    // this module through the same `local_cube_id` parameter keeps
+    // `verify_pin`, `submit_password`, and the UploadResult
+    // `persist_descriptor_fingerprint` call all pointing at the same
+    // cube even if a mid-session settings reload ever desynchronizes
+    // the two sources.
+    local_cube_id: &str,
     client: Option<CoincubeClient>,
     server_cube_id: Option<u64>,
     wallet: Option<Arc<Wallet>>,
@@ -691,7 +700,7 @@ fn submit_password(
         set_pw_error(rk, "Failed to read settings file.");
         return Task::none();
     };
-    let Some(cube) = s.cubes.iter().find(|c| c.id == cache.cube_id).cloned() else {
+    let Some(cube) = s.cubes.iter().find(|c| c.id == local_cube_id).cloned() else {
         set_pw_error(rk, "Cube not found in settings.");
         return Task::none();
     };

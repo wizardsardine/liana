@@ -220,17 +220,42 @@ pub enum SelectBitcoindTypeMsg {
     UseConnect,
 }
 
-#[derive(Debug, Clone)]
+/// Manual `Debug` redacts the OTP-verify JWT payload. The `Ok` arm of
+/// `OtpVerified` carries a `Zeroizing<String>` whose heap allocation is
+/// scrubbed on drop — but `Zeroizing<T>` delegates `Debug` to the inner
+/// `String`, so without the manual impl the token would leak into any
+/// tracing snapshot of a parent message (notably `Message::Install`).
+#[derive(Clone)]
 pub enum CoincubeConnectMsg {
     EmailEdited(String),
     ToggleMode,
     RequestOtp,
     OtpRequested(Result<(), String>),
     OtpEdited(String),
-    OtpVerified(Result<String, String>),
+    OtpVerified(Result<zeroize::Zeroizing<String>, String>),
     ResendOtp,
     OtpResent(Result<(), String>),
     Skip,
+}
+
+impl std::fmt::Debug for CoincubeConnectMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmailEdited(s) => f.debug_tuple("EmailEdited").field(s).finish(),
+            Self::ToggleMode => write!(f, "ToggleMode"),
+            Self::RequestOtp => write!(f, "RequestOtp"),
+            Self::OtpRequested(r) => f.debug_tuple("OtpRequested").field(r).finish(),
+            Self::OtpEdited(s) => f.debug_tuple("OtpEdited").field(s).finish(),
+            Self::OtpVerified(Ok(_)) => write!(f, "OtpVerified(Ok(<redacted>))"),
+            Self::OtpVerified(Err(e)) => f
+                .debug_tuple("OtpVerified")
+                .field(&Err::<(), _>(e))
+                .finish(),
+            Self::ResendOtp => write!(f, "ResendOtp"),
+            Self::OtpResent(r) => f.debug_tuple("OtpResent").field(r).finish(),
+            Self::Skip => write!(f, "Skip"),
+        }
+    }
 }
 
 /// Messages driving the Cube Recovery Kit restore step. Manual
@@ -409,4 +434,33 @@ pub enum ThresholdSequenceModal {
     ThresholdEdited(usize),
     SequenceEdited(String),
     Confirm,
+}
+
+#[cfg(test)]
+mod coincube_connect_msg_debug_tests {
+    use super::CoincubeConnectMsg;
+    use zeroize::Zeroizing;
+
+    /// Canary: appears in the Debug render only if redaction regressed.
+    const CANARY_JWT: &str = "eyCANARY.cc-jwt.XYZZY-do-not-leak";
+
+    #[test]
+    fn otp_verified_ok_is_redacted() {
+        let msg = CoincubeConnectMsg::OtpVerified(Ok(Zeroizing::new(CANARY_JWT.to_string())));
+        let rendered = format!("{:?}", msg);
+        assert!(
+            !rendered.contains(CANARY_JWT),
+            "JWT leaked through CoincubeConnectMsg::OtpVerified Debug: {}",
+            rendered
+        );
+        assert!(rendered.contains("<redacted>"));
+    }
+
+    #[test]
+    fn otp_verified_err_preserves_error_message() {
+        let msg = CoincubeConnectMsg::OtpVerified(Err("bad otp".to_string()));
+        let rendered = format!("{:?}", msg);
+        assert!(rendered.contains("bad otp"));
+        assert!(!rendered.contains(CANARY_JWT));
+    }
 }

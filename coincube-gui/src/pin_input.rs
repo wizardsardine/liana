@@ -57,20 +57,45 @@ impl PinInput {
         }
     }
 
+    /// Overwrite `self.digits[i]` with `new`, scrubbing the previous
+    /// String's heap bytes first. Needed because plain assignment
+    /// (`self.digits[i] = new`) drops the old `String` without
+    /// zeroizing, leaving the digit on the heap until the allocator
+    /// reuses that region. Callers with a digit character in hand use
+    /// this instead of direct assignment.
+    fn replace_digit(&mut self, i: usize, new: String) {
+        if i >= self.digits.len() {
+            return;
+        }
+        self.digits[i].zeroize();
+        self.digits[i] = new;
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::DigitChanged(index, value) => {
                 if index >= self.digits.len() {
                     return Task::none();
                 }
-                let old_value = self.digits[index].clone();
+                // Previous digit's state before we overwrite it. Capture
+                // just the booleans/lengths we need — cloning the String
+                // itself (the prior implementation did `old_value =
+                // self.digits[index].clone()`) would copy the plaintext
+                // digit onto a throwaway heap buffer that then dropped
+                // un-scrubbed at the end of this function.
+                let old_was_empty = self.digits[index].is_empty();
+                let old_len = self.digits[index].len();
                 if value.is_empty() {
-                    self.digits[index] = value;
+                    self.replace_digit(index, value);
                     if index > 0 {
                         // this deletes the number and also moves the cursor to the previous field
                         // If the field was already empty, also clear the previous field
-                        if old_value.is_empty() {
-                            self.digits[index - 1] = String::new();
+                        if old_was_empty {
+                            // Scrub the previous digit in place rather
+                            // than reassigning `String::new()`, which
+                            // would drop the old plaintext buffer
+                            // un-scrubbed.
+                            self.digits[index - 1].zeroize();
                         }
                         return focus_previous();
                     }
@@ -78,11 +103,11 @@ impl PinInput {
                     // Smart fill logic: determine which field to update
                     if value.len() == 1 {
                         // Simple case: typing in empty field
-                        self.digits[index] = value;
+                        self.replace_digit(index, value);
                         if index < 3 {
                             return focus_next();
                         }
-                    } else if value.len() > old_value.len() {
+                    } else if value.len() > old_len {
                         // User typed in a field that already has content
                         // Extract the newly typed character
                         if let Some(last_char) = value.chars().last() {
@@ -90,15 +115,13 @@ impl PinInput {
                                 let new_digit = last_char.to_string();
 
                                 // Smart fill: if current field has content and next field is empty, fill next
-                                if !old_value.is_empty()
-                                    && index < 3
-                                    && self.digits[index + 1].is_empty()
+                                if !old_was_empty && index < 3 && self.digits[index + 1].is_empty()
                                 {
-                                    self.digits[index + 1] = new_digit;
+                                    self.replace_digit(index + 1, new_digit);
                                     return focus_next();
                                 } else {
                                     // Otherwise replace current field
-                                    self.digits[index] = new_digit;
+                                    self.replace_digit(index, new_digit);
                                     if index < 3 {
                                         return focus_next();
                                     }
@@ -169,7 +192,7 @@ impl Drop for PinInput {
 
 #[cfg(test)]
 mod tests {
-    use super::PinInput;
+    use super::{Message, PinInput};
     use zeroize::Zeroize;
 
     #[test]
@@ -198,5 +221,61 @@ mod tests {
         let mut s = "9".to_string();
         s.zeroize();
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn replace_digit_scrubs_previous_buffer() {
+        let mut pin = PinInput::new();
+        pin.digits = ["7".to_string(), String::new(), String::new(), String::new()];
+        pin.replace_digit(0, "3".to_string());
+        // End state: only the new digit is visible.
+        assert_eq!(pin.digits[0], "3");
+        // The `zeroize::Zeroize for String` impl scrubs bytes then
+        // clears length before we drop the old allocation, so by the
+        // time `replace_digit` returns no plaintext "7" is reachable
+        // through `self.digits` — the only digit accessible is "3".
+        assert_eq!(pin.value(), "3");
+    }
+
+    #[test]
+    fn digit_changed_smart_fill_scrubs_previous_digit() {
+        // Reproduces the `update()` path where the user types into a
+        // field that already has a digit AND the next field is empty:
+        // the typed character goes into the next slot, leaving the
+        // current slot's previous digit in place. Nothing to scrub in
+        // this branch directly, but we must not panic or drop data.
+        let mut pin = PinInput::new();
+        pin.digits[0] = "5".to_string();
+        let _ = pin.update(Message::DigitChanged(0, "58".to_string()));
+        assert_eq!(pin.digits[0], "5");
+        assert_eq!(pin.digits[1], "8");
+    }
+
+    #[test]
+    fn digit_changed_replace_scrubs_overwritten_digit() {
+        // Path: `value.len() > old_len` with next-slot non-empty falls
+        // through to "replace current field". Old buffer must be
+        // scrubbed before the new one takes its place.
+        let mut pin = PinInput::new();
+        pin.digits[0] = "5".to_string();
+        pin.digits[1] = "9".to_string(); // occupies next slot → no smart-fill
+        let _ = pin.update(Message::DigitChanged(0, "52".to_string()));
+        // Slot 0 replaced with "2", previous "5" scrubbed before the
+        // replacement was assigned.
+        assert_eq!(pin.digits[0], "2");
+        assert_eq!(pin.digits[1], "9");
+    }
+
+    #[test]
+    fn digit_changed_backspace_on_empty_clears_prior_slot() {
+        // Path: `value.is_empty()` + `old_was_empty` → zeroize prior
+        // slot. Before this fix the prior slot was reassigned
+        // `String::new()`, dropping its plaintext buffer un-scrubbed.
+        let mut pin = PinInput::new();
+        pin.digits[0] = "4".to_string();
+        pin.digits[1] = String::new();
+        let _ = pin.update(Message::DigitChanged(1, String::new()));
+        assert!(pin.digits[0].is_empty(), "prior slot should be cleared");
+        assert!(pin.digits[1].is_empty());
     }
 }

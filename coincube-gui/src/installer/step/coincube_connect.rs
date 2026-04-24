@@ -1,5 +1,6 @@
 use coincube_ui::{component::form, widget::*};
 use iced::Task;
+use zeroize::Zeroizing;
 
 use crate::{
     hw::HardwareWallets,
@@ -19,7 +20,14 @@ pub struct CoincubeConnectStep {
     otp: form::Value<String>,
     otp_sent: bool,
     is_signup: bool,
-    jwt: Option<String>,
+    /// JWT captured from the OTP-verify response, held on the step
+    /// between `update(OtpVerified)` and the next `apply()`. Wrapped in
+    /// `Zeroizing` so the heap allocation is scrubbed on drop; `apply`
+    /// moves the value into `Context` with `take()` so no plaintext
+    /// copy lingers on the step after hand-off. Navigating back past
+    /// this step can't re-trigger `apply` — `skip()` short-circuits
+    /// while `ctx.connect_jwt.is_some()` — so `take` is safe.
+    jwt: Option<Zeroizing<String>>,
     processing: bool,
     error: Option<String>,
     skipped: bool,
@@ -87,14 +95,13 @@ impl Step for CoincubeConnectStep {
             ctx.connect_jwt = None;
             return true;
         }
-        if let Some(token) = &self.jwt {
+        // Move the JWT out of the step into `Context`. The step won't
+        // be re-entered while `ctx.connect_jwt.is_some()` (see
+        // `skip()`), so consuming the token here is safe and avoids
+        // keeping a duplicate `Zeroizing<String>` alive on the step.
+        if let Some(token) = self.jwt.take() {
             ctx.use_coincube_connect = true;
-            // Wrap into `Zeroizing<String>` at the Context handoff so
-            // the JWT heap allocation is scrubbed on Context drop.
-            // `self.jwt` is a plain `Option<String>` today; promoting
-            // it to `Zeroizing` end-to-end would be a broader refactor
-            // (OTP-verify plumbing), tracked separately.
-            ctx.connect_jwt = Some(zeroize::Zeroizing::new(token.clone()));
+            ctx.connect_jwt = Some(token);
             true
         } else {
             false
@@ -182,7 +189,14 @@ impl Step for CoincubeConnectStep {
                                 } else {
                                     client.login_verify_otp(req).await
                                 }
-                                .map(|resp| resp.token)
+                                // Wrap into `Zeroizing<String>` at the
+                                // async boundary — before the token
+                                // enters the message queue — so every
+                                // in-flight copy of the subsequent
+                                // `OtpVerified` message scrubs its
+                                // heap on drop, not just the copy
+                                // stashed on the step's state.
+                                .map(|resp| Zeroizing::new(resp.token))
                                 .map_err(|e| e.to_string())
                             },
                             |res| Message::CoincubeConnect(CoincubeConnectMsg::OtpVerified(res)),
