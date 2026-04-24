@@ -642,7 +642,7 @@ fn submit_password(
     // fails, so a transient network error doesn't force the user to
     // re-type their password (and re-enter their PIN to unlock the
     // mnemonic again).
-    let (mode, password_copy, mnemonic_clone_opt, pending) = match &rk.flow {
+    let (password_copy, mnemonic_clone_opt, pending) = match &rk.flow {
         RecoveryKitState::PasswordEntry {
             mode: m,
             mnemonic,
@@ -685,7 +685,6 @@ fn submit_password(
                 acknowledged: *acknowledged,
             };
             (
-                *m,
                 Zeroizing::new(password.to_string()),
                 mnemonic.clone(),
                 pending,
@@ -734,7 +733,6 @@ fn submit_password(
             encrypt_and_upload(
                 client,
                 cube_id_num,
-                mode,
                 mnemonic,
                 descriptor_blob,
                 SeedBlobCube {
@@ -969,7 +967,6 @@ fn restore_entry_on_upload_error(flow: &mut RecoveryKitState, err: &str) {
 async fn encrypt_and_upload(
     client: CoincubeClient,
     cube_id_num: u64,
-    _mode: RecoveryKitMode,
     mnemonic: Option<Zeroizing<Vec<String>>>,
     descriptor_blob: Option<DescriptorBlob>,
     cube_meta: SeedBlobCube,

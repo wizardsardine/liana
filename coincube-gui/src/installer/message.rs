@@ -306,7 +306,7 @@ pub enum RecoveryKitRestoreMsg {
 impl std::fmt::Debug for RecoveryKitRestoreMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::EmailEdited(_) => f.debug_tuple("EmailEdited").field(&"<redacted>").finish(),
+            Self::EmailEdited(s) => f.debug_tuple("EmailEdited").field(s).finish(),
             Self::RequestOtp => write!(f, "RequestOtp"),
             Self::OtpSent(r) => f.debug_tuple("OtpSent").field(r).finish(),
             Self::OtpEdited(_) => f.debug_tuple("OtpEdited").field(&"<redacted>").finish(),

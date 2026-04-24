@@ -1546,13 +1546,13 @@ impl App {
             }
             Message::View(view::Message::ShowError(msg)) => {
                 // Redirect ShowError to ShowToast with Error level
-                return self.update(Message::View(view::Message::ShowToast(
+                return self.update_dispatch(Message::View(view::Message::ShowToast(
                     log::Level::Error,
                     msg,
                 )));
             }
             Message::View(view::Message::ShowSuccess(msg)) => {
-                return self.update(Message::View(view::Message::ShowToast(
+                return self.update_dispatch(Message::View(view::Message::ShowToast(
                     log::Level::Info,
                     msg,
                 )));
@@ -1671,8 +1671,8 @@ impl App {
                                         self.cache.node_bitcoind_sync_progress = None;
                                         self.cache.node_bitcoind_ibd = None;
                                         self.cache.node_bitcoind_last_log = None;
-                                        let cfg_task =
-                                            self.update(Message::DaemonConfigLoaded(Ok(())));
+                                        let cfg_task = self
+                                            .update_dispatch(Message::DaemonConfigLoaded(Ok(())));
                                         return Task::batch([
                                             cfg_task,
                                             Task::done(Message::CacheUpdated),
@@ -1825,7 +1825,8 @@ impl App {
                             match self.load_daemon_config(datadir, new_cfg) {
                                 Ok(()) => {
                                     info!("Switched to COINCUBE | Connect fallback after Bitcoind failure");
-                                    let cfg_task = self.update(Message::DaemonConfigLoaded(Ok(())));
+                                    let cfg_task =
+                                        self.update_dispatch(Message::DaemonConfigLoaded(Ok(())));
                                     return Task::batch([
                                         cfg_task,
                                         Task::done(Message::CacheUpdated),
@@ -1916,7 +1917,7 @@ impl App {
                         self.cache.node_bitcoind_last_log = None;
                     }
                     let res = self.load_daemon_config(self.cache.datadir_path.clone(), *cfg);
-                    return self.update(Message::DaemonConfigLoaded(res));
+                    return self.update_dispatch(Message::DaemonConfigLoaded(res));
                 } else {
                     tracing::warn!("Attempted to load daemon config without vault");
                 }
