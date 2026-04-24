@@ -250,25 +250,30 @@ impl ConnectCubePanel {
             return None;
         }
         let db_username = db_username.to_string();
+        let db_addr = db_addr.clone();
         Some(iced::Task::perform(
             async move {
                 match spark.get_lightning_address().await {
                     Ok(Some(info)) => {
                         // Only treat as "in sync" when the SDK's
-                        // bound username matches the DB-confirmed
-                        // reservation. A mismatch means the SDK
-                        // holds a stale or foreign binding (prior
-                        // cube, cross-device swap, etc.) and we
-                        // must surface the divergence — silently
-                        // accepting it would display the wrong
-                        // address to the user.
-                        if info.username == db_username {
+                        // full `user@domain` matches the DB-confirmed
+                        // reservation. Matching on username alone
+                        // would miss `COINCUBE_LNURL_DOMAIN` drift
+                        // (staging/prod env flip) — the SDK would
+                        // hold `user@staging.coincube.io` while the
+                        // DB has `user@coincube.io` and we'd display
+                        // the wrong address. `register_lightning_address`
+                        // can't retarget domains (the SDK's
+                        // `lnurl_domain` is fixed at init), so
+                        // surface the divergence for the operator
+                        // instead of silently papering over it.
+                        if info.lightning_address == db_addr {
                             ReconcileOutcome::AlreadyBound(info)
                         } else {
                             ReconcileOutcome::NeedsReRegistration(format!(
                                 "Spark SDK is bound to '{}' but the confirmed \
                                  reservation is '{}'",
-                                info.username, db_username
+                                info.lightning_address, db_addr
                             ))
                         }
                     }
