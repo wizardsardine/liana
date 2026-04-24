@@ -89,7 +89,12 @@ impl Step for CoincubeConnectStep {
         }
         if let Some(token) = &self.jwt {
             ctx.use_coincube_connect = true;
-            ctx.connect_jwt = Some(token.clone());
+            // Wrap into `Zeroizing<String>` at the Context handoff so
+            // the JWT heap allocation is scrubbed on Context drop.
+            // `self.jwt` is a plain `Option<String>` today; promoting
+            // it to `Zeroizing` end-to-end would be a broader refactor
+            // (OTP-verify plumbing), tracked separately.
+            ctx.connect_jwt = Some(zeroize::Zeroizing::new(token.clone()));
             true
         } else {
             false

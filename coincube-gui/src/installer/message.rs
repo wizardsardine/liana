@@ -34,6 +34,19 @@ use crate::{
     },
 };
 
+/// Result handed to `Message::CubeSaved` after post-install
+/// orchestration finishes. Extracted as an alias because the
+/// inlined form trips `clippy::type_complexity`; the name also
+/// documents the intent at call sites.
+pub type CubeSaveResult = Result<
+    (
+        CubeSettings,
+        Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+        Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
+    ),
+    String,
+>;
+
 #[derive(Debug, Clone)]
 pub enum Message {
     UserActionDone(bool),
@@ -80,23 +93,20 @@ pub enum Message {
     Decrypt(Decrypt),
     /// Post-install orchestration completed. The first field pairs the
     /// saved/found `CubeSettings` with an optional pre-loaded
-    /// `BreezClient`.
+    /// `BreezClient` and `SparkBackend`.
     ///
-    /// The BreezClient slot is populated only for the Recovery Kit
+    /// Both wallet-client slots are populated only for the Recovery Kit
     /// restore flow, where the new PIN-setup step lets us build the
-    /// client up-front against the just-encrypted mnemonic — matching
-    /// what fresh-install + pre-existing-Cube opens already do. For
-    /// every other flow (fresh install, remote backend, etc.) the
-    /// client is built downstream (PIN entry, login) and this slot
-    /// stays `None`.
+    /// clients up-front against the just-encrypted mnemonic — matching
+    /// what fresh-install + pre-existing-Cube opens already do. Without
+    /// this, the Loader landed on the post-install screen with
+    /// `spark_backend = None` and the Spark panels stayed empty until
+    /// the user closed and re-opened the Cube (at which point the
+    /// normal PIN-entry path loads Spark correctly). For every other
+    /// flow (fresh install, remote backend, etc.) the clients are
+    /// built downstream (PIN entry, login) and these slots stay `None`.
     CubeSaved(
-        Result<
-            (
-                CubeSettings,
-                Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
-            ),
-            String,
-        >,
+        CubeSaveResult,
         Box<settings::WalletSettings>,
         Option<Bitcoind>,
     ),

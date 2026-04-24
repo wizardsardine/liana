@@ -774,7 +774,10 @@ impl Step for RecoveryKitRestoreStep {
         // `Phase::Ready` path above; the `skipped` branch short-circuits
         // before reaching here so we never push a stale/empty JWT.
         if let Some(jwt) = &self.jwt {
-            ctx.connect_jwt = Some(jwt.to_string());
+            // `self.jwt: Option<Zeroizing<String>>` — cloning preserves
+            // the wrapper so `Context` carries the scrub-on-drop
+            // guarantee all the way to the Esplora-config copy.
+            ctx.connect_jwt = Some(jwt.clone());
             ctx.use_coincube_connect = true;
         }
 

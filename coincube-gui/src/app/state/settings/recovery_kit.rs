@@ -51,7 +51,12 @@ pub enum SeedSource {
 /// failure can restore the entry screen without making the user
 /// re-type their password (and, for mnemonic cubes, re-enter their
 /// PIN to re-decrypt the mnemonic).
-#[derive(Debug)]
+///
+/// `Debug` is manual — the derived version would deref through
+/// `Zeroizing<String>` / `Zeroizing<Vec<String>>` and print the
+/// password and mnemonic words in plaintext to any `{:?}` site,
+/// which defeats the whole reason those fields are Zeroizing-wrapped
+/// in the first place. Keep the manual impl in sync with the fields.
 pub struct PasswordEntryPending {
     pub mode: RecoveryKitMode,
     pub mnemonic: Option<Zeroizing<Vec<String>>>,
@@ -60,9 +65,27 @@ pub struct PasswordEntryPending {
     pub acknowledged: bool,
 }
 
+impl std::fmt::Debug for PasswordEntryPending {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasswordEntryPending")
+            .field("mode", &self.mode)
+            .field("mnemonic", &self.mnemonic.as_ref().map(|_| "<redacted>"))
+            .field("password", &"<redacted>")
+            .field("confirm", &"<redacted>")
+            .field("acknowledged", &self.acknowledged)
+            .finish()
+    }
+}
+
 /// The actual UI state of the wizard. `None` = card view; any other
 /// variant = wizard is taking over the settings page.
-#[derive(Debug)]
+///
+/// `Debug` is manual — the `PasswordEntry` variant holds the live
+/// password/confirm inputs and (for mnemonic cubes) the decrypted
+/// mnemonic; a derived `Debug` would print all three in plaintext.
+/// `Uploading` is also manual because it carries `PasswordEntryPending`
+/// which has its own redacting impl we want to delegate to. Other
+/// variants are non-sensitive and get straightforward formatting.
 pub enum RecoveryKitState {
     None,
     PinEntry {
@@ -96,6 +119,57 @@ pub enum RecoveryKitState {
     Error {
         message: String,
     },
+}
+
+impl std::fmt::Debug for RecoveryKitState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => write!(f, "None"),
+            Self::PinEntry { mode, error } => f
+                .debug_struct("PinEntry")
+                .field("mode", mode)
+                .field("error", error)
+                .finish(),
+            Self::PasswordEntry {
+                mode,
+                mnemonic,
+                acknowledged,
+                error,
+                // `password` and `confirm` intentionally omitted
+                // from the Debug output — printing them would
+                // leak the live recovery password. The `..`
+                // pattern keeps this impl compilable if fields
+                // are added later, but the "add new field" path
+                // should deliberately decide whether to expose it.
+                ..
+            } => f
+                .debug_struct("PasswordEntry")
+                .field("mode", mode)
+                .field("mnemonic", &mnemonic.as_ref().map(|_| "<redacted>"))
+                .field("password", &"<redacted>")
+                .field("confirm", &"<redacted>")
+                .field("acknowledged", acknowledged)
+                .field("error", error)
+                .finish(),
+            Self::Uploading { pending } => f
+                .debug_struct("Uploading")
+                // `pending`'s own Debug is redacting — delegate.
+                .field("pending", pending)
+                .finish(),
+            Self::Completed {
+                updated_at,
+                now_has_seed,
+                now_has_descriptor,
+            } => f
+                .debug_struct("Completed")
+                .field("updated_at", updated_at)
+                .field("now_has_seed", now_has_seed)
+                .field("now_has_descriptor", now_has_descriptor)
+                .finish(),
+            Self::Removing => write!(f, "Removing"),
+            Self::Error { message } => f.debug_struct("Error").field("message", message).finish(),
+        }
+    }
 }
 
 /// Top-level container held on `GeneralSettingsState`. Separates the
@@ -328,7 +402,10 @@ pub fn update(
                 password, error, ..
             } = &mut rk.flow
             {
-                *password = Zeroizing::new(value);
+                // `value` is already `Zeroizing<String>` from the
+                // message payload — move it straight in. The
+                // previous `password` drops here, wiping its heap.
+                *password = value;
                 *error = None;
             }
             Task::none()
@@ -336,7 +413,7 @@ pub fn update(
 
         RecoveryKitMessage::ConfirmChanged(value) => {
             if let RecoveryKitState::PasswordEntry { confirm, error, .. } = &mut rk.flow {
-                *confirm = Zeroizing::new(value);
+                *confirm = value;
                 *error = None;
             }
             Task::none()
@@ -934,10 +1011,18 @@ async fn encrypt_and_upload(
         None
     };
 
-    // Descriptor blob.
+    // Descriptor blob. Wrapping the serialised JSON in `Zeroizing<Vec<u8>>`
+    // mirrors the seed-blob site above and ensures the plaintext bytes —
+    // which embed the wallet's xpubs — are wiped when `bytes` drops at
+    // the end of this block. The descriptor halves aren't as sensitive
+    // as the mnemonic, but xpubs give watch-only spend access to every
+    // address on the wallet and match the privacy discipline applied
+    // to `DescriptorBlob`'s redacting Debug impl.
     let (desc_ct, desc_fp) = if include_descriptor {
         let blob = descriptor_blob.as_ref().unwrap();
-        let bytes = serde_json::to_vec(blob).map_err(|e| format!("serialize descriptor: {}", e))?;
+        let bytes: Zeroizing<Vec<u8>> = Zeroizing::new(
+            serde_json::to_vec(blob).map_err(|e| format!("serialize descriptor: {}", e))?,
+        );
         let ct = recovery::encrypt(&bytes, &password, KdfParams::DEFAULT_V1)
             .map_err(|e| format!("encrypt descriptor: {}", e))?;
         let fp = descriptor_blob_fingerprint(blob);
@@ -1079,6 +1164,92 @@ mod tests {
             confirm: Zeroizing::new("correct-horse-battery-staple".to_string()),
             acknowledged: true,
         }
+    }
+
+    // Regression tests for the Debug redaction on
+    // `PasswordEntryPending` and `RecoveryKitState`. Without manual
+    // impls, the derived versions would deref through `Zeroizing`
+    // and print the password + mnemonic words to any `{:?}` site,
+    // defeating the whole reason those fields are Zeroizing-wrapped.
+    // Canary strings are unlikely to collide with `<redacted>` or
+    // field names.
+
+    const PASSWORD_CANARY: &str = "pwd-canary-XYZZY-XYZZY-XYZZY";
+    const MNEMONIC_CANARY: &str = "mnemonic-canary-word-XYZZY";
+
+    fn pending_with_canaries() -> PasswordEntryPending {
+        PasswordEntryPending {
+            mode: RecoveryKitMode::Create,
+            mnemonic: Some(Zeroizing::new(vec![MNEMONIC_CANARY.to_string(); 12])),
+            password: Zeroizing::new(PASSWORD_CANARY.to_string()),
+            confirm: Zeroizing::new(PASSWORD_CANARY.to_string()),
+            acknowledged: true,
+        }
+    }
+
+    #[test]
+    fn password_entry_pending_debug_redacts_secrets() {
+        let p = pending_with_canaries();
+        let r = format!("{:?}", p);
+        assert!(
+            !r.contains(PASSWORD_CANARY),
+            "password leaked through PasswordEntryPending Debug: {}",
+            r
+        );
+        assert!(
+            !r.contains(MNEMONIC_CANARY),
+            "mnemonic leaked through PasswordEntryPending Debug: {}",
+            r
+        );
+        // Non-sensitive metadata is preserved for diagnostics.
+        assert!(r.contains("Create"), "mode should be visible: {}", r);
+        assert!(
+            r.contains("acknowledged: true"),
+            "acknowledged should be visible: {}",
+            r
+        );
+    }
+
+    #[test]
+    fn recovery_kit_state_password_entry_debug_redacts_secrets() {
+        let state = RecoveryKitState::PasswordEntry {
+            mode: RecoveryKitMode::Create,
+            mnemonic: Some(Zeroizing::new(vec![MNEMONIC_CANARY.to_string(); 12])),
+            password: Zeroizing::new(PASSWORD_CANARY.to_string()),
+            confirm: Zeroizing::new(PASSWORD_CANARY.to_string()),
+            acknowledged: false,
+            error: Some("wrong password".to_string()),
+        };
+        let r = format!("{:?}", state);
+        assert!(
+            !r.contains(PASSWORD_CANARY),
+            "password leaked through PasswordEntry Debug: {}",
+            r
+        );
+        assert!(
+            !r.contains(MNEMONIC_CANARY),
+            "mnemonic leaked through PasswordEntry Debug: {}",
+            r
+        );
+        // Error messages are diagnostic and non-secret; surface them.
+        assert!(
+            r.contains("wrong password"),
+            "error field should be visible: {}",
+            r
+        );
+    }
+
+    #[test]
+    fn recovery_kit_state_uploading_debug_redacts_via_pending() {
+        // The `Uploading { pending }` branch delegates to
+        // `PasswordEntryPending`'s redacting Debug; verify the
+        // composite doesn't re-expose the secrets.
+        let state = RecoveryKitState::Uploading {
+            pending: pending_with_canaries(),
+        };
+        let r = format!("{:?}", state);
+        assert!(!r.contains(PASSWORD_CANARY), "pwd leaked: {}", r);
+        assert!(!r.contains(MNEMONIC_CANARY), "mnemonic leaked: {}", r);
     }
 
     #[test]

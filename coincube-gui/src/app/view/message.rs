@@ -766,10 +766,17 @@ pub enum RecoveryKitMessage {
     /// the wrap, a plain `Vec<String>` with the phrase bytes would
     /// linger on the heap past the message cycle.
     PinVerified(Result<zeroize::Zeroizing<Vec<String>>, String>),
-    /// Recovery password input changed.
-    PasswordChanged(String),
-    /// "Confirm recovery password" input changed.
-    ConfirmChanged(String),
+    /// Recovery password input changed. Wrapped in `Zeroizing` at
+    /// the message level (not just on the state field) because
+    /// Iced's runtime clones messages between update/task/view —
+    /// plain `String` copies would linger on the heap past the
+    /// flow's completion. Matches the installer's
+    /// `RecoveryKitRestoreMsg::PasswordEdited` discipline.
+    PasswordChanged(zeroize::Zeroizing<String>),
+    /// "Confirm recovery password" input changed. Same
+    /// `Zeroizing`-at-message-level discipline as
+    /// `PasswordChanged` above.
+    ConfirmChanged(zeroize::Zeroizing<String>),
     /// User toggled the "I've written this down" gate on the password
     /// screen. Submit is inert until this is true.
     AcknowledgeToggled(bool),
@@ -792,7 +799,14 @@ pub enum RecoveryKitMessage {
 /// What the upload handler hands back to the state machine on success.
 /// We only carry the fields the state needs to render the Completed
 /// screen and persist the drift-fingerprint cache.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is manual below — the `descriptor_fingerprint` hex is a
+/// stable identifier correlatable across sessions and against the
+/// server-side record, so it's redacted from any `{:?}` site.
+/// Tracing dumps see `Some(<redacted>)` / `None` while still
+/// revealing whether an upload produced a fingerprint at all (a
+/// non-sensitive signal useful for diagnostics).
+#[derive(Clone)]
 pub struct RecoveryKitUploadOutcome {
     /// RFC 3339 timestamp from the server's `updatedAt` field. Shown
     /// in the Completed screen's "Last updated" line.
@@ -808,6 +822,22 @@ pub struct RecoveryKitUploadOutcome {
     /// `CubeSettings::recovery_kit_last_backed_up_descriptor_fingerprint`
     /// for drift detection (W12).
     pub descriptor_fingerprint: Option<String>,
+}
+
+impl std::fmt::Debug for RecoveryKitUploadOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RecoveryKitUploadOutcome")
+            .field("updated_at", &self.updated_at)
+            .field("now_has_seed", &self.now_has_seed)
+            .field("now_has_descriptor", &self.now_has_descriptor)
+            .field(
+                "descriptor_fingerprint",
+                // Preserve presence/absence for diagnostics while
+                // hiding the hex itself.
+                &self.descriptor_fingerprint.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 // Manual Debug: every variant that could carry mnemonic, password,
@@ -1337,4 +1367,71 @@ pub enum P2PMessage {
     FileSaved(Result<(), String>),
     // Stream-level errors (relay connection, subscription, restore failures)
     StreamError(String),
+}
+
+#[cfg(test)]
+mod recovery_kit_upload_outcome_debug_tests {
+    use super::{RecoveryKitMessage, RecoveryKitUploadOutcome};
+
+    /// Canary string embedded into the fingerprint. If it ever appears in
+    /// a Debug render we know the redaction regressed.
+    const CANARY_FP: &str = "canary-fp-XYZZY-do-not-leak";
+
+    fn outcome_with_fp(fp: Option<String>) -> RecoveryKitUploadOutcome {
+        RecoveryKitUploadOutcome {
+            updated_at: "2026-04-22T00:00:00Z".to_string(),
+            now_has_seed: true,
+            now_has_descriptor: true,
+            descriptor_fingerprint: fp,
+        }
+    }
+
+    #[test]
+    fn debug_redacts_some_fingerprint_but_preserves_presence() {
+        let outcome = outcome_with_fp(Some(CANARY_FP.to_string()));
+        let rendered = format!("{:?}", outcome);
+        assert!(
+            !rendered.contains(CANARY_FP),
+            "fingerprint hex leaked through Debug: {}",
+            rendered
+        );
+        assert!(
+            rendered.contains("<redacted>"),
+            "redaction marker missing: {}",
+            rendered
+        );
+        assert!(
+            rendered.contains("Some"),
+            "presence of Some() should remain visible: {}",
+            rendered
+        );
+        assert!(rendered.contains("updated_at"));
+        assert!(rendered.contains("now_has_seed"));
+        assert!(rendered.contains("now_has_descriptor"));
+    }
+
+    #[test]
+    fn debug_renders_none_when_fingerprint_absent() {
+        let outcome = outcome_with_fp(None);
+        let rendered = format!("{:?}", outcome);
+        assert!(
+            rendered.contains("None"),
+            "absent case lost signal: {}",
+            rendered
+        );
+        assert!(!rendered.contains(CANARY_FP));
+    }
+
+    #[test]
+    fn upload_result_ok_debug_does_not_leak_fingerprint() {
+        let msg =
+            RecoveryKitMessage::UploadResult(Ok(outcome_with_fp(Some(CANARY_FP.to_string()))));
+        let rendered = format!("{:?}", msg);
+        assert!(
+            !rendered.contains(CANARY_FP),
+            "Debug(RecoveryKitMessage::UploadResult(Ok(..))) leaked fingerprint: {}",
+            rendered
+        );
+        assert!(rendered.contains("<redacted>"));
+    }
 }

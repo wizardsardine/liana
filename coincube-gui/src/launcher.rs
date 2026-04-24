@@ -2409,14 +2409,18 @@ fn remote_cube_list_item<'a>(cube: &'a RemoteCube) -> Element<'a, ViewMessage> {
     // W13 entry point on the launcher: clicking cloud-arrow-down on a
     // remote-only cube kicks off the Connect-Recovery-Kit restore flow.
     // The flow's cube picker (`RecoveryKitRestoreStep`) lets the user
-    // confirm which cube to restore; pre-selecting by `cube.uuid` here
+    // choose which cube on their Connect account to restore — clicking
+    // this specific row doesn't preselect `cube.uuid`, so the tooltip
+    // is deliberately generic to avoid implying otherwise. Threading
+    // the clicked uuid through `ViewMessage::RestoreFromRecoveryKit`
+    // → `UserFlow::RestoreFromRecoveryKit` → the step's cube picker
     // is a future refinement.
     let restore_button = iced_tooltip::Tooltip::new(
         Button::new(icon::cloud_arrow_down_icon())
             .style(theme::button::secondary)
             .padding(10)
             .on_press(ViewMessage::RestoreFromRecoveryKit),
-        Container::new(p1_regular("Restore this Cube from your Recovery Kit"))
+        Container::new(p1_regular("Choose a Recovery Kit to restore"))
             .padding(8)
             .style(theme::card::simple),
         iced_tooltip::Position::Bottom,

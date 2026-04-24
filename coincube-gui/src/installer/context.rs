@@ -96,7 +96,13 @@ pub struct Context {
     pub recovered_signer: Option<Arc<Signer>>,
     pub bitcoind_is_external: bool,
     pub use_coincube_connect: bool,
-    pub connect_jwt: Option<String>,
+    /// Connect JWT threaded across installer steps. Wrapped in
+    /// `Zeroizing<String>` so the heap allocation is scrubbed when the
+    /// `Context` (and any `Task::perform` clone of it) drops — keeps
+    /// the token off the residual heap between the step that writes it
+    /// (`CoincubeConnectStep` or `RecoveryKitRestoreStep`) and the
+    /// downstream step that copies it into `EsploraConfig.token`.
+    pub connect_jwt: Option<zeroize::Zeroizing<String>>,
     pub install_node_alongside_connect: bool,
     pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
     pub internal_bitcoind: Option<Bitcoind>,
@@ -189,5 +195,21 @@ impl Context {
             connect_vault_timelock_days: None,
             restore_pin: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Context;
+
+    /// Compile-time pin: if anyone reverts `Context.connect_jwt` to a
+    /// plain `Option<String>`, this type-level assertion stops
+    /// compiling. Keeps the JWT's scrub-on-drop guarantee intact
+    /// across the installer → Esplora handoff.
+    #[test]
+    fn connect_jwt_is_zeroizing_wrapped() {
+        #[allow(dead_code)]
+        const _: fn(&Context) -> Option<&zeroize::Zeroizing<String>> =
+            |ctx| ctx.connect_jwt.as_ref();
     }
 }

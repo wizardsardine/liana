@@ -379,9 +379,12 @@ impl Step for SelectBitcoindTypeStep {
                 let Some(token) = &ctx.connect_jwt else {
                     return false;
                 };
+                // `EsploraConfig.token` is a plain `String` (serialized
+                // to disk in `coincubed` config), so we copy the inner
+                // string out of the `Zeroizing<String>` wrapper here.
                 ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
                     addr: crate::installer::connect_url(ctx.network),
-                    token: Some(token.clone()),
+                    token: Some(token.as_str().to_owned()),
                 }));
                 ctx.internal_bitcoind_config = None;
                 ctx.pending_bitcoind_config = None;
@@ -867,9 +870,13 @@ impl Step for InternalBitcoindStep {
                 let Some(token) = &ctx.connect_jwt else {
                     return false;
                 };
+                // Inner `String` copy: `EsploraConfig.token` is a plain
+                // `String` (persisted to disk), so extract it from the
+                // `Zeroizing<String>` wrapper rather than cloning the
+                // wrapper itself.
                 ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
                     addr: crate::installer::connect_url(ctx.network),
-                    token: Some(token.clone()),
+                    token: Some(token.as_str().to_owned()),
                 }));
             } else {
                 ctx.bitcoin_backend = bitcoind_config.map(BitcoinBackend::Bitcoind);

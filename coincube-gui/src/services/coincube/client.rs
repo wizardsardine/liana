@@ -25,7 +25,18 @@ const _: () = {
     }
 };
 
-#[derive(Debug, Clone)]
+/// HTTP client for the coincube-api backend.
+///
+/// `Debug` is implemented manually below so `{:?}` on a `CoincubeClient`
+/// — or anything that transitively contains one (notably
+/// `Message::Install` in `launcher.rs`, which derives `Debug` and logs
+/// through tracing snapshots) — redacts the JWT. The `Zeroizing` wrapper
+/// only scrubs the heap *on drop*; it does **not** hide the token from
+/// `{:?}` (`Zeroizing<T>` derefs to `T` for Debug), so without this impl
+/// the bearer token leaks into any log line that formats a parent
+/// message. Mirror of the `EsploraConfig` pattern in
+/// `coincubed/src/config.rs`.
+#[derive(Clone)]
 pub struct CoincubeClient {
     pub client: Client,
     pub base_url: String,
@@ -38,6 +49,26 @@ pub struct CoincubeClient {
     /// but the outer `Option` is a wrapper we can freely reassign,
     /// and the inner `Zeroizing<String>` does the zeroing.
     token: Option<Zeroizing<String>>,
+}
+
+impl std::fmt::Debug for CoincubeClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The inner `reqwest::Client` is printed opaquely because
+        // `set_token` bakes the JWT into its `default_headers`
+        // (`Authorization: Bearer ...`); deriving / forwarding to
+        // `reqwest::Client`'s Debug would leak the token through a
+        // second path even though the dedicated `token` field is
+        // redacted. Low diagnostic loss — request-level logs already
+        // carry the useful HTTP details.
+        f.debug_struct("CoincubeClient")
+            .field("client", &"<reqwest::Client>")
+            .field("base_url", &self.base_url)
+            // Preserve Some/None presence for diagnostics (helps
+            // distinguish "unauthenticated" from "token-but-rejected"
+            // states in logs) while hiding the JWT itself.
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 impl Default for CoincubeClient {
@@ -1127,6 +1158,39 @@ mod token_zeroization_tests {
         // proves the Zeroizing wrapper inside Clone is independent,
         // not a shared reference.
         assert_eq!(c2.token(), Some("tok"));
+    }
+
+    /// Canary-string test guarding the manual `Debug` impl. Without
+    /// the redaction, `Zeroizing<String>` derefs to `String` and the
+    /// JWT bytes end up in any `{:?}` render of a parent message
+    /// (e.g. `Message::Install(... Option<CoincubeClient>)`).
+    #[test]
+    fn debug_redacts_jwt_and_preserves_presence() {
+        const CANARY_JWT: &str = "eyCANARY.jwt.XYZZY-do-not-leak";
+        let mut c = CoincubeClient::for_test("http://127.0.0.1:0");
+        c.set_token(CANARY_JWT);
+        let rendered = format!("{:?}", c);
+        assert!(
+            !rendered.contains(CANARY_JWT),
+            "JWT leaked through Debug: {}",
+            rendered
+        );
+        assert!(
+            rendered.contains("<redacted>"),
+            "redaction marker missing: {}",
+            rendered
+        );
+        assert!(
+            rendered.contains("Some"),
+            "Some/None signal lost — harms diagnostics: {}",
+            rendered
+        );
+        // No-token path: still prints None so "unauthenticated" is
+        // visible in logs.
+        c.clear_token();
+        let rendered_empty = format!("{:?}", c);
+        assert!(rendered_empty.contains("None"));
+        assert!(!rendered_empty.contains(CANARY_JWT));
     }
 }
 

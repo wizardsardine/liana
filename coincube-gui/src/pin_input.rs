@@ -6,10 +6,18 @@ use iced::{
     widget::{operation::focus_next, operation::focus_previous},
     Alignment, Length, Task,
 };
+use zeroize::Zeroize;
 
 /// Reusable 4-digit PIN input component.
 ///
 /// Handles digit entry with auto-advance/retreat and show/hide toggle.
+///
+/// The `digits` buffers hold plaintext PIN characters while the user is
+/// entering them. `Drop` + `clear()` both `zeroize()` each digit so the
+/// heap allocations don't linger on the residual heap after the widget
+/// is destroyed or reset. Iced's internal render/event buffers may
+/// still hold short-lived copies — eliminating those is framework-side
+/// and out of this widget's control.
 #[derive(Default)]
 pub struct PinInput {
     pub digits: [String; 4],
@@ -41,9 +49,12 @@ impl PinInput {
         !self.digits.iter().any(|d| d.is_empty())
     }
 
-    /// Clear all digits.
+    /// Clear all digits, scrubbing each heap buffer before it's
+    /// reused. Leaves every digit as an empty `String`.
     pub fn clear(&mut self) {
-        self.digits = [String::new(), String::new(), String::new(), String::new()];
+        for d in &mut self.digits {
+            d.zeroize();
+        }
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -142,5 +153,50 @@ impl PinInput {
             .push(pin_inputs)
             .push(toggle_button)
             .into()
+    }
+}
+
+impl Drop for PinInput {
+    fn drop(&mut self) {
+        // Scrub every digit buffer before the heap allocations are
+        // handed back to the allocator, so a later allocation that
+        // reuses the same region can't read the PIN.
+        for d in &mut self.digits {
+            d.zeroize();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PinInput;
+    use zeroize::Zeroize;
+
+    #[test]
+    fn clear_empties_every_digit() {
+        let mut pin = PinInput::new();
+        pin.digits = [
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+        ];
+        assert_eq!(pin.value(), "1234");
+        pin.clear();
+        for d in &pin.digits {
+            assert!(d.is_empty(), "clear() left a digit non-empty: {:?}", d);
+        }
+        assert_eq!(pin.value(), "");
+    }
+
+    #[test]
+    fn zeroize_on_digit_clears_underlying_bytes() {
+        // Not a true "Drop observed memory" test (we can't look at
+        // freed allocations portably), but it pins the invariant that
+        // calling `zeroize()` on a digit leaves it empty — the same
+        // primitive the `Drop` impl relies on.
+        let mut s = "9".to_string();
+        s.zeroize();
+        assert!(s.is_empty());
     }
 }

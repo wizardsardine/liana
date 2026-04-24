@@ -198,7 +198,14 @@ pub fn password_entry_view<'a>(
         .push(caption("Recovery password"))
         .push(
             TextInput::new("Choose a password", password.as_str())
-                .on_input(|v| wrap(RecoveryKitMessage::PasswordChanged(v)))
+                .on_input(|v| {
+                    // Wrap at the message boundary — the `String`
+                    // from iced's callback is the last unprotected
+                    // copy in our code path; every in-flight clone
+                    // from here on is in a `Zeroizing` wrapper that
+                    // wipes on drop.
+                    wrap(RecoveryKitMessage::PasswordChanged(Zeroizing::new(v)))
+                })
                 .secure(true)
                 .size(16)
                 .padding(12)
@@ -220,7 +227,7 @@ pub fn password_entry_view<'a>(
         .push(caption("Confirm recovery password"))
         .push(
             TextInput::new("Re-enter password", confirm.as_str())
-                .on_input(|v| wrap(RecoveryKitMessage::ConfirmChanged(v)))
+                .on_input(|v| wrap(RecoveryKitMessage::ConfirmChanged(Zeroizing::new(v))))
                 .secure(true)
                 .size(16)
                 .padding(12)

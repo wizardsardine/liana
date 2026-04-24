@@ -380,12 +380,14 @@ impl Tab {
                             // Only the restore path needs to build a
                             // BreezClient up-front — fresh-install +
                             // remote-backend flows build it at PIN
-                            // entry / login. Also gate on the network
-                            // actually being supported; `load_breez_client`
-                            // returns `NetworkNotSupported` on
-                            // testnet/signet which we want to treat as
-                            // a legit "no client" rather than a hard
-                            // error.
+                            // entry / login. On `NetworkNotSupported`
+                            // (testnet/signet) we mirror the PIN-entry
+                            // branch (`BreezClientLoadedAfterPin`
+                            // handler) and hand back a disconnected
+                            // client: the Loader's Synced/App arms
+                            // treat a `None` BreezClient as an
+                            // architectural bug and error out, so
+                            // pre-loaded-must-exist is the contract.
                             let breez_client = if let Some(seed) = &restore_seed {
                                 match breez_liquid::load_breez_client(
                                     datadir.path(),
@@ -399,10 +401,13 @@ impl Tab {
                                     Err(breez_liquid::BreezError::NetworkNotSupported(n)) => {
                                         info!(
                                             "BreezClient not loaded for restored Cube: \
-                                             network {} is not supported by Breez SDK",
+                                             network {} is not supported by Breez SDK; \
+                                             using disconnected client",
                                             n
                                         );
-                                        None
+                                        Some(Arc::new(breez_liquid::BreezClient::disconnected(
+                                            network,
+                                        )))
                                     }
                                     Err(e) => {
                                         // A non-network failure here
@@ -423,7 +428,42 @@ impl Tab {
                                 None
                             };
 
-                            Ok((cube, breez_client))
+                            // Mirror the PIN-entry path (tab.rs Spark
+                            // load near line 781): spawn the bridge
+                            // subprocess against the just-encrypted
+                            // mnemonic so the Loader can hand a live
+                            // SparkBackend to App. Failures here are
+                            // non-fatal — without this, the first
+                            // boot after restore landed in the app
+                            // with `spark_backend = None` and the
+                            // Spark panels only populated after the
+                            // user closed + re-opened the Cube.
+                            let spark_backend = if let Some(seed) = &restore_seed {
+                                match app::breez_spark::load_spark_client(
+                                    datadir.path(),
+                                    network,
+                                    seed.master_signer_fingerprint,
+                                    seed.pin.as_str(),
+                                )
+                                .await
+                                {
+                                    Ok(client) => {
+                                        Some(Arc::new(app::wallets::SparkBackend::new(client)))
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Spark bridge unavailable after restore, \
+                                             continuing without Spark: {}",
+                                            e
+                                        );
+                                        None
+                                    }
+                                }
+                            } else {
+                                None
+                            };
+
+                            Ok((cube, breez_client, spark_backend))
                         },
                         move |result| {
                             Message::Install(installer::Message::CubeSaved(
@@ -437,8 +477,8 @@ impl Tab {
                     msg
                 {
                     // Handle cube save failure
-                    let (cube, restored_breez_client) = match result {
-                        Ok(pair) => pair,
+                    let (cube, restored_breez_client, restored_spark_backend) = match result {
+                        Ok(triple) => triple,
                         Err(err) => {
                             error!("Aborting loader transition due to cube save failure");
                             return i
@@ -481,7 +521,13 @@ impl Tab {
                             // the user's new PIN) wins over the
                             // installer-launched one.
                             restored_breez_client.or_else(|| i.breez_client.clone()),
-                            None, // Installer path doesn't plumb Spark yet — follow-up
+                            // Spark backend built against the user's
+                            // new PIN during the restore async block.
+                            // Falling back to the installer's existing
+                            // handle covers the non-restore flows that
+                            // already had Spark wired in before this
+                            // Message arm widened.
+                            restored_spark_backend.or_else(|| i.spark_backend.clone()),
                         );
                         self.state = State::Loader(loader);
                         command.map(Message::Load)
