@@ -1156,22 +1156,15 @@ async fn find_or_create_cube(
             {
                 let mut empty_cube = settings_data.cubes[empty_idx].clone();
                 empty_cube.vault_wallet_id = Some(wallet_id.clone());
-                if let Some(seed) = restore_seed {
-                    empty_cube.master_signer_fingerprint = Some(seed.master_signer_fingerprint);
-                    // `with_pin` is the sanctioned path for setting
-                    // the Argon2id hash; go through it even when the
-                    // Cube already exists so the restored Cube has a
-                    // usable PIN hash. If the Cube had its own
-                    // `security_pin_hash`, this replaces it with one
-                    // derived from the PIN the user just chose —
-                    // consistent with the newly-encrypted mnemonic on
-                    // disk (otherwise PIN entry against the old hash
-                    // would silently succeed but fail to decrypt the
-                    // mnemonic).
-                    empty_cube = empty_cube
-                        .with_pin(seed.pin.as_str())
-                        .map_err(|e| format!("Failed to set PIN on restored cube: {}", e))?;
-                }
+                // Reuse `decorate_new` so the fingerprint + PIN-hash
+                // path matches the brand-new-Cube branches below. If
+                // the Cube had its own `security_pin_hash`, `with_pin`
+                // replaces it with one derived from the PIN the user
+                // just chose — consistent with the newly-encrypted
+                // mnemonic on disk (otherwise PIN entry against the
+                // old hash would silently succeed but fail to decrypt
+                // the mnemonic).
+                let empty_cube = decorate_new(empty_cube)?;
                 settings_data.cubes[empty_idx] = empty_cube.clone();
                 let cube_name = empty_cube.name.clone();
 
