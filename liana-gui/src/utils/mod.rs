@@ -6,6 +6,7 @@ use std::{
 use liana::miniscript::bitcoin::{self, bip32::DerivationPath, Network};
 
 pub mod serde;
+pub mod subscription;
 
 #[cfg(test)]
 pub mod sandbox;

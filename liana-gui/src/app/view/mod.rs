@@ -97,7 +97,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     let pane_size_cell = &cache.pane_size;
     let probe: Element<'a, Message> = responsive(move |size| {
         pane_size_cell.set(size);
-        Space::new(Length::Fill, Length::Fill).into()
+        Space::new().height(Length::Fill).width(Length::Fill).into()
     })
     .into();
 

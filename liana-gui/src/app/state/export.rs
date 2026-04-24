@@ -316,7 +316,7 @@ impl ExportModal {
         if let Some(path) = &self.path {
             match &self.state {
                 ImportExportState::Started | ImportExportState::Progress(_) => {
-                    Some(iced::Subscription::run_with_id(
+                    Some(crate::utils::subscription::run_with_id(
                         self.modal_title(),
                         export::export_subscription(
                             self.daemon.clone(),

@@ -164,6 +164,7 @@ fn button(p: &Button, status: Status, width: f32) -> Style {
                 }
             },
             shadow: p.active.shadow,
+            snap: false,
         },
         Status::Pressed => {
             if let Some(pressed) = p.pressed {
@@ -182,6 +183,7 @@ fn button(p: &Button, status: Status, width: f32) -> Style {
                         }
                     },
                     shadow: pressed.shadow,
+                    snap: false,
                 }
             } else {
                 button(p, Status::Active, width)
@@ -202,6 +204,7 @@ fn button(p: &Button, status: Status, width: f32) -> Style {
                 }
             },
             shadow: p.hovered.shadow,
+            snap: false,
         },
         Status::Disabled => {
             if let Some(disabled) = p.disabled {
@@ -225,6 +228,7 @@ fn button(p: &Button, status: Status, width: f32) -> Style {
                         }
                     },
                     shadow: disabled.shadow,
+                    snap: false,
                 }
             } else {
                 let active: Style = button(p, Status::Active, width);

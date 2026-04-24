@@ -35,10 +35,10 @@ use liana_ui::{
 use uuid::Uuid;
 
 pub const INSTALLER_STEPS: usize = 5;
-pub const MENU_ENTRY_WIDTH: u16 = 600;
-pub const ACCOUNT_ENTRY_WIDTH: u16 = MENU_ENTRY_WIDTH - 80;
-pub const MENU_ENTRY_HEIGHT: u16 = 80;
-const EMAIL_ROW_HEIGHT: u16 = 56;
+pub const MENU_ENTRY_WIDTH: u32 = 600;
+pub const ACCOUNT_ENTRY_WIDTH: u32 = MENU_ENTRY_WIDTH - 80;
+pub const MENU_ENTRY_HEIGHT: u32 = 80;
+const EMAIL_ROW_HEIGHT: u32 = 56;
 
 /// Format last edit information as "Edited by [You|email] [relative_time]".
 /// Returns None if `last_edited` is None.
@@ -64,7 +64,7 @@ pub fn format_last_edit_info(
     })
 }
 
-const EMAIL_HEADER_SPACER: u16 = 30;
+const EMAIL_HEADER_SPACER: u32 = 30;
 
 /// Create a breadcrumb element from path segments.
 /// Renders as "Segment1 > Segment2 > Segment3" with styled separators.

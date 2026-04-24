@@ -8,7 +8,7 @@ use liana::miniscript::bitcoin::Network;
 use liana_ui::{
     component::{button, card, network_banner, notification, pick_list, text::*},
     icon, image, theme,
-    widget::{modal::Modal, Column, Container, Element, Row},
+    widget::{modal::Modal, Column, ColumnExt, Container, Element, Row, RowExt, SpaceExt},
 };
 use lianad::config::ConfigError;
 use tokio::runtime::Handle;
@@ -608,13 +608,11 @@ impl DeleteWalletModal {
                     )
                     .push(Row::new())
                     .push_maybe(self.wallet_settings.remote_backend_auth.as_ref().map(|a| {
-                        checkbox(
-                            match self.user_role {
+                        checkbox(self.delete_liana_connect)
+                        .label(match self.user_role {
                                 Some(UserRole::Owner) | None => "Also permanently delete this wallet from Liana Connect (for all members).".to_string(),
                                 Some(UserRole::Member) => format!("Also disassociate {} from this Liana Connect wallet.", a.email),
-                            },
-                            self.delete_liana_connect,
-                        )
+                            })
                         .on_toggle_maybe(if !self.deleted {
                                 Some(|v| {
                                     ViewMessage::DeleteWallet(DeleteWalletMessage::DeleteLianaConnect(v))

@@ -13,45 +13,38 @@ use iced::{
 
 pub fn warning<'a, T: 'a + Clone>(message: String, error: String) -> Container<'a, T> {
     let message_clone = message.clone();
-    Container::new(Container::new(collapse::Collapse::new(
-        move || {
-            Button::new(
-                Row::new()
-                    .push(
-                        Container::new(
-                            text::p1_bold(message_clone.to_string()).color(color::LIGHT_BLACK),
-                        )
+    Container::new(Container::new(
+        collapse::Collapse::new(
+            Row::new()
+                .push(
+                    Container::new(
+                        text::p1_bold(message_clone.to_string()).color(color::LIGHT_BLACK),
+                    )
+                    .width(Length::Fill),
+                )
+                .push(
+                    Row::new()
+                        .align_y(Alignment::Center)
+                        .spacing(10)
+                        .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
+                        .push(icon::collapse_icon().color(color::LIGHT_BLACK)),
+                ),
+            Row::new()
+                .push(
+                    Container::new(text::p1_bold(message.to_owned()).color(color::LIGHT_BLACK))
                         .width(Length::Fill),
-                    )
-                    .push(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .spacing(10)
-                            .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
-                            .push(icon::collapse_icon().color(color::LIGHT_BLACK)),
-                    ),
-            )
-            .style(theme::button::transparent)
-        },
-        move || {
-            Button::new(
-                Row::new()
-                    .push(
-                        Container::new(text::p1_bold(message.to_owned()).color(color::LIGHT_BLACK))
-                            .width(Length::Fill),
-                    )
-                    .push(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .spacing(10)
-                            .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
-                            .push(icon::collapsed_icon().color(color::LIGHT_BLACK)),
-                    ),
-            )
-            .style(theme::button::transparent)
-        },
-        move || Element::<'a, T>::from(text::p2_regular(error.to_owned())),
-    )))
+                )
+                .push(
+                    Row::new()
+                        .align_y(Alignment::Center)
+                        .spacing(10)
+                        .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
+                        .push(icon::collapsed_icon().color(color::LIGHT_BLACK)),
+                ),
+            text::p2_regular(error.to_owned()),
+        )
+        .style(theme::button::transparent),
+    ))
     .padding(15)
     .style(theme::banner::warning)
     .width(Length::Fill)
@@ -96,45 +89,38 @@ pub fn processing_hardware_wallet_error<'a, T: 'a + Clone>(
     error: String,
 ) -> Container<'a, T> {
     let message_clone = message.clone();
-    Container::new(Container::new(collapse::Collapse::new(
-        move || {
-            Button::new(
-                Row::new()
-                    .push(
-                        Container::new(
-                            text::p1_bold(message_clone.to_string()).color(color::LIGHT_BLACK),
-                        )
+    Container::new(Container::new(
+        collapse::Collapse::new(
+            Row::new()
+                .push(
+                    Container::new(
+                        text::p1_bold(message_clone.to_string()).color(color::LIGHT_BLACK),
+                    )
+                    .width(Length::Fill),
+                )
+                .push(
+                    Row::new()
+                        .align_y(Alignment::Center)
+                        .spacing(10)
+                        .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
+                        .push(icon::collapse_icon().color(color::LIGHT_BLACK)),
+                ),
+            Row::new()
+                .push(
+                    Container::new(text::p1_bold(message.to_owned()).color(color::LIGHT_BLACK))
                         .width(Length::Fill),
-                    )
-                    .push(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .spacing(10)
-                            .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
-                            .push(icon::collapse_icon().color(color::LIGHT_BLACK)),
-                    ),
-            )
-            .style(theme::button::transparent)
-        },
-        move || {
-            Button::new(
-                Row::new()
-                    .push(
-                        Container::new(text::p1_bold(message.to_owned()).color(color::LIGHT_BLACK))
-                            .width(Length::Fill),
-                    )
-                    .push(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .spacing(10)
-                            .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
-                            .push(icon::collapsed_icon().color(color::LIGHT_BLACK)),
-                    ),
-            )
-            .style(theme::button::transparent)
-        },
-        move || Element::<'a, T>::from(text::p2_regular(error.to_owned())),
-    )))
+                )
+                .push(
+                    Row::new()
+                        .align_y(Alignment::Center)
+                        .spacing(10)
+                        .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
+                        .push(icon::collapsed_icon().color(color::LIGHT_BLACK)),
+                ),
+            text::p2_regular(error.to_owned()),
+        )
+        .style(theme::button::transparent),
+    ))
     .padding(10)
     .style(theme::notification::error)
     .width(Length::Fill)

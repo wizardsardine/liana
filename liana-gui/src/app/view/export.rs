@@ -9,7 +9,7 @@ use liana_ui::{
         text::{h4_bold, text},
     },
     icon,
-    widget::Element,
+    widget::{ColumnExt, Element, RowExt, SpaceExt},
 };
 
 use crate::export::ImportExportState;

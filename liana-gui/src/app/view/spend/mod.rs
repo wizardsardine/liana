@@ -286,19 +286,22 @@ pub fn create_spend_tx<'a>(
         .push_maybe(selected_amount)
         .push_maybe(hint)
         .width(Length::Fill);
-    let coins = Container::new(scrollable(coins.iter().enumerate().fold(
-        Column::new().spacing(10),
-        |col, (i, (coin, selected))| {
-            col.push(coin_list_view(
-                i,
-                coin,
-                coins_labels,
-                timelock,
-                cache.blockheight() as u32,
-                *selected,
-            ))
-        },
-    )))
+    let coins = Container::new(
+        scrollable(coins.iter().enumerate().fold(
+            Column::new().spacing(10),
+            |col, (i, (coin, selected))| {
+                col.push(coin_list_view(
+                    i,
+                    coin,
+                    coins_labels,
+                    timelock,
+                    cache.blockheight() as u32,
+                    *selected,
+                ))
+            },
+        ))
+        .spacing(5),
+    )
     .max_height(300);
     let coin_selection = Container::new(
         Column::new()
@@ -503,7 +506,8 @@ pub fn recipient_view<'a>(
 
     // The MAX option cannot be edited for recovery recipients.
     let max = (!is_recovery).then_some(tooltip::Tooltip::new(
-        checkbox("MAX", is_max_selected)
+        checkbox(is_max_selected)
+            .label("MAX")
             .on_toggle(move |_| CreateSpendMessage::SendMaxToRecipient(index)),
         // Add spaces at end so that text is padded at screen edge.
         "Total amount remaining after paying fee and any other recipients     ",
@@ -557,7 +561,7 @@ fn coin_list_view<'a>(
         .push(
             Row::new()
                 .push(
-                    checkbox("", selected).on_toggle(move |_| {
+                    checkbox(selected).on_toggle(move |_| {
                         Message::CreateSpend(CreateSpendMessage::SelectCoin(i))
                     }),
                 )

@@ -314,7 +314,7 @@ impl HardwareWallets {
     }
 
     pub fn refresh(&self) -> iced::Subscription<HardwareWalletMessage> {
-        iced::Subscription::run_with_id(
+        crate::utils::subscription::run_with_id(
             format!("refresh-{}", self.network),
             refresh(State {
                 network: self.network,
@@ -384,7 +384,8 @@ struct State {
 }
 
 fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
-    iced::stream::channel(100, move |mut output| async move {
+    type Sender = iced::futures::channel::mpsc::Sender<HardwareWalletMessage>;
+    iced::stream::channel(100, move |mut output: Sender| async move {
         loop {
             let api = if let Some(api) = &mut state.api {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;

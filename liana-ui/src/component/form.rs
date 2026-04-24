@@ -135,7 +135,7 @@ where
     }
 
     /// Sets the [`Form`] with a text size
-    pub fn size(mut self, size: u16) -> Self {
+    pub fn size(mut self, size: u32) -> Self {
         self.input = self.input.size(size);
         self
     }

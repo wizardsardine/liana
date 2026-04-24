@@ -1,4 +1,5 @@
 use iced::widget::toggler::{Catalog, Status, Style, StyleFn};
+use iced::Background;
 
 use super::Theme;
 
@@ -17,20 +18,26 @@ impl Catalog for Theme {
 pub fn primary(theme: &Theme, status: Status) -> Style {
     match status {
         Status::Active { is_toggled: true } | Status::Hovered { is_toggled: true } => Style {
-            background: theme.colors.togglers.on.background,
+            background: Background::Color(theme.colors.togglers.on.background),
             background_border_width: 1.0,
             background_border_color: theme.colors.togglers.on.background_border,
-            foreground: theme.colors.togglers.on.foreground,
+            foreground: Background::Color(theme.colors.togglers.on.foreground),
             foreground_border_width: 1.0,
             foreground_border_color: theme.colors.togglers.on.foreground_border,
+            text_color: None,
+            border_radius: None,
+            padding_ratio: 0.1,
         },
         _ => Style {
-            background: theme.colors.togglers.off.background,
+            background: Background::Color(theme.colors.togglers.off.background),
             background_border_width: 1.0,
             background_border_color: theme.colors.togglers.off.background_border,
-            foreground: theme.colors.togglers.off.foreground,
+            foreground: Background::Color(theme.colors.togglers.off.foreground),
             foreground_border_width: 1.0,
             foreground_border_color: theme.colors.togglers.off.foreground_border,
+            text_color: None,
+            border_radius: None,
+            padding_ratio: 0.1,
         },
     }
 }

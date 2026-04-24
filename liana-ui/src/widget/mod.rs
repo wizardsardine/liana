@@ -22,3 +22,48 @@ pub type PickList<'a, T, L, V, Message> =
     iced::widget::PickList<'a, T, L, V, Message, Theme, Renderer>;
 pub type Scrollable<'a, Message> = iced::widget::Scrollable<'a, Message, Theme, Renderer>;
 pub type Svg<'a> = iced::widget::Svg<'a, Theme>;
+
+/// Extension trait to restore `push_maybe` for `Column`, removed in iced 0.14.
+pub trait ColumnExt<'a, Message> {
+    fn push_maybe(self, child: Option<impl Into<Element<'a, Message>>>) -> Self;
+}
+
+impl<'a, Message> ColumnExt<'a, Message> for Column<'a, Message> {
+    fn push_maybe(self, child: Option<impl Into<Element<'a, Message>>>) -> Self {
+        if let Some(child) = child {
+            self.push(child)
+        } else {
+            self
+        }
+    }
+}
+
+/// Extension trait to restore `with_width` and `with_height` for `Space`, removed in iced 0.14.
+pub trait SpaceExt {
+    fn with_width(width: impl Into<iced::Length>) -> iced::widget::Space;
+    fn with_height(height: impl Into<iced::Length>) -> iced::widget::Space;
+}
+
+impl SpaceExt for iced::widget::Space {
+    fn with_width(width: impl Into<iced::Length>) -> iced::widget::Space {
+        iced::widget::Space::new().width(width)
+    }
+    fn with_height(height: impl Into<iced::Length>) -> iced::widget::Space {
+        iced::widget::Space::new().height(height)
+    }
+}
+
+/// Extension trait to restore `push_maybe` for `Row`, removed in iced 0.14.
+pub trait RowExt<'a, Message> {
+    fn push_maybe(self, child: Option<impl Into<Element<'a, Message>>>) -> Self;
+}
+
+impl<'a, Message> RowExt<'a, Message> for Row<'a, Message> {
+    fn push_maybe(self, child: Option<impl Into<Element<'a, Message>>>) -> Self {
+        if let Some(child) = child {
+            self.push(child)
+        } else {
+            self
+        }
+    }
+}

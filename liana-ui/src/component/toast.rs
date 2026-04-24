@@ -3,7 +3,7 @@ use std::time::Instant;
 use iced::advanced::widget::{Operation, Tree};
 use iced::advanced::{layout, mouse, overlay, renderer};
 use iced::advanced::{Clipboard, Layout, Shell, Widget};
-use iced::event::{self, Event};
+use iced::event::Event;
 use iced::{Alignment, Element, Length, Point, Rectangle, Size, Vector};
 
 pub trait Toast {
@@ -41,13 +41,13 @@ where
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut Tree,
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
         self.content
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
     }
 
@@ -92,31 +92,30 @@ where
     }
 
     fn operate(
-        &self,
+        &mut self,
         state: &mut Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
-        operation.container(None, layout.bounds(), &mut |operation| {
-            self.content
-                .as_widget()
-                .operate(&mut state.children[0], layout, renderer, operation);
-        });
+        operation.container(None, layout.bounds());
+        self.content
+            .as_widget_mut()
+            .operate(&mut state.children[0], layout, renderer, operation);
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         state: &mut Tree,
-        event: Event,
+        event: &Event,
         layout: Layout<'_>,
         cursor_position: iced::mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
-    ) -> event::Status {
-        self.content.as_widget_mut().on_event(
+    ) {
+        self.content.as_widget_mut().update(
             &mut state.children[0],
             event,
             layout,
@@ -169,8 +168,9 @@ where
     fn overlay<'b>(
         &'b mut self,
         state: &'b mut Tree,
-        layout: Layout<'_>,
+        layout: Layout<'b>,
         renderer: &Renderer,
+        viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         let instants = state.state.downcast_mut::<Vec<Option<Instant>>>();
@@ -181,6 +181,7 @@ where
             &mut content_state[0],
             layout,
             renderer,
+            viewport,
             translation,
         );
 
@@ -232,28 +233,28 @@ where
         .translate(Vector::new(self.position.x, self.position.y))
     }
 
-    fn on_event(
+    fn update(
         &mut self,
-        event: Event,
+        event: &Event,
         layout: Layout<'_>,
         cursor_position: iced::mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
-    ) -> event::Status {
+    ) {
         let viewport = layout.bounds();
         self.toasts
             .iter_mut()
             .zip(self.state.iter_mut())
             .zip(layout.children())
             .zip(self.instants.iter_mut())
-            .map(|(((child, state), layout), instant)| {
+            .for_each(|(((child, state), layout), instant)| {
                 let mut local_messages = vec![];
                 let mut local_shell = Shell::new(&mut local_messages);
 
-                let status = child.as_widget_mut().on_event(
+                child.as_widget_mut().update(
                     state,
-                    event.clone(),
+                    event,
                     layout,
                     cursor_position,
                     renderer,
@@ -267,10 +268,7 @@ where
                 }
 
                 shell.merge(local_shell, std::convert::identity);
-
-                status
-            })
-            .fold(event::Status::Ignored, event::Status::merge)
+            });
     }
 
     fn draw(
@@ -307,24 +305,22 @@ where
         renderer: &Renderer,
         operation: &mut dyn iced::advanced::widget::Operation,
     ) {
-        operation.container(None, layout.bounds(), &mut |operation| {
-            self.toasts
-                .iter()
-                .zip(self.state.iter_mut())
-                .zip(layout.children())
-                .for_each(|((child, state), layout)| {
-                    child
-                        .as_widget()
-                        .operate(state, layout, renderer, operation);
-                })
-        });
+        operation.container(None, layout.bounds());
+        self.toasts
+            .iter_mut()
+            .zip(self.state.iter_mut())
+            .zip(layout.children())
+            .for_each(|((child, state), layout)| {
+                child
+                    .as_widget_mut()
+                    .operate(state, layout, renderer, operation);
+            });
     }
 
     fn mouse_interaction(
         &self,
         layout: Layout<'_>,
         cursor_position: iced::mouse::Cursor,
-        viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
         self.toasts
@@ -336,18 +332,12 @@ where
                     state,
                     layout,
                     cursor_position,
-                    viewport,
+                    &layout.bounds(),
                     renderer,
                 )
             })
             .max()
             .unwrap_or_default()
-    }
-
-    fn is_over(&self, layout: Layout<'_>, _renderer: &Renderer, cursor_position: Point) -> bool {
-        layout
-            .children()
-            .any(|layout| layout.bounds().contains(cursor_position))
     }
 }
 

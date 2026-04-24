@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use iced::alignment::{Horizontal, Vertical};
-use iced::widget::{container, Column, Rule};
+use iced::widget::{container, rule, Column};
 use iced::{
     alignment,
     widget::{radio, scrollable, tooltip as iced_tooltip, Space},
@@ -262,7 +262,7 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Elemen
         .push(Space::with_width(30))
         .push(text("Other formats"))
         .push(Space::with_width(15))
-        .push(Rule::horizontal(2))
+        .push(rule::horizontal(2))
         .push(Space::with_width(30))
         .align_y(Vertical::Center);
 
@@ -906,7 +906,7 @@ pub fn rescan<'a>(
                 Container::new(
                     Column::new()
                         .width(Length::Fill)
-                        .push(ProgressBar::new(0.0..=1.0, p as f32).width(Length::Fill))
+                        .push(ProgressBar::new(0.0..=1.0, p as f32).length(Length::Fill))
                         .push(text(format!("Rescanning...{:.2}%", p * 100.0))),
                 )
             } else {

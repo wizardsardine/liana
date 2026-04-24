@@ -7,7 +7,7 @@ use iced::widget::overlay::menu;
 use iced::widget::text_input::{Catalog, Status, Style, StyleFn, Value};
 
 use iced_core::clipboard::{self, Clipboard};
-use iced_core::event::{self, Event};
+use iced_core::event::Event;
 use iced_core::keyboard;
 use iced_core::keyboard::key;
 use iced_core::layout;
@@ -231,8 +231,8 @@ where
             content: self.placeholder.as_str(),
             bounds: Size::new(f32::INFINITY, text_bounds.height),
             size: text_size,
-            horizontal_alignment: alignment::Horizontal::Left,
-            vertical_alignment: alignment::Vertical::Center,
+            align_x: alignment::Horizontal::Left.into(),
+            align_y: alignment::Vertical::Center,
             shaping: text::Shaping::Advanced,
             wrapping: text::Wrapping::default(),
         };
@@ -256,8 +256,8 @@ where
                 font: icon.font,
                 size: icon.size.unwrap_or_else(|| renderer.default_size()),
                 bounds: Size::new(f32::INFINITY, text_bounds.height),
-                horizontal_alignment: alignment::Horizontal::Center,
-                vertical_alignment: alignment::Vertical::Center,
+                align_x: alignment::Horizontal::Center.into(),
+                align_y: alignment::Vertical::Center,
                 shaping: text::Shaping::Advanced,
                 wrapping: text::Wrapping::default(),
             };
@@ -325,7 +325,9 @@ where
         let status = if is_disabled {
             Status::Disabled
         } else if state.is_focused() {
-            Status::Focused
+            Status::Focused {
+                is_hovered: is_mouse_over,
+            }
         } else if is_mouse_over {
             Status::Hovered
         } else {
@@ -346,9 +348,15 @@ where
         if self.icon.is_some() {
             let icon_layout = children_layout.next().unwrap();
 
+            let icon = state.icon.raw();
+
             renderer.fill_paragraph(
-                state.icon.raw(),
-                icon_layout.bounds().center(),
+                icon,
+                icon_layout.bounds().anchor(
+                    icon.min_bounds(),
+                    alignment::Horizontal::Center,
+                    alignment::Vertical::Center,
+                ),
                 style.icon,
                 *viewport,
             );
@@ -451,8 +459,11 @@ where
 
             renderer.fill_paragraph(
                 paragraph,
-                Point::new(text_bounds.x, text_bounds.center_y())
-                    + Vector::new(alignment_offset - offset, 0.0),
+                text_bounds.anchor(
+                    paragraph.min_bounds(),
+                    alignment::Horizontal::Left,
+                    alignment::Vertical::Center,
+                ) + Vector::new(alignment_offset - offset, 0.0),
                 if text.is_empty() {
                     style.placeholder
                 } else {
@@ -502,38 +513,38 @@ where
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut Tree,
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        self.layout(tree, renderer, limits, None)
+        TextInput::layout(self, tree, renderer, limits, None)
     }
 
     fn operate(
-        &self,
+        &mut self,
         tree: &mut Tree,
-        _layout: Layout<'_>,
+        layout: Layout<'_>,
         _renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
 
-        operation.focusable(state, self.id.as_ref().map(|id| &id.0));
-        operation.text_input(state, self.id.as_ref().map(|id| &id.0));
+        operation.focusable(self.id.as_ref().map(|id| &id.0), layout.bounds(), state);
+        operation.text_input(self.id.as_ref().map(|id| &id.0), layout.bounds(), state);
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         tree: &mut Tree,
-        event: Event,
+        event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
-    ) -> event::Status {
+    ) {
         let update_cache = |state, value| {
             replace_paragraph(
                 renderer,
@@ -554,13 +565,11 @@ where
                     // Event wasn't processed by overlay, so cursor was clicked either outside its
                     // bounds or on the drop-down, either way we close the overlay.
                     state.menu.is_open = false;
-
-                    return event::Status::Captured;
                 } else if cursor.is_over(layout.bounds()) {
                     state.menu.is_open = true;
-                    return event::Status::Captured;
+                    return;
                 } else {
-                    return event::Status::Ignored;
+                    return;
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
@@ -657,8 +666,6 @@ where
                     }
 
                     state.last_click = Some(click);
-
-                    return event::Status::Captured;
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
@@ -698,8 +705,6 @@ where
                     state
                         .cursor
                         .select_range(state.cursor.start(&value), position);
-
-                    return event::Status::Captured;
                 }
             }
             Event::Keyboard(keyboard::Event::KeyPressed { key, text, .. }) => {
@@ -720,13 +725,13 @@ where
                                 );
                             }
 
-                            return event::Status::Captured;
+                            return;
                         }
                         keyboard::Key::Character("x")
                             if state.keyboard_modifiers.command() && !self.is_secure =>
                         {
                             let Some(on_input) = &self.on_input else {
-                                return event::Status::Ignored;
+                                return;
                             };
 
                             if let Some((start, end)) = state.cursor.selection(&self.value) {
@@ -744,14 +749,14 @@ where
 
                             update_cache(state, &self.value);
 
-                            return event::Status::Captured;
+                            return;
                         }
                         keyboard::Key::Character("v")
                             if state.keyboard_modifiers.command()
                                 && !state.keyboard_modifiers.alt() =>
                         {
                             let Some(on_input) = &self.on_input else {
-                                return event::Status::Ignored;
+                                return;
                             };
 
                             let content = match state.is_pasting.take() {
@@ -783,19 +788,19 @@ where
 
                             update_cache(state, &self.value);
 
-                            return event::Status::Captured;
+                            return;
                         }
                         keyboard::Key::Character("a") if state.keyboard_modifiers.command() => {
                             state.cursor.select_all(&self.value);
 
-                            return event::Status::Captured;
+                            return;
                         }
                         _ => {}
                     }
 
                     if let Some(text) = text {
                         let Some(on_input) = &self.on_input else {
-                            return event::Status::Ignored;
+                            return;
                         };
 
                         state.is_pasting = None;
@@ -812,7 +817,7 @@ where
 
                             update_cache(state, &self.value);
 
-                            return event::Status::Captured;
+                            return;
                         }
                     }
 
@@ -824,7 +829,7 @@ where
                         }
                         keyboard::Key::Named(key::Named::Backspace) => {
                             let Some(on_input) = &self.on_input else {
-                                return event::Status::Ignored;
+                                return;
                             };
 
                             if modifiers.jump() && state.cursor.selection(&self.value).is_none() {
@@ -846,7 +851,7 @@ where
                         }
                         keyboard::Key::Named(key::Named::Delete) => {
                             let Some(on_input) = &self.on_input else {
-                                return event::Status::Ignored;
+                                return;
                             };
 
                             if modifiers.jump() && state.cursor.selection(&self.value).is_none() {
@@ -943,13 +948,9 @@ where
                         }
                         keyboard::Key::Named(
                             key::Named::Tab | key::Named::ArrowUp | key::Named::ArrowDown,
-                        ) => {
-                            return event::Status::Ignored;
-                        }
+                        ) => {}
                         _ => {}
                     }
-
-                    return event::Status::Captured;
                 }
             }
             Event::Keyboard(keyboard::Event::KeyReleased { key, .. }) => {
@@ -963,12 +964,12 @@ where
                         keyboard::Key::Named(
                             key::Named::Tab | key::Named::ArrowUp | key::Named::ArrowDown,
                         ) => {
-                            return event::Status::Ignored;
+                            return;
                         }
                         _ => {}
                     }
 
-                    return event::Status::Captured;
+                    return;
                 }
 
                 state.is_pasting = None;
@@ -976,7 +977,7 @@ where
             Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
                 let state = state::<Renderer>(tree);
 
-                state.keyboard_modifiers = modifiers;
+                state.keyboard_modifiers = *modifiers;
             }
             Event::Window(window::Event::Unfocused) => {
                 let state = state::<Renderer>(tree);
@@ -992,7 +993,7 @@ where
                     focus.is_window_focused = true;
                     focus.updated_at = Instant::now();
 
-                    shell.request_redraw(window::RedrawRequest::NextFrame);
+                    shell.request_redraw();
                 }
             }
             Event::Window(window::Event::RedrawRequested(now)) => {
@@ -1000,21 +1001,19 @@ where
 
                 if let Some(focus) = &mut state.is_focused {
                     if focus.is_window_focused {
-                        focus.now = now;
+                        focus.now = *now;
 
                         let millis_until_redraw = CURSOR_BLINK_INTERVAL_MILLIS
-                            - (now - focus.updated_at).as_millis() % CURSOR_BLINK_INTERVAL_MILLIS;
+                            - (*now - focus.updated_at).as_millis() % CURSOR_BLINK_INTERVAL_MILLIS;
 
-                        shell.request_redraw(window::RedrawRequest::At(
-                            now + Duration::from_millis(millis_until_redraw as u64),
-                        ));
+                        shell.request_redraw_at(
+                            *now + Duration::from_millis(millis_until_redraw as u64),
+                        );
                     }
                 }
             }
             _ => {}
         }
-
-        event::Status::Ignored
     }
 
     fn draw(
@@ -1052,8 +1051,9 @@ where
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        layout: Layout<'_>,
+        layout: Layout<'b>,
         renderer: &Renderer,
+        _viewport: &Rectangle,
         translation: Vector,
     ) -> Option<iced_core::overlay::Element<'b, Message, Theme, Renderer>> {
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
@@ -1121,11 +1121,11 @@ where
                         *state_value = paragraph::Plain::new(Text {
                             font,
                             line_height,
-                            content: &value.to_string(),
+                            content: value.to_string(),
                             bounds: Size::new(f32::INFINITY, text_bounds.height),
                             size: text_size,
-                            horizontal_alignment: alignment::Horizontal::Left,
-                            vertical_alignment: alignment::Vertical::Top,
+                            align_x: alignment::Horizontal::Left.into(),
+                            align_y: alignment::Vertical::Top,
                             shaping: text::Shaping::Advanced,
                             wrapping: text::Wrapping::default(),
                         });
@@ -1196,7 +1196,7 @@ pub struct Id(widget::Id);
 
 impl Id {
     /// Creates a custom [`Id`].
-    pub fn new(id: impl Into<std::borrow::Cow<'static, str>>) -> Self {
+    pub fn new(id: &'static str) -> Self {
         Self(widget::Id::new(id))
     }
 
@@ -1216,12 +1216,6 @@ impl From<Id> for widget::Id {
 
 impl From<&'static str> for Id {
     fn from(id: &'static str) -> Self {
-        Self::new(id)
-    }
-}
-
-impl From<String> for Id {
-    fn from(id: String) -> Self {
         Self::new(id)
     }
 }
@@ -1367,6 +1361,10 @@ impl<P: text::Paragraph> operation::Focusable for State<P> {
 }
 
 impl<P: text::Paragraph> operation::TextInput for State<P> {
+    fn text(&self) -> &str {
+        self.value.content()
+    }
+
     fn move_cursor_to_front(&mut self) {
         State::move_cursor_to_front(self);
     }
@@ -1381,6 +1379,10 @@ impl<P: text::Paragraph> operation::TextInput for State<P> {
 
     fn select_all(&mut self) {
         State::select_all(self);
+    }
+
+    fn select_range(&mut self, start: usize, end: usize) {
+        self.cursor.select_range(start, end);
     }
 }
 
@@ -1462,11 +1464,11 @@ fn replace_paragraph<Renderer>(
     state.value = paragraph::Plain::new(Text {
         font,
         line_height,
-        content: &value.to_string(),
+        content: value.to_string(),
         bounds: Size::new(f32::INFINITY, text_bounds.height),
         size: text_size,
-        horizontal_alignment: alignment::Horizontal::Left,
-        vertical_alignment: alignment::Vertical::Top,
+        align_x: alignment::Horizontal::Left.into(),
+        align_y: alignment::Vertical::Top,
         shaping: text::Shaping::Advanced,
         wrapping: text::Wrapping::default(),
     });

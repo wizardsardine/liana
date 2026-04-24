@@ -5,7 +5,7 @@ use iced::{Alignment, Length};
 use liana_ui::{
     component::{badge, button, card, pick_list, separation, text::*},
     icon, theme,
-    widget::Element,
+    widget::{ColumnExt, Element, SpaceExt},
 };
 
 use crate::settings::message::{Msg, Section};

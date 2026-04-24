@@ -1,7 +1,7 @@
 pub use iced::widget::overlay::menu::Catalog;
 use iced::{
     widget::overlay::menu::{Style, StyleFn},
-    Border,
+    Border, Shadow,
 };
 
 use super::Theme;
@@ -35,5 +35,6 @@ pub fn primary(theme: &Theme) -> Style {
                 ..Default::default()
             }
         },
+        shadow: Shadow::default(),
     }
 }

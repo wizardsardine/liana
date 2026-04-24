@@ -41,13 +41,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     let initial_size = load_initial_size(&config.liana_directory, None);
     let window_settings = create_window_settings("Liana", initial_size);
 
-    if let Err(e) = iced::application(LianaGUI::title, LianaGUI::update, LianaGUI::view)
-        .theme(|_| theme::Theme::default())
-        .scale_factor(LianaGUI::scale_factor)
-        .subscription(LianaGUI::subscription)
-        .settings(settings)
-        .window(window_settings)
-        .run_with(move || LianaGUI::new((config, log_level, VERSION)))
+    if let Err(e) = iced::application(
+        move || LianaGUI::new((config.clone(), log_level, VERSION)),
+        LianaGUI::update,
+        LianaGUI::view,
+    )
+    .title(LianaGUI::title)
+    .theme(|_: &_| theme::Theme::default())
+    .scale_factor(LianaGUI::scale_factor)
+    .subscription(LianaGUI::subscription)
+    .settings(settings)
+    .window(window_settings)
+    .run()
     {
         log::error!("{}", e);
         Err(format!("Failed to launch UI: {e}").into())

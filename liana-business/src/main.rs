@@ -64,16 +64,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     window_settings.icon = Some(image::liana_business_app_icon());
 
     if let Err(e) = iced::application(
-        LianaBusiness::title,
+        move || LianaBusiness::new((config.clone(), log_level, VERSION)),
         LianaBusiness::update,
         LianaBusiness::view,
     )
-    .theme(|_| theme::Theme::business())
+    .title(LianaBusiness::title)
+    .theme(|_: &_| theme::Theme::business())
     .scale_factor(LianaBusiness::scale_factor)
     .subscription(LianaBusiness::subscription)
     .settings(settings)
     .window(window_settings)
-    .run_with(move || LianaBusiness::new((config, log_level, VERSION)))
+    .run()
     {
         log::error!("{}", e);
         Err(format!("Failed to launch UI: {e}").into())
