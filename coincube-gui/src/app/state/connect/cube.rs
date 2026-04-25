@@ -94,6 +94,23 @@ impl ConnectCubePanel {
         self.client = Some(client);
     }
 
+    /// Returns a task to load avatar if conditions are met (client available, cube registered, not already loaded).
+    pub fn load_avatar_if_needed(&self) -> Option<iced::Task<Message>> {
+        if self.client.is_some() && self.server_cube_id.is_some() && self.avatar_data.is_none() {
+            let client = self.client.clone().unwrap();
+            let cid = self.server_cube_id.unwrap();
+            return Some(iced::Task::perform(
+                async move { client.get_avatar(&cid).await },
+                |res| Message::View(view::Message::ConnectCube(
+                    ConnectCubeMessage::Avatar(crate::app::view::AvatarMessage::Loaded(
+                        res.map_err(|e| e.to_string()),
+                    )),
+                )),
+            ));
+        }
+        None
+    }
+
     /// Clear the API client and all session-scoped state (called on account logout).
     pub fn clear_client(&mut self) {
         self.client = None;

@@ -90,6 +90,14 @@ impl ConnectPanel {
             self.cube.clear_client();
         }
     }
+
+    /// Check if avatar should be loaded and return task if so.
+    pub fn check_and_load_avatar(&self) -> iced::Task<Message> {
+        if let Some(task) = self.cube.load_avatar_if_needed() {
+            return task;
+        }
+        iced::Task::none()
+    }
 }
 
 impl State for ConnectPanel {
@@ -153,11 +161,13 @@ impl State for ConnectPanel {
                 // (idempotent — returns existing if already registered).
                 // The response includes lightning address if already claimed.
                 let now_authenticated = self.account.is_authenticated();
+                // Try to load avatar if conditions are met (client available, cube registered, not loaded)
+                let avatar_task = self.check_and_load_avatar();
                 if !was_authenticated && now_authenticated {
                     let register_task = self.cube.register_cube();
-                    return iced::Task::batch([task, register_task]);
+                    return iced::Task::batch([task, register_task, avatar_task]);
                 }
-                task
+                return iced::Task::batch([task, avatar_task]);
             }
             Message::View(view::Message::ConnectCube(msg)) => {
                 let task = self.cube.update_message(msg);
