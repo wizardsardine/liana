@@ -115,9 +115,12 @@ impl ConnectCubePanel {
     pub fn get_active_avatar_handle(&self) -> Option<iced::widget::image::Handle> {
         self.avatar_data.as_ref().and_then(|d| {
             let url = d.active_avatar_url.as_deref().unwrap_or("");
+            // Extract the last path segment for exact ID matching
+            // (avoids false matches like ".../112" matching ID "12")
+            let active_id = url.rsplit('/').next()?.split('.').next()?;
             d.variants
                 .iter()
-                .find(|v| url.ends_with(&v.id.to_string()))
+                .find(|v| v.id.to_string() == active_id)
                 .and_then(|v| self.avatar_image_cache.get(&v.id))
                 .map(|(_, handle)| handle.clone())
         })
