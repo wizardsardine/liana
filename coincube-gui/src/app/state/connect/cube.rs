@@ -98,17 +98,29 @@ impl ConnectCubePanel {
     pub fn load_avatar_if_needed(&self) -> Option<iced::Task<Message>> {
         if self.client.is_some() && self.server_cube_id.is_some() && self.avatar_data.is_none() {
             let client = self.client.clone().unwrap();
-            let cid = self.server_cube_id.unwrap();
+            let cid = self.api_cube_id().unwrap();
             return Some(iced::Task::perform(
                 async move { client.get_avatar(&cid).await },
-                |res| Message::View(view::Message::ConnectCube(
-                    ConnectCubeMessage::Avatar(crate::app::view::AvatarMessage::Loaded(
-                        res.map_err(|e| e.to_string()),
-                    )),
-                )),
+                |res| {
+                    Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
+                        crate::app::view::AvatarMessage::Loaded(res.map_err(|e| e.to_string())),
+                    )))
+                },
             ));
         }
         None
+    }
+
+    /// Returns the active avatar image handle for the sidebar, if available.
+    pub fn get_active_avatar_handle(&self) -> Option<iced::widget::image::Handle> {
+        self.avatar_data.as_ref().and_then(|d| {
+            let url = d.active_avatar_url.as_deref().unwrap_or("");
+            d.variants
+                .iter()
+                .find(|v| url.ends_with(&v.id.to_string()))
+                .and_then(|v| self.avatar_image_cache.get(&v.id))
+                .map(|(_, handle)| handle.clone())
+        })
     }
 
     /// Clear the API client and all session-scoped state (called on account logout).
@@ -179,6 +191,10 @@ impl ConnectCubePanel {
                             });
                         } else {
                             self.lightning_address = None;
+                        }
+                        // Trigger avatar load now that cube is registered
+                        if let Some(task) = self.load_avatar_if_needed() {
+                            return task;
                         }
                     }
                     Err(e) => {

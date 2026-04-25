@@ -623,6 +623,7 @@ pub async fn load_application(
         btc_usd_price: None,
         show_direction_badges: true,
         lightning_address: None,
+        avatar_handle: None,
         cube_id: config.cube_settings.id.clone(),
         default_lightning_backend: config.cube_settings.default_lightning_backend,
     };

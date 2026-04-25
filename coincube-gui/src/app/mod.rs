@@ -1942,6 +1942,8 @@ impl App {
                             }
                         })
                     });
+                // Sync avatar handle to cache for sidebar display across all panels
+                self.cache.avatar_handle = self.panels.connect.cube.get_active_avatar_handle();
                 return task;
             }
             Message::View(view::Message::DismissReceivedCelebration) => {

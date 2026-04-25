@@ -1139,6 +1139,7 @@ pub fn create_app_with_remote_backend(
             btc_usd_price: None,
             show_direction_badges: true,
             lightning_address: None,
+            avatar_handle: None,
             cube_id: cube_settings.id.clone(),
             default_lightning_backend: cube_settings.default_lightning_backend,
         },
