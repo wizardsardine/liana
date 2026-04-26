@@ -1942,6 +1942,9 @@ impl App {
                             }
                         })
                     });
+                if let Some(p2p) = self.panels.p2p.as_mut() {
+                    p2p.sync_lightning_address_from_cache(&self.cache);
+                }
                 return task;
             }
             Message::View(view::Message::DismissReceivedCelebration) => {

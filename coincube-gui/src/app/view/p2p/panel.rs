@@ -200,6 +200,9 @@ pub struct P2PPanel {
     create_min_amount: form::Value<String>,
     create_max_amount: form::Value<String>,
     create_lightning_address: form::Value<String>,
+    // Tracks whether the user has interacted with the lightning address field;
+    // gates auto-prefill from the cube's registered address.
+    lightning_address_user_edited: bool,
     // Order submission state
     confirming_order: bool,
     order_submitting: bool,
@@ -303,6 +306,7 @@ impl P2PPanel {
             create_min_amount: Default::default(),
             create_max_amount: Default::default(),
             create_lightning_address: Default::default(),
+            lightning_address_user_edited: false,
             confirming_order: false,
             order_submitting: false,
             order_submit_error: None,
@@ -563,6 +567,17 @@ impl P2PPanel {
             .collect()
     }
 
+    pub fn sync_lightning_address_from_cache(&mut self, cache: &Cache) {
+        if self.lightning_address_user_edited
+            || !self.create_lightning_address.value.is_empty()
+        {
+            return;
+        }
+        if let Some(addr) = cache.lightning_address.as_ref() {
+            self.create_lightning_address.value = addr.clone();
+        }
+    }
+
     fn clear_create_form(&mut self) {
         self.create_order_type = OrderType::Buy;
         self.create_pricing_mode = PricingMode::Market;
@@ -575,6 +590,7 @@ impl P2PPanel {
         self.create_min_amount = Default::default();
         self.create_max_amount = Default::default();
         self.create_lightning_address = Default::default();
+        self.lightning_address_user_edited = false;
     }
 
     fn rebuild_currency_combo(&mut self) {
@@ -3861,13 +3877,20 @@ impl State for P2PPanel {
     fn update(
         &mut self,
         _daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
-        _cache: &Cache,
+        cache: &Cache,
         message: Message,
     ) -> Task<Message> {
         let msg = match message {
             Message::View(view::Message::P2P(msg)) => msg,
             _ => return Task::none(),
         };
+        if !self.lightning_address_user_edited
+            && self.create_lightning_address.value.is_empty()
+        {
+            if let Some(addr) = cache.lightning_address.as_ref() {
+                self.create_lightning_address.value = addr.clone();
+            }
+        }
         match msg {
             P2PMessage::OrderTypeSelected(t) => self.create_order_type = t,
             P2PMessage::PricingModeSelected(m) => self.create_pricing_mode = m,
@@ -3919,6 +3942,7 @@ impl State for P2PPanel {
             }
             P2PMessage::LightningAddressEdited(v) => {
                 self.create_lightning_address.value = v;
+                self.lightning_address_user_edited = true;
             }
             P2PMessage::SubmitOrder => {
                 // Double-check validation before showing confirmation
@@ -4270,7 +4294,7 @@ impl State for P2PPanel {
                     self.taking_order = true;
                     return self.update(
                         _daemon,
-                        _cache,
+                        cache,
                         Message::View(view::Message::P2P(P2PMessage::ConfirmTakeOrder)),
                     );
                 }
