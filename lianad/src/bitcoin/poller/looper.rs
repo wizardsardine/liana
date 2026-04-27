@@ -1,5 +1,6 @@
 use crate::{
     bitcoin::{BitcoinInterface, BlockChainTip, UTxO, UTxOAddress},
+    config::{Config, PayjoinConfig},
     database::{Coin, DatabaseConnection, DatabaseInterface},
     payjoin::receiver::payjoin_receiver_check,
 };
@@ -405,11 +406,15 @@ pub fn poll(
     db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     desc: &descriptors::LianaDescriptor,
+    payjoin_config: &Option<PayjoinConfig>,
 ) {
     let mut db_conn = db.connection();
     updates(&mut db_conn, bit, desc, secp);
     rescan_check(&mut db_conn, bit, desc, secp);
-    payjoin_receiver_check(db, bit, desc, secp);
+    let resolved_payjoin_config = payjoin_config
+        .clone()
+        .unwrap_or_else(Config::default_payjoin_config);
+    payjoin_receiver_check(db, bit, desc, secp, &resolved_payjoin_config.ohttp_relay);
     let now: u32 = time::SystemTime::now()
         .duration_since(time::UNIX_EPOCH)
         .expect("current system time must be later than epoch")

@@ -26,7 +26,7 @@ use payjoin::{
 use crate::{
     bitcoin::BitcoinInterface,
     database::{Coin, CoinStatus, DatabaseConnection, DatabaseInterface},
-    payjoin::helpers::{finalize_psbt, post_request, OHTTP_RELAY},
+    payjoin::helpers::{finalize_psbt, post_request},
 };
 
 use super::db::{ReceiverPersister, SessionId};
@@ -38,9 +38,10 @@ fn read_from_directory(
     bit: &mut sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
     desc: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    ohttp_relay: &str,
 ) -> Result<(), Box<dyn Error>> {
     let (req, context) = receiver
-        .create_poll_request(OHTTP_RELAY)
+        .create_poll_request(ohttp_relay)
         .map_err(|e| format!("Failed to extract request: {:?}", e))?;
 
     let proposal = match post_request(req.clone()) {
@@ -285,9 +286,10 @@ fn finalize_proposal(
 fn send_payjoin_proposal(
     proposal: Receiver<PayjoinProposal>,
     persister: &ReceiverPersister,
+    ohttp_relay: &str,
 ) -> Result<(), Box<dyn Error>> {
     let (req, ctx) = proposal
-        .create_post_request(OHTTP_RELAY)
+        .create_post_request(ohttp_relay)
         .map_err(|e| format!("Failed to extract request: {:?}", e))?;
 
     log::info!("[Payjoin] Receiver responding to sender...");
@@ -406,6 +408,7 @@ pub(crate) fn send_payjoin_for_session(
     db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     session_id: SessionId,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    ohttp_relay: &str,
 ) -> Result<(), Box<dyn Error>> {
     let persister = ReceiverPersister::from_id(Arc::new(db.clone()), session_id.clone());
     let (state, _) = match replay_event_log(&persister) {
@@ -437,7 +440,7 @@ pub(crate) fn send_payjoin_for_session(
         }
         _ => return Err("Payjoin session is not ready to send.".into()),
     };
-    send_payjoin_proposal(proposal, &persister)
+    send_payjoin_proposal(proposal, &persister, ohttp_relay)
 }
 
 fn process_receiver_session(
@@ -446,13 +449,14 @@ fn process_receiver_session(
     desc: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     persister: ReceiverPersister,
+    ohttp_relay: &str,
 ) -> Result<(), Box<dyn Error>> {
     let (state, _) = replay_event_log(&persister)
         .map_err(|e| format!("Failed to replay receiver event log: {:?}", e))?;
 
     match state {
         ReceiveSession::Initialized(context) => {
-            read_from_directory(context, &persister, db_conn, bit, desc, secp)?;
+            read_from_directory(context, &persister, db_conn, bit, desc, secp, ohttp_relay)?;
         }
         ReceiveSession::UncheckedOriginalPayload(proposal) => {
             check_proposal(proposal, &persister, db_conn, bit, desc, secp)?;
@@ -497,6 +501,7 @@ pub(crate) fn payjoin_receiver_check(
     bit: &mut sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
     desc: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    ohttp_relay: &str,
 ) {
     let mut db_conn = db.connection();
 
@@ -504,7 +509,14 @@ pub(crate) fn payjoin_receiver_check(
         let persister = ReceiverPersister::from_id(Arc::new(db.clone()), session_id.clone());
 
         match replay_event_log(&persister) {
-            Ok(_) => match process_receiver_session(&mut db_conn, bit, desc, secp, persister) {
+            Ok(_) => match process_receiver_session(
+                &mut db_conn,
+                bit,
+                desc,
+                secp,
+                persister,
+                ohttp_relay,
+            ) {
                 Ok(_) => (),
                 Err(e) => {
                     log::warn!("process_receiver_session(): {}", e);

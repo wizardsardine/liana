@@ -482,8 +482,18 @@ impl DaemonControl {
     pub fn send_payjoin_proposal(&self, txid: &bitcoin::Txid) -> Result<(), CommandError> {
         let session_id = find_session_id_by_txid(&self.db, txid)
             .ok_or(CommandError::NoPayjoinSessionForTxid(*txid))?;
-        send_payjoin_for_session(&self.db, session_id, &self.secp)
-            .map_err(|e| CommandError::SendPayjoinFailed(e.to_string()))
+        let payjoin_config = self
+            .config
+            .payjoin_config
+            .clone()
+            .unwrap_or_else(Config::default_payjoin_config);
+        send_payjoin_for_session(
+            &self.db,
+            session_id,
+            &self.secp,
+            &payjoin_config.ohttp_relay,
+        )
+        .map_err(|e| CommandError::SendPayjoinFailed(e.to_string()))
     }
 
     /// Cancel the payjoin receiver session associated with the given txid and immediately

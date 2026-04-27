@@ -8,6 +8,7 @@ use lianad::config::{Config as DaemonConfig, PayjoinConfig};
 use crate::{
     app::{cache::Cache, error::Error, message::Message, state::settings::State, view},
     daemon::Daemon,
+    utils::default_payjoin_config,
 };
 
 #[derive(Debug)]
@@ -19,13 +20,9 @@ pub struct PayjoinSettingsState {
 
 impl PayjoinSettingsState {
     pub fn new(config: Option<DaemonConfig>) -> Self {
-        let payjoin_config =
-            config
-                .and_then(|c| c.payjoin_config)
-                .unwrap_or_else(|| PayjoinConfig {
-                    ohttp_relay: "https://pj.bobspacebkk.com".to_string(),
-                    payjoin_directory: "https://payjo.in".to_string(),
-                });
+        let payjoin_config = config
+            .and_then(|c| c.payjoin_config)
+            .unwrap_or_else(default_payjoin_config);
         PayjoinSettingsState {
             warning: None,
             config_updated: false,
