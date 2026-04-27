@@ -69,7 +69,6 @@ pub enum Message {
     Export(ImportExportMessage),
     ReceivePayjoin(Result<(Address, ChildNumber, Option<String>), Error>),
     PayjoinInitiated(Result<String, Error>),
-    BroadcastPjFallbackModal(Result<HashSet<Txid>, Error>),
     ActivePayjoinSessions(Result<Vec<u32>, Error>),
 }
 

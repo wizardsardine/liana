@@ -208,35 +208,11 @@ impl PsbtState {
                 self.modal = Some(PsbtModal::SendPayjoin(SendPayjoinModal::default()));
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::BroadcastPjFallback)) => {
-                let outpoints: Vec<_> = self.tx.coins.keys().cloned().collect();
-                return Task::perform(
-                    async move {
-                        daemon
-                            .list_coins(&[CoinStatus::Spending], &outpoints)
-                            .await
-                            .map(|res| {
-                                res.coins
-                                    .iter()
-                                    .filter_map(|c| c.spend_info.map(|info| info.txid))
-                                    .collect()
-                            })
-                            .map_err(|e| e.into())
-                    },
-                    Message::BroadcastPjFallbackModal,
-                );
+                self.modal = Some(PsbtModal::Broadcast(BroadcastModal {
+                    is_payjoin_fallback: true,
+                    ..Default::default()
+                }));
             }
-            Message::BroadcastPjFallbackModal(res) => match res {
-                Ok(conflicting_txids) => {
-                    self.modal = Some(PsbtModal::Broadcast(BroadcastModal {
-                        conflicting_txids,
-                        is_payjoin_fallback: true,
-                        ..Default::default()
-                    }));
-                }
-                Err(e) => {
-                    self.warning = Some(e);
-                }
-            },
             Message::View(view::Message::Spend(view::SpendTxMessage::Broadcast)) => {
                 let outpoints: Vec<_> = self.tx.coins.keys().cloned().collect();
                 return Task::perform(
