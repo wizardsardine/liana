@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
-    convert::{TryFrom, TryInto},
+    convert::TryInto,
     iter::FromIterator,
     str::FromStr,
     sync::Arc,
