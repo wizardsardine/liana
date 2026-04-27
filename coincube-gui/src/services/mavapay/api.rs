@@ -27,7 +27,9 @@ impl<T> From<coincube::CoincubeError> for MavapayApiResult<T> {
             coincube::CoincubeError::Api(msg) => msg.clone(),
             coincube::CoincubeError::Parse(e) => format!("Parse error: {e:?}"),
             coincube::CoincubeError::SseError(e) => format!("EventSource error: {:?}", e),
-            coincube::CoincubeError::VaultKeyholderLocked { .. } => e.to_string(),
+            coincube::CoincubeError::VaultKeyholderLocked { .. }
+            | coincube::CoincubeError::NotFound
+            | coincube::CoincubeError::RateLimited { .. } => e.to_string(),
         };
 
         MavapayApiResult::Error { message }

@@ -34,6 +34,19 @@ use crate::{
     },
 };
 
+/// Result handed to `Message::CubeSaved` after post-install
+/// orchestration finishes. Extracted as an alias because the
+/// inlined form trips `clippy::type_complexity`; the name also
+/// documents the intent at call sites.
+pub type CubeSaveResult = Result<
+    (
+        CubeSettings,
+        Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+        Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
+    ),
+    String,
+>;
+
 #[derive(Debug, Clone)]
 pub enum Message {
     UserActionDone(bool),
@@ -78,8 +91,22 @@ pub enum Message {
     SelectKeySource(SelectKeySourceMessage),
     EditKeyAlias(EditKeyAliasMessage),
     Decrypt(Decrypt),
+    /// Post-install orchestration completed. The first field pairs the
+    /// saved/found `CubeSettings` with an optional pre-loaded
+    /// `BreezClient` and `SparkBackend`.
+    ///
+    /// Both wallet-client slots are populated only for the Recovery Kit
+    /// restore flow, where the new PIN-setup step lets us build the
+    /// clients up-front against the just-encrypted mnemonic — matching
+    /// what fresh-install + pre-existing-Cube opens already do. Without
+    /// this, the Loader landed on the post-install screen with
+    /// `spark_backend = None` and the Spark panels stayed empty until
+    /// the user closed and re-opened the Cube (at which point the
+    /// normal PIN-entry path loads Spark correctly). For every other
+    /// flow (fresh install, remote backend, etc.) the clients are
+    /// built downstream (PIN entry, login) and these slots stay `None`.
     CubeSaved(
-        Result<CubeSettings, String>,
+        CubeSaveResult,
         Box<settings::WalletSettings>,
         Option<Bitcoind>,
     ),
@@ -92,6 +119,15 @@ pub enum Message {
         Result<super::connect_vault::ConnectVaultOutcome, super::connect_vault::ConnectVaultError>,
     ),
     CoincubeConnect(CoincubeConnectMsg),
+    /// PIN-setup step that runs after a full Recovery Kit restore
+    /// (`UserFlow::RestoreFromRecoveryKit`). Collects a 4-digit PIN
+    /// used to AES-encrypt the restored mnemonic on disk and to seed
+    /// `CubeSettings.security_pin_hash`, bringing the restore flow in
+    /// line with fresh-install Cubes so the Liquid/Spark BreezClient
+    /// can decrypt the mnemonic on later opens.
+    RestorePinSetup(RestorePinSetupMsg),
+    /// Cube Recovery Kit restore step (W13 / W14 / W15).
+    RecoveryKitRestore(RecoveryKitRestoreMsg),
     BorderWalletWizard(
         super::step::descriptor::editor::border_wallet_wizard::BorderWalletWizardMessage,
     ),
@@ -184,17 +220,157 @@ pub enum SelectBitcoindTypeMsg {
     UseConnect,
 }
 
-#[derive(Debug, Clone)]
+/// Manual `Debug` redacts the OTP-verify JWT payload. The `Ok` arm of
+/// `OtpVerified` carries a `Zeroizing<String>` whose heap allocation is
+/// scrubbed on drop — but `Zeroizing<T>` delegates `Debug` to the inner
+/// `String`, so without the manual impl the token would leak into any
+/// tracing snapshot of a parent message (notably `Message::Install`).
+#[derive(Clone)]
 pub enum CoincubeConnectMsg {
     EmailEdited(String),
     ToggleMode,
     RequestOtp,
     OtpRequested(Result<(), String>),
     OtpEdited(String),
-    OtpVerified(Result<String, String>),
+    OtpVerified(Result<zeroize::Zeroizing<String>, String>),
     ResendOtp,
     OtpResent(Result<(), String>),
     Skip,
+}
+
+impl std::fmt::Debug for CoincubeConnectMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmailEdited(s) => f.debug_tuple("EmailEdited").field(s).finish(),
+            Self::ToggleMode => write!(f, "ToggleMode"),
+            Self::RequestOtp => write!(f, "RequestOtp"),
+            Self::OtpRequested(r) => f.debug_tuple("OtpRequested").field(r).finish(),
+            Self::OtpEdited(s) => f.debug_tuple("OtpEdited").field(s).finish(),
+            Self::OtpVerified(Ok(_)) => write!(f, "OtpVerified(Ok(<redacted>))"),
+            Self::OtpVerified(Err(e)) => f
+                .debug_tuple("OtpVerified")
+                .field(&Err::<(), _>(e))
+                .finish(),
+            Self::ResendOtp => write!(f, "ResendOtp"),
+            Self::OtpResent(r) => f.debug_tuple("OtpResent").field(r).finish(),
+            Self::Skip => write!(f, "Skip"),
+        }
+    }
+}
+
+/// Messages driving the Cube Recovery Kit restore step. Manual
+/// `Debug` redacts every variant that carries password, OTP, or
+/// mnemonic material — tracing dumps don't leak the kit.
+///
+/// Sensitive payloads (`OtpEdited`, `OtpVerified` JWT,
+/// `PasswordEdited`) are wrapped in `Zeroizing<String>` so each
+/// in-flight copy zeroes its heap allocation on drop, not just the
+/// copy stored on the step's state. Iced's runtime may hold several
+/// message copies simultaneously (update → task → view round-trip),
+/// so wrapping at the message level — not just at the state field —
+/// is what prevents key material from lingering after the flow
+/// completes. `EmailEdited` stays as plain `String`: the email is
+/// already surfaced elsewhere in the UI (header caption) and isn't
+/// a credential.
+#[derive(Clone)]
+pub enum RecoveryKitRestoreMsg {
+    EmailEdited(String),
+    RequestOtp,
+    OtpSent(Result<(), String>),
+    OtpEdited(zeroize::Zeroizing<String>),
+    OtpVerified(Result<zeroize::Zeroizing<String>, String>),
+    CubesLoaded(Result<Vec<super::step::recovery_kit_restore::RestoreCubeCandidate>, String>),
+    SelectCube(u64),
+    PasswordEdited(zeroize::Zeroizing<String>),
+    SubmitPassword,
+    /// Carries the typed `RestoreError` rather than a flattened
+    /// `String` so the UI can branch on variants — `BadPasswordOrCorrupt`
+    /// keeps the user on `PasswordEntry` for a retry, while
+    /// `RateLimited` / `NotFound` / `BlobParse` / `Api` are terminal
+    /// and route to `Phase::Error`. A stringified error here would
+    /// collapse those cases and produce wrong UX (e.g. rate-limit
+    /// cooldowns treated as retryable password errors).
+    DecryptResult(
+        Result<
+            (
+                Option<crate::services::recovery::SeedBlob>,
+                Option<crate::services::recovery::DescriptorBlob>,
+            ),
+            crate::services::recovery::restore::RestoreError,
+        >,
+    ),
+    RetryFromStart,
+    Skip,
+}
+
+impl std::fmt::Debug for RecoveryKitRestoreMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmailEdited(s) => f.debug_tuple("EmailEdited").field(s).finish(),
+            Self::RequestOtp => write!(f, "RequestOtp"),
+            Self::OtpSent(r) => f.debug_tuple("OtpSent").field(r).finish(),
+            Self::OtpEdited(_) => f.debug_tuple("OtpEdited").field(&"<redacted>").finish(),
+            Self::OtpVerified(Ok(_)) => write!(f, "OtpVerified(Ok(<redacted>))"),
+            Self::OtpVerified(Err(e)) => f
+                .debug_tuple("OtpVerified")
+                .field(&Err::<(), _>(e))
+                .finish(),
+            Self::CubesLoaded(r) => f.debug_tuple("CubesLoaded").field(r).finish(),
+            Self::SelectCube(id) => f.debug_tuple("SelectCube").field(id).finish(),
+            Self::PasswordEdited(_) => f
+                .debug_tuple("PasswordEdited")
+                .field(&"<redacted>")
+                .finish(),
+            Self::SubmitPassword => write!(f, "SubmitPassword"),
+            Self::DecryptResult(Ok(_)) => write!(f, "DecryptResult(Ok(<redacted>))"),
+            Self::DecryptResult(Err(e)) => f
+                .debug_tuple("DecryptResult")
+                .field(&Err::<(), _>(e))
+                .finish(),
+            Self::RetryFromStart => write!(f, "RetryFromStart"),
+            Self::Skip => write!(f, "Skip"),
+        }
+    }
+}
+
+/// Messages driving the PIN-setup step that runs in between the
+/// Recovery Kit restore step and the node-setup steps in
+/// `UserFlow::RestoreFromRecoveryKit`. Manual `Debug` redacts the PIN
+/// payloads so tracing dumps don't leak them — see the analogous
+/// pattern on `RecoveryKitRestoreMsg`.
+///
+/// The step holds *two* `PinInput` widgets (entry + confirmation), so
+/// the digit/toggle variants carry a `PinField` discriminator rather
+/// than threading separate message trees through the view.
+#[derive(Clone)]
+pub enum RestorePinSetupMsg {
+    /// A digit was typed in one of the PIN fields. `pin_input::Message`
+    /// uses the derived `Debug` which includes the typed digit — our
+    /// outer `Debug` impl below replaces the inner message with
+    /// `<redacted>` so tracing dumps don't reveal keystrokes.
+    Pin(PinField, crate::pin_input::Message),
+    Submit,
+}
+
+/// Identifier for which `PinInput` widget a `RestorePinSetupMsg::Pin`
+/// refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinField {
+    Entry,
+    Confirm,
+}
+
+impl std::fmt::Debug for RestorePinSetupMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pin(field, _) => f
+                .debug_tuple("Pin")
+                .field(field)
+                .field(&"<redacted>")
+                .finish(),
+            Self::Submit => write!(f, "Submit"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -258,4 +434,33 @@ pub enum ThresholdSequenceModal {
     ThresholdEdited(usize),
     SequenceEdited(String),
     Confirm,
+}
+
+#[cfg(test)]
+mod coincube_connect_msg_debug_tests {
+    use super::CoincubeConnectMsg;
+    use zeroize::Zeroizing;
+
+    /// Canary: appears in the Debug render only if redaction regressed.
+    const CANARY_JWT: &str = "eyCANARY.cc-jwt.XYZZY-do-not-leak";
+
+    #[test]
+    fn otp_verified_ok_is_redacted() {
+        let msg = CoincubeConnectMsg::OtpVerified(Ok(Zeroizing::new(CANARY_JWT.to_string())));
+        let rendered = format!("{:?}", msg);
+        assert!(
+            !rendered.contains(CANARY_JWT),
+            "JWT leaked through CoincubeConnectMsg::OtpVerified Debug: {}",
+            rendered
+        );
+        assert!(rendered.contains("<redacted>"));
+    }
+
+    #[test]
+    fn otp_verified_err_preserves_error_message() {
+        let msg = CoincubeConnectMsg::OtpVerified(Err("bad otp".to_string()));
+        let rendered = format!("{:?}", msg);
+        assert!(rendered.contains("bad otp"));
+        assert!(!rendered.contains(CANARY_JWT));
+    }
 }

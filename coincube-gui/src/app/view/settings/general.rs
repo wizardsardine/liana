@@ -11,8 +11,10 @@ use crate::app::menu::Menu;
 use crate::app::settings::display::DisplayMode;
 use crate::app::settings::fiat::PriceSetting;
 use crate::app::settings::unit::{BitcoinDisplayUnit, UnitSetting};
+use crate::app::state::settings::recovery_kit::RecoveryKit;
 use crate::app::view::dashboard;
 use crate::app::view::message::*;
+use crate::services::coincube::RecoveryKitStatus;
 use crate::services::fiat::{Currency, ALL_PRICE_SOURCES};
 
 #[allow(clippy::too_many_arguments)]
@@ -27,6 +29,7 @@ pub fn general_section<'a>(
     backup_state: &'a crate::app::state::settings::general::BackupSeedState,
     backup_pin: &'a crate::pin_input::PinInput,
     backup_mnemonic: Option<&'a [String]>,
+    recovery_kit: Option<&'a RecoveryKit>,
 ) -> Element<'a, Message> {
     use crate::app::state::settings::general::BackupSeedState;
 
@@ -49,6 +52,38 @@ pub fn general_section<'a>(
         .push(direction_badges_toggle(show_direction_badges))
         .push(fiat_price(new_price_setting, currencies_list))
         .push(backup_master_seed_card(cache.current_cube_backed_up));
+
+    // Connect-hosted Recovery Kit card. Render only when the outer
+    // SettingsState had a `RecoveryKit` on hand — i.e. when the
+    // downcasting wrapper invoked `view_with_recovery_kit`. Falling
+    // back to no-card when `None` keeps the trait-based `view`
+    // callers harmless.
+    if let Some(rk) = recovery_kit {
+        // W12 drift: compute on the fly by comparing the cached live
+        // fingerprint (refreshed every App tick) with the last-backed-up
+        // fingerprint (persisted on `CubeSettings`). Only meaningful
+        // when a descriptor has actually been backed up — otherwise
+        // the card's "incomplete" copy already prompts the user.
+        let server_has_descriptor = rk
+            .status
+            .as_ref()
+            .map(|s| s.has_encrypted_wallet_descriptor)
+            .unwrap_or(false);
+        let drift = descriptor_drift(
+            server_has_descriptor,
+            cache.current_descriptor_fingerprint.as_deref(),
+            cache
+                .recovery_kit_last_backed_up_descriptor_fingerprint
+                .as_deref(),
+        );
+        col = col.push(recovery_kit_card(
+            cache.current_cube_is_passkey,
+            cache.has_vault,
+            rk.status.as_ref(),
+            rk.status_loading,
+            drift,
+        ));
+    }
 
     if developer_mode {
         col = col.push(toast_testing());
@@ -91,6 +126,159 @@ fn backup_master_seed_card<'a>(backed_up: bool) -> Element<'a, Message> {
                     .width(Length::Fixed(160.0))
                     .on_press(SettingsMessage::BackupMasterSeed(BackupWalletMessage::Start).into()),
             ),
+    )
+    .width(Length::Fill)
+    .into()
+}
+
+/// Cube Recovery Kit card — rendered below the local paper-phrase
+/// backup card. Shows copy + a primary action that drives the
+/// `RecoveryKitMessage` flow. States mirror the plan §6.3 matrix.
+///
+/// - `is_passkey`: when true, the seed is unextractable on-device and
+///   only the descriptor can be backed up; the card has a reduced
+///   two-state variant and is suppressed entirely on passkey cubes
+///   without a Vault (nothing to back up).
+/// - `has_vault`: gates the "complete" copy on mnemonic cubes — a
+///   seed-only kit on a vaultless cube is already "complete" from the
+///   user's perspective, so the CTA becomes "Update" rather than
+///   "Add Wallet Descriptor".
+fn recovery_kit_card<'a>(
+    is_passkey: bool,
+    has_vault: bool,
+    status: Option<&RecoveryKitStatus>,
+    loading: bool,
+    drift: bool,
+) -> Element<'a, Message> {
+    // Passkey + no vault => nothing to back up yet. Render a thin
+    // informational card rather than the regular flow.
+    if is_passkey && !has_vault {
+        return card::simple(
+            Column::new()
+                .spacing(4)
+                .push(text("Back up your Wallet Descriptor").bold())
+                .push(
+                    text(
+                        "Passkey Cubes back up the Wallet Descriptor only — create a Vault \
+                         to enable Recovery-Kit backup.",
+                    )
+                    .size(14),
+                ),
+        )
+        .width(Length::Fill)
+        .into();
+    }
+
+    let (title, subtitle, primary_label, primary_mode) = if is_passkey {
+        // Passkey variant — descriptor-only. Two states.
+        match status {
+            Some(s) if s.has_encrypted_wallet_descriptor => (
+                "Wallet Descriptor backed up",
+                format!("Last updated {}.", s.updated_at.as_deref().unwrap_or("—")),
+                "Update",
+                RecoveryKitMode::Rotate,
+            ),
+            _ => (
+                "Back up your Wallet Descriptor",
+                "Your Master Seed Phrase is protected by your passkey and isn't included \
+                 in the Recovery Kit — we back up the Wallet Descriptor only."
+                    .to_string(),
+                "Create Recovery Kit",
+                RecoveryKitMode::Create,
+            ),
+        }
+    } else {
+        // Mnemonic variant — full four-state matrix per plan §6.3.
+        match status {
+            Some(s) if !s.has_recovery_kit => (
+                "Back up your Cube Recovery Kit",
+                "Back up your Master Seed Phrase and Wallet Descriptor to your Connect \
+                 account so you can restore your Cube if you lose this device."
+                    .to_string(),
+                "Create Recovery Kit",
+                RecoveryKitMode::Create,
+            ),
+            Some(s) if s.has_encrypted_seed && !s.has_encrypted_wallet_descriptor && has_vault => (
+                "Finish backing up your Recovery Kit",
+                "Your Master Seed Phrase is backed up, but your Wallet Descriptor isn't."
+                    .to_string(),
+                "Add Wallet Descriptor",
+                RecoveryKitMode::AddDescriptor,
+            ),
+            Some(s) if !s.has_encrypted_seed && s.has_encrypted_wallet_descriptor => (
+                "Finish backing up your Recovery Kit",
+                "Your Wallet Descriptor is backed up, but your Master Seed Phrase isn't."
+                    .to_string(),
+                "Add Master Seed Phrase",
+                RecoveryKitMode::AddSeed,
+            ),
+            Some(s) => (
+                "Recovery Kit backed up",
+                format!("Last updated {}.", s.updated_at.as_deref().unwrap_or("—")),
+                "Update",
+                RecoveryKitMode::Rotate,
+            ),
+            None => (
+                "Cube Recovery Kit",
+                if loading {
+                    "Checking your Connect account…".to_string()
+                } else {
+                    "Sign in to Connect to back up your Cube Recovery Kit.".to_string()
+                },
+                "Create Recovery Kit",
+                RecoveryKitMode::Create,
+            ),
+        }
+    };
+
+    // Drift overrides the "complete" state: primary CTA becomes
+    // "Update now" and the subtitle swaps to the drift warning.
+    let (subtitle, primary_label, primary_mode) = if drift {
+        (
+            "Your Wallet Descriptor changed since your last backup — update now.".to_string(),
+            "Update now",
+            RecoveryKitMode::Rotate,
+        )
+    } else {
+        (subtitle, primary_label, primary_mode)
+    };
+
+    // Render with Remove button when a kit exists.
+    let has_kit = status.map(|s| s.has_recovery_kit).unwrap_or(false);
+    let mut actions = Row::new().spacing(10).align_y(Alignment::Center).push(
+        button::primary(None, primary_label)
+            .padding([8, 16])
+            .width(Length::Fixed(220.0))
+            .on_press(SettingsMessage::RecoveryKit(RecoveryKitMessage::Start(primary_mode)).into()),
+    );
+    if has_kit {
+        actions = actions.push(
+            button::secondary(None, "Remove")
+                .padding([8, 16])
+                .width(Length::Fixed(120.0))
+                .on_press(SettingsMessage::RecoveryKit(RecoveryKitMessage::Remove).into()),
+        );
+    }
+
+    let mut body = Column::new()
+        .spacing(4)
+        .width(Length::Fill)
+        .push(text(title).bold())
+        .push(text(subtitle).size(14));
+    if drift {
+        body = body.push(
+            text("⚠ Descriptor out of sync with your Connect backup.")
+                .size(12)
+                .style(coincube_ui::theme::text::warning),
+        );
+    }
+
+    card::simple(
+        Row::new()
+            .spacing(20)
+            .align_y(Alignment::Center)
+            .push(body)
+            .push(actions),
     )
     .width(Length::Fill)
     .into()
@@ -283,4 +471,90 @@ pub fn fiat_price<'a>(
     )
     .width(Length::Fill)
     .into()
+}
+
+/// Decide whether the Recovery-Kit card should flag "descriptor
+/// drift". Split out of `general_section` so the branch table is
+/// testable without standing up a full `Cache`.
+///
+/// - `server_has_descriptor`: the Connect-side `RecoveryKitStatus`
+///   reports a descriptor half is backed up.
+/// - `live`: SHA-256 of what the live wallet would currently upload
+///   (`None` when no Vault is loaded).
+/// - `cached`: SHA-256 of what this device last uploaded
+///   (`None` when the local cache was cleared, the kit was made from
+///   a different install, or the backup happened before the cache
+///   field existed).
+fn descriptor_drift(server_has_descriptor: bool, live: Option<&str>, cached: Option<&str>) -> bool {
+    if !server_has_descriptor {
+        return false;
+    }
+    match (live, cached) {
+        // Both present — direct comparison. This is the only branch
+        // with positive evidence of drift; everything else is
+        // absence-of-evidence and must not fire the banner.
+        (Some(live), Some(cached)) => live != cached,
+        // Live descriptor known, no cached hash. This happens for:
+        // kit restored onto this device (we never re-uploaded so
+        // never populated the cache), kit uploaded from a different
+        // device, and installs that pre-date the cache field. In
+        // all three, the server's `has_encrypted_wallet_descriptor`
+        // flag already tells us a backup exists — firing the banner
+        // here produces a *permanent* false positive that stays up
+        // until the user manually re-uploads, training them to
+        // ignore the signal entirely (banner blindness). The
+        // always-visible "Update" CTA on the card is the right
+        // affordance for users who want to force a refresh; the
+        // banner is reserved for confirmed drift.
+        (Some(_), None) => false,
+        // No live fingerprint (no Vault loaded yet) → can't compare.
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_drift_when_server_has_no_descriptor() {
+        // Card's "incomplete" copy already covers this case; drift
+        // must not double up the signal.
+        assert!(!descriptor_drift(false, Some("a"), Some("b")));
+        assert!(!descriptor_drift(false, Some("a"), None));
+        assert!(!descriptor_drift(false, None, Some("b")));
+    }
+
+    #[test]
+    fn drift_when_live_and_cached_differ() {
+        assert!(descriptor_drift(true, Some("a"), Some("b")));
+    }
+
+    #[test]
+    fn no_drift_when_live_and_cached_match() {
+        assert!(!descriptor_drift(true, Some("a"), Some("a")));
+    }
+
+    #[test]
+    fn no_drift_when_cached_missing_but_live_present() {
+        // The drift banner must fire only on *positive evidence* of
+        // drift (cached hash known + different). Absence of a local
+        // cached fingerprint is the normal state after a kit is
+        // restored to this device, uploaded from another device, or
+        // created by a client version predating the cache field.
+        // The server's `has_encrypted_wallet_descriptor=true` is the
+        // authoritative signal that a backup exists; firing a
+        // permanent banner here would train users to tune it out.
+        assert!(!descriptor_drift(true, Some("a"), None));
+    }
+
+    #[test]
+    fn no_drift_when_live_missing() {
+        // No Vault loaded yet — can't compute a comparison.
+        // `server_has_descriptor` being true here means another
+        // device backed up the descriptor; we can't usefully flag
+        // drift until this device has a wallet to diff against.
+        assert!(!descriptor_drift(true, None, Some("b")));
+        assert!(!descriptor_drift(true, None, None));
+    }
 }
