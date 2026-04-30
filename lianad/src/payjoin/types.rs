@@ -41,3 +41,9 @@ pub struct PayjoinInfo {
     pub status: PayjoinStatus,
     pub bip21: String,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PayjoinRole {
+    Receiver,
+    Sender,
+}

@@ -323,19 +323,20 @@ fn payjoin_txid_from_event(event_json: &[u8]) -> Option<bitcoin::Txid> {
     None
 }
 
-/// Find the receiver session whose payjoin PSBT has the given txid.
+/// Find the receiver session whose payjoin PSBT has the given txid, returning
+/// the session id along with its receive-address derivation index.
 /// First attempts replay and inspects the current state; if replay fails
 /// (e.g. expired) or yields a state without a PSBT, falls back to scanning
 /// raw event JSON for the PSBT so closed and expired sessions still match.
-pub(crate) fn find_session_id_by_txid(
+pub(crate) fn find_receiver_session_by_txid(
     db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     txid: &bitcoin::Txid,
-) -> Option<SessionId> {
-    let session_ids = {
+) -> Option<(SessionId, u32)> {
+    let sessions = {
         let mut db_conn = db.connection();
-        db_conn.get_all_receiver_session_ids()
+        db_conn.get_all_receiver_sessions()
     };
-    for session_id in session_ids {
+    for (session_id, derivation_index) in sessions {
         let persister = ReceiverPersister::from_id(Arc::new(db.clone()), session_id.clone());
         if let Ok((state, _)) = replay_event_log(&persister) {
             let psbt_txid = match &state {
@@ -346,7 +347,7 @@ pub(crate) fn find_session_id_by_txid(
                 _ => None,
             };
             if psbt_txid.as_ref() == Some(txid) {
-                return Some(session_id);
+                return Some((session_id, derivation_index));
             }
         }
         let events = db.connection().load_receiver_session_events(&session_id);
@@ -355,7 +356,7 @@ pub(crate) fn find_session_id_by_txid(
             .filter_map(|ev| payjoin_txid_from_event(ev))
             .any(|t| t == *txid)
         {
-            return Some(session_id);
+            return Some((session_id, derivation_index));
         }
     }
     None

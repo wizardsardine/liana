@@ -748,6 +748,7 @@ impl Daemon for BackendWalletClient {
                     tx: tx.raw,
                     height: tx.block_height,
                     time: tx.confirmed_at.map(|t| t as u32),
+                    payjoin_role: None,
                 })
                 .collect(),
         })
@@ -767,6 +768,7 @@ impl Daemon for BackendWalletClient {
                     tx: tx.raw,
                     height: tx.block_height,
                     time: tx.confirmed_at.map(|t| t as u32),
+                    payjoin_role: None,
                 })
                 .collect(),
         })
@@ -1176,6 +1178,7 @@ fn history_tx_from_api(value: api::Transaction, network: Network) -> HistoryTran
         coins,
         changes_indexes,
         network,
+        None,
     );
     tx.load_labels(&labels);
     tx

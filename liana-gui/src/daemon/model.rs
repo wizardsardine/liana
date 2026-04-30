@@ -15,7 +15,7 @@ pub use lianad::commands::{
     ListCoinsResult, ListRevealedAddressesEntry, ListRevealedAddressesResult, ListSpendEntry,
     ListSpendResult, ListTransactionsResult, TransactionInfo,
 };
-use lianad::payjoin::types::PayjoinStatus;
+use lianad::payjoin::types::{PayjoinRole, PayjoinStatus};
 
 pub type Coin = ListCoinsEntry;
 
@@ -340,6 +340,7 @@ pub struct HistoryTransaction {
     pub height: Option<i32>,
     pub time: Option<u32>,
     pub kind: TransactionKind,
+    pub payjoin_role: Option<PayjoinRole>,
 }
 
 impl HistoryTransaction {
@@ -350,8 +351,9 @@ impl HistoryTransaction {
         coins: Vec<Coin>,
         change_indexes: Vec<usize>,
         network: Network,
+        payjoin_role: Option<PayjoinRole>,
     ) -> Self {
-        let (incoming_amount, outgoing_amount) = tx.output.iter().enumerate().fold(
+        let (raw_incoming, raw_outgoing) = tx.output.iter().enumerate().fold(
             (Amount::from_sat(0), Amount::from_sat(0)),
             |(change, spend), (i, output)| {
                 if change_indexes.contains(&i) {
@@ -362,48 +364,6 @@ impl HistoryTransaction {
             },
         );
 
-        let kind = if coins.is_empty() {
-            if change_indexes.len() == 1 {
-                TransactionKind::IncomingSinglePayment(OutPoint {
-                    txid: tx.compute_txid(),
-                    vout: change_indexes[0] as u32,
-                })
-            } else {
-                TransactionKind::IncomingPaymentBatch(
-                    change_indexes
-                        .iter()
-                        .map(|i| OutPoint {
-                            txid: tx.compute_txid(),
-                            vout: *i as u32,
-                        })
-                        .collect(),
-                )
-            }
-        } else if outgoing_amount == Amount::from_sat(0) {
-            TransactionKind::SendToSelf
-        } else {
-            let outpoints: Vec<OutPoint> = tx
-                .output
-                .iter()
-                .enumerate()
-                .filter_map(|(i, _)| {
-                    if !change_indexes.contains(&i) {
-                        Some(OutPoint {
-                            txid: tx.compute_txid(),
-                            vout: i as u32,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if outpoints.len() == 1 {
-                TransactionKind::OutgoingSinglePayment(outpoints[0])
-            } else {
-                TransactionKind::OutgoingPaymentBatch(outpoints)
-            }
-        };
-
         let mut inputs_amount = Amount::from_sat(0);
         let mut coins_map = HashMap::<OutPoint, Coin>::with_capacity(coins.len());
         for coin in coins {
@@ -411,19 +371,94 @@ impl HistoryTransaction {
             coins_map.insert(coin.outpoint, coin);
         }
 
+        let txid = tx.compute_txid();
+        let (kind, incoming_amount, outgoing_amount, fee_amount) = match payjoin_role {
+            Some(PayjoinRole::Receiver) => {
+                // Wallet contributed inputs, but the net effect is an inbound deposit.
+                // All wallet outputs are receive outputs; the displayed amount is the
+                // net (wallet outputs minus wallet inputs we contributed).
+                let kind = if change_indexes.len() == 1 {
+                    TransactionKind::IncomingSinglePayment(OutPoint {
+                        txid,
+                        vout: change_indexes[0] as u32,
+                    })
+                } else {
+                    TransactionKind::IncomingPaymentBatch(
+                        change_indexes
+                            .iter()
+                            .map(|i| OutPoint {
+                                txid,
+                                vout: *i as u32,
+                            })
+                            .collect(),
+                    )
+                };
+                let net = raw_incoming
+                    .checked_sub(inputs_amount)
+                    .unwrap_or(Amount::from_sat(0));
+                (kind, net, Amount::from_sat(0), None)
+            }
+            _ => {
+                let kind = if coins_map.is_empty() {
+                    if change_indexes.len() == 1 {
+                        TransactionKind::IncomingSinglePayment(OutPoint {
+                            txid,
+                            vout: change_indexes[0] as u32,
+                        })
+                    } else {
+                        TransactionKind::IncomingPaymentBatch(
+                            change_indexes
+                                .iter()
+                                .map(|i| OutPoint {
+                                    txid,
+                                    vout: *i as u32,
+                                })
+                                .collect(),
+                        )
+                    }
+                } else if raw_outgoing == Amount::from_sat(0) {
+                    TransactionKind::SendToSelf
+                } else {
+                    let outpoints: Vec<OutPoint> = tx
+                        .output
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, _)| {
+                            if !change_indexes.contains(&i) {
+                                Some(OutPoint {
+                                    txid,
+                                    vout: i as u32,
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    if outpoints.len() == 1 {
+                        TransactionKind::OutgoingSinglePayment(outpoints[0])
+                    } else {
+                        TransactionKind::OutgoingPaymentBatch(outpoints)
+                    }
+                };
+                let fee = inputs_amount.checked_sub(raw_outgoing + raw_incoming);
+                (kind, raw_incoming, raw_outgoing, fee)
+            }
+        };
+
         Self {
             labels: HashMap::new(),
             kind,
-            txid: tx.compute_txid(),
+            txid,
             tx,
             coins: coins_map,
             change_indexes,
             outgoing_amount,
             incoming_amount,
-            fee_amount: inputs_amount.checked_sub(outgoing_amount + incoming_amount),
+            fee_amount,
             height,
             time,
             network,
+            payjoin_role,
         }
     }
 

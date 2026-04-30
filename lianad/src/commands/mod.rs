@@ -12,8 +12,10 @@ use crate::{
     payjoin::{
         db::ReceiverPersister,
         helpers::{fetch_ohttp_keys, FetchOhttpKeysError},
-        receiver::{cancel_payjoin_for_session, find_session_id_by_txid, send_payjoin_for_session},
-        types::PayjoinStatus,
+        receiver::{
+            cancel_payjoin_for_session, find_receiver_session_by_txid, send_payjoin_for_session,
+        },
+        types::{PayjoinRole, PayjoinStatus},
     },
     poller::PollerMessage,
     DaemonControl, VERSION,
@@ -457,7 +459,7 @@ impl DaemonControl {
     /// Get receiver session and its sender/receiver status by txid
     pub fn get_payjoin_info(&self, txid: &bitcoin::Txid) -> Result<PayjoinStatus, CommandError> {
         log::debug!("Getting payjoin info for txid: {:?}", txid);
-        if let Some(session_id) = find_session_id_by_txid(&self.db, txid) {
+        if let Some((session_id, _)) = find_receiver_session_by_txid(&self.db, txid) {
             let persister =
                 ReceiverPersister::from_id(Arc::new(self.db.clone()), session_id.clone());
             match replay_receiver_event_log(&persister) {
@@ -480,7 +482,7 @@ impl DaemonControl {
 
     /// Send a finalized payjoin proposal for the receiver session associated with the given txid.
     pub fn send_payjoin_proposal(&self, txid: &bitcoin::Txid) -> Result<(), CommandError> {
-        let session_id = find_session_id_by_txid(&self.db, txid)
+        let (session_id, _) = find_receiver_session_by_txid(&self.db, txid)
             .ok_or(CommandError::NoPayjoinSessionForTxid(*txid))?;
         let payjoin_config = self
             .config
@@ -499,7 +501,7 @@ impl DaemonControl {
     /// Cancel the payjoin receiver session associated with the given txid and immediately
     /// broadcast the sender's original (non-payjoin) fallback transaction.
     pub fn broadcast_payjoin_fallback(&self, txid: &bitcoin::Txid) -> Result<(), CommandError> {
-        let session_id = find_session_id_by_txid(&self.db, txid)
+        let (session_id, _) = find_receiver_session_by_txid(&self.db, txid)
             .ok_or(CommandError::NoPayjoinSessionForTxid(*txid))?;
         let fallback = cancel_payjoin_for_session(&self.db, session_id)
             .map_err(|e| CommandError::CancelPayjoinFailed(e.to_string()))?
@@ -1398,7 +1400,17 @@ impl DaemonControl {
             .connection()
             .list_wallet_transactions(txids)
             .into_iter()
-            .map(|(tx, height, time)| TransactionInfo { tx, height, time })
+            .map(|(tx, height, time)| {
+                let txid = tx.compute_txid();
+                let payjoin_role =
+                    find_receiver_session_by_txid(&self.db, &txid).map(|_| PayjoinRole::Receiver);
+                TransactionInfo {
+                    tx,
+                    height,
+                    time,
+                    payjoin_role,
+                }
+            })
             .collect();
         ListTransactionsResult { transactions }
     }
@@ -1686,6 +1698,8 @@ pub struct TransactionInfo {
     pub tx: bitcoin::Transaction,
     pub height: Option<i32>,
     pub time: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payjoin_role: Option<PayjoinRole>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

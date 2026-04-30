@@ -293,6 +293,7 @@ pub trait Daemon: Debug {
                     tx_coins,
                     change_indexes,
                     info.network,
+                    tx.payjoin_role,
                 )
             })
             .collect();
@@ -371,6 +372,7 @@ pub trait Daemon: Debug {
                     tx_coins,
                     change_indexes,
                     info.network,
+                    tx.payjoin_role,
                 )
             })
             .collect();

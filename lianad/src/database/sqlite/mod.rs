@@ -1108,15 +1108,16 @@ impl SqliteConn {
         .unwrap_or_default()
     }
 
-    /// Get every receiver session id (both active and closed).
-    pub fn get_all_receiver_session_ids(&mut self) -> Vec<SessionId> {
+    /// Get every receiver session (both active and closed) with its derivation index.
+    pub fn get_all_receiver_sessions(&mut self) -> Vec<(SessionId, u32)> {
         db_query(
             &mut self.conn,
-            "SELECT id FROM payjoin_receivers",
+            "SELECT id, derivation_index FROM payjoin_receivers WHERE derivation_index IS NOT NULL",
             rusqlite::params![],
             |row| {
                 let id: i64 = row.get(0)?;
-                Ok(SessionId::new(id))
+                let derivation_index: u32 = row.get(1)?;
+                Ok((SessionId::new(id), derivation_index))
             },
         )
         .expect("Db must not fail")

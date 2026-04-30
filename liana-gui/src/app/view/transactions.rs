@@ -142,6 +142,7 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                 } else {
                     None
                 })
+                .push_maybe(tx.payjoin_role.map(|_| badge::payjoin()))
                 .push(if tx.is_external() {
                     Row::new()
                         .spacing(5)
@@ -423,8 +424,9 @@ pub fn tx_view<'a>(
             .push(
                 Column::new()
                     .spacing(20)
-                    // We do not need to display inputs for external incoming transactions
-                    .push_maybe(if tx.is_external() {
+                    // We do not need to display inputs for external incoming transactions,
+                    // but for incoming payjoins we contributed inputs that are worth showing.
+                    .push_maybe(if tx.is_external() && tx.coins.is_empty() {
                         None
                     } else {
                         Some(super::psbt::inputs_view(

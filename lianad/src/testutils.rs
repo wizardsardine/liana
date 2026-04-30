@@ -622,13 +622,13 @@ impl DatabaseConnection for DummyDatabase {
             .collect()
     }
 
-    fn get_all_receiver_session_ids(&mut self) -> Vec<SessionId> {
+    fn get_all_receiver_sessions(&mut self) -> Vec<(SessionId, u32)> {
         self.db
             .read()
             .unwrap()
             .payjoin_receiver_sessions
-            .keys()
-            .map(|id| SessionId::new(*id))
+            .iter()
+            .map(|(id, (derivation_index, _))| (SessionId::new(*id), *derivation_index))
             .collect()
     }
 

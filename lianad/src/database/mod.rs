@@ -212,8 +212,8 @@ pub trait DatabaseConnection {
     /// Get all Receiver Sessions
     fn get_all_active_receiver_session_ids(&mut self) -> Vec<SessionId>;
 
-    /// Get every Receiver Session id (active and closed)
-    fn get_all_receiver_session_ids(&mut self) -> Vec<SessionId>;
+    /// Get every Receiver Session (active and closed) with its derivation index
+    fn get_all_receiver_sessions(&mut self) -> Vec<(SessionId, u32)>;
 
     /// Save a Receiver Session Event
     fn save_receiver_session_event(&mut self, session_id: &SessionId, event: Vec<u8>);
@@ -474,8 +474,8 @@ impl DatabaseConnection for SqliteConn {
         self.get_all_active_receiver_session_ids()
     }
 
-    fn get_all_receiver_session_ids(&mut self) -> Vec<SessionId> {
-        self.get_all_receiver_session_ids()
+    fn get_all_receiver_sessions(&mut self) -> Vec<(SessionId, u32)> {
+        self.get_all_receiver_sessions()
     }
 
     fn save_receiver_session_event(&mut self, session_id: &SessionId, event: Vec<u8>) {
