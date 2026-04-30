@@ -9,7 +9,10 @@ use std::{
     time,
 };
 
-use encrypted_backup::{descriptor::dpk_to_pk, Decrypted, EncryptedBackup};
+use encrypted_backup::{
+    descriptor::{descr_to_dpks, dpk_to_pk, dpks_to_derivation_keys_paths},
+    Content, Decrypted, EncryptedBackup,
+};
 use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender};
 
 use async_hwi::bitbox::api::btc::Fingerprint;
@@ -17,7 +20,8 @@ use chrono::{DateTime, Duration, Utc};
 use liana::{
     descriptors::{bip341_nums, LianaDescriptor},
     miniscript::{
-        bitcoin::{Amount, Network, Psbt, Txid},
+        self,
+        bitcoin::{self, Amount, Network, Psbt, Txid},
         DescriptorPublicKey,
     },
 };
@@ -591,11 +595,36 @@ pub async fn export_string(
     path: PathBuf,
     str: String,
 ) -> Result<(), Error> {
+    export_bytes(sender, path, str.as_bytes()).await
+}
+
+pub async fn export_bytes(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+    bytes: &[u8],
+) -> Result<(), Error> {
     let mut file = open_file_write(&path).await?;
-    file.write_all(str.as_bytes())?;
+    file.write_all(bytes)?;
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
     Ok(())
+}
+
+/// Extract the inner secp256k1 pubkey from an `XPub`/`MultiXPub` descriptor key.
+/// Used in place of `encrypted_backup::descriptor::dpk_to_pk` when the input is a bare
+/// xpub with no derivation path or wildcard (which the lib helper rejects).
+/// We use it only for decryption as an user could supply a bare xpub.
+pub fn xpub_pubkey(key: &DescriptorPublicKey) -> liana::miniscript::bitcoin::secp256k1::PublicKey {
+    match key {
+        DescriptorPublicKey::Single(key) => match key.key {
+            miniscript::descriptor::SinglePubKey::FullKey(pk) => pk.inner,
+            miniscript::descriptor::SinglePubKey::XOnly(pk) => {
+                pk.public_key(bitcoin::key::Parity::Even)
+            }
+        },
+        DescriptorPublicKey::XPub(key) => key.xkey.public_key,
+        DescriptorPublicKey::MultiXPub(key) => key.xkey.public_key,
+    }
 }
 
 pub async fn export_encrypted_descriptor(
@@ -604,15 +633,19 @@ pub async fn export_encrypted_descriptor(
     descr: LianaDescriptor,
 ) -> Result<(), Error> {
     let descriptor = descr.descriptor();
-    let bytes = EncryptedBackup::new().set_payload(descriptor)?.encrypt()?;
+    let bytes = EncryptedBackup::new()
+        .set_payload(descriptor)?
+        .encrypt()?
+        .bytes;
 
     send_progress!(sender, Progress(30.0));
     // verify we can decrypt with any keys from the descriptor
     for key in descr.spendable_keys() {
+        let pk = xpub_pubkey(&key);
         let decrypted = EncryptedBackup::new()
             .set_encrypted_payload(&bytes)
             .map_err(|_| Error::EncryptionFailed)?
-            .set_keys(vec![dpk_to_pk(&key)])
+            .set_keys(vec![pk])
             .decrypt()
             .map_err(|_| Error::EncryptionFailed)?;
         if let Decrypted::Descriptor(d) = decrypted {
@@ -626,7 +659,7 @@ pub async fn export_encrypted_descriptor(
 
     // verify we can NOT decrypt w/ unspendable key or BIP341 NUMS
     if let Some(unspendable) = descr.process_unspendable_key() {
-        let unspendable = dpk_to_pk(&unspendable);
+        let unspendable = dpk_to_pk(&unspendable).map_err(|_| Error::EncryptionFailed)?;
         let encrypted = EncryptedBackup::new()
             .set_encrypted_payload(&bytes)
             .map_err(|_| Error::EncryptionFailed)?
@@ -830,16 +863,53 @@ pub async fn import_backup(
     // Load backup from file
     let mut file = File::open(&path)?;
 
-    let mut backup_str = String::new();
-    file.read_to_string(&mut backup_str)?;
-    backup_str = backup_str.trim().to_string();
+    let mut backup_bytes = Vec::<u8>::new();
+    file.read_to_end(&mut backup_bytes)?;
 
-    let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
-    let backup = match backup {
-        Ok(psbt) => psbt,
-        Err(e) => {
-            return Err(Error::BackupImport(format!("{e:?}")));
+    let default_error = Error::BackupImport("Fail to import backup: unknown format".to_string());
+
+    // first try to parse as encrypted backup
+    let backup: Backup = if let Ok(mut encrypted_backup) =
+        EncryptedBackup::new().set_encrypted_payload(&backup_bytes)
+    {
+        // TODO: change when we get BIP #
+        if encrypted_backup.get_content() != Content::Proprietary(b"WalletBackup".to_vec()) {
+            return Err(Error::BackupImport(
+                "Encrypted file does not contains a backup.".to_string(),
+            ));
         }
+        let descriptor = wallet.main_descriptor.descriptor();
+        let dpks = descr_to_dpks(descriptor).expect("descriptor always have valid keys");
+        let (keys, _) = dpks_to_derivation_keys_paths(&dpks);
+        encrypted_backup = encrypted_backup.set_keys(keys);
+        let decrypted = encrypted_backup
+            .decrypt()
+            .map_err(|_| Error::BackupImport("Fail to decrypt file.".to_string()))?;
+        let backup_bytes = if let Decrypted::WalletBackup(bytes) = decrypted {
+            bytes
+        } else {
+            return Err(Error::BackupImport(
+                "File decrypted but does not contains a backup payload.".to_string(),
+            ));
+        };
+        let mut backup_str = String::from_utf8(backup_bytes).map_err(|_| {
+            Error::BackupImport(
+                "File decrypted but does not contains a valid utf8 backup payload.".to_string(),
+            )
+        })?;
+        backup_str = backup_str.trim().to_string();
+
+        serde_json::from_str(&backup_str).map_err(|_| {
+            Error::BackupImport(
+                "File decrypted but does not contains a valid backup payload.".to_string(),
+            )
+        })?
+    } else {
+        // else we try to parse as unencrypted backup
+        let mut backup_str = String::from_utf8(backup_bytes).map_err(|_| default_error.clone())?;
+        backup_str = backup_str.trim().to_string();
+
+        serde_json::from_str(&backup_str).map_err(|_| default_error)?
     };
 
     // get backend info
@@ -1381,9 +1451,8 @@ pub async fn app_backup(
     wallet: Arc<Wallet>,
     daemon: Arc<dyn Daemon + Sync + Send>,
     sender: &UnboundedSender<Progress>,
-) -> Result<String, backup::Error> {
-    let backup = Backup::from_app(datadir, network, config, wallet, daemon, sender).await?;
-    serde_json::to_string_pretty(&backup).map_err(|_| backup::Error::Json)
+) -> Result<Backup, backup::Error> {
+    Backup::from_app(datadir, network, config, wallet, daemon, sender).await
 }
 
 pub async fn app_backup_export(
@@ -1398,14 +1467,18 @@ pub async fn app_backup_export(
     let backup = app_backup(datadir.clone(), network, config, wallet, daemon, sender)
         .await
         .map_err(Error::Backup)?;
-    export_string(sender, path, backup).await
+
+    let backup = EncryptedBackup::new()
+        .set_payload(&backup)?
+        .encrypt()?
+        .bytes;
+
+    export_bytes(sender, path, &backup).await
 }
 
 #[cfg(test)]
 mod tests {
     use std::env;
-
-    use encrypted_backup::Version;
 
     use super::*;
 
@@ -1427,7 +1500,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_import_descriptor_from_backup_file() {
+    async fn test_import_descriptor_from_backup_file_v0() {
         let (sender, mut receiver) = unbounded_channel();
         let path = env::current_dir()
             .unwrap()
@@ -1441,6 +1514,21 @@ mod tests {
         let descr = LianaDescriptor::from_str(raw_descriptor).unwrap();
         let _msg = receiver.try_recv().unwrap();
         assert!(matches!(Progress::Descriptor(descr), _msg));
+    }
+
+    #[tokio::test]
+    async fn test_import_descriptor_from_backup_file_v1() {
+        // TODO:
+    }
+
+    #[tokio::test]
+    async fn test_export_encrypted_descriptor() {
+        // TODO: must be v1
+    }
+
+    #[tokio::test]
+    async fn test_export_encrypted_backup() {
+        // TODO: must be v1
     }
 
     #[test]
@@ -1483,7 +1571,7 @@ mod tests {
         let keys = descriptor
             .spendable_keys()
             .into_iter()
-            .map(|k| dpk_to_pk(&k))
+            .map(|k| xpub_pubkey(&k))
             .collect::<Vec<_>>();
 
         let path = env::current_dir()
@@ -1499,7 +1587,7 @@ mod tests {
             .set_encrypted_payload(&bytes)
             .unwrap();
 
-        assert_eq!(backp.get_version(), Version::V0);
+        assert_eq!(backp.get_version(), encrypted_backup::Version::V0);
 
         for k in keys {
             let descr = backp.clone().set_keys(vec![k]).decrypt().unwrap();
@@ -1509,5 +1597,10 @@ mod tests {
                 panic!("not a descriptor")
             }
         }
+    }
+
+    #[test]
+    fn test_import_encrypted_descriptor_v1() {
+        // TODO:
     }
 }

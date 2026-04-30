@@ -1,9 +1,14 @@
 use chrono::{Duration, Utc};
+use encrypted_backup::{
+    descriptor::{descr_to_dpks, dpks_to_derivation_keys_paths},
+    ToPayload,
+};
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::{
         self,
         bitcoin::{bip32::Fingerprint, Network, Txid},
+        Descriptor, DescriptorPublicKey,
     },
 };
 use lianad::{
@@ -15,6 +20,7 @@ use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::{Debug, Display},
+    str::FromStr,
     sync::Arc,
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -451,6 +457,41 @@ pub enum KeyType {
     External,
     /// Service the user pay for
     ThirdParty,
+}
+
+impl ToPayload for Backup {
+    fn to_payload(&self) -> Result<Vec<u8>, encrypted_backup::Error> {
+        Ok(self.to_string().as_bytes().to_vec())
+    }
+
+    fn content_type(&self) -> encrypted_backup::Content {
+        // TODO: update w/ bip #
+        encrypted_backup::Content::Proprietary(b"WalletBackup".to_vec())
+    }
+
+    fn derivation_paths(
+        &self,
+    ) -> Result<Vec<miniscript::bitcoin::bip32::DerivationPath>, encrypted_backup::Error> {
+        let err = encrypted_backup::Error::Descriptor;
+        let descriptor = &self.account().map_err(|_| err.clone())?.descriptor;
+        let descriptor =
+            Descriptor::<DescriptorPublicKey>::from_str(descriptor).map_err(|_| err.clone())?;
+        let dpks = descr_to_dpks(&descriptor).map_err(|_| err.clone())?;
+        let (_, paths) = dpks_to_derivation_keys_paths(&dpks);
+        (!paths.is_empty()).then_some(paths).ok_or(err)
+    }
+
+    fn keys(
+        &self,
+    ) -> Result<Vec<miniscript::bitcoin::secp256k1::PublicKey>, encrypted_backup::Error> {
+        let err = encrypted_backup::Error::Descriptor;
+        let descriptor = &self.account().map_err(|_| err.clone())?.descriptor;
+        let descriptor =
+            Descriptor::<DescriptorPublicKey>::from_str(descriptor).map_err(|_| err.clone())?;
+        let dpks = descr_to_dpks(&descriptor).map_err(|_| err.clone())?;
+        let (keys, _) = dpks_to_derivation_keys_paths(&dpks);
+        (!keys.is_empty()).then_some(keys).ok_or(err)
+    }
 }
 
 #[cfg(test)]
