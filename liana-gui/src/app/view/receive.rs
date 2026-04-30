@@ -280,71 +280,55 @@ pub fn verify_address_modal<'a>(
     address: &Address,
     derivation_index: &ChildNumber,
 ) -> Element<'a, Message> {
+    let address_row = Row::new()
+        .width(Length::Fill)
+        .align_y(Alignment::Center)
+        .push(Container::new(text("Address:").bold()).width(Length::Fill))
+        .push(
+            Row::new()
+                .align_y(Alignment::Center)
+                .push(Container::new(text(address.to_string()).small()))
+                .push(
+                    Button::new(icon::clipboard_icon())
+                        .on_press(Message::Clipboard(address.to_string()))
+                        .style(theme::button::transparent_border),
+                )
+                .width(Length::Shrink),
+        );
+
+    let index_row = Row::new()
+        .width(Length::Fill)
+        .align_y(Alignment::Center)
+        .push(Container::new(text("Derivation index:").bold()).width(Length::Fill))
+        .push(Container::new(text(derivation_index.to_string()).small()).width(Length::Shrink));
+
+    let title_row = text("Select device to verify address on:").width(Length::Fill);
+
+    let devices = hws
+        .iter()
+        .enumerate()
+        .fold(Column::new().spacing(10), |col, (i, hw)| {
+            col.push(hw::hw_list_view_verify_address(
+                i,
+                hw,
+                if let HardwareWallet::Supported { fingerprint, .. } = hw {
+                    chosen_hws.contains(fingerprint)
+                } else {
+                    false
+                },
+            ))
+        });
+
     Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))
         .push(card::simple(
             Column::new()
                 .push(
                     Column::new()
-                        .push(
-                            Column::new()
-                                .push(
-                                    Row::new()
-                                        .width(Length::Fill)
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            Container::new(text("Address:").bold())
-                                                .width(Length::Fill),
-                                        )
-                                        .push(
-                                            Row::new()
-                                                .align_y(Alignment::Center)
-                                                .push(Container::new(
-                                                    text(address.to_string()).small(),
-                                                ))
-                                                .push(
-                                                    Button::new(icon::clipboard_icon())
-                                                        .on_press(Message::Clipboard(
-                                                            address.to_string(),
-                                                        ))
-                                                        .style(theme::button::transparent_border),
-                                                )
-                                                .width(Length::Shrink),
-                                        ),
-                                )
-                                .push(
-                                    Row::new()
-                                        .width(Length::Fill)
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            Container::new(text("Derivation index:").bold())
-                                                .width(Length::Fill),
-                                        )
-                                        .push(
-                                            Container::new(
-                                                text(derivation_index.to_string()).small(),
-                                            )
-                                            .width(Length::Shrink),
-                                        ),
-                                )
-                                .spacing(5),
-                        )
-                        .push(text("Select device to verify address on:").width(Length::Fill))
+                        .push(Column::new().push(address_row).push(index_row).spacing(5))
+                        .push(title_row)
                         .spacing(10)
-                        .push(hws.iter().enumerate().fold(
-                            Column::new().spacing(10),
-                            |col, (i, hw)| {
-                                col.push(hw::hw_list_view_verify_address(
-                                    i,
-                                    hw,
-                                    if let HardwareWallet::Supported { fingerprint, .. } = hw {
-                                        chosen_hws.contains(fingerprint)
-                                    } else {
-                                        false
-                                    },
-                                ))
-                            },
-                        ))
+                        .push(devices)
                         .width(Length::Fill),
                 )
                 .spacing(20)
