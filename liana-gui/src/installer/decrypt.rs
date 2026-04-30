@@ -40,7 +40,7 @@ use liana_ui::{
 use crate::{
     app::state::export::ExportModal,
     backup::Backup,
-    export::ImportExportType,
+    export::{xpub_pubkey, ImportExportType},
     hw::{HardwareWallet, HardwareWallets},
     installer,
     utils::{default_derivation_path, example_xpub},
@@ -423,7 +423,7 @@ impl DecryptModal {
             let bytes = self.bytes.clone();
             Task::perform(
                 async move {
-                    let pk = encrypted_backup::descriptor::dpk_to_pk(&dpk);
+                    let pk = xpub_pubkey(&dpk);
                     decrypt_descriptor_with_pk(&bytes, pk).unwrap_or(Decrypt::XpubError(
                         "Xpub is valid but cannot decrypt this file",
                     ))

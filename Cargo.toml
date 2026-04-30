@@ -84,7 +84,7 @@ rust-ini = "0.19.0"
 rfd = "0.15.1"
 fs2 = "0.4.3"
 open = "5.3"
-encrypted_backup = { version = "=0.0.2", package = "bitcoin-encrypted-backup", default-features = false, features = ["miniscript_12_0", "rand"] }
+encrypted_backup = { git = "https://github.com/pythcoiner/bitcoin-encrypted-backup", rev = "9c0fcf2", package = "bitcoin-encrypted-backup", default-features = false, features = ["miniscript_12_0", "rand", "v0"] }
 zip = { version = "0.6", default-features = false }
 tar = { version = "0.4", default-features = false }
 flate2 = { version = "1.0", default-features = false }
