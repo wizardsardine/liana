@@ -58,8 +58,6 @@ pub enum SpendCreationError {
     SanityCheckFailure(Psbt),
     FetchingTransaction(bitcoin::OutPoint),
     CoinSelection(InsufficientFunds),
-    //TODO: wrap a more specific error
-    InvalidBip21,
 }
 
 impl fmt::Display for SpendCreationError {
@@ -75,21 +73,18 @@ impl fmt::Display for SpendCreationError {
                 MAX_FEERATE,
                 match info {
                     InsaneFeeInfo::NegativeFee => "would have a negative fee".to_string(),
-                    InsaneFeeInfo::TooHighFee(f) => format!("{} sats in fees", f),
+                    InsaneFeeInfo::TooHighFee(f) => format!("{f} sats in fees"),
                     InsaneFeeInfo::InvalidFeerate => "would have an invalid feerate".to_string(),
-                    InsaneFeeInfo::TooHighFeerate(r) => format!("has a feerate of {} sats/vb", r),
+                    InsaneFeeInfo::TooHighFeerate(r) => format!("has a feerate of {r} sats/vb"),
                 },
             ),
             Self::FetchingTransaction(op) => {
-                write!(f, "Could not fetch transaction for coin {}", op)
+                write!(f, "Could not fetch transaction for coin {op}")
             }
-            Self::CoinSelection(e) => write!(f, "Coin selection error: '{}'", e),
+            Self::CoinSelection(e) => write!(f, "Coin selection error: '{e}'"),
             Self::SanityCheckFailure(psbt) => write!(
                 f,
-                "BUG! Please report this. Failed sanity checks for PSBT '{}'.",
-                psbt
-            ),
-            Self::InvalidBip21 => write!(f, "Invalid BIP21"),
+                "BUG! Please report this. Failed sanity checks for PSBT '{psbt}'."),
         }
     }
 }
