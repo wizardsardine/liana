@@ -163,9 +163,8 @@ struct DummyDbState {
     rescan_timestamp: Option<u32>,
     last_poll_timestamp: Option<u32>,
     ohttp_keys: HashMap<String, (u32, OhttpKeys)>,
-    payjoin_receiver_sessions: HashMap<i64, (u32, String, Option<u32>)>,
+    payjoin_receiver_sessions: HashMap<i64, (u32, Option<u32>)>,
     payjoin_sessions_by_derivation: HashMap<u32, i64>,
-    payjoin_sessions_by_txid: HashMap<bitcoin::Txid, i64>,
     receiver_session_events: HashMap<i64, Vec<Vec<u8>>>,
 }
 
@@ -205,7 +204,6 @@ impl DummyDatabase {
                 ohttp_keys: HashMap::new(),
                 payjoin_receiver_sessions: HashMap::new(),
                 payjoin_sessions_by_derivation: HashMap::new(),
-                payjoin_sessions_by_txid: HashMap::new(),
                 receiver_session_events: HashMap::new(),
             })),
         }
@@ -579,7 +577,7 @@ impl DatabaseConnection for DummyDatabase {
             .insert(ohttp_relay.to_string(), (0, ohttp_keys));
     }
 
-    fn insert_input_seen_before(&mut self, _outpoints: &[bitcoin::OutPoint]) -> bool {
+    fn insert_input_seen_before(&mut self, _outpoint: &bitcoin::OutPoint) -> bool {
         false
     }
 
@@ -603,11 +601,11 @@ impl DatabaseConnection for DummyDatabase {
             .unwrap_or_default()
     }
 
-    fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32, bip21: &str) -> i64 {
+    fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32) -> i64 {
         let mut db = self.db.write().unwrap();
         let session_id = (db.payjoin_receiver_sessions.len() + 1) as i64;
         db.payjoin_receiver_sessions
-            .insert(session_id, (derivation_index, bip21.to_string(), None));
+            .insert(session_id, (derivation_index, None));
         db.payjoin_sessions_by_derivation
             .insert(derivation_index, session_id);
         session_id
@@ -619,7 +617,7 @@ impl DatabaseConnection for DummyDatabase {
             .unwrap()
             .payjoin_receiver_sessions
             .iter()
-            .filter(|(_, (_, _, completed_at))| completed_at.is_none())
+            .filter(|(_, (_, completed_at))| completed_at.is_none())
             .map(|(id, _)| SessionId::new(*id))
             .collect()
     }
@@ -643,20 +641,8 @@ impl DatabaseConnection for DummyDatabase {
                 .as_secs()
                 .try_into()
                 .unwrap();
-            session.2 = Some(now);
+            session.1 = Some(now);
         }
-    }
-
-    fn get_payjoin_receiver_session_id_from_txid(
-        &mut self,
-        txid: &bitcoin::Txid,
-    ) -> Option<SessionId> {
-        self.db
-            .read()
-            .unwrap()
-            .payjoin_sessions_by_txid
-            .get(txid)
-            .map(|id| SessionId::new(*id))
     }
 }
 

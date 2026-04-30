@@ -28,7 +28,13 @@ impl Display for PersisterError {
     }
 }
 
-impl std::error::Error for PersisterError {}
+impl std::error::Error for PersisterError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PersisterError::Serialize(e) => Some(e),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct ReceiverPersister {
@@ -37,9 +43,9 @@ pub(crate) struct ReceiverPersister {
 }
 
 impl ReceiverPersister {
-    pub fn new(db: Arc<dyn DatabaseInterface>, derivation_index: u32, bip21: &str) -> Self {
+    pub fn new(db: Arc<dyn DatabaseInterface>, derivation_index: u32) -> Self {
         let mut db_conn = db.connection();
-        let session_id = db_conn.save_new_payjoin_receiver_session(derivation_index, bip21);
+        let session_id = db_conn.save_new_payjoin_receiver_session(derivation_index);
         Self {
             db,
             session_id: SessionId(session_id),

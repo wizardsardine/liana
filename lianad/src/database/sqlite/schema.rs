@@ -137,7 +137,7 @@ CREATE TABLE labels (
 /* Payjoin OHttpKeys */
 CREATE TABLE payjoin_ohttp_keys (
     id INTEGER PRIMARY KEY NOT NULL,
-    relay_url TEXT UNIQUE NOT NULL,
+    directory_url TEXT UNIQUE NOT NULL,
     timestamp INTEGER NOT NULL,
     key BLOB NOT NULL
 );

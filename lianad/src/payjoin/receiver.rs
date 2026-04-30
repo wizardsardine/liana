@@ -115,7 +115,7 @@ fn check_no_inputs_seen_before(
 ) -> Result<(), Box<dyn Error>> {
     let proposal = proposal
         .check_no_inputs_seen_before(&mut |outpoint| {
-            let seen = db_conn.insert_input_seen_before(&[*outpoint]);
+            let seen = db_conn.insert_input_seen_before(outpoint);
             Ok(seen)
         })
         .save(persister)?;

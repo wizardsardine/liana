@@ -482,26 +482,21 @@ impl SqliteConn {
         .expect("Database must be available")
     }
 
-    pub fn insert_outpoint_seen_before<'a>(
-        &mut self,
-        outpoints: impl IntoIterator<Item = &'a bitcoin::OutPoint>,
-    ) -> bool {
+    pub fn insert_outpoint_seen_before(&mut self, outpoint: &bitcoin::OutPoint) -> bool {
         let mut is_duplicate = false;
         db_exec(&mut self.conn, |db_tx| {
-            for outpoint in outpoints {
-                let mut buf = Vec::new();
-                outpoint
-                    .consensus_encode(&mut buf)
-                    .expect("Outpoint must encode");
-                let affected = db_tx.execute(
-                    "INSERT OR IGNORE INTO payjoin_outpoints (outpoint, created_at) \
-                        VALUES (?1, ?2)",
-                    rusqlite::params![buf, curr_timestamp()],
-                )?;
+            let mut buf = Vec::new();
+            outpoint
+                .consensus_encode(&mut buf)
+                .expect("Outpoint must encode");
+            let affected = db_tx.execute(
+                "INSERT OR IGNORE INTO payjoin_outpoints (outpoint, created_at) \
+                    VALUES (?1, ?2)",
+                rusqlite::params![buf, curr_timestamp()],
+            )?;
 
-                if affected == 0 {
-                    is_duplicate = true
-                }
+            if affected == 0 {
+                is_duplicate = true
             }
             Ok(())
         })
@@ -1127,22 +1122,8 @@ impl SqliteConn {
         .expect("Db must not fail")
     }
 
-    /// Deprecated: txid-in-events byte scan never worked since events serialize
-    /// txids as JSON hex while the caller passes raw bytes. Kept as a stub
-    /// returning None; callers should use the replay-based lookup in `payjoin::receiver`.
-    pub fn get_payjoin_receiver_session_id_from_txid(
-        &mut self,
-        _txid: &bitcoin::Txid,
-    ) -> Option<SessionId> {
-        None
-    }
-
     /// Create new Receiver Session
-    pub fn save_new_payjoin_receiver_session(
-        &mut self,
-        derivation_index: u32,
-        _bip21: &str,
-    ) -> i64 {
+    pub fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32) -> i64 {
         let mut id = 0i64;
         db_exec(&mut self.conn, |db_tx| {
             db_tx.execute(

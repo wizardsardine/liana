@@ -197,23 +197,17 @@ pub trait DatabaseConnection {
     /// Dump all labels
     fn get_labels_bip329(&mut self, offset: u32, limit: u32) -> Labels;
 
-    /// Get the next Session Id
+    /// Get OhttpKeys
     fn payjoin_get_ohttp_keys(&mut self, ohttp_relay: &str) -> Option<(u32, OhttpKeys)>;
 
     /// Save OHttpKeys
     fn payjoin_save_ohttp_keys(&mut self, ohttp_relay: &str, ohttp_keys: OhttpKeys);
 
     /// Save Receiver Session
-    fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32, bip21: &str) -> i64;
+    fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32) -> i64;
 
     /// Get active payjoin sessions with their derivation indexes
     fn get_active_payjoin_receiver_sessions(&mut self) -> Vec<(SessionId, u32)>;
-
-    /// Get receiver session id from txid -- this will return the session id if the txid is a proposed payjoin txid or the original txid
-    fn get_payjoin_receiver_session_id_from_txid(
-        &mut self,
-        txid: &bitcoin::Txid,
-    ) -> Option<SessionId>;
 
     /// Get all Receiver Sessions
     fn get_all_active_receiver_session_ids(&mut self) -> Vec<SessionId>;
@@ -232,7 +226,7 @@ pub trait DatabaseConnection {
     fn load_receiver_session_events(&mut self, session_id: &SessionId) -> Vec<Vec<u8>>;
 
     /// Check if input has been seen before and then add it to the input_seen table
-    fn insert_input_seen_before(&mut self, outpoints: &[bitcoin::OutPoint]) -> bool;
+    fn insert_input_seen_before(&mut self, outpoint: &bitcoin::OutPoint) -> bool;
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -456,8 +450,8 @@ impl DatabaseConnection for SqliteConn {
             .collect()
     }
 
-    fn insert_input_seen_before(&mut self, outpoints: &[bitcoin::OutPoint]) -> bool {
-        self.insert_outpoint_seen_before(outpoints)
+    fn insert_input_seen_before(&mut self, outpoint: &bitcoin::OutPoint) -> bool {
+        self.insert_outpoint_seen_before(outpoint)
     }
 
     fn payjoin_get_ohttp_keys(&mut self, ohttp_relay: &str) -> Option<(u32, OhttpKeys)> {
@@ -468,8 +462,8 @@ impl DatabaseConnection for SqliteConn {
         self.payjoin_save_ohttp_keys(ohttp_relay, ohttp_keys)
     }
 
-    fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32, bip21: &str) -> i64 {
-        self.save_new_payjoin_receiver_session(derivation_index, bip21)
+    fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32) -> i64 {
+        self.save_new_payjoin_receiver_session(derivation_index)
     }
 
     fn get_active_payjoin_receiver_sessions(&mut self) -> Vec<(SessionId, u32)> {
@@ -482,13 +476,6 @@ impl DatabaseConnection for SqliteConn {
 
     fn get_all_receiver_session_ids(&mut self) -> Vec<SessionId> {
         self.get_all_receiver_session_ids()
-    }
-
-    fn get_payjoin_receiver_session_id_from_txid(
-        &mut self,
-        txid: &bitcoin::Txid,
-    ) -> Option<SessionId> {
-        self.get_payjoin_receiver_session_id_from_txid(txid)
     }
 
     fn save_receiver_session_event(&mut self, session_id: &SessionId, event: Vec<u8>) {

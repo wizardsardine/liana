@@ -442,7 +442,7 @@ impl DaemonControl {
             .derive(new_index, &self.secp)
             .address(self.config.bitcoin_config.network);
 
-        let persister = ReceiverPersister::new(Arc::new(self.db.clone()), new_index.into(), "");
+        let persister = ReceiverPersister::new(Arc::new(self.db.clone()), new_index.into());
         let session = ReceiverBuilder::new(address.clone(), payjoin_dir_url, ohttp_keys)
             .map_err(|e| CommandError::IntoUrlError(e.to_string()))?
             .build()
