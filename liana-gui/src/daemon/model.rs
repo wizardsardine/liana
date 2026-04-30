@@ -564,6 +564,35 @@ pub fn payments_from_tx(history_tx: HistoryTransaction) -> Vec<Payment> {
     let time = history_tx
         .time
         .map(|t| chrono::DateTime::<chrono::Utc>::from_timestamp(t as i64, 0).unwrap());
+    // For payjoin receivers we contributed inputs that round-trip through the
+    // receive output, so the gross output value overstates the deposit. Emit a
+    // single Payment with the net amount instead.
+    if matches!(history_tx.payjoin_role, Some(PayjoinRole::Receiver)) {
+        if let Some(&output_index) = history_tx.change_indexes.first() {
+            let output = &history_tx.tx.output[output_index];
+            let outpoint = OutPoint {
+                txid: history_tx.tx.compute_txid(),
+                vout: output_index as u32,
+            };
+            let label = history_tx.labels.get(&outpoint.to_string()).cloned();
+            let address = Address::from_script(&output.script_pubkey, history_tx.network)
+                .ok()
+                .map(|addr| addr.to_string());
+            let address_label = address
+                .as_ref()
+                .and_then(|addr| history_tx.labels.get(addr).cloned());
+            return vec![Payment {
+                label,
+                address,
+                address_label,
+                outpoint,
+                time,
+                amount: history_tx.incoming_amount,
+                kind: PaymentKind::Incoming,
+            }];
+        }
+        return Vec::new();
+    }
     history_tx
         .tx
         .output
