@@ -2047,6 +2047,15 @@ impl App {
                             }
                         })
                     });
+                // Sync avatar handle to cache for sidebar display across all panels.
+                // Only update when Some to avoid blinking during in-flight image loads.
+                // Clear on logout when auth state transitions from true to false.
+                if let Some(handle) = self.panels.connect.cube.get_active_avatar_handle() {
+                    self.cache.avatar_handle = Some(handle);
+                } else if was_authenticated && !self.cache.connect_authenticated {
+                    // Logout occurred - clear the avatar
+                    self.cache.avatar_handle = None;
+                }
                 return task;
             }
             Message::View(view::Message::DismissReceivedCelebration) => {

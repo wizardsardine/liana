@@ -72,6 +72,8 @@ pub struct Cache {
     pub show_direction_badges: bool,
     /// Cached Lightning Address for display in the sidebar across all panels
     pub lightning_address: Option<String>,
+    /// Cached avatar image handle for display in the sidebar across all panels
+    pub avatar_handle: Option<iced::widget::image::Handle>,
     /// Id of the current Cube — needed by Spark Settings so the
     /// `update_settings_file` closure can find the right cube when
     /// persisting the `default_lightning_backend` picker change.
@@ -130,6 +132,7 @@ impl std::default::Default for Cache {
             btc_usd_price: None,
             show_direction_badges: true,
             lightning_address: None,
+            avatar_handle: None,
             cube_id: String::new(),
             current_cube_server_id: None,
             current_descriptor_fingerprint: None,

@@ -90,6 +90,14 @@ impl ConnectPanel {
             self.cube.clear_client();
         }
     }
+
+    /// Check if avatar should be loaded and return task if so.
+    pub fn check_and_load_avatar(&self) -> iced::Task<Message> {
+        if let Some(task) = self.cube.load_avatar_if_needed() {
+            return task;
+        }
+        iced::Task::none()
+    }
 }
 
 impl State for ConnectPanel {
@@ -154,8 +162,21 @@ impl State for ConnectPanel {
                 // The response includes lightning address if already claimed.
                 let now_authenticated = self.account.is_authenticated();
                 if !was_authenticated && now_authenticated {
+                    // First login - register cube, avatar will load after CubeRegistered
                     let register_task = self.cube.register_cube();
                     return iced::Task::batch([task, register_task]);
+                }
+                // Already authenticated - ensure cube is registered, then load avatar
+                if now_authenticated {
+                    if self.cube.server_cube_id.is_none() {
+                        // Need to register cube first, avatar will load after CubeRegistered
+                        let register_task = self.cube.register_cube();
+                        return iced::Task::batch([task, register_task]);
+                    } else {
+                        // Cube already registered, load avatar now
+                        let avatar_task = self.check_and_load_avatar();
+                        return iced::Task::batch([task, avatar_task]);
+                    }
                 }
                 task
             }
