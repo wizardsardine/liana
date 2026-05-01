@@ -1161,7 +1161,11 @@ async fn find_or_create_cube(
                         ));
                     }
                     target_cube.vault_wallet_id = Some(wallet_id.clone());
-                    let cube_clone = target_cube.clone();
+                    // Apply restore-flow credentials (PIN hash + fingerprint) if
+                    // restoring to this cube — same rationale as the empty-cube
+                    // fallback: the hash must match the newly-encrypted mnemonic.
+                    let cube_clone = decorate_new(target_cube.clone())?;
+                    *target_cube = cube_clone.clone();
                     let cube_name = target_cube.name.clone();
 
                     info!(
