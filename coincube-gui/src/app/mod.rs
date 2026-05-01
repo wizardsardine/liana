@@ -875,6 +875,9 @@ impl App {
             current_cube_backed_up: cube_settings.backed_up,
             current_cube_is_passkey: cube_settings.is_passkey_cube(),
             cube_id: cube_settings.id.clone(),
+            recovery_kit_last_backed_up_descriptor_fingerprint: cube_settings
+                .recovery_kit_last_backed_up_descriptor_fingerprint
+                .clone(),
             default_lightning_backend: cube_settings.default_lightning_backend,
             ..Default::default()
         };
@@ -1495,19 +1498,61 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.update_dispatch(message);
+        // Sync *after* dispatch: if this update just mutated
+        // `self.panels.connect.cube.server_cube_id` (e.g. a
+        // `CubeRegistered(Ok)` result) or loaded a wallet, the cache
+        // must reflect that by the time the next view render runs.
+        // A pre-dispatch sync would miss those same-call mutations
+        // and leave view layers one full message cycle behind.
+        self.sync_panel_derived_cache_fields();
+        task
+    }
+
+    /// Mirrors panel-owned state into `Cache` for cheap read access
+    /// by view layers and `State::reload()` callbacks that don't
+    /// reach into the panel hierarchy. Runs after every `update`
+    /// dispatch so same-tick mutations are observable by the next
+    /// render.
+    fn sync_panel_derived_cache_fields(&mut self) {
+        // Authoritative server cube id lives on ConnectPanel; views
+        // (Recovery-Kit card, future dashboards) read the Cache
+        // mirror. `None` until `CubeRegistered(Ok)` populates the
+        // panel's id.
+        self.cache.current_cube_server_id = self.panels.connect.cube.server_cube_id;
+
+        // W12 drift detection: SHA-256 over a JSON blob —
+        // microseconds — so running it every tick is fine and
+        // avoids a separate invalidation pathway tied to wallet
+        // changes. When the wallet is absent (no Vault yet) the
+        // fingerprint is `None`, which the card treats as "nothing
+        // to drift against".
+        self.cache.current_descriptor_fingerprint = self.wallet.as_ref().and_then(|w| {
+            use crate::app::state::settings::recovery_kit as rk;
+            // Canonical API string ("mainnet" for Bitcoin mainnet) —
+            // the fingerprint inputs must agree byte-for-byte with
+            // the string used at backup time (see `network_str` in
+            // `state::settings::recovery_kit`). Any divergence here
+            // would make every tick report a spurious drift.
+            let network = settings::network_to_api_string(self.cache.network);
+            rk::live_descriptor_fingerprint(w.as_ref(), &self.cube_settings.id, &network)
+        });
+    }
+
+    fn update_dispatch(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::View(view::Message::DismissToast(id)) => {
                 self.errors.retain(|(i, ..)| *i != id);
             }
             Message::View(view::Message::ShowError(msg)) => {
                 // Redirect ShowError to ShowToast with Error level
-                return self.update(Message::View(view::Message::ShowToast(
+                return self.update_dispatch(Message::View(view::Message::ShowToast(
                     log::Level::Error,
                     msg,
                 )));
             }
             Message::View(view::Message::ShowSuccess(msg)) => {
-                return self.update(Message::View(view::Message::ShowToast(
+                return self.update_dispatch(Message::View(view::Message::ShowToast(
                     log::Level::Info,
                     msg,
                 )));
@@ -1626,8 +1671,8 @@ impl App {
                                         self.cache.node_bitcoind_sync_progress = None;
                                         self.cache.node_bitcoind_ibd = None;
                                         self.cache.node_bitcoind_last_log = None;
-                                        let cfg_task =
-                                            self.update(Message::DaemonConfigLoaded(Ok(())));
+                                        let cfg_task = self
+                                            .update_dispatch(Message::DaemonConfigLoaded(Ok(())));
                                         return Task::batch([
                                             cfg_task,
                                             Task::done(Message::CacheUpdated),
@@ -1669,6 +1714,17 @@ impl App {
                         self.cube_settings.default_lightning_backend =
                             cube.default_lightning_backend;
                         self.cache.default_lightning_backend = cube.default_lightning_backend;
+                        // Mirror the drift fingerprint cache (W12). Refreshing
+                        // on every SettingsSaved keeps the Recovery-Kit card
+                        // in sync after a successful upload or remove.
+                        self.cache
+                            .recovery_kit_last_backed_up_descriptor_fingerprint = cube
+                            .recovery_kit_last_backed_up_descriptor_fingerprint
+                            .clone();
+                        self.cube_settings
+                            .recovery_kit_last_backed_up_descriptor_fingerprint = cube
+                            .recovery_kit_last_backed_up_descriptor_fingerprint
+                            .clone();
 
                         // Clear cached fiat display price if disabled.
                         // Note: btc_usd_price is NOT cleared — it's needed for
@@ -1769,7 +1825,8 @@ impl App {
                             match self.load_daemon_config(datadir, new_cfg) {
                                 Ok(()) => {
                                     info!("Switched to COINCUBE | Connect fallback after Bitcoind failure");
-                                    let cfg_task = self.update(Message::DaemonConfigLoaded(Ok(())));
+                                    let cfg_task =
+                                        self.update_dispatch(Message::DaemonConfigLoaded(Ok(())));
                                     return Task::batch([
                                         cfg_task,
                                         Task::done(Message::CacheUpdated),
@@ -1860,7 +1917,7 @@ impl App {
                         self.cache.node_bitcoind_last_log = None;
                     }
                     let res = self.load_daemon_config(self.cache.datadir_path.clone(), *cfg);
-                    return self.update(Message::DaemonConfigLoaded(res));
+                    return self.update_dispatch(Message::DaemonConfigLoaded(res));
                 } else {
                     tracing::warn!("Attempted to load daemon config without vault");
                 }
@@ -1885,6 +1942,54 @@ impl App {
                             self.breez_client.clone(),
                         );
                     }
+
+                    // W10 — nudge the user to back up the freshly-created
+                    // Vault to their Connect Recovery Kit. Fires
+                    // `LoadStatus` now; the `StatusLoaded` handler in
+                    // `state::settings::recovery_kit` reads this flag
+                    // and emits the toast only if the freshly-loaded
+                    // status shows the descriptor isn't already
+                    // backed up. Gating on the in-memory `status`
+                    // here (pre-fetch) would misfire: on app startup
+                    // and after Connect sign-out the cached value is
+                    // `None` even for users whose kit is complete.
+                    //
+                    // Both the flag and the `LoadStatus` dispatch are
+                    // gated on auth — unauthenticated users have no
+                    // Connect account to fetch against, and dispatching
+                    // the message anyway would just round-trip through
+                    // `load_status`'s early-return. Skipping saves the
+                    // message-queue hop and keeps the intent obvious.
+                    let nudge_task: Option<Task<Message>> =
+                        if self.panels.connect.account.is_authenticated() {
+                            self.panels
+                                .global_settings
+                                .recovery_kit
+                                .nudge_on_next_status_load = true;
+                            Some(Task::done(Message::View(view::Message::Settings(
+                                view::SettingsMessage::RecoveryKit(
+                                    view::RecoveryKitMessage::LoadStatus,
+                                ),
+                            ))))
+                        } else {
+                            None
+                        };
+                    // Forward to the current panel; batch the nudge in
+                    // only when we actually constructed one.
+                    if let (Some(daemon), Some(panel)) =
+                        (self.daemon.clone(), self.panels.current_mut())
+                    {
+                        let panel_task = panel.update(
+                            Some(daemon),
+                            &self.cache,
+                            Message::WalletUpdated(Ok(wallet)),
+                        );
+                        return match nudge_task {
+                            Some(nudge) => Task::batch([panel_task, nudge]),
+                            None => panel_task,
+                        };
+                    }
+                    return nudge_task.unwrap_or_else(Task::none);
                 }
 
                 // Forward the message to the current panel
@@ -2369,6 +2474,34 @@ impl App {
                     .panels
                     .global_settings
                     .update(self.daemon.clone(), &self.cache, msg);
+            }
+
+            // Cube Recovery Kit dispatch. Handled at App level because
+            // the handler needs the authenticated CoincubeClient, the
+            // Connect numeric cube id, and the live Wallet — none of
+            // which are plumbed through `State::update`. Mirrors the
+            // `cube_members::update(state, msg, client, cube_id)`
+            // pattern at `state/connect/cube_members.rs:79`.
+            Message::View(view::Message::Settings(view::SettingsMessage::RecoveryKit(msg))) => {
+                let seed_source = if self.cube_settings.is_passkey_cube() {
+                    crate::app::state::settings::recovery_kit::SeedSource::Passkey
+                } else {
+                    crate::app::state::settings::recovery_kit::SeedSource::Mnemonic
+                };
+                let client = self.authenticated_coincube_client();
+                let server_cube_id = self.panels.connect.cube.server_cube_id;
+                let wallet = self.wallet.clone();
+                let local_cube_id = self.cube_settings.id.clone();
+                return crate::app::state::settings::recovery_kit::update(
+                    &mut self.panels.global_settings.recovery_kit,
+                    msg,
+                    &self.cache,
+                    &local_cube_id,
+                    seed_source,
+                    client,
+                    server_cube_id,
+                    wallet,
+                );
             }
 
             // Route refundables updates directly to LiquidTransactions so that

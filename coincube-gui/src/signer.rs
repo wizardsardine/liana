@@ -83,6 +83,35 @@ impl Signer {
             Some((checksum.to_string(), timestamp)),
         )
     }
+
+    /// AES-encrypted variant of [`Signer::store`] — writes the
+    /// mnemonic file protected by `password` (Argon2id-derived key).
+    ///
+    /// Used by the Recovery Kit restore flow so the stored mnemonic
+    /// matches the layout a fresh-install Cube produces: the Liquid /
+    /// Spark BreezClient decrypts via the Cube's PIN on every open.
+    /// Without encryption, `MasterSigner::from_datadir_by_fingerprint`
+    /// still succeeds (it handles both shapes) but `load_breez_client`
+    /// refuses to decrypt an unencrypted blob with a password and the
+    /// app hangs on "Starting daemon…". Keeping the PIN-encrypted
+    /// layout uniform across fresh-install and restored Cubes avoids
+    /// that branch.
+    pub fn store_encrypted(
+        &self,
+        datadir_root: &CoincubeDirectory,
+        network: Network,
+        checksum: &str,
+        timestamp: i64,
+        password: &str,
+    ) -> Result<(), SignerError> {
+        self.key.store_encrypted(
+            datadir_root.path(),
+            network,
+            &self.curve,
+            Some((checksum.to_string(), timestamp)),
+            Some(password),
+        )
+    }
 }
 
 pub fn delete_wallet_mnemonics(

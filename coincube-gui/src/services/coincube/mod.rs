@@ -31,6 +31,21 @@ pub enum CoincubeError {
     VaultKeyholderLocked {
         vault_id: u64,
     },
+    /// 404 from an endpoint where the caller expects the resource may
+    /// legitimately be absent (e.g. `get_recovery_kit` when no kit exists
+    /// yet). Only the recovery-kit methods emit this variant today; other
+    /// callers continue to route 404 through `Unsuccessful` as before.
+    NotFound,
+    /// 429 from a rate-limited endpoint. `retry_after` is parsed from
+    /// the `Retry-After` response header per RFC 7231 §7.1.3 —
+    /// both *delta-seconds* (e.g. `60`) and *HTTP-date* (IMF-fixdate,
+    /// e.g. `Wed, 21 Oct 2026 07:28:00 GMT`) forms are accepted. An
+    /// HTTP-date that's already in the past is clamped to zero; a
+    /// missing or unparseable header falls back to 60s so the UI
+    /// always has a usable cooldown.
+    RateLimited {
+        retry_after: std::time::Duration,
+    },
 }
 
 impl From<serde_json::Error> for CoincubeError {
@@ -76,6 +91,10 @@ impl std::fmt::Display for CoincubeError {
                 "Can't add a keyholder to Vault #{} — the signing quorum is fixed at build time.",
                 vault_id
             ),
+            CoincubeError::NotFound => write!(f, "Not found"),
+            CoincubeError::RateLimited { retry_after } => {
+                write!(f, "Rate limited — retry after {}s", retry_after.as_secs())
+            }
         }
     }
 }
@@ -93,6 +112,26 @@ impl CoincubeError {
                 ..
             })
         )
+    }
+
+    /// True when the error is the typed 404 variant. Today only the
+    /// recovery-kit endpoints produce this; generic 404s still surface
+    /// as `Unsuccessful`.
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, CoincubeError::NotFound)
+    }
+
+    /// When the error is a typed 429 rate-limit, returns the cooldown
+    /// `Duration` computed from the server's `Retry-After` header.
+    /// Accepts both RFC 7231 forms (delta-seconds and HTTP-date);
+    /// past dates and missing/malformed headers are normalised to
+    /// safe defaults. Callers can use this to delay a retry or
+    /// display a countdown to the user.
+    pub fn rate_limit_retry_after(&self) -> Option<std::time::Duration> {
+        match self {
+            CoincubeError::RateLimited { retry_after } => Some(*retry_after),
+            _ => None,
+        }
     }
 }
 
@@ -1202,5 +1241,163 @@ impl CoincubeError {
             return env.error.code == ERR_KEY_ALREADY_USED_IN_VAULT;
         }
         false
+    }
+}
+
+// =============================================================================
+// Cube Recovery Kit (W7)
+// =============================================================================
+//
+// Backs the Settings → "Cube Recovery Kit" card and the installer restore
+// flow. See `plans/PLAN-cube-recovery-kit-desktop.md` §2.2.
+//
+// The `encrypted_*` fields are opaque base64 envelopes produced by
+// `services::recovery::envelope::encrypt`; the server stores and
+// returns them verbatim.
+
+/// Identifier for the only envelope scheme this client speaks today.
+/// Sent to the backend on upsert so the server can refuse kits it can't
+/// later hand back to older clients if the scheme ever changes.
+pub const RECOVERY_KIT_SCHEME_AES_256_GCM: &str = "aes-256-gcm";
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryKitStatus {
+    pub has_recovery_kit: bool,
+    pub has_encrypted_seed: bool,
+    pub has_encrypted_wallet_descriptor: bool,
+    pub encryption_scheme: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+/// Deserialize a field that may arrive as:
+///   - missing entirely (paired with `#[serde(default)]`),
+///   - explicit JSON `null`, or
+///   - a normal string.
+///
+/// All three reduce to the empty `String`, preserving the
+/// `.is_empty()` convention the rest of the codebase uses to
+/// detect "no half backed up". The current backend serialises
+/// absent halves as `""` and never emits null or omits the field,
+/// but `UpdateRecoveryKitRequest` already uses `*string` with
+/// `omitempty` on the request side — the response side may trend
+/// the same way, and this deserializer keeps the client robust
+/// across that evolution without an API break.
+fn null_as_empty_string<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryKit {
+    pub id: u64,
+    pub cube_id: u64,
+    /// Opaque base64 envelope for the seed half; the empty string
+    /// means "this half isn't backed up" (e.g. a passkey cube that
+    /// can't extract its seed). Tolerates `null` / missing on the
+    /// wire via `null_as_empty_string`; callers should continue to
+    /// check `.is_empty()` rather than `.is_some()`.
+    #[serde(default, deserialize_with = "null_as_empty_string")]
+    pub encrypted_cube_seed: String,
+    /// Opaque base64 envelope for the descriptor half; empty when
+    /// the kit is seed-only (no Vault created yet, or the Vault
+    /// wizard "skip" path). Same wire-tolerance as `encrypted_cube_seed`.
+    #[serde(default, deserialize_with = "null_as_empty_string")]
+    pub encrypted_wallet_descriptor: String,
+    pub encryption_scheme: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Body for POST / PUT `/api/v1/connect/cubes/{cubeId}/recovery-kit`. Omits
+/// `encryptedCubeSeed` / `encryptedWalletDescriptor` when `None`, which
+/// the backend's partial-field create path (backend PR 1) uses to decide
+/// which half of the kit the caller is touching.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpsertRecoveryKitRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_cube_seed: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_wallet_descriptor: Option<&'a str>,
+    pub encryption_scheme: &'a str,
+}
+
+#[cfg(test)]
+mod recovery_kit_response_tests {
+    //! Regression tests for `RecoveryKit` deserialisation tolerance.
+    //! The current backend always sends both ciphertext fields as
+    //! (possibly empty) strings, but the wire shape could evolve
+    //! toward nullable/omitted halves (request side already uses
+    //! `*string` with `omitempty`). Any of the four shapes below
+    //! must deserialise; `.is_empty()` is the caller's existing
+    //! "no half backed up" check.
+    use super::RecoveryKit;
+    use serde_json::json;
+
+    fn kit_with_halves(
+        seed: serde_json::Value,
+        descriptor: serde_json::Value,
+    ) -> serde_json::Value {
+        json!({
+            "id": 1,
+            "cubeId": 42,
+            "encryptedCubeSeed": seed,
+            "encryptedWalletDescriptor": descriptor,
+            "encryptionScheme": "aes-256-gcm",
+            "createdAt": "2026-04-23T00:00:00Z",
+            "updatedAt": "2026-04-23T00:00:00Z"
+        })
+    }
+
+    #[test]
+    fn deserialises_string_halves() {
+        let v = kit_with_halves(json!("CIPHER_A"), json!("CIPHER_D"));
+        let kit: RecoveryKit = serde_json::from_value(v).unwrap();
+        assert_eq!(kit.encrypted_cube_seed, "CIPHER_A");
+        assert_eq!(kit.encrypted_wallet_descriptor, "CIPHER_D");
+    }
+
+    #[test]
+    fn deserialises_empty_halves() {
+        // Current backend wire shape when one half isn't backed up.
+        let v = kit_with_halves(json!("CIPHER_A"), json!(""));
+        let kit: RecoveryKit = serde_json::from_value(v).unwrap();
+        assert_eq!(kit.encrypted_cube_seed, "CIPHER_A");
+        assert!(kit.encrypted_wallet_descriptor.is_empty());
+    }
+
+    #[test]
+    fn deserialises_null_halves() {
+        // Future-proofing: a server that serialises absent halves as
+        // JSON null instead of "" must not break the client.
+        let v = kit_with_halves(json!(null), json!(null));
+        let kit: RecoveryKit = serde_json::from_value(v).unwrap();
+        assert!(kit.encrypted_cube_seed.is_empty());
+        assert!(kit.encrypted_wallet_descriptor.is_empty());
+    }
+
+    #[test]
+    fn deserialises_missing_halves() {
+        // Future-proofing: a server with `omitempty` on the response
+        // (like `UpdateRecoveryKitRequest` already has on the request
+        // side) would omit the field entirely. `#[serde(default)]`
+        // handles that.
+        let v = json!({
+            "id": 1,
+            "cubeId": 42,
+            "encryptionScheme": "aes-256-gcm",
+            "createdAt": "2026-04-23T00:00:00Z",
+            "updatedAt": "2026-04-23T00:00:00Z"
+        });
+        let kit: RecoveryKit = serde_json::from_value(v).unwrap();
+        assert!(kit.encrypted_cube_seed.is_empty());
+        assert!(kit.encrypted_wallet_descriptor.is_empty());
     }
 }
