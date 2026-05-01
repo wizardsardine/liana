@@ -125,7 +125,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
         cache,
         content,
         &cache.cube_name,
-        None,
+        cache.avatar_handle.as_ref(),
         cache.lightning_address.as_deref(),
     )
 }

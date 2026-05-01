@@ -262,8 +262,14 @@ fn wallet_card<'a>(
                 .push(text("Vault").size(14))
                 .push(
                     Row::new()
+                        .spacing(10)
                         .align_y(Alignment::Center)
                         .push(Space::new().width(Length::Fill))
+                        .push(
+                            button::secondary(None, "Restore from Connect")
+                                .width(Length::Fixed(200.0))
+                                .on_press(Message::SetupVaultRestoreFromKit),
+                        )
                         .push(
                             button::primary(None, "Create Vault")
                                 .width(Length::Fixed(160.0))

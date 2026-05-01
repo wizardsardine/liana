@@ -96,7 +96,13 @@ pub struct Context {
     pub recovered_signer: Option<Arc<Signer>>,
     pub bitcoind_is_external: bool,
     pub use_coincube_connect: bool,
-    pub connect_jwt: Option<String>,
+    /// Connect JWT threaded across installer steps. Wrapped in
+    /// `Zeroizing<String>` so the heap allocation is scrubbed when the
+    /// `Context` (and any `Task::perform` clone of it) drops — keeps
+    /// the token off the residual heap between the step that writes it
+    /// (`CoincubeConnectStep` or `RecoveryKitRestoreStep`) and the
+    /// downstream step that copies it into `EsploraConfig.token`.
+    pub connect_jwt: Option<zeroize::Zeroizing<String>>,
     pub install_node_alongside_connect: bool,
     pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
     pub internal_bitcoind: Option<Bitcoind>,
@@ -130,6 +136,24 @@ pub struct Context {
     /// with an "approximate" caveat in the Final step's success caption.
     /// `None` when the descriptor has no recovery paths.
     pub connect_vault_timelock_days: Option<i32>,
+    /// PIN chosen by the user during a Recovery Kit restore. Populated
+    /// by `RestorePinSetupStep` (between `RecoveryKitRestoreStep` and
+    /// the node-setup step in `UserFlow::RestoreFromRecoveryKit`).
+    ///
+    /// Downstream consumers:
+    /// - `install_local_wallet` branches on this to call
+    ///   `Signer::store_encrypted(..., &pin)` rather than the
+    ///   unencrypted `store(...)` so the Liquid/Spark BreezClient can
+    ///   decrypt the mnemonic on subsequent Cube opens.
+    /// - `gui::tab::find_or_create_cube` / the `CubeSaved` handler use
+    ///   the value to populate `CubeSettings.security_pin_hash` and
+    ///   `CubeSettings.master_signer_fingerprint`, matching what a
+    ///   fresh-install Cube stores.
+    ///
+    /// Wrapped in `Zeroizing<String>` so the heap allocation is zeroed
+    /// when the `Context` clone held by `Task::perform` drops after
+    /// the install completes. `None` for non-restore flows.
+    pub restore_pin: Option<zeroize::Zeroizing<String>>,
 }
 
 impl Context {
@@ -169,6 +193,23 @@ impl Context {
             cube_name: cube_settings.map(|cs| cs.name.clone()),
             connect_vault_members: Vec::new(),
             connect_vault_timelock_days: None,
+            restore_pin: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Context;
+
+    /// Compile-time pin: if anyone reverts `Context.connect_jwt` to a
+    /// plain `Option<String>`, this type-level assertion stops
+    /// compiling. Keeps the JWT's scrub-on-drop guarantee intact
+    /// across the installer → Esplora handoff.
+    #[test]
+    fn connect_jwt_is_zeroizing_wrapped() {
+        #[allow(dead_code)]
+        const _: fn(&Context) -> Option<&zeroize::Zeroizing<String>> =
+            |ctx| ctx.connect_jwt.as_ref();
     }
 }

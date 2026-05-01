@@ -1,12 +1,11 @@
 use iced::{
     alignment::Horizontal,
-    widget::{pick_list, scrollable, Button, Space, Stack, Toggler},
+    widget::{pick_list, scrollable, tooltip as iced_tooltip, Button, Space, Stack, Toggler},
     Alignment, Length, Subscription, Task,
 };
 
 use coincube_core::{bip39, miniscript::bitcoin::Network};
 use coincube_ui::{
-    color,
     component::{button, card, network_banner, notification, spinner, text::*},
     icon, image, theme,
     widget::{modal::Modal, CheckBox, Column, Container, Element, Row},
@@ -17,7 +16,7 @@ use tokio::runtime::Handle;
 use crate::feature_flags;
 use crate::pin_input;
 use crate::services::coincube::{
-    CubeLimitsResponse, CubeResponse, RegisterCubeRequest, UpdateCubeRequest,
+    CoincubeClient, CubeLimitsResponse, CubeResponse, RegisterCubeRequest, UpdateCubeRequest,
 };
 #[cfg(not(target_os = "macos"))]
 use crate::services::passkey::CeremonyMode;
@@ -284,15 +283,38 @@ impl Launcher {
                 let datadir_path = self.datadir_path.clone();
                 let network = self.network;
                 Task::perform(async move { (datadir_path, network) }, |(d, n)| {
-                    Message::Install(d, n, UserFlow::AddWallet)
+                    Message::Install(d, n, UserFlow::AddWallet, None)
                 })
             }
             Message::View(ViewMessage::CreateWallet) => {
                 let datadir_path = self.datadir_path.clone();
                 let network = self.network;
                 Task::perform(async move { (datadir_path, network) }, |(d, n)| {
-                    Message::Install(d, n, UserFlow::CreateWallet)
+                    Message::Install(d, n, UserFlow::CreateWallet, None)
                 })
+            }
+            Message::View(ViewMessage::RestoreFromRecoveryKit) => {
+                // W13 — same launch shape as CreateWallet; the
+                // installer picks the Recovery-Kit step sequence off
+                // the UserFlow.
+                //
+                // Forward the launcher's already-authenticated Connect
+                // client so `RecoveryKitRestoreStep` can skip its own
+                // email + OTP form (the user already signed in to see
+                // the list of remote cubes on this very screen —
+                // re-prompting them for the same credentials right
+                // after they clicked "restore this one" is pure churn).
+                // Falls back to `None` when the session isn't active
+                // yet (developer-mode path, or stale cached launcher
+                // state), in which case the step's own auth form
+                // kicks in.
+                let datadir_path = self.datadir_path.clone();
+                let network = self.network;
+                let client = self.connect_account.authenticated_client();
+                Task::perform(
+                    async move { (datadir_path, network, client) },
+                    |(d, n, c)| Message::Install(d, n, UserFlow::RestoreFromRecoveryKit, c),
+                )
             }
             Message::View(ViewMessage::ShareXpubs) => {
                 if !self.developer_mode {
@@ -304,7 +326,7 @@ impl Launcher {
                 let datadir_path = self.datadir_path.clone();
                 let network = self.network;
                 Task::perform(async move { (datadir_path, network) }, |(d, n)| {
-                    Message::Install(d, n, UserFlow::ShareXpubs)
+                    Message::Install(d, n, UserFlow::ShareXpubs, None)
                 })
             }
             Message::View(ViewMessage::ShowCreateCube(show)) => {
@@ -2369,29 +2391,47 @@ fn cubes_list_item<'a>(cube: &'a CubeSettings, i: usize) -> Element<'a, ViewMess
 }
 
 fn remote_cube_list_item<'a>(cube: &'a RemoteCube) -> Element<'a, ViewMessage> {
-    let disabled_style = |_t: &theme::Theme| theme::text::custom(color::GREY_3);
+    // Render the cube-name area as a plain card, NOT a Button. Using a
+    // Button without `.on_press` makes Iced render it in
+    // `Status::Disabled` (alpha 0.2 on the text), which made the whole
+    // row read as "disabled" to users and obscured the fact that the
+    // cloud-download icon on the right is an active restore trigger.
+    let card = Container::new(
+        Column::new().spacing(4).push(p1_bold(&cube.name)).push(
+            p1_regular("On another device — click the download icon to restore")
+                .style(theme::text::secondary),
+        ),
+    )
+    .padding(15)
+    .width(Length::Fixed(500.0))
+    .style(theme::card::simple);
+
+    // W13 entry point on the launcher: clicking cloud-arrow-down on a
+    // remote-only cube kicks off the Connect-Recovery-Kit restore flow.
+    // The flow's cube picker (`RecoveryKitRestoreStep`) lets the user
+    // choose which cube on their Connect account to restore — clicking
+    // this specific row doesn't preselect `cube.uuid`, so the tooltip
+    // is deliberately generic to avoid implying otherwise. Threading
+    // the clicked uuid through `ViewMessage::RestoreFromRecoveryKit`
+    // → `UserFlow::RestoreFromRecoveryKit` → the step's cube picker
+    // is a future refinement.
+    let restore_button = iced_tooltip::Tooltip::new(
+        Button::new(icon::cloud_arrow_down_icon())
+            .style(theme::button::secondary)
+            .padding(10)
+            .on_press(ViewMessage::RestoreFromRecoveryKit),
+        Container::new(p1_regular("Choose a Recovery Kit to restore"))
+            .padding(8)
+            .style(theme::card::simple),
+        iced_tooltip::Position::Bottom,
+    );
+
     Container::new(
         Row::new()
             .align_y(Alignment::Center)
             .spacing(20)
-            .push(
-                Container::new(
-                    Button::new(
-                        Column::new()
-                            .push(p1_bold(&cube.name).style(disabled_style))
-                            .push(p1_regular("On another device").style(disabled_style)),
-                    )
-                    .padding(15)
-                    .style(theme::button::container_border)
-                    .width(Length::Fixed(500.0)),
-                )
-                .style(theme::card::simple),
-            )
-            .push(
-                Button::new(icon::cloud_arrow_down_icon())
-                    .style(theme::button::secondary)
-                    .padding(10),
-            )
+            .push(card)
+            .push(restore_button)
             .push(
                 Button::new(icon::trash_icon())
                     .style(theme::button::secondary)
@@ -2612,7 +2652,13 @@ fn map_connect_task(task: Task<app::message::Message>) -> Task<Message> {
 #[derive(Debug, Clone)]
 pub enum Message {
     View(ViewMessage),
-    Install(CoincubeDirectory, Network, UserFlow),
+    /// Launch the installer. The trailing `Option<CoincubeClient>`
+    /// forwards the launcher's already-authenticated Connect session
+    /// into the installer so steps like `RecoveryKitRestoreStep` don't
+    /// demand the user retype email + OTP a second time. `None` means
+    /// "launcher had no Connect session" — the relevant installer step
+    /// then falls back to its own auth form.
+    Install(CoincubeDirectory, Network, UserFlow, Option<CoincubeClient>),
     Checked(Result<State, String>),
     Run(
         CoincubeDirectory,
@@ -2660,6 +2706,10 @@ pub enum Message {
 pub enum ViewMessage {
     ImportWallet,
     CreateWallet,
+    /// W13 — launch the installer in "restore from Connect Recovery
+    /// Kit" mode. Sibling to `CreateWallet` / `ImportWallet` in the
+    /// cube-setup menu.
+    RestoreFromRecoveryKit,
     ShowCreateCube(bool),
     CubeNameEdited(String),
     CreateCube,

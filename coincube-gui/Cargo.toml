@@ -109,9 +109,11 @@ encrypted_backup = { version = "0.0.1", default-features = false, features = [
 	"miniscript_12_0",
 ], package = "bitcoin-encrypted-backup" }
 
-zeroize = "1"
+zeroize = { version = "1", features = ["derive"] }
 chacha20poly1305 = "0.10.1"
+aes-gcm = { version = "0.10", features = ["aes"] }
 sha2 = "0.11.0"
+zxcvbn = "3"
 
 dotenvy = "0.15.7"
 
