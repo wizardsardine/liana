@@ -16,6 +16,13 @@ use crate::{
 
 use super::{CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER};
 
+/// Stored session for per-cube auto-connect
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct StoredSession {
+    #[serde(flatten)]
+    login: LoginResponse,
+}
+
 // ── Checkout state machine ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -219,6 +226,8 @@ pub struct ConnectAccountPanel {
     pub step: ConnectFlowStep,
     pub active_sub: ConnectSubMenu,
     pub client: CoincubeClient,
+    /// Current cube UUID for per-cube auto-connect tracking
+    current_cube_uuid: Option<String>,
     pub user: Option<User>,
     pub plan: Option<ConnectPlan>,
     pub verified_devices: Option<Vec<VerifiedDevice>>,
@@ -246,6 +255,7 @@ impl ConnectAccountPanel {
             step: ConnectFlowStep::CheckingSession,
             active_sub: ConnectSubMenu::LightningAddress,
             client: CoincubeClient::new(),
+            current_cube_uuid: None,
             user: None,
             plan: None,
             verified_devices: None,
@@ -271,13 +281,32 @@ impl ConnectAccountPanel {
         }
     }
 
+    /// Returns the keyring key for the current cube, or None if no cube is set.
+    /// Format: "cube_{uuid}" for per-cube isolated sessions.
+    fn keyring_key_for_cube(&self) -> Option<String> {
+        self.current_cube_uuid
+            .as_ref()
+            .map(|uuid| format!("cube_{}", uuid))
+    }
+
     pub fn is_authenticated(&self) -> bool {
         matches!(self.step, ConnectFlowStep::Dashboard)
     }
 
-    /// Returns `true` if a session has been previously stored in the OS keyring,
-    /// indicating the user has (or had) a Connect account on this device.
-    pub fn has_stored_session() -> bool {
+    /// Returns `true` if a session has been previously stored in the OS keyring
+    /// for the current cube, or in the legacy global key.
+    pub fn has_stored_session(&self) -> bool {
+        // Check cube-specific key first
+        if let Some(key) = self.keyring_key_for_cube() {
+            if keyring::Entry::new(CONNECT_KEYRING_SERVICE, &key)
+                .ok()
+                .and_then(|e| e.get_secret().ok())
+                .is_some()
+            {
+                return true;
+            }
+        }
+        // Fall back to legacy global key
         keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER)
             .ok()
             .and_then(|e| e.get_secret().ok())
@@ -340,30 +369,52 @@ impl ConnectAccountPanel {
         load_contacts_data(&self.client, self.session_generation)
     }
 
-    fn load_session_from_keyring(&mut self) -> Option<LoginResponse> {
-        match keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
-            Ok(entry) => match entry.get_secret() {
-                Ok(bytes) => match serde_json::from_slice::<LoginResponse>(&bytes) {
-                    Ok(l) => Some(l),
-                    Err(e) => {
-                        log::error!("[CONNECT] Failed to parse keyring session: {:?}", e);
-                        None
+    fn load_session_from_keyring(&mut self) -> Option<StoredSession> {
+        // Try cube-specific key first
+        if let Some(key) = self.keyring_key_for_cube() {
+            if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, &key) {
+                if let Ok(bytes) = entry.get_secret() {
+                    if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
+                        return Some(session);
                     }
-                },
-                Err(_) => None,
-            },
-            Err(e) => {
-                log::error!("[CONNECT] Keyring inaccessible: {}", e);
-                None
+                }
+            }
+            // Cube-specific not found - try legacy global as fallback
+            if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
+                if let Ok(bytes) = entry.get_secret() {
+                    if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
+                        // Migrate to cube-specific key
+                        self.save_session_to_keyring(&session);
+                        log::info!(
+                            "[CONNECT] Migrated legacy session to cube-specific key for {}",
+                            key
+                        );
+                        return Some(session);
+                    }
+                }
+            }
+        } else {
+            // No cube UUID set - try legacy global key only
+            if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
+                if let Ok(bytes) = entry.get_secret() {
+                    if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
+                        return Some(session);
+                    }
+                }
             }
         }
+        None
     }
 
-    fn save_session_to_keyring(&self, login: &LoginResponse) {
-        match keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
+    fn save_session_to_keyring(&self, session: &StoredSession) {
+        let Some(key) = self.keyring_key_for_cube() else {
+            log::warn!("[CONNECT] Cannot save session: no cube UUID set");
+            return;
+        };
+        match keyring::Entry::new(CONNECT_KEYRING_SERVICE, &key) {
             Ok(entry) => {
                 let _ = entry.delete_credential();
-                if let Ok(bytes) = serde_json::to_vec(login) {
+                if let Ok(bytes) = serde_json::to_vec(session) {
                     if let Err(e) = entry.set_secret(&bytes) {
                         log::error!("[CONNECT] Failed to save session to keyring: {}", e);
                     }
@@ -374,16 +425,28 @@ impl ConnectAccountPanel {
     }
 
     fn clear_keyring_session(&self) {
+        // Clear cube-specific session if we have a cube UUID
+        if let Some(key) = self.keyring_key_for_cube() {
+            if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, &key) {
+                let _ = entry.delete_credential();
+            }
+        }
+        // Also clear legacy global session for migration cleanup
         if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
             let _ = entry.delete_credential();
         }
     }
 
-    fn post_login_tasks(&mut self, login: LoginResponse) -> iced::Task<Message> {
-        self.save_session_to_keyring(&login);
-        self.client.set_token(&login.token);
+    /// Set the current cube UUID for per-cube auto-connect tracking
+    pub fn set_current_cube_uuid(&mut self, cube_uuid: Option<String>) {
+        self.current_cube_uuid = cube_uuid;
+    }
 
-        let user = login.user;
+    fn post_login_tasks(&mut self, session: StoredSession) -> iced::Task<Message> {
+        self.save_session_to_keyring(&session);
+        self.client.set_token(&session.login.token);
+
+        let user = session.login.user;
         iced::Task::done(Message::View(view::Message::ConnectAccount(
             ConnectAccountMessage::SessionLoaded { user, plan: None },
         )))
@@ -392,8 +455,9 @@ impl ConnectAccountPanel {
     pub fn update_message(&mut self, msg: ConnectAccountMessage) -> iced::Task<Message> {
         match msg {
             ConnectAccountMessage::Init => {
+                // Per-cube session storage: if a session exists for this cube, auto-connect
                 if let Some(session) = self.load_session_from_keyring() {
-                    let refresh_token = session.refresh_token.clone();
+                    let refresh_token = session.login.refresh_token.clone();
                     // Transition out of CheckingSession so re-navigation
                     // won't re-trigger Init while the refresh is in flight.
                     self.step = ConnectFlowStep::Login {
@@ -404,6 +468,7 @@ impl ConnectAccountPanel {
                         ConnectAccountMessage::RefreshSession { refresh_token },
                     )));
                 }
+                // No session for this cube - show Login form
                 self.step = ConnectFlowStep::Login {
                     email: String::new(),
                     loading: false,
@@ -443,7 +508,8 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::SetSession(login) => {
-                return self.post_login_tasks(login);
+                let session = StoredSession { login };
+                return self.post_login_tasks(session);
             }
 
             ConnectAccountMessage::SessionLoaded { user, plan } => {
@@ -926,46 +992,54 @@ impl ConnectAccountPanel {
                 self.show_billing_history = !self.show_billing_history;
                 if self.show_billing_history {
                     let gen = self.session_generation;
-                    let client = self.client.clone();
-                    return iced::Task::perform(
-                        async move {
-                            client
-                                .get_billing_history()
-                                .await
-                                .map_err(|e| e.to_string())
-                        },
-                        move |result| {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::BillingHistoryLoaded(result, gen),
-                            ))
-                        },
-                    );
-                }
-            }
-
-            ConnectAccountMessage::BillingHistoryLoaded(result, gen) => {
-                if gen == self.session_generation {
-                    match result {
-                        Ok(history) => self.billing_history = Some(history),
-                        Err(e) => {
-                            // Leave billing_history as None so ToggleBillingHistory retries
-                            self.error = Some(e);
-                        }
-                    }
+                    let c1 = self.client.clone();
+                    let c2 = self.client.clone();
+                    return iced::Task::batch([
+                        iced::Task::perform(
+                            async move { c1.get_billing_history().await },
+                            move |res| match res {
+                                Ok(history) => Message::View(view::Message::ConnectAccount(
+                                    ConnectAccountMessage::BillingHistoryLoaded(Ok(history), gen),
+                                )),
+                                Err(e) => Message::View(view::Message::ConnectAccount(
+                                    ConnectAccountMessage::BillingHistoryLoaded(
+                                        Err(e.to_string()),
+                                        gen,
+                                    ),
+                                )),
+                            },
+                        ),
+                        iced::Task::perform(
+                            async move { c2.get_user().await },
+                            move |res| match res {
+                                Ok(user) => Message::View(view::Message::ConnectAccount(
+                                    ConnectAccountMessage::SessionLoaded { user, plan: None },
+                                )),
+                                Err(e) => Message::View(view::Message::ConnectAccount(
+                                    ConnectAccountMessage::RefreshFailed(e.to_string()),
+                                )),
+                            },
+                        ),
+                    ]);
                 }
             }
             ConnectAccountMessage::Contacts(contacts_msg) => {
                 return self.update_contacts(contacts_msg);
             }
-
-            ConnectAccountMessage::Error(e) => {
-                log::error!("[CONNECT] Error: {}", e);
-                self.error = Some(e);
-                match &mut self.step {
-                    ConnectFlowStep::Login { loading, .. } => *loading = false,
-                    ConnectFlowStep::Register { loading, .. } => *loading = false,
-                    ConnectFlowStep::OtpVerification { sending, .. } => *sending = false,
-                    _ => {}
+            ConnectAccountMessage::Error(error_msg) => {
+                self.error = Some(error_msg);
+            }
+            ConnectAccountMessage::BillingHistoryLoaded(result, gen) => {
+                if gen == self.session_generation {
+                    match result {
+                        Ok(history) => {
+                            self.billing_history = Some(history);
+                            self.error = None;
+                        }
+                        Err(e) => {
+                            self.error = Some(e);
+                        }
+                    }
                 }
             }
         }
