@@ -385,6 +385,10 @@ impl ConnectAccountPanel {
                     if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
                         // Migrate to cube-specific key
                         self.save_session_to_keyring(&session);
+                        // Delete legacy credential to prevent other cubes from reusing it
+                        if let Err(e) = entry.delete_credential() {
+                            log::warn!("[CONNECT] Failed to delete legacy session after migration: {}", e);
+                        }
                         log::info!(
                             "[CONNECT] Migrated legacy session to cube-specific key for {}",
                             key
