@@ -898,10 +898,7 @@ impl App {
         cache.has_p2p = panels.p2p.is_some();
 
         let set_cube_task = panels.connect.set_cube_uuid(Some(cube_settings.id.clone()));
-        let cmd = iced::Task::batch([
-            set_cube_task,
-            panels.global_home.reload(None, None),
-        ]);
+        let cmd = iced::Task::batch([set_cube_task, panels.global_home.reload(None, None)]);
 
         (
             Self {

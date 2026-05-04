@@ -387,7 +387,10 @@ impl ConnectAccountPanel {
                         self.save_session_to_keyring(&session);
                         // Delete legacy credential to prevent other cubes from reusing it
                         if let Err(e) = entry.delete_credential() {
-                            log::warn!("[CONNECT] Failed to delete legacy session after migration: {}", e);
+                            log::warn!(
+                                "[CONNECT] Failed to delete legacy session after migration: {}",
+                                e
+                            );
                         }
                         log::info!(
                             "[CONNECT] Migrated legacy session to cube-specific key for {}",
@@ -411,9 +414,13 @@ impl ConnectAccountPanel {
     }
 
     fn save_session_to_keyring(&self, session: &StoredSession) {
-        let Some(key) = self.keyring_key_for_cube() else {
-            log::warn!("[CONNECT] Cannot save session: no cube UUID set");
-            return;
+        // Use cube-specific key if available, otherwise fall back to legacy global key
+        let (key, is_legacy) = match self.keyring_key_for_cube() {
+            Some(key) => (key, false),
+            None => {
+                log::info!("[CONNECT] No cube UUID set, using legacy global session key");
+                (CONNECT_KEYRING_USER.to_string(), true)
+            }
         };
         match keyring::Entry::new(CONNECT_KEYRING_SERVICE, &key) {
             Ok(entry) => {
@@ -421,6 +428,8 @@ impl ConnectAccountPanel {
                 if let Ok(bytes) = serde_json::to_vec(session) {
                     if let Err(e) = entry.set_secret(&bytes) {
                         log::error!("[CONNECT] Failed to save session to keyring: {}", e);
+                    } else if is_legacy {
+                        log::info!("[CONNECT] Saved session to legacy global key");
                     }
                 }
             }
