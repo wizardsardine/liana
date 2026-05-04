@@ -4,6 +4,8 @@ mod menu;
 pub mod modal;
 pub mod text_input;
 
+use iced::Length;
+
 use crate::theme::Theme;
 
 pub type Renderer = iced::Renderer;
@@ -42,6 +44,8 @@ impl<'a, Message> ColumnExt<'a, Message> for Column<'a, Message> {
 pub trait SpaceExt {
     fn with_width(width: impl Into<iced::Length>) -> iced::widget::Space;
     fn with_height(height: impl Into<iced::Length>) -> iced::widget::Space;
+    fn fill_width() -> iced::widget::Space;
+    fn fill_height() -> iced::widget::Space;
 }
 
 impl SpaceExt for iced::widget::Space {
@@ -50,6 +54,14 @@ impl SpaceExt for iced::widget::Space {
     }
     fn with_height(height: impl Into<iced::Length>) -> iced::widget::Space {
         iced::widget::Space::new().height(height)
+    }
+
+    fn fill_width() -> iced::widget::Space {
+        iced::widget::Space::new().width(Length::Fill)
+    }
+
+    fn fill_height() -> iced::widget::Space {
+        iced::widget::Space::new().height(Length::Fill)
     }
 }
 
