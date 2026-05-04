@@ -1014,15 +1014,17 @@ impl ConnectAccountPanel {
                             },
                         ),
                         iced::Task::perform(
-                            async move { c2.get_user().await },
-                            move |res| match res {
-                                Ok(user) => Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::SessionLoaded { user, plan: None },
-                                )),
-                                Err(e) => Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::RefreshFailed(e.to_string()),
-                                )),
+                            async move {
+                                match c2.get_user().await {
+                                    Ok(u) => Message::View(view::Message::ConnectAccount(
+                                        ConnectAccountMessage::UserProfileLoaded(u),
+                                    )),
+                                    Err(e) => Message::View(view::Message::ConnectAccount(
+                                        ConnectAccountMessage::UserProfileFailed(e.to_string()),
+                                    )),
+                                }
                             },
+                            |m| m,
                         ),
                     ]);
                 }
@@ -1045,6 +1047,14 @@ impl ConnectAccountPanel {
                         }
                     }
                 }
+            }
+            ConnectAccountMessage::UserProfileLoaded(user) => {
+                // Non-auth profile refresh - only update user, no step/session changes
+                self.user = Some(user);
+            }
+            ConnectAccountMessage::UserProfileFailed(error) => {
+                // Non-auth error - just show error, don't redirect to login
+                self.error = Some(error);
             }
         }
 

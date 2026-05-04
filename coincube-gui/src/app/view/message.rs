@@ -944,6 +944,10 @@ pub enum ConnectAccountMessage {
         u64,
     ),
     ToggleBillingHistory,
+    /// User profile refreshed (billing history view update)
+    UserProfileLoaded(crate::services::coincube::User),
+    /// User profile refresh failed (non-auth error)
+    UserProfileFailed(String),
 }
 
 #[derive(Debug, Clone)]
