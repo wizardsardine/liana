@@ -91,6 +91,23 @@ impl ConnectPanel {
         }
     }
 
+    /// Set the current cube UUID for per-cube auto-connect tracking.
+    /// Returns a Task to trigger session check if in CheckingSession state.
+    pub fn set_cube_uuid(&mut self, cube_uuid: Option<String>) -> iced::Task<Message> {
+        self.account.set_current_cube_uuid(cube_uuid.clone());
+
+        // If we're in CheckingSession and now have a cube UUID, trigger Init to check for session
+        if matches!(self.account.step, ConnectFlowStep::CheckingSession) {
+            if cube_uuid.is_some() {
+                return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Init,
+                )));
+            }
+        }
+
+        iced::Task::none()
+    }
+
     /// Check if avatar should be loaded and return task if so.
     pub fn check_and_load_avatar(&self) -> iced::Task<Message> {
         if let Some(task) = self.cube.load_avatar_if_needed() {

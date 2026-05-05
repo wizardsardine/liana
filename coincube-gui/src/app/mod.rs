@@ -797,6 +797,8 @@ impl App {
                 .global_home
                 .reload(Some(daemon.clone()), Some(wallet.clone())),
         );
+        let set_cube_task = panels.connect.set_cube_uuid(Some(cube_settings.id.clone()));
+        tasks.push(set_cube_task);
         let cmd = Task::batch(tasks);
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
@@ -895,7 +897,8 @@ impl App {
         let mut cache = cache;
         cache.has_p2p = panels.p2p.is_some();
 
-        let cmd = panels.global_home.reload(None, None);
+        let set_cube_task = panels.connect.set_cube_uuid(Some(cube_settings.id.clone()));
+        let cmd = iced::Task::batch([set_cube_task, panels.global_home.reload(None, None)]);
 
         (
             Self {
