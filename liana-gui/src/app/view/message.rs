@@ -5,7 +5,10 @@ use crate::{
     node::bitcoind::RpcAuthType,
     services::fiat::{Currency, PriceSource},
 };
-use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
+use liana::miniscript::bitcoin::{
+    bip32::{ChildNumber, Fingerprint},
+    Address, OutPoint,
+};
 
 pub trait Close {
     fn close() -> Self;
@@ -32,7 +35,10 @@ pub enum Message {
     Previous,
     SelectHardwareWallet(usize),
     CreateRbf(CreateRbfMessage),
-    ShowQrCode(usize),
+    ShowAddressQrCode {
+        address: Option<(Address, ChildNumber)>,
+        row_index: Option<usize>,
+    },
     ImportExport(ImportExportMessage),
     HideRescanWarning,
     ExportPsbt,

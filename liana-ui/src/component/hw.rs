@@ -1,12 +1,18 @@
-use crate::{color, component::text, icon, image, theme, widget::*};
+use crate::{
+    color,
+    component::text::{self, p1_regular},
+    icon, image, theme,
+    widget::*,
+};
 use bitcoin::bip32::{ChildNumber, Fingerprint};
 use iced::{
-    alignment::Vertical,
+    alignment::{Horizontal, Vertical},
     widget::{column, container, row, tooltip, Space},
     Alignment, Length,
 };
-use std::borrow::Cow;
-use std::fmt::Display;
+use std::{borrow::Cow, fmt::Display};
+
+const PADDING: u16 = 10;
 
 pub fn locked_hardware_wallet<'a, T: 'a, K: Display>(
     kind: K,
@@ -33,7 +39,7 @@ pub fn locked_hardware_wallet<'a, T: 'a, K: Display>(
         ])
         .width(Length::Fill),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn supported_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
@@ -57,7 +63,7 @@ pub fn supported_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
         ])
         .width(Length::Fill),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -139,7 +145,7 @@ pub fn supported_hardware_wallet_with_account<
             .push_maybe(display_account.map(|a| column![Space::with_height(8), a])),
     )
     .align_y(Alignment::Center)
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn warning_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Display>(
@@ -176,7 +182,7 @@ pub fn warning_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Displa
         ])
         .align_y(Alignment::Center),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn unimplemented_method_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
@@ -199,7 +205,7 @@ pub fn unimplemented_method_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
                 .width(Length::Fill),
             )
             .width(Length::Fill)
-            .padding(10),
+            .padding(PADDING),
             message,
             tooltip::Position::Bottom,
         )
@@ -233,7 +239,7 @@ pub fn disabled_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
                 .align_y(Vertical::Center),
         )
         .width(Length::Fill)
-        .padding(10)
+        .padding(PADDING)
         .style(theme::card::simple),
     )
     .width(Length::Fill)
@@ -250,6 +256,27 @@ pub fn unrelated_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
         fingerprint,
         "This signing device is not related to this Liana wallet.",
     )
+}
+
+pub fn show_qr_code<'a, M: 'a + 'static>(
+    tt: Option<&'static str>,
+    msg: Option<M>,
+) -> Button<'a, M> {
+    let mut btn = Button::new(
+        Row::new()
+            .push(icon::qr_icon().size(30))
+            .push(p1_regular("Show QR Code"))
+            .push_maybe(tt.map(super::tooltip))
+            .spacing(20)
+            .align_y(Alignment::Center)
+            .padding(PADDING + 5),
+    )
+    .style(theme::button::secondary)
+    .width(Length::Fill);
+    if let Some(msg) = msg {
+        btn = btn.on_press(msg);
+    }
+    btn
 }
 
 pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
@@ -282,7 +309,7 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
         ])
         .align_y(Alignment::Center),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn selected_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Display>(
@@ -333,7 +360,7 @@ pub fn selected_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Displ
             }))
             .push(image::success_mark_icon().width(Length::Fixed(50.0))),
     )
-    .padding(10)
+    .padding(PADDING)
     .align_y(Alignment::Center)
 }
 
@@ -369,7 +396,7 @@ pub fn sign_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Displa
         ])
         .align_y(Alignment::Center),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn registration_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
@@ -404,7 +431,7 @@ pub fn registration_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
         ])
         .align_y(Alignment::Center),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn wrong_network_hardware_wallet<'a, T: 'static, K: Display, V: Display>(
@@ -436,7 +463,7 @@ pub fn wrong_network_hardware_wallet<'a, T: 'static, K: Display, V: Display>(
         ])
         .align_y(Alignment::Center),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn unsupported_hardware_wallet<'a, T: 'static, K: Display, V: Display>(
@@ -468,7 +495,7 @@ pub fn unsupported_hardware_wallet<'a, T: 'static, K: Display, V: Display>(
         ])
         .align_y(Alignment::Center),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn unsupported_version_hardware_wallet<'a, T: 'static, K: Display, V: Display, S: Display>(
@@ -499,7 +526,7 @@ pub fn unsupported_version_hardware_wallet<'a, T: 'static, K: Display, V: Displa
         ])
         .align_y(Alignment::Center),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn taproot_not_supported_device<'a, T: 'static, K: Display>(kind: K) -> Container<'a, T> {
@@ -512,7 +539,7 @@ pub fn taproot_not_supported_device<'a, T: 'static, K: Display>(kind: K) -> Cont
         .into()])
         .align_y(Alignment::Center),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
@@ -544,7 +571,7 @@ pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
         ])
         .align_y(Alignment::Center),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn selected_hot_signer<'a, T: 'a, F: Display>(
@@ -573,7 +600,7 @@ pub fn selected_hot_signer<'a, T: 'a, F: Display>(
         ])
         .align_y(Alignment::Center),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn unselected_hot_signer<'a, T: 'a, F: Display>(
@@ -597,7 +624,7 @@ pub fn unselected_hot_signer<'a, T: 'a, F: Display>(
         ])
         .width(Length::Fill),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn hot_signer<'a, T: 'a, F: Display>(
@@ -629,7 +656,7 @@ pub fn hot_signer<'a, T: 'a, F: Display>(
             .push(Space::with_width(Length::Fill))
             .align_y(Vertical::Center),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn selected_provider_key<'a, T: 'a, F: Display>(
@@ -657,7 +684,7 @@ pub fn selected_provider_key<'a, T: 'a, F: Display>(
         ])
         .align_y(Alignment::Center),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn unselected_provider_key<'a, T: 'a, F: Display>(
@@ -682,7 +709,7 @@ pub fn unselected_provider_key<'a, T: 'a, F: Display>(
         .into()])
         .align_y(Alignment::Center),
     )
-    .padding(10)
+    .padding(PADDING)
 }
 
 pub fn unsaved_provider_key<'a, T: 'a, F: Display>(
@@ -708,5 +735,15 @@ pub fn unsaved_provider_key<'a, T: 'a, F: Display>(
         ])
         .align_y(Alignment::Center),
     )
-    .padding(10)
+    .padding(PADDING)
+}
+
+pub fn modal_no_devices_placeholder<'a, M: 'a>() -> Element<'a, M> {
+    column![
+        icon::usb_icon().size(100),
+        p1_regular("Plug in a hardware device ...")
+    ]
+    .align_x(Horizontal::Center)
+    .spacing(20)
+    .into()
 }
