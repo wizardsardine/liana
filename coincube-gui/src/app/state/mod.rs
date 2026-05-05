@@ -64,6 +64,18 @@ pub trait State {
     ) -> Task<Message> {
         Task::none()
     }
+
+    /// Opt-in escape hatch for concrete-type access through a
+    /// `Box<dyn State>`. Default is `None`; implementations that need
+    /// to be reached from their parent panel (e.g. the `SettingsState`
+    /// outer wrapper needs a `&GeneralSettingsState` to render the
+    /// Recovery-Kit card alongside the rest of the General page)
+    /// override this to return `Some(self)`. Keeps the refactor local
+    /// to the cases that need it rather than forcing every impl to
+    /// participate.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
 }
 
 /// redirect to another state with a message menu

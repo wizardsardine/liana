@@ -13,19 +13,12 @@ use crate::{
 };
 
 pub struct BackupMnemonic {
-    words: [&'static str; 12],
-    done: bool,
     signer: Arc<Mutex<Signer>>,
 }
 
 impl BackupMnemonic {
     pub fn new(signer: Arc<Mutex<Signer>>) -> Self {
-        let words = signer.lock().unwrap().mnemonic();
-        Self {
-            done: false,
-            words,
-            signer,
-        }
+        Self { signer }
     }
 }
 
@@ -36,10 +29,7 @@ impl From<BackupMnemonic> for Box<dyn Step> {
 }
 
 impl Step for BackupMnemonic {
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
-        if let Message::UserActionDone(done) = message {
-            self.done = done;
-        }
+    fn update(&mut self, _hws: &mut HardwareWallets, _message: Message) -> Task<Message> {
         Task::none()
     }
     fn skip(&self, ctx: &Context) -> bool {
@@ -57,7 +47,7 @@ impl Step for BackupMnemonic {
         progress: (usize, usize),
         email: Option<&'a str>,
     ) -> Element<'a, Message> {
-        view::backup_mnemonic(progress, email, &self.words, self.done)
+        view::backup_mnemonic(progress, email)
     }
 }
 

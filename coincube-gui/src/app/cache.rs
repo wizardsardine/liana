@@ -72,10 +72,32 @@ pub struct Cache {
     pub show_direction_badges: bool,
     /// Cached Lightning Address for display in the sidebar across all panels
     pub lightning_address: Option<String>,
+    /// Cached avatar image handle for display in the sidebar across all panels
+    pub avatar_handle: Option<iced::widget::image::Handle>,
     /// Id of the current Cube — needed by Spark Settings so the
     /// `update_settings_file` closure can find the right cube when
     /// persisting the `default_lightning_backend` picker change.
     pub cube_id: String,
+    /// Connect's numeric id for the active Cube (mirror of
+    /// `ConnectCubePanel::server_cube_id`). `None` when the user isn't
+    /// signed in to Connect or the cube hasn't been registered yet.
+    /// Recovery-kit calls need this because the backend identifies
+    /// cubes by numeric id, not by the local UUID carried in
+    /// `cube_id` above.
+    pub current_cube_server_id: Option<u64>,
+    /// SHA-256 hex fingerprint of the *live* descriptor blob — i.e.
+    /// what `descriptor_blob_from_wallet(...)` currently produces
+    /// given the loaded wallet. `None` when there's no wallet.
+    /// Recomputed by `App` whenever the wallet changes.
+    pub current_descriptor_fingerprint: Option<String>,
+    /// SHA-256 hex fingerprint of the descriptor blob that was last
+    /// successfully uploaded to Connect for this Cube. Mirrors
+    /// `CubeSettings::recovery_kit_last_backed_up_descriptor_fingerprint`.
+    /// The Settings card compares this to `current_descriptor_fingerprint`
+    /// to surface the "your descriptor changed since your last backup"
+    /// drift banner (W12). `None` when no descriptor has ever been
+    /// backed up, or when the kit has been removed.
+    pub recovery_kit_last_backed_up_descriptor_fingerprint: Option<String>,
     /// Current preference for which backend fulfills incoming
     /// Lightning Address invoices. Mirrored from
     /// `CubeSettings::default_lightning_backend` so panels can read
@@ -110,7 +132,11 @@ impl std::default::Default for Cache {
             btc_usd_price: None,
             show_direction_badges: true,
             lightning_address: None,
+            avatar_handle: None,
             cube_id: String::new(),
+            current_cube_server_id: None,
+            current_descriptor_fingerprint: None,
+            recovery_kit_last_backed_up_descriptor_fingerprint: None,
             default_lightning_backend: crate::app::wallets::WalletKind::default(),
         }
     }
