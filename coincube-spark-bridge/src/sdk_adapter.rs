@@ -28,6 +28,12 @@ const USDB_MAINNET_TOKEN_IDENTIFIER: &str =
 /// "Stable Balance" without leaking this label.
 pub const STABLE_BALANCE_LABEL: &str = "USDB";
 
+/// Default LNURL domain for production builds. The Breez-hosted LNURL
+/// server issues Lightning Addresses of the form `<username>@<this>`.
+/// Override at launch time via `COINCUBE_LNURL_DOMAIN` when pointing
+/// staging builds at an alternate allowlisted domain.
+const DEFAULT_LNURL_DOMAIN: &str = "coincube.io";
+
 /// Cloneable SDK handle. The inner [`BreezSdk`] is `Send + Sync`, so the
 /// bridge can freely share it across async tasks serving different
 /// JSON-RPC requests concurrently.
@@ -57,6 +63,16 @@ pub fn mainnet_config(api_key: String) -> breez_sdk_spark::Config {
         threshold_sats: None,
         max_slippage_bps: None,
     });
+    // Treat an unset / empty / whitespace-only env var as "not
+    // configured" and fall back to the default. An empty string
+    // would otherwise be handed to the SDK as a valid domain and
+    // produce nonsense Lightning Addresses like `user@`.
+    let lnurl_domain = std::env::var("COINCUBE_LNURL_DOMAIN")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_LNURL_DOMAIN.to_string());
+    config.lnurl_domain = Some(lnurl_domain);
     config
 }
 

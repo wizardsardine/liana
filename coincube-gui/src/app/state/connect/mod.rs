@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::{
     app::{
-        breez_liquid::BreezClient,
+        breez_spark::SparkClient,
         cache::Cache,
         menu::Menu,
         message::Message,
@@ -55,7 +55,7 @@ pub struct ConnectPanel {
 
 impl ConnectPanel {
     pub fn new(
-        breez_client: Arc<BreezClient>,
+        spark_client: Option<Arc<SparkClient>>,
         cube_uuid: String,
         cube_name: String,
         cube_network: String,
@@ -67,7 +67,7 @@ impl ConnectPanel {
         account.set_active_network(Some(cube_network.clone()));
         ConnectPanel {
             account,
-            cube: ConnectCubePanel::new(breez_client, cube_uuid, cube_name, cube_network),
+            cube: ConnectCubePanel::new(spark_client, cube_uuid, cube_name, cube_network),
         }
     }
 
@@ -97,12 +97,10 @@ impl ConnectPanel {
         self.account.set_current_cube_uuid(cube_uuid.clone());
 
         // If we're in CheckingSession and now have a cube UUID, trigger Init to check for session
-        if matches!(self.account.step, ConnectFlowStep::CheckingSession) {
-            if cube_uuid.is_some() {
-                return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::Init,
-                )));
-            }
+        if matches!(self.account.step, ConnectFlowStep::CheckingSession) && cube_uuid.is_some() {
+            return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::Init,
+            )));
         }
 
         iced::Task::none()

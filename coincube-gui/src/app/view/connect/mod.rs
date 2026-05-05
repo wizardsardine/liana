@@ -1097,6 +1097,20 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
                     )
                     .color(color::GREY_3),
                 )
+                .push_maybe(state.ln_reconcile_needs_reregister.as_deref().map(|err| {
+                    // API↔SDK divergence — the DB confirms the
+                    // address but the Spark SDK couldn't bind it on
+                    // this device. Surface to the user so they
+                    // know manual action may be needed.
+                    Column::new()
+                        .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
+                        .push(
+                            text::p2_bold("Lightning address needs re-registration")
+                                .color(color::RED),
+                        )
+                        .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
+                        .push(text::p2_regular(err).color(color::GREY_3))
+                }))
                 .padding(20)
                 .spacing(2),
         )

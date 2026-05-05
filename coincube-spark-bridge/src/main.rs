@@ -68,9 +68,8 @@ mod smoke_test {
     pub async fn run() -> anyhow::Result<()> {
         let api_key = env::var("BREEZ_API_KEY")
             .map_err(|_| anyhow::anyhow!("BREEZ_API_KEY must be set for --smoke-test"))?;
-        let mnemonic = env::var("COINCUBE_SPARK_MNEMONIC").map_err(|_| {
-            anyhow::anyhow!("COINCUBE_SPARK_MNEMONIC must be set for --smoke-test")
-        })?;
+        let mnemonic = env::var("COINCUBE_SPARK_MNEMONIC")
+            .map_err(|_| anyhow::anyhow!("COINCUBE_SPARK_MNEMONIC must be set for --smoke-test"))?;
         let storage_dir = env::var("COINCUBE_SPARK_STORAGE_DIR").map_err(|_| {
             anyhow::anyhow!("COINCUBE_SPARK_STORAGE_DIR must be set for --smoke-test")
         })?;

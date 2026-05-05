@@ -429,7 +429,6 @@ pub struct CubeResponse {
     pub name: String,
     pub network: String,
     pub lightning_address: Option<String>,
-    pub bolt12_offer: Option<String>,
     pub status: String,
     /// Populated by `GET /connect/cubes/{id}` (not by `list_cubes`). Defaults
     /// to empty so existing list-based code paths keep working.
@@ -632,16 +631,6 @@ pub struct ApiResponse<T> {
 #[serde(rename_all = "camelCase")]
 pub struct LightningAddress {
     pub lightning_address: Option<String>,
-    pub bolt12_offer: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CheckUsernameResponse {
-    pub available: bool,
-    pub username: String,
-    /// Set when the API returns an error (e.g. reserved/invalid username)
-    #[serde(default)]
-    pub error_message: Option<String>,
 }
 
 /// Error response shape: `{ "success": false, "error": { "code": "...", "message": "..." } }`
@@ -656,11 +645,13 @@ pub struct ApiErrorDetail {
     pub message: String,
 }
 
+/// Reserve-only step of the Phase 4g claim flow. The server stores
+/// the pending username against the cube but does NOT stamp the
+/// record confirmed until a follow-up `/confirm` call lands.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ClaimLightningAddressRequest {
+pub struct ReserveLightningAddressRequest {
     pub username: String,
-    pub bolt12_offer: String,
 }
 
 pub fn get_countries() -> &'static [Country] {

@@ -21,17 +21,20 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use breez_sdk_spark::{
-    ClaimDepositRequest, EventListener, GetInfoRequest, InputType, ListPaymentsRequest,
+    CheckLightningAddressRequest, ClaimDepositRequest, EventListener, GetInfoRequest, InputType,
+    LightningAddressInfo as SdkLightningAddressInfo, ListPaymentsRequest,
     ListUnclaimedDepositsRequest, LnurlPayRequest, PaymentDetails, PrepareLnurlPayRequest,
     PrepareLnurlPayResponse, PrepareSendPaymentRequest, PrepareSendPaymentResponse,
-    ReceivePaymentMethod, ReceivePaymentRequest, SdkEvent, SendPaymentMethod, SendPaymentRequest,
-    StableBalanceActiveLabel, UpdateUserSettingsRequest,
+    ReceivePaymentMethod, ReceivePaymentRequest, RegisterLightningAddressRequest, SdkEvent,
+    SendPaymentMethod, SendPaymentRequest, StableBalanceActiveLabel, UpdateUserSettingsRequest,
 };
 use coincube_spark_protocol::{
-    ClaimDepositOk, DepositInfo, ErrorKind, Event as ProtocolEvent, Frame, GetInfoOk,
-    GetUserSettingsOk, ListPaymentsOk, ListUnclaimedDepositsOk, Method, OkPayload, ParseInputKind,
-    ParseInputOk, PaymentSummary, PrepareSendOk, ReceivePaymentOk, Request, Response,
-    SendPaymentOk, SetStableBalanceParams,
+    CheckLightningAddressAvailableOk, ClaimDepositOk, DepositInfo, ErrorKind,
+    Event as ProtocolEvent, Frame, GetInfoOk, GetLightningAddressOk, GetUserSettingsOk,
+    LightningAddressInfo as ProtocolLightningAddressInfo, ListPaymentsOk, ListUnclaimedDepositsOk,
+    Method, OkPayload, ParseInputKind, ParseInputOk, PaymentSummary, PrepareSendOk,
+    ReceivePaymentOk, RegisterLightningAddressOk, Request, Response, SendPaymentOk,
+    SetStableBalanceParams,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Mutex, RwLock};
@@ -212,6 +215,14 @@ async fn handle_request(request: Request, state: Arc<ServerState>) -> Response {
         Method::ClaimDeposit(params) => handle_claim_deposit(id, params, state).await,
         Method::GetUserSettings => handle_get_user_settings(id, state).await,
         Method::SetStableBalance(params) => handle_set_stable_balance(id, params, state).await,
+        Method::CheckLightningAddressAvailable(params) => {
+            handle_check_lightning_address_available(id, params, state).await
+        }
+        Method::RegisterLightningAddress(params) => {
+            handle_register_lightning_address(id, params, state).await
+        }
+        Method::GetLightningAddress => handle_get_lightning_address(id, state).await,
+        Method::DeleteLightningAddress => handle_delete_lightning_address(id, state).await,
         Method::Shutdown => {
             // Handled inline in the read loop — this branch exists so the
             // match is exhaustive.
@@ -305,9 +316,20 @@ impl EventListener for BridgeEventListener {
             SdkEvent::UnclaimedDeposits { .. }
             | SdkEvent::ClaimedDeposits { .. }
             | SdkEvent::NewDeposits { .. } => Some(ProtocolEvent::DepositsChanged),
-            // Optimization + lightning-address-changed remain
-            // swallowed until a panel needs them.
-            SdkEvent::Optimization { .. } | SdkEvent::LightningAddressChanged { .. } => None,
+            // Phase 4g: forward the LNURL registration state. Fires
+            // when the user claims/drops an address on this device,
+            // or when realtime-sync replays the change from another
+            // device. The gui refreshes its settings view and
+            // auto-re-registers from the DB-reserved username if
+            // the SDK report went Some → None unexpectedly.
+            SdkEvent::LightningAddressChanged { lightning_address } => {
+                Some(ProtocolEvent::LightningAddressChanged {
+                    info: lightning_address.map(sdk_address_info_to_protocol),
+                })
+            }
+            // Optimization events stay swallowed until a panel
+            // needs them.
+            SdkEvent::Optimization { .. } => None,
         };
 
         if let Some(ev) = protocol_event {
@@ -534,14 +556,11 @@ async fn handle_send_payment(
     // and dispatch to `sdk.lnurl_pay` instead of `sdk.send_payment`.
     let handle = params.prepare_handle;
 
-    if let Some((_inserted_at, prepare)) =
-        state.pending_prepares.lock().await.remove(&handle)
-    {
+    if let Some((_inserted_at, prepare)) = state.pending_prepares.lock().await.remove(&handle) {
         return execute_regular_send(id, sdk, prepare).await;
     }
 
-    if let Some((_inserted_at, prepare)) =
-        state.pending_lnurl_prepares.lock().await.remove(&handle)
+    if let Some((_inserted_at, prepare)) = state.pending_lnurl_prepares.lock().await.remove(&handle)
     {
         return execute_lnurl_send(id, sdk, prepare).await;
     }
@@ -600,11 +619,7 @@ async fn execute_regular_send(
     }
 }
 
-async fn execute_lnurl_send(
-    id: u64,
-    sdk: SdkHandle,
-    prepare: PrepareLnurlPayResponse,
-) -> Response {
+async fn execute_lnurl_send(id: u64, sdk: SdkHandle, prepare: PrepareLnurlPayResponse) -> Response {
     // The LNURL prepare response carries its own top-level
     // `amount_sats` / `fee_sats` fields (u64, already in sats — no
     // u128 clamping needed here). Snapshot them for the send response.
@@ -873,11 +888,7 @@ async fn handle_prepare_lnurl_pay(
                 }),
             )
         }
-        Err(e) => Response::err(
-            id,
-            ErrorKind::Sdk,
-            format!("prepare_lnurl_pay failed: {e}"),
-        ),
+        Err(e) => Response::err(id, ErrorKind::Sdk, format!("prepare_lnurl_pay failed: {e}")),
     }
 }
 
@@ -1037,6 +1048,149 @@ async fn handle_set_stable_balance(
             ErrorKind::Sdk,
             format!("update_user_settings failed: {e}"),
         ),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4g: Breez-hosted LNURL / Lightning Address management
+// ---------------------------------------------------------------------------
+
+async fn handle_check_lightning_address_available(
+    id: u64,
+    params: coincube_spark_protocol::CheckLightningAddressAvailableParams,
+    state: Arc<ServerState>,
+) -> Response {
+    let sdk = match state.sdk.read().await.clone() {
+        Some(s) => s,
+        None => {
+            return Response::err(
+                id,
+                ErrorKind::NotConnected,
+                "init must succeed before check_lightning_address_available",
+            );
+        }
+    };
+
+    match sdk
+        .sdk
+        .check_lightning_address_available(CheckLightningAddressRequest {
+            username: params.username,
+        })
+        .await
+    {
+        Ok(available) => Response::ok(
+            id,
+            OkPayload::CheckLightningAddressAvailable(CheckLightningAddressAvailableOk {
+                available,
+            }),
+        ),
+        Err(e) => Response::err(
+            id,
+            ErrorKind::Sdk,
+            format!("check_lightning_address_available failed: {e}"),
+        ),
+    }
+}
+
+async fn handle_register_lightning_address(
+    id: u64,
+    params: coincube_spark_protocol::RegisterLightningAddressParams,
+    state: Arc<ServerState>,
+) -> Response {
+    let sdk = match state.sdk.read().await.clone() {
+        Some(s) => s,
+        None => {
+            return Response::err(
+                id,
+                ErrorKind::NotConnected,
+                "init must succeed before register_lightning_address",
+            );
+        }
+    };
+
+    match sdk
+        .sdk
+        .register_lightning_address(RegisterLightningAddressRequest {
+            username: params.username,
+            description: params.description,
+        })
+        .await
+    {
+        Ok(info) => Response::ok(
+            id,
+            OkPayload::RegisterLightningAddress(RegisterLightningAddressOk {
+                info: sdk_address_info_to_protocol(info),
+            }),
+        ),
+        Err(e) => Response::err(
+            id,
+            ErrorKind::Sdk,
+            format!("register_lightning_address failed: {e}"),
+        ),
+    }
+}
+
+async fn handle_get_lightning_address(id: u64, state: Arc<ServerState>) -> Response {
+    let sdk = match state.sdk.read().await.clone() {
+        Some(s) => s,
+        None => {
+            return Response::err(
+                id,
+                ErrorKind::NotConnected,
+                "init must succeed before get_lightning_address",
+            );
+        }
+    };
+
+    match sdk.sdk.get_lightning_address().await {
+        Ok(info) => Response::ok(
+            id,
+            OkPayload::GetLightningAddress(GetLightningAddressOk {
+                info: info.map(sdk_address_info_to_protocol),
+            }),
+        ),
+        Err(e) => Response::err(
+            id,
+            ErrorKind::Sdk,
+            format!("get_lightning_address failed: {e}"),
+        ),
+    }
+}
+
+async fn handle_delete_lightning_address(id: u64, state: Arc<ServerState>) -> Response {
+    let sdk = match state.sdk.read().await.clone() {
+        Some(s) => s,
+        None => {
+            return Response::err(
+                id,
+                ErrorKind::NotConnected,
+                "init must succeed before delete_lightning_address",
+            );
+        }
+    };
+
+    match sdk.sdk.delete_lightning_address().await {
+        Ok(()) => Response::ok(id, OkPayload::DeleteLightningAddress {}),
+        Err(e) => Response::err(
+            id,
+            ErrorKind::Sdk,
+            format!("delete_lightning_address failed: {e}"),
+        ),
+    }
+}
+
+/// Flatten the SDK's `LightningAddressInfo { lnurl: LnurlInfo { url,
+/// bech32 }, .. }` into the protocol's flat shape so the gui doesn't
+/// need to know about `LnurlInfo`. The SDK's `description` is
+/// non-optional; we preserve its value as-is (callers that didn't
+/// supply one got the SDK's `"Pay to <user>@<domain>"` default).
+fn sdk_address_info_to_protocol(info: SdkLightningAddressInfo) -> ProtocolLightningAddressInfo {
+    ProtocolLightningAddressInfo {
+        lightning_address: info.lightning_address,
+        username: info.username,
+        description: Some(info.description),
+        lnurl_url: info.lnurl.url,
+        lnurl_bech32: info.lnurl.bech32,
     }
 }
 

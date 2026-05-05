@@ -218,7 +218,7 @@ impl Panels {
             // remaining panels
             buy_sell: None,
             connect: ConnectPanel::new(
-                breez_client.clone(),
+                spark_backend.as_ref().map(|b| b.client().clone()),
                 cube_id.clone(),
                 cube_name,
                 cube_network,
@@ -364,7 +364,7 @@ impl Panels {
                 config.clone(),
             )),
             connect: ConnectPanel::new(
-                breez_client.clone(),
+                spark_backend.as_ref().map(|b| b.client().clone()),
                 cube_id.clone(),
                 cube_name,
                 cube_network,
@@ -660,8 +660,6 @@ pub struct App {
     /// True while a check_bitcoind_sync_progress probe is in flight; prevents
     /// multiple concurrent RPC calls from piling up across subscription ticks.
     bitcoind_sync_probe_in_progress: bool,
-    /// Retry counter for LNURL SSE reconnection (same pattern as Meld).
-    lnurl_sse_retries: usize,
     /// Global "payment received" celebration overlay — shown for incoming
     /// Liquid payments (e.g. LNURL) regardless of which panel is active.
     show_received_celebration: bool,
@@ -818,7 +816,6 @@ impl App {
                 errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
-                lnurl_sse_retries: 0,
                 show_received_celebration: false,
                 received_celebration_amount: String::new(),
                 received_celebration_context: "transaction-received".to_string(),
@@ -915,7 +912,6 @@ impl App {
                 errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
-                lnurl_sse_retries: 0,
                 show_received_celebration: false,
                 received_celebration_amount: String::new(),
                 received_celebration_context: "transaction-received".to_string(),
@@ -1283,26 +1279,6 @@ impl App {
             );
         }
 
-        // LNURL SSE stream — active while the user is logged in to Connect.
-        // Listens for Lightning Address invoice requests and generates BOLT11
-        // invoices via the Breez SDK.
-        if self.panels.connect.account.is_authenticated() {
-            if let Some(client) = self.panels.connect.account.authenticated_client() {
-                if let Some(token) = client.token() {
-                    subscriptions.push(
-                        crate::services::lnurl::stream::lnurl_subscription(
-                            token.to_string(),
-                            self.lnurl_sse_retries,
-                            self.breez_client.clone(),
-                            self.wallet_registry.spark().cloned(),
-                            self.cube_settings.default_lightning_backend,
-                        )
-                        .map(Message::Lnurl),
-                    );
-                }
-            }
-        }
-
         // Poll pending local Bitcoind IBD progress on a fixed interval,
         // independent of the variable-rate tick subscription.
         if self
@@ -1580,40 +1556,6 @@ impl App {
             Message::InstallStats(_) => {
                 if let Some(panel) = self.panels.current_mut() {
                     return panel.update(self.daemon.clone(), &self.cache, message);
-                }
-            }
-            Message::Lnurl(msg) => {
-                use crate::services::lnurl::LnurlMessage;
-                match msg {
-                    LnurlMessage::StreamConnected => {
-                        info!("[LNURL] SSE stream connected");
-                        // Note: do NOT reset lnurl_sse_retries here — retries
-                        // is part of the subscription hash, so changing it would
-                        // cause Iced to tear down this just-connected stream.
-                    }
-                    LnurlMessage::InvoiceRequest(event) => {
-                        info!(
-                            "[LNURL] Invoice request: id={}, user={}, amount_msats={}",
-                            event.request_id, event.username, event.amount_msats
-                        );
-                    }
-                    LnurlMessage::InvoiceGenerated { request_id } => {
-                        info!("[LNURL] Invoice delivered for request {}", request_id);
-                    }
-                    LnurlMessage::InvoiceError { request_id, error } => {
-                        warn!(
-                            "[LNURL] Invoice error for request {}: {}",
-                            request_id, error
-                        );
-                    }
-                    LnurlMessage::EventSourceDisconnected(reason) => {
-                        warn!("[LNURL] SSE disconnected: {}", reason);
-                        self.lnurl_sse_retries += 1;
-                    }
-                    LnurlMessage::StreamError(err) => {
-                        warn!("[LNURL] Stream error: {}", err);
-                        self.lnurl_sse_retries += 1;
-                    }
                 }
             }
             Message::SetInternalBitcoind(bitcoind) => {
@@ -2027,13 +1969,6 @@ impl App {
                     .connect
                     .update(self.daemon.clone(), &self.cache, msg);
                 self.cache.connect_authenticated = self.panels.connect.account.is_authenticated();
-                // Reset LNURL backoff when auth state changes (login/logout).
-                // The token is part of the subscription hash, so changing it
-                // already causes Iced to recreate the subscription — resetting
-                // retries just ensures backoff starts fresh.
-                if was_authenticated != self.cache.connect_authenticated {
-                    self.lnurl_sse_retries = 0;
-                }
                 // Sync lightning address to cache for sidebar display
                 self.cache.lightning_address = self
                     .panels
@@ -2154,6 +2089,14 @@ impl App {
                         // matured deposit, or clear the indicator once claimed).
                         tasks.push(Task::done(Message::View(view::Message::Home(
                             view::HomeMessage::SparkDepositsChanged,
+                        ))));
+                    }
+                    SparkEvent::LightningAddressChanged { info } => {
+                        // Phase 4g: forward to ConnectCube so it can
+                        // refresh its view and auto-re-register if
+                        // the SDK state went Some → None unexpectedly.
+                        tasks.push(Task::done(Message::View(view::Message::ConnectCube(
+                            view::ConnectCubeMessage::SparkLightningAddressChanged(info),
                         ))));
                     }
                     _ => {}
