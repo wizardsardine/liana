@@ -26,7 +26,7 @@ pub struct SubItem {
 // render the same `SubItem` shape with the same square icon+label
 // buttons, so the constants and layout live here to keep them from
 // drifting.
-pub const RAIL_ITEM_HEIGHT: f32 = 64.0;
+pub const RAIL_ITEM_HEIGHT: f32 = 72.0;
 const HIGHLIGHT_WIDTH: f32 = 5.0;
 const ICON_SIZE: f32 = 22.0;
 const LABEL_SIZE: f32 = 10.0;
