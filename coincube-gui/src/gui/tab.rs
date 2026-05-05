@@ -349,6 +349,7 @@ impl Tab {
                     let wallet_id = settings.wallet_id();
                     let wallet_alias = settings.alias.clone();
                     let network = i.network;
+                    let originating_cube_id = i.cube_settings.as_ref().map(|c| c.id.clone());
 
                     // Capture restore-flow state up-front. Cloning the
                     // `Zeroizing<String>` here means the PIN copy
@@ -373,6 +374,7 @@ impl Tab {
                                 &wallet_id,
                                 &wallet_alias,
                                 network,
+                                originating_cube_id,
                                 restore_seed.as_ref(),
                             )
                             .await?;
@@ -1112,6 +1114,7 @@ async fn find_or_create_cube(
     wallet_id: &WalletId,
     wallet_alias: &Option<String>,
     network: bitcoin::Network,
+    originating_cube_id: Option<String>,
     restore_seed: Option<&RestoreCubeSeed>,
 ) -> Result<app::settings::CubeSettings, String> {
     // Helper: decorate a freshly-minted CubeSettings with
@@ -1144,7 +1147,43 @@ async fn find_or_create_cube(
                 return Ok(existing_cube.clone());
             }
 
-            // Second, find a cube without a vault and associate this wallet with it.
+            // Second, if we have an originating cube ID, validate and use it
+            if let Some(target_cube_id) = originating_cube_id {
+                if let Some(target_cube) = settings_data
+                    .cubes
+                    .iter_mut()
+                    .find(|c| c.id == target_cube_id)
+                {
+                    if target_cube.vault_wallet_id.is_some() {
+                        return Err(format!(
+                            "Cube '{}' already has a vault. Remove the existing vault before creating a new one.",
+                            target_cube.name
+                        ));
+                    }
+                    target_cube.vault_wallet_id = Some(wallet_id.clone());
+                    // Apply restore-flow credentials (PIN hash + fingerprint) if
+                    // restoring to this cube — same rationale as the empty-cube
+                    // fallback: the hash must match the newly-encrypted mnemonic.
+                    let cube_clone = decorate_new(target_cube.clone())?;
+                    *target_cube = cube_clone.clone();
+                    let cube_name = target_cube.name.clone();
+
+                    info!(
+                        "Associating wallet {} with originating cube '{}' on {} network",
+                        wallet_id, cube_name, network
+                    );
+
+                    return save_cube_settings(network_dir, cube_clone, network, settings_data)
+                        .await;
+                } else {
+                    return Err(format!(
+                        "Cannot find originating cube with ID '{}'. Please restart the app and try again.",
+                        target_cube_id
+                    ));
+                }
+            }
+
+            // Third, find a cube without a vault and associate this wallet with it
             // Find by index so we can overwrite with a decorated clone without
             // fighting the borrow checker over a mutable reference that would
             // otherwise need `mem::take` (and `CubeSettings` doesn't implement
