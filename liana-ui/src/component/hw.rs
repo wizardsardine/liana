@@ -6,7 +6,7 @@ use crate::{
 };
 use bitcoin::bip32::{ChildNumber, Fingerprint};
 use iced::{
-    alignment::Vertical,
+    alignment::{Horizontal, Vertical},
     widget::{column, container, row, tooltip, Space},
     Alignment, Length,
 };
@@ -734,4 +734,14 @@ pub fn unsaved_provider_key<'a, T: 'a, F: Display>(
         .align_y(Alignment::Center),
     )
     .padding(10)
+}
+
+pub fn modal_no_devices_placeholder<'a, M: 'a>() -> Element<'a, M> {
+    column![
+        icon::usb_icon().size(100),
+        p1_regular("Plug in a hardware device ...")
+    ]
+    .align_x(Horizontal::Center)
+    .spacing(20)
+    .into()
 }
