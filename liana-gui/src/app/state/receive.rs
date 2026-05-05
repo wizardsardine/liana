@@ -287,11 +287,31 @@ impl State for ReceivePanel {
                     Task::none()
                 }
             }
-            Message::View(view::Message::ShowQrCode(i)) => {
-                if let (Some(address), Some(index)) = (self.address(i), self.derivation_index(i)) {
-                    if let Some(modal) = ShowQrCodeModal::new(address, *index) {
+            Message::View(view::Message::ShowAddressQrCode {
+                row_index: Some(i),
+                address: None,
+            }) => {
+                if let Some(address) = self.address(i) {
+                    if let Some(modal) = ShowQrCodeModal::new(address, None) {
                         self.modal = Modal::ShowQrCode(modal);
                     }
+                }
+
+                Task::none()
+            }
+            Message::View(view::Message::ShowAddressQrCode {
+                row_index: None,
+                address: Some((address, i)),
+            }) => {
+                if let Some(modal) = ShowQrCodeModal::new(&address, Some(i)) {
+                    self.modal = Modal::ShowQrCode(modal);
+                }
+
+                Task::none()
+            }
+            Message::View(view::Message::CollapseQrOptSection(collapsed)) => {
+                if let Modal::VerifyAddress(modal) = &mut self.modal {
+                    modal.collapsed = collapsed;
                 }
                 Task::none()
             }
@@ -336,6 +356,7 @@ pub struct VerifyAddressModal {
     hws: HardwareWallets,
     address: Address,
     derivation_index: ChildNumber,
+    collapsed: bool,
 }
 
 impl VerifyAddressModal {
@@ -352,6 +373,7 @@ impl VerifyAddressModal {
             hws: HardwareWallets::new(data_dir, network).with_wallet(wallet),
             address,
             derivation_index,
+            collapsed: false,
         }
     }
 }
@@ -363,7 +385,8 @@ impl VerifyAddressModal {
             &self.hws.list,
             &self.chosen_hws,
             &self.address,
-            &self.derivation_index,
+            self.derivation_index,
+            self.collapsed,
         )
     }
 
@@ -421,8 +444,9 @@ pub struct ShowQrCodeModal {
 }
 
 impl ShowQrCodeModal {
-    pub fn new(address: &Address, index: ChildNumber) -> Option<Self> {
-        qr_code::Data::new(format!("bitcoin:{address}?index={index}"))
+    pub fn new(address: &Address, index: Option<ChildNumber>) -> Option<Self> {
+        let index = index.map(|i| format!("?index={i}")).unwrap_or_default();
+        qr_code::Data::new(format!("bitcoin:{address}{index}"))
             .ok()
             .map(|qr_code| Self {
                 qr_code,
