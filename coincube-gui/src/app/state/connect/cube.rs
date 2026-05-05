@@ -329,10 +329,31 @@ impl ConnectCubePanel {
                                 if info.lightning_address == db_addr {
                                     ReconcileOutcome::ReRegistered(info)
                                 } else {
+                                    // Roll back the orphan binding we
+                                    // just created on the LNURL server
+                                    // — leaving it would squat the
+                                    // wrong-domain record forever.
+                                    // Best-effort: log if the cleanup
+                                    // itself fails so an operator can
+                                    // remove it manually.
+                                    let bound = info.lightning_address.clone();
+                                    let mut suffix = "";
+                                    if let Err(e) = spark.delete_lightning_address().await {
+                                        log::error!(
+                                            "[CONNECT-CUBE] failed to roll back \
+                                             orphan Spark registration {:?} after \
+                                             reconcile domain mismatch (expected {:?}): {}",
+                                            bound,
+                                            db_addr,
+                                            e
+                                        );
+                                        suffix = " (orphan SDK registration left behind \
+                                                  — please contact support)";
+                                    }
                                     ReconcileOutcome::NeedsReRegistration(format!(
                                         "Spark SDK registered '{}' but the confirmed \
-                                         reservation is '{}'",
-                                        info.lightning_address, db_addr
+                                         reservation is '{}'{}",
+                                        bound, db_addr, suffix
                                     ))
                                 }
                             }

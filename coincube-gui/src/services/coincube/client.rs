@@ -7,8 +7,8 @@ use super::{
     Invite, LightningAddress, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
     PublicAvatarData, RecoveryKit, RecoveryKitStatus, RefreshTokenRequest, RegenerationData,
     RegisterCubeRequest, ReserveLightningAddressRequest, SaveQuoteRequest, SaveQuoteResponse,
-    StatsPeriod, TimeseriesResponse, TodayStats, UpdateCubeRequest, UpsertRecoveryKitRequest,
-    User, VaultMemberResponse, VerifiedDevice,
+    StatsPeriod, TimeseriesResponse, TodayStats, UpdateCubeRequest, UpsertRecoveryKitRequest, User,
+    VaultMemberResponse, VerifiedDevice,
 };
 use reqwest::{Client, Method};
 use serde::Deserialize;
