@@ -281,7 +281,29 @@ impl ConnectCubePanel {
                         // SDK has no record — try to bind the
                         // DB-confirmed username on this device.
                         match spark.register_lightning_address(db_username, None).await {
-                            Ok(info) => ReconcileOutcome::ReRegistered(info),
+                            Ok(info) => {
+                                // Same guard as the `AlreadyBound`
+                                // branch: the SDK's `lnurl_domain` is
+                                // fixed at init from
+                                // `COINCUBE_LNURL_DOMAIN`, so a
+                                // staging/prod env flip would let the
+                                // register call succeed against the
+                                // wrong domain (e.g. binds
+                                // `user@staging.coincube.io` while the
+                                // DB-confirmed reservation is
+                                // `user@coincube.io`). Surface the
+                                // divergence instead of returning a
+                                // mismatched `ReRegistered`.
+                                if info.lightning_address == db_addr {
+                                    ReconcileOutcome::ReRegistered(info)
+                                } else {
+                                    ReconcileOutcome::NeedsReRegistration(format!(
+                                        "Spark SDK registered '{}' but the confirmed \
+                                         reservation is '{}'",
+                                        info.lightning_address, db_addr
+                                    ))
+                                }
+                            }
                             Err(e) => ReconcileOutcome::NeedsReRegistration(e.to_string()),
                         }
                     }
