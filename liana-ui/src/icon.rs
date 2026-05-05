@@ -191,6 +191,10 @@ pub fn settings_icon() -> Text<'static> {
     bootstrap_icon('\u{F3E5}')
 }
 
+pub fn qr_icon() -> Text<'static> {
+    bootstrap_icon('\u{F6AD}')
+}
+
 const ICONEX_ICONS: Font = Font::with_name("Untitled1");
 
 fn iconex_icon(unicode: char) -> Text<'static> {

@@ -1,12 +1,16 @@
-use crate::{color, component::text, icon, image, theme, widget::*};
+use crate::{
+    color,
+    component::text::{self, p1_regular},
+    icon, image, theme,
+    widget::*,
+};
 use bitcoin::bip32::{ChildNumber, Fingerprint};
 use iced::{
     alignment::Vertical,
     widget::{column, container, row, tooltip, Space},
     Alignment, Length,
 };
-use std::borrow::Cow;
-use std::fmt::Display;
+use std::{borrow::Cow, fmt::Display};
 
 pub fn locked_hardware_wallet<'a, T: 'a, K: Display>(
     kind: K,
@@ -250,6 +254,27 @@ pub fn unrelated_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
         fingerprint,
         "This signing device is not related to this Liana wallet.",
     )
+}
+
+pub fn show_qr_code<'a, M: 'a + 'static>(
+    tt: Option<&'static str>,
+    msg: Option<M>,
+) -> Button<'a, M> {
+    let mut btn = Button::new(
+        Row::new()
+            .push(icon::qr_icon().size(30))
+            .push(p1_regular("Show QR Code"))
+            .push_maybe(tt.map(super::tooltip))
+            .spacing(20)
+            .align_y(Alignment::Center)
+            .padding(10 + 5),
+    )
+    .style(theme::button::secondary)
+    .width(Length::Fill);
+    if let Some(msg) = msg {
+        btn = btn.on_press(msg);
+    }
+    btn
 }
 
 pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
