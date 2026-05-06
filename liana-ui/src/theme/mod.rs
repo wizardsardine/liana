@@ -22,6 +22,66 @@ pub mod text;
 pub mod text_input;
 pub mod toggler;
 
+/// Generate the boilerplate `pub fn <variant>(&Theme) -> Style` style
+/// functions for a theme submodule.
+///
+/// Most theme submodules (`pill`, `badge`, `banner`, `notification`, parts of
+/// `card`, ...) follow the same shape: a private `<builder>(&ContainerPalette)
+/// -> Style` constructor, and one public `pub fn <variant>(theme: &Theme) -> Style`
+/// per variant that just looks up the matching palette and forwards it to the
+/// builder. This macro emits those forwarders.
+///
+/// # Parameters
+///
+/// - `$builder`     — ident of the in-scope private builder fn taking the
+///   palette and returning a `Style`.
+/// - `$palette_group` — ident of the field on [`palette::Palette`] holding the
+///   group of variants (e.g. `pills`, `badges`, `banners`).
+/// - `[$name, ...]` — bracketed list of variant idents. Each must be both a
+///   field on the palette group struct and the name of the
+///   public function the macro will generate.
+///
+/// # Requirements at the call site
+///
+/// Only the `$builder` fn needs to be in scope (typically defined as a private
+/// fn in the same module). `Theme` and `Style` are referenced through absolute
+/// paths inside the macro — no extra `use`s required. Just import the macro
+/// itself: `use super::styles;`.
+///
+/// # Example
+///
+/// ```ignore
+/// // In theme/badge.rs
+/// use super::styles;
+/// use super::palette::ContainerPalette;
+///
+/// fn badge(palette: &ContainerPalette) -> iced::widget::container::Style { /* ... */ }
+///
+/// styles!(badge, badges, [simple, bitcoin]);
+/// ```
+///
+/// expands to:
+///
+/// ```ignore
+/// pub fn simple(theme: &crate::theme::Theme) -> iced::widget::container::Style {
+///     badge(&theme.colors.badges.simple)
+/// }
+/// pub fn bitcoin(theme: &crate::theme::Theme) -> iced::widget::container::Style {
+///     badge(&theme.colors.badges.bitcoin)
+/// }
+/// ```
+macro_rules! styles {
+    ($builder:ident, $palette_group:ident, [$($name:ident),* $(,)?]) => {
+        $(
+            pub fn $name(theme: &$crate::theme::Theme) -> ::iced::widget::container::Style {
+                $builder(&theme.colors.$palette_group.$name)
+            }
+        )*
+    };
+}
+
+pub(crate) use styles;
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Theme {
     pub colors: palette::Palette,

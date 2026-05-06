@@ -1,46 +1,46 @@
-use iced::widget::container::Style;
-use iced::{Background, Border};
+use iced::{widget::container::Style, Background, Border};
 
-use super::palette::ContainerPalette;
-use super::Theme;
+use super::{card::CARD_SHADOW, palette::ContainerPalette, styles};
 
-fn pill(palette: &ContainerPalette) -> Style {
+fn builder(palette: &ContainerPalette) -> Style {
     Style {
         background: Some(Background::Color(palette.background)),
         text_color: palette.text,
         border: Border {
             radius: 25.0.into(),
-            width: 1.0,
+            width: 2.0,
             color: palette.border.unwrap_or_default(),
         },
         ..Default::default()
     }
 }
 
-pub fn simple(theme: &Theme) -> Style {
-    pill(&theme.colors.pills.simple)
-}
+#[rustfmt::skip]
+styles!(
+    builder,
+    pills,
+    [
+        simple,
+        success,
+        warning,
+        soft_warning,
+        internal,
+        external,
+        safety_net,
+    ]
+);
 
-pub fn primary(theme: &Theme) -> Style {
-    pill(&theme.colors.pills.primary)
-}
-
-pub fn success(theme: &Theme) -> Style {
-    pill(&theme.colors.pills.success)
-}
-
-pub fn warning(theme: &Theme) -> Style {
-    pill(&theme.colors.pills.warning)
-}
-
-pub fn internal(theme: &Theme) -> Style {
-    pill(&theme.colors.pills.internal)
-}
-
-pub fn external(theme: &Theme) -> Style {
-    pill(&theme.colors.pills.external)
-}
-
-pub fn safety_net(theme: &Theme) -> Style {
-    pill(&theme.colors.pills.safety_net)
+pub fn fingerprint(theme: &crate::theme::Theme) -> ::iced::widget::container::Style {
+    let palette = &theme.colors.pills.fingerprint;
+    Style {
+        background: Some(Background::Color(palette.background)),
+        text_color: palette.text,
+        border: Border {
+            radius: 25.0.into(),
+            width: 2.0,
+            color: palette.border.unwrap_or_default(),
+        },
+        shadow: CARD_SHADOW,
+        ..Default::default()
+    }
 }

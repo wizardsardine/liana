@@ -44,10 +44,9 @@ fn pill_badges() -> Sample<5> {
 }
 
 #[rustfmt::skip]
-fn pill_styles() -> Sample<7> {
+fn pill_styles() -> Sample<6> {
     [
         (pill_sample("  simple  ", theme::pill::simple), "liana_ui::theme::pill::simple"),
-        (pill_sample("  primary  ", theme::pill::primary), "liana_ui::theme::pill::primary"),
         (pill_sample("  success  ", theme::pill::success), "liana_ui::theme::pill::success"),
         (pill_sample("  warning  ", theme::pill::warning), "liana_ui::theme::pill::warning"),
         (pill_sample("  internal  ", theme::pill::internal), "liana_ui::theme::pill::internal"),
