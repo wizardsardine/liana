@@ -57,7 +57,7 @@ let
 
     cargoArtifacts = windowsDeps;
 
-    cargoExtraArgs = "-p liana-business";
+    cargoExtraArgs = "-p liana-business --no-default-features";
 
     installPhaseCommand = ''
       mkdir -p $out/x86_64-pc-windows-gnu
@@ -70,7 +70,7 @@ let
     inherit (lianaBusinessInfo) pname version;
 
     CARGO_BUILD_TARGET = "x86_64-apple-darwin";
-    buildPhaseCargoCommand = "cargo zigbuild --release --message-format json-render-diagnostics";
+    buildPhaseCargoCommand = "cargo zigbuild --release -p liana-business --no-default-features --message-format json-render-diagnostics";
     doNotPostBuildInstallCargoBinaries = true;
 
     depsBuildBuild = [
@@ -103,7 +103,7 @@ let
     inherit (lianaBusinessInfo) pname version;
 
     CARGO_BUILD_TARGET = "aarch64-apple-darwin";
-    buildPhaseCargoCommand = "cargo zigbuild --release --message-format json-render-diagnostics";
+    buildPhaseCargoCommand = "cargo zigbuild --release -p liana-business --no-default-features --message-format json-render-diagnostics";
     doNotPostBuildInstallCargoBinaries = true;
 
     depsBuildBuild = [
