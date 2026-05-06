@@ -13,7 +13,7 @@ use liana::{
 
 use liana_ui::{
     color,
-    component::{amount::*, badge, button, form, text::*},
+    component::{amount::*, button, form, pill, text::*},
     icon, theme,
     widget::*,
 };
@@ -586,9 +586,9 @@ fn coin_list_view<'a>(
                     },
                 )
                 .push(if coin.spend_info.is_some() {
-                    badge::spent()
+                    pill::spent()
                 } else if coin.block_height.is_none() {
-                    badge::unconfirmed()
+                    pill::unconfirmed()
                 } else {
                     let seq = remaining_sequence(coin, blockheight, timelock);
                     coins::coin_sequence_label(seq, timelock as u32)

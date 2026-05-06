@@ -17,9 +17,9 @@ use liana::{
 use liana_ui::{
     component::{
         amount::*,
-        badge, button, card,
+        button, card,
         collapse::Collapse,
-        form, hw, separation,
+        form, hw, pill, separation,
         text::{self, *},
     },
     icon, theme,
@@ -61,14 +61,14 @@ pub fn psbt_view<'a>(
                     .spacing(10)
                     .push(Container::new(h3("PSBT")).width(Length::Fill))
                     .push_maybe(if !tx.sigs.recovery_paths().is_empty() {
-                        Some(badge::recovery())
+                        Some(pill::recovery())
                     } else {
                         None
                     })
                     .push_maybe(match tx.status {
-                        SpendStatus::Deprecated => Some(badge::deprecated()),
-                        SpendStatus::Broadcast => Some(badge::unconfirmed()),
-                        SpendStatus::Spent => Some(badge::spent()),
+                        SpendStatus::Deprecated => Some(pill::deprecated()),
+                        SpendStatus::Broadcast => Some(pill::unconfirmed()),
+                        SpendStatus::Spent => Some(pill::spent()),
                         _ => None,
                     }),
             )

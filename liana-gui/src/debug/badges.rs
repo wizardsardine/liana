@@ -3,7 +3,7 @@
 use liana_ui::{
     component::{
         badge::{self, badge},
-        text,
+        pill, text,
     },
     icon::tooltip_icon,
     theme,
@@ -35,11 +35,11 @@ fn icon_badges() -> Sample<5> {
 #[rustfmt::skip]
 fn pill_badges() -> Sample<5> {
     [
-        (badge::recovery(), "liana_ui::component::badge::recovery()"),
-        (badge::unconfirmed(), "liana_ui::component::badge::unconfirmed()"),
-        (badge::batch(), "liana_ui::component::badge::batch()"),
-        (badge::deprecated(), "liana_ui::component::badge::deprecated()"),
-        (badge::spent(), "liana_ui::component::badge::spent()"),
+        (pill::recovery(), "liana_ui::component::pill::recovery()"),
+        (pill::unconfirmed(), "liana_ui::component::pill::unconfirmed()"),
+        (pill::batch(), "liana_ui::component::pill::batch()"),
+        (pill::deprecated(), "liana_ui::component::pill::deprecated()"),
+        (pill::spent(), "liana_ui::component::pill::spent()"),
     ]
 }
 
