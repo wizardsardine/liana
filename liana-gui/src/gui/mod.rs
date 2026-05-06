@@ -19,6 +19,9 @@ mod cache;
 pub mod pane;
 pub mod tab;
 
+#[cfg(feature = "debugger")]
+use crate::debug;
+
 use crate::{
     app::{
         cache::{FiatPrice, FiatPriceRequest},
@@ -57,12 +60,26 @@ where
     window_config: Option<WindowConfig>,
     global_cache: GlobalCache,
     version: &'static str,
+    #[cfg(feature = "debugger")]
+    debug_view: Option<usize>,
+    #[cfg(feature = "debugger")]
+    ctrl_d_held: bool,
     _phantom: PhantomData<M>,
 }
 
 #[derive(Debug)]
 pub enum Key {
     Tab(bool),
+    #[cfg(feature = "debugger")]
+    CtrlDPressed,
+    #[cfg(feature = "debugger")]
+    CtrlDReleased,
+    #[cfg(feature = "debugger")]
+    DebugNext,
+    #[cfg(feature = "debugger")]
+    DebugPrev,
+    #[cfg(feature = "debugger")]
+    DebugClose,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -77,6 +94,8 @@ where
     Pane(pane_grid::Pane, pane::Message<M>),
     KeyPressed(Key),
     Event(iced::Event),
+    #[cfg(feature = "debugger")]
+    DebugNoOp,
 
     Clicked(pane_grid::Pane),
     Dragged(pane_grid::DragEvent),
@@ -165,6 +184,10 @@ where
                 window_config,
                 version,
                 global_cache: GlobalCache::default(),
+                #[cfg(feature = "debugger")]
+                debug_view: None,
+                #[cfg(feature = "debugger")]
+                ctrl_d_held: false,
                 _phantom: PhantomData,
             },
             Task::batch(cmds),
@@ -257,6 +280,44 @@ where
                 } else {
                     focus_next()
                 }
+            }
+            #[cfg(feature = "debugger")]
+            Message::KeyPressed(Key::CtrlDPressed) => {
+                self.ctrl_d_held = true;
+                Task::none()
+            }
+            #[cfg(feature = "debugger")]
+            Message::KeyPressed(Key::CtrlDReleased) => {
+                self.ctrl_d_held = false;
+                Task::none()
+            }
+            #[cfg(feature = "debugger")]
+            Message::KeyPressed(Key::DebugNext) => {
+                if self.ctrl_d_held {
+                    self.debug_view = match self.debug_view {
+                        None => Some(0),
+                        Some(i) if i + 1 < debug::PAGES.len() => Some(i + 1),
+                        Some(_) => self.debug_view,
+                    };
+                }
+                Task::none()
+            }
+            #[cfg(feature = "debugger")]
+            Message::KeyPressed(Key::DebugPrev) => {
+                if self.ctrl_d_held {
+                    self.debug_view = match self.debug_view {
+                        Some(0) | None => None,
+                        Some(i) => Some(i - 1),
+                    };
+                }
+                Task::none()
+            }
+            #[cfg(feature = "debugger")]
+            Message::KeyPressed(Key::DebugClose) => {
+                if self.ctrl_d_held {
+                    self.debug_view = None;
+                }
+                Task::none()
             }
             Message::Fiat(FiatMessage::GetPriceResult(price)) => {
                 if self
@@ -507,6 +568,8 @@ where
                 }
                 Task::none()
             }
+            #[cfg(feature = "debugger")]
+            Message::DebugNoOp => Task::none(),
             Message::Tick => {
                 let mut tasks = vec![];
 
@@ -598,6 +661,54 @@ where
                     }),
                     event::Status::Ignored,
                 ) => Some(Message::KeyPressed(Key::Tab(modifiers.shift()))),
+                #[cfg(feature = "debugger")]
+                (
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Character(c),
+                        modifiers,
+                        ..
+                    }),
+                    event::Status::Ignored,
+                ) if modifiers.command() && c.as_str().eq_ignore_ascii_case("d") => {
+                    Some(Message::KeyPressed(Key::CtrlDPressed))
+                }
+                #[cfg(feature = "debugger")]
+                (
+                    Event::Keyboard(keyboard::Event::KeyReleased {
+                        key: iced::keyboard::Key::Character(c),
+                        ..
+                    }),
+                    _,
+                ) if c.as_str().eq_ignore_ascii_case("d") => {
+                    Some(Message::KeyPressed(Key::CtrlDReleased))
+                }
+                #[cfg(feature = "debugger")]
+                (
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight),
+                        modifiers,
+                        ..
+                    }),
+                    event::Status::Ignored,
+                ) if modifiers.command() => Some(Message::KeyPressed(Key::DebugNext)),
+                #[cfg(feature = "debugger")]
+                (
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft),
+                        modifiers,
+                        ..
+                    }),
+                    event::Status::Ignored,
+                ) if modifiers.command() => Some(Message::KeyPressed(Key::DebugPrev)),
+                #[cfg(feature = "debugger")]
+                (
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                        modifiers,
+                        ..
+                    }),
+                    event::Status::Ignored,
+                ) if modifiers.command() => Some(Message::KeyPressed(Key::DebugClose)),
                 (
                     iced::Event::Window(iced::window::Event::CloseRequested),
                     event::Status::Ignored,
@@ -618,7 +729,24 @@ where
         Subscription::batch(vec)
     }
 
+    #[cfg(not(feature = "debugger"))]
     pub fn view(&self) -> Element<'_, Message<M>> {
+        self.base_view()
+    }
+
+    #[cfg(feature = "debugger")]
+    pub fn view(&self) -> Element<'_, Message<M>> {
+        let base = self.base_view();
+        match self.debug_view.and_then(|idx| debug::PAGES.get(idx)) {
+            Some(entry) => {
+                let overlay = (entry.view)().map(|_| Message::DebugNoOp);
+                iced::widget::stack![base, overlay].into()
+            }
+            None => base,
+        }
+    }
+
+    fn base_view(&self) -> Element<'_, Message<M>> {
         if self.panes.len() == 1 {
             if let Some((&id, pane)) = self.panes.iter().nth(0) {
                 return Column::new()

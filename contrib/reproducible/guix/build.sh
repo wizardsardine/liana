@@ -30,11 +30,19 @@ EOF
 # We need to set RUSTC_BOOTSTRAP=1 as a workaround to be able to use unstable
 # features in the GUI dependencies
 for package_name in "lianad" "liana-gui" "liana-business"; do
+    # Disable default features for liana-gui and liana-business so the
+    # `debugger` feature (default-on for development) is not compiled into
+    # release artifacts.
+    case "$package_name" in
+        liana-gui|liana-business) extra_args="--no-default-features" ;;
+        *) extra_args="" ;;
+    esac
     RUSTC_BOOTSTRAP=1 cargo zigbuild -vvv \
         --color always \
         --frozen \
         --offline \
         -p "$package_name" \
+        $extra_args \
         --jobs "$JOBS" \
 	--target x86_64-unknown-linux-gnu.2.31 \
         --release \
