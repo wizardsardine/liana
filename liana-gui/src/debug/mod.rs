@@ -18,6 +18,7 @@ use liana_ui::{component::text, theme, widget::*};
 
 pub mod badges;
 pub mod buttons;
+pub mod hw;
 pub mod texts;
 
 /// Every registered debug page. Append `&module::ENTRY` here when adding a new
@@ -30,6 +31,8 @@ pub const PAGES: &[&DebugPageEntry] = &[
     &buttons::ENTRY_CONSTRUCTORS_THEMED,
     &buttons::ENTRY_CONSTRUCTORS_WIDTHS,
     &buttons::ENTRY_CONSTRUCTORS_HELPERS,
+    &hw::ENTRY_PAGE_1,
+    &hw::ENTRY_PAGE_2,
     &texts::ENTRY_CONSTRUCTORS,
     &texts::ENTRY_THEMES,
     // <- add new entry here
