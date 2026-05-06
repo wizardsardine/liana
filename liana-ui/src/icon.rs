@@ -191,6 +191,14 @@ pub fn settings_icon() -> Text<'static> {
     bootstrap_icon('\u{F3E5}')
 }
 
+pub fn clock_icon() -> Text<'static> {
+    bootstrap_icon('\u{F293}')
+}
+
+pub fn clock_fill_icon() -> Text<'static> {
+    bootstrap_icon('\u{F291}')
+}
+
 const ICONEX_ICONS: Font = Font::with_name("Untitled1");
 
 fn iconex_icon(unicode: char) -> Text<'static> {
@@ -215,10 +223,6 @@ pub fn key_icon() -> Text<'static> {
 
 pub fn history_icon() -> Text<'static> {
     iconex_icon('\u{BEBA}')
-}
-
-pub fn clock_icon() -> Text<'static> {
-    iconex_icon('\u{B0CA}')
 }
 
 pub fn clipboard_icon() -> Text<'static> {
