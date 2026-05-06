@@ -17,9 +17,9 @@ use liana::{
 use liana_ui::{
     component::{
         amount::*,
-        badge, button, card,
+        button, card,
         collapse::Collapse,
-        form, hw, separation,
+        form, hw, pill, separation,
         text::{self, *},
     },
     icon, theme,
@@ -61,14 +61,14 @@ pub fn psbt_view<'a>(
                     .spacing(10)
                     .push(Container::new(h3("PSBT")).width(Length::Fill))
                     .push_maybe(if !tx.sigs.recovery_paths().is_empty() {
-                        Some(badge::recovery())
+                        Some(pill::recovery())
                     } else {
                         None
                     })
                     .push_maybe(match tx.status {
-                        SpendStatus::Deprecated => Some(badge::deprecated()),
-                        SpendStatus::Broadcast => Some(badge::unconfirmed()),
-                        SpendStatus::Spent => Some(badge::spent()),
+                        SpendStatus::Deprecated => Some(pill::deprecated()),
+                        SpendStatus::Broadcast => Some(pill::unconfirmed()),
+                        SpendStatus::Spent => Some(pill::spent()),
                         _ => None,
                     }),
             )
@@ -457,19 +457,10 @@ pub fn signatures<'a>(
                         .push(sigs.signed_pubkeys.keys().fold(
                             Row::new().spacing(5),
                             |row, value| {
-                                row.push(if let Some(alias) = keys_aliases.get(value) {
-                                    Container::new(tooltip::Tooltip::new(
-                                        Container::new(text(alias))
-                                            .padding(10)
-                                            .style(theme::pill::simple),
-                                        text(value.to_string()),
-                                        tooltip::Position::Bottom,
-                                    ))
-                                } else {
-                                    Container::new(text(value.to_string()))
-                                        .padding(10)
-                                        .style(theme::pill::simple)
-                                })
+                                row.push(pill::fingerprint(
+                                    value.to_string(),
+                                    keys_aliases.get(value).map(String::as_str),
+                                ))
                             },
                         )),
                 )
@@ -535,22 +526,7 @@ fn container_from_fg(
     fg: Fingerprint,
     aliases: &HashMap<Fingerprint, String>,
 ) -> Container<'_, Message> {
-    if let Some(alias) = aliases.get(&fg) {
-        Container::new(
-            tooltip::Tooltip::new(
-                Container::new(text(alias))
-                    .padding(10)
-                    .style(theme::pill::simple),
-                liana_ui::widget::Text::new(fg.to_string()),
-                tooltip::Position::Bottom,
-            )
-            .style(theme::card::simple),
-        )
-    } else {
-        Container::new(text(fg.to_string()))
-            .padding(10)
-            .style(theme::pill::simple)
-    }
+    pill::fingerprint(fg.to_string(), aliases.get(&fg).map(String::as_str))
 }
 
 pub fn path_view<'a>(

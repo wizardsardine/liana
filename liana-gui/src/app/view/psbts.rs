@@ -1,7 +1,7 @@
 use iced::{widget::Space, Alignment, Length};
 
 use liana_ui::{
-    component::{amount::*, badge, button, card, form, text::*},
+    component::{amount::*, badge, button, card, form, pill, text::*},
     icon, theme,
     widget::*,
 };
@@ -103,7 +103,7 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                             badge::spend()
                         })
                         .push(if !tx.sigs.recovery_paths().is_empty() {
-                            badge::recovery()
+                            pill::recovery()
                         } else {
                             let sigs = tx.sigs.primary_path();
                             Container::new(
@@ -135,14 +135,14 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                         .width(Length::Fill),
                 )
                 .push_maybe(if tx.is_batch() {
-                    Some(badge::batch())
+                    Some(pill::batch())
                 } else {
                     None
                 })
                 .push_maybe(match tx.status {
-                    SpendStatus::Deprecated => Some(badge::deprecated().width(120.0)),
-                    SpendStatus::Broadcast => Some(badge::unconfirmed().width(120.0)),
-                    SpendStatus::Spent => Some(badge::spent().width(120.0)),
+                    SpendStatus::Deprecated => Some(pill::deprecated().width(120.0)),
+                    SpendStatus::Broadcast => Some(pill::unconfirmed().width(120.0)),
+                    SpendStatus::Spent => Some(pill::spent().width(120.0)),
                     _ => None,
                 })
                 .push(

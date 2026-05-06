@@ -8,32 +8,18 @@ use iced::{
     Alignment, Length,
 };
 use liana_connect::ws_business::{self, UserRole};
-use liana_ui::{component::text, icon, theme, widget::*};
+use liana_ui::{
+    component::{pill, text},
+    icon, theme,
+    widget::*,
+};
 
 /// Create a status badge for xpub population status
 fn xpub_status_badge(has_xpub: bool) -> Element<'static, Msg> {
-    const BADGE_WIDTH: f32 = 100.0;
-
     if has_xpub {
-        Container::new(
-            Container::new(text::caption("✓ Set"))
-                .padding([4, 12])
-                .style(liana_ui::theme::pill::success)
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-        )
-        .width(Length::Fixed(BADGE_WIDTH))
-        .into()
+        pill::xpub_set().into()
     } else {
-        Container::new(
-            Container::new(text::caption("Not Set"))
-                .padding([4, 12])
-                .style(liana_ui::theme::pill::warning)
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-        )
-        .width(Length::Fixed(BADGE_WIDTH))
-        .into()
+        pill::xpub_not_set().into()
     }
 }
 
@@ -217,12 +203,10 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
 
     list_content = list_content.push(Space::with_height(50));
 
-    let role_badge = if is_ws_admin { Some("WS Admin") } else { None };
-
     layout_with_scrollable_list(
         (0, 0), // No progress indicator
         Some(current_user_email),
-        role_badge,
+        is_ws_admin,
         &breadcrumb,
         header_content,
         list_content,

@@ -119,12 +119,13 @@ pub struct Badges {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Pills {
     pub simple: ContainerPalette,
-    pub primary: ContainerPalette,
     pub success: ContainerPalette,
     pub warning: ContainerPalette,
+    pub soft_warning: ContainerPalette,
     pub internal: ContainerPalette,
     pub external: ContainerPalette,
     pub safety_net: ContainerPalette,
+    pub fingerprint: ContainerPalette,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

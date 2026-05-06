@@ -73,6 +73,8 @@ tar = { workspace = true, default-features = false }
 flate2 = { workspace = true, default-features = false }
 
 [features]
+default = ["debugger"]
+debugger = []
 skip-windows-icon = []
 
 [build-dependencies]

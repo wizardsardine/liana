@@ -60,7 +60,6 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
     layout(
         (1, INSTALLER_STEPS),
         None,
-        None,
         &["Login".to_string()],
         content,
         true,

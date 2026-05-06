@@ -1,6 +1,6 @@
 use iced::Color;
 
-use crate::color;
+use crate::color::{self, TRANSPARENT};
 use crate::theme::card::CARD_SHADOW;
 
 use super::*;
@@ -44,6 +44,7 @@ color!(MENU_BG_HOVER, 0xE9ECEF);
 
 color!(EXTERNAL, 0x0F172A);
 color!(SAFETY_NET, 0x475569);
+color!(FINGERPRINT_BACKGROUND, 0xE9F4FF);
 
 impl Palette {
     pub fn business() -> Self {
@@ -427,25 +428,25 @@ impl Palette {
                 },
             },
             pills: Pills {
-                primary: ContainerPalette {
-                    background: color::BUSINESS_BLUE,
-                    text: color::WHITE.into(),
-                    border: color::TRANSPARENT.into(),
-                },
                 simple: ContainerPalette {
-                    background: color::LIGHT_BLUE_TINT,
-                    text: color::BUSINESS_BLUE_DARK.into(),
-                    border: color::SOFT_BLUE.into(),
+                    background: TRANSPARENT,
+                    text: color::BUSINESS_PILL_SIMPLE.into(),
+                    border: color::BUSINESS_PILL_SIMPLE.into(),
                 },
                 warning: ContainerPalette {
                     background: color::AMBER,
                     text: color::DARK_TEXT_SECONDARY.into(),
                     border: color::AMBER.into(),
                 },
+                soft_warning: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: color::AMBER.into(),
+                    border: color::AMBER.into(),
+                },
                 success: ContainerPalette {
-                    background: color::DARK_GREEN,
+                    background: color::SUCCESS_GREEN,
                     text: color::WHITE.into(),
-                    border: color::DARK_GREEN.into(),
+                    border: color::SUCCESS_GREEN.into(),
                 },
                 internal: ContainerPalette {
                     background: color::BUSINESS_BLUE,
@@ -461,6 +462,11 @@ impl Palette {
                     background: SAFETY_NET,
                     text: color::WHITE.into(),
                     border: SAFETY_NET.into(),
+                },
+                fingerprint: ContainerPalette {
+                    background: FINGERPRINT_BACKGROUND,
+                    text: SAFETY_NET.into(),
+                    border: FINGERPRINT_BACKGROUND.into(),
                 },
             },
             notifications: Notifications {

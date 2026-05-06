@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use iced::{widget::Space, Alignment, Length};
 
 use liana_ui::{
-    component::{amount::*, badge, button, form, text::*},
+    component::{amount::*, badge, button, form, pill, text::*},
     icon, theme,
     widget::*,
 };
@@ -117,11 +117,11 @@ fn coin_list_view<'a>(
                                         .width(Length::Fill)
                                 })
                                 .push(if coin.spend_info.is_some() {
-                                    badge::spent()
+                                    pill::spent()
                                 } else if coin.block_height.is_none() {
-                                    badge::unconfirmed()
+                                    pill::unconfirmed()
                                 } else {
-                                    coin_sequence_label(seq, timelock as u32)
+                                    pill::coin_sequence(seq, timelock as u32)
                                 })
                                 .spacing(10)
                                 .align_y(Alignment::Center)
@@ -318,50 +318,6 @@ fn coin_list_view<'a>(
             }),
     )
     .style(theme::card::button_simple)
-}
-
-pub fn coin_sequence_label<'a, T: 'a>(seq: u32, timelock: u32) -> Container<'a, T> {
-    if seq == 0 {
-        Container::new(
-            Row::new()
-                .spacing(5)
-                .push(icon::clock_icon().width(Length::Fixed(20.0)))
-                .push(p2_regular("Expired"))
-                .align_y(Alignment::Center),
-        )
-        .padding(10)
-        .style(theme::pill::warning)
-    } else if seq < timelock * 10 / 100 {
-        Container::new(
-            Row::new()
-                .spacing(5)
-                .push(icon::clock_icon().width(Length::Fixed(20.0)))
-                .push(p2_regular(expire_message(seq)))
-                .align_y(Alignment::Center),
-        )
-        .padding(10)
-        .style(theme::pill::simple)
-    } else {
-        Container::new(
-            Row::new()
-                .spacing(5)
-                .push(icon::clock_icon().width(Length::Fixed(20.0)))
-                .push(p2_regular(expire_message(seq)).style(theme::text::secondary))
-                .align_y(Alignment::Center),
-        )
-        .padding(10)
-        .style(theme::pill::simple)
-    }
-}
-
-pub fn expire_message(sequence: u32) -> String {
-    if sequence <= 144 {
-        "Expires today".to_string()
-    } else if sequence <= 2 * 144 {
-        "Expires in ≈ 2 days".to_string()
-    } else {
-        format!("Expires in {}", expire_message_units(sequence).join(","))
-    }
 }
 
 /// returns y,m,d
