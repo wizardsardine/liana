@@ -1,5 +1,5 @@
 use crate::{
-    component::{amount, badge, card, text},
+    component::{amount, badge, card, pill, text},
     theme,
     widget::*,
 };
@@ -26,7 +26,7 @@ pub fn unconfirmed_outgoing_event<T: Clone + 'static>(
             .spacing(10)
             .align_y(Alignment::Center)
             .width(Length::Fill),
-        badge::unconfirmed(),
+        pill::unconfirmed(),
         row!(text::p1_regular("-"), amount::amount(amount))
             .spacing(5)
             .align_y(Alignment::Center),
@@ -72,7 +72,7 @@ pub fn unconfirmed_incoming_event<T: Clone + 'static>(
             .spacing(10)
             .align_y(Alignment::Center)
             .width(Length::Fill),
-        badge::unconfirmed(),
+        pill::unconfirmed(),
         row!(text::p1_regular("+"), amount::amount(amount))
             .spacing(5)
             .align_y(Alignment::Center),

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use iced::{widget::Space, Alignment, Length};
 
 use liana_ui::{
-    component::{amount::*, badge, button, form, text::*},
+    component::{amount::*, badge, button, form, pill, text::*},
     icon, theme,
     widget::*,
 };
@@ -117,9 +117,9 @@ fn coin_list_view<'a>(
                                         .width(Length::Fill)
                                 })
                                 .push(if coin.spend_info.is_some() {
-                                    badge::spent()
+                                    pill::spent()
                                 } else if coin.block_height.is_none() {
-                                    badge::unconfirmed()
+                                    pill::unconfirmed()
                                 } else {
                                     coin_sequence_label(seq, timelock as u32)
                                 })
