@@ -18,6 +18,7 @@ use liana_ui::{component::text, theme, widget::*};
 
 pub mod badges;
 pub mod buttons;
+pub mod forms;
 pub mod hw;
 pub mod texts;
 
@@ -33,6 +34,7 @@ pub const PAGES: &[&DebugPageEntry] = &[
     &buttons::ENTRY_CONSTRUCTORS_HELPERS,
     &hw::ENTRY_PAGE_1,
     &hw::ENTRY_PAGE_2,
+    &forms::ENTRY,
     &texts::ENTRY_CONSTRUCTORS,
     &texts::ENTRY_THEMES,
     // <- add new entry here
