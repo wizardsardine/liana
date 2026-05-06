@@ -21,6 +21,7 @@ pub mod buttons;
 pub mod cards;
 pub mod forms;
 pub mod hw;
+pub mod icons;
 pub mod texts;
 
 /// Every registered debug page. Append `&module::ENTRY` here when adding a new
@@ -41,6 +42,12 @@ pub const PAGES: &[&DebugPageEntry] = &[
     &cards::ENTRY_WRAPPED,
     &texts::ENTRY_CONSTRUCTORS,
     &texts::ENTRY_THEMES,
+    &icons::ENTRY_HELPERS,
+    &icons::ENTRY_BOOTSTRAP_1,
+    &icons::ENTRY_BOOTSTRAP_2,
+    &icons::ENTRY_BOOTSTRAP_3,
+    &icons::ENTRY_BOOTSTRAP_4,
+    &icons::ENTRY_ICONEX,
     // <- add new entry here
 ];
 
