@@ -155,6 +155,59 @@ pub async fn mark_cube_synced(
     .await
 }
 
+/// Backfill helper for Cubes created before
+/// [`CubeSettings::master_signer_fingerprint`] was tracked: walks
+/// `<datadir>/<network>/mnemonics/` for master-seed files
+/// (`mnemonic-<fp>-master_<ts>-<ts>.txt`) and returns the
+/// fingerprint of the file whose timestamp is closest to
+/// `cube_created_at` and whose contents successfully decrypt with
+/// `pin`. Returns `None` when no master seed for this Cube lives
+/// on this device (e.g. Cube was created elsewhere and never
+/// restored here).
+///
+/// Caller is responsible for persisting the result via
+/// [`update_settings_file`] and updating their in-memory
+/// [`CubeSettings`] copy. Without persistence the next launch
+/// would re-run the same scan, so callers should always write
+/// the result back.
+pub fn derive_master_signer_fingerprint(
+    datadir_root: &std::path::Path,
+    network: Network,
+    pin: &str,
+    cube_created_at: i64,
+) -> Option<Fingerprint> {
+    use coincube_core::signer::{
+        MasterSigner, MnemonicFileName, MASTER_SEED_LABEL, MNEMONICS_FOLDER_NAME,
+    };
+    use std::str::FromStr;
+
+    let mnemonics_folder = datadir_root
+        .join(network.to_string())
+        .join(MNEMONICS_FOLDER_NAME);
+    let entries = std::fs::read_dir(&mnemonics_folder).ok()?;
+
+    // Sort by closeness to `cube_created_at` so the matching Cube's
+    // seed wins before we waste an Argon2 decrypt on another Cube's
+    // file (master-seed files share the network folder across all
+    // Cubes on this device).
+    let mut candidates: Vec<(Fingerprint, i64)> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_str()?.to_owned();
+            let parsed = MnemonicFileName::from_str(&name).ok()?;
+            let (checksum, ts) = parsed.descriptor_info?;
+            checksum
+                .starts_with(MASTER_SEED_LABEL)
+                .then_some((parsed.fingerprint, ts))
+        })
+        .collect();
+    candidates.sort_by_key(|(_, ts)| (ts - cube_created_at).abs());
+
+    candidates.into_iter().map(|(fp, _)| fp).find(|&fp| {
+        MasterSigner::from_datadir_by_fingerprint(datadir_root, network, fp, Some(pin)).is_ok()
+    })
+}
+
 /// Cubes represent user accounts that can contain multiple features (Vault, Liquid wallet, etc.)
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CubeSettings {

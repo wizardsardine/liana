@@ -65,6 +65,10 @@ pub enum Message {
         network: bitcoin::Network,
         config: app::Config,
         breez_client: Result<Arc<app::breez_liquid::BreezClient>, app::breez_liquid::BreezError>,
+        /// Spark backend carried over from the Login state (loaded during
+        /// PIN entry alongside the Liquid client). `None` if the cube has
+        /// no Spark signer or the bridge failed to spawn.
+        spark_backend: Option<Arc<app::wallets::SparkBackend>>,
     },
     BreezClientLoadedAfterPin {
         breez_client: Result<Arc<app::breez_liquid::BreezClient>, app::breez_liquid::BreezError>,
@@ -314,6 +318,7 @@ impl Tab {
                             network: l.network,
                             config,
                             breez_client: Ok(breez),
+                            spark_backend: l.spark_backend.clone(),
                         });
                     }
 
@@ -333,6 +338,7 @@ impl Tab {
                              Liquid wallet is encrypted and cannot be loaded without PIN."
                                 .to_string(),
                         )),
+                        spark_backend: l.spark_backend.clone(),
                     })
                 }
                 _ => l.update(msg).map(Message::Login),
@@ -498,6 +504,7 @@ impl Tab {
                             // the restore path; fall back to whatever
                             // the installer was launched with.
                             restored_breez_client.or_else(|| i.breez_client.clone()),
+                            restored_spark_backend.or_else(|| i.spark_backend.clone()),
                         );
                         self.state = State::Login(login);
                         command.map(Message::Login)
@@ -799,6 +806,58 @@ impl Tab {
 
                             Task::perform(
                                 async move {
+                                    let mut cube = cube;
+                                    // Backfill `master_signer_fingerprint` for
+                                    // Cubes minted before the field existed —
+                                    // without it, the Liquid + Spark loaders
+                                    // below silently skip and the Connect
+                                    // Lightning Address claim flow / Spark
+                                    // panels stay disabled. Only the cube's
+                                    // own master seed will decrypt with this
+                                    // PIN, so a successful match is sound.
+                                    if cube.master_signer_fingerprint.is_none() {
+                                        if let Some(fp) =
+                                            app::settings::derive_master_signer_fingerprint(
+                                                datadir_clone.path(),
+                                                network_val,
+                                                &pin,
+                                                cube.created_at,
+                                            )
+                                        {
+                                            cube.master_signer_fingerprint = Some(fp);
+                                            let cube_id = cube.id.clone();
+                                            let network_dir =
+                                                datadir_clone.network_directory(network_val);
+                                            if let Err(e) = app::settings::update_settings_file(
+                                                &network_dir,
+                                                |mut s| {
+                                                    if let Some(c) =
+                                                        s.cubes.iter_mut().find(|c| c.id == cube_id)
+                                                    {
+                                                        c.master_signer_fingerprint = Some(fp);
+                                                    }
+                                                    Some(s)
+                                                },
+                                            )
+                                            .await
+                                            {
+                                                tracing::warn!(
+                                                    "Failed to persist backfilled \
+                                                     master_signer_fingerprint for cube {}: {}",
+                                                    cube.id,
+                                                    e
+                                                );
+                                            } else {
+                                                tracing::info!(
+                                                    "Backfilled master_signer_fingerprint {} \
+                                                     for legacy cube {}",
+                                                    fp,
+                                                    cube.id
+                                                );
+                                            }
+                                        }
+                                    }
+
                                     // Both Breez SDKs (Liquid + Spark) load
                                     // from the same master seed fingerprint.
                                     let breez_signer_fingerprint = cube.master_signer_fingerprint;
@@ -918,6 +977,7 @@ impl Tab {
                     network,
                     config,
                     breez_client,
+                    spark_backend,
                 },
             ) => {
                 // The Vault is independent of Liquid: any Breez load failure
@@ -943,6 +1003,7 @@ impl Tab {
                     network,
                     config,
                     breez,
+                    spark_backend,
                 ) {
                     Ok((app, command)) => {
                         self.state = State::App(app);
@@ -990,15 +1051,12 @@ impl Tab {
                 };
                 if let Some(wallet_settings) = wallet_settings {
                     if wallet_settings.remote_backend_auth.is_some() {
-                        // Remote-backend login path doesn't plumb Spark yet —
-                        // the remote backend uses `create_app_with_remote_backend`
-                        // which takes its own `None` for Spark. Wiring the
-                        // remote-backend Spark path is a follow-up.
                         let (login, command) = login::CoincubeLiteLogin::new(
                             datadir.clone(),
                             network,
                             wallet_settings.clone(),
                             Some(breez),
+                            spark_backend,
                         );
                         self.state = State::Login(login);
                         command.map(Message::Login)
@@ -1271,6 +1329,7 @@ pub fn create_app_with_remote_backend(
     network: bitcoin::Network,
     config: app::Config,
     breez_client: Arc<app::breez_liquid::BreezClient>,
+    spark_backend: Option<Arc<app::wallets::SparkBackend>>,
 ) -> Result<(app::App, iced::Task<app::Message>), String> {
     // If someone modified the wallet_alias on Liana-Connect,
     // then the new alias is imported and stored in the settings file.
@@ -1411,7 +1470,7 @@ pub fn create_app_with_remote_backend(
                 .expect("Datadir should be conform"),
         ),
         breez_client,
-        None, // Spark backend — Phase 4 wires the runtime spawn
+        spark_backend,
         config,
         Arc::new(remote_backend),
         coincube_dir,

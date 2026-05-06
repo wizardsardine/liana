@@ -1092,8 +1092,7 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
                 .push(
                     text::p2_regular(
                         "Anyone can send you bitcoin using this address. \
-                         BOLT12 / BIP353 payments are received automatically and work if you are offline. \
-                         BOLT11 / LNURL payments require this app to be open and active.",
+                         This app must be open and active to receive payments.",
                     )
                     .color(color::GREY_3),
                 )
