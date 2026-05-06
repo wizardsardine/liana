@@ -139,13 +139,13 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
     let orgs = state.backend.get_orgs();
 
     // Determine if user is WSAdmin (use global role from User record)
-    let is_ws_manager = matches!(
+    let is_ws_admin = matches!(
         state.app.global_user_role,
         Some(UserRole::WizardSardineAdmin)
     );
 
     // Add search bar for WSAdmin users
-    if is_ws_manager && !orgs.is_empty() {
+    if is_ws_admin && !orgs.is_empty() {
         let search_value = form::Value {
             value: state.views.org_select.search_filter.clone(),
             warning: None,
@@ -176,7 +176,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
     let filtered_orgs: Vec<_> = orgs
         .iter()
         .filter(|(_, org)| {
-            if is_ws_manager && !search_filter.is_empty() {
+            if is_ws_admin && !search_filter.is_empty() {
                 org.name.to_lowercase().contains(&search_filter)
             } else {
                 true
@@ -218,7 +218,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
                 })
                 // WizardSardineManager: optionally hide finalized wallets (match wallet_select filtering)
                 .filter(|wallet| {
-                    !(is_ws_manager
+                    !(is_ws_admin
                         && hide_finalized
                         && matches!(
                             wallet.effective_status(current_user_email),
@@ -245,16 +245,10 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
     }
     list_content = list_content.push(Space::with_height(50));
 
-    let role_badge = if is_ws_manager {
-        Some("WS Admin")
-    } else {
-        None
-    };
-
     layout_with_scrollable_list(
         (3, INSTALLER_STEPS),
         Some(current_user_email),
-        role_badge,
+        is_ws_admin,
         &["Organizations".to_string()],
         header_content,
         list_content,

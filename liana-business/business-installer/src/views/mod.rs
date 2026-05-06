@@ -95,7 +95,7 @@ enum LayoutContent<'a> {
 fn layout_inner<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
-    role_badge: Option<&'static str>,
+    is_ws_admin: bool,
     breadcrumb: &[String],
     content: LayoutContent<'a>,
     padding_left: bool,
@@ -119,12 +119,8 @@ fn layout_inner<'a>(
         .spacing(10)
         .align_y(Alignment::Center);
 
-    if let Some(role) = role_badge {
-        email_row = email_row.push(
-            Container::new(text::caption(role))
-                .padding([4, 12])
-                .style(theme::pill::simple),
-        );
+    if is_ws_admin {
+        email_row = email_row.push(liana_ui::component::pill::ws_admin());
     }
 
     if let Some(e) = email {
@@ -241,7 +237,6 @@ fn layout_inner<'a>(
 pub fn layout<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
-    role_badge: Option<&'static str>,
     breadcrumb: &[String],
     content: impl Into<Element<'a, Msg>>,
     padding_left: bool,
@@ -250,7 +245,7 @@ pub fn layout<'a>(
     layout_inner(
         progress,
         email,
-        role_badge,
+        false,
         breadcrumb,
         LayoutContent::Scrollable(content.into()),
         padding_left,
@@ -265,7 +260,7 @@ pub fn layout<'a>(
 pub fn layout_with_scrollable_list<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
-    role_badge: Option<&'static str>,
+    is_ws_admin: bool,
     breadcrumb: &[String],
     header_content: impl Into<Element<'a, Msg>>,
     list_content: impl Into<Element<'a, Msg>>,
@@ -276,7 +271,7 @@ pub fn layout_with_scrollable_list<'a>(
     layout_inner(
         progress,
         email,
-        role_badge,
+        is_ws_admin,
         breadcrumb,
         LayoutContent::ScrollableList {
             header: header_content.into(),

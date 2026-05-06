@@ -20,7 +20,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     let current_user_email = &state.views.login.email.form.value;
 
     // Determine user role from AppState
-    let is_ws_manager = matches!(
+    let is_ws_admin = matches!(
         state.app.current_user_role,
         Some(UserRole::WizardSardineAdmin)
     );
@@ -49,7 +49,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     // Once the wallet is Locked/Validated/Finalized, keys cannot be managed
     if is_draft {
         let icon = Some(icon::key_icon());
-        if is_ws_manager {
+        if is_ws_admin {
             buttons_row = buttons_row.push(btn_secondary(
                 icon,
                 "Manage Keys",
@@ -67,7 +67,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     }
 
     // WS Admin on Draft: "Lock Template" (if valid)
-    if is_ws_manager && is_draft {
+    if is_ws_admin && is_draft {
         let is_valid = state.is_template_valid();
         let lock_button = btn_primary(
             None,
@@ -79,7 +79,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     }
 
     // WS Admin on Locked: "Unlock" button
-    if is_ws_manager && is_locked {
+    if is_ws_admin && is_locked {
         buttons_row = buttons_row.push(btn_secondary(
             None,
             "Unlock",
@@ -104,12 +104,6 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
         .padding(20)
         .into();
 
-    let role_badge = if is_ws_manager {
-        Some("WS Admin")
-    } else {
-        None
-    };
-
     // Build breadcrumb: org_name > wallet_name > Template
     let org_name = state
         .app
@@ -131,7 +125,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     layout_with_scrollable_list(
         (0, 0), // No progress indicator for template builder
         Some(current_user_email),
-        role_badge,
+        is_ws_admin,
         &breadcrumb,
         header_content,
         visualization,

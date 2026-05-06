@@ -21,7 +21,6 @@ pub fn loading_view(has_error: bool) -> Element<'static, Msg> {
     layout(
         (0, 0),
         None,
-        None,
         &[],
         Container::new(
             Column::new()
