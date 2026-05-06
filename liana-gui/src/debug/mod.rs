@@ -17,6 +17,7 @@ use iced::{widget::scrollable, Alignment, Length};
 use liana_ui::{component::text, theme, widget::*};
 
 pub mod badges;
+pub mod texts;
 
 /// Every registered debug page. Append `&module::ENTRY` here when adding a new
 /// debug module — that's the one line of glue beyond the `debug_page!` call.
@@ -24,6 +25,8 @@ pub mod badges;
 #[rustfmt::skip]
 pub const PAGES: &[&DebugPageEntry] = &[
     &badges::ENTRY,
+    &texts::ENTRY_CONSTRUCTORS,
+    &texts::ENTRY_THEMES,
     // <- add new entry here
 ];
 
