@@ -8,7 +8,7 @@ use iced::{
 };
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
 use liana_ui::{
-    component::{form, text},
+    component::{form, pill, text},
     theme,
     widget::*,
 };
@@ -49,49 +49,16 @@ fn derive_user_role(
     None
 }
 
-/// Fixed width for status badges to ensure alignment
-const STATUS_BADGE_WIDTH: f32 = 90.0;
-
 /// Render a colored status badge for wallet status
 fn status_badge(wallet: &Wallet, user_email: &str) -> Element<'static, Msg> {
-    let status = wallet.effective_status(user_email);
-    let width = STATUS_BADGE_WIDTH;
-    if status == WalletStatus::Registration {
-        return Container::new(text::caption("Register"))
-            .padding([4, 12])
-            .width(width)
-            .center_x(width)
-            .style(theme::pill::warning)
-            .into();
+    match wallet.effective_status(user_email) {
+        WalletStatus::Registration => pill::register(),
+        WalletStatus::Created | WalletStatus::Drafted => pill::draft(),
+        WalletStatus::Locked => pill::to_approve(),
+        WalletStatus::Validated => pill::set_keys(),
+        WalletStatus::Finalized => pill::active(),
     }
-
-    match status {
-        WalletStatus::Registration => unreachable!(), // Handled above
-        WalletStatus::Created | WalletStatus::Drafted => Container::new(text::caption("Draft"))
-            .padding([4, 12])
-            .width(width)
-            .center_x(width)
-            .style(theme::pill::simple)
-            .into(),
-        WalletStatus::Locked => Container::new(text::caption("To Approve"))
-            .padding([4, 12])
-            .width(width)
-            .center_x(width)
-            .style(theme::pill::warning)
-            .into(),
-        WalletStatus::Validated => Container::new(text::caption("Set keys"))
-            .padding([4, 12])
-            .width(width)
-            .center_x(width)
-            .style(theme::pill::warning)
-            .into(),
-        WalletStatus::Finalized => Container::new(text::caption("Active"))
-            .padding([4, 12])
-            .width(width)
-            .center_x(width)
-            .style(theme::pill::success)
-            .into(),
-    }
+    .into()
 }
 
 /// Get a display label for the user role
@@ -149,7 +116,7 @@ pub fn wallet_card<'a>(
     let mut right_col = Column::new()
         .push(status_badge(wallet, user_email))
         .spacing(4)
-        .width(STATUS_BADGE_WIDTH)
+        .width(pill::PillWidth::M)
         .align_x(Alignment::Center);
 
     // Only show role for Wallet Manager and Participant (not WS Admin)
@@ -338,8 +305,6 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
 
     list_content = list_content.push(Space::with_height(50));
 
-    let role_badge = if is_ws_admin { Some("WS Admin") } else { None };
-
     // Build breadcrumb: org_name > Wallets
     let org_name = state
         .app
@@ -352,7 +317,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
     layout_with_scrollable_list(
         (4, INSTALLER_STEPS),
         Some(&state.views.login.email.form.value),
-        role_badge,
+        is_ws_admin,
         &breadcrumb,
         header_content,
         list_content,
