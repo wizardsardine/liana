@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    liana_business::{EXTERNAL, SAFETY_NET},
+    *,
+};
 
 impl Palette {
     pub fn liana() -> Self {
@@ -457,40 +460,45 @@ impl Palette {
                 },
             },
             pills: Pills {
-                primary: ContainerPalette {
-                    background: color::GREEN,
-                    text: color::LIGHT_BLACK.into(),
-                    border: color::TRANSPARENT.into(),
-                },
                 simple: ContainerPalette {
                     background: color::TRANSPARENT,
                     text: color::GREY_3.into(),
                     border: color::GREY_3.into(),
                 },
                 warning: ContainerPalette {
+                    background: color::AMBER,
+                    text: color::DARK_TEXT_SECONDARY.into(),
+                    border: color::AMBER.into(),
+                },
+                soft_warning: ContainerPalette {
                     background: color::TRANSPARENT,
-                    text: color::RED.into(),
-                    border: color::RED.into(),
+                    text: color::AMBER.into(),
+                    border: color::AMBER.into(),
                 },
                 success: ContainerPalette {
-                    background: color::GREEN,
-                    text: color::LIGHT_BLACK.into(),
-                    border: color::GREEN.into(),
+                    background: color::SUCCESS_GREEN,
+                    text: color::WHITE.into(),
+                    border: color::SUCCESS_GREEN.into(),
                 },
                 internal: ContainerPalette {
-                    background: color::TRANSPARENT,
-                    text: color::GREY_3.into(),
-                    border: color::GREY_3.into(),
+                    background: color::BUSINESS_BLUE,
+                    text: color::WHITE.into(),
+                    border: color::BUSINESS_BLUE.into(),
                 },
                 external: ContainerPalette {
-                    background: color::TRANSPARENT,
-                    text: color::GREY_3.into(),
-                    border: color::GREY_3.into(),
+                    background: EXTERNAL,
+                    text: color::WHITE.into(),
+                    border: EXTERNAL.into(),
                 },
                 safety_net: ContainerPalette {
-                    background: color::TRANSPARENT,
-                    text: color::GREY_3.into(),
-                    border: color::GREY_3.into(),
+                    background: SAFETY_NET,
+                    text: color::WHITE.into(),
+                    border: SAFETY_NET.into(),
+                },
+                fingerprint: ContainerPalette {
+                    background: color::FINGERPRINT_BACKGROUND,
+                    text: color::FINGERPRINT_TEXT.into(),
+                    border: color::FINGERPRINT_BORDER.into(),
                 },
             },
             notifications: Notifications {
