@@ -23,7 +23,7 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{coins, dashboard, message::*, psbt, FiatAmountConverter},
+        view::{dashboard, message::*, psbt, FiatAmountConverter},
     },
     daemon::model::{remaining_sequence, Coin, SpendTx},
 };
@@ -591,7 +591,7 @@ fn coin_list_view<'a>(
                     pill::unconfirmed()
                 } else {
                     let seq = remaining_sequence(coin, blockheight, timelock);
-                    coins::coin_sequence_label(seq, timelock as u32)
+                    pill::coin_sequence(seq, timelock as u32)
                 })
                 .spacing(10)
                 .align_y(Alignment::Center)
