@@ -25,7 +25,7 @@ use iced::{
 };
 
 use liana_ui::{
-    component::{button, text::*},
+    component::{button, pill},
     icon::cross_icon,
     image::*,
     theme,
@@ -64,14 +64,16 @@ pub fn sidebar<'a>(
         .height(Length::Fill)
         .spacing(10);
 
+    let rescan = cache.rescan_progress().and_then(|p| match menu_width {
+        MenuWidth::Normal => Some(pill::rescan(p, false)),
+        MenuWidth::Compact => Some(pill::rescan(p, true)),
+        MenuWidth::Small => None,
+    });
+
     let bottom_buttons = Container::new(
         Column::new()
             .spacing(10)
-            .push_maybe(cache.rescan_progress().map(|p| {
-                Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
-                    .padding(5)
-                    .style(theme::pill::simple)
-            }))
+            .push_maybe(rescan)
             .push(Menu::Recovery.entry(active, menu_width))
             .push(Menu::Transactions.entry(active, menu_width))
             .push(Menu::Coins.entry(active, menu_width))

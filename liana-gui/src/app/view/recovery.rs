@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::{
-    widget::{checkbox, tooltip, Space},
+    widget::{checkbox, Space},
     Alignment, Length,
 };
 
@@ -11,7 +11,7 @@ use liana::miniscript::bitcoin::{
 };
 
 use liana_ui::{
-    component::{amount::*, button, text::*},
+    component::{amount::*, button, pill, text::*},
     theme,
     widget::*,
 };
@@ -118,22 +118,10 @@ pub fn recovery_path_view<'a>(
                         .push(origins.iter().fold(
                             Row::new().align_y(Alignment::Center).spacing(5),
                             |row, (fg, _)| {
-                                row.push(if let Some(alias) = key_aliases.get(fg) {
-                                    Container::new(
-                                        tooltip::Tooltip::new(
-                                            Container::new(text(alias))
-                                                .padding(5)
-                                                .style(theme::pill::simple),
-                                            liana_ui::widget::Text::new(fg.to_string()),
-                                            tooltip::Position::Top,
-                                        )
-                                        .style(theme::card::simple),
-                                    )
-                                } else {
-                                    Container::new(text(fg.to_string()))
-                                        .padding(5)
-                                        .style(theme::pill::simple)
-                                })
+                                row.push(pill::fingerprint(
+                                    fg.to_string(),
+                                    key_aliases.get(fg).map(String::as_str),
+                                ))
                             },
                         )),
                 )
