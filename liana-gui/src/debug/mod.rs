@@ -17,6 +17,8 @@ use iced::{widget::scrollable, Alignment, Length};
 use liana_ui::{component::text, theme, widget::*};
 
 pub mod badges;
+pub mod pill_styles;
+pub mod pills;
 
 /// Every registered debug page. Append `&module::ENTRY` here when adding a new
 /// debug module — that's the one line of glue beyond the `debug_page!` call.
@@ -24,6 +26,8 @@ pub mod badges;
 #[rustfmt::skip]
 pub const PAGES: &[&DebugPageEntry] = &[
     &badges::ENTRY,
+    &pills::ENTRY,
+    &pill_styles::ENTRY,
     // <- add new entry here
 ];
 
@@ -63,7 +67,7 @@ where
                 Row::new()
                     .spacing(20)
                     .align_y(Alignment::Center)
-                    .push(Container::new(sample.into()).width(Length::Fixed(160.0)))
+                    .push(Container::new(sample.into()))
                     .push(text::p1_regular(path)),
             )
         },
