@@ -28,6 +28,7 @@ use liana_ui::{component::text, theme, widget::*};
 use crate::app::{cache::Cache, menu::Menu, view::Message as ViewMessage};
 
 pub mod badges;
+pub mod buttons;
 pub mod texts;
 
 /// Navigation hint shown in every debug page's chrome.
@@ -311,6 +312,10 @@ pub const DESIGN_SYSTEM: DebugStack = DebugStack {
     #[rustfmt::skip]
     pages: &[
         &badges::ENTRY,
+        &buttons::ENTRY_THEMES,
+        &buttons::ENTRY_CONSTRUCTORS_THEMED,
+        &buttons::ENTRY_CONSTRUCTORS_WIDTHS,
+        &buttons::ENTRY_CONSTRUCTORS_HELPERS,
         &texts::ENTRY_CONSTRUCTORS,
         &texts::ENTRY_THEMES,
     ],
