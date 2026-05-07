@@ -853,9 +853,27 @@ impl ConnectCubePanel {
                 else {
                     return iced::Task::none();
                 };
+                // Same malformed-record guard as
+                // `reconcile_spark_lightning_address`: without
+                // `@domain` in the DB record, the post-register
+                // comparison against the SDK's full `user@domain`
+                // can never match, and the user would be stuck in
+                // a retry loop they can't clear.
                 let db_username = match db_addr.split('@').next() {
-                    Some(u) if !u.is_empty() => u.to_string(),
-                    _ => return iced::Task::none(),
+                    Some(u) if !u.is_empty() && db_addr.contains('@') => u.to_string(),
+                    _ => {
+                        log::warn!(
+                            "[CONNECT-CUBE] skipping retry rebind: malformed DB \
+                             lightning address {:?} (expected user@domain)",
+                            db_addr
+                        );
+                        self.ln_reconcile_needs_reregister = Some(format!(
+                            "Stored lightning address {:?} is malformed \
+                             (expected user@domain) — please re-claim a username",
+                            db_addr
+                        ));
+                        return iced::Task::none();
+                    }
                 };
                 self.ln_reregistering = true;
                 return iced::Task::perform(
