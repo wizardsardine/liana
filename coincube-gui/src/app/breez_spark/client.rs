@@ -507,8 +507,8 @@ impl SparkClient {
     /// Spark leaf on the Breez-hosted LNURL server.
     ///
     /// Call after the API's reserve endpoint has returned 2xx — the
-    /// Go API commits the BIP353 TXT and persists the record in its
-    /// `confirm` step, but only if the SDK registration succeeds. On
+    /// Go API persists the record and the `confirm` step stamps it
+    /// permanent, but only after the SDK registration succeeds. On
     /// any failure here the caller must release the reservation via
     /// the API's DELETE endpoint.
     pub async fn register_lightning_address(

@@ -1039,6 +1039,33 @@ pub enum ConnectCubeMessage {
     ClaimLightningAddress,
     LightningAddressClaimed(crate::services::coincube::LightningAddress),
     LightningAddressLoaded(Option<crate::services::coincube::LightningAddress>),
+    /// Flip the claimed-address card into the in-place edit form.
+    BeginEditLightningAddress,
+    /// Drop edit mode, clear the input, abort any pending availability check.
+    CancelEditLightningAddress,
+    /// User clicked "Change" on the edit form — open the destructive
+    /// confirmation modal with the proposed new username.
+    RequestChangeLightningAddress,
+    /// User backed out of the confirmation modal.
+    DismissChangeConfirmation,
+    /// User confirmed the swap — fires the PUT + SDK delete+register chain.
+    ConfirmChangeLightningAddress,
+    /// Terminal result of the change chain. The outcome variants
+    /// distinguish server-side rejection (address unchanged) from
+    /// server-committed-but-SDK-out-of-sync (the new address is
+    /// confirmed in the API and the existing re-registration prompt
+    /// is surfaced for the user to retry the SDK side).
+    LightningAddressUpdated(crate::app::state::connect::cube::LightningAddressChangeOutcome),
+    /// Terminal result of the manual SDK rebind retry kicked off by
+    /// `RetryLightningAddressReregister`. `Ok` clears the
+    /// re-registration prompt; `Err` keeps it surfaced with an
+    /// updated message.
+    LightningAddressReregistered(Result<coincube_spark_protocol::LightningAddressInfo, String>),
+    /// Manual retry of the SDK side of a Lightning Address rebind
+    /// when reconcile flagged `ln_reconcile_needs_reregister`. Performs
+    /// SDK delete (idempotent) then register against the DB-confirmed
+    /// username.
+    RetryLightningAddressReregister,
     /// Phase 4g: the Spark SDK forwarded a `LightningAddressChanged`
     /// event — either a register/unregister on this device, or a
     /// cross-device sync replay via realtime-sync. `None` with a
