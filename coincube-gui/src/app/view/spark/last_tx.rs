@@ -53,6 +53,7 @@ pub fn last_transactions_section<'a, M: 'a + Clone + 'static>(
             SparkPaymentMethod::Lightning => asset_network_logo("btc", "lightning", 40.0),
             SparkPaymentMethod::OnChainBitcoin => asset_network_logo("btc", "bitcoin", 40.0),
             SparkPaymentMethod::Spark => asset_network_logo("btc", "spark", 40.0),
+            SparkPaymentMethod::StableBalance => asset_network_logo("btc", "spark", 40.0),
         };
 
         let display_amount = if tx.is_incoming {
@@ -67,6 +68,9 @@ pub fn last_transactions_section<'a, M: 'a + Clone + 'static>(
             .with_label(tx.description.clone())
             .with_time_ago(tx.time_ago.clone());
 
+        if let Some(token_str) = tx.token_display.as_ref() {
+            item = item.with_amount_override(token_str.clone());
+        }
         if let Some(fiat) = tx.fiat_amount.as_ref() {
             item =
                 item.with_fiat_amount(format!("{} {}", fiat.to_rounded_string(), fiat.currency()));

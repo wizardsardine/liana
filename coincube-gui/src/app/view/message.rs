@@ -1165,8 +1165,16 @@ pub enum HomeMessage {
     /// Navigate to Spark Receive.
     ReceiveSparkBtc,
     /// Bridge returned a fresh Spark balance (used by the Home
-    /// page's periodic balance refresh).
-    SparkBalanceUpdated(Amount),
+    /// page's periodic balance refresh). Carries the raw
+    /// `balance_sats` and the optional Stable Balance USDB holding
+    /// so the handler can fold USDB into the headline at the
+    /// current BTC/USD price (same pattern as the Spark Overview
+    /// panel — when Stable Balance is on, raw `balance_sats` reads
+    /// 0 even though the wallet still has spendable value).
+    SparkBalanceUpdated {
+        btc: Amount,
+        stable_balance: Option<coincube_spark_protocol::StableBalanceSnapshot>,
+    },
     ToggleBalanceMask,
     /// Open the wallet-picker popup on the amount screen, editing the named side.
     OpenWalletPicker(PickerSide),

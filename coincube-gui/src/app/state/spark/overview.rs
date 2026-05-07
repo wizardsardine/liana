@@ -33,6 +33,11 @@ use crate::utils::format_time_ago;
 #[derive(Debug, Clone)]
 pub struct SparkBalanceSnapshot {
     pub balance_sats: u64,
+    /// USDB amount in token base units, when Stable Balance is on
+    /// and the SDK reports a non-zero USDB holding. The view folds
+    /// this into the unified portfolio total at the current BTC
+    /// price, the same way Liquid folds USDt into L-BTC.
+    pub stable_balance: Option<coincube_spark_protocol::StableBalanceSnapshot>,
 }
 
 pub struct SparkOverview {
@@ -88,6 +93,7 @@ impl State for SparkOverview {
             bitcoin_unit: cache.bitcoin_unit,
             show_direction_badges: cache.show_direction_badges,
             stable_balance_active: self.stable_balance_active.unwrap_or(false),
+            btc_usd_price: cache.btc_usd_price,
             display_mode: cache.display_mode,
         }
         .render()
@@ -119,6 +125,7 @@ impl State for SparkOverview {
                 (Ok(info), Ok(list)) => Message::View(view::Message::SparkOverview(
                     view::SparkOverviewMessage::DataLoaded {
                         balance: Amount::from_sat(info.balance_sats),
+                        stable_balance: info.stable_balance,
                         recent_payments: list.payments,
                     },
                 )),
@@ -154,12 +161,14 @@ impl State for SparkOverview {
             match msg {
                 view::SparkOverviewMessage::DataLoaded {
                     balance,
+                    stable_balance,
                     recent_payments,
                 } => {
                     self.loading = false;
                     self.error = None;
                     self.snapshot = Some(SparkBalanceSnapshot {
                         balance_sats: balance.to_sat(),
+                        stable_balance,
                     });
 
                     let fiat_converter: Option<FiatAmountConverter> =
@@ -225,9 +234,14 @@ pub(crate) fn payment_summary_to_recent_tx(
 ) -> SparkRecentTransaction {
     let is_incoming = p.direction.eq_ignore_ascii_case("Receive");
     let status = parse_status(&p.status);
+
+    if let Some(token_amount) = p.token_amount {
+        return token_payment_to_recent_tx(p, token_amount, is_incoming, status);
+    }
+
     let method = parse_method(&p.method);
-    // PaymentSummary carries the signed sat amount; the view displays
-    // the absolute value and composes the direction separately.
+    // PaymentSummary carries the unsigned sat amount; the view displays
+    // it and composes the direction from the `direction` field.
     let amount = Amount::from_sat(p.amount_sat.unsigned_abs());
     let fees_sat = Amount::from_sat(p.fees_sat);
     let fiat_amount = fiat_converter.map(|c| c.convert(amount));
@@ -242,6 +256,7 @@ pub(crate) fn payment_summary_to_recent_tx(
             }
         }
         SparkPaymentMethod::Spark => "Spark transfer".to_string(),
+        SparkPaymentMethod::StableBalance => "Stable Balance".to_string(),
     });
 
     SparkRecentTransaction {
@@ -255,6 +270,61 @@ pub(crate) fn payment_summary_to_recent_tx(
         is_incoming,
         status,
         method,
+        token_display: None,
+    }
+}
+
+/// Build a recent-tx row for a `method=token` payment. The bridge
+/// strips the sat fields to zero in this case and ships the token
+/// amount + decimals + ticker; the view renders that as the headline
+/// figure ("1.58 USDB") instead of pretending it's sats. USDB pegs
+/// 1:1 to USD, so the secondary fiat line is the token amount itself,
+/// not a BTC-derived conversion.
+fn token_payment_to_recent_tx(
+    p: &PaymentSummary,
+    token_amount: u64,
+    is_incoming: bool,
+    status: DomainPaymentStatus,
+) -> SparkRecentTransaction {
+    use crate::app::breez_spark::assets::format_token_display;
+    use crate::app::view::vault::fiat::FiatAmount;
+    use crate::services::fiat::Currency;
+
+    let decimals = p.token_decimals.unwrap_or(0);
+    let ticker = p.token_ticker.clone().unwrap_or_else(|| "USDB".to_string());
+    let token_str = format_token_display(token_amount, decimals);
+    let token_display = format!("{} {}", token_str, ticker);
+
+    // USDB ≈ $1, so the dollar value is `amount / 10^decimals`. We
+    // surface that as the row's secondary text via `FiatAmount` so it
+    // matches the existing fiat label style.
+    let dollar_value = if decimals == 0 {
+        token_amount as f64
+    } else {
+        token_amount as f64 / 10_f64.powi(decimals as i32)
+    };
+    let fiat_amount = FiatAmount::new(dollar_value, Currency::USD).ok();
+
+    let description = p
+        .description
+        .clone()
+        .unwrap_or_else(|| "Stable Balance".to_string());
+
+    SparkRecentTransaction {
+        id: p.id.clone(),
+        description,
+        time_ago: format_time_ago(p.timestamp as i64),
+        timestamp: p.timestamp,
+        // Zero out the sat amount so the row's pending-sat sums and
+        // any callers that read `amount` for BTC totals don't pick up
+        // a token figure as if it were satoshis.
+        amount: Amount::ZERO,
+        fees_sat: Amount::ZERO,
+        fiat_amount,
+        is_incoming,
+        status,
+        method: SparkPaymentMethod::StableBalance,
+        token_display: Some(token_display),
     }
 }
 
@@ -276,6 +346,7 @@ fn parse_method(raw: &str) -> SparkPaymentMethod {
     match raw.to_lowercase().as_str() {
         "lightning" => SparkPaymentMethod::Lightning,
         "deposit" | "withdraw" => SparkPaymentMethod::OnChainBitcoin,
+        "token" => SparkPaymentMethod::StableBalance,
         _ => SparkPaymentMethod::Spark,
     }
 }

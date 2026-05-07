@@ -181,6 +181,7 @@ fn transaction_row<'a>(
         SparkPaymentMethod::Lightning => asset_network_logo("btc", "lightning", 40.0),
         SparkPaymentMethod::OnChainBitcoin => asset_network_logo("btc", "bitcoin", 40.0),
         SparkPaymentMethod::Spark => asset_network_logo("btc", "spark", 40.0),
+        SparkPaymentMethod::StableBalance => asset_network_logo("btc", "spark", 40.0),
     };
 
     // Outgoing amount includes fees so the headline figure matches what
@@ -197,10 +198,25 @@ fn transaction_row<'a>(
         .with_custom_icon(combo_icon)
         .with_show_direction_badge(show_direction_badges);
 
-    if let Some(fiat_amount) = fiat_converter.map(|converter| {
-        let fiat = converter.convert(display_amount);
-        format!("{} {}", fiat.to_rounded_string(), fiat.currency())
-    }) {
+    if let Some(token_str) = tx.token_display.as_ref() {
+        item = item.with_amount_override(token_str.clone());
+    }
+
+    // For token rows: the row's `tx.fiat_amount` is already the
+    // dollar value (USDB is pegged 1:1 to USD); for sat rows we
+    // derive fiat off the display_amount via the converter so it
+    // matches what the user sees in the headline figure.
+    let fiat_label = if tx.token_display.is_some() {
+        tx.fiat_amount
+            .as_ref()
+            .map(|f| format!("{} {}", f.to_rounded_string(), f.currency()))
+    } else {
+        fiat_converter.map(|converter| {
+            let fiat = converter.convert(display_amount);
+            format!("{} {}", fiat.to_rounded_string(), fiat.currency())
+        })
+    };
+    if let Some(fiat_amount) = fiat_label {
         item = item.with_fiat_amount(fiat_amount);
     }
 
@@ -235,17 +251,27 @@ pub fn transaction_detail_view<'a>(
     // matches the list-row total the user tapped. Fees are still listed
     // separately further down. Recompute the fiat off the same total
     // rather than reusing `tx.fiat_amount`, which is amount-only.
+    //
+    // Token rows (Stable Balance) zero out `tx.amount`/`tx.fees_sat`
+    // because the payment is denominated in token base units, not
+    // sats. For those we keep the precomputed `tx.fiat_amount` (the
+    // dollar value of the token leg) and skip the converter entirely.
     let total_amount = if is_incoming {
         tx.amount
     } else {
         tx.amount + tx.fees_sat
     };
-    let total_fiat = fiat_converter.as_ref().map(|c| c.convert(total_amount));
+    let total_fiat = if tx.token_display.is_some() {
+        tx.fiat_amount
+    } else {
+        fiat_converter.as_ref().map(|c| c.convert(total_amount))
+    };
 
     let method_icon = match tx.method {
         SparkPaymentMethod::Lightning => asset_network_logo::<Message>("btc", "lightning", 56.0),
         SparkPaymentMethod::OnChainBitcoin => asset_network_logo::<Message>("btc", "bitcoin", 56.0),
         SparkPaymentMethod::Spark => asset_network_logo::<Message>("btc", "spark", 56.0),
+        SparkPaymentMethod::StableBalance => asset_network_logo::<Message>("btc", "spark", 56.0),
     };
     let method_text = match tx.method {
         SparkPaymentMethod::Lightning => "Lightning payment",
@@ -257,6 +283,7 @@ pub fn transaction_detail_view<'a>(
             }
         }
         SparkPaymentMethod::Spark => "Spark transfer",
+        SparkPaymentMethod::StableBalance => "Stable Balance",
     };
     let status_text = match tx.status {
         DomainPaymentStatus::Complete => "Completed",
@@ -273,15 +300,23 @@ pub fn transaction_detail_view<'a>(
         .as_ref()
         .map(|f| format!("{} {}", f.to_rounded_string(), f.currency()));
 
-    let amount_row = Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(text(sign).size(H1_SIZE))
-        .push(amount_with_size_and_unit::<Message>(
-            &total_amount,
-            H1_SIZE,
-            bitcoin_unit,
-        ));
+    let amount_row = if let Some(token_str) = tx.token_display.as_ref() {
+        Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(text(sign).size(H1_SIZE))
+            .push(text(token_str.clone()).size(H1_SIZE))
+    } else {
+        Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(text(sign).size(H1_SIZE))
+            .push(amount_with_size_and_unit::<Message>(
+                &total_amount,
+                H1_SIZE,
+                bitcoin_unit,
+            ))
+    };
 
     let mut amount_block = Column::new().spacing(4).push(amount_row);
     if let Some(s) = fiat_str {

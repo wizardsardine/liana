@@ -19,7 +19,7 @@ use breez_sdk_spark::{
 /// the identifier is stable across deployments and leaking the
 /// knob to ops would just mean a way to silently misconfigure a
 /// production wallet.
-const USDB_MAINNET_TOKEN_IDENTIFIER: &str =
+pub const USDB_MAINNET_TOKEN_IDENTIFIER: &str =
     "btkn1xgrvjwey5ngcagvap2dzzvsy4uk8ua9x69k82dwvt5e7ef9drm9qztux87";
 
 /// Integrator-defined label used to reference the USDB token in

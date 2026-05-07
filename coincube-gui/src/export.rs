@@ -633,7 +633,7 @@ pub async fn export_spark_payments(
 
     let mut file = open_file_write(&path).await?;
 
-    let header = "Date,PaymentType,Method,Description,Amount (sats),Fees (sats),Net (sats)\n";
+    let header = "Date,PaymentType,Method,Description,Amount (sats),Fees (sats),Net (sats),Token Amount,Token Ticker\n";
     file.write_all(header.as_bytes())?;
 
     let list = spark_backend
@@ -674,9 +674,30 @@ pub async fn export_spark_payments(
             amount_sats as i64
         };
 
+        // Token payments (Stable Balance) carry their value in
+        // `token_amount` at `token_decimals` precision; sats columns
+        // are zero for those rows. Render the token figure with the
+        // token's own decimals so the column is human-readable.
+        let (token_amount_str, token_ticker) =
+            match (payment.token_amount, payment.token_decimals) {
+                (Some(amount), Some(decimals)) => (
+                    crate::app::breez_spark::assets::format_token_display(amount, decimals),
+                    payment.token_ticker.clone().unwrap_or_default(),
+                ),
+                _ => (String::new(), String::new()),
+            };
+
         let line = format!(
-            "{},{},{},{},{},{},{}\n",
-            date_time, payment_type, method_label, description, amount_sats, fees_sats, net_sats
+            "{},{},{},{},{},{},{},{},{}\n",
+            date_time,
+            payment_type,
+            method_label,
+            description,
+            amount_sats,
+            fees_sats,
+            net_sats,
+            token_amount_str,
+            token_ticker
         );
         file.write_all(line.as_bytes())?;
     }
