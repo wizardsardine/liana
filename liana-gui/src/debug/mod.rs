@@ -31,6 +31,7 @@ pub mod badges;
 pub mod buttons;
 pub mod cards;
 pub mod forms;
+pub mod home;
 pub mod hw;
 pub mod icons;
 pub mod texts;
@@ -340,7 +341,7 @@ pub const DESIGN_SYSTEM: DebugStack = DebugStack {
 pub const HOME_PANEL: DebugStack = DebugStack {
     name: "Home panel",
     menu: Some(&HOME_MENU),
-    pages: &[],
+    pages: &[&home::ENTRY],
 };
 
 pub const SEND_PANEL: DebugStack = DebugStack {
