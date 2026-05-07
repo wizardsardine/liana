@@ -5,9 +5,17 @@
 //! and re-exported by `liana-business` so its `EXTRA_STACKS` slice picks
 //! it up (see `liana_business::debug::EXTRA_STACKS`).
 //!
-//! This commit lays down the scaffold and the cross-cutting modal pages.
-//! Per-step submodules (`login`, `orgs`, `wallets`, …) are added in
-//! follow-up commits.
+//! The pages are split into one submodule per wizard step so a designer
+//! can browse them in their natural order: `login` → `orgs` → `wallets`
+//! → `template_creation` → `keys` → `key_registration` (xpub fetch) →
+//! `descriptor_registration` (wallet descriptor on devices). Cross-cutting
+//! modals (warning / conflict) live at the end of [`INSTALLER_STACK`] and
+//! are defined in this file.
+//!
+//! Each state-based page builds a stripped-down [`State`] via
+//! `State::for_debug` (no tokio runtime, no HW bridge thread) and mutates
+//! `views.*` to reach the targeted scenario. View functions never read
+//! `state.backend`/`state.hw`, so the stub state renders faithfully.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -31,6 +39,7 @@ use crate::state::{
 };
 use crate::views::{modals::conflict::conflict_modal_view, modals::warning::warning_modal_view};
 
+pub mod descriptor_registration;
 pub mod key_registration;
 pub mod keys;
 pub mod login;
@@ -59,6 +68,12 @@ pub(super) fn stub_tokens() -> AccessTokenResponse {
         expires_at: 0,
         refresh_token: String::new(),
     }
+}
+
+const SAMPLE_XPUB: &str = "[19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<0;1>/*";
+
+pub(super) fn sample_xpub() -> DescriptorPublicKey {
+    DescriptorPublicKey::from_str(SAMPLE_XPUB).expect("sample xpub parses")
 }
 
 /// Common helper: install an org + wallet in the backend so the breadcrumb
@@ -103,12 +118,6 @@ pub(super) fn add_sample_org_and_wallet(s: &mut State) {
     }
     s.app.selected_org = Some(org_id);
     s.app.selected_wallet = Some(wallet_id);
-}
-
-const SAMPLE_XPUB: &str = "[19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<0;1>/*";
-
-pub(super) fn sample_xpub() -> DescriptorPublicKey {
-    DescriptorPublicKey::from_str(SAMPLE_XPUB).expect("sample xpub parses")
 }
 
 // ---- cross-cutting modals -----------------------------------------------
@@ -273,6 +282,12 @@ pub const INSTALLER_STACK: DebugStack = DebugStack {
         &key_registration::ENTRY_XPUB_MODAL_DETAILS_FETCH_SUCCESS,
         &key_registration::ENTRY_XPUB_MODAL_DETAILS_WRONG_NETWORK,
         &key_registration::ENTRY_XPUB_MODAL_DETAILS_ACCOUNT_5,
+        // descriptor registration
+        &descriptor_registration::ENTRY_REGISTRATION,
+        &descriptor_registration::ENTRY_REGISTRATION_WITH_DEVICES,
+        &descriptor_registration::ENTRY_REGISTRATION_MODAL_REGISTERING,
+        &descriptor_registration::ENTRY_REGISTRATION_MODAL_CONFIRM_COLDCARD,
+        &descriptor_registration::ENTRY_REGISTRATION_MODAL_ERROR,
         // cross-cutting modals
         &ENTRY_WARNING_MODAL,
         &ENTRY_CONFLICT_MODAL_INFO,
