@@ -9,9 +9,11 @@
 //! Per-step submodules (`login`, `orgs`, `wallets`, …) are added in
 //! follow-up commits.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+use liana_connect::ws_business::{Org, Wallet, WalletStatus};
 use liana_gui::{
     debug::{installer_with_modal, DebugMessage, DebugPageEntry, DebugStack},
     dir::LianaDirectory,
@@ -27,6 +29,7 @@ use crate::state::{
 };
 use crate::views::{modals::conflict::conflict_modal_view, modals::warning::warning_modal_view};
 
+pub mod keys;
 pub mod login;
 pub mod orgs;
 pub mod template_creation;
@@ -53,6 +56,50 @@ pub(super) fn stub_tokens() -> AccessTokenResponse {
         expires_at: 0,
         refresh_token: String::new(),
     }
+}
+
+/// Common helper: install an org + wallet in the backend so the breadcrumb
+/// renders org / wallet names instead of placeholders.
+pub(super) fn add_sample_org_and_wallet(s: &mut State) {
+    let org_id = Uuid::from_u128(0x4000);
+    let wallet_id = Uuid::from_u128(0x5000);
+    {
+        let mut wallets = s.backend.wallets.lock().expect("poisoned");
+        wallets.insert(
+            wallet_id,
+            Wallet {
+                alias: "Acme treasury".to_string(),
+                org: org_id,
+                owner: Uuid::nil(),
+                id: wallet_id,
+                status: WalletStatus::Drafted,
+                template: None,
+                last_edited: None,
+                last_editor: None,
+                descriptor: None,
+                devices: None,
+            },
+        );
+    }
+    let mut org_wallets = BTreeSet::new();
+    org_wallets.insert(wallet_id);
+    {
+        let mut orgs = s.backend.orgs.lock().expect("poisoned");
+        orgs.insert(
+            org_id,
+            Org {
+                name: "Acme Vault".to_string(),
+                id: org_id,
+                wallets: org_wallets,
+                users: BTreeSet::new(),
+                owners: Vec::new(),
+                last_edited: None,
+                last_editor: None,
+            },
+        );
+    }
+    s.app.selected_org = Some(org_id);
+    s.app.selected_wallet = Some(wallet_id);
 }
 
 // ---- cross-cutting modals -----------------------------------------------
@@ -178,6 +225,18 @@ pub const INSTALLER_STACK: DebugStack = DebugStack {
         &template_creation::ENTRY_PATH_MODAL_RECOVERY_TIMELOCK_TOO_LARGE_MONTHS,
         &template_creation::ENTRY_PATH_MODAL_RECOVERY_TIMELOCK_DUPLICATE,
         &template_creation::ENTRY_PATH_MODAL_RECOVERY_THRESHOLD_AND_TIMELOCK,
+        // keys metadata
+        &keys::ENTRY_KEYS_EMPTY,
+        &keys::ENTRY_KEYS_WITH_BREADCRUMB,
+        &keys::ENTRY_KEYS_MANY,
+        &keys::ENTRY_KEY_MODAL_NEW_EMPTY,
+        &keys::ENTRY_KEY_MODAL_NEW_ALIASED,
+        &keys::ENTRY_KEY_MODAL_EXTERNAL,
+        &keys::ENTRY_KEY_MODAL_INTERNAL,
+        &keys::ENTRY_KEY_MODAL_COSIGNER,
+        &keys::ENTRY_KEY_MODAL_SAFETY_NET,
+        &keys::ENTRY_KEY_MODAL_INVALID_EMAIL,
+        &keys::ENTRY_KEY_MODAL_EMPTY_ALIAS,
         // cross-cutting modals
         &ENTRY_WARNING_MODAL,
         &ENTRY_CONFLICT_MODAL_INFO,
