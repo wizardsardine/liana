@@ -159,11 +159,22 @@ pub async fn mark_cube_synced(
 /// [`CubeSettings::master_signer_fingerprint`] was tracked: walks
 /// `<datadir>/<network>/mnemonics/` for master-seed files
 /// (`mnemonic-<fp>-master_<ts>-<ts>.txt`) and returns the
-/// fingerprint of the file whose timestamp is closest to
-/// `cube_created_at` and whose contents successfully decrypt with
-/// `pin`. Returns `None` when no master seed for this Cube lives
-/// on this device (e.g. Cube was created elsewhere and never
-/// restored here).
+/// fingerprint of the file whose timestamp matches
+/// `cube_created_at` (within [`MASTER_SEED_CREATION_WINDOW_SECS`])
+/// and whose contents successfully decrypt with `pin`. Returns
+/// `None` when no master seed for this Cube lives on this device
+/// (e.g. Cube was created elsewhere and never restored here) or
+/// when no file falls inside the creation window.
+///
+/// PIN check alone is *not* sufficient evidence of ownership —
+/// two Cubes can share a PIN, and if this Cube's master file is
+/// missing/corrupted the PIN would still decrypt some *other*
+/// Cube's seed and we'd silently bind the wrong wallet. The
+/// timestamp-window guard is what makes the match safe: the file
+/// is written `Utc::now()` milliseconds before `CubeSettings.
+/// created_at` is stamped (see `launcher.rs`), so a tight window
+/// uniquely associates the file with this Cube. PIN decryption
+/// stays as a second layer.
 ///
 /// Caller is responsible for persisting the result via
 /// [`update_settings_file`] and updating their in-memory
@@ -181,26 +192,41 @@ pub fn derive_master_signer_fingerprint(
     };
     use std::str::FromStr;
 
+    /// Tolerance (seconds) between a master-seed file's timestamp
+    /// and the owning Cube's `created_at`. Two seconds covers the
+    /// Argon2 + AES-GCM encryption pause between the two
+    /// `Utc::now()` reads in the create-cube path; any wider and
+    /// we'd risk admitting a different Cube's file.
+    const MASTER_SEED_CREATION_WINDOW_SECS: i64 = 2;
+
     let mnemonics_folder = datadir_root
         .join(network.to_string())
         .join(MNEMONICS_FOLDER_NAME);
     let entries = std::fs::read_dir(&mnemonics_folder).ok()?;
 
-    // Sort by closeness to `cube_created_at` so the matching Cube's
-    // seed wins before we waste an Argon2 decrypt on another Cube's
-    // file (master-seed files share the network folder across all
-    // Cubes on this device).
     let mut candidates: Vec<(Fingerprint, i64)> = entries
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let name = e.file_name().to_str()?.to_owned();
             let parsed = MnemonicFileName::from_str(&name).ok()?;
             let (checksum, ts) = parsed.descriptor_info?;
-            checksum
-                .starts_with(MASTER_SEED_LABEL)
-                .then_some((parsed.fingerprint, ts))
+            if !checksum.starts_with(MASTER_SEED_LABEL) {
+                return None;
+            }
+            // Hard ownership filter: only consider files whose
+            // creation timestamp falls in the Cube's creation
+            // window. A PIN match alone is not enough — see fn
+            // doc above.
+            if (ts - cube_created_at).abs() > MASTER_SEED_CREATION_WINDOW_SECS {
+                return None;
+            }
+            Some((parsed.fingerprint, ts))
         })
         .collect();
+    // If two files happen to fall inside the window (extremely
+    // unlikely — would require two Cubes minted within 2s), prefer
+    // the closer one so the deterministic order matches user
+    // expectation.
     candidates.sort_by_key(|(_, ts)| (ts - cube_created_at).abs());
 
     candidates.into_iter().map(|(fp, _)| fp).find(|&fp| {
