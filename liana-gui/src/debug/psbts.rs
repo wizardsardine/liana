@@ -464,18 +464,15 @@ fn pending_spend_tx() -> &'static SpendTx {
 }
 
 /// Public wrapper so other debug modules (panels.rs Send pages) can
-/// reuse the same mock SpendTx. Consumed by `panels.rs` once it lands.
-#[allow(dead_code)]
+/// reuse the same mock SpendTx.
 pub(super) fn pending_spend_tx_pub() -> &'static SpendTx {
     pending_spend_tx()
 }
 
-#[allow(dead_code)]
 pub(super) fn broadcast_spend_tx_pub() -> &'static SpendTx {
     broadcast_spend_tx()
 }
 
-#[allow(dead_code)]
 pub(super) fn sample_policy_pub() -> &'static LianaPolicy {
     sample_policy()
 }

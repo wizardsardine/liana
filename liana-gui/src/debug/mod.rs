@@ -36,6 +36,7 @@ pub mod hw;
 pub mod hw_modals;
 pub mod icons;
 pub mod installer_modals;
+pub mod panels;
 pub mod psbts;
 pub mod settings;
 pub mod texts;
@@ -352,13 +353,24 @@ pub const HOME_PANEL: DebugStack = DebugStack {
 pub const SEND_PANEL: DebugStack = DebugStack {
     name: "Send panel",
     menu: Some(&SEND_MENU),
-    pages: &[],
+    pages: &[
+        &panels::ENTRY_SPEND_DRAFTING,
+        &panels::ENTRY_SPEND_REVIEWING,
+        &panels::ENTRY_RECIPIENT_VALID,
+        &panels::ENTRY_CREATE_SPEND_SELF,
+        &panels::ENTRY_CREATE_SPEND_FILLED,
+    ],
 };
 
 pub const RECEIVE_PANEL: DebugStack = DebugStack {
     name: "Receive panel",
     menu: Some(&RECEIVE_MENU),
-    pages: &[],
+    pages: &[
+        &panels::ENTRY_RECEIVE,
+        &panels::ENTRY_RECEIVE_WITH_PREV,
+        &panels::ENTRY_VERIFY_ADDRESS,
+        &panels::ENTRY_QR_MODAL,
+    ],
 };
 
 pub const PSBT_PANEL: DebugStack = DebugStack {
@@ -383,19 +395,24 @@ pub const PSBT_PANEL: DebugStack = DebugStack {
 pub const RECOVERY_PANEL: DebugStack = DebugStack {
     name: "Recovery",
     menu: Some(&RECOVERY_MENU),
-    pages: &[],
+    pages: &[&panels::ENTRY_RECOVERY_NONE],
 };
 
 pub const TRANSACTIONS_PANEL: DebugStack = DebugStack {
     name: "Transactions",
     menu: Some(&TRANSACTIONS_MENU),
-    pages: &[&transactions::ENTRY],
+    pages: &[
+        &transactions::ENTRY,
+        &panels::ENTRY_TX_OUTGOING,
+        &panels::ENTRY_TX_INCOMING,
+        &panels::ENTRY_TX_SELF,
+    ],
 };
 
 pub const COINS_PANEL: DebugStack = DebugStack {
     name: "Coins",
     menu: Some(&COINS_MENU),
-    pages: &[],
+    pages: &[&panels::ENTRY_COINS_EMPTY, &panels::ENTRY_COINS_WITH_DATA],
 };
 
 pub const SETTINGS_PANEL: DebugStack = DebugStack {
