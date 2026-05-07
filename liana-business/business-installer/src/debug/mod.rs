@@ -11,8 +11,10 @@
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::OnceLock;
 
+use liana::miniscript::descriptor::DescriptorPublicKey;
 use liana_connect::ws_business::{Org, Wallet, WalletStatus};
 use liana_gui::{
     debug::{installer_with_modal, DebugMessage, DebugPageEntry, DebugStack},
@@ -29,6 +31,7 @@ use crate::state::{
 };
 use crate::views::{modals::conflict::conflict_modal_view, modals::warning::warning_modal_view};
 
+pub mod key_registration;
 pub mod keys;
 pub mod login;
 pub mod orgs;
@@ -100,6 +103,12 @@ pub(super) fn add_sample_org_and_wallet(s: &mut State) {
     }
     s.app.selected_org = Some(org_id);
     s.app.selected_wallet = Some(wallet_id);
+}
+
+const SAMPLE_XPUB: &str = "[19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<0;1>/*";
+
+pub(super) fn sample_xpub() -> DescriptorPublicKey {
+    DescriptorPublicKey::from_str(SAMPLE_XPUB).expect("sample xpub parses")
 }
 
 // ---- cross-cutting modals -----------------------------------------------
@@ -237,6 +246,33 @@ pub const INSTALLER_STACK: DebugStack = DebugStack {
         &keys::ENTRY_KEY_MODAL_SAFETY_NET,
         &keys::ENTRY_KEY_MODAL_INVALID_EMAIL,
         &keys::ENTRY_KEY_MODAL_EMPTY_ALIAS,
+        // key registration (xpub fetching)
+        &key_registration::ENTRY_XPUB,
+        &key_registration::ENTRY_XPUB_PARTIAL,
+        &key_registration::ENTRY_XPUB_ALL_SET,
+        &key_registration::ENTRY_XPUB_PARTICIPANT_NO_KEYS,
+        &key_registration::ENTRY_XPUB_WS_ADMIN,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT_OPTIONS_EXPANDED,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT_PASTE_EXPANDED,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT_PASTE_COLLAPSED,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT_WITH_CURRENT_XPUB,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT_LOCKED_BITBOX,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT_LOCKED_JADE,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT_UNSUPPORTED_VERSION_COLDCARD,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT_UNSUPPORTED_VERSION_JADE,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT_UNSUPPORTED_NOT_PART_OF_WALLET,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT_UNSUPPORTED_WRONG_NETWORK,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT_UNSUPPORTED_METHOD,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT_UNSUPPORTED_APP_NOT_OPEN,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT_ONE_DEVICE_OPTIONS_EXPANDED,
+        &key_registration::ENTRY_XPUB_MODAL_SELECT_MULTIPLE_DEVICES,
+        &key_registration::ENTRY_XPUB_MODAL_DETAILS,
+        &key_registration::ENTRY_XPUB_MODAL_DETAILS_FETCHING,
+        &key_registration::ENTRY_XPUB_MODAL_DETAILS_FETCH_ERROR,
+        &key_registration::ENTRY_XPUB_MODAL_DETAILS_FETCH_SUCCESS,
+        &key_registration::ENTRY_XPUB_MODAL_DETAILS_WRONG_NETWORK,
+        &key_registration::ENTRY_XPUB_MODAL_DETAILS_ACCOUNT_5,
         // cross-cutting modals
         &ENTRY_WARNING_MODAL,
         &ENTRY_CONFLICT_MODAL_INFO,
