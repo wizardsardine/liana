@@ -117,6 +117,12 @@ pub struct CoincubeLiteLogin {
     pub network: Network,
     pub settings: WalletSettings,
     pub breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+    /// Spark backend loaded alongside the Liquid client during PIN
+    /// entry / restore. `None` for cubes without a Spark signer or
+    /// when the bridge subprocess failed to spawn. Threaded through
+    /// to `create_app_with_remote_backend` so the Connect Lightning
+    /// Address claim flow has a SparkClient to talk to.
+    pub spark_backend: Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
 
     wallet_id: String,
     email: String,
@@ -147,6 +153,7 @@ impl CoincubeLiteLogin {
         network: Network,
         settings: WalletSettings,
         breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+        spark_backend: Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
     ) -> (Self, Task<Message>) {
         let auth = settings.remote_backend_auth.clone().unwrap();
         (
@@ -161,6 +168,7 @@ impl CoincubeLiteLogin {
                 auth_error: None,
                 processing: true,
                 breez_client,
+                spark_backend,
             },
             Task::perform(
                 async move {

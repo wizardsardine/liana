@@ -93,7 +93,8 @@ pub enum ReconcileOutcome {
 use super::{cube_members, AvatarFlowStep, ConnectCubeMembersState};
 
 /// Per-Cube Connect panel handling Lightning Address and Avatar.
-/// These features are tied to the Cube's Breez wallet (BOLT12 offer).
+/// The Lightning Address claim flow is fulfilled by the Cube's
+/// Spark wallet via Breez-hosted LNURL.
 pub struct ConnectCubePanel {
     /// The Cube's client-side UUID (from CubeSettings.id)
     pub cube_uuid: String,
@@ -568,10 +569,10 @@ impl ConnectCubePanel {
 
                         // Step 3: commit. API stamps
                         // `lightning_address_confirmed_at` on the
-                        // existing reservation. Empty body — no
-                        // BOLT12 offer, no DNS work. On failure
-                        // roll back both the SDK registration and
-                        // the reservation.
+                        // existing reservation. Empty body — the
+                        // reserve step already carried all the data
+                        // the API needs. On failure roll back both
+                        // the SDK registration and the reservation.
                         match client.confirm_lightning_address(&cube_id).await {
                             Ok(ln_addr) => Ok(ln_addr),
                             Err(e) => {

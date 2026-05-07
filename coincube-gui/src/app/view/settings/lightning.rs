@@ -7,8 +7,8 @@
 //! wallet's own Settings panel matches the mental model: Lightning
 //! routing is a cross-wallet concern, not a Spark-specific control.
 //!
-//! Additional Lightning-flavored preferences (BOLT12 toggles, LNURL
-//! pay defaults, etc.) can pile into this page as they land.
+//! Additional Lightning-flavored preferences (LNURL pay defaults,
+//! invoice expiry, etc.) can pile into this page as they land.
 
 use iced::widget::{Column, Row, Space};
 use iced::{Alignment, Length};
