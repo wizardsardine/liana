@@ -33,7 +33,7 @@ let
     TOOLKIT_x86_64_pc_windows_gnu = "${pkgs.pkgsCross.mingwW64.stdenv.cc.bintools.bintools}/bin";
     WINDRES_x86_64_pc_windows_gnu = "${pkgs.pkgsCross.mingwW64.stdenv.cc.targetPrefix}windres";
 
-    cargoExtraArgs = "-p liana-gui";
+    cargoExtraArgs = "-p liana-gui --no-default-features";
     depsBuildBuild = with pkgs; [
       pkgsCross.mingwW64.stdenv.cc
       pkgsCross.mingwW64.buildPackages.binutils
@@ -51,7 +51,7 @@ let
     inherit (lianaInfo) pname version;
 
     CARGO_BUILD_TARGET = "x86_64-apple-darwin";
-    buildPhaseCargoCommand = "cargo zigbuild --release --message-format json-render-diagnostics";
+    buildPhaseCargoCommand = "cargo zigbuild --release -p liana-gui -p lianad --no-default-features --message-format json-render-diagnostics";
     doNotPostBuildInstallCargoBinaries = true;
 
     depsBuildBuild = [
@@ -86,7 +86,7 @@ let
     inherit (lianaInfo) pname version;
 
     CARGO_BUILD_TARGET = "aarch64-apple-darwin";
-    buildPhaseCargoCommand = "cargo zigbuild --release --message-format json-render-diagnostics";
+    buildPhaseCargoCommand = "cargo zigbuild --release -p liana-gui -p lianad --no-default-features --message-format json-render-diagnostics";
     doNotPostBuildInstallCargoBinaries = true;
 
     depsBuildBuild = [

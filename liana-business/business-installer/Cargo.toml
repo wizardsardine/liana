@@ -7,6 +7,10 @@ edition = "2021"
 name = "business_installer"
 path = "src/lib.rs"
 
+[features]
+default = ["debugger"]
+debugger = ["liana-gui/debugger"]
+
 [dependencies]
 crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
 email_address = { workspace = true }

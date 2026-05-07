@@ -23,7 +23,7 @@ default-members = [
 [workspace.dependencies]
 # Internal crates
 liana = { path = "liana" }
-liana-gui = { path = "liana-gui" }
+liana-gui = { path = "liana-gui", default-features = false }
 liana-ui = { path = "liana-ui" }
 liana-connect = { path = "liana-connect" }
 
