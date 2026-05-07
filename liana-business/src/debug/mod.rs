@@ -50,7 +50,10 @@ pub const BUSINESS_SETTINGS: DebugStack = DebugStack {
 
 /// Slice handed to `liana_gui::gui::GUI::new` from `main.rs`. Append new
 /// business / business-installer stacks here as they appear.
-pub const EXTRA_STACKS: &[&DebugStack] = &[&BUSINESS_SETTINGS];
+pub const EXTRA_STACKS: &[&DebugStack] = &[
+    &BUSINESS_SETTINGS,
+    &business_installer::debug::INSTALLER_STACK,
+];
 
 /// SAFETY: iced renders on the main thread; debug-overlay state is only
 /// read during rendering, so satisfying `OnceLock`'s `Sync` bound with an
