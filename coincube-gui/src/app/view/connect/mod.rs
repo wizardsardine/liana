@@ -1092,15 +1092,16 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
         } else if state.ln_username_available == Some(true) {
             text::p2_regular("✓ Available").color(color::GREEN).into()
         } else if username.is_empty() {
-            text::p2_regular("Choose a new username").color(color::GREY_3).into()
+            text::p2_regular("Choose a new username")
+                .color(color::GREY_3)
+                .into()
         } else {
             text::p2_regular(" ").into()
         };
 
-        let cancel_btn = button::secondary(None, "Cancel")
-            .on_press_maybe((!state.ln_changing).then_some(
-                ConnectCubeMessage::CancelEditLightningAddress,
-            ));
+        let cancel_btn = button::secondary(None, "Cancel").on_press_maybe(
+            (!state.ln_changing).then_some(ConnectCubeMessage::CancelEditLightningAddress),
+        );
         let change_btn: Element<ConnectCubeMessage> = if state.ln_changing {
             iced::widget::button(
                 container(text::p1_regular("Changing…").color(color::GREY_3))
@@ -1122,9 +1123,7 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
             Column::new()
                 .push(text::p1_bold("Your Lightning Address").style(theme::text::primary))
                 .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                .push(
-                    text::p2_regular(format!("Current: {}", address)).color(color::GREY_3),
-                )
+                .push(text::p2_regular(format!("Current: {}", address)).color(color::GREY_3))
                 .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
                 .push(
                     Row::new()
@@ -1135,8 +1134,9 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
                                         .then_some(ConnectCubeMessage::LnUsernameChanged),
                                 )
                                 .on_submit_maybe(
-                                    can_change
-                                        .then_some(ConnectCubeMessage::RequestChangeLightningAddress),
+                                    can_change.then_some(
+                                        ConnectCubeMessage::RequestChangeLightningAddress,
+                                    ),
                                 )
                                 .size(16)
                                 .padding(15),
@@ -1233,10 +1233,12 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
                         .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
                         .push(text::p2_regular(err).color(color::GREY_3))
                         .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                        .push(button::secondary(None, retry_label).on_press_maybe(
-                            (!state.ln_reregistering)
-                                .then_some(ConnectCubeMessage::RetryLightningAddressReregister),
-                        ))
+                        .push(
+                            button::secondary(None, retry_label)
+                                .on_press_maybe((!state.ln_reregistering).then_some(
+                                    ConnectCubeMessage::RetryLightningAddressReregister,
+                                )),
+                        )
                 }))
                 .padding(20)
                 .spacing(2),
@@ -1378,9 +1380,7 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
                     current_addr
                 )))
                 .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-                .push(
-                    text::p1_bold(format!("New address: {}", new_addr)).color(color::ORANGE),
-                )
+                .push(text::p1_bold(format!("New address: {}", new_addr)).color(color::ORANGE))
                 .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
                 .push(
                     Row::new()
