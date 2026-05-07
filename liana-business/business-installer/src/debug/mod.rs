@@ -29,6 +29,7 @@ use crate::views::{modals::conflict::conflict_modal_view, modals::warning::warni
 
 pub mod login;
 pub mod orgs;
+pub mod template_creation;
 pub mod wallets;
 
 /// SAFETY: iced renders on the main thread; debug-overlay state is only
@@ -149,6 +150,34 @@ pub const INSTALLER_STACK: DebugStack = DebugStack {
         &orgs::ENTRY_ORG_SELECT_WITH_ORGS,
         // wallet select
         &wallets::ENTRY_WALLET_SELECT_WITH_WALLETS,
+        // template creation
+        &template_creation::ENTRY_TEMPLATE_BUILDER,
+        &template_creation::ENTRY_TEMPLATE_BUILDER_OWNER,
+        &template_creation::ENTRY_TEMPLATE_BUILDER_WS_ADMIN,
+        &template_creation::ENTRY_TEMPLATE_BUILDER_WS_ADMIN_SINGLE_KEY,
+        &template_creation::ENTRY_TEMPLATE_BUILDER_LOCKED,
+        &template_creation::ENTRY_PATH_MODAL_PRIMARY,
+        &template_creation::ENTRY_PATH_MODAL_PRIMARY_NO_KEYS,
+        &template_creation::ENTRY_PATH_MODAL_PRIMARY_THRESHOLD_EMPTY,
+        &template_creation::ENTRY_PATH_MODAL_PRIMARY_THRESHOLD_INVALID,
+        &template_creation::ENTRY_PATH_MODAL_SECONDARY,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_UNIT_BLOCKS,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_UNIT_HOURS,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_UNIT_DAYS,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_UNIT_MONTHS,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_NO_KEYS,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_NO_KEYS_OTHERS_VALID,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_THRESHOLD_EMPTY,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_THRESHOLD_TOO_HIGH,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_THRESHOLD_NON_NUMERIC,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_TIMELOCK_EMPTY,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_TIMELOCK_ZERO,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_TIMELOCK_TOO_LARGE,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_TIMELOCK_TOO_LARGE_BLOCKS,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_TIMELOCK_TOO_LARGE_DAYS,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_TIMELOCK_TOO_LARGE_MONTHS,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_TIMELOCK_DUPLICATE,
+        &template_creation::ENTRY_PATH_MODAL_RECOVERY_THRESHOLD_AND_TIMELOCK,
         // cross-cutting modals
         &ENTRY_WARNING_MODAL,
         &ENTRY_CONFLICT_MODAL_INFO,
