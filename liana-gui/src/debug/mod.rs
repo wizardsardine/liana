@@ -29,6 +29,7 @@ use crate::app::{cache::Cache, menu::Menu, view::Message as ViewMessage};
 
 pub mod badges;
 pub mod buttons;
+pub mod cards;
 pub mod forms;
 pub mod hw;
 pub mod texts;
@@ -321,6 +322,9 @@ pub const DESIGN_SYSTEM: DebugStack = DebugStack {
         &hw::ENTRY_PAGE_1,
         &hw::ENTRY_PAGE_2,
         &forms::ENTRY,
+        &cards::ENTRY_CONSTRUCTORS,
+        &cards::ENTRY_THEMES,
+        &cards::ENTRY_WRAPPED,
         &texts::ENTRY_CONSTRUCTORS,
         &texts::ENTRY_THEMES,
     ],
