@@ -35,6 +35,7 @@ pub mod home;
 pub mod hw;
 pub mod icons;
 pub mod texts;
+pub mod transactions;
 
 /// Navigation hint shown in every debug page's chrome.
 pub const NAV_HINT: &str = "Ctrl + D + ←/→ pages · Ctrl + D + ↑/↓ stacks · Ctrl + D + Esc close";
@@ -371,7 +372,7 @@ pub const RECOVERY_PANEL: DebugStack = DebugStack {
 pub const TRANSACTIONS_PANEL: DebugStack = DebugStack {
     name: "Transactions",
     menu: Some(&TRANSACTIONS_MENU),
-    pages: &[],
+    pages: &[&transactions::ENTRY],
 };
 
 pub const COINS_PANEL: DebugStack = DebugStack {
