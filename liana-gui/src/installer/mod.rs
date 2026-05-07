@@ -7,6 +7,9 @@ mod step;
 mod view;
 
 pub use context::{Context, RemoteBackend};
+
+#[cfg(feature = "debugger")]
+pub use descriptor::Key;
 use iced::{clipboard, Subscription, Task};
 use liana::miniscript::bitcoin::{self, Network};
 use liana_ui::{
@@ -15,6 +18,11 @@ use liana_ui::{
 };
 use lianad::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Config};
 use std::{collections::HashMap, fmt::Debug, ops::Deref};
+#[cfg(feature = "debugger")]
+pub use step::descriptor::editor::{
+    key::{EditKeyAlias, PathData, SelectKeySource, SelectKeySourceMessage},
+    DescriptorEditModal,
+};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 

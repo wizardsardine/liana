@@ -35,6 +35,7 @@ pub mod home;
 pub mod hw;
 pub mod hw_modals;
 pub mod icons;
+pub mod installer_modals;
 pub mod psbts;
 pub mod texts;
 pub mod transactions;
@@ -415,7 +416,14 @@ pub const HW_MODALS: DebugStack = DebugStack {
 pub const INSTALLER_MODALS: DebugStack = DebugStack {
     name: "Installer modals",
     menu: None,
-    pages: &[],
+    pages: &[
+        &installer_modals::ENTRY_EMPTY,
+        &installer_modals::ENTRY_OPTIONS_OPEN,
+        &installer_modals::ENTRY_WITH_HWS,
+        &installer_modals::ENTRY_TAPROOT_PATH,
+        &installer_modals::ENTRY_SAFETY_NET,
+        &installer_modals::ENTRY_EDIT_ALIAS,
+    ],
 };
 
 /// All registered debug stacks, in navigation order. `Ctrl + D + ↑/↓`
