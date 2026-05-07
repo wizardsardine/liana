@@ -37,6 +37,7 @@ pub mod hw_modals;
 pub mod icons;
 pub mod installer_modals;
 pub mod psbts;
+pub mod settings;
 pub mod texts;
 pub mod transactions;
 
@@ -400,7 +401,30 @@ pub const COINS_PANEL: DebugStack = DebugStack {
 pub const SETTINGS_PANEL: DebugStack = DebugStack {
     name: "Settings",
     menu: Some(&SETTINGS_MENU),
-    pages: &[],
+    pages: &[
+        &settings::ENTRY_LIST_LOCAL,
+        &settings::ENTRY_LIST_REMOTE,
+        &settings::ENTRY_ABOUT,
+        &settings::ENTRY_IMPORT_EXPORT,
+        &settings::ENTRY_GENERAL_OFF,
+        &settings::ENTRY_GENERAL_ON,
+        &settings::ENTRY_REMOTE_BACKEND_IDLE,
+        &settings::ENTRY_REMOTE_BACKEND_PROCESSING,
+        &settings::ENTRY_REMOTE_BACKEND_SUCCESS,
+        &settings::ENTRY_BITCOIND_RUNNING,
+        &settings::ENTRY_BITCOIND_STOPPED,
+        &settings::ENTRY_BITCOIND_EDIT,
+        &settings::ENTRY_ELECTRUM_RUNNING,
+        &settings::ENTRY_ELECTRUM_EDIT,
+        &settings::ENTRY_RESCAN_IDLE,
+        &settings::ENTRY_RESCAN_SCANNING,
+        &settings::ENTRY_RESCAN_SUCCESS,
+        &settings::ENTRY_RESCAN_INVALID_DATE,
+        &settings::ENTRY_WALLET_SETTINGS,
+        &settings::ENTRY_WALLET_SETTINGS_PROCESSING,
+        &settings::ENTRY_WALLET_SETTINGS_UPDATED,
+        &settings::ENTRY_REGISTER_WALLET_MODAL,
+    ],
 };
 
 pub const HW_MODALS: DebugStack = DebugStack {
