@@ -2,6 +2,8 @@ pub mod app;
 pub mod args;
 pub mod backup;
 pub mod daemon;
+#[cfg(feature = "debugger")]
+pub mod debug;
 pub mod delete;
 pub mod dir;
 pub mod download;
