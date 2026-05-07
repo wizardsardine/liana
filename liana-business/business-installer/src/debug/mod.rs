@@ -29,6 +29,7 @@ use crate::views::{modals::conflict::conflict_modal_view, modals::warning::warni
 
 pub mod login;
 pub mod orgs;
+pub mod wallets;
 
 /// SAFETY: iced renders on the main thread; debug-overlay state is only
 /// read during rendering.
@@ -146,6 +147,8 @@ pub const INSTALLER_STACK: DebugStack = DebugStack {
         &login::ENTRY_ACCOUNT_SELECT_PROCESSING,
         // org select
         &orgs::ENTRY_ORG_SELECT_WITH_ORGS,
+        // wallet select
+        &wallets::ENTRY_WALLET_SELECT_WITH_WALLETS,
         // cross-cutting modals
         &ENTRY_WARNING_MODAL,
         &ENTRY_CONFLICT_MODAL_INFO,
