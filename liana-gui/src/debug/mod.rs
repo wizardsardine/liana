@@ -32,6 +32,7 @@ pub mod buttons;
 pub mod cards;
 pub mod forms;
 pub mod hw;
+pub mod icons;
 pub mod texts;
 
 /// Navigation hint shown in every debug page's chrome.
@@ -327,6 +328,12 @@ pub const DESIGN_SYSTEM: DebugStack = DebugStack {
         &cards::ENTRY_WRAPPED,
         &texts::ENTRY_CONSTRUCTORS,
         &texts::ENTRY_THEMES,
+        &icons::ENTRY_HELPERS,
+        &icons::ENTRY_BOOTSTRAP_1,
+        &icons::ENTRY_BOOTSTRAP_2,
+        &icons::ENTRY_BOOTSTRAP_3,
+        &icons::ENTRY_BOOTSTRAP_4,
+        &icons::ENTRY_ICONEX,
     ],
 };
 
