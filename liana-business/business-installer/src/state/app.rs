@@ -101,12 +101,14 @@ impl AppState {
     pub fn new() -> Self {
         // Test data keys
         let mut keys = BTreeMap::new();
+        // The edit-key modal has no description input, so production keys
+        // never carry one — keep the seed data consistent.
         keys.insert(
             0,
             Key {
                 id: 0,
                 alias: "Wallet Manager".to_string(),
-                description: "Wallet Manager key".to_string(),
+                description: String::new(),
                 identity: KeyIdentity::Email("owner@example.com".to_string()),
                 key_type: KeyType::Internal,
                 xpub: None,
@@ -123,7 +125,7 @@ impl AppState {
             Key {
                 id: 1,
                 alias: "Bob".to_string(),
-                description: "Bob's key".to_string(),
+                description: String::new(),
                 identity: KeyIdentity::Email("bob@example.com".to_string()),
                 key_type: KeyType::External,
                 xpub: None,
@@ -140,7 +142,7 @@ impl AppState {
             Key {
                 id: 2,
                 alias: "Alice".to_string(),
-                description: "Alice's key".to_string(),
+                description: String::new(),
                 identity: KeyIdentity::Email("alice@example.com".to_string()),
                 key_type: KeyType::External,
                 xpub: None,
