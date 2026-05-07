@@ -9,14 +9,48 @@
 //! Per-step submodules (`login`, `orgs`, `wallets`, …) are added in
 //! follow-up commits.
 
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use liana_gui::debug::{installer_with_modal, DebugMessage, DebugPageEntry, DebugStack};
+use liana_gui::{
+    debug::{installer_with_modal, DebugMessage, DebugPageEntry, DebugStack},
+    dir::LianaDirectory,
+    services::connect::client::auth::AccessTokenResponse,
+};
 use liana_ui::widget::Element;
+use miniscript::bitcoin::Network;
 use uuid::Uuid;
 
-use crate::state::views::modals::{ConflictModalState, ConflictType, WarningModalState};
+use crate::state::{
+    views::modals::{ConflictModalState, ConflictType, WarningModalState},
+    State,
+};
 use crate::views::{modals::conflict::conflict_modal_view, modals::warning::warning_modal_view};
+
+pub mod login;
+
+/// SAFETY: iced renders on the main thread; debug-overlay state is only
+/// read during rendering.
+pub(super) struct StateCell<T>(pub(super) T);
+unsafe impl<T> Sync for StateCell<T> {}
+
+pub(super) fn datadir() -> LianaDirectory {
+    LianaDirectory::new(PathBuf::new())
+}
+
+pub(super) fn build_state(setup: impl FnOnce(&mut State)) -> State {
+    let mut s = State::for_debug(Network::Bitcoin, datadir());
+    setup(&mut s);
+    s
+}
+
+pub(super) fn stub_tokens() -> AccessTokenResponse {
+    AccessTokenResponse {
+        access_token: String::new(),
+        expires_at: 0,
+        refresh_token: String::new(),
+    }
+}
 
 // ---- cross-cutting modals -----------------------------------------------
 
@@ -98,8 +132,22 @@ pub const INSTALLER_STACK: DebugStack = DebugStack {
     name: "Business installer",
     menu: None,
     pages: &[
+        // Login
+        &login::ENTRY_EMAIL_EMPTY,
+        &login::ENTRY_EMAIL,
+        &login::ENTRY_EMAIL_INVALID,
+        &login::ENTRY_CODE_INVALID,
+        &login::ENTRY_CODE_EMPTY,
+        &login::ENTRY_CODE,
+        // Select account
+        &login::ENTRY_ACCOUNT_SELECT,
+        &login::ENTRY_ACCOUNT_SELECT_MANY,
+        &login::ENTRY_ACCOUNT_SELECT_PROCESSING,
+        // cross-cutting modals
         &ENTRY_WARNING_MODAL,
         &ENTRY_CONFLICT_MODAL_INFO,
         &ENTRY_CONFLICT_MODAL_CHOICE,
+        &login::ENTRY_LOADING_OK,
+        &login::ENTRY_LOADING_ERROR,
     ],
 };
