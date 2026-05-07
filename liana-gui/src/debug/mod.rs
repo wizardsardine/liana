@@ -29,6 +29,7 @@ use crate::app::{cache::Cache, menu::Menu, view::Message as ViewMessage};
 
 pub mod badges;
 pub mod buttons;
+pub mod hw;
 pub mod texts;
 
 /// Navigation hint shown in every debug page's chrome.
@@ -316,6 +317,8 @@ pub const DESIGN_SYSTEM: DebugStack = DebugStack {
         &buttons::ENTRY_CONSTRUCTORS_THEMED,
         &buttons::ENTRY_CONSTRUCTORS_WIDTHS,
         &buttons::ENTRY_CONSTRUCTORS_HELPERS,
+        &hw::ENTRY_PAGE_1,
+        &hw::ENTRY_PAGE_2,
         &texts::ENTRY_CONSTRUCTORS,
         &texts::ENTRY_THEMES,
     ],
