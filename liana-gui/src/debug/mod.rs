@@ -34,6 +34,7 @@ pub mod forms;
 pub mod home;
 pub mod hw;
 pub mod icons;
+pub mod psbts;
 pub mod texts;
 pub mod transactions;
 
@@ -360,7 +361,20 @@ pub const RECEIVE_PANEL: DebugStack = DebugStack {
 pub const PSBT_PANEL: DebugStack = DebugStack {
     name: "PSBT",
     menu: Some(&PSBTS_MENU),
-    pages: &[],
+    pages: &[
+        &psbts::ENTRY,
+        &psbts::ENTRY_IMPORT_EMPTY,
+        &psbts::ENTRY_IMPORT_TYPED,
+        &psbts::ENTRY_IMPORT_PROCESSING,
+        &psbts::ENTRY_IMPORT_SUCCESS,
+        &psbts::ENTRY_RBF_BUMP,
+        &psbts::ENTRY_RBF_REPLACED,
+        &psbts::ENTRY_RBF_CANCEL,
+        &psbts::ENTRY_PSBT_PENDING,
+        &psbts::ENTRY_PSBT_BROADCAST,
+        &psbts::ENTRY_PSBT_SPENT,
+        &psbts::ENTRY_PSBT_RECOVERY,
+    ],
 };
 
 pub const RECOVERY_PANEL: DebugStack = DebugStack {
