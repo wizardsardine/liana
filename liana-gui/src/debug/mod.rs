@@ -33,6 +33,7 @@ pub mod cards;
 pub mod forms;
 pub mod home;
 pub mod hw;
+pub mod hw_modals;
 pub mod icons;
 pub mod psbts;
 pub mod texts;
@@ -404,7 +405,11 @@ pub const SETTINGS_PANEL: DebugStack = DebugStack {
 pub const HW_MODALS: DebugStack = DebugStack {
     name: "HW modals",
     menu: None,
-    pages: &[],
+    pages: &[
+        &hw_modals::ENTRY_SIGNING,
+        &hw_modals::ENTRY_REGISTRATION,
+        &hw_modals::ENTRY_VERIFY_ADDRESS,
+    ],
 };
 
 pub const INSTALLER_MODALS: DebugStack = DebugStack {
