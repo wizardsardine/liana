@@ -654,6 +654,15 @@ pub struct ReserveLightningAddressRequest {
     pub username: String,
 }
 
+/// Body for `PUT /api/v1/connect/cubes/{id}/lightning-address`.
+/// Atomic server-side username swap on a cube that already has a
+/// confirmed Lightning Address.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLightningAddressRequest {
+    pub username: String,
+}
+
 pub fn get_countries() -> &'static [Country] {
     static COUNTRIES_JSON: &str = include_str!("../countries.json");
     static COUNTRIES: std::sync::OnceLock<Vec<Country>> = std::sync::OnceLock::new();

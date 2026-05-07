@@ -7,8 +7,8 @@ use super::{
     Invite, LightningAddress, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
     PublicAvatarData, RecoveryKit, RecoveryKitStatus, RefreshTokenRequest, RegenerationData,
     RegisterCubeRequest, ReserveLightningAddressRequest, SaveQuoteRequest, SaveQuoteResponse,
-    StatsPeriod, TimeseriesResponse, TodayStats, UpdateCubeRequest, UpsertRecoveryKitRequest, User,
-    VaultMemberResponse, VerifiedDevice,
+    StatsPeriod, TimeseriesResponse, TodayStats, UpdateCubeRequest, UpdateLightningAddressRequest,
+    UpsertRecoveryKitRequest, User, VaultMemberResponse, VerifiedDevice,
 };
 use reqwest::{Client, Method};
 use serde::Deserialize;
@@ -434,10 +434,10 @@ impl CoincubeClient {
     }
 
     /// Phase 4g step 1: reserve `username` against the cube. The API
-    /// persists the pending record but does NOT publish the BIP353
-    /// TXT yet — that lands in the [`Self::confirm_lightning_address`]
-    /// step after the Spark SDK has registered the username with the
-    /// Breez-hosted LNURL server.
+    /// persists the pending record. The follow-up
+    /// [`Self::confirm_lightning_address`] step stamps the record
+    /// confirmed once the Spark SDK has registered the username with
+    /// the Breez-hosted LNURL server.
     pub async fn reserve_lightning_address(
         &self,
         cube_id: &str,
@@ -460,7 +460,7 @@ impl CoincubeClient {
     /// Spark SDK has successfully registered the username with the
     /// Breez-hosted LNURL server. Body is empty — the API stamps
     /// `lightning_address_confirmed_at = now()` on the existing
-    /// reservation, turning it permanent. No DNS work happens.
+    /// reservation, turning it permanent.
     pub async fn confirm_lightning_address(
         &self,
         cube_id: &str,
@@ -486,6 +486,31 @@ impl CoincubeClient {
         let res = self.client.delete(&url).send().await?;
         let _ = res.check_success().await?;
         Ok(())
+    }
+
+    /// Atomic server-side rename. The cube must already have a
+    /// confirmed Lightning Address — the API updates only the
+    /// `lightning_address` column and leaves
+    /// `lightning_address_confirmed_at` set. The Spark/Breez SDK
+    /// binding still has to be updated separately on this device
+    /// (delete-then-register) since it's not reachable from the
+    /// server.
+    pub async fn update_lightning_address(
+        &self,
+        cube_id: &str,
+        username: &str,
+    ) -> Result<LightningAddress, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/lightning-address",
+            self.base_url, cube_id
+        );
+        let req = UpdateLightningAddressRequest {
+            username: username.to_string(),
+        };
+        let res = self.client.put(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<LightningAddress> = res.json().await?;
+        Ok(resp.data)
     }
 }
 
