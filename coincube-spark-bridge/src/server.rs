@@ -34,7 +34,7 @@ use coincube_spark_protocol::{
     LightningAddressInfo as ProtocolLightningAddressInfo, ListPaymentsOk, ListUnclaimedDepositsOk,
     Method, OkPayload, ParseInputKind, ParseInputOk, PaymentSummary, PrepareSendOk,
     ReceivePaymentOk, RegisterLightningAddressOk, Request, Response, SendPaymentOk,
-    SetStableBalanceParams,
+    SetStableBalanceParams, StableBalanceSnapshot,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Mutex, RwLock};
@@ -377,13 +377,25 @@ async fn handle_get_info(
         })
         .await
     {
-        Ok(info) => Response::ok(
-            id,
-            OkPayload::GetInfo(GetInfoOk {
-                balance_sats: info.balance_sats,
-                identity_pubkey: info.identity_pubkey,
-            }),
-        ),
+        Ok(info) => {
+            let stable_balance = info
+                .token_balances
+                .get(crate::sdk_adapter::USDB_MAINNET_TOKEN_IDENTIFIER)
+                .filter(|tb| tb.balance > 0)
+                .map(|tb| StableBalanceSnapshot {
+                    balance: clamp_u128_to_u64(tb.balance),
+                    decimals: tb.token_metadata.decimals,
+                    ticker: tb.token_metadata.ticker.clone(),
+                });
+            Response::ok(
+                id,
+                OkPayload::GetInfo(GetInfoOk {
+                    balance_sats: info.balance_sats,
+                    identity_pubkey: info.identity_pubkey,
+                    stable_balance,
+                }),
+            )
+        }
         Err(e) => Response::err(id, ErrorKind::Sdk, format!("get_info failed: {e}")),
     }
 }
@@ -436,15 +448,56 @@ async fn handle_list_payments(
 /// direction so the protocol crate doesn't need to mirror Spark's enums
 /// yet — later phases can replace these with typed variants as the UI
 /// starts branching on them.
+///
+/// `Payment.amount` is overloaded in the SDK ("satoshis or token base
+/// units" depending on `method`). For `PaymentMethod::Token` payments
+/// the value is in token base units (e.g. microUSDB at 6 decimals),
+/// not sats — treating it as sats produces the wrong fiat figure and
+/// a wildly inflated headline number. Token payments populate the
+/// dedicated `token_*` fields and zero out the sat fields; the gui
+/// renders them with the token's own ticker / decimals.
 fn payment_to_summary(p: breez_sdk_spark::Payment) -> PaymentSummary {
     let description = match &p.details {
         Some(PaymentDetails::Lightning { description, .. }) => description.clone(),
         _ => None,
     };
+    let token_metadata = match &p.details {
+        Some(PaymentDetails::Token { metadata, .. }) => Some(metadata.clone()),
+        _ => None,
+    };
+    let is_token = matches!(p.method, breez_sdk_spark::PaymentMethod::Token);
+
+    let (amount_sat, fees_sat, token_amount, token_decimals, token_ticker) = if is_token {
+        let metadata = token_metadata;
+        (
+            0i64,
+            0u64,
+            Some(clamp_u128_to_u64(p.amount)),
+            metadata.as_ref().map(|m| m.decimals),
+            metadata.map(|m| m.ticker),
+        )
+    } else {
+        // Match the previous behavior: ship the magnitude as i64 and
+        // let the gui derive direction from the `direction` field.
+        // Consumers all call `unsigned_abs()` on this, so flipping the
+        // sign here would silently no-op for some and double-flip for
+        // others.
+        (
+            clamp_u128_to_u64(p.amount) as i64,
+            clamp_u128_to_u64(p.fees),
+            None,
+            None,
+            None,
+        )
+    };
+
     PaymentSummary {
         id: p.id,
-        amount_sat: clamp_u128_to_u64(p.amount) as i64,
-        fees_sat: clamp_u128_to_u64(p.fees),
+        amount_sat,
+        fees_sat,
+        token_amount,
+        token_decimals,
+        token_ticker,
         timestamp: p.timestamp,
         status: format!("{:?}", p.status),
         direction: format!("{:?}", p.payment_type),

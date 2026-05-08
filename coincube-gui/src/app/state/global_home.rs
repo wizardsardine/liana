@@ -557,8 +557,40 @@ impl State for GlobalHome {
                         use crate::app::menu::SparkSubMenu;
                         crate::app::state::redirect(Menu::Spark(SparkSubMenu::Receive))
                     }
-                    HomeMessage::SparkBalanceUpdated(balance) => {
-                        self.spark_balance = balance;
+                    HomeMessage::SparkBalanceUpdated {
+                        btc,
+                        stable_balance,
+                    } => {
+                        // Fold any USDB holding into the displayed
+                        // Spark balance using the current BTC/USD
+                        // reference price. Stable Balance auto-sweeps
+                        // the BTC balance into USDB, so without this
+                        // the Home card would read 0 even though the
+                        // wallet has spendable value (the SDK
+                        // converts back to sats on send).
+                        //
+                        // Fallback: `cache.btc_usd_price` is only set
+                        // when the user's fiat preference is USD. For
+                        // EUR/GBP/etc. fall back to the user-fiat
+                        // converter price so the holding still shows
+                        // up (with a small FX-spread approximation)
+                        // instead of collapsing to zero.
+                        let reference_price = cache.btc_usd_price.or_else(|| {
+                            let converter: Option<view::FiatAmountConverter> =
+                                cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+                            converter.map(|c| c.price_per_btc())
+                        });
+                        let usdb_as_sats = stable_balance
+                            .map(|sb| {
+                                crate::app::breez_spark::assets::stable_token_as_sats(
+                                    sb.balance,
+                                    sb.decimals,
+                                    reference_price,
+                                )
+                            })
+                            .unwrap_or(0);
+                        self.spark_balance =
+                            Amount::from_sat(btc.to_sat().saturating_add(usdb_as_sats));
                         self.spark_balance_loaded = true;
                         Task::none()
                     }
@@ -2331,9 +2363,10 @@ impl GlobalHome {
         Some(Task::perform(
             async move { backend.get_info().await },
             |result| match result {
-                Ok(info) => Message::View(view::Message::Home(HomeMessage::SparkBalanceUpdated(
-                    Amount::from_sat(info.balance_sats),
-                ))),
+                Ok(info) => Message::View(view::Message::Home(HomeMessage::SparkBalanceUpdated {
+                    btc: Amount::from_sat(info.balance_sats),
+                    stable_balance: info.stable_balance,
+                })),
                 Err(e) => {
                     tracing::warn!("Home: spark get_info failed: {}", e);
                     // Soft-fail: leave the card showing whatever the

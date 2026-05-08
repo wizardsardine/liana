@@ -316,6 +316,28 @@ pub enum OkPayload {
 pub struct GetInfoOk {
     pub balance_sats: u64,
     pub identity_pubkey: String,
+    /// Stable Balance USDB holding when the SDK reports a non-zero
+    /// USDB token balance. `None` when the user has no USDB.
+    /// Carries enough metadata for the gui to render the holding
+    /// without hardcoding decimals or ticker.
+    #[serde(default)]
+    pub stable_balance: Option<StableBalanceSnapshot>,
+}
+
+/// Snapshot of the wallet's USDB (Stable Balance) holding. Mirrors the
+/// fields the gui needs to fold the holding into the unified portfolio
+/// total, the same way the Liquid panel folds USDt into the L-BTC
+/// total.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StableBalanceSnapshot {
+    /// USDB amount in token base units (`balance / 10^decimals` is
+    /// the dollar value).
+    pub balance: u64,
+    /// Token base-units precision (USDB ships at 6 decimals today).
+    pub decimals: u32,
+    /// Display ticker (e.g. "USDB"). Plumbing only — the gui still
+    /// renders the feature as "Stable Balance".
+    pub ticker: String,
 }
 
 /// Compact payment summary used by Phase 2. The full Spark `Payment` shape is
@@ -331,11 +353,29 @@ pub struct ListPaymentsOk {
 pub struct PaymentSummary {
     /// Payment id / tx id as reported by the Spark SDK.
     pub id: String,
-    /// Amount in satoshis (direction-signed).
+    /// Amount in satoshis (direction-signed). Zero for `method=token`
+    /// payments — the real amount is in `token_amount` because Spark's
+    /// `Payment.amount` is overloaded ("satoshis or token base units"
+    /// depending on method).
     pub amount_sat: i64,
-    /// Fees paid in satoshis (non-signed).
+    /// Fees paid in satoshis (non-signed). Zero for `method=token`
+    /// payments — token fees are tracked separately on the SDK side
+    /// and aren't surfaced here yet.
     #[serde(default)]
     pub fees_sat: u64,
+    /// Token amount in base units when `method=token`; `None` for
+    /// Bitcoin-side payments. Always positive — direction is in
+    /// [`PaymentSummary::direction`].
+    #[serde(default)]
+    pub token_amount: Option<u64>,
+    /// Decimals for [`PaymentSummary::token_amount`]. `None` for
+    /// non-token payments.
+    #[serde(default)]
+    pub token_decimals: Option<u32>,
+    /// Display ticker for [`PaymentSummary::token_amount`] (e.g.
+    /// "USDB"). `None` for non-token payments.
+    #[serde(default)]
+    pub token_ticker: Option<String>,
     /// Unix timestamp in seconds.
     pub timestamp: u64,
     pub status: String,

@@ -26,6 +26,9 @@ pub enum SparkOverviewMessage {
     /// Bridge returned `get_info` + `list_payments` success.
     DataLoaded {
         balance: coincube_core::miniscript::bitcoin::Amount,
+        /// USDB holding from `get_info`, when present. Folded into
+        /// the unified portfolio total alongside the BTC balance.
+        stable_balance: Option<coincube_spark_protocol::StableBalanceSnapshot>,
         recent_payments: Vec<coincube_spark_protocol::PaymentSummary>,
     },
     /// Bridge returned an error response.
