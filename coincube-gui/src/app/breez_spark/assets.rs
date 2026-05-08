@@ -46,7 +46,7 @@ pub fn list_assets() -> Vec<SparkAsset> {
 /// Real-world token metadata uses single-digit decimals; clamping rather
 /// than panicking shields the formatter from a malformed `decimals`
 /// coming back from the bridge.
-const MAX_TOKEN_DECIMALS_U64: u32 = 19;
+pub(crate) const MAX_TOKEN_DECIMALS_U64: u32 = 19;
 
 /// Format a token base-unit amount with two decimal places of
 /// fractional precision. Mirrors [`crate::app::breez_liquid::assets::format_usdt_display`]

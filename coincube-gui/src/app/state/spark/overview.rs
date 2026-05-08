@@ -286,11 +286,16 @@ fn token_payment_to_recent_tx(
     is_incoming: bool,
     status: DomainPaymentStatus,
 ) -> SparkRecentTransaction {
-    use crate::app::breez_spark::assets::format_token_display;
+    use crate::app::breez_spark::assets::{format_token_display, MAX_TOKEN_DECIMALS_U64};
     use crate::app::view::vault::fiat::FiatAmount;
     use crate::services::fiat::Currency;
 
-    let decimals = p.token_decimals.unwrap_or(0);
+    // Clamp once so the formatter and the fiat math see the same
+    // decimals value. `format_token_display` clamps internally, but
+    // the `10_f64.powi(decimals as i32)` below would wrap for
+    // pathological inputs (`decimals > i32::MAX` casts to negative,
+    // making `powi` near-zero and the dollar figure blow up).
+    let decimals = p.token_decimals.unwrap_or(0).min(MAX_TOKEN_DECIMALS_U64);
     let ticker = p.token_ticker.clone().unwrap_or_else(|| "USDB".to_string());
     let token_str = format_token_display(token_amount, decimals);
     let token_display = format!("{} {}", token_str, ticker);
