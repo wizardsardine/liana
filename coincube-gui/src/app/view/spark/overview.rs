@@ -168,8 +168,19 @@ fn connected_view<'a>(
     // Stable Balance feature promises the spendable balance stays
     // pegged to fiat; if we showed only `balance_sats` here, toggling
     // Stable Balance ON would look like the wallet was emptied.
+    //
+    // Fallback: `cache.btc_usd_price` is only populated when the
+    // user's fiat preference is USD. For users on EUR/GBP/etc. it
+    // stays `None`, which would collapse the headline to 0 — so we
+    // fall back to `fiat_converter.price_per_btc()` (user-fiat per
+    // BTC). That introduces a small FX-spread error since USDB is
+    // technically USD-denominated, not user-fiat-denominated, but
+    // the error is bounded and far better than the entire holding
+    // disappearing.
+    let reference_price =
+        btc_usd_price.or_else(|| fiat_converter.as_ref().map(|c| c.price_per_btc()));
     let usdb_as_sats = stable_balance
-        .map(|sb| stable_token_as_sats(sb.balance, sb.decimals, btc_usd_price))
+        .map(|sb| stable_token_as_sats(sb.balance, sb.decimals, reference_price))
         .unwrap_or(0);
     let total_balance = Amount::from_sat(balance_sats.saturating_add(usdb_as_sats));
     let total_fiat = fiat_converter.as_ref().map(|c| c.convert(total_balance));

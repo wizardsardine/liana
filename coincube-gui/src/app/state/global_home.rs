@@ -568,12 +568,24 @@ impl State for GlobalHome {
                         // the Home card would read 0 even though the
                         // wallet has spendable value (the SDK
                         // converts back to sats on send).
+                        //
+                        // Fallback: `cache.btc_usd_price` is only set
+                        // when the user's fiat preference is USD. For
+                        // EUR/GBP/etc. fall back to the user-fiat
+                        // converter price so the holding still shows
+                        // up (with a small FX-spread approximation)
+                        // instead of collapsing to zero.
+                        let reference_price = cache.btc_usd_price.or_else(|| {
+                            let converter: Option<view::FiatAmountConverter> =
+                                cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+                            converter.map(|c| c.price_per_btc())
+                        });
                         let usdb_as_sats = stable_balance
                             .map(|sb| {
                                 crate::app::breez_spark::assets::stable_token_as_sats(
                                     sb.balance,
                                     sb.decimals,
-                                    cache.btc_usd_price,
+                                    reference_price,
                                 )
                             })
                             .unwrap_or(0);

@@ -678,14 +678,25 @@ pub async fn export_spark_payments(
         // `token_amount` at `token_decimals` precision; sats columns
         // are zero for those rows. Render the token figure with the
         // token's own decimals so the column is human-readable.
-        let (token_amount_str, token_ticker) =
-            match (payment.token_amount, payment.token_decimals) {
-                (Some(amount), Some(decimals)) => (
+        let (token_amount_str, token_ticker) = match (payment.token_amount, payment.token_decimals)
+        {
+            (Some(amount), Some(decimals)) => {
+                // The ticker comes from the token issuer's metadata
+                // (untrusted), so CSV-quote it the same way `description`
+                // is escaped above. The amount string is closed-form
+                // (digits + ".") so it doesn't need quoting.
+                let ticker = payment
+                    .token_ticker
+                    .as_deref()
+                    .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+                    .unwrap_or_default();
+                (
                     crate::app::breez_spark::assets::format_token_display(amount, decimals),
-                    payment.token_ticker.clone().unwrap_or_default(),
-                ),
-                _ => (String::new(), String::new()),
-            };
+                    ticker,
+                )
+            }
+            _ => (String::new(), String::new()),
+        };
 
         let line = format!(
             "{},{},{},{},{},{},{},{},{}\n",

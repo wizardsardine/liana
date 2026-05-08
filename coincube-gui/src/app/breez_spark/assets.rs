@@ -42,6 +42,12 @@ pub fn list_assets() -> Vec<SparkAsset> {
     vec![SparkAsset::Bitcoin, SparkAsset::Lightning]
 }
 
+/// Largest base-10 exponent that fits in a `u64` (10^19 ≤ u64::MAX < 10^20).
+/// Real-world token metadata uses single-digit decimals; clamping rather
+/// than panicking shields the formatter from a malformed `decimals`
+/// coming back from the bridge.
+const MAX_TOKEN_DECIMALS_U64: u32 = 19;
+
 /// Format a token base-unit amount with two decimal places of
 /// fractional precision. Mirrors [`crate::app::breez_liquid::assets::format_usdt_display`]
 /// but parameterized on the token's own decimals (USDB ships at 6,
@@ -52,6 +58,10 @@ pub fn format_token_display(amount: u64, decimals: u32) -> String {
     if decimals == 0 {
         return amount.to_string();
     }
+    // Clamp once at the top so every subsequent `10_u64.pow(...)`
+    // stays within u64 range. 10^19 fits in u64; 10^20 would panic in
+    // debug and wrap in release.
+    let decimals = decimals.min(MAX_TOKEN_DECIMALS_U64);
     let divisor = 10_u64.pow(decimals);
     let mut whole = amount / divisor;
     let frac = amount % divisor;
@@ -88,6 +98,11 @@ pub fn stable_token_as_sats(amount: u64, decimals: u32, btc_usd_price: Option<f6
     let Some(price) = btc_usd_price.filter(|p| *p > 0.0) else {
         return 0;
     };
+    // Same clamp as `format_token_display`: keeps `decimals as i32`
+    // well-defined and `10_f64.powi(decimals)` far away from the f64
+    // ~10^308 ceiling. Anything past 19 is already implausible token
+    // metadata and would saturate the formatter anyway.
+    let decimals = decimals.min(MAX_TOKEN_DECIMALS_U64);
     let usd_value = amount as f64 / 10_f64.powi(decimals as i32);
     (usd_value / price * 100_000_000.0) as u64
 }
