@@ -8,8 +8,6 @@ use chrono::{NaiveDate, Utc};
 use iced::{clipboard, Task};
 use tracing::info;
 
-use crate::services::coincube::{CoincubeClient, OtpRequest, OtpVerifyRequest};
-
 use coincube_core::miniscript::bitcoin::Network;
 use coincubed::config::{
     BitcoinBackend, BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config, ElectrumConfig,
@@ -38,23 +36,6 @@ use crate::{
         NodeType,
     },
 };
-
-#[derive(Debug)]
-enum ConnectLoginState {
-    EnterEmail {
-        client: CoincubeClient,
-        email: String,
-        loading: bool,
-        error: Option<String>,
-    },
-    EnterOtp {
-        client: CoincubeClient,
-        email: String,
-        otp: String,
-        loading: bool,
-        error: Option<String>,
-    },
-}
 
 #[derive(Debug, PartialEq)]
 enum InternalSetupStage {
@@ -85,7 +66,6 @@ pub struct BitcoindSettingsState {
     config_updated: bool,
     full_config: Option<Config>,
     node_switch_processing: bool,
-    connect_login: Option<ConnectLoginState>,
     pending_node_setup: Option<PendingNodeSetup>,
     cancel_node_setup_in_flight: bool,
 
@@ -119,7 +99,6 @@ impl BitcoindSettingsState {
             config_updated: false,
             full_config: config.clone(),
             node_switch_processing: false,
-            connect_login: None,
             bitcoind_settings: bitcoind_config.map(|bitcoind_config| {
                 BitcoindSettings::new(
                     configured_node_type,
@@ -147,6 +126,43 @@ impl BitcoindSettingsState {
             cancel_node_setup_in_flight: false,
         }
     }
+
+    /// Build an `EsploraConfig` carrying `jwt` and dispatch a `LoadDaemonConfig`
+    /// task that flips the active backend to Connect. Shared by the post-OTP
+    /// path and the App-level fast path that reuses an existing Connect
+    /// session.
+    fn apply_connect_jwt(
+        &mut self,
+        daemon: &Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        jwt: String,
+    ) -> Task<Message> {
+        let Some(cfg) = daemon.config() else {
+            return Task::none();
+        };
+        // Reconstruct URL from cache.network so a stale fallback_esplora.addr
+        // (e.g. written before Testnet4 was handled) is never used.
+        use coincubed::config::EsploraConfig;
+        let esplora_url = crate::installer::connect_url(cache.network);
+        info!(
+            "Switching to Connect: url={} token_len={}",
+            esplora_url,
+            jwt.len()
+        );
+        let esplora = EsploraConfig {
+            addr: esplora_url,
+            token: Some(jwt),
+        };
+        let mut new_cfg = cfg.clone();
+        if let Some(BitcoinBackend::Bitcoind(current)) = cfg.bitcoin_backend.clone() {
+            new_cfg.pending_bitcoind = Some(current);
+        }
+        new_cfg.bitcoin_backend = Some(BitcoinBackend::Esplora(esplora));
+        new_cfg.fallback_esplora = None;
+        self.node_switch_processing = true;
+        self.warning = None;
+        Task::done(Message::LoadDaemonConfig(Box::new(new_cfg)))
+    }
 }
 
 impl State for BitcoindSettingsState {
@@ -165,7 +181,6 @@ impl State for BitcoindSettingsState {
                 Ok(()) => {
                     self.config_updated = true;
                     self.node_switch_processing = false;
-                    self.connect_login = None;
                     self.pending_node_setup = None;
                     self.warning = None;
                     self.full_config = daemon.config().cloned();
@@ -197,7 +212,6 @@ impl State for BitcoindSettingsState {
                 Err(e) => {
                     self.config_updated = false;
                     self.node_switch_processing = false;
-                    self.connect_login = None;
                     self.pending_node_setup = None;
                     self.cancel_node_setup_in_flight = false;
                     let err_msg = e.to_string();
@@ -251,189 +265,14 @@ impl State for BitcoindSettingsState {
                 use view::NodeSettingsMessage;
                 match msg {
                     NodeSettingsMessage::SwitchToConnect => {
-                        // Gate the switch behind a fresh COINCUBE | Connect login
-                        // to obtain a valid JWT before starting the daemon.
-                        self.connect_login = Some(ConnectLoginState::EnterEmail {
-                            client: CoincubeClient::new(),
-                            email: String::new(),
-                            loading: false,
-                            error: None,
-                        });
+                        // The App-level dispatcher always rewrites this into
+                        // either `SwitchToConnectFastPath(jwt)` (if a Connect
+                        // session is already live) or a navigation to the
+                        // Connect tab to sign in. We never land here directly.
                     }
-                    NodeSettingsMessage::ConnectLoginCancel => {
-                        self.connect_login = None;
+                    NodeSettingsMessage::SwitchToConnectFastPath(jwt) => {
+                        return self.apply_connect_jwt(&daemon, cache, jwt);
                     }
-                    NodeSettingsMessage::ConnectLoginEmailChanged(email) => {
-                        if let Some(ConnectLoginState::EnterEmail {
-                            email: ref mut e, ..
-                        }) = self.connect_login
-                        {
-                            *e = email;
-                        }
-                    }
-                    NodeSettingsMessage::ConnectLoginRequestOtp => {
-                        if let Some(ConnectLoginState::EnterEmail {
-                            ref client,
-                            ref email,
-                            ref mut loading,
-                            ref mut error,
-                        }) = self.connect_login
-                        {
-                            if email.contains('@')
-                                && email.contains('.')
-                                && email.len() >= 6
-                                && !*loading
-                            {
-                                *loading = true;
-                                *error = None;
-                                let client = client.clone();
-                                let req = OtpRequest {
-                                    email: email.clone(),
-                                };
-                                return Task::perform(
-                                    async move {
-                                        client.login_send_otp(req).await.map_err(|e| e.to_string())
-                                    },
-                                    |res| {
-                                        Message::View(view::Message::Settings(
-                                            view::SettingsMessage::NodeSettings(
-                                                view::NodeSettingsMessage::ConnectLoginOtpRequested(
-                                                    res,
-                                                ),
-                                            ),
-                                        ))
-                                    },
-                                );
-                            }
-                        }
-                    }
-                    NodeSettingsMessage::ConnectLoginOtpRequested(res) => match res {
-                        Ok(()) => {
-                            let (client, email) = match self.connect_login.take() {
-                                Some(ConnectLoginState::EnterEmail { client, email, .. }) => {
-                                    (client, email)
-                                }
-                                other => {
-                                    self.connect_login = other;
-                                    return Task::none();
-                                }
-                            };
-                            self.connect_login = Some(ConnectLoginState::EnterOtp {
-                                client,
-                                email,
-                                otp: String::new(),
-                                loading: false,
-                                error: None,
-                            });
-                        }
-                        Err(e) => {
-                            if let Some(ConnectLoginState::EnterEmail {
-                                ref mut loading,
-                                ref mut error,
-                                ..
-                            }) = self.connect_login
-                            {
-                                *loading = false;
-                                *error = Some(e);
-                            }
-                        }
-                    },
-                    NodeSettingsMessage::ConnectLoginOtpChanged(otp) => {
-                        if let Some(ConnectLoginState::EnterOtp { otp: ref mut o, .. }) =
-                            self.connect_login
-                        {
-                            *o = otp;
-                        }
-                    }
-                    NodeSettingsMessage::ConnectLoginVerifyOtp => {
-                        if let Some(ConnectLoginState::EnterOtp {
-                            ref client,
-                            ref email,
-                            ref otp,
-                            ref mut loading,
-                            ref mut error,
-                        }) = self.connect_login
-                        {
-                            if otp.len() == 6 && !*loading {
-                                *loading = true;
-                                *error = None;
-                                let client = client.clone();
-                                let req = OtpVerifyRequest {
-                                    email: email.clone(),
-                                    otp: otp.clone(),
-                                };
-                                return Task::perform(
-                                    async move {
-                                        client
-                                            .login_verify_otp(req)
-                                            .await
-                                            .map(|resp| resp.token)
-                                            .map_err(|e| e.to_string())
-                                    },
-                                    |res| {
-                                        Message::View(view::Message::Settings(
-                                            view::SettingsMessage::NodeSettings(
-                                                view::NodeSettingsMessage::ConnectLoginVerified(
-                                                    res,
-                                                ),
-                                            ),
-                                        ))
-                                    },
-                                );
-                            }
-                        }
-                    }
-                    NodeSettingsMessage::ConnectLoginVerified(res) => match res {
-                        Ok(jwt) => {
-                            if matches!(
-                                self.connect_login,
-                                Some(ConnectLoginState::EnterOtp { .. })
-                            ) {
-                                self.connect_login = None;
-                                if let Some(cfg) = daemon.config() {
-                                    // Reconstruct URL from cache.network so a
-                                    // stale fallback_esplora.addr (e.g. written
-                                    // before Testnet4 was handled) is never used.
-                                    use coincubed::config::EsploraConfig;
-                                    let esplora_url = crate::installer::connect_url(cache.network);
-                                    info!(
-                                        "Switching to Connect: url={} token_len={}",
-                                        esplora_url,
-                                        jwt.len()
-                                    );
-                                    let esplora = EsploraConfig {
-                                        addr: esplora_url,
-                                        token: Some(jwt),
-                                    };
-                                    let mut new_cfg = cfg.clone();
-                                    if let Some(BitcoinBackend::Bitcoind(current)) =
-                                        cfg.bitcoin_backend.clone()
-                                    {
-                                        new_cfg.pending_bitcoind = Some(current);
-                                    }
-                                    new_cfg.bitcoin_backend =
-                                        Some(BitcoinBackend::Esplora(esplora));
-                                    new_cfg.fallback_esplora = None;
-                                    self.node_switch_processing = true;
-                                    self.warning = None;
-                                    return Task::done(Message::LoadDaemonConfig(Box::new(
-                                        new_cfg,
-                                    )));
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            if let Some(ConnectLoginState::EnterOtp {
-                                ref mut loading,
-                                ref mut error,
-                                ..
-                            }) = self.connect_login
-                            {
-                                *loading = false;
-                                *error = Some(e);
-                            }
-                        }
-                    },
                     NodeSettingsMessage::SetupLocalNode => {
                         let default_addr = match cache.network {
                             Network::Bitcoin => "127.0.0.1:8332",
@@ -770,38 +609,6 @@ impl State for BitcoindSettingsState {
                         );
                     }
                 }
-            } else if let Some(login) = &self.connect_login {
-                let (step, email, otp, loading, error) = match login {
-                    ConnectLoginState::EnterEmail {
-                        email,
-                        loading,
-                        error,
-                        ..
-                    } => (
-                        view::vault::settings::ConnectLoginViewStep::EnterEmail,
-                        email.as_str(),
-                        "",
-                        *loading,
-                        error.clone(),
-                    ),
-                    ConnectLoginState::EnterOtp {
-                        email,
-                        otp,
-                        loading,
-                        error,
-                        ..
-                    } => (
-                        view::vault::settings::ConnectLoginViewStep::EnterOtp,
-                        email.as_str(),
-                        otp.as_str(),
-                        *loading,
-                        error.clone(),
-                    ),
-                };
-                setting_panels.push(
-                    view::vault::settings::connect_login_panel(&step, email, otp, loading, error)
-                        .map(map_node_msg),
-                );
             } else {
                 let (
                     active_backend,
@@ -844,6 +651,7 @@ impl State for BitcoindSettingsState {
                         active_backend,
                         active_icon,
                         cache.node_bitcoind_sync_progress,
+                        cache.node_bitcoind_ibd,
                         cache.node_bitcoind_last_log.as_deref(),
                         can_switch_to_connect,
                         can_switch_to_bitcoind,

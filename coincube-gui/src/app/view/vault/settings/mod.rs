@@ -1226,103 +1226,12 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ConnectLoginViewStep {
-    EnterEmail,
-    EnterOtp,
-}
-
-pub fn connect_login_panel<'a>(
-    step: &ConnectLoginViewStep,
-    email: &'a str,
-    otp: &'a str,
-    loading: bool,
-    error: Option<String>,
-) -> Element<'a, NodeSettingsMessage> {
-    let mut col = Column::new().spacing(15);
-
-    col = col.push(
-        Row::new()
-            .push(text("Sign in to COINCUBE | Connect").bold())
-            .push(Space::new().width(Length::Fill))
-            .push(
-                button::transparent(None, "Cancel")
-                    .on_press(NodeSettingsMessage::ConnectLoginCancel),
-            )
-            .align_y(Alignment::Center),
-    );
-
-    match step {
-        ConnectLoginViewStep::EnterEmail => {
-            let valid = email.contains('@') && email.contains('.') && email.len() >= 6;
-            let mut email_input = TextInput::new("your@email.com", email)
-                .on_input(NodeSettingsMessage::ConnectLoginEmailChanged)
-                .size(16)
-                .padding(12)
-                .width(Length::Fill);
-            if valid {
-                email_input = email_input.on_submit(NodeSettingsMessage::ConnectLoginRequestOtp);
-            }
-            col = col.push(
-                Column::new()
-                    .spacing(8)
-                    .push(caption("Email address"))
-                    .push(email_input),
-            );
-            let mut send_btn = button::primary(None, if loading { "Sending…" } else { "Send OTP" })
-                .padding([10, 20]);
-            if valid && !loading {
-                send_btn = send_btn.on_press(NodeSettingsMessage::ConnectLoginRequestOtp);
-            }
-            col = col.push(send_btn);
-        }
-        ConnectLoginViewStep::EnterOtp => {
-            col = col.push(
-                text(format!("A one-time code was sent to {}", email))
-                    .style(theme::text::secondary),
-            );
-            let mut otp_input = TextInput::new("6-digit code", otp)
-                .on_input(NodeSettingsMessage::ConnectLoginOtpChanged)
-                .size(16)
-                .padding(12)
-                .width(Length::Fill);
-            if otp.len() == 6 && !loading {
-                otp_input = otp_input.on_submit(NodeSettingsMessage::ConnectLoginVerifyOtp);
-            }
-            col = col.push(
-                Column::new()
-                    .spacing(8)
-                    .push(caption("One-time code"))
-                    .push(otp_input),
-            );
-            let mut verify_btn = button::primary(
-                None,
-                if loading {
-                    "Verifying…"
-                } else {
-                    "Verify & Switch"
-                },
-            )
-            .padding([10, 20]);
-            if otp.len() == 6 && !loading {
-                verify_btn = verify_btn.on_press(NodeSettingsMessage::ConnectLoginVerifyOtp);
-            }
-            col = col.push(verify_btn);
-        }
-    }
-
-    if let Some(e) = error {
-        col = col.push(text(e).style(theme::text::warning));
-    }
-
-    card::simple(Container::new(col).padding(15).width(Length::Fill)).into()
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn node_backend_status<'a>(
     active_backend: &'static str,
     active_icon: coincube_ui::widget::Text<'static>,
     pending_progress: Option<f64>,
+    pending_ibd: Option<bool>,
     pending_bitcoind_log: Option<&'a str>,
     can_switch_to_connect: bool,
     can_switch_to_bitcoind: bool,
@@ -1330,6 +1239,10 @@ pub fn node_backend_status<'a>(
     processing: bool,
     warning: Option<String>,
 ) -> Element<'a, NodeSettingsMessage> {
+    // Once the node reports it has left initial block download, treat it as
+    // ready even if `verificationprogress` still pins at 1.0 — otherwise the
+    // syncing copy/button label keep saying "syncing" at 100%.
+    let still_syncing = pending_ibd != Some(false);
     let mut col = Column::new().spacing(15);
 
     col = col.push(
@@ -1349,7 +1262,7 @@ pub fn node_backend_status<'a>(
         .width(Length::Fill),
     );
 
-    if let Some(progress) = pending_progress {
+    if let Some(progress) = pending_progress.filter(|_| still_syncing) {
         let desc = if progress > 0.98 {
             "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance."
         } else if progress > 0.9 {
@@ -1391,7 +1304,7 @@ pub fn node_backend_status<'a>(
         });
     }
     if can_switch_to_bitcoind {
-        let label = if pending_progress.is_some() {
+        let label = if pending_progress.is_some() && still_syncing {
             "Switch to local node (still syncing)"
         } else {
             "Switch to local node"

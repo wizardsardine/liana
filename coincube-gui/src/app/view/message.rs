@@ -280,16 +280,16 @@ pub enum InstallStatsViewMessage {
 
 #[derive(Debug, Clone)]
 pub enum NodeSettingsMessage {
+    /// Trigger from the "Switch to COINCUBE | Connect" button. Always
+    /// rewritten by the App-level dispatcher into either
+    /// `SwitchToConnectFastPath(jwt)` (when a Connect session is live) or a
+    /// navigation to the Connect tab to sign in. Never reaches the per-panel
+    /// state.
     SwitchToConnect,
+    /// Carries an existing Connect JWT directly to the per-panel state so the
+    /// switch can complete without the user signing in again.
+    SwitchToConnectFastPath(String),
     SwitchToBitcoind,
-    // COINCUBE | Connect re-authentication sub-flow (gates the Switch to Connect action)
-    ConnectLoginEmailChanged(String),
-    ConnectLoginRequestOtp,
-    ConnectLoginOtpRequested(Result<(), String>),
-    ConnectLoginOtpChanged(String),
-    ConnectLoginVerifyOtp,
-    ConnectLoginVerified(Result<String, String>), // Ok(jwt_token)
-    ConnectLoginCancel,
     // "Set up local node while on Connect" sub-flow
     SetupLocalNode,
     SetupLocalNodeCancel,
