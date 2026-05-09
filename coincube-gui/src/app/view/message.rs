@@ -15,6 +15,37 @@ use crate::{
     },
 };
 use coincubed::config::BitcoindConfig;
+use zeroize::Zeroizing;
+
+/// Wrapper around a Connect bearer token that redacts its contents from
+/// `Debug` output and zeroes the heap allocation on drop.
+///
+/// Carried by [`NodeSettingsMessage::SwitchToConnectFastPath`] so the JWT
+/// does not leak through `{:?}` on a parent message — `NodeSettingsMessage`
+/// derives `Debug`, and tracing/panic dumps elsewhere format messages
+/// transitively. Mirrors the pattern used by `CoincubeClient` and
+/// `EsploraConfig` (services/coincube/client.rs, coincubed/src/config.rs).
+#[derive(Clone)]
+pub struct ConnectJwt(Zeroizing<String>);
+
+impl ConnectJwt {
+    pub fn new(token: String) -> Self {
+        Self(Zeroizing::new(token))
+    }
+
+    /// Consume the wrapper and yield the bearer token. The original
+    /// `Zeroizing<String>` is dropped here and its heap bytes are wiped;
+    /// the returned `String` is a fresh allocation owned by the caller.
+    pub fn into_string(self) -> String {
+        (*self.0).clone()
+    }
+}
+
+impl std::fmt::Debug for ConnectJwt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectJwt(<redacted>)")
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FeeratePriority {
@@ -287,8 +318,10 @@ pub enum NodeSettingsMessage {
     /// state.
     SwitchToConnect,
     /// Carries an existing Connect JWT directly to the per-panel state so the
-    /// switch can complete without the user signing in again.
-    SwitchToConnectFastPath(String),
+    /// switch can complete without the user signing in again. The JWT is
+    /// wrapped in [`ConnectJwt`] so `{:?}` on this message redacts the token
+    /// rather than printing it verbatim.
+    SwitchToConnectFastPath(ConnectJwt),
     SwitchToBitcoind,
     // "Set up local node while on Connect" sub-flow
     SetupLocalNode,

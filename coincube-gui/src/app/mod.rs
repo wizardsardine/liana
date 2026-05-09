@@ -1766,9 +1766,24 @@ impl App {
                             .and_then(|c| {
                                 c.fallback_esplora.as_ref().map(|fb| {
                                     let mut new_cfg = c.clone();
+                                    // Demote the current Bitcoind to
+                                    // `pending_bitcoind` so the syncing card
+                                    // reappears and the user can retry once
+                                    // the node is healthy. Without this the
+                                    // fallback strands the user on Connect
+                                    // with an empty pending slot, which
+                                    // surfaces the "Set up local node" prompt
+                                    // and forces a full re-install.
+                                    let preserved_bitcoind = match &c.bitcoin_backend {
+                                        Some(coincubed::config::BitcoinBackend::Bitcoind(bc)) => {
+                                            Some(bc.clone())
+                                        }
+                                        _ => None,
+                                    };
                                     new_cfg.bitcoin_backend = Some(
                                         coincubed::config::BitcoinBackend::Esplora(fb.clone()),
                                     );
+                                    new_cfg.pending_bitcoind = preserved_bitcoind;
                                     new_cfg.fallback_esplora = None;
                                     new_cfg
                                 })
@@ -2483,7 +2498,9 @@ impl App {
                 if let Some(jwt) = existing_jwt {
                     let routed = Message::View(view::Message::Settings(
                         view::SettingsMessage::NodeSettings(
-                            view::NodeSettingsMessage::SwitchToConnectFastPath(jwt),
+                            view::NodeSettingsMessage::SwitchToConnectFastPath(
+                                view::ConnectJwt::new(jwt),
+                            ),
                         ),
                     ));
                     if let (Some(daemon), Some(panel)) =
@@ -2493,9 +2510,8 @@ impl App {
                     }
                 } else {
                     self.pending_switch_to_connect_after_login = true;
-                    return self.set_current_panel(menu::Menu::Connect(
-                        menu::ConnectSubMenu::Overview,
-                    ));
+                    return self
+                        .set_current_panel(menu::Menu::Connect(menu::ConnectSubMenu::Overview));
                 }
             }
 

@@ -1263,13 +1263,22 @@ pub fn node_backend_status<'a>(
     );
 
     if let Some(progress) = pending_progress.filter(|_| still_syncing) {
-        let desc = if progress > 0.98 {
-            "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance."
+        let pace = if progress > 0.98 {
+            "This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance."
         } else if progress > 0.9 {
-            "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance."
+            "This will take a while, depending on the last time it was done, your internet connection, and your computer performance."
         } else {
-            "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster."
+            "A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster."
         };
+        // Mirror the wording from `internal_node_setup_panel` so the user
+        // sees the same promise from both entry points: a freshly installed
+        // managed node, and a pending node we previously set aside when
+        // toggling to Connect.
+        let desc = format!(
+            "Bitcoin Core is running and syncing in the background. \
+             COINCUBE will automatically switch to this node once syncing is complete. {}",
+            pace,
+        );
 
         let mut sync_col = Column::new()
             .spacing(8)
@@ -1303,13 +1312,16 @@ pub fn node_backend_status<'a>(
             btn.on_press(NodeSettingsMessage::SwitchToConnect)
         });
     }
-    if can_switch_to_bitcoind {
-        let label = if pending_progress.is_some() && still_syncing {
-            "Switch to local node (still syncing)"
-        } else {
-            "Switch to local node"
-        };
-        let btn = button::secondary(None, label).padding([8, 15]);
+    // While the pending local node is still in IBD the auto-switch on the
+    // App side will flip the backend the moment it completes; surfacing a
+    // "Switch to local node" button here just produces a "still syncing"
+    // warning and adds no value. When IBD status is still unknown (the
+    // first sync probe hasn't returned yet) we keep the button visible —
+    // the defensive guard in `SwitchToBitcoind` will warn cleanly if the
+    // user clicks before the probe lands.
+    let show_switch_to_bitcoind_btn = can_switch_to_bitcoind && pending_ibd != Some(true);
+    if show_switch_to_bitcoind_btn {
+        let btn = button::secondary(None, "Switch to local node").padding([8, 15]);
         btn_row = btn_row.push(if processing {
             btn
         } else {
@@ -1324,7 +1336,7 @@ pub fn node_backend_status<'a>(
             btn.on_press(NodeSettingsMessage::SetupLocalNode)
         });
     }
-    if can_switch_to_connect || can_switch_to_bitcoind || can_setup_local_node {
+    if can_switch_to_connect || show_switch_to_bitcoind_btn || can_setup_local_node {
         col = col.push(btn_row);
     }
 

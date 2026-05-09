@@ -271,7 +271,7 @@ impl State for BitcoindSettingsState {
                         // Connect tab to sign in. We never land here directly.
                     }
                     NodeSettingsMessage::SwitchToConnectFastPath(jwt) => {
-                        return self.apply_connect_jwt(&daemon, cache, jwt);
+                        return self.apply_connect_jwt(&daemon, cache, jwt.into_string());
                     }
                     NodeSettingsMessage::SetupLocalNode => {
                         let default_addr = match cache.network {
