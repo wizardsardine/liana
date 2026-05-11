@@ -682,6 +682,11 @@ pub struct App {
     /// Prevents duplicate concurrent SDK calls when several BreezEvents arrive
     /// in quick succession. Cleared in the `RefundablesLoaded` handler.
     refundables_fetch_in_flight: bool,
+    /// Set when the user clicked "Switch to COINCUBE | Connect" on Vault →
+    /// Settings → Node while not signed in to Connect. We routed them to the
+    /// Connect tab to sign in; on the next auth transition (false → true) we
+    /// jump back to Vault Settings → Node and re-fire the switch.
+    pending_switch_to_connect_after_login: bool,
 }
 
 /// Returns true when a `DaemonError` indicates the daemon process is no longer
@@ -829,6 +834,7 @@ impl App {
                 toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
                 last_refundables_fetch: None,
                 refundables_fetch_in_flight: false,
+                pending_switch_to_connect_after_login: false,
             },
             cmd,
         )
@@ -925,6 +931,7 @@ impl App {
                 toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
                 last_refundables_fetch: None,
                 refundables_fetch_in_flight: false,
+                pending_switch_to_connect_after_login: false,
             },
             cmd,
         )
@@ -1587,9 +1594,10 @@ impl App {
                         self.cache.node_bitcoind_ibd = Some(ibd);
                         // Only auto-switch when we have observed the node transition
                         // OUT of IBD (was_in_ibd=true → ibd=false).  This prevents
-                        // the immediately reversal that occurs when ConnectLoginVerified
-                        // saves an already-synced Bitcoind into pending_bitcoind: the
-                        // first poll would otherwise see ibd=false and switch back.
+                        // the immediate reversal that occurs when the
+                        // SwitchToConnect flow saves an already-synced Bitcoind
+                        // into pending_bitcoind: the first poll would otherwise
+                        // see ibd=false and switch back.
                         if !ibd && was_in_ibd {
                             let switch =
                                 self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
@@ -1758,9 +1766,24 @@ impl App {
                             .and_then(|c| {
                                 c.fallback_esplora.as_ref().map(|fb| {
                                     let mut new_cfg = c.clone();
+                                    // Demote the current Bitcoind to
+                                    // `pending_bitcoind` so the syncing card
+                                    // reappears and the user can retry once
+                                    // the node is healthy. Without this the
+                                    // fallback strands the user on Connect
+                                    // with an empty pending slot, which
+                                    // surfaces the "Set up local node" prompt
+                                    // and forces a full re-install.
+                                    let preserved_bitcoind = match &c.bitcoin_backend {
+                                        Some(coincubed::config::BitcoinBackend::Bitcoind(bc)) => {
+                                            Some(bc.clone())
+                                        }
+                                        _ => None,
+                                    };
                                     new_cfg.bitcoin_backend = Some(
                                         coincubed::config::BitcoinBackend::Esplora(fb.clone()),
                                     );
+                                    new_cfg.pending_bitcoind = preserved_bitcoind;
                                     new_cfg.fallback_esplora = None;
                                     new_cfg
                                 })
@@ -1954,6 +1977,14 @@ impl App {
                 // orphan route like Marketplace(BuySell) with no vault).
                 // Otherwise rail clicks get silently dropped and the
                 // user is trapped on whichever screen is rendering.
+                if self.pending_switch_to_connect_after_login
+                    && !matches!(menu, menu::Menu::Connect(_))
+                {
+                    // User abandoned the auto-return trip by going somewhere
+                    // else; don't surprise them with a backend swap on a
+                    // future, unrelated Connect login.
+                    self.pending_switch_to_connect_after_login = false;
+                }
                 let close_task = self
                     .panels
                     .current_mut()
@@ -1993,6 +2024,26 @@ impl App {
                 } else if was_authenticated && !self.cache.connect_authenticated {
                     // Logout occurred - clear the avatar
                     self.cache.avatar_handle = None;
+                }
+                // Auto-return for the "Switch to Connect" flow. When the user
+                // clicked it without an active session, we routed them to the
+                // Connect tab and set this flag. Now that they've signed in,
+                // jump back to Vault → Settings → Node and re-fire the switch
+                // — which will fast-path through the new session's JWT.
+                if !was_authenticated
+                    && self.cache.connect_authenticated
+                    && self.pending_switch_to_connect_after_login
+                {
+                    self.pending_switch_to_connect_after_login = false;
+                    let nav = self.set_current_panel(menu::Menu::Vault(
+                        menu::VaultSubMenu::Settings(Some(menu::SettingsOption::Node)),
+                    ));
+                    let switch = Task::done(Message::View(view::Message::Settings(
+                        view::SettingsMessage::NodeSettings(
+                            view::NodeSettingsMessage::SwitchToConnect,
+                        ),
+                    )));
+                    return Task::batch([task, nav, switch]);
                 }
                 return task;
             }
@@ -2429,6 +2480,39 @@ impl App {
                     .panels
                     .global_settings
                     .update(self.daemon.clone(), &self.cache, msg);
+            }
+
+            // Vault → Settings → Node "Switch to COINCUBE | Connect". The
+            // canonical Connect session lives in `panels.connect.account`; we
+            // either reuse its JWT for an immediate switch, or send the user
+            // to the Connect tab to sign in and auto-return on success.
+            Message::View(view::Message::Settings(view::SettingsMessage::NodeSettings(
+                view::NodeSettingsMessage::SwitchToConnect,
+            ))) => {
+                let existing_jwt = self
+                    .panels
+                    .connect
+                    .account
+                    .authenticated_client()
+                    .and_then(|c| c.token().map(str::to_owned));
+                if let Some(jwt) = existing_jwt {
+                    let routed = Message::View(view::Message::Settings(
+                        view::SettingsMessage::NodeSettings(
+                            view::NodeSettingsMessage::SwitchToConnectFastPath(
+                                view::ConnectJwt::new(jwt),
+                            ),
+                        ),
+                    ));
+                    if let (Some(daemon), Some(panel)) =
+                        (self.daemon.clone(), self.panels.current_mut())
+                    {
+                        return panel.update(Some(daemon), &self.cache, routed);
+                    }
+                } else {
+                    self.pending_switch_to_connect_after_login = true;
+                    return self
+                        .set_current_panel(menu::Menu::Connect(menu::ConnectSubMenu::Overview));
+                }
             }
 
             // Cube Recovery Kit dispatch. Handled at App level because

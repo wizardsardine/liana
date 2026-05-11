@@ -15,6 +15,37 @@ use crate::{
     },
 };
 use coincubed::config::BitcoindConfig;
+use zeroize::Zeroizing;
+
+/// Wrapper around a Connect bearer token that redacts its contents from
+/// `Debug` output and zeroes the heap allocation on drop.
+///
+/// Carried by [`NodeSettingsMessage::SwitchToConnectFastPath`] so the JWT
+/// does not leak through `{:?}` on a parent message — `NodeSettingsMessage`
+/// derives `Debug`, and tracing/panic dumps elsewhere format messages
+/// transitively. Mirrors the pattern used by `CoincubeClient` and
+/// `EsploraConfig` (services/coincube/client.rs, coincubed/src/config.rs).
+#[derive(Clone)]
+pub struct ConnectJwt(Zeroizing<String>);
+
+impl ConnectJwt {
+    pub fn new(token: String) -> Self {
+        Self(Zeroizing::new(token))
+    }
+
+    /// Consume the wrapper and yield the bearer token. The original
+    /// `Zeroizing<String>` is dropped here and its heap bytes are wiped;
+    /// the returned `String` is a fresh allocation owned by the caller.
+    pub fn into_string(self) -> String {
+        (*self.0).clone()
+    }
+}
+
+impl std::fmt::Debug for ConnectJwt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectJwt(<redacted>)")
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FeeratePriority {
@@ -280,16 +311,18 @@ pub enum InstallStatsViewMessage {
 
 #[derive(Debug, Clone)]
 pub enum NodeSettingsMessage {
+    /// Trigger from the "Switch to COINCUBE | Connect" button. Always
+    /// rewritten by the App-level dispatcher into either
+    /// `SwitchToConnectFastPath(jwt)` (when a Connect session is live) or a
+    /// navigation to the Connect tab to sign in. Never reaches the per-panel
+    /// state.
     SwitchToConnect,
+    /// Carries an existing Connect JWT directly to the per-panel state so the
+    /// switch can complete without the user signing in again. The JWT is
+    /// wrapped in [`ConnectJwt`] so `{:?}` on this message redacts the token
+    /// rather than printing it verbatim.
+    SwitchToConnectFastPath(ConnectJwt),
     SwitchToBitcoind,
-    // COINCUBE | Connect re-authentication sub-flow (gates the Switch to Connect action)
-    ConnectLoginEmailChanged(String),
-    ConnectLoginRequestOtp,
-    ConnectLoginOtpRequested(Result<(), String>),
-    ConnectLoginOtpChanged(String),
-    ConnectLoginVerifyOtp,
-    ConnectLoginVerified(Result<String, String>), // Ok(jwt_token)
-    ConnectLoginCancel,
     // "Set up local node while on Connect" sub-flow
     SetupLocalNode,
     SetupLocalNodeCancel,
