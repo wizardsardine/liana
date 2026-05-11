@@ -1,7 +1,10 @@
-//! Two galleries:
+//! Three galleries:
 //!
-//! - **Constructors** — every `liana_ui::component::text::*` helper, with
-//!   its size / font family / weight extracted from the helper's source.
+//! - **Legacy constructors** — every legacy `liana_ui::component::text::*`
+//!   helper, with its size / font family / weight extracted from the
+//!   helper's source.
+//! - **New constructors** — same, for the new design-system helpers under
+//!   `liana_ui::component::text::new::*`.
 //! - **Themes** — every `liana_ui::theme::text::*` style applied to the same
 //!   sample, so palette colors can be compared side by side.
 
@@ -12,7 +15,12 @@ use iced::{
 };
 use liana_ui::{
     component::text::{
-        self, TextSpec, BUTTON_TEXT_SPEC, CAPTION_SPEC, H1_SPEC, H2_SPEC, H3_SPEC, H4_BOLD_SPEC,
+        self,
+        new::{
+            B1_SPEC, B2_MEDIUM_SPEC, B2_SPEC, B3_SPEC, B4_BOLD_SPEC, B4_MEDIUM_SPEC,
+            B5_MEDIUM_SPEC, D2_SPEC, D3_SPEC, D4_SPEC, H2_SEMI_SPEC,
+        },
+        TextSpec, BUTTON_TEXT_SPEC, CAPTION_SPEC, H1_SPEC, H2_SPEC, H3_SPEC, H4_BOLD_SPEC,
         H4_REGULAR_SPEC, H5_MEDIUM_SPEC, H5_REGULAR_SPEC, P1_BOLD_SPEC, P1_MEDIUM_SPEC,
         P1_REGULAR_SPEC, P2_MEDIUM_SPEC, P2_REGULAR_SPEC, PANEL_TITLE_SPEC,
     },
@@ -22,9 +30,8 @@ use liana_ui::{
 
 use crate::debug::{debug_chrome, DebugMessage, DebugPageEntry};
 
-pub static ENTRY_CONSTRUCTORS: DebugPageEntry = DebugPageEntry {
-    view: constructors_view,
-};
+pub static ENTRY_LEGACY: DebugPageEntry = DebugPageEntry { view: legacy_view };
+pub static ENTRY_NEW: DebugPageEntry = DebugPageEntry { view: new_view };
 pub static ENTRY_THEMES: DebugPageEntry = DebugPageEntry { view: themes_view };
 
 const ROW_SPACING: f32 = 5.0;
@@ -72,35 +79,13 @@ fn render(
     debug_chrome(title, body)
 }
 
-// ----- Constructors --------------------------------------------------------
-
-fn constructors_view() -> Element<'static, DebugMessage> {
-    #[rustfmt::skip]
-    let entries: Vec<(&'static str, TextSpec)> = vec![
-        ("liana_ui::component::text::h1",                         H1_SPEC),
-        ("liana_ui::component::text::h2",                         H2_SPEC),
-        ("liana_ui::component::text::panel_title",                PANEL_TITLE_SPEC),
-        ("liana_ui::component::text::h3",                         H3_SPEC),
-        ("liana_ui::component::text::h4_bold",                    H4_BOLD_SPEC),
-        ("liana_ui::component::text::h4_regular",                 H4_REGULAR_SPEC),
-        ("liana_ui::component::text::h5_medium",                  H5_MEDIUM_SPEC),
-        ("liana_ui::component::text::h5_regular",                 H5_REGULAR_SPEC),
-        ("liana_ui::component::text::p1_bold",                    P1_BOLD_SPEC),
-        ("liana_ui::component::text::p1_medium",                  P1_MEDIUM_SPEC),
-        ("liana_ui::component::text::p1_regular",                 P1_REGULAR_SPEC),
-        ("liana_ui::component::text::text (alias of p1_regular)", P1_REGULAR_SPEC),
-        ("liana_ui::component::text::p2_medium",                  P2_MEDIUM_SPEC),
-        ("liana_ui::component::text::p2_regular",                 P2_REGULAR_SPEC),
-        ("liana_ui::component::text::caption",                    CAPTION_SPEC),
-        ("liana_ui::component::text::button_text",                BUTTON_TEXT_SPEC),
-    ];
-
-    let rows = entries
+fn make_rows(entries: Vec<(&'static str, TextSpec)>) -> Vec<Row<'static, DebugMessage>> {
+    entries
         .into_iter()
         .map(|(path, spec)| {
             let size_str = match spec.size {
                 Some(s) => format!("size {s}px"),
-                None => "size — (caller sets)".to_string(),
+                None => "size - (caller sets)".to_string(),
             };
             let row = Row::new()
                 .spacing(20)
@@ -122,9 +107,58 @@ fn constructors_view() -> Element<'static, DebugMessage> {
                 )
                 .width(1350)
         })
-        .collect();
+        .collect()
+}
 
-    render("Texts — constructors", rows)
+// ----- Constructors (legacy) ----------------------------------------------
+
+fn legacy_view() -> Element<'static, DebugMessage> {
+    #[rustfmt::skip]
+    let entries: Vec<(&'static str, TextSpec)> = vec![
+        ("liana_ui::component::text::h1",                         H1_SPEC),
+        ("liana_ui::component::text::h2",                         H2_SPEC),
+        ("liana_ui::component::text::panel_title",                PANEL_TITLE_SPEC),
+        ("liana_ui::component::text::h3",                         H3_SPEC),
+        ("liana_ui::component::text::h4_bold",                    H4_BOLD_SPEC),
+        ("liana_ui::component::text::h4_regular",                 H4_REGULAR_SPEC),
+        ("liana_ui::component::text::h5_medium",                  H5_MEDIUM_SPEC),
+        ("liana_ui::component::text::h5_regular",                 H5_REGULAR_SPEC),
+        ("liana_ui::component::text::p1_bold",                    P1_BOLD_SPEC),
+        ("liana_ui::component::text::p1_medium",                  P1_MEDIUM_SPEC),
+        ("liana_ui::component::text::p1_regular",                 P1_REGULAR_SPEC),
+        ("liana_ui::component::text::text (alias of p1_regular)", P1_REGULAR_SPEC),
+        ("liana_ui::component::text::p2_medium",                  P2_MEDIUM_SPEC),
+        ("liana_ui::component::text::p2_regular",                 P2_REGULAR_SPEC),
+        ("liana_ui::component::text::caption",                    CAPTION_SPEC),
+        ("liana_ui::component::text::button_text",                BUTTON_TEXT_SPEC),
+    ];
+
+    render("Texts - legacy constructors", make_rows(entries))
+}
+
+// ----- Constructors (new design system) -----------------------------------
+
+fn new_view() -> Element<'static, DebugMessage> {
+    #[rustfmt::skip]
+    let entries: Vec<(&'static str, TextSpec)> = vec![
+        ("text::new::d2",            D2_SPEC),
+        ("text::new::d3",            D3_SPEC),
+        ("text::new::d4",            D4_SPEC),
+        ("text::new::h1",            text::new::H1_SPEC),
+        ("text::new::h2",            text::new::H2_SPEC),
+        ("text::new::h2_semi",       H2_SEMI_SPEC),
+        ("text::new::h3",            text::new::H3_SPEC),
+        ("text::new::b1",            B1_SPEC),
+        ("text::new::b2",            B2_SPEC),
+        ("text::new::b2_medium",     B2_MEDIUM_SPEC),
+        ("text::new::b3",            B3_SPEC),
+        ("text::new::b4_medium",     B4_MEDIUM_SPEC),
+        ("text::new::b4_bold",       B4_BOLD_SPEC),
+        ("text::new::b5_medium",     B5_MEDIUM_SPEC),
+        ("text::new::caption",       text::new::CAPTION_SPEC),
+    ];
+
+    render("Texts - new design system", make_rows(entries))
 }
 
 // ----- Themes --------------------------------------------------------------
@@ -155,5 +189,5 @@ fn themes_view() -> Element<'static, DebugMessage> {
         })
         .collect();
 
-    render("Texts — themes", rows)
+    render("Texts - themes", rows)
 }

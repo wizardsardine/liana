@@ -40,7 +40,8 @@ pub const DESIGN_SYSTEM: DebugStack = DebugStack {
         &badges::ENTRY,
         &pills::ENTRY,
         &pill_styles::ENTRY,
-        &texts::ENTRY_CONSTRUCTORS,
+        &texts::ENTRY_LEGACY,
+        &texts::ENTRY_NEW,
         &texts::ENTRY_THEMES,
     ],
 };
