@@ -64,7 +64,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     window_settings.icon = Some(image::liana_business_app_icon());
 
     if let Err(e) = iced::application(
-        move || LianaBusiness::new((config.clone(), log_level, VERSION)),
+        move || {
+            LianaBusiness::new(
+                (config.clone(), log_level, VERSION),
+                #[cfg(feature = "debugger")]
+                &[], // Pass liana-business debug stack later here
+            )
+        },
         LianaBusiness::update,
         LianaBusiness::view,
     )

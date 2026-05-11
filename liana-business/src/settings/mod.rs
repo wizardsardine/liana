@@ -194,6 +194,9 @@ impl SettingsTrait for BusinessSettings {
                     .map_err(|e| SettingsError::Unexpected(e.to_string()))?,
             );
 
+            #[cfg(feature = "debugger")]
+            liana_gui::debug::set_variant(liana_ui::Variant::LianaBusiness);
+
             let cache = Cache {
                 variant: liana_ui::Variant::LianaBusiness,
                 network,

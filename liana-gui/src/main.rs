@@ -42,7 +42,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let window_settings = create_window_settings("Liana", initial_size);
 
     if let Err(e) = iced::application(
-        move || LianaGUI::new((config.clone(), log_level, VERSION)),
+        move || {
+            LianaGUI::new(
+                (config.clone(), log_level, VERSION),
+                #[cfg(feature = "debugger")]
+                &[],
+            )
+        },
         LianaGUI::update,
         LianaGUI::view,
     )
