@@ -356,7 +356,6 @@ mod tests {
             name: name.to_string(),
             network: "bitcoin".to_string(),
             lightning_address: None,
-            bolt12_offer: None,
             status: "active".to_string(),
             members,
             pending_invites,

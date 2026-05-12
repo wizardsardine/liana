@@ -57,11 +57,19 @@ pub enum SparkPaymentMethod {
     Lightning,
     OnChainBitcoin,
     Spark,
+    /// Stable Balance conversion leg (BTC ↔ USDB). Surfaces in the
+    /// transaction list whenever the SDK records the receive side of
+    /// a conversion as a top-level `method=token` payment. Rendered
+    /// with the "Stable" branding rather than as a bitcoin transfer
+    /// — the amount is in token base units, not sats.
+    StableBalance,
 }
 
 /// Row data the overview renderer needs for each recent payment.
-/// Mirrors `view::liquid::RecentTransaction` but drops the USDt-only
-/// `usdt_display` field (Spark has no USDt support).
+/// Mirrors `view::liquid::RecentTransaction` plus a `token_display`
+/// override that the Stable Balance USDB rows use the same way Liquid
+/// uses `usdt_display` — when set, the row shows that string in place
+/// of the BTC amount and skips the BTC pending-sums.
 ///
 /// Carries the Spark payment `id` and raw `timestamp` so the detail
 /// view can render a full date and a copy-to-clipboard payment ID
@@ -78,6 +86,10 @@ pub struct SparkRecentTransaction {
     pub is_incoming: bool,
     pub status: DomainPaymentStatus,
     pub method: SparkPaymentMethod,
+    /// When set, render this string instead of the BTC `amount` (e.g.
+    /// "1.58 USDB"). Token-method payments populate this; bitcoin
+    /// rows leave it `None`.
+    pub token_display: Option<String>,
 }
 
 /// View wrapper for the Spark Overview panel.
@@ -91,6 +103,10 @@ pub struct SparkOverviewView<'a> {
     /// token. Rendered as a small "Stable" badge next to the balance
     /// header.
     pub stable_balance_active: bool,
+    /// Reference BTC/USD price used to fold USDB into the unified
+    /// portfolio total at the current rate. `None` skips the fold —
+    /// matches the Liquid panel's USDt behaviour.
+    pub btc_usd_price: Option<f64>,
     pub display_mode: DisplayMode,
 }
 
@@ -118,6 +134,8 @@ impl<'a> SparkOverviewView<'a> {
                 .into(),
             SparkStatus::Connected(snapshot) => connected_view(
                 snapshot.balance_sats,
+                snapshot.stable_balance.as_ref(),
+                self.btc_usd_price,
                 self.recent_transactions,
                 self.fiat_converter,
                 self.bitcoin_unit,
@@ -132,6 +150,8 @@ impl<'a> SparkOverviewView<'a> {
 #[allow(clippy::too_many_arguments)]
 fn connected_view<'a>(
     balance_sats: u64,
+    stable_balance: Option<&coincube_spark_protocol::StableBalanceSnapshot>,
+    btc_usd_price: Option<f64>,
     recent: &'a [SparkRecentTransaction],
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: BitcoinDisplayUnit,
@@ -139,21 +159,52 @@ fn connected_view<'a>(
     stable_balance_active: bool,
     display_mode: DisplayMode,
 ) -> Element<'a, SparkOverviewMessage> {
+    use crate::app::breez_spark::assets::stable_token_as_sats;
+
     let mut content = Column::new().spacing(20);
 
-    let btc_balance = Amount::from_sat(balance_sats);
-    let btc_fiat = fiat_converter.as_ref().map(|c| c.convert(btc_balance));
+    // Fold USDB into the unified portfolio total at the current
+    // BTC/USD price — same pattern as Liquid's USDt fold. The
+    // Stable Balance feature promises the spendable balance stays
+    // pegged to fiat; if we showed only `balance_sats` here, toggling
+    // Stable Balance ON would look like the wallet was emptied.
+    //
+    // Fallback: `cache.btc_usd_price` is only populated when the
+    // user's fiat preference is USD. For users on EUR/GBP/etc. it
+    // stays `None`, which would collapse the headline to 0 — so we
+    // fall back to `fiat_converter.price_per_btc()` (user-fiat per
+    // BTC). That introduces a small FX-spread error since USDB is
+    // technically USD-denominated, not user-fiat-denominated, but
+    // the error is bounded and far better than the entire holding
+    // disappearing.
+    let reference_price =
+        btc_usd_price.or_else(|| fiat_converter.as_ref().map(|c| c.price_per_btc()));
+    let usdb_as_sats = stable_balance
+        .map(|sb| stable_token_as_sats(sb.balance, sb.decimals, reference_price))
+        .unwrap_or(0);
+    let total_balance = Amount::from_sat(balance_sats.saturating_add(usdb_as_sats));
+    let total_fiat = fiat_converter.as_ref().map(|c| c.convert(total_balance));
 
     // Sum pending BTC (in/out) from the recent-transactions list for
-    // the small "pending" indicators underneath the total.
+    // the small "pending" indicators underneath the total. Skip
+    // token-display rows so a USDB conversion entry doesn't get
+    // counted as pending sats.
     let pending_outgoing_sats: u64 = recent
         .iter()
-        .filter(|t| !t.is_incoming && matches!(t.status, DomainPaymentStatus::Pending))
+        .filter(|t| {
+            !t.is_incoming
+                && t.token_display.is_none()
+                && matches!(t.status, DomainPaymentStatus::Pending)
+        })
         .map(|t| (t.amount + t.fees_sat).to_sat())
         .sum();
     let pending_incoming_sats: u64 = recent
         .iter()
-        .filter(|t| t.is_incoming && matches!(t.status, DomainPaymentStatus::Pending))
+        .filter(|t| {
+            t.is_incoming
+                && t.token_display.is_none()
+                && matches!(t.status, DomainPaymentStatus::Pending)
+        })
         .map(|t| t.amount.to_sat())
         .sum();
 
@@ -168,8 +219,8 @@ fn connected_view<'a>(
                 .push_maybe(stable_balance_active.then(stable_badge)),
         )
         .push(wallet_header::<SparkOverviewMessage>(WalletHeaderProps {
-            sats: btc_balance,
-            fiat: btc_fiat,
+            sats: total_balance,
+            fiat: total_fiat,
             balance_masked: false,
             bitcoin_unit,
             variant: HeaderVariant::Overview,
@@ -181,7 +232,16 @@ fn connected_view<'a>(
             on_swap: Some(SparkOverviewMessage::FlipDisplayMode),
         }));
 
-    let btc_fiat_str = btc_fiat
+    // Stable Balance auto-sweeps the BTC balance into USDB, so the
+    // raw `balance_sats` reads 0 even though the user can still send
+    // bitcoin normally — the SDK converts USDB back to sats as needed
+    // when sending. Surface the spendable total (= raw BTC + USDB
+    // folded at the current price) so the row matches the header and
+    // accurately represents what's spendable.
+    let btc_row_amount = total_balance;
+    let btc_row_fiat = total_fiat;
+
+    let btc_fiat_str = btc_row_fiat
         .as_ref()
         .map(|f| format!("{} {}", f.to_rounded_string(), f.currency()))
         .unwrap_or_default();
@@ -191,7 +251,7 @@ fn connected_view<'a>(
         .push(coincube_ui::image::asset_network_logo::<SparkOverviewMessage>("btc", "spark", 40.0))
         .push(text("BTC").size(P1_SIZE).bold().width(Length::Fixed(60.0)))
         .push(amount_with_size_and_unit(
-            &btc_balance,
+            &btc_row_amount,
             P1_SIZE,
             bitcoin_unit,
         ))
@@ -248,6 +308,9 @@ fn connected_view<'a>(
                 SparkPaymentMethod::Spark => {
                     coincube_ui::image::asset_network_logo("btc", "spark", 40.0)
                 }
+                SparkPaymentMethod::StableBalance => {
+                    coincube_ui::image::asset_network_logo("btc", "spark", 40.0)
+                }
             };
 
             let display_amount = if tx.is_incoming {
@@ -262,6 +325,12 @@ fn connected_view<'a>(
                 .with_label(tx.description.clone())
                 .with_time_ago(tx.time_ago.clone());
 
+            if let Some(token_str) = tx.token_display.as_ref() {
+                // Token rows: replace the BTC headline with the token
+                // string. The fiat label still rides along underneath
+                // because USDB is pegged to USD.
+                item = item.with_amount_override(token_str.clone());
+            }
             if let Some(fiat) = tx.fiat_amount.as_ref() {
                 item = item.with_fiat_amount(format!(
                     "{} {}",

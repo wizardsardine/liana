@@ -218,7 +218,7 @@ impl Panels {
             // remaining panels
             buy_sell: None,
             connect: ConnectPanel::new(
-                breez_client.clone(),
+                spark_backend.as_ref().map(|b| b.client().clone()),
                 cube_id.clone(),
                 cube_name,
                 cube_network,
@@ -364,7 +364,7 @@ impl Panels {
                 config.clone(),
             )),
             connect: ConnectPanel::new(
-                breez_client.clone(),
+                spark_backend.as_ref().map(|b| b.client().clone()),
                 cube_id.clone(),
                 cube_name,
                 cube_network,
@@ -660,8 +660,6 @@ pub struct App {
     /// True while a check_bitcoind_sync_progress probe is in flight; prevents
     /// multiple concurrent RPC calls from piling up across subscription ticks.
     bitcoind_sync_probe_in_progress: bool,
-    /// Retry counter for LNURL SSE reconnection (same pattern as Meld).
-    lnurl_sse_retries: usize,
     /// Global "payment received" celebration overlay — shown for incoming
     /// Liquid payments (e.g. LNURL) regardless of which panel is active.
     show_received_celebration: bool,
@@ -684,6 +682,11 @@ pub struct App {
     /// Prevents duplicate concurrent SDK calls when several BreezEvents arrive
     /// in quick succession. Cleared in the `RefundablesLoaded` handler.
     refundables_fetch_in_flight: bool,
+    /// Set when the user clicked "Switch to COINCUBE | Connect" on Vault →
+    /// Settings → Node while not signed in to Connect. We routed them to the
+    /// Connect tab to sign in; on the next auth transition (false → true) we
+    /// jump back to Vault Settings → Node and re-fire the switch.
+    pending_switch_to_connect_after_login: bool,
 }
 
 /// Returns true when a `DaemonError` indicates the daemon process is no longer
@@ -797,6 +800,8 @@ impl App {
                 .global_home
                 .reload(Some(daemon.clone()), Some(wallet.clone())),
         );
+        let set_cube_task = panels.connect.set_cube_uuid(Some(cube_settings.id.clone()));
+        tasks.push(set_cube_task);
         let cmd = Task::batch(tasks);
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
@@ -816,7 +821,6 @@ impl App {
                 errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
-                lnurl_sse_retries: 0,
                 show_received_celebration: false,
                 received_celebration_amount: String::new(),
                 received_celebration_context: "transaction-received".to_string(),
@@ -830,6 +834,7 @@ impl App {
                 toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
                 last_refundables_fetch: None,
                 refundables_fetch_in_flight: false,
+                pending_switch_to_connect_after_login: false,
             },
             cmd,
         )
@@ -895,7 +900,8 @@ impl App {
         let mut cache = cache;
         cache.has_p2p = panels.p2p.is_some();
 
-        let cmd = panels.global_home.reload(None, None);
+        let set_cube_task = panels.connect.set_cube_uuid(Some(cube_settings.id.clone()));
+        let cmd = iced::Task::batch([set_cube_task, panels.global_home.reload(None, None)]);
 
         (
             Self {
@@ -912,7 +918,6 @@ impl App {
                 errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
-                lnurl_sse_retries: 0,
                 show_received_celebration: false,
                 received_celebration_amount: String::new(),
                 received_celebration_context: "transaction-received".to_string(),
@@ -926,6 +931,7 @@ impl App {
                 toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
                 last_refundables_fetch: None,
                 refundables_fetch_in_flight: false,
+                pending_switch_to_connect_after_login: false,
             },
             cmd,
         )
@@ -1280,26 +1286,6 @@ impl App {
             );
         }
 
-        // LNURL SSE stream — active while the user is logged in to Connect.
-        // Listens for Lightning Address invoice requests and generates BOLT11
-        // invoices via the Breez SDK.
-        if self.panels.connect.account.is_authenticated() {
-            if let Some(client) = self.panels.connect.account.authenticated_client() {
-                if let Some(token) = client.token() {
-                    subscriptions.push(
-                        crate::services::lnurl::stream::lnurl_subscription(
-                            token.to_string(),
-                            self.lnurl_sse_retries,
-                            self.breez_client.clone(),
-                            self.wallet_registry.spark().cloned(),
-                            self.cube_settings.default_lightning_backend,
-                        )
-                        .map(Message::Lnurl),
-                    );
-                }
-            }
-        }
-
         // Poll pending local Bitcoind IBD progress on a fixed interval,
         // independent of the variable-rate tick subscription.
         if self
@@ -1579,40 +1565,6 @@ impl App {
                     return panel.update(self.daemon.clone(), &self.cache, message);
                 }
             }
-            Message::Lnurl(msg) => {
-                use crate::services::lnurl::LnurlMessage;
-                match msg {
-                    LnurlMessage::StreamConnected => {
-                        info!("[LNURL] SSE stream connected");
-                        // Note: do NOT reset lnurl_sse_retries here — retries
-                        // is part of the subscription hash, so changing it would
-                        // cause Iced to tear down this just-connected stream.
-                    }
-                    LnurlMessage::InvoiceRequest(event) => {
-                        info!(
-                            "[LNURL] Invoice request: id={}, user={}, amount_msats={}",
-                            event.request_id, event.username, event.amount_msats
-                        );
-                    }
-                    LnurlMessage::InvoiceGenerated { request_id } => {
-                        info!("[LNURL] Invoice delivered for request {}", request_id);
-                    }
-                    LnurlMessage::InvoiceError { request_id, error } => {
-                        warn!(
-                            "[LNURL] Invoice error for request {}: {}",
-                            request_id, error
-                        );
-                    }
-                    LnurlMessage::EventSourceDisconnected(reason) => {
-                        warn!("[LNURL] SSE disconnected: {}", reason);
-                        self.lnurl_sse_retries += 1;
-                    }
-                    LnurlMessage::StreamError(err) => {
-                        warn!("[LNURL] Stream error: {}", err);
-                        self.lnurl_sse_retries += 1;
-                    }
-                }
-            }
             Message::SetInternalBitcoind(bitcoind) => {
                 self.internal_bitcoind = Some(bitcoind);
             }
@@ -1642,9 +1594,10 @@ impl App {
                         self.cache.node_bitcoind_ibd = Some(ibd);
                         // Only auto-switch when we have observed the node transition
                         // OUT of IBD (was_in_ibd=true → ibd=false).  This prevents
-                        // the immediately reversal that occurs when ConnectLoginVerified
-                        // saves an already-synced Bitcoind into pending_bitcoind: the
-                        // first poll would otherwise see ibd=false and switch back.
+                        // the immediate reversal that occurs when the
+                        // SwitchToConnect flow saves an already-synced Bitcoind
+                        // into pending_bitcoind: the first poll would otherwise
+                        // see ibd=false and switch back.
                         if !ibd && was_in_ibd {
                             let switch =
                                 self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
@@ -1813,9 +1766,24 @@ impl App {
                             .and_then(|c| {
                                 c.fallback_esplora.as_ref().map(|fb| {
                                     let mut new_cfg = c.clone();
+                                    // Demote the current Bitcoind to
+                                    // `pending_bitcoind` so the syncing card
+                                    // reappears and the user can retry once
+                                    // the node is healthy. Without this the
+                                    // fallback strands the user on Connect
+                                    // with an empty pending slot, which
+                                    // surfaces the "Set up local node" prompt
+                                    // and forces a full re-install.
+                                    let preserved_bitcoind = match &c.bitcoin_backend {
+                                        Some(coincubed::config::BitcoinBackend::Bitcoind(bc)) => {
+                                            Some(bc.clone())
+                                        }
+                                        _ => None,
+                                    };
                                     new_cfg.bitcoin_backend = Some(
                                         coincubed::config::BitcoinBackend::Esplora(fb.clone()),
                                     );
+                                    new_cfg.pending_bitcoind = preserved_bitcoind;
                                     new_cfg.fallback_esplora = None;
                                     new_cfg
                                 })
@@ -2009,6 +1977,14 @@ impl App {
                 // orphan route like Marketplace(BuySell) with no vault).
                 // Otherwise rail clicks get silently dropped and the
                 // user is trapped on whichever screen is rendering.
+                if self.pending_switch_to_connect_after_login
+                    && !matches!(menu, menu::Menu::Connect(_))
+                {
+                    // User abandoned the auto-return trip by going somewhere
+                    // else; don't surprise them with a backend swap on a
+                    // future, unrelated Connect login.
+                    self.pending_switch_to_connect_after_login = false;
+                }
                 let close_task = self
                     .panels
                     .current_mut()
@@ -2024,13 +2000,6 @@ impl App {
                     .connect
                     .update(self.daemon.clone(), &self.cache, msg);
                 self.cache.connect_authenticated = self.panels.connect.account.is_authenticated();
-                // Reset LNURL backoff when auth state changes (login/logout).
-                // The token is part of the subscription hash, so changing it
-                // already causes Iced to recreate the subscription — resetting
-                // retries just ensures backoff starts fresh.
-                if was_authenticated != self.cache.connect_authenticated {
-                    self.lnurl_sse_retries = 0;
-                }
                 // Sync lightning address to cache for sidebar display
                 self.cache.lightning_address = self
                     .panels
@@ -2058,6 +2027,26 @@ impl App {
                 } else if was_authenticated && !self.cache.connect_authenticated {
                     // Logout occurred - clear the avatar
                     self.cache.avatar_handle = None;
+                }
+                // Auto-return for the "Switch to Connect" flow. When the user
+                // clicked it without an active session, we routed them to the
+                // Connect tab and set this flag. Now that they've signed in,
+                // jump back to Vault → Settings → Node and re-fire the switch
+                // — which will fast-path through the new session's JWT.
+                if !was_authenticated
+                    && self.cache.connect_authenticated
+                    && self.pending_switch_to_connect_after_login
+                {
+                    self.pending_switch_to_connect_after_login = false;
+                    let nav = self.set_current_panel(menu::Menu::Vault(
+                        menu::VaultSubMenu::Settings(Some(menu::SettingsOption::Node)),
+                    ));
+                    let switch = Task::done(Message::View(view::Message::Settings(
+                        view::SettingsMessage::NodeSettings(
+                            view::NodeSettingsMessage::SwitchToConnect,
+                        ),
+                    )));
+                    return Task::batch([task, nav, switch]);
                 }
                 return task;
             }
@@ -2154,6 +2143,14 @@ impl App {
                         // matured deposit, or clear the indicator once claimed).
                         tasks.push(Task::done(Message::View(view::Message::Home(
                             view::HomeMessage::SparkDepositsChanged,
+                        ))));
+                    }
+                    SparkEvent::LightningAddressChanged { info } => {
+                        // Phase 4g: forward to ConnectCube so it can
+                        // refresh its view and auto-re-register if
+                        // the SDK state went Some → None unexpectedly.
+                        tasks.push(Task::done(Message::View(view::Message::ConnectCube(
+                            view::ConnectCubeMessage::SparkLightningAddressChanged(info),
                         ))));
                     }
                     _ => {}
@@ -2486,6 +2483,39 @@ impl App {
                     .panels
                     .global_settings
                     .update(self.daemon.clone(), &self.cache, msg);
+            }
+
+            // Vault → Settings → Node "Switch to COINCUBE | Connect". The
+            // canonical Connect session lives in `panels.connect.account`; we
+            // either reuse its JWT for an immediate switch, or send the user
+            // to the Connect tab to sign in and auto-return on success.
+            Message::View(view::Message::Settings(view::SettingsMessage::NodeSettings(
+                view::NodeSettingsMessage::SwitchToConnect,
+            ))) => {
+                let existing_jwt = self
+                    .panels
+                    .connect
+                    .account
+                    .authenticated_client()
+                    .and_then(|c| c.token().map(str::to_owned));
+                if let Some(jwt) = existing_jwt {
+                    let routed = Message::View(view::Message::Settings(
+                        view::SettingsMessage::NodeSettings(
+                            view::NodeSettingsMessage::SwitchToConnectFastPath(
+                                view::ConnectJwt::new(jwt),
+                            ),
+                        ),
+                    ));
+                    if let (Some(daemon), Some(panel)) =
+                        (self.daemon.clone(), self.panels.current_mut())
+                    {
+                        return panel.update(Some(daemon), &self.cache, routed);
+                    }
+                } else {
+                    self.pending_switch_to_connect_after_login = true;
+                    return self
+                        .set_current_panel(menu::Menu::Connect(menu::ConnectSubMenu::Overview));
+                }
             }
 
             // Cube Recovery Kit dispatch. Handled at App level because

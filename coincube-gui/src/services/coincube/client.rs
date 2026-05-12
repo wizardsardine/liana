@@ -1,15 +1,14 @@
 use super::{
-    get_countries, AddVaultMemberRequest, ApiErrorResponse, ApiResponse, AvatarGenerateData,
-    AvatarGenerateRequest, AvatarSelectData, AvatarSelectRequest, BillingHistoryEntry,
-    ChargeStatusResponse, CheckUsernameResponse, CheckoutRequest, CheckoutResponse,
-    ClaimLightningAddressRequest, CoincubeError, ConnectPlan, ConnectVaultResponse, Contact,
+    get_countries, AddVaultMemberRequest, ApiResponse, AvatarGenerateData, AvatarGenerateRequest,
+    AvatarSelectData, AvatarSelectRequest, BillingHistoryEntry, ChargeStatusResponse,
+    CheckoutRequest, CheckoutResponse, CoincubeError, ConnectPlan, ConnectVaultResponse, Contact,
     ContactCube, Country, CreateConnectVaultRequest, CreateInviteRequest, CubeInviteOrAddResult,
     CubeKeyRaw, CubeLimitsResponse, CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData,
     Invite, LightningAddress, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
     PublicAvatarData, RecoveryKit, RecoveryKitStatus, RefreshTokenRequest, RegenerationData,
-    RegisterCubeRequest, SaveQuoteRequest, SaveQuoteResponse, StatsPeriod, TimeseriesResponse,
-    TodayStats, UpdateCubeRequest, UpsertRecoveryKitRequest, User, VaultMemberResponse,
-    VerifiedDevice,
+    RegisterCubeRequest, ReserveLightningAddressRequest, SaveQuoteRequest, SaveQuoteResponse,
+    StatsPeriod, TimeseriesResponse, TodayStats, UpdateCubeRequest, UpdateLightningAddressRequest,
+    UpsertRecoveryKitRequest, User, VaultMemberResponse, VerifiedDevice,
 };
 use reqwest::{Client, Method};
 use serde::Deserialize;
@@ -434,54 +433,81 @@ impl CoincubeClient {
         Ok(resp.data)
     }
 
-    pub async fn check_lightning_address(
+    /// Phase 4g step 1: reserve `username` against the cube. The API
+    /// persists the pending record. The follow-up
+    /// [`Self::confirm_lightning_address`] step stamps the record
+    /// confirmed once the Spark SDK has registered the username with
+    /// the Breez-hosted LNURL server.
+    pub async fn reserve_lightning_address(
         &self,
         cube_id: &str,
         username: &str,
-    ) -> Result<CheckUsernameResponse, CoincubeError> {
-        let url = format!(
-            "{}/api/v1/connect/cubes/{}/lightning-address/check",
-            self.base_url, cube_id
-        );
-        let res = self
-            .client
-            .get(&url)
-            .query(&[("username", username)])
-            .send()
-            .await?;
-        let status = res.status();
-        let body = res.text().await.map_err(CoincubeError::Network)?;
-
-        if status.is_success() {
-            let resp: ApiResponse<CheckUsernameResponse> = serde_json::from_str(&body)?;
-            Ok(resp.data)
-        } else if status.is_client_error() && !matches!(status.as_u16(), 401 | 403) {
-            // Validation errors (400, 409, 422, etc.) — treat as "not available"
-            if let Ok(err_resp) = serde_json::from_str::<ApiErrorResponse>(&body) {
-                Ok(CheckUsernameResponse {
-                    available: false,
-                    username: username.to_string(),
-                    error_message: Some(err_resp.error.message),
-                })
-            } else {
-                Err(CoincubeError::Api(body))
-            }
-        } else {
-            // Auth errors (401/403), server errors (5xx), etc.
-            Err(CoincubeError::Api(body))
-        }
-    }
-
-    pub async fn claim_lightning_address(
-        &self,
-        cube_id: &str,
-        req: ClaimLightningAddressRequest,
     ) -> Result<LightningAddress, CoincubeError> {
         let url = format!(
             "{}/api/v1/connect/cubes/{}/lightning-address",
             self.base_url, cube_id
         );
+        let req = ReserveLightningAddressRequest {
+            username: username.to_string(),
+        };
         let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<LightningAddress> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// Phase 4g step 3: commit the reservation. Called after the
+    /// Spark SDK has successfully registered the username with the
+    /// Breez-hosted LNURL server. Body is empty — the API stamps
+    /// `lightning_address_confirmed_at = now()` on the existing
+    /// reservation, turning it permanent.
+    pub async fn confirm_lightning_address(
+        &self,
+        cube_id: &str,
+    ) -> Result<LightningAddress, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/lightning-address/confirm",
+            self.base_url, cube_id
+        );
+        let res = self.client.post(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<LightningAddress> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// Phase 4g cleanup: release a reservation on failure of the
+    /// SDK-register or /confirm steps, or drop a confirmed address
+    /// when the user asks to give up their Lightning Address.
+    pub async fn delete_lightning_address(&self, cube_id: &str) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/lightning-address",
+            self.base_url, cube_id
+        );
+        let res = self.client.delete(&url).send().await?;
+        let _ = res.check_success().await?;
+        Ok(())
+    }
+
+    /// Atomic server-side rename. The cube must already have a
+    /// confirmed Lightning Address — the API updates only the
+    /// `lightning_address` column and leaves
+    /// `lightning_address_confirmed_at` set. The Spark/Breez SDK
+    /// binding still has to be updated separately on this device
+    /// (delete-then-register) since it's not reachable from the
+    /// server.
+    pub async fn update_lightning_address(
+        &self,
+        cube_id: &str,
+        username: &str,
+    ) -> Result<LightningAddress, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/lightning-address",
+            self.base_url, cube_id
+        );
+        let req = UpdateLightningAddressRequest {
+            username: username.to_string(),
+        };
+        let res = self.client.put(&url).json(&req).send().await?;
         let res = res.check_success().await?;
         let resp: ApiResponse<LightningAddress> = res.json().await?;
         Ok(resp.data)

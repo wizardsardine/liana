@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bdk_electrum::bdk_chain::{
     bitcoin::{self, bip32::ChildNumber, BlockHash, OutPoint},
-    local_chain::LocalChain,
+    local_chain::{CannotConnectError, LocalChain},
     spk_client::{FullScanRequest, SyncRequest},
     ChainPosition,
 };
@@ -21,6 +21,10 @@ pub enum ElectrumError {
         BlockHash, /*server hash*/
         BlockHash, /*wallet hash*/
     ),
+    /// Electrum returned a chain update that doesn't connect to the wallet's
+    /// existing local_chain. The poller will retry, and `full_scan` has been
+    /// flipped on so the next iteration rebuilds from genesis.
+    CannotConnect(CannotConnectError),
 }
 
 impl std::fmt::Display for ElectrumError {
@@ -35,6 +39,12 @@ impl std::fmt::Display for ElectrumError {
                     expected, server, wallet,
                 )
             }
+            ElectrumError::CannotConnect(e) => write!(
+                f,
+                "Electrum chain update did not connect to the local chain: '{}'. \
+                 Falling back to a full scan.",
+                e
+            ),
         }
     }
 }
@@ -201,7 +211,16 @@ impl Electrum {
         if let Some(keychain_update) = keychain_update {
             self.bdk_wallet.apply_keychain_update(keychain_update);
         }
-        let changeset = self.bdk_wallet.apply_connected_chain_update(chain_update);
+        let changeset = match self.bdk_wallet.apply_connected_chain_update(chain_update) {
+            Ok(cs) => cs,
+            Err(e) => {
+                // Trigger a full scan on the next poll so the chain rebuilds
+                // from genesis and connects unconditionally. The poller
+                // already retries on `Err`.
+                self.full_scan = true;
+                return Err(ElectrumError::CannotConnect(e));
+            }
+        };
 
         let mut changes_iter = changeset.into_iter();
         let reorg_common_ancestor = if let Some((height, _)) = changes_iter.next() {

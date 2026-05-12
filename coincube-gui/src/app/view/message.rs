@@ -15,6 +15,37 @@ use crate::{
     },
 };
 use coincubed::config::BitcoindConfig;
+use zeroize::Zeroizing;
+
+/// Wrapper around a Connect bearer token that redacts its contents from
+/// `Debug` output and zeroes the heap allocation on drop.
+///
+/// Carried by [`NodeSettingsMessage::SwitchToConnectFastPath`] so the JWT
+/// does not leak through `{:?}` on a parent message — `NodeSettingsMessage`
+/// derives `Debug`, and tracing/panic dumps elsewhere format messages
+/// transitively. Mirrors the pattern used by `CoincubeClient` and
+/// `EsploraConfig` (services/coincube/client.rs, coincubed/src/config.rs).
+#[derive(Clone)]
+pub struct ConnectJwt(Zeroizing<String>);
+
+impl ConnectJwt {
+    pub fn new(token: String) -> Self {
+        Self(Zeroizing::new(token))
+    }
+
+    /// Consume the wrapper and yield the bearer token. The original
+    /// `Zeroizing<String>` is dropped here and its heap bytes are wiped;
+    /// the returned `String` is a fresh allocation owned by the caller.
+    pub fn into_string(self) -> String {
+        (*self.0).clone()
+    }
+}
+
+impl std::fmt::Debug for ConnectJwt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectJwt(<redacted>)")
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FeeratePriority {
@@ -280,16 +311,18 @@ pub enum InstallStatsViewMessage {
 
 #[derive(Debug, Clone)]
 pub enum NodeSettingsMessage {
+    /// Trigger from the "Switch to COINCUBE | Connect" button. Always
+    /// rewritten by the App-level dispatcher into either
+    /// `SwitchToConnectFastPath(jwt)` (when a Connect session is live) or a
+    /// navigation to the Connect tab to sign in. Never reaches the per-panel
+    /// state.
     SwitchToConnect,
+    /// Carries an existing Connect JWT directly to the per-panel state so the
+    /// switch can complete without the user signing in again. The JWT is
+    /// wrapped in [`ConnectJwt`] so `{:?}` on this message redacts the token
+    /// rather than printing it verbatim.
+    SwitchToConnectFastPath(ConnectJwt),
     SwitchToBitcoind,
-    // COINCUBE | Connect re-authentication sub-flow (gates the Switch to Connect action)
-    ConnectLoginEmailChanged(String),
-    ConnectLoginRequestOtp,
-    ConnectLoginOtpRequested(Result<(), String>),
-    ConnectLoginOtpChanged(String),
-    ConnectLoginVerifyOtp,
-    ConnectLoginVerified(Result<String, String>), // Ok(jwt_token)
-    ConnectLoginCancel,
     // "Set up local node while on Connect" sub-flow
     SetupLocalNode,
     SetupLocalNodeCancel,
@@ -944,6 +977,10 @@ pub enum ConnectAccountMessage {
         u64,
     ),
     ToggleBillingHistory,
+    /// User profile refreshed (billing history view update)
+    UserProfileLoaded(crate::services::coincube::User),
+    /// User profile refresh failed (non-auth error)
+    UserProfileFailed(String),
 }
 
 #[derive(Debug, Clone)]
@@ -1035,6 +1072,44 @@ pub enum ConnectCubeMessage {
     ClaimLightningAddress,
     LightningAddressClaimed(crate::services::coincube::LightningAddress),
     LightningAddressLoaded(Option<crate::services::coincube::LightningAddress>),
+    /// Flip the claimed-address card into the in-place edit form.
+    BeginEditLightningAddress,
+    /// Drop edit mode, clear the input, abort any pending availability check.
+    CancelEditLightningAddress,
+    /// User clicked "Change" on the edit form — open the destructive
+    /// confirmation modal with the proposed new username.
+    RequestChangeLightningAddress,
+    /// User backed out of the confirmation modal.
+    DismissChangeConfirmation,
+    /// User confirmed the swap — fires the PUT + SDK delete+register chain.
+    ConfirmChangeLightningAddress,
+    /// Terminal result of the change chain. The outcome variants
+    /// distinguish server-side rejection (address unchanged) from
+    /// server-committed-but-SDK-out-of-sync (the new address is
+    /// confirmed in the API and the existing re-registration prompt
+    /// is surfaced for the user to retry the SDK side).
+    LightningAddressUpdated(crate::app::state::connect::cube::LightningAddressChangeOutcome),
+    /// Terminal result of the manual SDK rebind retry kicked off by
+    /// `RetryLightningAddressReregister`. `Ok` clears the
+    /// re-registration prompt; `Err` keeps it surfaced with an
+    /// updated message.
+    LightningAddressReregistered(Result<coincube_spark_protocol::LightningAddressInfo, String>),
+    /// Manual retry of the SDK side of a Lightning Address rebind
+    /// when reconcile flagged `ln_reconcile_needs_reregister`. Performs
+    /// SDK delete (idempotent) then register against the DB-confirmed
+    /// username.
+    RetryLightningAddressReregister,
+    /// Phase 4g: the Spark SDK forwarded a `LightningAddressChanged`
+    /// event — either a register/unregister on this device, or a
+    /// cross-device sync replay via realtime-sync. `None` with a
+    /// populated DB reservation triggers auto-re-register.
+    SparkLightningAddressChanged(Option<coincube_spark_protocol::LightningAddressInfo>),
+    /// Phase 4g: outcome of the startup auto-reconcile. The
+    /// [`crate::app::state::connect::cube::ReconcileOutcome`]
+    /// payload distinguishes "already in sync / fixed it" from a
+    /// transient query failure and from a persistent API↔SDK
+    /// divergence that needs the user's attention.
+    LightningAddressReconciled(crate::app::state::connect::cube::ReconcileOutcome),
     /// Result of registering the cube with the backend (POST /connect/cubes).
     CubeRegistered(Result<crate::services::coincube::CubeResponse, String>),
     /// Retry a previously failed cube registration.
@@ -1123,8 +1198,16 @@ pub enum HomeMessage {
     /// Navigate to Spark Receive.
     ReceiveSparkBtc,
     /// Bridge returned a fresh Spark balance (used by the Home
-    /// page's periodic balance refresh).
-    SparkBalanceUpdated(Amount),
+    /// page's periodic balance refresh). Carries the raw
+    /// `balance_sats` and the optional Stable Balance USDB holding
+    /// so the handler can fold USDB into the headline at the
+    /// current BTC/USD price (same pattern as the Spark Overview
+    /// panel — when Stable Balance is on, raw `balance_sats` reads
+    /// 0 even though the wallet still has spendable value).
+    SparkBalanceUpdated {
+        btc: Amount,
+        stable_balance: Option<coincube_spark_protocol::StableBalanceSnapshot>,
+    },
     ToggleBalanceMask,
     /// Open the wallet-picker popup on the amount screen, editing the named side.
     OpenWalletPicker(PickerSide),

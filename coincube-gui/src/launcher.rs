@@ -200,7 +200,7 @@ impl Launcher {
                 passkey_ceremony: None,
                 #[cfg(target_os = "macos")]
                 native_passkey_ceremony: None,
-                has_stored_session: ConnectAccountPanel::has_stored_session(),
+                has_stored_session: false, // Will be checked when cube UUID is set
                 server_cube_limit: None,
                 rename_cube_modal: None,
                 pending_remote_rename: None,

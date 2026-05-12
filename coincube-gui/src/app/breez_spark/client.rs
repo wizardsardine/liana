@@ -43,11 +43,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use coincube_spark_protocol::{
-    ClaimDepositOk, ClaimDepositParams, ErrorKind, ErrorPayload, Event, Frame, GetInfoOk,
-    GetInfoParams, GetUserSettingsOk, InitParams, ListPaymentsOk, ListPaymentsParams,
-    ListUnclaimedDepositsOk, Method, OkPayload, ParseInputOk, ParseInputParams,
-    PrepareLnurlPayParams, PrepareSendOk, PrepareSendParams, ReceiveBolt11Params,
-    ReceiveOnchainParams, ReceivePaymentOk, Request, Response, ResponseResult, SendPaymentOk,
+    CheckLightningAddressAvailableParams, ClaimDepositOk, ClaimDepositParams, ErrorKind,
+    ErrorPayload, Event, Frame, GetInfoOk, GetInfoParams, GetUserSettingsOk, InitParams,
+    LightningAddressInfo, ListPaymentsOk, ListPaymentsParams, ListUnclaimedDepositsOk, Method,
+    OkPayload, ParseInputOk, ParseInputParams, PrepareLnurlPayParams, PrepareSendOk,
+    PrepareSendParams, ReceiveBolt11Params, ReceiveOnchainParams, ReceivePaymentOk,
+    RegisterLightningAddressParams, Request, Response, ResponseResult, SendPaymentOk,
     SendPaymentParams, SetStableBalanceParams,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -476,6 +477,89 @@ impl SparkClient {
             },
             make_spark_event_stream,
         )
+    }
+
+    /// Phase 4g: debounced availability hint for the claim-flow UI.
+    ///
+    /// Thin round-trip to the Breez-hosted LNURL server. Callers use
+    /// this only as a UX nicety (green ✓ / red ✗ while typing); our
+    /// API's reserve endpoint still does the authoritative uniqueness
+    /// check at claim time.
+    pub async fn check_lightning_address_available(
+        &self,
+        username: String,
+    ) -> Result<bool, SparkClientError> {
+        match self
+            .request(Method::CheckLightningAddressAvailable(
+                CheckLightningAddressAvailableParams { username },
+            ))
+            .await?
+        {
+            OkPayload::CheckLightningAddressAvailable(ok) => Ok(ok.available),
+            other => Err(SparkClientError::Protocol(format!(
+                "check_lightning_address_available returned unexpected payload: {:?}",
+                other
+            ))),
+        }
+    }
+
+    /// Phase 4g: bind `<username>@<lnurl_domain>` to this wallet's
+    /// Spark leaf on the Breez-hosted LNURL server.
+    ///
+    /// Call after the API's reserve endpoint has returned 2xx — the
+    /// Go API persists the record and the `confirm` step stamps it
+    /// permanent, but only after the SDK registration succeeds. On
+    /// any failure here the caller must release the reservation via
+    /// the API's DELETE endpoint.
+    pub async fn register_lightning_address(
+        &self,
+        username: String,
+        description: Option<String>,
+    ) -> Result<LightningAddressInfo, SparkClientError> {
+        match self
+            .request(Method::RegisterLightningAddress(
+                RegisterLightningAddressParams {
+                    username,
+                    description,
+                },
+            ))
+            .await?
+        {
+            OkPayload::RegisterLightningAddress(ok) => Ok(ok.info),
+            other => Err(SparkClientError::Protocol(format!(
+                "register_lightning_address returned unexpected payload: {:?}",
+                other
+            ))),
+        }
+    }
+
+    /// Phase 4g: fetch the Lightning Address currently bound to this
+    /// wallet on the Breez LNURL server (falling back to a server-side
+    /// recovery when the SDK's local cache is empty). Drives the
+    /// startup auto-reconcile — see the App's Spark-connect handler.
+    pub async fn get_lightning_address(
+        &self,
+    ) -> Result<Option<LightningAddressInfo>, SparkClientError> {
+        match self.request(Method::GetLightningAddress).await? {
+            OkPayload::GetLightningAddress(ok) => Ok(ok.info),
+            other => Err(SparkClientError::Protocol(format!(
+                "get_lightning_address returned unexpected payload: {:?}",
+                other
+            ))),
+        }
+    }
+
+    /// Phase 4g: unregister the Lightning Address bound to this
+    /// wallet. Idempotent at the SDK level — returns Ok even when no
+    /// address is currently registered.
+    pub async fn delete_lightning_address(&self) -> Result<(), SparkClientError> {
+        match self.request(Method::DeleteLightningAddress).await? {
+            OkPayload::DeleteLightningAddress {} => Ok(()),
+            other => Err(SparkClientError::Protocol(format!(
+                "delete_lightning_address returned unexpected payload: {:?}",
+                other
+            ))),
+        }
     }
 
     /// Gracefully shut down the bridge subprocess. After this returns
