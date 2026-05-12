@@ -50,6 +50,7 @@ struct FormValidation {
     sats_range: Option<String>,
     premium: Option<&'static str>,
     payment: Option<&'static str>,
+    lightning_address: Option<&'static str>,
     /// True when node limits haven't been fetched yet (market price only).
     node_limits_missing: bool,
 }
@@ -62,6 +63,7 @@ impl FormValidation {
             || self.sats_range.is_some()
             || self.premium.is_some()
             || self.payment.is_some()
+            || self.lightning_address.is_some()
     }
 }
 
@@ -857,6 +859,13 @@ impl P2PPanel {
             v.payment = Some("Select at least one payment method");
         }
 
+        // --- Lightning address / invoice (Buy orders only) ---
+        if self.create_order_type == OrderType::Buy
+            && self.create_lightning_address.value.trim().is_empty()
+        {
+            v.lightning_address = Some("Lightning Address or invoice is required");
+        }
+
         v
     }
 
@@ -1332,65 +1341,68 @@ impl P2PPanel {
         // static text with an "Edit" affordance; otherwise show the editable
         // form. If the user is editing but a registered address is available,
         // offer a way to revert.
-        let lightning_address_card: Element<'a, view::Message> =
-            if self.create_order_type == OrderType::Buy {
-                let registered = cache.lightning_address.as_deref();
-                let value_matches_registered =
-                    registered.is_some_and(|r| r == self.create_lightning_address.value);
-                let show_collapsed = !self.editing_lightning_address
-                    && !self.lightning_address_user_edited
-                    && value_matches_registered;
+        let lightning_address_card: Element<'a, view::Message> = if self.create_order_type
+            == OrderType::Buy
+        {
+            let registered = cache.lightning_address.as_deref();
+            let value_matches_registered =
+                registered.is_some_and(|r| r == self.create_lightning_address.value);
+            let show_collapsed = !self.editing_lightning_address
+                && !self.lightning_address_user_edited
+                && value_matches_registered;
 
-                let body: Element<'a, view::Message> = if show_collapsed {
-                    let addr = self.create_lightning_address.value.as_str();
-                    row![
-                        icon::lightning_icon().style(theme::text::warning),
-                        p2_regular(addr),
-                        Space::new().width(Length::Fill),
-                        button::secondary_compact(None, "Use different invoice")
-                            .on_press(p2p(P2PMessage::EditLightningAddress)),
-                    ]
-                    .spacing(12)
-                    .align_y(iced::alignment::Vertical::Center)
-                    .into()
-                } else {
-                    let mut col = column![row![
-                        icon::lightning_icon().style(theme::text::warning),
-                        form::Form::new_trimmed(
-                            "Enter lightning address or invoice",
-                            &self.create_lightning_address,
-                            |v| { view::Message::P2P(P2PMessage::LightningAddressEdited(v)) }
-                        )
-                        .padding(10),
-                    ]
-                    .spacing(12)
-                    .align_y(iced::alignment::Vertical::Center),]
-                    .spacing(8);
-                    if registered.is_some() && !value_matches_registered {
-                        col = col.push(
-                            row![
-                                Space::new().width(Length::Fill),
-                                button::secondary_compact(None, "Use registered address")
-                                    .on_press(p2p(P2PMessage::UseRegisteredLightningAddress)),
-                            ]
-                            .align_y(iced::alignment::Vertical::Center),
-                        );
-                    }
-                    col.into()
-                };
-
-                card::simple(
-                    column![
-                        p2_regular("Lightning Address (optional)").style(theme::text::secondary),
-                        body,
-                    ]
-                    .spacing(12),
-                )
-                .width(Length::Fill)
+            let body: Element<'a, view::Message> = if show_collapsed {
+                let addr = self.create_lightning_address.value.as_str();
+                row![
+                    icon::lightning_icon().style(theme::text::warning),
+                    p2_regular(addr),
+                    Space::new().width(Length::Fill),
+                    button::secondary_compact(None, "Use different Lightning Address or invoice")
+                        .on_press(p2p(P2PMessage::EditLightningAddress)),
+                ]
+                .spacing(12)
+                .align_y(iced::alignment::Vertical::Center)
                 .into()
             } else {
-                column![].into()
+                let mut col = column![row![
+                    icon::lightning_icon().style(theme::text::warning),
+                    form::Form::new_trimmed(
+                        "Enter lightning address or invoice",
+                        &self.create_lightning_address,
+                        |v| { view::Message::P2P(P2PMessage::LightningAddressEdited(v)) }
+                    )
+                    .padding(10),
+                ]
+                .spacing(12)
+                .align_y(iced::alignment::Vertical::Center),]
+                .spacing(8);
+                if registered.is_some() {
+                    col = col.push(
+                        row![
+                            Space::new().width(Length::Fill),
+                            button::secondary_compact(None, "Use registered address")
+                                .on_press(p2p(P2PMessage::UseRegisteredLightningAddress)),
+                        ]
+                        .align_y(iced::alignment::Vertical::Center),
+                    );
+                }
+                col.into()
             };
+
+            let mut card_col = column![
+                p2_regular("Lightning Address or Invoice").style(theme::text::secondary),
+                body,
+            ]
+            .spacing(12);
+            if self.submit_attempted {
+                if let Some(warn) = v.lightning_address {
+                    card_col = card_col.push(caption(warn).style(theme::text::warning));
+                }
+            }
+            card::simple(card_col).width(Length::Fill).into()
+        } else {
+            column![].into()
+        };
 
         // Expiry days
         // Error message
