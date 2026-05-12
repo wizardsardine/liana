@@ -2016,6 +2016,9 @@ impl App {
                             }
                         })
                     });
+                if let Some(p2p) = self.panels.p2p.as_mut() {
+                    p2p.sync_lightning_address_from_cache(&self.cache);
+                }
                 // Sync avatar handle to cache for sidebar display across all panels.
                 // Only update when Some to avoid blinking during in-flight image loads.
                 // Clear on logout when auth state transitions from true to false.

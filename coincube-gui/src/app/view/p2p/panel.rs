@@ -50,6 +50,7 @@ struct FormValidation {
     sats_range: Option<String>,
     premium: Option<&'static str>,
     payment: Option<&'static str>,
+    lightning_address: Option<&'static str>,
     /// True when node limits haven't been fetched yet (market price only).
     node_limits_missing: bool,
 }
@@ -62,6 +63,7 @@ impl FormValidation {
             || self.sats_range.is_some()
             || self.premium.is_some()
             || self.payment.is_some()
+            || self.lightning_address.is_some()
     }
 }
 
@@ -199,7 +201,19 @@ pub struct P2PPanel {
     payment_method_combo_state: combo_box::State<String>,
     create_min_amount: form::Value<String>,
     create_max_amount: form::Value<String>,
+    // Explicit toggle for range vs single-amount orders. When false, only
+    // create_min_amount is used (as the fiat amount).
+    range_order_mode: bool,
     create_lightning_address: form::Value<String>,
+    // Tracks whether the user has interacted with the lightning address field;
+    // gates auto-prefill from the cube's registered address.
+    lightning_address_user_edited: bool,
+    // When true, show the editable lightning address input; otherwise show the
+    // prefilled address as static text with an "Edit" affordance.
+    editing_lightning_address: bool,
+    // Set once the user has clicked Submit. Required-field errors are only
+    // surfaced after this; before that, an untouched form looks clean.
+    submit_attempted: bool,
     // Order submission state
     confirming_order: bool,
     order_submitting: bool,
@@ -302,7 +316,11 @@ impl P2PPanel {
             ),
             create_min_amount: Default::default(),
             create_max_amount: Default::default(),
+            range_order_mode: false,
             create_lightning_address: Default::default(),
+            lightning_address_user_edited: false,
+            editing_lightning_address: false,
+            submit_attempted: false,
             confirming_order: false,
             order_submitting: false,
             order_submit_error: None,
@@ -563,6 +581,15 @@ impl P2PPanel {
             .collect()
     }
 
+    pub fn sync_lightning_address_from_cache(&mut self, cache: &Cache) {
+        if self.lightning_address_user_edited || !self.create_lightning_address.value.is_empty() {
+            return;
+        }
+        if let Some(addr) = cache.lightning_address.as_ref() {
+            self.create_lightning_address.value = addr.clone();
+        }
+    }
+
     fn clear_create_form(&mut self) {
         self.create_order_type = OrderType::Buy;
         self.create_pricing_mode = PricingMode::Market;
@@ -574,7 +601,11 @@ impl P2PPanel {
         self.rebuild_payment_method_combo();
         self.create_min_amount = Default::default();
         self.create_max_amount = Default::default();
+        self.range_order_mode = false;
         self.create_lightning_address = Default::default();
+        self.lightning_address_user_edited = false;
+        self.editing_lightning_address = false;
+        self.submit_attempted = false;
     }
 
     fn rebuild_currency_combo(&mut self) {
@@ -658,7 +689,72 @@ impl P2PPanel {
     }
 
     fn is_range_order(&self) -> bool {
-        !self.create_min_amount.value.is_empty() && !self.create_max_amount.value.is_empty()
+        self.range_order_mode
+    }
+
+    /// Returns BTC price (units of `create_fiat_currency` per 1 BTC) when the
+    /// cache has a usable rate for the currently selected currency.
+    fn btc_price_for_selected(&self, cache: &Cache) -> Option<f64> {
+        use crate::services::fiat::Currency;
+        let target: Currency = self.create_fiat_currency.parse().ok()?;
+        if let Some(fp) = cache.fiat_price.as_ref() {
+            if fp.currency() == target {
+                if let Ok(p) = fp.res.as_ref() {
+                    if p.value > 0.0 {
+                        return Some(p.value);
+                    }
+                }
+            }
+        }
+        if target == Currency::USD {
+            return cache.btc_usd_price.filter(|p| *p > 0.0);
+        }
+        None
+    }
+
+    fn fiat_to_sats_estimate(&self, fiat_amount: i64, cache: &Cache) -> Option<u64> {
+        if fiat_amount <= 0 {
+            return None;
+        }
+        let price = self.btc_price_for_selected(cache)?;
+        let sats = (fiat_amount as f64 / price * 1e8).round();
+        if sats.is_finite() && sats > 0.0 {
+            Some(sats as u64)
+        } else {
+            None
+        }
+    }
+
+    fn sats_preview_caption<'a>(&self, sats: u64) -> Element<'a, view::Message> {
+        let formatted = super::components::format_with_separators(sats);
+        let below_min = self.node_min_order_sats.is_some_and(|m| sats < m);
+        let above_max = self.node_max_order_sats.is_some_and(|m| sats > m);
+        if below_min {
+            caption(format!("≈ {formatted} sats — below trade minimum"))
+                .style(theme::text::warning)
+                .into()
+        } else if above_max {
+            caption(format!("≈ {formatted} sats — exceeds trade maximum"))
+                .style(theme::text::warning)
+                .into()
+        } else {
+            caption(format!("≈ {formatted} sats"))
+                .style(theme::text::secondary)
+                .into()
+        }
+    }
+
+    fn sats_to_fiat_estimate(&self, sats: u64, cache: &Cache) -> Option<f64> {
+        if sats == 0 {
+            return None;
+        }
+        let price = self.btc_price_for_selected(cache)?;
+        let fiat = sats as f64 / 1e8 * price;
+        if fiat.is_finite() && fiat > 0.0 {
+            Some(fiat)
+        } else {
+            None
+        }
     }
 
     /// Validate the create-order form and return per-field warnings.
@@ -761,6 +857,13 @@ impl P2PPanel {
             || !self.create_custom_payment_method.value.trim().is_empty();
         if !has_payment {
             v.payment = Some("Select at least one payment method");
+        }
+
+        // --- Lightning address / invoice (Buy orders only) ---
+        if self.create_order_type == OrderType::Buy
+            && self.create_lightning_address.value.trim().is_empty()
+        {
+            v.lightning_address = Some("Lightning Address or invoice is required");
         }
 
         v
@@ -880,7 +983,7 @@ impl P2PPanel {
         .into()
     }
 
-    fn create_order_view<'a>(&'a self) -> Element<'a, view::Message> {
+    fn create_order_view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         let p2p = |msg: P2PMessage| view::Message::P2P(msg);
         let is_range = self.is_range_order();
         // Fixed price not available for range orders
@@ -909,21 +1012,6 @@ impl P2PPanel {
         }
         .on_press(p2p(P2PMessage::OrderTypeSelected(OrderType::Sell)))
         .width(Length::Fill);
-
-        // Banner text based on order type
-        let banner_text = match self.create_order_type {
-            OrderType::Buy => "You want to buy Bitcoin",
-            OrderType::Sell => "You want to sell Bitcoin",
-        };
-
-        let banner = container(
-            p1_bold(banner_text)
-                .width(Length::Fill)
-                .align_x(iced::alignment::Horizontal::Center),
-        )
-        .padding([12, 20])
-        .width(Length::Fill)
-        .style(theme::container::foreground);
 
         // Order type card
         let order_type_card = container(row![buy_btn, sell_btn].spacing(8).width(Length::Fill))
@@ -960,43 +1048,108 @@ impl P2PPanel {
         )
         .width(Length::Fill);
 
-        // Amount card (min required, max optional — fills max to make a range order)
-        let amount_label = match self.create_order_type {
-            OrderType::Buy => "Enter amount you want to send",
-            OrderType::Sell => "Enter amount you want to receive",
+        // Amount card with Single / Range toggle
+        let amount_label = match (&self.create_order_type, is_range) {
+            (OrderType::Buy, false) => "Enter amount you want to send",
+            (OrderType::Buy, true) => "Enter amount range you want to send",
+            (OrderType::Sell, false) => "Enter amount you want to receive",
+            (OrderType::Sell, true) => "Enter amount range you want to receive",
+        };
+
+        let single_btn = if !is_range {
+            button::primary(None, "Single")
+        } else {
+            button::secondary(None, "Single")
+        }
+        .on_press(p2p(P2PMessage::RangeOrderToggled(false)))
+        .width(Length::Fill);
+
+        let range_btn = if is_range {
+            button::primary(None, "Range")
+        } else {
+            button::secondary(None, "Range")
+        }
+        .on_press(p2p(P2PMessage::RangeOrderToggled(true)))
+        .width(Length::Fill);
+
+        // Inline per-field validation. Only surface errors after the user has
+        // typed in the field, so an empty form doesn't render warnings.
+        let min_field_col = {
+            let placeholder = if is_range { "Min" } else { "Amount" };
+            let mut col =
+                column![
+                    form::Form::new_amount_sats(placeholder, &self.create_min_amount, |v| {
+                        view::Message::P2P(P2PMessage::MinAmountEdited(v))
+                    })
+                    .padding(10),
+                ]
+                .spacing(4)
+                .width(Length::Fill);
+            if !self.create_min_amount.value.is_empty() || self.submit_attempted {
+                if let Some(warn) = v.amount {
+                    col = col.push(caption(warn).style(theme::text::warning));
+                }
+            }
+            if let Ok(amt) = self.create_min_amount.value.parse::<i64>() {
+                if let Some(sats) = self.fiat_to_sats_estimate(amt, cache) {
+                    col = col.push(self.sats_preview_caption(sats));
+                }
+            }
+            col
+        };
+
+        let amount_inputs: Element<'a, view::Message> = if is_range {
+            let max_field_col = {
+                let mut col =
+                    column![
+                        form::Form::new_amount_sats("Max", &self.create_max_amount, |v| {
+                            view::Message::P2P(P2PMessage::MaxAmountEdited(v))
+                        })
+                        .padding(10),
+                    ]
+                    .spacing(4)
+                    .width(Length::Fill);
+                if !self.create_max_amount.value.is_empty() || self.submit_attempted {
+                    if let Some(warn) = v.max_amount {
+                        col = col.push(caption(warn).style(theme::text::warning));
+                    }
+                }
+                if let Ok(amt) = self.create_max_amount.value.parse::<i64>() {
+                    if let Some(sats) = self.fiat_to_sats_estimate(amt, cache) {
+                        col = col.push(self.sats_preview_caption(sats));
+                    }
+                }
+                col
+            };
+            row![
+                icon::coins_icon().style(theme::text::warning),
+                min_field_col,
+                max_field_col,
+            ]
+            .spacing(8)
+            .align_y(iced::alignment::Vertical::Top)
+            .into()
+        } else {
+            row![
+                icon::coins_icon().style(theme::text::warning),
+                min_field_col,
+            ]
+            .spacing(8)
+            .align_y(iced::alignment::Vertical::Top)
+            .into()
         };
 
         let mut amount_col = column![
             p2_regular(amount_label).style(theme::text::secondary),
-            row![
-                icon::coins_icon().style(theme::text::warning),
-                form::Form::new_amount_sats("Amount", &self.create_min_amount, |v| {
-                    view::Message::P2P(P2PMessage::MinAmountEdited(v))
-                })
-                .padding(10),
-                form::Form::new_amount_sats("Max (optional)", &self.create_max_amount, |v| {
-                    view::Message::P2P(P2PMessage::MaxAmountEdited(v))
-                })
-                .padding(10),
-            ]
-            .spacing(8)
-            .align_y(iced::alignment::Vertical::Center),
+            row![single_btn, range_btn].spacing(8).width(Length::Fill),
+            amount_inputs,
         ]
         .spacing(12);
-        // Show amount warning (only after user started typing to avoid initial noise)
-        if let Some(warn) = v.amount {
-            if !self.create_min_amount.value.is_empty() {
-                amount_col = amount_col.push(caption(warn).style(theme::text::warning));
-            }
-        }
-        if let Some(warn) = v.max_amount {
-            amount_col = amount_col.push(caption(warn).style(theme::text::warning));
-        }
         // Show node order limits as a hint, or a warning if not loaded
         if let (Some(min), Some(max)) = (self.node_min_order_sats, self.node_max_order_sats) {
             amount_col = amount_col.push(
                 caption(format!(
-                    "Node accepts orders between {} and {} sats",
+                    "Trade size must be between {} and {} sats",
                     super::components::format_with_separators(min),
                     super::components::format_with_separators(max),
                 ))
@@ -1064,12 +1217,14 @@ impl P2PPanel {
             },
         ]
         .spacing(12);
-        if let Some(warn) = v.payment {
-            payment_col = payment_col.push(caption(warn).style(theme::text::warning));
+        if self.submit_attempted {
+            if let Some(warn) = v.payment {
+                payment_col = payment_col.push(caption(warn).style(theme::text::warning));
+            }
         }
         let payment_card = card::simple(payment_col).width(Length::Fill);
 
-        // Price type card
+        // Combined price type + pricing input card
         let market_btn = if *effective_pricing_mode == PricingMode::Market {
             button::primary(None, "Market Rate")
         } else {
@@ -1090,22 +1245,7 @@ impl P2PPanel {
             fixed_btn.on_press(p2p(P2PMessage::PricingModeSelected(PricingMode::Fixed)))
         };
 
-        let price_type_card = card::simple(
-            column![
-                p2_regular("Price type").style(theme::text::secondary),
-                row![
-                    icon::dollar_icon().style(theme::text::warning),
-                    row![market_btn, fixed_btn].spacing(8).width(Length::Fill),
-                ]
-                .spacing(12)
-                .align_y(iced::alignment::Vertical::Center),
-            ]
-            .spacing(12),
-        )
-        .width(Length::Fill);
-
-        // Pricing-mode-dependent field card
-        let pricing_card: Element<'a, view::Message> = if *effective_pricing_mode
+        let pricing_input: Element<'a, view::Message> = if *effective_pricing_mode
             == PricingMode::Fixed
         {
             let mut sats_col = column![
@@ -1122,16 +1262,22 @@ impl P2PPanel {
                 .spacing(12)
                 .align_y(iced::alignment::Vertical::Center),
             ]
-            .spacing(12);
-            // Show sats warnings (range warnings only after user started typing)
+            .spacing(8);
             if let Some(warn) = v.sats {
-                if !self.create_sats_amount.value.is_empty() {
+                if !self.create_sats_amount.value.is_empty() || self.submit_attempted {
                     sats_col = sats_col.push(caption(warn).style(theme::text::warning));
                 }
             } else if let Some(warn) = v.sats_range.clone() {
                 sats_col = sats_col.push(caption(warn).style(theme::text::warning));
             }
-            // Show node limits hint
+            if let Ok(sats) = self.create_sats_amount.value.parse::<u64>() {
+                if let Some(fiat) = self.sats_to_fiat_estimate(sats, cache) {
+                    sats_col = sats_col.push(
+                        caption(format!("≈ {:.2} {}", fiat, self.create_fiat_currency))
+                            .style(theme::text::secondary),
+                    );
+                }
+            }
             if let (Some(min), Some(max)) = (self.node_min_order_sats, self.node_max_order_sats) {
                 sats_col = sats_col.push(
                     caption(format!(
@@ -1142,10 +1288,9 @@ impl P2PPanel {
                     .style(theme::text::secondary),
                 );
             }
-            card::simple(sats_col).width(Length::Fill).into()
+            sats_col.into()
         } else {
             let premium_val: f32 = self.create_premium.value.parse::<f32>().unwrap_or(0.0);
-            // Dynamic slider range: expand beyond ±10 if the current value is outside
             let slider_min: f32 = (-10.0f32).min(premium_val).max(-100.0);
             let slider_max: f32 = (10.0f32).max(premium_val).min(100.0);
             let premium_int = premium_val as i64;
@@ -1172,40 +1317,92 @@ impl P2PPanel {
                 })
                 .step(1.0),
             ]
-            .spacing(12);
+            .spacing(8);
             if !self.create_premium.value.is_empty() {
                 if let Some(warn) = v.premium {
                     premium_col = premium_col.push(caption(warn).style(theme::text::warning));
                 }
             }
-            card::simple(premium_col).width(Length::Fill).into()
+            premium_col.into()
         };
 
-        // Lightning address card (Buy orders only)
-        let lightning_address_card: Element<'a, view::Message> =
-            if self.create_order_type == OrderType::Buy {
-                card::simple(
-                    column![
-                        p2_regular("Lightning Address (optional)").style(theme::text::secondary),
-                        row![
-                            icon::lightning_icon().style(theme::text::warning),
-                            form::Form::new_trimmed(
-                                "Enter lightning address",
-                                &self.create_lightning_address,
-                                |v| { view::Message::P2P(P2PMessage::LightningAddressEdited(v)) }
-                            )
-                            .padding(10),
-                        ]
-                        .spacing(12)
-                        .align_y(iced::alignment::Vertical::Center),
-                    ]
-                    .spacing(12),
-                )
-                .width(Length::Fill)
+        let pricing_card = card::simple(
+            column![
+                p2_regular("Price type").style(theme::text::secondary),
+                row![market_btn, fixed_btn].spacing(8).width(Length::Fill),
+                pricing_input,
+            ]
+            .spacing(12),
+        )
+        .width(Length::Fill);
+
+        // Lightning address card (Buy orders only). When the cube has a
+        // registered address and the user hasn't edited the field, show it as
+        // static text with an "Edit" affordance; otherwise show the editable
+        // form. If the user is editing but a registered address is available,
+        // offer a way to revert.
+        let lightning_address_card: Element<'a, view::Message> = if self.create_order_type
+            == OrderType::Buy
+        {
+            let registered = cache.lightning_address.as_deref();
+            let value_matches_registered =
+                registered.is_some_and(|r| r == self.create_lightning_address.value);
+            let show_collapsed = !self.editing_lightning_address
+                && !self.lightning_address_user_edited
+                && value_matches_registered;
+
+            let body: Element<'a, view::Message> = if show_collapsed {
+                let addr = self.create_lightning_address.value.as_str();
+                row![
+                    icon::lightning_icon().style(theme::text::warning),
+                    p2_regular(addr),
+                    Space::new().width(Length::Fill),
+                    button::secondary_compact(None, "Use different Lightning Address or invoice")
+                        .on_press(p2p(P2PMessage::EditLightningAddress)),
+                ]
+                .spacing(12)
+                .align_y(iced::alignment::Vertical::Center)
                 .into()
             } else {
-                column![].into()
+                let mut col = column![row![
+                    icon::lightning_icon().style(theme::text::warning),
+                    form::Form::new_trimmed(
+                        "Enter lightning address or invoice",
+                        &self.create_lightning_address,
+                        |v| { view::Message::P2P(P2PMessage::LightningAddressEdited(v)) }
+                    )
+                    .padding(10),
+                ]
+                .spacing(12)
+                .align_y(iced::alignment::Vertical::Center),]
+                .spacing(8);
+                if registered.is_some() {
+                    col = col.push(
+                        row![
+                            Space::new().width(Length::Fill),
+                            button::secondary_compact(None, "Use registered address")
+                                .on_press(p2p(P2PMessage::UseRegisteredLightningAddress)),
+                        ]
+                        .align_y(iced::alignment::Vertical::Center),
+                    );
+                }
+                col.into()
             };
+
+            let mut card_col = column![
+                p2_regular("Lightning Address or Invoice").style(theme::text::secondary),
+                body,
+            ]
+            .spacing(12);
+            if self.submit_attempted {
+                if let Some(warn) = v.lightning_address {
+                    card_col = card_col.push(caption(warn).style(theme::text::warning));
+                }
+            }
+            card::simple(card_col).width(Length::Fill).into()
+        } else {
+            column![].into()
+        };
 
         // Expiry days
         // Error message
@@ -1215,18 +1412,14 @@ impl P2PPanel {
             column![].into()
         };
 
-        // Submit: use form validation
-        let can_submit =
-            !v.has_errors() && !self.order_submitting && !self.create_min_amount.value.is_empty();
-
+        // Submit is always clickable (unless a request is already in flight) —
+        // clicking with errors flips submit_attempted so warnings appear inline.
         let submit_btn = if self.order_submitting {
             button::primary(None, "Submit").width(Length::Fill)
-        } else if can_submit {
+        } else {
             button::primary(None, "Submit")
                 .on_press(p2p(P2PMessage::SubmitOrder))
                 .width(Length::Fill)
-        } else {
-            button::primary(None, "Submit").width(Length::Fill)
         };
 
         let form_dirty = self.create_fiat_currency != "USD"
@@ -1252,12 +1445,10 @@ impl P2PPanel {
         };
 
         column![
-            banner,
             order_type_card,
             currency_card,
             amount_card,
             payment_card,
-            price_type_card,
             pricing_card,
             lightning_address_card,
             error_msg,
@@ -3788,7 +3979,7 @@ impl State for P2PPanel {
                             ]
                             .spacing(8)
                             .width(Length::Fill),
-                            container(self.create_order_view()).width(Length::Fill),
+                            container(self.create_order_view(cache)).width(Length::Fill),
                             Space::new().height(Length::Fixed(40.0)),
                         ]
                         .spacing(16),
@@ -3861,13 +4052,18 @@ impl State for P2PPanel {
     fn update(
         &mut self,
         _daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
-        _cache: &Cache,
+        cache: &Cache,
         message: Message,
     ) -> Task<Message> {
         let msg = match message {
             Message::View(view::Message::P2P(msg)) => msg,
             _ => return Task::none(),
         };
+        if !self.lightning_address_user_edited && self.create_lightning_address.value.is_empty() {
+            if let Some(addr) = cache.lightning_address.as_ref() {
+                self.create_lightning_address.value = addr.clone();
+            }
+        }
         match msg {
             P2PMessage::OrderTypeSelected(t) => self.create_order_type = t,
             P2PMessage::PricingModeSelected(m) => self.create_pricing_mode = m,
@@ -3907,20 +4103,36 @@ impl State for P2PPanel {
             }
             P2PMessage::MinAmountEdited(v) => {
                 self.create_min_amount.value = v;
-                if self.is_range_order() {
-                    self.create_pricing_mode = PricingMode::Market;
-                }
             }
             P2PMessage::MaxAmountEdited(v) => {
                 self.create_max_amount.value = v;
-                if self.is_range_order() {
+            }
+            P2PMessage::RangeOrderToggled(on) => {
+                self.range_order_mode = on;
+                if on {
+                    // Range orders only support market pricing.
                     self.create_pricing_mode = PricingMode::Market;
+                } else {
+                    self.create_max_amount = Default::default();
                 }
             }
             P2PMessage::LightningAddressEdited(v) => {
                 self.create_lightning_address.value = v;
+                self.lightning_address_user_edited = true;
+            }
+            P2PMessage::EditLightningAddress => {
+                self.editing_lightning_address = true;
+            }
+            P2PMessage::UseRegisteredLightningAddress => {
+                self.editing_lightning_address = false;
+                self.lightning_address_user_edited = false;
+                self.create_lightning_address = Default::default();
+                if let Some(addr) = cache.lightning_address.as_ref() {
+                    self.create_lightning_address.value = addr.clone();
+                }
             }
             P2PMessage::SubmitOrder => {
+                self.submit_attempted = true;
                 // Double-check validation before showing confirmation
                 if self.validate_order_form().has_errors() {
                     return Task::none();
@@ -4270,7 +4482,7 @@ impl State for P2PPanel {
                     self.taking_order = true;
                     return self.update(
                         _daemon,
-                        _cache,
+                        cache,
                         Message::View(view::Message::P2P(P2PMessage::ConfirmTakeOrder)),
                     );
                 }
