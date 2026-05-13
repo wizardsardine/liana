@@ -12,8 +12,8 @@ use liana_gui::hw::{is_compatible_with_tapminiscript, min_taproot_version, Unsup
 use liana_ui::{
     component::{
         button::{btn_cancel, btn_clear, btn_retry, btn_save},
-        form, hw,
-        modal::{self, modal_view, none_fn, ModalWidth},
+        form,
+        modal::{self, legacy, modal_view, none_fn, ModalWidth},
         pick_list,
         text::{self, p1_bold},
         tooltip,
@@ -322,17 +322,10 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
                 Some(move || Msg::XpubSelectDevice(fp)),
             )
         }
-        DeviceState::Locked { pairing_code } => {
-            let card_content = match kind {
-                async_hwi::DeviceKind::Jade => hw::taproot_not_supported_device(kind),
-                _ => hw::locked_hardware_wallet(kind, pairing_code),
-            };
-
-            Button::new(card_content)
-                .style(theme::button::secondary)
-                .width(Length::Fill)
-                .into()
-        }
+        DeviceState::Locked { pairing_code } => match kind {
+            async_hwi::DeviceKind::Jade => legacy::taproot_unsupported_device(kind, None),
+            _ => legacy::locked_device(kind, pairing_code, None),
+        },
         DeviceState::Unsupported { reason } => {
             let message = match &reason {
                 UnsupportedReason::NotPartOfWallet(fg) => {
@@ -343,15 +336,15 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
                     minimal_supported_version,
                 } => match kind {
                     async_hwi::DeviceKind::Jade => {
-                        return hw::taproot_not_supported_device(kind).into()
+                        return legacy::taproot_unsupported_device(kind, None)
                     }
                     _ => {
-                        return hw::unsupported_version_hardware_wallet(
+                        return legacy::unsupported_version_device(
                             kind,
                             version.as_ref(),
                             minimal_supported_version,
+                            None,
                         )
-                        .into()
                     }
                 },
                 UnsupportedReason::Method(m) => format!("Unsupported method: {m}"),
