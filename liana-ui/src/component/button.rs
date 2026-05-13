@@ -1,4 +1,7 @@
-use super::text::{button_text, text};
+use super::{
+    modal::BTN_W,
+    text::{button_text, text},
+};
 use crate::{
     font::{BOLD, MEDIUM},
     icon::ICON_SIZE_L,
@@ -18,6 +21,7 @@ const MENU_ICON_SIZE: u32 = ICON_SIZE_L as u32;
 
 const ICON_BTN_SIZE: f32 = 40.0;
 const ICON_BTN_PADDING: f32 = 10.0;
+pub const DEVICE_BTN_H: u32 = 40;
 
 pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str, compact: bool) -> Button<'a, T> {
     Button::new(
@@ -129,6 +133,45 @@ fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>) -> Container<'a, T
             .align_x(Horizontal::Center)
             .padding(5),
     }
+}
+
+pub fn device<'a, T: 'a + std::clone::Clone, C: Into<Element<'a, T>>>(
+    content: C,
+    msg: Option<T>,
+) -> Element<'a, T> {
+    device_with_height(content, msg, DEVICE_BTN_H)
+}
+
+pub fn device_with_height<'a, T: 'a + std::clone::Clone, C: Into<Element<'a, T>>>(
+    content: C,
+    msg: Option<T>,
+    height: u32,
+) -> Element<'a, T> {
+    device_with_height_clickable(content, msg, Some(height), true)
+}
+
+pub fn device_with_height_clickable<'a, T: 'a + std::clone::Clone, C: Into<Element<'a, T>>>(
+    content: C,
+    msg: Option<T>,
+    height: Option<u32>,
+    clickable: bool,
+) -> Element<'a, T> {
+    let mut content = Container::new(content).width(BTN_W);
+    if let Some(h) = height {
+        content = content.center_y(h);
+    }
+    let style = if clickable {
+        theme::button::signing_devices
+    } else {
+        theme::button::signing_devices_non_clickable
+    };
+    Button::new(content)
+        .style(style)
+        .on_press_maybe(msg)
+        .padding(10)
+        .width(Length::Shrink)
+        .height(Length::Shrink)
+        .into()
 }
 
 /// Button width presets.

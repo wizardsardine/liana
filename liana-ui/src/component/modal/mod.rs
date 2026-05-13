@@ -1,8 +1,10 @@
+pub mod legacy;
+
 use iced::{
     alignment::{Horizontal, Vertical},
     widget::{
         button::{Status, Style},
-        column, container, row, Space,
+        column, row, Space,
     },
     Length, Padding,
 };
@@ -20,7 +22,7 @@ use crate::{
     theme::{self, Theme},
 };
 
-use crate::widget::{Button, Column, ColumnExt, Element, Row, RowExt, SpaceExt, Text};
+use crate::widget::{Button, CheckBox, Column, ColumnExt, Element, Row, RowExt, SpaceExt, Text};
 
 pub const BTN_W: u32 = 500;
 pub const BTN_H: u32 = 40;
@@ -170,6 +172,27 @@ where
         .into()
 }
 
+/// Outer shell for a collapsible key/signer entry, routed through the
+/// `button::device*` helpers.
+pub fn collapsible_button<'a, Message, Closed, Expanded, Collapse>(
+    collapsed: bool,
+    closed_content: Closed,
+    expanded_content: Expanded,
+    collapse_message: Collapse,
+) -> Element<'a, Message>
+where
+    Closed: Into<Element<'a, Message>>,
+    Expanded: Into<Element<'a, Message>>,
+    Collapse: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    if collapsed {
+        button::device_with_height_clickable(expanded_content, None, None, false)
+    } else {
+        button::device(closed_content, Some(collapse_message()))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn collapsible_input_button<'a, Message, Paste, Collapse, Input>(
     collapsed: bool,
@@ -203,40 +226,93 @@ where
                 text::p1_regular(label).style(theme::text::primary),
                 Space::with_width(Length::Fill)
             ])
-            .push(line);
-        let row = Row::new()
+            .push(line)
+            .width(Length::Fill);
+        let content = Row::new()
             .push_maybe(icon)
             .push(col)
             .align_y(Vertical::Center)
-            .spacing(V_SPACING);
-
-        Button::new(row).style(widget_style)
+            .spacing(V_SPACING)
+            .width(Length::Fill);
+        button::device_with_height_clickable(content, None, None, false)
     } else {
-        let row = Row::new()
+        let content = Row::new()
+            .push_maybe(icon.as_ref().map(|_| Space::with_width(H_SPACING)))
             .push_maybe(icon)
+            .push(Space::with_width(H_SPACING))
             .push(text::p1_regular(label))
-            .height(BTN_H)
             .spacing(V_SPACING)
             .align_y(Vertical::Center);
-        Button::new(row)
-            .on_press(collapse_message())
-            .style(widget_style)
+        button::device(content, Some(collapse_message()))
     }
-    .width(BTN_W)
-    .into()
 }
 
-pub fn key_entry<'a, Message, OnClick>(
+/// Like [`collapsible_input_button`] but the form is gated behind a
+/// disclaimer checkbox: the expanded button shows the checkbox first
+/// (`!ack`), then swaps to the form once the user toggles it on (`ack`).
+#[allow(clippy::too_many_arguments)]
+pub fn acked_input_button<'a, Message, Ack, Input, Paste, Collapse, I>(
+    collapsed: bool,
+    ack: bool,
+    icon: I,
+    label: &'a str,
+    disclaimer: &'a str,
+    input_placeholder: &'a str,
+    input_value: &Value<String>,
+    ack_message: Ack,
+    input_message: Input,
+    paste_message: Paste,
+    collapse_message: Collapse,
+) -> Element<'a, Message>
+where
+    I: Fn() -> Text<'static>,
+    Ack: 'static + Fn(bool) -> Message,
+    Input: 'static + Fn(String) -> Message,
+    Paste: 'static + Fn() -> Message,
+    Collapse: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    let form = if ack {
+        form::Form::new(input_placeholder, input_value, input_message)
+    } else {
+        form::Form::new_disabled(input_placeholder, input_value)
+    }
+    .padding(10);
+    let paste = Button::new(icon::paste_icon().color(color::BLACK)).on_press(paste_message());
+
+    let expanded = {
+        let line = row![form, paste].spacing(V_SPACING);
+        let check_box = CheckBox::new(ack).label(disclaimer).on_toggle(ack_message);
+        let label = row![
+            text::p1_regular(label).color(color::WHITE),
+            Space::fill_width()
+        ];
+        let content = if ack {
+            Container::new(column![label, line])
+        } else {
+            Container::new(check_box)
+        };
+        row![icon(), content]
+            .align_y(Vertical::Center)
+            .spacing(V_SPACING)
+    };
+    let closed = row![icon(), text::p1_regular(label)]
+        .spacing(V_SPACING)
+        .align_y(Vertical::Center);
+    collapsible_button(collapsed, closed, expanded, collapse_message)
+}
+
+pub fn key_entry<'a, Message, M>(
     icon: Option<Text<'static>>,
     name: String,
     fingerprint: Option<String>,
     tooltip_str: Option<&'static str>,
     error: Option<String>,
     mut message: Option<String>,
-    on_press: Option<OnClick>,
+    on_press: Option<M>,
 ) -> Element<'a, Message>
 where
-    OnClick: 'static + Fn() -> Message,
+    M: 'static + Fn() -> Message,
     Message: Clone + 'static,
 {
     if error.is_some() {
@@ -263,22 +339,19 @@ where
         .push_maybe(tt)
         .align_y(Vertical::Center)
         .spacing(V_SPACING);
-    let mut btn = Button::new(row).style(widget_style).width(BTN_W);
-    if let Some(msg) = on_press {
-        btn = btn.on_press(msg())
-    }
-    btn.into()
+    let msg = on_press.map(|f| f());
+    button::device(row, msg)
 }
 
-pub fn button_entry<'a, Message, OnClick>(
+pub fn button_entry<'a, Message, M>(
     icon: Option<Text<'static>>,
     label: &'a str,
     tooltip_str: Option<&'static str>,
     error: Option<String>,
-    on_press: Option<OnClick>,
+    on_press: Option<M>,
 ) -> Element<'a, Message>
 where
-    OnClick: 'static + Fn() -> Message,
+    M: 'static + Fn() -> Message,
     Message: Clone + 'static,
 {
     let error = error.map(|e| {
@@ -291,20 +364,20 @@ where
     let tt = tooltip_str.map(|s| tooltip(s));
 
     let row = Row::new()
+        .push_maybe(icon.as_ref().map(|_| Space::with_width(H_SPACING)))
         .push_maybe(icon)
+        .push(Space::with_width(H_SPACING))
         .push(text::p1_regular(label))
-        .push(Space::with_width(Length::Fill))
+        .push(Space::fill_width())
         .push_maybe(tt)
-        .spacing(H_SPACING)
-        .align_y(Vertical::Center)
-        .height(BTN_H);
+        .spacing(V_SPACING)
+        .align_y(Vertical::Center);
 
-    let col = Column::new().push(row).push_maybe(error);
+    let col = Column::new()
+        .push(row)
+        .push_maybe(error)
+        .width(Length::Fill);
 
-    let mut btn = Button::new(container(col)).style(widget_style).width(BTN_W);
-    if let Some(msg) = on_press {
-        let msg = msg();
-        btn = btn.on_press(msg);
-    }
-    btn.into()
+    let msg = on_press.map(|f| f());
+    button::device(col, msg)
 }
