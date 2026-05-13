@@ -280,12 +280,6 @@ pub enum SettingsMessage {
     WalletAliasEdited(String),
     Save,
     GeneralSection,
-    /// Navigate to the app-level Lightning preferences page.
-    LightningSection,
-    /// User picked a new default Lightning backend on the
-    /// Settings → Lightning page. The state panel persists the
-    /// choice and re-reads it on `SettingsSaved`.
-    DefaultLightningBackendChanged(crate::app::wallets::WalletKind),
     DisplayUnitChanged(BitcoinDisplayUnit),
     Fiat(FiatMessage),
     NodeSettings(NodeSettingsMessage),
@@ -1396,6 +1390,30 @@ pub enum P2PMessage {
     CopyPaymentInvoice(String),
     ResetInvoiceCopied,
     CancelPaymentInvoice(String),
+    /// Spark balance lookup for the pending-payment modal completed.
+    /// Drives the Spark-pay-first UX: when the balance covers the hold
+    /// invoice (plus a small fee buffer), the modal opens with a
+    /// "Pay from Spark" button instead of a QR code.
+    SparkBalanceLoaded(u64),
+    SparkBalanceFailed(String),
+    /// User pressed "Pay from Spark" in the payment-required modal.
+    /// Triggers `parse_input` + `prepare_send` on the Spark backend.
+    SparkPayPrepare,
+    /// `prepare_send` succeeded — preview is ready (amount + fee).
+    SparkPayPrepared(coincube_spark_protocol::PrepareSendOk),
+    /// User confirmed the Spark-pay preview. Triggers `send_payment`.
+    SparkPayConfirm,
+    /// `send_payment` finished successfully — dismiss the modal.
+    SparkPaySent(coincube_spark_protocol::SendPaymentOk),
+    /// Any Spark prepare/send step failed. Stays in the modal so the
+    /// user can retry or fall through to the QR.
+    SparkPayFailed(String),
+    /// Abandon the in-progress Spark pay (drops a prepared handle, returns
+    /// to the Spark-pay idle button).
+    SparkPayCancel,
+    /// Flip the "Pay from another wallet" toggle. `true` reveals the
+    /// QR/Copy Invoice body, `false` returns to Spark-pay mode.
+    ToggleQrFallback(bool),
     // Trade detail
     SelectTrade(String),
     CloseTradeDetail,

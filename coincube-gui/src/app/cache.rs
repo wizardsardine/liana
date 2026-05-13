@@ -74,9 +74,7 @@ pub struct Cache {
     pub lightning_address: Option<String>,
     /// Cached avatar image handle for display in the sidebar across all panels
     pub avatar_handle: Option<iced::widget::image::Handle>,
-    /// Id of the current Cube — needed by Spark Settings so the
-    /// `update_settings_file` closure can find the right cube when
-    /// persisting the `default_lightning_backend` picker change.
+    /// Id of the current Cube.
     pub cube_id: String,
     /// Connect's numeric id for the active Cube (mirror of
     /// `ConnectCubePanel::server_cube_id`). `None` when the user isn't
@@ -98,13 +96,6 @@ pub struct Cache {
     /// drift banner (W12). `None` when no descriptor has ever been
     /// backed up, or when the kit has been removed.
     pub recovery_kit_last_backed_up_descriptor_fingerprint: Option<String>,
-    /// Current preference for which backend fulfills incoming
-    /// Lightning Address invoices. Mirrored from
-    /// `CubeSettings::default_lightning_backend` so panels can read
-    /// it without going through the disk layer; the authoritative
-    /// copy lives on `App::cube_settings` and is re-read on
-    /// `Message::SettingsSaved`.
-    pub default_lightning_backend: crate::app::wallets::WalletKind,
 }
 
 /// only used for tests.
@@ -137,7 +128,6 @@ impl std::default::Default for Cache {
             current_cube_server_id: None,
             current_descriptor_fingerprint: None,
             recovery_kit_last_backed_up_descriptor_fingerprint: None,
-            default_lightning_backend: crate::app::wallets::WalletKind::default(),
         }
     }
 }

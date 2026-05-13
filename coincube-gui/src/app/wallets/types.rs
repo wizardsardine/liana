@@ -13,19 +13,12 @@ use breez_sdk_liquid::prelude::{Payment as LiquidPayment, RefundableSwap as Liqu
 use crate::app::breez_liquid::assets::USDT_PRECISION;
 
 /// Identifies a wallet backend.
-///
-/// Default is [`Self::Spark`] as of Phase 5 — new cubes route incoming
-/// Lightning Address invoices through the Spark bridge. Existing cubes
-/// that previously deserialized with Liquid default keep their
-/// explicit value (serde only applies the default when the field is
-/// absent entirely). Users can override per-cube in Spark Settings.
 #[derive(
     Debug, Clone, Copy, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum WalletKind {
-    /// Spark wallet — default for everyday Lightning UX and the
-    /// Phase 5 routing target for incoming Lightning Address invoices.
+    /// Spark wallet — default for everyday Lightning UX.
     #[default]
     Spark,
     /// Liquid wallet — advanced wallet for L-BTC, USDt, and

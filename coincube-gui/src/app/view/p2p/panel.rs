@@ -19,8 +19,10 @@ use crate::app::{
     message::Message,
     view::{self, message::P2PMessage},
     wallet::Wallet,
+    wallets::SparkBackend,
     State,
 };
+use coincube_spark_protocol::PrepareSendOk;
 
 use super::components::order_card::TakeOrderState;
 use super::components::trade_card::{TradeRole, TradeStatus};
@@ -164,8 +166,52 @@ struct PendingChatMessage {
     original_text: String,
 }
 
+/// Phase of the "Pay from Spark" flow inside the payment-required modal.
+///
+/// Mirrors `crate::app::state::spark::send::SparkSendPhase` but lives on
+/// `P2PPanel` so the seller can pay the Mostro hold invoice directly
+/// without leaving the modal.
+#[derive(Debug, Clone, Default)]
+enum SparkPayPhase {
+    /// No Spark-pay action in flight (balance not yet known, or the
+    /// user is reviewing the legacy QR fallback). The modal renders
+    /// the "Pay from Spark" entry button when `spark_balance_sat`
+    /// covers the hold amount.
+    #[default]
+    Idle,
+    /// `prepare_send` is in flight.
+    Preparing,
+    /// `prepare_send` returned — preview the amount + fee before send.
+    Prepared(PrepareSendOk),
+    /// `send_payment` is in flight.
+    Sending,
+    /// A prepare/send step failed — error stays visible until the user
+    /// retries or flips to the QR fallback.
+    Error(String),
+}
+
+/// Fee buffer (in sats) added on top of the hold amount when deciding
+/// whether the cube's Spark balance can cover the trade. Mostro routing
+/// fees can run a percent or two; this is a small headroom so we don't
+/// promise "Pay from Spark" only to fail at `prepare_send`.
+const SPARK_PAY_FEE_BUFFER_SATS: u64 = 10;
+
 pub struct P2PPanel {
     wallet: Option<Arc<Wallet>>,
+    /// Spark backend, when the cube has it. Used by the payment-required
+    /// modal to pay Mostro hold invoices directly instead of forcing
+    /// the user to scan/copy into an external wallet.
+    spark_backend: Option<Arc<SparkBackend>>,
+    /// Last-known Spark balance in sats, refreshed each time the
+    /// payment-required modal appears. `None` until the lookup
+    /// completes; treated as "insufficient" for the spark-pay gate.
+    spark_balance_sat: Option<u64>,
+    /// Current phase of the "Pay from Spark" sub-flow inside the modal.
+    spark_pay_phase: SparkPayPhase,
+    /// When `true`, the payment-required modal renders the legacy QR /
+    /// Copy Invoice / Cancel UI even if Spark could cover the trade.
+    /// Toggled by the "Pay from another wallet" link.
+    show_qr_fallback: bool,
     mnemonic: String,
     // Node info (fetched from info event)
     node_currencies: Vec<String>,
@@ -272,12 +318,17 @@ pub struct P2PPanel {
 impl P2PPanel {
     pub fn new(
         wallet: Option<Arc<Wallet>>,
+        spark_backend: Option<Arc<SparkBackend>>,
         mnemonic: String,
         default_currency: Option<String>,
     ) -> Self {
         let default_currency = default_currency.unwrap_or_else(|| "USD".to_string());
         Self {
             wallet,
+            spark_backend,
+            spark_balance_sat: None,
+            spark_pay_phase: SparkPayPhase::Idle,
+            show_qr_fallback: false,
             mnemonic,
             node_currencies: Vec::new(),
             node_min_order_sats: None,
@@ -2947,59 +2998,213 @@ impl P2PPanel {
             order_id
         };
 
-        card::simple(
+        // Decide whether the cube's Spark balance covers this trade.
+        // A small fee buffer prevents promising "Pay from Spark" only
+        // for `prepare_send` to fail on routing fees.
+        let hold_amount_sat: Option<u64> = amount_sats.and_then(|a| u64::try_from(a).ok());
+        let spark_can_cover = matches!(
+            (self.spark_balance_sat, hold_amount_sat),
+            (Some(bal), Some(amt)) if bal >= amt.saturating_add(SPARK_PAY_FEE_BUFFER_SATS)
+        );
+        let spark_mode = self.spark_backend.is_some() && spark_can_cover && !self.show_qr_fallback;
+
+        let header = container(
             column![
+                p1_bold("Payment Required"),
+                p2_regular(format!(
+                    "Order {} taken. Pay this hold invoice to lock {} for the trade.",
+                    truncated_id, amount_text
+                ))
+                .style(theme::text::secondary),
+            ]
+            .spacing(8)
+            .align_x(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .center_x(Length::Fill);
+
+        let cancel_button = button::alert(None, "Cancel Order")
+            .on_press(view::Message::P2P(P2PMessage::CancelPaymentInvoice(
+                order_id.to_string(),
+            )))
+            .width(Length::Fill);
+
+        let body: Element<'a, view::Message> = if spark_mode {
+            self.spark_pay_body(invoice, hold_amount_sat, cancel_button)
+        } else {
+            self.qr_pay_body(invoice, order_id, qr_data, cancel_button)
+        };
+
+        card::simple(column![header, body].spacing(16).align_x(Alignment::Center))
+            .width(Length::Fixed(450.0))
+            .into()
+    }
+
+    /// QR / Copy Invoice / Cancel Order — the legacy "pay from external
+    /// wallet" body. Used when Spark is unavailable, balance is too
+    /// low, or the user clicked "Pay from another wallet".
+    fn qr_pay_body<'a>(
+        &'a self,
+        invoice: &str,
+        _order_id: &str,
+        qr_data: &'a qr_code::Data,
+        cancel_button: Button<'a, view::Message>,
+    ) -> Element<'a, view::Message> {
+        let mut col = column![
+            container(
                 container(
-                    column![
-                        p1_bold("Payment Required"),
-                        p2_regular(format!(
-                            "Order {} taken. Pay this hold invoice to lock {} for the trade.",
-                            truncated_id, amount_text
-                        ))
-                        .style(theme::text::secondary),
-                    ]
-                    .spacing(8)
-                    .align_x(Alignment::Center),
+                    iced::widget::QRCode::<coincube_ui::theme::Theme>::new(qr_data).cell_size(2),
                 )
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-                container(
-                    container(
-                        iced::widget::QRCode::<coincube_ui::theme::Theme>::new(qr_data)
-                            .cell_size(2),
-                    )
-                    .padding(10)
-                    .style(|_| {
-                        iced::widget::container::Style::default().background(iced::Color::WHITE)
-                    })
-                    .max_width(280)
-                    .max_height(280),
-                )
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-                row![
-                    if self.invoice_copied {
-                        button::secondary(None, "Copied!").width(Length::Fill)
-                    } else {
-                        button::primary(None, "Copy Invoice")
-                            .on_press(view::Message::P2P(P2PMessage::CopyPaymentInvoice(
-                                invoice.to_string(),
-                            )))
-                            .width(Length::Fill)
-                    },
-                    button::alert(None, "Cancel Order")
-                        .on_press(view::Message::P2P(P2PMessage::CancelPaymentInvoice(
-                            order_id.to_string(),
+                .padding(10)
+                .style(|_| {
+                    iced::widget::container::Style::default().background(iced::Color::WHITE)
+                })
+                .max_width(280)
+                .max_height(280),
+            )
+            .width(Length::Fill)
+            .center_x(Length::Fill),
+            row![
+                if self.invoice_copied {
+                    button::secondary(None, "Copied!").width(Length::Fill)
+                } else {
+                    button::primary(None, "Copy Invoice")
+                        .on_press(view::Message::P2P(P2PMessage::CopyPaymentInvoice(
+                            invoice.to_string(),
                         )))
+                        .width(Length::Fill)
+                },
+                cancel_button,
+            ]
+            .spacing(8),
+        ]
+        .spacing(16)
+        .align_x(Alignment::Center);
+
+        // Offer a way back to Spark-pay if the cube has a sufficient
+        // balance — used when the user toggled into the fallback by
+        // mistake. Hidden when Spark can't cover the hold amount
+        // (rendering the toggle would be a dead end).
+        let hold_amount_sat = self
+            .pending_payment_invoice
+            .as_ref()
+            .and_then(|(_, _, a, _)| a.and_then(|n| u64::try_from(n).ok()));
+        let spark_can_cover = matches!(
+            (self.spark_balance_sat, hold_amount_sat),
+            (Some(bal), Some(amt)) if bal >= amt.saturating_add(SPARK_PAY_FEE_BUFFER_SATS)
+        );
+        if self.spark_backend.is_some() && spark_can_cover && self.show_qr_fallback {
+            col = col.push(
+                button::transparent(None, "← Back to Spark")
+                    .on_press(view::Message::P2P(P2PMessage::ToggleQrFallback(false))),
+            );
+        }
+        col.into()
+    }
+
+    /// "Pay from Spark" body — primary path when the cube has enough
+    /// Spark balance. Walks through Idle → Preparing → Prepared
+    /// (with amount/fee preview) → Sending, with an Error state and a
+    /// "Pay from another wallet" toggle as the escape hatch.
+    fn spark_pay_body<'a>(
+        &'a self,
+        _invoice: &str,
+        hold_amount_sat: Option<u64>,
+        cancel_button: Button<'a, view::Message>,
+    ) -> Element<'a, view::Message> {
+        let balance_text = self
+            .spark_balance_sat
+            .map(|b| format!("Spark balance: {} sats", b))
+            .unwrap_or_default();
+
+        let hold_text = hold_amount_sat
+            .map(|a| format!("Lock amount: {} sats", a))
+            .unwrap_or_else(|| "Lock amount: TBD".to_string());
+
+        let summary = container(
+            column![
+                p2_regular(hold_text).style(theme::text::primary),
+                p2_regular(balance_text).style(theme::text::secondary),
+            ]
+            .spacing(4)
+            .align_x(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .center_x(Length::Fill);
+
+        let switch_to_qr = button::transparent(None, "Pay from another wallet")
+            .on_press(view::Message::P2P(P2PMessage::ToggleQrFallback(true)));
+
+        let action: Element<'a, view::Message> = match &self.spark_pay_phase {
+            SparkPayPhase::Idle => column![
+                button::primary(None, "Pay from Spark")
+                    .on_press(view::Message::P2P(P2PMessage::SparkPayPrepare))
+                    .width(Length::Fill),
+                row![switch_to_qr, cancel_button].spacing(8),
+            ]
+            .spacing(8)
+            .into(),
+            SparkPayPhase::Preparing => column![
+                p2_regular("Preparing payment…").style(theme::text::secondary),
+                row![switch_to_qr, cancel_button].spacing(8),
+            ]
+            .spacing(8)
+            .align_x(Alignment::Center)
+            .into(),
+            SparkPayPhase::Prepared(preview) => {
+                let total = preview.amount_sat.saturating_add(preview.fee_sat);
+                column![
+                    container(
+                        column![
+                            detail_row("Amount", format!("{} sats", preview.amount_sat)),
+                            detail_row("Network fee", format!("{} sats", preview.fee_sat)),
+                            detail_row("Total", format!("{} sats", total)),
+                        ]
+                        .spacing(4),
+                    )
+                    .width(Length::Fill),
+                    row![
+                        button::primary(None, "Confirm and pay")
+                            .on_press(view::Message::P2P(P2PMessage::SparkPayConfirm))
+                            .width(Length::Fill),
+                        button::transparent(None, "Back")
+                            .on_press(view::Message::P2P(P2PMessage::SparkPayCancel))
+                            .width(Length::Fill),
+                    ]
+                    .spacing(8),
+                    row![switch_to_qr, cancel_button].spacing(8),
+                ]
+                .spacing(12)
+                .into()
+            }
+            SparkPayPhase::Sending => column![
+                p2_regular("Sending payment…").style(theme::text::secondary),
+                cancel_button,
+            ]
+            .spacing(8)
+            .align_x(Alignment::Center)
+            .into(),
+            SparkPayPhase::Error(msg) => column![
+                p2_regular(format!("Spark payment failed: {}", msg)).style(theme::text::warning),
+                row![
+                    button::primary(None, "Try again")
+                        .on_press(view::Message::P2P(P2PMessage::SparkPayPrepare))
+                        .width(Length::Fill),
+                    button::transparent(None, "Pay from another wallet")
+                        .on_press(view::Message::P2P(P2PMessage::ToggleQrFallback(true)))
                         .width(Length::Fill),
                 ]
                 .spacing(8),
+                cancel_button,
             ]
+            .spacing(12)
+            .into(),
+        };
+
+        column![summary, action]
             .spacing(16)
-            .align_x(Alignment::Center),
-        )
-        .width(Length::Fixed(450.0))
-        .into()
+            .align_x(Alignment::Center)
+            .into()
     }
 
     fn dispute_chat_view<'a>(&'a self, trade: &'a P2PTrade) -> Element<'a, view::Message> {
@@ -4575,10 +4780,31 @@ impl State for P2PPanel {
                         tracing::info!("Order taken, payment required: {}", order_id);
 
                         self.selected_order = None;
+                        // Reset Spark-pay state for the new modal session.
+                        self.spark_balance_sat = None;
+                        self.spark_pay_phase = SparkPayPhase::Idle;
+                        self.show_qr_fallback = false;
                         match qr_code::Data::new(&invoice) {
                             Ok(qr_data) => {
                                 self.pending_payment_invoice =
                                     Some((order_id, invoice, amount_sats, qr_data));
+                                // Kick off a balance lookup. The modal
+                                // renders QR-only until this returns;
+                                // if it covers the hold amount, the
+                                // modal swaps into Spark-pay mode.
+                                if let Some(spark) = self.spark_backend.clone() {
+                                    return Task::perform(
+                                        async move { spark.get_info().await },
+                                        |result| match result {
+                                            Ok(info) => Message::View(view::Message::P2P(
+                                                P2PMessage::SparkBalanceLoaded(info.balance_sats),
+                                            )),
+                                            Err(e) => Message::View(view::Message::P2P(
+                                                P2PMessage::SparkBalanceFailed(e.to_string()),
+                                            )),
+                                        },
+                                    );
+                                }
                             }
                             Err(e) => {
                                 tracing::warn!("Failed to generate QR code: {e}");
@@ -4596,6 +4822,85 @@ impl State for P2PPanel {
             P2PMessage::DismissPaymentInvoice => {
                 self.pending_payment_invoice = None;
                 self.invoice_copied = false;
+                self.spark_balance_sat = None;
+                self.spark_pay_phase = SparkPayPhase::Idle;
+                self.show_qr_fallback = false;
+            }
+            P2PMessage::SparkBalanceLoaded(balance_sat) => {
+                self.spark_balance_sat = Some(balance_sat);
+            }
+            P2PMessage::SparkBalanceFailed(err) => {
+                tracing::warn!("Spark balance lookup failed: {}", err);
+                self.spark_balance_sat = None;
+            }
+            P2PMessage::SparkPayPrepare => {
+                let Some(spark) = self.spark_backend.clone() else {
+                    self.spark_pay_phase =
+                        SparkPayPhase::Error("Spark wallet is not available.".to_string());
+                    return Task::none();
+                };
+                let Some((_, ref invoice, _, _)) = self.pending_payment_invoice else {
+                    return Task::none();
+                };
+                let invoice = invoice.clone();
+                self.spark_pay_phase = SparkPayPhase::Preparing;
+                return Task::perform(
+                    async move { spark.prepare_send(invoice, None).await },
+                    |result| match result {
+                        Ok(ok) => {
+                            Message::View(view::Message::P2P(P2PMessage::SparkPayPrepared(ok)))
+                        }
+                        Err(e) => Message::View(view::Message::P2P(P2PMessage::SparkPayFailed(
+                            e.to_string(),
+                        ))),
+                    },
+                );
+            }
+            P2PMessage::SparkPayPrepared(ok) => {
+                self.spark_pay_phase = SparkPayPhase::Prepared(ok);
+            }
+            P2PMessage::SparkPayConfirm => {
+                let Some(spark) = self.spark_backend.clone() else {
+                    self.spark_pay_phase =
+                        SparkPayPhase::Error("Spark wallet is not available.".to_string());
+                    return Task::none();
+                };
+                let SparkPayPhase::Prepared(ref prepared) = self.spark_pay_phase else {
+                    return Task::none();
+                };
+                let handle = prepared.handle.clone();
+                self.spark_pay_phase = SparkPayPhase::Sending;
+                return Task::perform(async move { spark.send_payment(handle).await }, |result| {
+                    match result {
+                        Ok(ok) => Message::View(view::Message::P2P(P2PMessage::SparkPaySent(ok))),
+                        Err(e) => Message::View(view::Message::P2P(P2PMessage::SparkPayFailed(
+                            e.to_string(),
+                        ))),
+                    }
+                });
+            }
+            P2PMessage::SparkPaySent(ok) => {
+                tracing::info!(
+                    "Spark payment for hold invoice succeeded: id={}, amount={}, fee={}",
+                    ok.payment_id,
+                    ok.amount_sat,
+                    ok.fee_sat
+                );
+                self.pending_payment_invoice = None;
+                self.invoice_copied = false;
+                self.spark_balance_sat = None;
+                self.spark_pay_phase = SparkPayPhase::Idle;
+                self.show_qr_fallback = false;
+            }
+            P2PMessage::SparkPayFailed(err) => {
+                tracing::warn!("Spark pay failed: {}", err);
+                self.spark_pay_phase = SparkPayPhase::Error(err);
+            }
+            P2PMessage::SparkPayCancel => {
+                self.spark_pay_phase = SparkPayPhase::Idle;
+            }
+            P2PMessage::ToggleQrFallback(show) => {
+                self.show_qr_fallback = show;
             }
             P2PMessage::CopyPaymentInvoice(invoice) => {
                 self.invoice_copied = true;
