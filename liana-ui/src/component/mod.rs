@@ -5,7 +5,6 @@ pub mod card;
 pub mod collapse;
 pub mod event;
 pub mod form;
-pub mod hw;
 pub mod modal;
 pub mod notification;
 pub mod pick_list;
