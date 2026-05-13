@@ -18,82 +18,35 @@ impl Catalog for Theme {
     }
 }
 
-pub fn primary(theme: &Theme, status: Status) -> Style {
-    button(
-        &theme.colors.buttons.primary,
-        status,
-        theme.button_border_width,
-    )
+macro_rules! button_styles {
+    ($($name:ident),* $(,)?) => {
+        $(
+            pub fn $name(theme: &Theme, status: Status) -> Style {
+                button(&theme.colors.buttons.$name, status, theme.button_border_width)
+            }
+        )*
+    };
 }
 
-pub fn secondary(theme: &Theme, status: Status) -> Style {
-    button(
-        &theme.colors.buttons.secondary,
-        status,
-        theme.button_border_width,
-    )
-}
-
-pub fn tertiary(theme: &Theme, status: Status) -> Style {
-    button(
-        &theme.colors.buttons.tertiary,
-        status,
-        theme.button_border_width,
-    )
-}
-
-pub fn destructive(theme: &Theme, status: Status) -> Style {
-    button(
-        &theme.colors.buttons.destructive,
-        status,
-        theme.button_border_width,
-    )
-}
-
-pub fn container(theme: &Theme, status: Status) -> Style {
-    button(
-        &theme.colors.buttons.container,
-        status,
-        theme.button_border_width,
-    )
-}
-
-pub fn container_border(theme: &Theme, status: Status) -> Style {
-    button(
-        &theme.colors.buttons.container_border,
-        status,
-        theme.button_border_width,
-    )
-}
-
-pub fn menu(theme: &Theme, status: Status) -> Style {
-    button(
-        &theme.colors.buttons.menu,
-        status,
-        theme.button_border_width,
-    )
-}
-
-pub fn tab_menu(theme: &Theme, status: Status) -> Style {
-    button(
-        &theme.colors.buttons.tab_menu,
-        status,
-        theme.button_border_width,
-    )
-}
+button_styles!(
+    primary,
+    secondary,
+    tertiary,
+    destructive,
+    container,
+    container_border,
+    menu,
+    tab_menu,
+    transparent,
+    transparent_border,
+    clickable_card,
+    link,
+);
 
 pub fn menu_pressed(theme: &Theme, _status: Status) -> Style {
     button(
         &theme.colors.buttons.menu,
         Status::Pressed,
-        theme.button_border_width,
-    )
-}
-
-pub fn transparent(theme: &Theme, status: Status) -> Style {
-    button(
-        &theme.colors.buttons.transparent,
-        status,
         theme.button_border_width,
     )
 }
@@ -106,30 +59,6 @@ pub fn transparent_primary_text(theme: &Theme, status: Status) -> Style {
     );
     style.text_color = theme.colors.text.primary;
     style
-}
-
-pub fn transparent_border(theme: &Theme, status: Status) -> Style {
-    button(
-        &theme.colors.buttons.transparent_border,
-        status,
-        theme.button_border_width,
-    )
-}
-
-pub fn clickable_card(theme: &Theme, status: Status) -> Style {
-    button(
-        &theme.colors.buttons.clickable_card,
-        status,
-        theme.button_border_width,
-    )
-}
-
-pub fn link(theme: &Theme, status: Status) -> Style {
-    button(
-        &theme.colors.buttons.link,
-        status,
-        theme.button_border_width,
-    )
 }
 
 fn round_button(p: &Button, status: Status, width: f32, radius: f32) -> Style {
