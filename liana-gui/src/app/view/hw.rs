@@ -1,6 +1,4 @@
-use iced::Length;
-
-use liana_ui::{component::hw, theme, widget::*};
+use liana_ui::{component::modal::legacy, widget::*};
 
 use crate::{
     app::view::message::*,
@@ -13,7 +11,7 @@ pub fn hw_list_view_verify_address(
     hw: &HardwareWallet,
     chosen: bool,
 ) -> Element<'_, Message> {
-    let (content, selectable) = match hw {
+    match hw {
         HardwareWallet::Supported {
             kind,
             version,
@@ -22,31 +20,32 @@ pub fn hw_list_view_verify_address(
             ..
         } => {
             if chosen {
-                (
-                    hw::processing_hardware_wallet(
-                        kind,
-                        version.as_ref(),
-                        fingerprint,
-                        alias.as_ref(),
-                    ),
-                    false,
-                )
+                legacy::processing_device(kind, version.as_ref(), fingerprint, alias.as_ref(), None)
             } else {
                 match kind {
                     DeviceKind::Specter | DeviceKind::SpecterSimulator => {
-                        (hw::unimplemented_method_hardware_wallet(
+                        legacy::unimplemented_method_device(
                             kind.to_string(),
                             version.as_ref(),
                             fingerprint,
-                            "Liana cannot request the device to display the address. \n The verification must be done manually with the device control."
-                        ), false)
+                            "Liana cannot request the device to display the address. \n The verification must be done manually with the device control.",
+                            None,
+                        )
                     }
-                    _ => (hw::supported_hardware_wallet(
-                        kind,
-                        version.as_ref(),
-                        fingerprint,
-                        alias.as_ref(),
-                    ), true),
+                    _ => {
+                        let select_msg = if hw.is_supported() {
+                            Some(Message::SelectHardwareWallet(i))
+                        } else {
+                            None
+                        };
+                        legacy::supported_device(
+                            kind,
+                            version.as_ref(),
+                            fingerprint,
+                            alias.as_ref(),
+                            select_msg,
+                        )
+                    }
                 }
             }
         }
@@ -55,37 +54,25 @@ pub fn hw_list_view_verify_address(
             kind,
             reason,
             ..
-        } => (
-            match reason {
-                UnsupportedReason::NotPartOfWallet(fg) => {
-                    hw::unrelated_hardware_wallet(kind.to_string(), version.as_ref(), fg)
-                }
-                UnsupportedReason::WrongNetwork => {
-                    hw::wrong_network_hardware_wallet(kind.to_string(), version.as_ref())
-                }
-                UnsupportedReason::Version {
-                    minimal_supported_version,
-                } => hw::unsupported_version_hardware_wallet(
-                    kind.to_string(),
-                    version.as_ref(),
-                    minimal_supported_version,
-                ),
-                _ => hw::unsupported_hardware_wallet(kind.to_string(), version.as_ref()),
-            },
-            false,
-        ),
+        } => match reason {
+            UnsupportedReason::NotPartOfWallet(fg) => {
+                legacy::unrelated_device(kind.to_string(), version.as_ref(), fg, None)
+            }
+            UnsupportedReason::WrongNetwork => {
+                legacy::wrong_network_device(kind.to_string(), version.as_ref(), None)
+            }
+            UnsupportedReason::Version {
+                minimal_supported_version,
+            } => legacy::unsupported_version_device(
+                kind.to_string(),
+                version.as_ref(),
+                minimal_supported_version,
+                None,
+            ),
+            _ => legacy::unsupported_device(kind.to_string(), version.as_ref(), None),
+        },
         HardwareWallet::Locked {
             kind, pairing_code, ..
-        } => (
-            hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
-            false,
-        ),
-    };
-    let mut bttn = Button::new(content)
-        .style(theme::button::secondary)
-        .width(Length::Fill);
-    if selectable && hw.is_supported() {
-        bttn = bttn.on_press(Message::SelectHardwareWallet(i));
+        } => legacy::locked_device(kind, pairing_code.as_ref(), None),
     }
-    bttn.into()
 }

@@ -24,7 +24,9 @@ use liana::{
 };
 use liana_ui::{
     component::{
-        button, card, collapse, form, hw, separation,
+        button, card, collapse, form,
+        modal::legacy,
+        separation,
         text::{h2, h3, h4_bold, p1_bold, p1_regular, text, Text},
     },
     icon, theme,
@@ -439,7 +441,12 @@ pub fn hardware_wallet_xpubs<'a>(
     error: Option<&Error>,
     accounts: &HashMap<Fingerprint, ChildNumber>,
 ) -> Element<'a, Message> {
-    let mut bttn = Button::new(match hw {
+    let select_msg = if !processing && hw.is_supported() {
+        Some(Message::Select(i))
+    } else {
+        None
+    };
+    let bttn: Element<'a, Message> = match hw {
         HardwareWallet::Supported {
             kind,
             version,
@@ -448,15 +455,16 @@ pub fn hardware_wallet_xpubs<'a>(
             ..
         } => {
             if processing {
-                hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
+                legacy::processing_device(kind, version.as_ref(), fingerprint, alias.as_ref(), None)
             } else {
-                hw::supported_hardware_wallet_with_account(
+                legacy::supported_device_with_account(
                     kind,
                     version.as_ref(),
                     *fingerprint,
                     alias.as_ref(),
                     accounts.get(fingerprint).cloned(),
                     true,
+                    select_msg,
                 )
             }
         }
@@ -467,29 +475,25 @@ pub fn hardware_wallet_xpubs<'a>(
             ..
         } => match reason {
             UnsupportedReason::NotPartOfWallet(fg) => {
-                hw::unrelated_hardware_wallet(kind.to_string(), version.as_ref(), fg)
+                legacy::unrelated_device(kind.to_string(), version.as_ref(), fg, None)
             }
             UnsupportedReason::WrongNetwork => {
-                hw::wrong_network_hardware_wallet(kind.to_string(), version.as_ref())
+                legacy::wrong_network_device(kind.to_string(), version.as_ref(), None)
             }
             UnsupportedReason::Version {
                 minimal_supported_version,
-            } => hw::unsupported_version_hardware_wallet(
+            } => legacy::unsupported_version_device(
                 kind.to_string(),
                 version.as_ref(),
                 minimal_supported_version,
+                None,
             ),
-            _ => hw::unsupported_hardware_wallet(kind.to_string(), version.as_ref()),
+            _ => legacy::unsupported_device(kind.to_string(), version.as_ref(), None),
         },
         HardwareWallet::Locked {
             kind, pairing_code, ..
-        } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
-    })
-    .style(theme::button::secondary)
-    .width(Length::Fill);
-    if !processing && hw.is_supported() {
-        bttn = bttn.on_press(Message::Select(i));
-    }
+        } => legacy::locked_device(kind, pairing_code.as_ref(), None),
+    };
     Container::new(
         Column::new()
             .push_maybe(error.map(|e| card::warning(e.to_string()).width(Length::Fill)))

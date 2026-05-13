@@ -19,7 +19,9 @@ use liana_ui::{
         amount::*,
         button, card,
         collapse::Collapse,
-        form, hw, pill, separation,
+        form,
+        modal::legacy,
+        pill, separation,
         text::{self, *},
     },
     icon, theme,
@@ -989,18 +991,11 @@ pub fn sign_action<'a>(
 
     let hot_signer = signer.map(|fingerprint| {
         let can_sign = descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);
-        let btn = Button::new(if signed.contains(&fingerprint) {
-            hw::sign_success_hot_signer(fingerprint, signer_alias)
+        let select_msg = can_sign.then_some(Message::Spend(SpendTxMessage::SelectHotSigner));
+        if signed.contains(&fingerprint) {
+            legacy::signed_hot_key(fingerprint, signer_alias, select_msg)
         } else {
-            hw::hot_signer(fingerprint, signer_alias, can_sign)
-        })
-        .padding(10)
-        .style(theme::button::secondary)
-        .width(Length::Fill);
-        if can_sign {
-            btn.on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
-        } else {
-            btn
+            legacy::hot_key(fingerprint, signer_alias, can_sign, select_msg)
         }
     });
 

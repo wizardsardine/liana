@@ -1,7 +1,6 @@
 use async_hwi::{DeviceKind, Version};
-use iced::Length;
 use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::bip32::Fingerprint};
-use liana_ui::{component::hw, theme, widget::*};
+use liana_ui::{component::modal::legacy, widget::*};
 
 use crate::hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason};
 
@@ -34,8 +33,34 @@ where
     M: Clone + 'static,
     F: FnOnce() -> M + 'a,
 {
-    let mut unrelated = false;
-    let inner = match hw {
+    let unrelated = match (&mode, hw) {
+        (
+            HwRowMode::Registration { descriptor, .. },
+            HardwareWallet::Supported { fingerprint, .. },
+        ) => descriptor
+            .map(|d| !d.contains_fingerprint(*fingerprint))
+            .unwrap_or(false),
+        _ => false,
+    };
+    let enabled = match &mode {
+        HwRowMode::Signing {
+            signing, can_sign, ..
+        } => {
+            *can_sign
+                && !*signing
+                && hw.is_supported()
+                && match hw {
+                    HardwareWallet::Supported { registered, .. } => *registered != Some(false),
+                    _ => true,
+                }
+        }
+        HwRowMode::Registration { processing, .. } => {
+            !*processing && hw.is_supported() && !unrelated
+        }
+    };
+    let select_msg = if enabled { Some(make_select()) } else { None };
+
+    match hw {
         HardwareWallet::Supported {
             kind,
             version,
@@ -57,6 +82,7 @@ where
                 *signing,
                 *signed,
                 *can_sign,
+                select_msg,
             ),
             HwRowMode::Registration {
                 chosen,
@@ -64,26 +90,19 @@ where
                 complete,
                 descriptor,
                 device_must_support_taproot,
-            } => {
-                let device_in_descriptor = descriptor
-                    .map(|d| d.contains_fingerprint(*fingerprint))
-                    .unwrap_or(true);
-                if !device_in_descriptor {
-                    unrelated = true;
-                }
-                registration_entry(
-                    kind,
-                    version.as_ref(),
-                    fingerprint,
-                    alias.as_ref(),
-                    *chosen,
-                    *processing,
-                    *complete,
-                    descriptor.is_some(),
-                    *device_must_support_taproot,
-                    !device_in_descriptor,
-                )
-            }
+            } => registration_entry(
+                kind,
+                version.as_ref(),
+                fingerprint,
+                alias.as_ref(),
+                *chosen,
+                *processing,
+                *complete,
+                descriptor.is_some(),
+                *device_must_support_taproot,
+                unrelated,
+                select_msg,
+            ),
         },
         HardwareWallet::Unsupported {
             version,
@@ -92,54 +111,29 @@ where
             ..
         } => match reason {
             UnsupportedReason::NotPartOfWallet(fg) => {
-                hw::unrelated_hardware_wallet(kind.to_string(), version.as_ref(), fg)
+                legacy::unrelated_device(kind.to_string(), version.as_ref(), fg, None)
             }
             UnsupportedReason::WrongNetwork => {
-                hw::wrong_network_hardware_wallet(kind.to_string(), version.as_ref())
+                legacy::wrong_network_device(kind.to_string(), version.as_ref(), None)
             }
             UnsupportedReason::Version {
                 minimal_supported_version,
-            } => hw::unsupported_version_hardware_wallet(
+            } => legacy::unsupported_version_device(
                 kind.to_string(),
                 version.as_ref(),
                 minimal_supported_version,
+                None,
             ),
-            _ => hw::unsupported_hardware_wallet(kind.to_string(), version.as_ref()),
+            _ => legacy::unsupported_device(kind.to_string(), version.as_ref(), None),
         },
         HardwareWallet::Locked {
             kind, pairing_code, ..
-        } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
-    };
-
-    let mut bttn = Button::new(inner)
-        .style(theme::button::secondary)
-        .width(Length::Fill);
-
-    let enabled = match &mode {
-        HwRowMode::Signing {
-            signing, can_sign, ..
-        } => {
-            *can_sign
-                && !*signing
-                && hw.is_supported()
-                && match hw {
-                    HardwareWallet::Supported { registered, .. } => *registered != Some(false),
-                    _ => true,
-                }
-        }
-        HwRowMode::Registration { processing, .. } => {
-            !*processing && hw.is_supported() && !unrelated
-        }
-    };
-
-    if enabled {
-        bttn = bttn.on_press(make_select());
+        } => legacy::locked_device(kind, pairing_code.as_ref(), None),
     }
-    bttn.into()
 }
 
 #[allow(clippy::too_many_arguments)]
-fn signing_entry<'a, T: 'static + Clone>(
+fn signing_entry<'a, M: Clone + 'static>(
     kind: &'a DeviceKind,
     version: Option<&'a Version>,
     fingerprint: &'a Fingerprint,
@@ -148,33 +142,36 @@ fn signing_entry<'a, T: 'static + Clone>(
     signing: bool,
     signed: bool,
     can_sign: bool,
-) -> Container<'a, T> {
+    select_msg: Option<M>,
+) -> Element<'a, M> {
     if signing {
-        hw::processing_hardware_wallet(kind, version, fingerprint, alias)
+        legacy::processing_device(kind, version, fingerprint, alias, None)
     } else if signed {
-        hw::sign_success_hardware_wallet(kind, version, fingerprint, alias)
+        legacy::signed_device(kind, version, fingerprint, alias, None)
     } else if registered == Some(false) {
-        hw::warning_hardware_wallet(
+        legacy::warning_device(
             kind,
             version,
             fingerprint,
             alias,
             "The wallet descriptor is not registered on the device.\n You can register it in the settings.",
+            None,
         )
     } else if !can_sign {
-        hw::disabled_hardware_wallet(
+        legacy::disabled_device(
             kind,
             version,
             fingerprint,
             "This signing device is not part of this spending path.",
+            None,
         )
     } else {
-        hw::supported_hardware_wallet(kind, version, fingerprint, alias)
+        legacy::supported_device(kind, version, fingerprint, alias, select_msg)
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn registration_entry<'a, T: 'static>(
+fn registration_entry<'a, M: Clone + 'static>(
     kind: &'a DeviceKind,
     version: Option<&'a Version>,
     fingerprint: &'a Fingerprint,
@@ -185,16 +182,17 @@ fn registration_entry<'a, T: 'static>(
     has_descriptor: bool,
     device_must_support_taproot: bool,
     unrelated: bool,
-) -> Container<'a, T> {
+    select_msg: Option<M>,
+) -> Element<'a, M> {
     let not_tapminiscript =
         device_must_support_taproot && !is_compatible_with_tapminiscript(kind, version);
     if unrelated {
-        hw::unrelated_hardware_wallet(kind.to_string(), version, fingerprint)
+        legacy::unrelated_device(kind.to_string(), version, fingerprint, None)
     } else if chosen && processing {
-        hw::processing_hardware_wallet(kind, version, fingerprint, alias)
+        legacy::processing_device(kind, version, fingerprint, alias, None)
     } else if complete {
         if has_descriptor {
-            hw::selected_hardware_wallet(
+            legacy::selected_device(
                 kind,
                 version,
                 fingerprint,
@@ -206,19 +204,21 @@ fn registration_entry<'a, T: 'static>(
                 },
                 None,
                 false,
+                select_msg,
             )
         } else {
-            hw::registration_success_hardware_wallet(kind, version, fingerprint, alias)
+            legacy::registered_device(kind, version, fingerprint, alias, select_msg)
         }
     } else if not_tapminiscript {
-        hw::warning_hardware_wallet(
+        legacy::warning_device(
             kind,
             version,
             fingerprint,
             alias,
             "Device firmware version does not support taproot miniscript",
+            select_msg,
         )
     } else {
-        hw::supported_hardware_wallet(kind, version, fingerprint, alias)
+        legacy::supported_device(kind, version, fingerprint, alias, select_msg)
     }
 }
