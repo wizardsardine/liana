@@ -36,9 +36,27 @@ fn capitalize_first(s: &str) -> String {
 /// Render the xpub entry modal if it's open
 pub fn xpub_modal_view(state: &State) -> Option<Element<'_, Msg>> {
     let modal_state = state.views.xpub.modal.as_ref()?;
+
     Some(match modal_state.step {
         ModalStep::Select => select_view(state, modal_state),
-        ModalStep::Details => details_view(modal_state),
+        ModalStep::Details => {
+            let selected_device = modal_state.selected_device?;
+            let device_list = state.hw.list();
+            let mut connected = false;
+            for device in device_list.values() {
+                if device.fingerprint() == Some(selected_device) {
+                    if matches!(device, SigningDevice::Supported(..)) {
+                        connected = true;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+            if !connected {
+                return None;
+            }
+            details_view(modal_state)
+        }
     })
 }
 
