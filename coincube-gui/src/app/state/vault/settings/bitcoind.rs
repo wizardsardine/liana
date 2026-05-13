@@ -142,7 +142,10 @@ impl BitcoindSettingsState {
                 "apply_connect_jwt: daemon.config() is None \
                  (external coincubed?) — cannot switch to Connect"
             );
-            return Task::none();
+            let err = Error::Unexpected("Cannot enable Connect: configuration missing".to_string());
+            let err_msg = err.to_string();
+            self.warning = Some(err);
+            return Task::done(Message::View(view::Message::ShowError(err_msg)));
         };
         // Reconstruct URL from cache.network so a stale fallback_esplora.addr
         // (e.g. written before Testnet4 was handled) is never used.

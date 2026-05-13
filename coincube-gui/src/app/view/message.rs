@@ -1406,6 +1406,17 @@ pub enum P2PMessage {
         order_id: String,
         err: String,
     },
+    /// Result of pre-parsing the hold-invoice via `spark.parse_input`
+    /// alongside the balance fetch. Carries the BOLT11 amount so the
+    /// Spark-pay summary can show "Lock amount: X sats" before the
+    /// user clicks "Pay from Spark" — even for market-priced sell
+    /// orders where Mostro leaves `trade.sats_amount = None`.
+    /// `amount_sat` is `None` when the parse failed or the invoice
+    /// carried no amount (an unusual case for Mostro hold invoices).
+    SparkInvoiceAmountParsed {
+        order_id: String,
+        amount_sat: Option<u64>,
+    },
     /// User pressed "Pay from Spark" — either in the payment-required
     /// modal (right after taking a buy order) or in the trade-detail
     /// view (after navigating back to a trade with a pending hold
