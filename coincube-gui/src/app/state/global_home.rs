@@ -431,12 +431,19 @@ impl State for GlobalHome {
 
         // Total Balance is "loading" until every applicable wallet has
         // reported in. Absent wallets (no Spark / no Vault) don't gate.
-        // Vault loads when the daemon has produced its first poll.
+        // Vault loads when the daemon has produced its first poll —
+        // we use `blockheight > 0` rather than `last_poll_timestamp`
+        // because the wallet DB's `last_poll_timestamp` can remain
+        // `None` for cubes whose coins were imported/restored, leaving
+        // the gate stuck even though the cache has real coins and a
+        // current blockheight. `blockheight` is updated atomically
+        // with coins on every `UpdateDaemonCache`, so any non-zero
+        // value is a reliable "daemon has spoken" signal.
         let has_spark = self.spark_backend.is_some();
         let spark_pending = has_spark && !self.spark_balance_loaded;
         let liquid_pending = !self.liquid_balance_loaded;
         let usdt_pending = !self.usdt_balance_loaded;
-        let vault_pending = cache.has_vault && cache.last_poll_timestamp().is_none();
+        let vault_pending = cache.has_vault && cache.blockheight() <= 0;
         let total_balance_loading =
             spark_pending || liquid_pending || usdt_pending || vault_pending;
 

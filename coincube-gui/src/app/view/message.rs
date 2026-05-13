@@ -1394,20 +1394,45 @@ pub enum P2PMessage {
     /// Drives the Spark-pay-first UX: when the balance covers the hold
     /// invoice (plus a small fee buffer), the modal opens with a
     /// "Pay from Spark" button instead of a QR code.
-    SparkBalanceLoaded(u64),
-    SparkBalanceFailed(String),
-    /// User pressed "Pay from Spark" in the payment-required modal.
-    /// Triggers `parse_input` + `prepare_send` on the Spark backend.
-    SparkPayPrepare,
+    ///
+    /// `order_id` identifies the originating Mostro order so a stale
+    /// response from a previous session can't mutate state for the
+    /// active one — see `P2PPanel::spark_pay_session_id`.
+    SparkBalanceLoaded {
+        order_id: String,
+        balance_sat: u64,
+    },
+    SparkBalanceFailed {
+        order_id: String,
+        err: String,
+    },
+    /// User pressed "Pay from Spark" — either in the payment-required
+    /// modal (right after taking a buy order) or in the trade-detail
+    /// view (after navigating back to a trade with a pending hold
+    /// invoice). `order_id` scopes the resulting prepare/send chain
+    /// so a dismissed session can't pay against a fresh modal.
+    SparkPayPrepare {
+        order_id: String,
+        invoice: String,
+    },
     /// `prepare_send` succeeded — preview is ready (amount + fee).
-    SparkPayPrepared(coincube_spark_protocol::PrepareSendOk),
+    SparkPayPrepared {
+        order_id: String,
+        ok: coincube_spark_protocol::PrepareSendOk,
+    },
     /// User confirmed the Spark-pay preview. Triggers `send_payment`.
     SparkPayConfirm,
     /// `send_payment` finished successfully — dismiss the modal.
-    SparkPaySent(coincube_spark_protocol::SendPaymentOk),
+    SparkPaySent {
+        order_id: String,
+        ok: coincube_spark_protocol::SendPaymentOk,
+    },
     /// Any Spark prepare/send step failed. Stays in the modal so the
     /// user can retry or fall through to the QR.
-    SparkPayFailed(String),
+    SparkPayFailed {
+        order_id: String,
+        err: String,
+    },
     /// Abandon the in-progress Spark pay (drops a prepared handle, returns
     /// to the Spark-pay idle button).
     SparkPayCancel,

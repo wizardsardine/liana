@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use chrono::{NaiveDate, Utc};
 use iced::{clipboard, Task};
-use tracing::info;
+use tracing::{info, warn};
 
 use coincube_core::miniscript::bitcoin::Network;
 use coincubed::config::{
@@ -138,6 +138,10 @@ impl BitcoindSettingsState {
         jwt: String,
     ) -> Task<Message> {
         let Some(cfg) = daemon.config() else {
+            warn!(
+                "apply_connect_jwt: daemon.config() is None \
+                 (external coincubed?) — cannot switch to Connect"
+            );
             return Task::none();
         };
         // Reconstruct URL from cache.network so a stale fallback_esplora.addr
@@ -633,8 +637,33 @@ impl State for BitcoindSettingsState {
                         && matches!(&cfg.bitcoin_backend, Some(BitcoinBackend::Esplora(_)));
                     let csl = matches!(&cfg.bitcoin_backend, Some(BitcoinBackend::Esplora(_)))
                         && cfg.pending_bitcoind.is_none();
+                    // When the config exists but no backend is configured,
+                    // unlock the "Use Connect" / "Set up local node" paths
+                    // so the user has a recovery route. Without this the
+                    // page renders read-only "None" with no escape hatch.
+                    let (ctc, csl) = if cfg.bitcoin_backend.is_none() {
+                        warn!(
+                            "Node settings: daemon config has no bitcoin_backend; \
+                             unlocking recovery buttons. fallback_esplora={:?} pending_bitcoind={:?}",
+                            cfg.fallback_esplora.is_some(),
+                            cfg.pending_bitcoind.is_some(),
+                        );
+                        (true, true)
+                    } else {
+                        (ctc, csl)
+                    };
                     (ab, ai, ctc, ctb, csl)
                 } else {
+                    // No daemon config at all (e.g. ExternalCoincubed). The
+                    // GUI has nothing to write here, so leave the recovery
+                    // buttons hidden; clicking them would silently fail
+                    // because `apply_connect_jwt` early-returns on missing
+                    // config. Logged so we notice if this state appears
+                    // for setups where the GUI *should* own the config.
+                    warn!(
+                        "Node settings: daemon.config() returned None \
+                         (external coincubed?) — backend picker hidden"
+                    );
                     ("None", icon::network_icon(), false, false, false)
                 };
                 let warning_str = self
