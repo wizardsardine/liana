@@ -41,7 +41,16 @@ button_styles!(
     transparent_border,
     clickable_card,
     link,
+    signing_devices,
 );
+
+pub fn signing_devices_non_clickable(theme: &Theme, _status: Status) -> Style {
+    button(
+        &theme.colors.buttons.signing_devices,
+        Status::Active,
+        theme.button_border_width,
+    )
+}
 
 pub fn menu_pressed(theme: &Theme, _status: Status) -> Style {
     button(

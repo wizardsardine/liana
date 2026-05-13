@@ -60,6 +60,7 @@ pub struct Buttons {
     pub tab: Button,
     pub link: Button,
     pub pick_list: Button,
+    pub signing_devices: Button,
     pub border_width: f32,
 }
 

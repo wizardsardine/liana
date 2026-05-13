@@ -376,6 +376,27 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                signing_devices: Button {
+                    active: ButtonPalette {
+                        background: BTN_PRIMARY_DISABLED_BGD,
+                        text: color::GREEN,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: BTN_SECONDARY_HOVER_BGD,
+                        text: color::GREEN,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: BTN_SECONDARY_PRESSED_BGD,
+                        text: color::GREEN,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: btn_disabled(),
+                },
             },
             cards: Cards {
                 simple: ContainerPalette {

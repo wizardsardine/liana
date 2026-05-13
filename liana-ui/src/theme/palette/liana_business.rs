@@ -26,6 +26,8 @@ fn btn_disabled() -> Option<ButtonPalette> {
     })
 }
 
+color!(DEVICE_DISABLED, 0xA6A6A6);
+
 const BTN_SHADOW: Shadow = Shadow {
     color: color::BLACK_25,
     offset: iced::Vector { x: 0.0, y: 4.0 },
@@ -356,6 +358,32 @@ impl Palette {
                         shadow: Default::default(),
                     }),
                     disabled: btn_disabled(),
+                },
+                signing_devices: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_PRIMARY_BG,
+                        border: BTN_PRIMARY_BG.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_PRIMARY_BG,
+                        border: BTN_PRIMARY_BG.into(),
+                        shadow: BTN_SHADOW,
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_PRIMARY_PRESSED,
+                        border: BTN_PRIMARY_PRESSED.into(),
+                        shadow: BTN_SHADOW,
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLUE,
+                        border: color::BUSINESS_BLUE_50.into(),
+                        shadow: Default::default(),
+                    }),
                 },
             },
             cards: Cards {
