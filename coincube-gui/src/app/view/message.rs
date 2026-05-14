@@ -1286,6 +1286,7 @@ pub enum HomeMessage {
     BackToHome,
     BreezOnchainAddress(String),
     RefreshLiquidBalance,
+    RefreshSparkBalance,
     SignVaultToLiquidTx,
     TransferPsbtReady(TransferPsbtResult),
     TransferSigningComplete,

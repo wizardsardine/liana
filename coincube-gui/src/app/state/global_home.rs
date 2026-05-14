@@ -1934,6 +1934,9 @@ impl State for GlobalHome {
                         Task::none()
                     }
                     HomeMessage::RefreshLiquidBalance => self.load_liquid_balance(),
+                    HomeMessage::RefreshSparkBalance => {
+                        self.load_spark_balance().unwrap_or_else(Task::none)
+                    }
                     HomeMessage::TransferPsbtReady(result) => {
                         self.is_sending = false;
                         match result {

@@ -5970,62 +5970,92 @@ impl State for P2PPanel {
                         // at that point). Kick one off now so the
                         // Spark-pay gate can flip without requiring the
                         // user to navigate away and back.
+                        //
+                        // Skip the Spark-state reset entirely when a
+                        // prepare/send RPC is in flight: swapping the
+                        // session id or flipping the phase would cause
+                        // the eventual SparkPaySent to be filtered as
+                        // stale, losing the `spark_funded_order_ids`
+                        // entry that keeps the trade visible if Mostro
+                        // later cancels it. The shared non-chat
+                        // persistence path below still writes the DM
+                        // to disk.
                         if let Some(invoice) = active_invoice_just_arrived {
-                            self.spark_pay_phase = SparkPayPhase::Idle;
-                            self.show_qr_fallback = false;
-                            self.spark_pay_session_id = Some(order_id.clone());
-                            self.spark_balance_sat = None;
-                            self.spark_pay_amount_sat = None;
-                            self.spark_pay_attempt = None;
-                            let balance = self.spark_balance_fetch_task(cache, order_id.clone());
-                            let parse = self.spark_parse_invoice_task(order_id.clone(), invoice);
-                            // Persist before any Spark early-return — the
-                            // shared non-chat persistence path below is
-                            // bypassed by `return Task::batch(...)` / `return b`,
-                            // and losing the PayInvoice/WaitingSellerToPay/
-                            // BuyerTookOrder DM means the trade can't be
-                            // rebuilt from disk after a restart. The
-                            // `(None, _)` arm falls through and lets the
-                            // shared path persist instead.
-                            let persist_hold_invoice_dm = |this: &Self| {
-                                super::mostro::append_trade_message(
-                                    &this.cube_name(),
-                                    &order_id,
-                                    super::mostro::TradeMessage {
-                                        timestamp: chrono::Utc::now().timestamp() as u64,
-                                        action: action.clone(),
-                                        payload_json: payload_json.clone(),
-                                        is_own: false,
-                                    },
+                            if matches!(
+                                self.spark_pay_phase,
+                                SparkPayPhase::Preparing | SparkPayPhase::Sending,
+                            ) {
+                                tracing::info!(
+                                    target: "p2p::spark_pay",
+                                    "TradeUpdate({}): hold-invoice DM arrived during \
+                                     {:?} — skipping Spark-state reset to protect \
+                                     in-flight RPC",
+                                    order_id,
+                                    self.spark_pay_phase,
                                 );
-                            };
-                            match (balance, parse) {
-                                (Some(b), Some(p)) => {
-                                    tracing::info!(
-                                        target: "p2p::spark_pay",
-                                        "TradeUpdate({}): hold invoice landed on active trade — \
-                                         kicking off balance fetch + invoice parse",
-                                        order_id,
+                                // Fall through to the shared persistence
+                                // path; consume `invoice` so the binding
+                                // isn't flagged as unused.
+                                let _ = invoice;
+                            } else {
+                                self.spark_pay_phase = SparkPayPhase::Idle;
+                                self.show_qr_fallback = false;
+                                self.spark_pay_session_id = Some(order_id.clone());
+                                self.spark_balance_sat = None;
+                                self.spark_pay_amount_sat = None;
+                                self.spark_pay_attempt = None;
+                                let balance =
+                                    self.spark_balance_fetch_task(cache, order_id.clone());
+                                let parse =
+                                    self.spark_parse_invoice_task(order_id.clone(), invoice);
+                                // Persist before any Spark early-return — the
+                                // shared non-chat persistence path below is
+                                // bypassed by `return Task::batch(...)` / `return b`,
+                                // and losing the PayInvoice/WaitingSellerToPay/
+                                // BuyerTookOrder DM means the trade can't be
+                                // rebuilt from disk after a restart. The
+                                // `(None, _)` arm falls through and lets the
+                                // shared path persist instead.
+                                let persist_hold_invoice_dm = |this: &Self| {
+                                    super::mostro::append_trade_message(
+                                        &this.cube_name(),
+                                        &order_id,
+                                        super::mostro::TradeMessage {
+                                            timestamp: chrono::Utc::now().timestamp() as u64,
+                                            action: action.clone(),
+                                            payload_json: payload_json.clone(),
+                                            is_own: false,
+                                        },
                                     );
-                                    persist_hold_invoice_dm(self);
-                                    return Task::batch([b, p]);
-                                }
-                                (Some(b), None) => {
-                                    tracing::info!(
-                                        target: "p2p::spark_pay",
-                                        "TradeUpdate({}): hold invoice landed on active trade — \
-                                         kicking off balance fetch",
-                                        order_id,
-                                    );
-                                    persist_hold_invoice_dm(self);
-                                    return b;
-                                }
-                                (None, _) => {
-                                    tracing::info!(
-                                        target: "p2p::spark_pay",
-                                        "TradeUpdate({}): hold invoice landed but Spark backend is None",
-                                        order_id,
-                                    );
+                                };
+                                match (balance, parse) {
+                                    (Some(b), Some(p)) => {
+                                        tracing::info!(
+                                            target: "p2p::spark_pay",
+                                            "TradeUpdate({}): hold invoice landed on active trade — \
+                                             kicking off balance fetch + invoice parse",
+                                            order_id,
+                                        );
+                                        persist_hold_invoice_dm(self);
+                                        return Task::batch([b, p]);
+                                    }
+                                    (Some(b), None) => {
+                                        tracing::info!(
+                                            target: "p2p::spark_pay",
+                                            "TradeUpdate({}): hold invoice landed on active trade — \
+                                             kicking off balance fetch",
+                                            order_id,
+                                        );
+                                        persist_hold_invoice_dm(self);
+                                        return b;
+                                    }
+                                    (None, _) => {
+                                        tracing::info!(
+                                            target: "p2p::spark_pay",
+                                            "TradeUpdate({}): hold invoice landed but Spark backend is None",
+                                            order_id,
+                                        );
+                                    }
                                 }
                             }
                         } else if action == "PayInvoice"

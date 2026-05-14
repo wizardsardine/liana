@@ -2104,6 +2104,17 @@ impl App {
                 // balance change too.
                 tasks.push(self.panels.spark_overview.reload(None, None));
 
+                // Also refresh the Home (Cube → Overview) Spark card.
+                // `global_home.reload` only runs on navigation, so a
+                // cold-start `get_info` that soft-fails (SDK not ready)
+                // leaves `spark_balance_loaded = false` until the user
+                // navigates away and back. Piping the SDK's `Synced` /
+                // payment events through `RefreshSparkBalance` lets
+                // the card recover without re-navigation.
+                tasks.push(Task::done(Message::View(view::Message::Home(
+                    view::HomeMessage::RefreshSparkBalance,
+                ))));
+
                 // Payment-related events reload the Transactions list
                 // so newly surfaced rows appear without the user
                 // manually navigating / pressing refresh. `Synced`
