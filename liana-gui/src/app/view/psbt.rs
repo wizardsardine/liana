@@ -964,58 +964,57 @@ pub fn sign_action<'a>(
     signing: &HashSet<Fingerprint>,
     recovery_timelock: Option<u16>,
 ) -> Element<'a, Message> {
-    Column::new()
-        .push_maybe(warning.map(|w| warn(Some(w))))
-        .push(card::simple(
+    let signers = hws
+        .iter()
+        .enumerate()
+        .fold(Column::new().spacing(10), |col, (i, hw)| {
+            let (signed, signing, can_sign) = hw.fingerprint().map_or((false, false, false), |f| {
+                (
+                    signed.contains(&f),
+                    signing.contains(&f),
+                    descriptor.contains_fingerprint_in_path(f, recovery_timelock),
+                )
+            });
+            col.push(hw_list_view(i, hw, signed, signing, can_sign))
+        });
+
+    let hot_signer = signer.map(|fingerprint| {
+        let can_sign = descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);
+        let btn = Button::new(if signed.contains(&fingerprint) {
+            hw::sign_success_hot_signer(fingerprint, signer_alias)
+        } else {
+            hw::hot_signer(fingerprint, signer_alias, can_sign)
+        })
+        .padding(10)
+        .style(theme::button::secondary)
+        .width(Length::Fill);
+        if can_sign {
+            btn.on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
+        } else {
+            btn
+        }
+    });
+
+    let card_content = Column::new()
+        .push(
             Column::new()
                 .push(
-                    Column::new()
-                        .push(
-                            text("Select signing device to sign with:")
-                                .bold()
-                                .width(Length::Fill),
-                        )
-                        .spacing(10)
-                        .push(hws.iter().enumerate().fold(
-                            Column::new().spacing(10),
-                            |col, (i, hw)| {
-                                let (signed, signing, can_sign) =
-                                    hw.fingerprint().map_or((false, false, false), |f| {
-                                        (
-                                            signed.contains(&f),
-                                            signing.contains(&f),
-                                            descriptor
-                                                .contains_fingerprint_in_path(f, recovery_timelock),
-                                        )
-                                    });
-                                col.push(hw_list_view(i, hw, signed, signing, can_sign))
-                            },
-                        ))
-                        .push_maybe({
-                            signer.map(|fingerprint| {
-                                let can_sign = descriptor
-                                    .contains_fingerprint_in_path(fingerprint, recovery_timelock);
-                                let btn = Button::new(if signed.contains(&fingerprint) {
-                                    hw::sign_success_hot_signer(fingerprint, signer_alias)
-                                } else {
-                                    hw::hot_signer(fingerprint, signer_alias, can_sign)
-                                })
-                                .padding(10)
-                                .style(theme::button::secondary)
-                                .width(Length::Fill);
-                                if can_sign {
-                                    btn.on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
-                                } else {
-                                    btn
-                                }
-                            })
-                        })
+                    text("Select signing device to sign with:")
+                        .bold()
                         .width(Length::Fill),
                 )
-                .spacing(20)
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        ))
+                .spacing(10)
+                .push(signers)
+                .push_maybe(hot_signer)
+                .width(Length::Fill),
+        )
+        .spacing(20)
+        .width(Length::Fill)
+        .align_x(Alignment::Center);
+
+    Column::new()
+        .push_maybe(warning.map(|w| warn(Some(w))))
+        .push(card::simple(card_content))
         .width(Length::Fixed(500.0))
         .into()
 }
