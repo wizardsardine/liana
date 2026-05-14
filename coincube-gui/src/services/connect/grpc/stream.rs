@@ -43,7 +43,8 @@ pub fn connect_stream(
             loop {
                 match super::create_channel(&config.grpc_url).await {
                     Ok(grpc_channel) => {
-                        let interceptor = AuthInterceptor::new(config.tokens.clone());
+                        let access_token = config.tokens.read().await.access_token.clone();
+                        let interceptor = AuthInterceptor::new(&access_token);
                         let mut client =
                             RealtimeServiceClient::with_interceptor(grpc_channel, interceptor);
 

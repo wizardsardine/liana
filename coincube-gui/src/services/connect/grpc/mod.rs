@@ -21,11 +21,13 @@ pub enum ConnectStreamMessage {
 }
 
 /// Create a TLS-enabled tonic channel to the gRPC endpoint.
-pub async fn create_channel(grpc_url: &str) -> Result<Channel, tonic::transport::Error> {
+pub async fn create_channel(
+    grpc_url: &str,
+) -> Result<Channel, Box<dyn std::error::Error + Send + Sync>> {
     let tls = ClientTlsConfig::new();
-    Channel::from_shared(grpc_url.to_string())
-        .expect("invalid gRPC URL")
+    let channel = Channel::from_shared(grpc_url.to_string())?
         .tls_config(tls)?
         .connect()
-        .await
+        .await?;
+    Ok(channel)
 }
