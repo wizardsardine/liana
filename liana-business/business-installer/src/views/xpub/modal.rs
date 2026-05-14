@@ -13,7 +13,7 @@ use liana_ui::{
     component::{
         button::{btn_cancel, btn_clear, btn_retry, btn_save},
         form,
-        modal::{self, legacy, modal_view, none_fn, ModalWidth},
+        modal::{self, modal_view, none_fn, ModalWidth},
         pick_list,
         text::{self, p1_bold},
         tooltip,
@@ -307,7 +307,7 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
         Some(v) => format!("{kind_name} {v}"),
         None => kind_name,
     };
-    let version = data.version;
+    let fp_str = data.fingerprint.map(|fp| format!("#{fp}"));
 
     match data.state {
         DeviceState::Supported => {
@@ -322,10 +322,26 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
                 Some(move || Msg::XpubSelectDevice(fp)),
             )
         }
-        DeviceState::Locked { pairing_code } => match kind {
-            async_hwi::DeviceKind::Jade => legacy::taproot_unsupported_device(kind, None),
-            _ => legacy::locked_device(kind, pairing_code, None),
-        },
+        DeviceState::Locked { pairing_code } => {
+            let message = match kind {
+                async_hwi::DeviceKind::Jade => {
+                    "This device doesn't support taproot miniscript".to_string()
+                }
+                _ => match pairing_code {
+                    Some(code) => format!("Pairing code: {code}"),
+                    None => "Please unlock the device".to_string(),
+                },
+            };
+            modal::key_entry(
+                Some(icon::usb_drive_icon()),
+                name,
+                fp_str,
+                None,
+                None,
+                Some(message),
+                none_fn(),
+            )
+        }
         DeviceState::Unsupported { reason } => {
             let message = match &reason {
                 UnsupportedReason::NotPartOfWallet(fg) => {
@@ -336,21 +352,15 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
                     minimal_supported_version,
                 } => match kind {
                     async_hwi::DeviceKind::Jade => {
-                        return legacy::taproot_unsupported_device(kind, None)
+                        "This device doesn't support taproot miniscript".to_string()
                     }
-                    _ => {
-                        return legacy::unsupported_version_device(
-                            kind,
-                            version.as_ref(),
-                            minimal_supported_version,
-                            None,
-                        )
-                    }
+                    _ => format!(
+                        "Device version not supported, upgrade to version > {minimal_supported_version}"
+                    ),
                 },
                 UnsupportedReason::Method(m) => format!("Unsupported method: {m}"),
                 UnsupportedReason::AppIsNotOpen => "Please open the app on device".to_string(),
             };
-            let fp_str = data.fingerprint.map(|fp| format!("#{fp}"));
             modal::key_entry(
                 Some(icon::usb_drive_icon()),
                 name,
