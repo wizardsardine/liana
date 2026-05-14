@@ -280,12 +280,6 @@ pub enum SettingsMessage {
     WalletAliasEdited(String),
     Save,
     GeneralSection,
-    /// Navigate to the app-level Lightning preferences page.
-    LightningSection,
-    /// User picked a new default Lightning backend on the
-    /// Settings → Lightning page. The state panel persists the
-    /// choice and re-reads it on `SettingsSaved`.
-    DefaultLightningBackendChanged(crate::app::wallets::WalletKind),
     DisplayUnitChanged(BitcoinDisplayUnit),
     Fiat(FiatMessage),
     NodeSettings(NodeSettingsMessage),
@@ -1292,6 +1286,7 @@ pub enum HomeMessage {
     BackToHome,
     BreezOnchainAddress(String),
     RefreshLiquidBalance,
+    RefreshSparkBalance,
     SignVaultToLiquidTx,
     TransferPsbtReady(TransferPsbtResult),
     TransferSigningComplete,
@@ -1396,6 +1391,66 @@ pub enum P2PMessage {
     CopyPaymentInvoice(String),
     ResetInvoiceCopied,
     CancelPaymentInvoice(String),
+    /// Spark balance lookup for the pending-payment modal completed.
+    /// Drives the Spark-pay-first UX: when the balance covers the hold
+    /// invoice (plus a small fee buffer), the modal opens with a
+    /// "Pay from Spark" button instead of a QR code.
+    ///
+    /// `order_id` identifies the originating Mostro order so a stale
+    /// response from a previous session can't mutate state for the
+    /// active one — see `P2PPanel::spark_pay_session_id`.
+    SparkBalanceLoaded {
+        order_id: String,
+        balance_sat: u64,
+    },
+    SparkBalanceFailed {
+        order_id: String,
+        err: String,
+    },
+    /// Result of pre-parsing the hold-invoice via `spark.parse_input`
+    /// alongside the balance fetch. Carries the BOLT11 amount so the
+    /// Spark-pay summary can show "Lock amount: X sats" before the
+    /// user clicks "Pay from Spark" — even for market-priced sell
+    /// orders where Mostro leaves `trade.sats_amount = None`.
+    /// `amount_sat` is `None` when the parse failed or the invoice
+    /// carried no amount (an unusual case for Mostro hold invoices).
+    SparkInvoiceAmountParsed {
+        order_id: String,
+        amount_sat: Option<u64>,
+    },
+    /// User pressed "Pay from Spark" — either in the payment-required
+    /// modal (right after taking a buy order) or in the trade-detail
+    /// view (after navigating back to a trade with a pending hold
+    /// invoice). `order_id` scopes the resulting prepare/send chain
+    /// so a dismissed session can't pay against a fresh modal.
+    SparkPayPrepare {
+        order_id: String,
+        invoice: String,
+    },
+    /// `prepare_send` succeeded — preview is ready (amount + fee).
+    SparkPayPrepared {
+        order_id: String,
+        ok: coincube_spark_protocol::PrepareSendOk,
+    },
+    /// User confirmed the Spark-pay preview. Triggers `send_payment`.
+    SparkPayConfirm,
+    /// `send_payment` finished successfully — dismiss the modal.
+    SparkPaySent {
+        order_id: String,
+        ok: coincube_spark_protocol::SendPaymentOk,
+    },
+    /// Any Spark prepare/send step failed. Stays in the modal so the
+    /// user can retry or fall through to the QR.
+    SparkPayFailed {
+        order_id: String,
+        err: String,
+    },
+    /// Abandon the in-progress Spark pay (drops a prepared handle, returns
+    /// to the Spark-pay idle button).
+    SparkPayCancel,
+    /// Flip the "Pay from another wallet" toggle. `true` reveals the
+    /// QR/Copy Invoice body, `false` returns to Spark-pay mode.
+    ToggleQrFallback(bool),
     // Trade detail
     SelectTrade(String),
     CloseTradeDetail,

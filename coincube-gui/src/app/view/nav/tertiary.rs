@@ -1,6 +1,6 @@
 //! Tertiary (~72px) left nav rail — the third column that appears only
 //! when the current route has a third level (e.g. Cube → Settings →
-//! {General/Lightning/About}, Marketplace → P2P → {Order Book / My Trades
+//! {General/About/Stats}, Marketplace → P2P → {Order Book / My Trades
 //! / ...}, Vault → Settings → {Node / Wallet / Import-Export}).
 //!
 //! Styled like [`super::primary`] and [`super::secondary`], but with a
@@ -19,8 +19,8 @@ use crate::app::{
 };
 use coincube_ui::{
     icon::{
-        bitcoin_icon, chat_icon, graph_icon, home_icon, lightning_icon, plus_icon, receipt_icon,
-        settings_icon, tooltip_icon, wallet_icon, wrench_icon,
+        bitcoin_icon, chat_icon, graph_icon, home_icon, plus_icon, receipt_icon, settings_icon,
+        tooltip_icon, wallet_icon, wrench_icon,
     },
     theme,
     widget::{Column, Element},
@@ -72,17 +72,6 @@ fn home_settings_items() -> Vec<SubItem> {
                 matches!(
                     m,
                     Menu::Home(HomeSubMenu::Settings(HomeSettingsOption::General))
-                )
-            },
-        },
-        SubItem {
-            label: "Lightning",
-            icon: lightning_icon,
-            route: Menu::Home(HomeSubMenu::Settings(HomeSettingsOption::Lightning)),
-            matches: |m| {
-                matches!(
-                    m,
-                    Menu::Home(HomeSubMenu::Settings(HomeSettingsOption::Lightning))
                 )
             },
         },
