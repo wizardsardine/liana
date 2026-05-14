@@ -5277,6 +5277,12 @@ impl State for P2PPanel {
                     tracing::debug!("Ignoring stale SparkPayPrepared for order {}", order_id);
                     return Task::none();
                 }
+                // We're past the prepare phase — clear the attempt so a
+                // later `send_payment` failure can't satisfy the
+                // `retry_in_prepare_phase` check and re-fire `prepare_send`.
+                // A timed-out send may have actually delivered the
+                // payment; re-preparing risks double-paying the hold invoice.
+                self.spark_pay_attempt = None;
                 self.spark_pay_phase = SparkPayPhase::Prepared(ok);
             }
             P2PMessage::SparkPayConfirm => {
