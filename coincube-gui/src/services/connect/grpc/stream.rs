@@ -65,7 +65,14 @@ pub fn connect_stream(
                         let outbound = tokio_stream::wrappers::ReceiverStream::new(rx);
                         match client.connect(outbound).await {
                             Ok(response) => {
-                                let _ = channel.send(ConnectStreamMessage::Connected).await;
+                                log::info!("[CONNECT GRPC] Stream connected");
+                                if let Err(e) = channel.send(ConnectStreamMessage::Connected).await
+                                {
+                                    log::warn!(
+                                        "[CONNECT GRPC] Failed to forward Connected event: {}",
+                                        e
+                                    );
+                                }
                                 backoff = Duration::from_secs(1); // Reset on success
 
                                 let mut inbound = response.into_inner();
@@ -82,9 +89,15 @@ pub fn connect_stream(
                                                         })),
                                                     })
                                                     .await;
-                                                let _ = channel
+                                                if let Err(e) = channel
                                                     .send(ConnectStreamMessage::SessionEvent(event))
-                                                    .await;
+                                                    .await
+                                                {
+                                                    log::warn!(
+                                                        "[CONNECT GRPC] Failed to forward SessionEvent: {}",
+                                                        e
+                                                    );
+                                                }
                                             }
                                             Some(Body::Ping(_)) => {
                                                 let _ = tx
@@ -97,12 +110,18 @@ pub fn connect_stream(
                                                     .await;
                                             }
                                             Some(Body::Error(err)) => {
-                                                let _ = channel
+                                                if let Err(e) = channel
                                                     .send(ConnectStreamMessage::Error(format!(
                                                         "{}: {}",
                                                         err.code, err.message
                                                     )))
-                                                    .await;
+                                                    .await
+                                                {
+                                                    log::warn!(
+                                                        "[CONNECT GRPC] Failed to forward Error event: {}",
+                                                        e
+                                                    );
+                                                }
                                             }
                                             _ => {}
                                         },
@@ -118,25 +137,44 @@ pub fn connect_stream(
                                 }
                             }
                             Err(e) => {
-                                let _ = channel
+                                if let Err(send_err) = channel
                                     .send(ConnectStreamMessage::Error(e.to_string()))
-                                    .await;
+                                    .await
+                                {
+                                    log::warn!(
+                                        "[CONNECT GRPC] Failed to forward connect Error: {}",
+                                        send_err
+                                    );
+                                }
                             }
                         }
                     }
                     Err(e) => {
-                        let _ = channel
+                        if let Err(send_err) = channel
                             .send(ConnectStreamMessage::Error(e.to_string()))
-                            .await;
+                            .await
+                        {
+                            log::warn!(
+                                "[CONNECT GRPC] Failed to forward channel Error: {}",
+                                send_err
+                            );
+                        }
                     }
                 }
 
                 // Disconnected — reconnect with exponential backoff
-                let _ = channel
+                if let Err(e) = channel
                     .send(ConnectStreamMessage::Disconnected(
                         "Stream disconnected, reconnecting...".into(),
                     ))
-                    .await;
+                    .await
+                {
+                    log::warn!("[CONNECT GRPC] Failed to forward Disconnected event: {}", e);
+                }
+                log::debug!(
+                    "[CONNECT GRPC] Reconnecting in {:?} (exponential backoff)",
+                    backoff
+                );
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(max_backoff);
             }

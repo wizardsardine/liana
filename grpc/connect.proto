@@ -135,6 +135,18 @@ message RejectSessionRequest {
 
 message RejectSessionResponse {}
 
+message MarkDeliveredRequest {
+  string session_id = 1;
+}
+
+message MarkDeliveredResponse {}
+
+message MarkViewedRequest {
+  string session_id = 1;
+}
+
+message MarkViewedResponse {}
+
 message SubmitPartialSignatureRequest {
   string session_id = 1;
   bytes signed_psbt = 2;
@@ -225,6 +237,8 @@ service SessionService {
   rpc GetSigningSession(GetSigningSessionRequest) returns (GetSigningSessionResponse);
   rpc ListPendingSessions(ListPendingSessionsRequest) returns (ListPendingSessionsResponse);
   rpc CancelSigningSession(CancelSigningSessionRequest) returns (CancelSigningSessionResponse);
+  rpc MarkDelivered(MarkDeliveredRequest) returns (MarkDeliveredResponse);
+  rpc MarkViewed(MarkViewedRequest) returns (MarkViewedResponse);
   rpc ApproveSession(ApproveSessionRequest) returns (ApproveSessionResponse);
   rpc RejectSession(RejectSessionRequest) returns (RejectSessionResponse);
   rpc SubmitPartialSignature(SubmitPartialSignatureRequest) returns (SubmitPartialSignatureResponse);

@@ -31,7 +31,11 @@ impl GrpcSessionClient {
         self.inner
             .create_signing_session(request)
             .await
-            .map(|r| r.into_inner().session.unwrap_or_default())
+            .and_then(|r| {
+                r.into_inner().session.ok_or_else(|| {
+                    tonic::Status::internal("CreateSigningSession response missing session field")
+                })
+            })
     }
 
     /// Fetch the current state of a signing session.
