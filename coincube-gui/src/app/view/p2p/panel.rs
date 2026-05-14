@@ -3152,6 +3152,20 @@ impl P2PPanel {
         ))
     }
 
+    /// Whether the cube's Spark balance is sufficient to cover a hold
+    /// invoice of `hold_amount_sat`. Market-priced sell orders leave
+    /// Mostro's `sats_amount = None` until settlement, in which case we
+    /// answer optimistically when the balance is positive — `prepare_send`
+    /// will pull the real amount from the BOLT11 invoice and the preview
+    /// step gives the user a chance to back out.
+    fn spark_can_cover(&self, hold_amount_sat: Option<u64>) -> bool {
+        match (self.spark_balance_sat, hold_amount_sat) {
+            (Some(bal), Some(amt)) => bal >= amt.saturating_add(spark_pay_fee_buffer_sats(amt)),
+            (Some(bal), None) => bal > 0,
+            _ => false,
+        }
+    }
+
     /// Append hold invoice elements to a column: either Spark-pay UX
     /// (when the cube can cover the hold amount and the user hasn't
     /// toggled to QR), or QR + Copy Invoice for paying from another
@@ -3179,21 +3193,13 @@ impl P2PPanel {
             );
         };
 
-        // Spark-pay gate. Mirrors the payment-required modal when the
-        // amount is known: backend exists, balance covers (amount +
-        // fee buffer). For market-priced sell orders Mostro leaves
-        // `trade.sats_amount = None` until settlement — in that case
-        // we show the button optimistically when Spark balance is
-        // positive, because `prepare_send` pulls the real amount from
-        // the BOLT11 invoice and the preview step gives the user a
-        // chance to back out. If the balance turns out to be too low,
+        // Spark-pay gate: backend exists and `spark_can_cover` says yes.
+        // See `spark_can_cover` for the market-priced-order rationale
+        // behind accepting a `None` amount when the balance is positive.
+        // If the balance turns out to be too low at `prepare_send` time
         // we surface the failure in the Error phase with a "Pay from
         // another wallet" escape hatch.
-        let spark_can_cover = match (self.spark_balance_sat, sats_amount) {
-            (Some(bal), Some(amt)) => bal >= amt.saturating_add(spark_pay_fee_buffer_sats(amt)),
-            (Some(bal), None) => bal > 0,
-            _ => false,
-        };
+        let spark_can_cover = self.spark_can_cover(sats_amount);
         let spark_mode = self.spark_backend.is_some() && spark_can_cover && !self.show_qr_fallback;
         tracing::debug!(
             target: "p2p::spark_pay",
@@ -3409,10 +3415,7 @@ impl P2PPanel {
         // A small fee buffer prevents promising "Pay from Spark" only
         // for `prepare_send` to fail on routing fees.
         let hold_amount_sat: Option<u64> = amount_sats.and_then(|a| u64::try_from(a).ok());
-        let spark_can_cover = matches!(
-            (self.spark_balance_sat, hold_amount_sat),
-            (Some(bal), Some(amt)) if bal >= amt.saturating_add(spark_pay_fee_buffer_sats(amt))
-        );
+        let spark_can_cover = self.spark_can_cover(hold_amount_sat);
         let spark_mode = self.spark_backend.is_some() && spark_can_cover && !self.show_qr_fallback;
 
         let header = container(
@@ -3496,10 +3499,7 @@ impl P2PPanel {
             .pending_payment_invoice
             .as_ref()
             .and_then(|(_, _, a, _)| a.and_then(|n| u64::try_from(n).ok()));
-        let spark_can_cover = matches!(
-            (self.spark_balance_sat, hold_amount_sat),
-            (Some(bal), Some(amt)) if bal >= amt.saturating_add(spark_pay_fee_buffer_sats(amt))
-        );
+        let spark_can_cover = self.spark_can_cover(hold_amount_sat);
         if self.spark_backend.is_some() && spark_can_cover && self.show_qr_fallback {
             col = col.push(
                 button::transparent(None, "← Back to Spark")
