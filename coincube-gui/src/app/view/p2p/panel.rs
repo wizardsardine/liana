@@ -3501,11 +3501,15 @@ impl P2PPanel {
         // Offer a way back to Spark-pay if the cube has a sufficient
         // balance — used when the user toggled into the fallback by
         // mistake. Hidden when Spark can't cover the hold amount
-        // (rendering the toggle would be a dead end).
-        let hold_amount_sat = self
-            .pending_payment_invoice
-            .as_ref()
-            .and_then(|(_, _, a, _)| a.and_then(|n| u64::try_from(n).ok()));
+        // (rendering the toggle would be a dead end). Prefer the parsed
+        // BOLT11 amount over Mostro's `amount_sats` so a market-priced
+        // order whose invoice already revealed a too-large amount
+        // doesn't surface a dead-end "Back to Spark" toggle.
+        let hold_amount_sat = self.spark_pay_amount_sat.or_else(|| {
+            self.pending_payment_invoice
+                .as_ref()
+                .and_then(|(_, _, a, _)| a.and_then(|n| u64::try_from(n).ok()))
+        });
         let spark_can_cover = self.spark_can_cover(hold_amount_sat);
         if self.spark_backend.is_some() && spark_can_cover && self.show_qr_fallback {
             col = col.push(
