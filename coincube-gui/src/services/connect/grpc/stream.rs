@@ -44,7 +44,8 @@ pub fn connect_stream(
             loop {
                 match super::create_channel(&config.grpc_url).await {
                     Ok(grpc_channel) => {
-                        let interceptor = AuthInterceptor::new(config.tokens.clone());
+                        let access_token = config.tokens.read().await.access_token.clone();
+                        let interceptor = AuthInterceptor::new(&access_token);
                         let mut client =
                             RealtimeServiceClient::with_interceptor(grpc_channel, interceptor);
 
@@ -81,15 +82,22 @@ pub fn connect_stream(
                                     match inbound.message().await {
                                         Ok(Some(envelope)) => match envelope.body {
                                             Some(Body::SessionEvent(event)) => {
-                                                last_seen_seq = event.event_seq;
-                                                // Acknowledge receipt
-                                                let _ = tx
+                                                if let Err(e) = tx
                                                     .send(StreamEnvelope {
                                                         body: Some(Body::ClientAck(ClientAck {
                                                             event_seq: event.event_seq,
                                                         })),
                                                     })
-                                                    .await;
+                                                    .await
+                                                {
+                                                    log::warn!(
+                                                        "[CONNECT GRPC] Outbound channel closed while sending ClientAck (seq {}): {}; reconnecting",
+                                                        event.event_seq,
+                                                        e
+                                                    );
+                                                    break;
+                                                }
+                                                last_seen_seq = event.event_seq;
                                                 if let Err(e) = channel
                                                     .send(ConnectStreamMessage::SessionEvent(event))
                                                     .await
@@ -101,14 +109,21 @@ pub fn connect_stream(
                                                 }
                                             }
                                             Some(Body::Ping(_)) => {
-                                                let _ = tx
+                                                if let Err(e) = tx
                                                     .send(StreamEnvelope {
                                                         body: Some(Body::Pong(Pong {
                                                             ts_unix_ms: chrono::Utc::now()
                                                                 .timestamp_millis(),
                                                         })),
                                                     })
-                                                    .await;
+                                                    .await
+                                                {
+                                                    log::warn!(
+                                                        "[CONNECT GRPC] Outbound channel closed while sending Pong: {}; reconnecting",
+                                                        e
+                                                    );
+                                                    break;
+                                                }
                                             }
                                             Some(Body::Error(err)) => {
                                                 if let Err(e) = channel

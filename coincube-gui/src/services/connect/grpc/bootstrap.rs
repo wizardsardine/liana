@@ -14,12 +14,14 @@ use crate::dir::NetworkDirectory;
 use crate::services::connect::client::auth::AccessTokenResponse;
 use crate::services::connect::client::cache::{self, Account, ConnectCacheError};
 
-use super::{create_channel, device::GrpcDeviceClient, interceptor::AuthInterceptor};
+use super::{
+    create_channel, device::GrpcDeviceClient, interceptor::AuthInterceptor, CreateChannelError,
+};
 
 #[derive(Debug)]
 pub enum BootstrapError {
     Cache(ConnectCacheError),
-    Channel(tonic::transport::Error),
+    Channel(CreateChannelError),
     Rpc(tonic::Status),
 }
 
@@ -41,8 +43,8 @@ impl From<ConnectCacheError> for BootstrapError {
     }
 }
 
-impl From<tonic::transport::Error> for BootstrapError {
-    fn from(e: tonic::transport::Error) -> Self {
+impl From<CreateChannelError> for BootstrapError {
+    fn from(e: CreateChannelError) -> Self {
         Self::Channel(e)
     }
 }
@@ -86,7 +88,8 @@ pub async fn ensure_device_registered(
     }
 
     let channel = create_channel(grpc_url).await?;
-    let mut device = GrpcDeviceClient::new(channel, AuthInterceptor::new(tokens));
+    let access_token = tokens.read().await.access_token.clone();
+    let mut device = GrpcDeviceClient::new(channel, AuthInterceptor::new(&access_token));
 
     let resp = device
         .register_device(device_name, app_version, os_version)

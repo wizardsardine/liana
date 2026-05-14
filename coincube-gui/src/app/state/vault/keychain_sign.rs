@@ -369,9 +369,10 @@ impl KeychainSignModal {
         let channel = crate::services::connect::grpc::create_channel(&self.grpc_url)
             .await
             .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
+        let access_token = self.tokens.read().await.access_token.clone();
         Ok(GrpcSessionClient::new(
             channel,
-            AuthInterceptor::new(self.tokens.clone()),
+            AuthInterceptor::new(&access_token),
         ))
     }
 
@@ -483,7 +484,9 @@ impl KeychainSignModal {
                 let channel = crate::services::connect::grpc::create_channel(&grpc_url)
                     .await
                     .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
-                let mut client = GrpcSessionClient::new(channel, AuthInterceptor::new(tokens));
+                let access_token = tokens.read().await.access_token.clone();
+                let mut client =
+                    GrpcSessionClient::new(channel, AuthInterceptor::new(&access_token));
                 client
                     .resolve_signers(vault_id)
                     .await
@@ -604,7 +607,9 @@ impl KeychainSignModal {
                     let channel = crate::services::connect::grpc::create_channel(&grpc_url)
                         .await
                         .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
-                    let mut client = GrpcSessionClient::new(channel, AuthInterceptor::new(tokens));
+                    let access_token = tokens.read().await.access_token.clone();
+                    let mut client =
+                        GrpcSessionClient::new(channel, AuthInterceptor::new(&access_token));
                     client
                         .create_signing_session(req)
                         .await
@@ -717,8 +722,9 @@ impl KeychainSignModal {
                         let channel = crate::services::connect::grpc::create_channel(&grpc_url)
                             .await
                             .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
+                        let access_token = tokens.read().await.access_token.clone();
                         let mut client =
-                            GrpcSessionClient::new(channel, AuthInterceptor::new(tokens));
+                            GrpcSessionClient::new(channel, AuthInterceptor::new(&access_token));
                         client
                             .get_signing_session(session_id.clone())
                             .await
@@ -862,7 +868,9 @@ impl KeychainSignModal {
                     let channel = crate::services::connect::grpc::create_channel(&grpc_url)
                         .await
                         .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
-                    let mut client = GrpcSessionClient::new(channel, AuthInterceptor::new(tokens));
+                    let access_token = tokens.read().await.access_token.clone();
+                    let mut client =
+                        GrpcSessionClient::new(channel, AuthInterceptor::new(&access_token));
                     client
                         .cancel_signing_session(sid.clone(), "user_cancelled".to_string())
                         .await
@@ -908,7 +916,9 @@ impl KeychainSignModal {
                 let channel = crate::services::connect::grpc::create_channel(&grpc_url)
                     .await
                     .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
-                let mut client = GrpcSessionClient::new(channel, AuthInterceptor::new(tokens));
+                let access_token = tokens.read().await.access_token.clone();
+                let mut client =
+                    GrpcSessionClient::new(channel, AuthInterceptor::new(&access_token));
                 let req = CreateSigningSessionRequest {
                     request_id: uuid_v4(),
                     vault_id,

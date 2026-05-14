@@ -631,7 +631,6 @@ pub async fn load_application(
             .cube_settings
             .recovery_kit_last_backed_up_descriptor_fingerprint
             .clone(),
-        default_lightning_backend: config.cube_settings.default_lightning_backend,
         // Local-daemon path has no Connect tokens or gRPC URL; the user
         // would have to sign in via the Connect tab to populate these.
         connect_grpc_url: None,
