@@ -3413,8 +3413,15 @@ impl P2PPanel {
 
         // Decide whether the cube's Spark balance covers this trade.
         // A small fee buffer prevents promising "Pay from Spark" only
-        // for `prepare_send` to fail on routing fees.
-        let hold_amount_sat: Option<u64> = amount_sats.and_then(|a| u64::try_from(a).ok());
+        // for `prepare_send` to fail on routing fees. Prefer the parsed
+        // BOLT11 amount (populated alongside the balance fetch via
+        // `spark_parse_invoice_task`) over Mostro's `amount_sats` so
+        // market-priced sell orders — where Mostro leaves `amount_sats
+        // = None` until settlement — display a real lock amount and
+        // use a tighter cover check instead of "TBD" / `bal > 0`.
+        let hold_amount_sat: Option<u64> = self
+            .spark_pay_amount_sat
+            .or_else(|| amount_sats.and_then(|a| u64::try_from(a).ok()));
         let spark_can_cover = self.spark_can_cover(hold_amount_sat);
         let spark_mode = self.spark_backend.is_some() && spark_can_cover && !self.show_qr_fallback;
 
