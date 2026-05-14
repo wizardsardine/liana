@@ -3113,6 +3113,7 @@ pub async fn check_membership(
         ),
         auth.wallet_id.clone(),
         service_config.backend_api_url,
+        None,
         network,
         network_dir,
     )

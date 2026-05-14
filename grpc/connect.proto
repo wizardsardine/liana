@@ -218,6 +218,23 @@ message ListPendingSessionsResponse {
   repeated SigningSession sessions = 1;
 }
 
+message ResolveSignersRequest {
+  string vault_id = 1;
+}
+
+message ResolveSignersResponse {
+  repeated SignerTarget targets = 1;
+  repeated UnresolvedSigner unresolved = 2;
+}
+
+message UnresolvedSigner {
+  string key_id = 1;
+  string key_fingerprint = 2;
+  string owner_user_id = 3;
+  // Machine-readable reason: "no_device_registered" | "all_devices_revoked" | "owner_unknown".
+  string reason = 4;
+}
+
 message ErrorEvent {
   string code = 1;
   string message = 2;
@@ -242,6 +259,7 @@ service SessionService {
   rpc ApproveSession(ApproveSessionRequest) returns (ApproveSessionResponse);
   rpc RejectSession(RejectSessionRequest) returns (RejectSessionResponse);
   rpc SubmitPartialSignature(SubmitPartialSignatureRequest) returns (SubmitPartialSignatureResponse);
+  rpc ResolveSigners(ResolveSignersRequest) returns (ResolveSignersResponse);
 }
 
 service DeviceService {

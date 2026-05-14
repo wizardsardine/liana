@@ -687,6 +687,25 @@ pub struct App {
     /// Connect tab to sign in; on the next auth transition (false → true) we
     /// jump back to Vault Settings → Node and re-fire the switch.
     pending_switch_to_connect_after_login: bool,
+    /// Shared `Arc<RwLock<AccessTokenResponse>>` from the remote backend,
+    /// reused by the gRPC interceptor so token refreshes are observed by
+    /// both the REST and gRPC paths. `None` for local-daemon installs.
+    /// Stored on the App so PR B's `resolve_signers` /
+    /// `create_signing_session` call sites can construct a
+    /// `GrpcSessionClient` without re-plumbing.
+    #[allow(dead_code)]
+    connect_auth: Option<
+        Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>>,
+    >,
+    /// Email of the currently authenticated Connect account. Used to
+    /// scope cache writes (device_id, last_seen_event_seq). `None` for
+    /// local-daemon installs.
+    connect_email: Option<String>,
+    /// Live `ConnectStreamConfig` once it has been assembled from
+    /// `ServiceConfig` + cache state. `None` until the bootstrap task
+    /// fires `Message::ConnectStreamReady`, or permanently `None` if the
+    /// service config returned no `grpc_url`.
+    connect_stream_config: Option<crate::services::connect::grpc::stream::ConnectStreamConfig>,
 }
 
 /// Returns true when a `DaemonError` indicates the daemon process is no longer
@@ -754,6 +773,91 @@ async fn check_bitcoind_sync_progress(
     Ok((progress, ibd))
 }
 
+/// Hashable wrapper around `ConnectStreamConfig` so it can be used as
+/// the identity key for `iced::Subscription::run_with`. We hash only the
+/// fields that should force a fresh subscription: `device_id`,
+/// `grpc_url`, and `last_seen_seq`. The shared `Arc<RwLock<tokens>>` is
+/// intentionally excluded — a token refresh must not tear down the
+/// stream.
+struct ConnectStreamSubKey {
+    cfg: crate::services::connect::grpc::stream::ConnectStreamConfig,
+}
+
+impl std::hash::Hash for ConnectStreamSubKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        "connect-stream".hash(state);
+        self.cfg.device_id.hash(state);
+        self.cfg.grpc_url.hash(state);
+        self.cfg.last_seen_seq.hash(state);
+    }
+}
+
+fn make_connect_stream(
+    key: &ConnectStreamSubKey,
+) -> impl iced::futures::Stream<Item = crate::services::connect::grpc::ConnectStreamMessage> + 'static
+{
+    crate::services::connect::grpc::stream::connect_stream(&key.cfg)
+}
+
+/// Background task that assembles a `ConnectStreamConfig` from
+/// `ServiceConfig` + the on-disk Connect cache. Runs once at App startup
+/// when a remote backend is in play. Yields `Message::ConnectStreamReady`
+/// with `None` if the API config lacks a `grpc_url` (gRPC not enabled
+/// for this environment), or with `Some(cfg)` otherwise. The handler
+/// stashes the config and the next `subscription()` tick wires the
+/// stream.
+fn connect_stream_ready_task(
+    network: coincube_core::miniscript::bitcoin::Network,
+    datadir: CoincubeDirectory,
+    tokens: Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>>,
+    email: String,
+) -> Task<Message> {
+    use crate::services::connect::client::cache::Account;
+    use crate::services::connect::client::get_service_config;
+    use crate::services::connect::grpc::stream::ConnectStreamConfig;
+
+    Task::perform(
+        async move {
+            let service_config = match get_service_config(network).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        "Connect stream bootstrap: failed to fetch ServiceConfig: {}",
+                        e,
+                    );
+                    return None;
+                }
+            };
+            let Some(grpc_url) = service_config.grpc_url else {
+                tracing::info!("Connect stream bootstrap: ServiceConfig has no grpc_url");
+                return None;
+            };
+            let network_dir = datadir.network_directory(network);
+            let cache_account = Account::from_cache(&network_dir, &email).ok().flatten();
+            let Some(device_id) = cache_account.as_ref().and_then(|a| a.device_id.clone()) else {
+                tracing::info!(
+                    "Connect stream bootstrap: no device_id in cache for {} — \
+                     skipping stream until next launch",
+                    email,
+                );
+                return None;
+            };
+            let last_seen_seq = cache_account
+                .and_then(|a| a.last_seen_event_seq)
+                .unwrap_or(0);
+            Some(ConnectStreamConfig {
+                grpc_url,
+                tokens,
+                device_id,
+                user_agent: format!("coincube-gui/{}", env!("CARGO_PKG_VERSION")),
+                vault_ids: Vec::new(),
+                last_seen_seq,
+            })
+        },
+        Message::ConnectStreamReady,
+    )
+}
+
 impl App {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -767,6 +871,10 @@ impl App {
         internal_bitcoind: Option<Bitcoind>,
         restored_from_backup: bool,
         cube_settings: settings::CubeSettings,
+        connect_auth: Option<(
+            Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>>,
+            String,
+        )>,
     ) -> (App, Task<Message>) {
         let config_arc = Arc::new(config);
         let liquid_backend = Arc::new(LiquidBackend::new(breez_client.clone()));
@@ -802,6 +910,18 @@ impl App {
         );
         let set_cube_task = panels.connect.set_cube_uuid(Some(cube_settings.id.clone()));
         tasks.push(set_cube_task);
+        let (connect_auth_arc, connect_email) = match connect_auth {
+            Some((a, e)) => (Some(a), Some(e)),
+            None => (None, None),
+        };
+        if let (Some(auth), Some(email)) = (connect_auth_arc.as_ref(), connect_email.as_deref()) {
+            tasks.push(connect_stream_ready_task(
+                cache.network,
+                data_dir.clone(),
+                auth.clone(),
+                email.to_string(),
+            ));
+        }
         let cmd = Task::batch(tasks);
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
@@ -835,6 +955,9 @@ impl App {
                 last_refundables_fetch: None,
                 refundables_fetch_in_flight: false,
                 pending_switch_to_connect_after_login: false,
+                connect_auth: connect_auth_arc,
+                connect_email,
+                connect_stream_config: None,
             },
             cmd,
         )
@@ -932,6 +1055,9 @@ impl App {
                 last_refundables_fetch: None,
                 refundables_fetch_in_flight: false,
                 pending_switch_to_connect_after_login: false,
+                connect_auth: None,
+                connect_email: None,
+                connect_stream_config: None,
             },
             cmd,
         )
@@ -1342,6 +1468,20 @@ impl App {
             }
         }
 
+        // Connect realtime gRPC stream. Active once `Message::ConnectStreamReady`
+        // has populated `connect_stream_config`. The subscription identity is
+        // keyed on `(device_id, grpc_url, last_seen_seq)` so reconnecting after
+        // any of those change produces a fresh stream instead of stale wiring.
+        if let Some(cfg) = self.connect_stream_config.as_ref() {
+            subscriptions.push(
+                iced::Subscription::run_with(
+                    ConnectStreamSubKey { cfg: cfg.clone() },
+                    make_connect_stream,
+                )
+                .map(Message::ConnectStream),
+            );
+        }
+
         Subscription::batch(subscriptions)
     }
 
@@ -1483,6 +1623,76 @@ impl App {
         )
     }
 
+    /// Top-level handler for `Message::ConnectStream`. PR A logs and
+    /// persists the latest event seq; PR B's session-routing logic is
+    /// folded in here when the per-modal dispatch lands.
+    fn handle_connect_stream(
+        &mut self,
+        event: crate::services::connect::grpc::ConnectStreamMessage,
+    ) -> Task<Message> {
+        use crate::services::connect::grpc::ConnectStreamMessage as M;
+        match event {
+            M::Connected => {
+                log::info!("[CONNECT GRPC] Stream connected");
+                Task::none()
+            }
+            M::Disconnected(reason) => {
+                log::warn!("[CONNECT GRPC] Stream disconnected: {}", reason);
+                Task::none()
+            }
+            M::Error(err) => {
+                log::warn!("[CONNECT GRPC] Stream error: {}", err);
+                Task::none()
+            }
+            M::SessionEvent(session_event) => {
+                log::info!(
+                    "[CONNECT GRPC] SessionEvent seq={} type={:?} session={}",
+                    session_event.event_seq,
+                    session_event.event_type,
+                    session_event.session_id,
+                );
+                // Persist the latest seq so a restart resumes from the
+                // right cursor. Best-effort — log and continue on error.
+                let seq = session_event.event_seq;
+                let persist_task = if let Some(email) = self.connect_email.clone() {
+                    let network_dir = self.datadir.network_directory(self.cache.network);
+                    Task::perform(
+                        async move {
+                            if let Err(e) =
+                                crate::services::connect::client::cache::set_last_seen_event_seq_for_email(
+                                    &network_dir,
+                                    &email,
+                                    seq,
+                                )
+                                .await
+                            {
+                                log::warn!(
+                                    "[CONNECT GRPC] Failed to persist last_seen_event_seq={}: {}",
+                                    seq,
+                                    e,
+                                );
+                            }
+                        },
+                        |_| Message::CacheUpdated,
+                    )
+                } else {
+                    Task::none()
+                };
+                // Fan the event out via Message::KeychainSign(StreamEvent).
+                // It travels through the standard update path and is
+                // delegated to the active PSBT modal (if any) by
+                // `PsbtState`'s catchall arm — modals that don't
+                // recognise the session_id are no-ops.
+                let dispatch_task = Task::done(Message::KeychainSign(
+                    crate::app::state::vault::keychain_sign::KeychainSignMessage::StreamEvent(
+                        session_event,
+                    ),
+                ));
+                Task::batch([persist_task, dispatch_task])
+            }
+        }
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.update_dispatch(message);
         // Sync *after* dispatch: if this update just mutated
@@ -1559,6 +1769,31 @@ impl App {
                 if let Some(line) = log {
                     self.cache.node_bitcoind_last_log = Some(line);
                 }
+            }
+            Message::ConnectStreamReady(cfg) => {
+                match cfg {
+                    Some(cfg) => {
+                        tracing::info!(
+                            "Connect stream ready (device_id={}, last_seen_seq={})",
+                            cfg.device_id,
+                            cfg.last_seen_seq,
+                        );
+                        // Mirror into Cache so deep panels (the open
+                        // PSBT modal in particular) can spin up a
+                        // GrpcSessionClient on demand.
+                        self.cache.connect_grpc_url = Some(cfg.grpc_url.clone());
+                        self.cache.connect_tokens = Some(cfg.tokens.clone());
+                        self.connect_stream_config = Some(cfg);
+                    }
+                    None => {
+                        tracing::debug!(
+                            "Connect stream not started: missing grpc_url or device_id",
+                        );
+                    }
+                }
+            }
+            Message::ConnectStream(event) => {
+                return self.handle_connect_stream(event);
             }
             Message::InstallStats(_) => {
                 if let Some(panel) = self.panels.current_mut() {

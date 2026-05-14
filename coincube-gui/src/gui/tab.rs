@@ -722,6 +722,11 @@ impl Tab {
                         bitcoind,
                         restored_from_backup,
                         cube_settings,
+                        // Local daemon path has no Connect tokens at this
+                        // stage; the user may sign in to Connect later
+                        // via the Connect tab — that flow handles its own
+                        // gRPC bootstrap.
+                        None,
                     );
                     self.state = State::App(app);
                     command.map(Message::Run)
@@ -1411,6 +1416,15 @@ pub fn create_app_with_remote_backend(
         }
     };
 
+    // Reuse the existing `Arc<RwLock<AccessTokenResponse>>` from the
+    // remote backend so the gRPC interceptor and the REST client share
+    // a single source of truth — token refreshes propagate to both
+    // without manual fan-out.
+    let connect_auth = Some((
+        remote_backend.inner_client().auth.clone(),
+        remote_backend.user_email().to_string(),
+    ));
+
     Ok(App::new(
         Cache {
             network,
@@ -1456,6 +1470,12 @@ pub fn create_app_with_remote_backend(
                 .recovery_kit_last_backed_up_descriptor_fingerprint
                 .clone(),
             default_lightning_backend: cube_settings.default_lightning_backend,
+            // grpc_url isn't known yet — `Message::ConnectStreamReady`
+            // backfills both fields once `get_service_config` returns.
+            // Tokens we have right now (shared Arc with the REST client)
+            // so populate them eagerly.
+            connect_grpc_url: None,
+            connect_tokens: Some(remote_backend.inner_client().auth.clone()),
         },
         Arc::new(
             Wallet::new(wallet.descriptor)
@@ -1477,5 +1497,6 @@ pub fn create_app_with_remote_backend(
         None,
         false,
         cube_settings,
+        connect_auth,
     ))
 }

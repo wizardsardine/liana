@@ -64,6 +64,13 @@ pub trait Modal {
 pub enum PsbtModal {
     Save(SaveModal),
     Sign(SignModal),
+    /// Multi-signer Keychain signing flow. Coexists with `Sign` (local
+    /// signers) — the user picks which to open. Keychain sessions run
+    /// independently; signatures returned by Keychain signers are
+    /// merged into the same SpendTx via the daemon's `update_spend_tx`,
+    /// so the local-only "Sign" path can broadcast as today once every
+    /// path threshold is met.
+    KeychainSign(super::keychain_sign::KeychainSignModal),
     Broadcast(BroadcastModal),
     Delete(DeleteModal),
     Export(VaultExportModal),
@@ -74,6 +81,7 @@ impl<'a> AsRef<dyn Modal + 'a> for PsbtModal {
         match &self {
             Self::Save(a) => a,
             Self::Sign(a) => a,
+            Self::KeychainSign(a) => a,
             Self::Broadcast(a) => a,
             Self::Delete(a) => a,
             Self::Export(a) => a,
@@ -86,6 +94,7 @@ impl<'a> AsMut<dyn Modal + 'a> for PsbtModal {
         match self {
             Self::Save(a) => a,
             Self::Sign(a) => a,
+            Self::KeychainSign(a) => a,
             Self::Broadcast(a) => a,
             Self::Delete(a) => a,
             Self::Export(a) => a,
@@ -209,6 +218,48 @@ impl PsbtState {
                 self.modal = Some(PsbtModal::Sign(modal));
                 return cmd;
             }
+            Message::View(view::Message::Spend(view::SpendTxMessage::SignKeychain)) => {
+                // Idempotent: re-opening the modal while one is already
+                // attached just brings it back to the foreground.
+                if matches!(self.modal, Some(PsbtModal::KeychainSign(_))) {
+                    return Task::none();
+                }
+                let (Some(grpc_url), Some(tokens), Some(cube_server_id)) = (
+                    cache.connect_grpc_url.clone(),
+                    cache.connect_tokens.clone(),
+                    cache.current_cube_server_id,
+                ) else {
+                    let msg =
+                        "Sign via Keychain is unavailable: Connect is not ready yet.".to_string();
+                    return Task::done(Message::View(view::Message::ShowError(msg)));
+                };
+                // Construct a fresh `CoincubeClient` baked with the
+                // current access_token. Token refreshes during the
+                // session lifetime are handled by the gRPC interceptor
+                // (which reads the shared `Arc<RwLock>`) — REST calls
+                // here run before the user starts waiting, so a stale
+                // bearer is unlikely to surface in this short window.
+                let mut coincube_client = crate::services::coincube::CoincubeClient::new();
+                // Read the current access token synchronously via
+                // blocking_read — same pattern as `AuthInterceptor`.
+                let access_token = tokens.blocking_read().access_token.clone();
+                coincube_client.set_token(&access_token);
+
+                let descriptor_id = self.wallet.main_descriptor.to_string();
+                let modal = super::keychain_sign::KeychainSignModal::new(
+                    self.wallet.clone(),
+                    coincube_client,
+                    tokens,
+                    grpc_url,
+                    cube_server_id,
+                    cache.cube_id.clone(),
+                    descriptor_id,
+                    self.tx.psbt.clone(),
+                );
+                let launch = modal.launch();
+                self.modal = Some(PsbtModal::KeychainSign(modal));
+                return launch;
+            }
             Message::View(view::Message::Spend(view::SpendTxMessage::Broadcast)) => {
                 let outpoints: Vec<_> = self.tx.coins.keys().cloned().collect();
                 return Task::perform(
@@ -250,11 +301,32 @@ impl PsbtState {
                 self.saved = true;
                 if let Some(modal) = self.modal.as_mut() {
                     let cmd = modal.as_mut().update(daemon.clone(), message, &mut self.tx);
-                    // if modal is only the pending notif then we remove it once the psbt was
-                    // updated.
-                    if let PsbtModal::Sign(SignModal { display_modal, .. }) = modal {
-                        if !*display_modal {
-                            self.modal = None;
+                    // Decide modal-close intent before mutating
+                    // `self.modal` so the borrow checker stays happy.
+                    let close_sign = matches!(
+                        modal,
+                        PsbtModal::Sign(SignModal {
+                            display_modal: false,
+                            ..
+                        }),
+                    );
+                    let close_keychain = matches!(
+                        modal,
+                        PsbtModal::KeychainSign(km) if km.is_done(),
+                    );
+                    if close_sign || close_keychain {
+                        self.modal = None;
+                    }
+                    if close_keychain {
+                        // Recompute path_ready / sigs against the
+                        // newly merged PSBT so the outer view knows
+                        // to swap the Sign buttons for Broadcast.
+                        if let Ok(sigs) = self
+                            .wallet
+                            .main_descriptor
+                            .partial_spend_info(&self.tx.psbt)
+                        {
+                            self.tx.sigs = sigs;
                         }
                     }
                     return cmd;
@@ -939,6 +1011,12 @@ fn merge_signatures(psbt: &mut Psbt, signed_psbt: &Psbt) {
             psbtin.tap_key_sig = Some(sig);
         }
     }
+}
+
+/// Merge BIP32 / Tapscript signatures from `signed_psbt` into `psbt`.
+/// Public so the Keychain sign flow can reuse the same merge semantics.
+pub(crate) fn merge_signatures_pub(psbt: &mut Psbt, signed_psbt: &Psbt) {
+    merge_signatures(psbt, signed_psbt)
 }
 
 async fn sign_psbt_with_master_signer(

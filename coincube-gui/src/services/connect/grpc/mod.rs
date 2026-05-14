@@ -1,3 +1,4 @@
+pub mod bootstrap;
 pub mod device;
 pub mod interceptor;
 pub mod session;

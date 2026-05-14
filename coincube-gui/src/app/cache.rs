@@ -105,6 +105,18 @@ pub struct Cache {
     /// copy lives on `App::cube_settings` and is re-read on
     /// `Message::SettingsSaved`.
     pub default_lightning_backend: crate::app::wallets::WalletKind,
+    /// Connect gRPC base URL, populated once `Message::ConnectStreamReady`
+    /// fires after login. `None` until then or for local-daemon installs
+    /// — the Keychain "Sign via Keychain" button stays disabled while
+    /// this is `None`.
+    pub connect_grpc_url: Option<String>,
+    /// Shared `Arc<RwLock<AccessTokenResponse>>` from the remote backend,
+    /// mirrored into Cache so deep panels (PsbtState et al.) can spin up
+    /// a `GrpcSessionClient` on demand without re-plumbing the auth
+    /// handle. `None` for local-daemon installs.
+    pub connect_tokens: Option<
+        Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>>,
+    >,
 }
 
 /// only used for tests.
@@ -138,6 +150,8 @@ impl std::default::Default for Cache {
             current_descriptor_fingerprint: None,
             recovery_kit_last_backed_up_descriptor_fingerprint: None,
             default_lightning_backend: crate::app::wallets::WalletKind::default(),
+            connect_grpc_url: None,
+            connect_tokens: None,
         }
     }
 }

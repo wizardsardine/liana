@@ -422,16 +422,35 @@ pub fn spend_overview_view<'a>(
                 Row::new()
                     .push(Space::new().width(Length::Fill))
                     .push(if tx.path_ready().is_none() {
+                        // While the path threshold isn't met, expose
+                        // both Sign (local signers: HW, master, border)
+                        // and Sign via Keychain (Connect-registered
+                        // signers on contacts' phones). The Keychain
+                        // button stays enabled even when Connect isn't
+                        // ready — the modal shows a clean error in
+                        // that case, which is better than a confusing
+                        // disabled state with no hint about why.
                         Some(
-                            button::primary(None, "Sign")
-                                .on_press(Message::Spend(SpendTxMessage::Sign))
-                                .width(Length::Fixed(150.0)),
+                            Row::new()
+                                .spacing(10)
+                                .push(
+                                    button::secondary(None, "Sign via Keychain")
+                                        .on_press(Message::Spend(SpendTxMessage::SignKeychain))
+                                        .width(Length::Fixed(200.0)),
+                                )
+                                .push(
+                                    button::primary(None, "Sign")
+                                        .on_press(Message::Spend(SpendTxMessage::Sign))
+                                        .width(Length::Fixed(150.0)),
+                                ),
                         )
                     } else {
                         Some(
-                            button::primary(None, "Broadcast")
-                                .on_press(Message::Spend(SpendTxMessage::Broadcast))
-                                .width(Length::Fixed(150.0)),
+                            Row::new().push(
+                                button::primary(None, "Broadcast")
+                                    .on_press(Message::Spend(SpendTxMessage::Broadcast))
+                                    .width(Length::Fixed(150.0)),
+                            ),
                         )
                     })
                     .align_y(Alignment::Center)
