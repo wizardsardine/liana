@@ -1,6 +1,6 @@
 use dotenvy::dotenv;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Re-run this build script whenever .env changes so rustc-env vars stay current
     println!("cargo:rerun-if-changed=../.env");
 
@@ -25,4 +25,13 @@ fn main() {
             .compile()
             .unwrap();
     }
+
+    // gRPC proto codegen
+    println!("cargo:rerun-if-changed=../grpc/connect.proto");
+    tonic_build::configure()
+        .build_server(false)
+        .build_transport(false) // Avoid generating `connect()` which uses TryInto (edition 2021)
+        .compile_protos(&["../grpc/connect.proto"], &["../grpc/"])?;
+
+    Ok(())
 }

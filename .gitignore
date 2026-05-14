@@ -20,7 +20,6 @@ release_assets
 bin/
 lib/
 pyvenv.cfg
-plans/
 .claude/
 
 .vscode

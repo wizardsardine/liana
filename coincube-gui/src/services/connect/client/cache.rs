@@ -24,6 +24,8 @@ impl ConnectCache {
             self.accounts.push(Account {
                 email: email.to_string(),
                 tokens,
+                device_id: None,
+                last_seen_event_seq: None,
             })
         }
     }
@@ -49,6 +51,10 @@ impl ConnectCache {
 pub struct Account {
     pub email: String,
     pub tokens: AccessTokenResponse,
+    #[serde(default)]
+    pub device_id: Option<String>,
+    #[serde(default)]
+    pub last_seen_event_seq: Option<i64>,
 }
 
 impl Account {
