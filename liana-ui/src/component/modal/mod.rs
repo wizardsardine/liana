@@ -343,6 +343,51 @@ where
     button::device(row, msg)
 }
 
+/// Row entry for an expected key in a registration-style flow.
+pub fn registration_key_entry<'a, Message, M>(
+    fingerprint: String,
+    kind: Option<String>,
+    alias: Option<String>,
+    status: Option<String>,
+    on_press: Option<M>,
+) -> Element<'a, Message>
+where
+    M: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    let icon = if kind.is_some() {
+        icon::usb_drive_icon()
+    } else {
+        icon::round_key_icon()
+    };
+    let fg = text::p1_medium(fingerprint);
+    let fg_row = if let Some(k) = kind {
+        row![text::p1_bold(k), fg].spacing(5)
+    } else {
+        row![fg]
+    };
+    let designation = if let Some(alias) = alias {
+        column![text::h5_medium(alias), fg_row]
+    } else {
+        column![fg_row]
+    }
+    .align_x(Horizontal::Left);
+
+    let status = status.map(text::p1_medium);
+    let row = Row::new()
+        .push(Space::with_width(H_SPACING))
+        .push(icon)
+        .push(Space::with_width(H_SPACING))
+        .push(designation)
+        .push(Space::fill_width())
+        .push_maybe(status)
+        .push(Space::fill_width())
+        .align_y(Vertical::Center)
+        .spacing(V_SPACING);
+    let msg = on_press.map(|f| f());
+    button::device(row, msg)
+}
+
 pub fn button_entry<'a, Message, M>(
     icon: Option<Text<'static>>,
     label: &'a str,
