@@ -1,0 +1,722 @@
+use async_trait::async_trait;
+use breez_sdk_liquid::{
+    bitcoin::Network,
+    model::{LightningPaymentLimitsResponse, OnchainPaymentLimitsResponse, RefundResponse},
+    prelude as breez, InputType,
+};
+use coincube_core::{
+    miniscript::bitcoin::{
+        bip32::DerivationPath,
+        secp256k1::{All, Secp256k1},
+        Amount,
+    },
+    signer::MasterSigner,
+};
+use std::{
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
+
+use iced::futures::{SinkExt, Stream};
+
+use super::{BreezConfig, BreezError};
+
+/// Wrapper around MasterSigner that implements Breez SDK's Signer trait
+/// Based on SdkSigner from breez-sdk-liquid
+struct MasterSignerAdapter {
+    signer: Arc<Mutex<MasterSigner>>,
+    secp: Secp256k1<All>,
+}
+
+impl MasterSignerAdapter {
+    fn new(signer: Arc<Mutex<MasterSigner>>) -> Self {
+        Self {
+            signer,
+            secp: Secp256k1::new(),
+        }
+    }
+}
+
+impl breez::Signer for MasterSignerAdapter {
+    fn sign_ecdsa(
+        &self,
+        msg: Vec<u8>,
+        derivation_path: String,
+    ) -> Result<Vec<u8>, breez::SignerError> {
+        let signer = self.signer.lock().unwrap();
+
+        // Parse the derivation path
+        let path = DerivationPath::from_str(&derivation_path).map_err(|e| {
+            breez::SignerError::Generic {
+                err: format!("Invalid derivation path: {}", e),
+            }
+        })?;
+
+        // Get private key at this derivation path
+        let xpriv = signer.xpriv_at(&path, &self.secp);
+        let privkey = xpriv.to_priv();
+
+        // Sign the message hash (ECDSA)
+        let msg_hash =
+            coincube_core::miniscript::bitcoin::secp256k1::Message::from_digest_slice(&msg)
+                .map_err(|e| breez::SignerError::Generic {
+                    err: format!("Invalid message hash: {}", e),
+                })?;
+
+        let sig = self.secp.sign_ecdsa_low_r(&msg_hash, &privkey.inner);
+        Ok(sig.serialize_der().to_vec())
+    }
+
+    fn sign_ecdsa_recoverable(&self, msg: Vec<u8>) -> Result<Vec<u8>, breez::SignerError> {
+        let secp = Secp256k1::new();
+        let signer = self.signer.lock().unwrap();
+        let master_xpriv = signer.xpriv_at(&"m".parse().unwrap(), &secp);
+        let keypair = master_xpriv.to_keypair(&secp);
+        let s = msg.as_slice();
+
+        let msg: coincube_core::miniscript::bitcoin::secp256k1::Message =
+            coincube_core::miniscript::bitcoin::secp256k1::Message::from_digest_slice(s)
+                .map_err(|e| breez::SignerError::Generic { err: e.to_string() })?;
+
+        let recoverable_sig = secp.sign_ecdsa_recoverable(&msg, &keypair.secret_key());
+        let (recovery_id, sig) = recoverable_sig.serialize_compact();
+        let mut complete_signature = vec![31 + recovery_id.to_i32() as u8];
+        complete_signature.extend_from_slice(&sig);
+        Ok(complete_signature)
+    }
+
+    fn derive_xpub(&self, derivation_path: String) -> Result<Vec<u8>, breez::SignerError> {
+        let signer = self.signer.lock().unwrap();
+
+        // Parse the derivation path
+        let path = DerivationPath::from_str(&derivation_path).map_err(|e| {
+            breez::SignerError::Generic {
+                err: format!("Invalid derivation path: {}", e),
+            }
+        })?;
+
+        // Get xpub at this path
+        let xpub = signer.xpub_at(&path, &self.secp);
+
+        // Encode as bytes (same format as SdkSigner)
+        Ok(xpub.encode().to_vec())
+    }
+
+    fn xpub(&self) -> Result<Vec<u8>, breez::SignerError> {
+        let signer = self.signer.lock().unwrap();
+
+        // Get master xpub using public API (empty path = master)
+        let empty_path = DerivationPath::master();
+        let xpub = signer.xpub_at(&empty_path, &self.secp);
+
+        // Encode as bytes
+        Ok(xpub.encode().to_vec())
+    }
+
+    fn slip77_master_blinding_key(&self) -> Result<Vec<u8>, breez::SignerError> {
+        let signer = self.signer.lock().unwrap();
+        let key = signer.slip77_master_blinding_key();
+        Ok(key.to_vec())
+    }
+
+    fn hmac_sha256(
+        &self,
+        msg: Vec<u8>,
+        derivation_path: String,
+    ) -> Result<Vec<u8>, breez::SignerError> {
+        use coincube_core::miniscript::bitcoin::hashes::sha256::Hash as Sha256Hash;
+        use coincube_core::miniscript::bitcoin::hashes::{Hash, HashEngine, Hmac, HmacEngine};
+
+        let signer = self.signer.lock().unwrap();
+
+        // Parse the derivation path
+        let path = DerivationPath::from_str(&derivation_path).map_err(|e| {
+            breez::SignerError::Generic {
+                err: format!("Invalid derivation path: {}", e),
+            }
+        })?;
+
+        // Get private key at this derivation path
+        let xpriv = signer.xpriv_at(&path, &self.secp);
+        let privkey = xpriv.to_priv();
+
+        // Compute HMAC-SHA256 using the private key as the key
+        let mut hmac_engine: HmacEngine<Sha256Hash> =
+            HmacEngine::new(&privkey.inner.secret_bytes());
+        hmac_engine.input(&msg);
+        let hmac_result = Hmac::from_engine(hmac_engine);
+
+        Ok(hmac_result.to_byte_array().to_vec())
+    }
+
+    fn ecies_encrypt(&self, msg: Vec<u8>) -> Result<Vec<u8>, breez::SignerError> {
+        let _ = msg;
+        // ECIES encryption not currently needed for external signer
+        Err(breez::SignerError::Generic {
+            err: "ECIES encryption not implemented for external signer".to_string(),
+        })
+    }
+
+    fn ecies_decrypt(&self, msg: Vec<u8>) -> Result<Vec<u8>, breez::SignerError> {
+        let _ = msg;
+        // ECIES decryption not currently needed for external signer
+        Err(breez::SignerError::Generic {
+            err: "ECIES decryption not implemented for external signer".to_string(),
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct BreezClient {
+    sdk: Option<Arc<breez::LiquidSdk>>,
+    signer: Option<Arc<Mutex<MasterSigner>>>,
+    network: Network,
+}
+
+impl std::fmt::Debug for BreezClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BreezClient")
+            .field("sdk", &self.sdk.as_ref().map(|_| "<LiquidSdk>"))
+            .field("signer", &self.signer.as_ref().map(|_| "<MasterSigner>"))
+            .field("network", &self.network)
+            .finish()
+    }
+}
+
+impl BreezClient {
+    /// Create a disconnected client for networks where Breez SDK is not supported.
+    /// All SDK methods will return `BreezError::NetworkNotSupported`.
+    pub fn disconnected(network: Network) -> Self {
+        Self {
+            sdk: None,
+            signer: None,
+            network,
+        }
+    }
+
+    /// Returns a reference to the inner SDK, or `NetworkNotSupported` if disconnected.
+    fn get_sdk(&self) -> Result<&Arc<breez::LiquidSdk>, BreezError> {
+        self.sdk
+            .as_ref()
+            .ok_or(BreezError::NetworkNotSupported(self.network))
+    }
+
+    /// Connect to Breez SDK using an external signer (MasterSigner)
+    pub async fn connect_with_signer(
+        cfg: BreezConfig,
+        signer: Arc<Mutex<MasterSigner>>,
+    ) -> Result<Self, BreezError> {
+        let signer_adapter = MasterSignerAdapter::new(signer.clone());
+
+        let request = breez::ConnectWithSignerRequest {
+            config: cfg.sdk_config(),
+        };
+
+        let sdk = breez::LiquidSdk::connect_with_signer(request, Box::new(signer_adapter))
+            .await
+            .map_err(|e| BreezError::Connection(e.to_string()))?;
+
+        Ok(Self {
+            sdk: Some(sdk),
+            signer: Some(signer),
+            network: cfg.network,
+        })
+    }
+
+    pub async fn info(&self) -> Result<breez::GetInfoResponse, BreezError> {
+        self.get_sdk()?
+            .get_info()
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn receive_invoice(
+        &self,
+        amount: Option<Amount>,
+        description: Option<String>,
+    ) -> Result<breez::ReceivePaymentResponse, BreezError> {
+        let sdk = self.get_sdk()?;
+        let prepare = sdk
+            .prepare_receive_payment(&breez::PrepareReceiveRequest {
+                payment_method: breez::PaymentMethod::Bolt11Invoice,
+                amount: amount.map(|a| breez::ReceiveAmount::Bitcoin {
+                    payer_amount_sat: a.to_sat(),
+                }),
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+        sdk.receive_payment(&breez::ReceivePaymentRequest {
+            prepare_response: prepare,
+            description,
+            payer_note: None,
+            description_hash: None,
+        })
+        .await
+        .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn receive_onchain(
+        &self,
+        amount_sat: Option<u64>,
+    ) -> Result<breez::ReceivePaymentResponse, BreezError> {
+        let sdk = self.get_sdk()?;
+        let prepare = sdk
+            .prepare_receive_payment(&breez::PrepareReceiveRequest {
+                payment_method: breez::PaymentMethod::BitcoinAddress,
+                amount: amount_sat.map(|sat| breez::ReceiveAmount::Bitcoin {
+                    payer_amount_sat: sat,
+                }),
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+        sdk.receive_payment(&breez::ReceivePaymentRequest {
+            prepare_response: prepare,
+            description: None,
+            payer_note: None,
+            description_hash: None,
+        })
+        .await
+        .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn receive_liquid(&self) -> Result<breez::ReceivePaymentResponse, BreezError> {
+        let sdk = self.get_sdk()?;
+        let prepare = sdk
+            .prepare_receive_payment(&breez::PrepareReceiveRequest {
+                payment_method: breez::PaymentMethod::LiquidAddress,
+                amount: None,
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+        sdk.receive_payment(&breez::ReceivePaymentRequest {
+            prepare_response: prepare,
+            description: None,
+            payer_note: None,
+            description_hash: None,
+        })
+        .await
+        .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    /// Generate a Liquid address for receiving USDt (or any Liquid asset).
+    /// `amount` is in base units (e.g. 100_000_000 = 1 USDt); pass `None` for amountless.
+    /// `precision` is the asset's decimal precision (8 for USDt).
+    pub async fn receive_usdt(
+        &self,
+        asset_id: &str,
+        amount: Option<u64>,
+        precision: u8,
+    ) -> Result<breez::ReceivePaymentResponse, BreezError> {
+        let sdk = self.get_sdk()?;
+        let payer_amount = amount
+            .map(|a| safe_base_units_to_f64(a, precision))
+            .transpose()?;
+        let prepare = sdk
+            .prepare_receive_payment(&breez::PrepareReceiveRequest {
+                payment_method: breez::PaymentMethod::LiquidAddress,
+                amount: Some(breez::ReceiveAmount::Asset {
+                    asset_id: asset_id.to_string(),
+                    payer_amount,
+                }),
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+        sdk.receive_payment(&breez::ReceivePaymentRequest {
+            prepare_response: prepare,
+            description: None,
+            payer_note: None,
+            description_hash: None,
+        })
+        .await
+        .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    /// Prepare a USDt (or any Liquid asset) send payment.
+    /// `amount` is in base units; `precision` is the asset's decimal precision (8 for USDt).
+    /// `from_asset` enables cross-asset swaps via SideSwap when it differs from `asset_id`.
+    /// Returns a `PrepareSendResponse` that must be passed to `send_payment()`.
+    /// Always requests asset fee estimation for same-asset sends so the response
+    /// contains both `fees_sat` (L-BTC) and `estimated_asset_fees` (asset).
+    /// If L-BTC fee estimation fails inside the SDK, the prepare still succeeds
+    /// as long as asset fees are available. The caller inspects the response
+    /// to decide which fee path to use.
+    pub async fn prepare_send_asset(
+        &self,
+        destination: String,
+        to_asset_id: &str,
+        amount: u64,
+        precision: u8,
+        from_asset_id: Option<&str>,
+    ) -> Result<breez::PrepareSendResponse, BreezError> {
+        let receiver_amount = safe_base_units_to_f64(amount, precision)?;
+        // Cross-asset swaps cannot use asset fees per SDK constraint.
+        // For same-asset sends, always request asset fee estimation so we get
+        // both fee options back. The user's choice is applied at send time.
+        let is_cross_asset = from_asset_id.is_some_and(|from| from != to_asset_id);
+        let estimate_asset_fees = if is_cross_asset { None } else { Some(true) };
+        self.get_sdk()?
+            .prepare_send_payment(&breez::PrepareSendRequest {
+                destination,
+                amount: Some(breez::PayAmount::Asset {
+                    to_asset: to_asset_id.to_string(),
+                    receiver_amount,
+                    estimate_asset_fees,
+                    from_asset: from_asset_id.map(|s| s.to_string()),
+                }),
+                disable_mrh: None,
+                payment_timeout_sec: None,
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn pay_invoice(
+        &self,
+        invoice: String,
+        amount_sat: Option<u64>,
+    ) -> Result<breez::SendPaymentResponse, BreezError> {
+        let sdk = self.get_sdk()?;
+        let prepare = sdk
+            .prepare_send_payment(&breez::PrepareSendRequest {
+                destination: invoice,
+                amount: amount_sat.map(|sat| breez::PayAmount::Bitcoin {
+                    receiver_amount_sat: sat,
+                }),
+                disable_mrh: None,
+                payment_timeout_sec: None,
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+        sdk.send_payment(&breez::SendPaymentRequest {
+            prepare_response: prepare,
+            payer_note: None,
+            use_asset_fees: None,
+        })
+        .await
+        .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn prepare_send_payment(
+        &self,
+        request: &breez::PrepareSendRequest,
+    ) -> Result<breez::PrepareSendResponse, BreezError> {
+        self.get_sdk()?
+            .prepare_send_payment(request)
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn prepare_pay_onchain(
+        &self,
+        request: &breez::PreparePayOnchainRequest,
+    ) -> Result<breez::PreparePayOnchainResponse, BreezError> {
+        self.get_sdk()?
+            .prepare_pay_onchain(request)
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn pay_onchain(
+        &self,
+        request: &breez::PayOnchainRequest,
+    ) -> Result<breez::SendPaymentResponse, BreezError> {
+        self.get_sdk()?
+            .pay_onchain(request)
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn send_payment(
+        &self,
+        request: &breez::SendPaymentRequest,
+    ) -> Result<breez::SendPaymentResponse, BreezError> {
+        self.get_sdk()?
+            .send_payment(request)
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn list_payments(
+        &self,
+        limit: Option<u32>,
+    ) -> Result<Vec<breez::Payment>, BreezError> {
+        self.get_sdk()?
+            .list_payments(&breez::ListPaymentsRequest {
+                filters: None,
+                states: None,
+                from_timestamp: None,
+                to_timestamp: None,
+                offset: None,
+                limit,
+                details: None,
+                sort_ascending: Some(false), // Most recent first
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn list_refundables(&self) -> Result<Vec<breez::RefundableSwap>, BreezError> {
+        let refundables = self
+            .get_sdk()?
+            .list_refundables()
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+        if !refundables.is_empty() {
+            log::info!(
+                target: "breez_swap",
+                "list_refundables: {} refundable swap(s) discovered",
+                refundables.len()
+            );
+            for r in &refundables {
+                log::info!(
+                    target: "breez_swap",
+                    "  refundable: swap_address={} amount_sat={}",
+                    truncate_addr(&r.swap_address),
+                    r.amount_sat
+                );
+            }
+        }
+        Ok(refundables)
+    }
+
+    /// Fetch the SDK's recommended Bitcoin fee rates (sat/vB).
+    /// Used as a fallback fee source when the local mempool `FeeEstimator`
+    /// is unavailable or errors.
+    pub async fn recommended_fees(&self) -> Result<breez::RecommendedFees, BreezError> {
+        let fees = self
+            .get_sdk()?
+            .recommended_fees()
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+        log::info!(
+            target: "breez_swap",
+            "recommended_fees: fastest={} half_hour={} hour={} economy={} minimum={}",
+            fees.fastest_fee,
+            fees.half_hour_fee,
+            fees.hour_fee,
+            fees.economy_fee,
+            fees.minimum_fee
+        );
+        Ok(fees)
+    }
+
+    pub async fn fetch_payment_proposed_fees(
+        &self,
+        swap_id: &str,
+    ) -> Result<breez::FetchPaymentProposedFeesResponse, BreezError> {
+        self.get_sdk()?
+            .fetch_payment_proposed_fees(&breez::FetchPaymentProposedFeesRequest {
+                swap_id: swap_id.to_string(),
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn accept_payment_proposed_fees(
+        &self,
+        response: breez::FetchPaymentProposedFeesResponse,
+    ) -> Result<(), BreezError> {
+        self.get_sdk()?
+            .accept_payment_proposed_fees(&breez::AcceptPaymentProposedFeesRequest { response })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn validate_input(&self, input: String) -> Option<InputType> {
+        self.sdk.as_ref()?.parse(&input).await.ok()
+    }
+
+    pub async fn fetch_lightning_limits(
+        &self,
+    ) -> Result<LightningPaymentLimitsResponse, BreezError> {
+        self.get_sdk()?
+            .fetch_lightning_limits()
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn fetch_onchain_limits(&self) -> Result<OnchainPaymentLimitsResponse, BreezError> {
+        let limits = self
+            .get_sdk()?
+            .fetch_onchain_limits()
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+        log::info!(
+            target: "breez_swap",
+            "fetch_onchain_limits: pair=btc-to-lbtc receive_min_sat={} receive_max_sat={}",
+            limits.receive.min_sat,
+            limits.receive.max_sat
+        );
+        Ok(limits)
+    }
+
+    /// Manually trigger wallet synchronization with the blockchain
+    /// This is useful after payments to immediately update the balance
+    pub async fn sync(&self) -> Result<(), BreezError> {
+        self.get_sdk()?
+            .sync(false)
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+    pub async fn rescan_onchain_swaps(&self) -> Result<(), BreezError> {
+        self.get_sdk()?
+            .rescan_onchain_swaps()
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn refund_onchain_tx(
+        &self,
+        refund_request: breez::RefundRequest,
+    ) -> Result<RefundResponse, BreezError> {
+        log::info!(
+            target: "breez_swap",
+            "refund_onchain_tx: submitting refund swap_address={} refund_address={} fee_rate={}",
+            truncate_addr(&refund_request.swap_address),
+            truncate_addr(&refund_request.refund_address),
+            refund_request.fee_rate_sat_per_vbyte
+        );
+        match self.get_sdk()?.refund(&refund_request).await {
+            Ok(resp) => {
+                log::info!(
+                    target: "breez_swap",
+                    "refund_onchain_tx: success refund_tx_id={}",
+                    truncate_addr(&resp.refund_tx_id)
+                );
+                Ok(resp)
+            }
+            Err(e) => {
+                log::error!(
+                    target: "breez_swap",
+                    "refund_onchain_tx: failed: {}",
+                    e
+                );
+                Err(BreezError::Sdk(e.to_string()))
+            }
+        }
+    }
+
+    pub fn liquid_signer(&self) -> Option<Arc<Mutex<MasterSigner>>> {
+        self.signer.clone()
+    }
+
+    pub fn network(&self) -> Network {
+        self.network
+    }
+
+    pub fn subscription(&self) -> iced::Subscription<breez::SdkEvent> {
+        iced::Subscription::run_with(
+            BreezSubscriptionState {
+                client: self.clone(),
+            },
+            make_breez_stream,
+        )
+    }
+}
+
+struct BreezSubscriptionState {
+    client: BreezClient,
+}
+
+impl std::hash::Hash for BreezSubscriptionState {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.client.network.hash(state);
+    }
+}
+
+fn make_breez_stream(state: &BreezSubscriptionState) -> impl Stream<Item = breez::SdkEvent> {
+    let client = state.client.clone();
+    iced::stream::channel(
+        100,
+        move |mut output: iced::futures::channel::mpsc::Sender<breez::SdkEvent>| async move {
+            let Some(sdk) = client.sdk.clone() else {
+                std::future::pending::<()>().await;
+                return;
+            };
+
+            let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+            let listener = BreezEventListener { sender };
+
+            if let Ok(id) = sdk.add_event_listener(Box::new(listener)).await {
+                while let Some(event) = receiver.recv().await {
+                    let _ = output.send(event).await;
+                }
+
+                let _ = sdk.remove_event_listener(id).await;
+            }
+
+            std::future::pending().await
+        },
+    )
+}
+
+/// Privacy-preserving log helper: keeps the first and last 6 chars of an
+/// address-like string (swap addresses, refund addresses, txids) so logs are
+/// debuggable without leaking full on-chain identifiers.
+///
+/// Thin wrapper over the shared `crate::utils::truncate_middle` so the log
+/// helper and UI rendering always agree on the boundary where a string is
+/// short enough to leave alone.
+fn truncate_addr(s: &str) -> String {
+    crate::utils::truncate_middle(s, 6, 6)
+}
+
+/// Converts `amount` base-units to an `f64` display value by dividing by `10^precision`.
+///
+/// Returns `Err(BreezError::Sdk)` if:
+/// - `amount` exceeds 2^53 (largest exactly-representable f64 integer), or
+/// - `precision` is so large that `10^precision` overflows `u64` (precision > 19).
+fn safe_base_units_to_f64(amount: u64, precision: u8) -> Result<f64, BreezError> {
+    const MAX_EXACT_F64_INT: u64 = 1u64 << 53;
+    if amount > MAX_EXACT_F64_INT {
+        return Err(BreezError::Sdk(format!(
+            "amount {} exceeds maximum exactly-representable f64 integer (2^53 = {})",
+            amount, MAX_EXACT_F64_INT,
+        )));
+    }
+    let divisor = 10_u64.checked_pow(precision as u32).ok_or_else(|| {
+        BreezError::Sdk(format!(
+            "precision {} causes 10^precision to overflow u64",
+            precision,
+        ))
+    })?;
+    Ok(amount as f64 / divisor as f64)
+}
+
+struct BreezEventListener {
+    sender: tokio::sync::mpsc::UnboundedSender<breez::SdkEvent>,
+}
+
+#[async_trait]
+impl breez::EventListener for BreezEventListener {
+    async fn on_event(&self, e: breez::SdkEvent) {
+        let _ = self.sender.send(e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_addr_short_unchanged() {
+        assert_eq!(truncate_addr("bc1qabc"), "bc1qabc");
+    }
+
+    #[test]
+    fn truncate_addr_long_middle_elided() {
+        let long = "bc1p7gznc2zpn7aq3vqd695eml450d2ls33vw65tvwd77x936jquadnsp7ff6v";
+        assert_eq!(truncate_addr(long), "bc1p7g…p7ff6v");
+    }
+
+    #[test]
+    fn truncate_addr_exactly_14_chars_unchanged() {
+        assert_eq!(truncate_addr("12345678901234"), "12345678901234");
+    }
+}

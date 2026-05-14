@@ -20,16 +20,16 @@ use coincubed::config::BitcoindRpcAuth;
 use super::super::{dashboard, message::*};
 
 use coincube_ui::{
-    component::{badge, button, card, form, separation, text::*, tooltip::tooltip},
+    component::{badge, button, card, form, separation, text::*},
     icon,
     theme::{self},
-    widget::*,
+    widget::{Button, Container, Element, ProgressBar, Row, TextInput},
 };
 
 use crate::{
     app::{
         cache::Cache,
-        menu::{Menu, VaultSubMenu},
+        menu::{HomeSettingsOption, HomeSubMenu, Menu, VaultSubMenu},
         settings::ProviderKey,
         view::vault::hw,
     },
@@ -41,47 +41,12 @@ use crate::{
     },
 };
 
-fn header<'a>(title: &'a str, msg: SettingsMessage) -> Row<'a, Message> {
-    Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(
-            Button::new(text("Settings").size(30).bold())
-                .style(theme::button::transparent)
-                .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Settings(None)))),
-        )
-        .push(icon::chevron_right().size(30))
-        .push(
-            Button::new(text(title).size(30).bold())
-                .style(theme::button::transparent)
-                .on_press(Message::Settings(msg)),
-        )
-}
-
-fn settings_section<'a>(
-    title: &'a str,
-    tool_tip: Option<&'static str>,
-    icon: coincube_ui::widget::Text<'static>,
-    msg: Message,
-) -> Container<'a, Message> {
-    let tt = tool_tip.map(tooltip);
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(badge::badge(icon))
-                .push(text(title).bold())
-                .push(tt)
-                .padding(10)
-                .spacing(20)
-                .align_y(Alignment::Center)
-                .width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .style(theme::button::transparent_border)
-        .on_press(msg),
-    )
-    .width(Length::Fill)
-    .style(theme::card::simple)
+fn header<'a>(title: &'a str, _msg: SettingsMessage) -> Row<'a, Message> {
+    // Matches the plain `h3` heading style used on the Home / Wallets
+    // page so Vault Settings sub-pages don't pick up extra button
+    // padding. The tertiary rail already surfaces the active sub-page,
+    // so no breadcrumb is rendered here.
+    Row::new().push(h3(title).bold())
 }
 
 fn export_section<'a>(
@@ -112,38 +77,20 @@ fn export_section<'a>(
     .style(theme::card::simple)
 }
 
-pub fn list<'a>(menu: &'a Menu, cache: &'a Cache, is_remote_backend: bool) -> Element<'a, Message> {
+pub fn list<'a>(
+    menu: &'a Menu,
+    cache: &'a Cache,
+    _is_remote_backend: bool,
+) -> Element<'a, Message> {
+    // Landing fallback — normally users enter via the tertiary rail and
+    // land on a specific sub-page directly (Node / Wallet / Import-Export /
+    // About), so this view shouldn't be hit in practice. Left here as a
+    // defensive fallback for Settings(None) + no inner `self.setting` state.
     let header = Button::new(text("Settings").size(30).bold())
         .style(theme::button::transparent)
-        .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Settings(None))));
-
-    let node = settings_section(
-        "Node",
-        None,
-        icon::bitcoin_icon(),
-        Message::Settings(SettingsMessage::EditBitcoindSettings),
-    );
-
-    let backend = settings_section(
-        "Backend",
-        None,
-        icon::bitcoin_icon(),
-        Message::Settings(SettingsMessage::EditRemoteBackendSettings),
-    );
-
-    let wallet = settings_section(
-        "Wallet",
-        None,
-        icon::wallet_icon(),
-        Message::Settings(SettingsMessage::EditWalletSettings),
-    );
-
-    let import_export = settings_section(
-        "Import/Export",
-        None,
-        icon::wallet_icon(),
-        Message::Settings(SettingsMessage::ImportExportSection),
-    );
+        .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Settings(Some(
+            crate::app::menu::SettingsOption::Node,
+        )))));
 
     dashboard(
         menu,
@@ -152,9 +99,7 @@ pub fn list<'a>(menu: &'a Menu, cache: &'a Cache, is_remote_backend: bool) -> El
             .spacing(20)
             .width(Length::Fill)
             .push(header)
-            .push(if !is_remote_backend { node } else { backend })
-            .push(wallet)
-            .push(import_export),
+            .push(p1_regular("Pick a settings category from the left.")),
     )
 }
 
@@ -196,6 +141,22 @@ pub fn import_export<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Messag
             "A collection of the export and import functions present in Coincube.",
         ))
         .push(Space::new().width(Length::Fill));
+
+    // Nudge to Cube → Settings → General, where the Recovery Kit card
+    // lives. Can't fire `Start(Create)` here: the wizard is only
+    // rendered inside `SettingsState::view` on the global settings
+    // panel, so starting the flow from Vault leaves it running on an
+    // unrendered panel and the state persists into the next General
+    // visit.
+    let backup_to_connect = export_section(
+        "Connect Recovery Kit",
+        "Back up your Wallet Descriptor (and Master Seed Phrase) to your Connect account. \
+         Encrypted on-device with a password you choose.",
+        icon::backup_icon(),
+        Message::Menu(Menu::Home(HomeSubMenu::Settings(
+            HomeSettingsOption::General,
+        ))),
+    );
 
     let export_encrypted_descriptor = export_section(
         "Encrypted descriptor",
@@ -254,6 +215,7 @@ pub fn import_export<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Messag
             .spacing(20)
             .push(header)
             .push(description)
+            .push(backup_to_connect)
             .push(export_encrypted_descriptor)
             .push(export_wallet)
             .push(import_wallet)
@@ -261,49 +223,6 @@ pub fn import_export<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Messag
             .push(export_labels)
             .push(export_transactions)
             .push(export_descriptor)
-            .width(Length::Fill),
-    )
-}
-
-pub fn about_section<'a>(
-    menu: &'a Menu,
-    cache: &'a Cache,
-    coincubed_version: Option<&String>,
-) -> Element<'a, Message> {
-    let header = header("About", SettingsMessage::AboutSection);
-
-    let content = card::simple(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(badge::badge(icon::tooltip_icon()))
-                    .push(text("Version").bold())
-                    .padding(10)
-                    .spacing(20)
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill),
-            )
-            .push(separation().width(Length::Fill))
-            .push(Space::new().height(Length::Fixed(10.0)))
-            .push(
-                Row::new().push(Space::new().width(Length::Fill)).push(
-                    Column::new()
-                        .push(text(format!("coincube-gui v{}", crate::VERSION)))
-                        .push(
-                            coincubed_version
-                                .map(|version| text(format!("coincubed v{}", version))),
-                        ),
-                ),
-            ),
-    );
-
-    dashboard(
-        menu,
-        cache,
-        Column::new()
-            .spacing(20)
-            .push(header)
-            .push(content)
             .width(Length::Fill),
     )
 }
@@ -1307,103 +1226,12 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ConnectLoginViewStep {
-    EnterEmail,
-    EnterOtp,
-}
-
-pub fn connect_login_panel<'a>(
-    step: &ConnectLoginViewStep,
-    email: &'a str,
-    otp: &'a str,
-    loading: bool,
-    error: Option<String>,
-) -> Element<'a, NodeSettingsMessage> {
-    let mut col = Column::new().spacing(15);
-
-    col = col.push(
-        Row::new()
-            .push(text("Sign in to COINCUBE | Connect").bold())
-            .push(Space::new().width(Length::Fill))
-            .push(
-                button::transparent(None, "Cancel")
-                    .on_press(NodeSettingsMessage::ConnectLoginCancel),
-            )
-            .align_y(Alignment::Center),
-    );
-
-    match step {
-        ConnectLoginViewStep::EnterEmail => {
-            let valid = email.contains('@') && email.contains('.') && email.len() >= 6;
-            let mut email_input = TextInput::new("your@email.com", email)
-                .on_input(NodeSettingsMessage::ConnectLoginEmailChanged)
-                .size(16)
-                .padding(12)
-                .width(Length::Fill);
-            if valid {
-                email_input = email_input.on_submit(NodeSettingsMessage::ConnectLoginRequestOtp);
-            }
-            col = col.push(
-                Column::new()
-                    .spacing(8)
-                    .push(caption("Email address"))
-                    .push(email_input),
-            );
-            let mut send_btn = button::primary(None, if loading { "Sending…" } else { "Send OTP" })
-                .padding([10, 20]);
-            if valid && !loading {
-                send_btn = send_btn.on_press(NodeSettingsMessage::ConnectLoginRequestOtp);
-            }
-            col = col.push(send_btn);
-        }
-        ConnectLoginViewStep::EnterOtp => {
-            col = col.push(
-                text(format!("A one-time code was sent to {}", email))
-                    .style(theme::text::secondary),
-            );
-            let mut otp_input = TextInput::new("6-digit code", otp)
-                .on_input(NodeSettingsMessage::ConnectLoginOtpChanged)
-                .size(16)
-                .padding(12)
-                .width(Length::Fill);
-            if otp.len() == 6 && !loading {
-                otp_input = otp_input.on_submit(NodeSettingsMessage::ConnectLoginVerifyOtp);
-            }
-            col = col.push(
-                Column::new()
-                    .spacing(8)
-                    .push(caption("One-time code"))
-                    .push(otp_input),
-            );
-            let mut verify_btn = button::primary(
-                None,
-                if loading {
-                    "Verifying…"
-                } else {
-                    "Verify & Switch"
-                },
-            )
-            .padding([10, 20]);
-            if otp.len() == 6 && !loading {
-                verify_btn = verify_btn.on_press(NodeSettingsMessage::ConnectLoginVerifyOtp);
-            }
-            col = col.push(verify_btn);
-        }
-    }
-
-    if let Some(e) = error {
-        col = col.push(text(e).style(theme::text::warning));
-    }
-
-    card::simple(Container::new(col).padding(15).width(Length::Fill)).into()
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn node_backend_status<'a>(
     active_backend: &'static str,
     active_icon: coincube_ui::widget::Text<'static>,
     pending_progress: Option<f64>,
+    pending_ibd: Option<bool>,
     pending_bitcoind_log: Option<&'a str>,
     can_switch_to_connect: bool,
     can_switch_to_bitcoind: bool,
@@ -1411,6 +1239,10 @@ pub fn node_backend_status<'a>(
     processing: bool,
     warning: Option<String>,
 ) -> Element<'a, NodeSettingsMessage> {
+    // Once the node reports it has left initial block download, treat it as
+    // ready even if `verificationprogress` still pins at 1.0 — otherwise the
+    // syncing copy/button label keep saying "syncing" at 100%.
+    let still_syncing = pending_ibd != Some(false);
     let mut col = Column::new().spacing(15);
 
     col = col.push(
@@ -1430,14 +1262,23 @@ pub fn node_backend_status<'a>(
         .width(Length::Fill),
     );
 
-    if let Some(progress) = pending_progress {
-        let desc = if progress > 0.98 {
-            "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance."
+    if let Some(progress) = pending_progress.filter(|_| still_syncing) {
+        let pace = if progress > 0.98 {
+            "This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance."
         } else if progress > 0.9 {
-            "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance."
+            "This will take a while, depending on the last time it was done, your internet connection, and your computer performance."
         } else {
-            "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster."
+            "A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster."
         };
+        // Mirror the wording from `internal_node_setup_panel` so the user
+        // sees the same promise from both entry points: a freshly installed
+        // managed node, and a pending node we previously set aside when
+        // toggling to Connect.
+        let desc = format!(
+            "Bitcoin Core is running and syncing in the background. \
+             COINCUBE will automatically switch to this node once syncing is complete. {}",
+            pace,
+        );
 
         let mut sync_col = Column::new()
             .spacing(8)
@@ -1471,13 +1312,16 @@ pub fn node_backend_status<'a>(
             btn.on_press(NodeSettingsMessage::SwitchToConnect)
         });
     }
-    if can_switch_to_bitcoind {
-        let label = if pending_progress.is_some() {
-            "Switch to local node (still syncing)"
-        } else {
-            "Switch to local node"
-        };
-        let btn = button::secondary(None, label).padding([8, 15]);
+    // While the pending local node is still in IBD the auto-switch on the
+    // App side will flip the backend the moment it completes; surfacing a
+    // "Switch to local node" button here just produces a "still syncing"
+    // warning and adds no value. When IBD status is still unknown (the
+    // first sync probe hasn't returned yet) we keep the button visible —
+    // the defensive guard in `SwitchToBitcoind` will warn cleanly if the
+    // user clicks before the probe lands.
+    let show_switch_to_bitcoind_btn = can_switch_to_bitcoind && pending_ibd != Some(true);
+    if show_switch_to_bitcoind_btn {
+        let btn = button::secondary(None, "Switch to local node").padding([8, 15]);
         btn_row = btn_row.push(if processing {
             btn
         } else {
@@ -1492,7 +1336,7 @@ pub fn node_backend_status<'a>(
             btn.on_press(NodeSettingsMessage::SetupLocalNode)
         });
     }
-    if can_switch_to_connect || can_switch_to_bitcoind || can_setup_local_node {
+    if can_switch_to_connect || show_switch_to_bitcoind_btn || can_setup_local_node {
         col = col.push(btn_row);
     }
 

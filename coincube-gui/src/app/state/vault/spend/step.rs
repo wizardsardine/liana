@@ -801,7 +801,7 @@ impl Step for DefineSpend {
                             } else {
                                 // Either it's set to some other recipient or not at all.
                                 self.send_max_to_recipient = Some(i);
-                            };
+                            }
                         }
                     }
                     _ => {}
@@ -866,7 +866,7 @@ impl Step for DefineSpend {
                 }
             },
             _ => {}
-        };
+        }
         Task::none()
     }
 
@@ -1111,7 +1111,7 @@ impl Recipient {
                 self.label.value = label;
             }
             _ => {}
-        };
+        }
     }
 
     fn view(
@@ -1359,7 +1359,7 @@ impl Step for SelectRecoveryPath {
                 }
             }
             _ => {}
-        };
+        }
         Task::none()
     }
 

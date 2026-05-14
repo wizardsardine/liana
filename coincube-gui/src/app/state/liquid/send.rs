@@ -2,22 +2,32 @@ use std::convert::TryInto;
 use std::sync::Arc;
 use std::time::Duration;
 
-use breez_sdk_liquid::model::PaymentDetails;
-use breez_sdk_liquid::prelude::Payment;
 use breez_sdk_liquid::InputType;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{component::form, widget::*};
 use iced::Task;
 
-use crate::app::breez::assets::{
-    asset_kind_for_id, lbtc_asset_id, parse_asset_to_minor_units, usdt_asset_id, AssetKind,
-    USDT_PRECISION,
+use super::sideshift_send::SideshiftSendFlow;
+
+/// Map SDK prepare errors to user-friendly messages.
+fn friendly_prepare_error(e: &impl std::fmt::Display) -> String {
+    let msg = e.to_string();
+    if msg.contains("not enough funds") || msg.contains("InsufficientFunds") {
+        "Minimum spendable amount not met. Try adding more funds.".to_string()
+    } else {
+        format!("Failed to prepare payment: {}", msg)
+    }
+}
+use crate::app::breez_liquid::assets::{
+    asset_kind_for_id, format_usdt_display, lbtc_asset_id, parse_asset_to_minor_units,
+    usdt_asset_id, AssetKind, USDT_PRECISION,
 };
-use crate::app::menu::{LiquidSubMenu, Menu, UsdtSubMenu};
+use crate::app::cache::Cache;
+use crate::app::menu::{LiquidSubMenu, Menu};
 use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::state::{redirect, State};
 use crate::app::view::SendPopupMessage;
-use crate::app::{breez::BreezClient, cache::Cache};
+use crate::app::wallets::{DomainPayment, DomainPaymentDetails, LiquidBackend};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::utils::format_time_ago;
@@ -26,6 +36,94 @@ use crate::utils::format_time_ago;
 pub enum SendAsset {
     Lbtc,
     Usdt,
+}
+
+/// Network/rail for the receiving side of a send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReceiveNetwork {
+    /// BTC via Lightning Network
+    Lightning,
+    /// L-BTC or USDt on Liquid
+    Liquid,
+    /// BTC on-chain
+    Bitcoin,
+    /// USDt on Ethereum (SideShift)
+    Ethereum,
+    /// USDt on Tron (SideShift)
+    Tron,
+    /// USDt on Binance Smart Chain (SideShift)
+    Binance,
+    /// USDt on Solana (SideShift)
+    Solana,
+}
+
+impl ReceiveNetwork {
+    /// Display name for the network badge.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Lightning => "Lightning",
+            Self::Liquid => "Liquid",
+            Self::Bitcoin => "Bitcoin",
+            Self::Ethereum => "Ethereum",
+            Self::Tron => "Tron",
+            Self::Binance => "Binance",
+            Self::Solana => "Solana",
+        }
+    }
+
+    /// Whether this network requires SideShift.
+    pub fn is_sideshift(&self) -> bool {
+        matches!(
+            self,
+            Self::Ethereum | Self::Tron | Self::Binance | Self::Solana
+        )
+    }
+
+    /// Convert to SideshiftNetwork for the SideShift API.
+    pub fn to_sideshift_network(&self) -> Option<crate::services::sideshift::SideshiftNetwork> {
+        match self {
+            Self::Ethereum => Some(crate::services::sideshift::SideshiftNetwork::Ethereum),
+            Self::Tron => Some(crate::services::sideshift::SideshiftNetwork::Tron),
+            Self::Binance => Some(crate::services::sideshift::SideshiftNetwork::Binance),
+            Self::Solana => Some(crate::services::sideshift::SideshiftNetwork::Solana),
+            _ => None,
+        }
+    }
+
+    /// Valid "They Receive" networks for a given "You Send" asset.
+    pub fn options_for_send_asset(
+        send_asset: SendAsset,
+        cross_asset_supported: bool,
+    ) -> Vec<(SendAsset, ReceiveNetwork)> {
+        match send_asset {
+            SendAsset::Lbtc => {
+                let mut opts = vec![
+                    (SendAsset::Lbtc, ReceiveNetwork::Lightning),
+                    (SendAsset::Lbtc, ReceiveNetwork::Liquid),
+                    (SendAsset::Lbtc, ReceiveNetwork::Bitcoin),
+                ];
+                if cross_asset_supported {
+                    opts.push((SendAsset::Usdt, ReceiveNetwork::Liquid));
+                }
+                opts
+            }
+            SendAsset::Usdt => {
+                let mut opts = vec![(SendAsset::Usdt, ReceiveNetwork::Liquid)];
+                if cross_asset_supported {
+                    opts.push((SendAsset::Lbtc, ReceiveNetwork::Lightning));
+                    opts.push((SendAsset::Lbtc, ReceiveNetwork::Liquid));
+                    opts.push((SendAsset::Lbtc, ReceiveNetwork::Bitcoin));
+                }
+                opts.extend([
+                    (SendAsset::Usdt, ReceiveNetwork::Ethereum),
+                    (SendAsset::Usdt, ReceiveNetwork::Tron),
+                    (SendAsset::Usdt, ReceiveNetwork::Binance),
+                    (SendAsset::Usdt, ReceiveNetwork::Solana),
+                ]);
+                opts
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -48,10 +146,10 @@ pub enum LiquidSendFlowState {
     Sent,
 }
 
-/// LiquidSend manages the Lightning Network send interface
+/// LiquidSend manages the send interface for all Liquid wallet assets.
 pub struct LiquidSend {
-    breez_client: Arc<BreezClient>,
-    usdt_only: bool,
+    breez_client: Arc<LiquidBackend>,
+    sideshift_flow: Option<SideshiftSendFlow>,
     btc_balance: Amount,
     usdt_balance: u64,
     amount: Amount,
@@ -62,9 +160,20 @@ pub struct LiquidSend {
     /// The asset the user is paying with. Equals `to_asset` for same-asset sends;
     /// differs for cross-asset swaps (via SideSwap).
     from_asset: SendAsset,
+    /// The wallet screen the user entered from. Set once when the send screen is
+    /// opened and never mutated by cross-asset toggles. Used for guards and resets
+    /// that need to know the user's original intent (replaces the old `usdt_only`
+    /// invariant).
+    home_asset: SendAsset,
+    /// Network the recipient receives on (Lightning, Liquid, Bitcoin, Ethereum, etc.)
+    receive_network: ReceiveNetwork,
+    /// Whether the "You Send" picker modal is open.
+    send_picker_open: bool,
+    /// Whether the "They Receive" picker modal is open.
+    receive_picker_open: bool,
     recent_transaction: Vec<view::liquid::RecentTransaction>,
-    recent_payments: Vec<Payment>,
-    selected_payment: Option<Payment>,
+    recent_payments: Vec<DomainPayment>,
+    selected_payment: Option<DomainPayment>,
     input: form::Value<String>,
     input_type: Option<InputType>,
     lightning_limits: Option<(u64, u64)>, // (min_sats, max_sats)
@@ -78,13 +187,26 @@ pub struct LiquidSend {
     prepare_response: Option<breez_sdk_liquid::prelude::PrepareSendResponse>,
     prepare_onchain_response: Option<breez_sdk_liquid::prelude::PreparePayOnchainResponse>,
     is_sending: bool,
+    /// User preference for paying fees in the asset (USDt) vs L-BTC.
+    /// `true` = pay fees in USDt, `false` = pay fees in L-BTC.
+    /// Only relevant for same-asset USDt sends.
+    pay_fees_with_asset: bool,
+    /// Whether a SendMax prepare call is in flight.
+    max_loading: bool,
+    /// Whether the current amount was set via "Send Max" for L-BTC (use Drain).
+    is_drain: bool,
+    /// Quote and image handle for the "Transaction complete" screen.
+    sent_celebration_context: String,
+    sent_amount_display: String,
+    sent_quote: coincube_ui::component::quote_display::Quote,
+    sent_image_handle: iced::widget::image::Handle,
 }
 
 impl LiquidSend {
-    pub fn new(breez_client: Arc<BreezClient>) -> Self {
+    pub fn new(breez_client: Arc<LiquidBackend>) -> Self {
         Self {
             breez_client,
-            usdt_only: false,
+            sideshift_flow: None,
             btc_balance: Amount::from_sat(0),
             usdt_balance: 0,
             amount: Amount::from_sat(0),
@@ -92,6 +214,10 @@ impl LiquidSend {
             usdt_amount_input: form::Value::default(),
             to_asset: SendAsset::Lbtc,
             from_asset: SendAsset::Lbtc,
+            home_asset: SendAsset::Lbtc,
+            receive_network: ReceiveNetwork::Lightning,
+            send_picker_open: false,
+            receive_picker_open: false,
             recent_transaction: Vec::new(),
             recent_payments: Vec::new(),
             selected_payment: None,
@@ -107,21 +233,72 @@ impl LiquidSend {
             prepare_response: None,
             prepare_onchain_response: None,
             is_sending: false,
+            pay_fees_with_asset: true,
+            max_loading: false,
+            is_drain: false,
+            sent_celebration_context: "liquid-send".to_string(),
+            sent_amount_display: String::new(),
+            sent_quote: coincube_ui::component::quote_display::random_quote("liquid-send"),
+            sent_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
+                "liquid-send",
+            ),
         }
     }
 
-    pub fn new_usdt_only(breez_client: Arc<BreezClient>) -> Self {
-        Self {
-            usdt_only: true,
-            to_asset: SendAsset::Usdt,
-            from_asset: SendAsset::Usdt,
-            ..Self::new(breez_client)
-        }
+    pub fn usdt_balance(&self) -> u64 {
+        self.usdt_balance
+    }
+
+    pub fn btc_balance(&self) -> Amount {
+        self.btc_balance
+    }
+
+    pub fn pay_fees_with_asset(&self) -> bool {
+        self.pay_fees_with_asset
+    }
+
+    pub fn max_loading(&self) -> bool {
+        self.max_loading
+    }
+
+    pub fn send_asset(&self) -> SendAsset {
+        self.from_asset
+    }
+
+    pub fn receive_asset(&self) -> SendAsset {
+        self.to_asset
+    }
+
+    pub fn receive_network(&self) -> ReceiveNetwork {
+        self.receive_network
+    }
+
+    pub fn send_picker_open(&self) -> bool {
+        self.send_picker_open
+    }
+
+    pub fn receive_picker_open(&self) -> bool {
+        self.receive_picker_open
+    }
+
+    pub fn cross_asset_supported(&self) -> bool {
+        matches!(
+            self.breez_client.network(),
+            breez_sdk_liquid::bitcoin::Network::Bitcoin
+        )
+    }
+
+    pub fn breez_client(&self) -> &Arc<LiquidBackend> {
+        &self.breez_client
+    }
+
+    pub fn recent_transactions(&self) -> &[view::liquid::RecentTransaction] {
+        &self.recent_transaction
     }
 
     fn load_balance(&self) -> Task<Message> {
         let breez_client = self.breez_client.clone();
-        let usdt_only = self.usdt_only;
+        let usdt_only = self.home_asset == SendAsset::Usdt;
 
         Task::perform(
             async move {
@@ -161,12 +338,13 @@ impl LiquidSend {
                 };
 
                 let all_payments = payments.unwrap_or_default();
-                let payments: Vec<_> = all_payments
+                let payments: Vec<DomainPayment> = all_payments
                     .into_iter()
                     .filter(|p| {
                         let is_usdt = matches!(
                             &p.details,
-                            PaymentDetails::Liquid { asset_id, .. } if asset_id == usdt_id
+                            DomainPaymentDetails::LiquidAsset { asset_id, .. }
+                                if asset_id == usdt_id
                         );
                         if usdt_only {
                             is_usdt
@@ -200,6 +378,18 @@ impl LiquidSend {
 
 impl State for LiquidSend {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
+        // Delegate to SideShift flow when active
+        if let Some(sideshift) = &self.sideshift_flow {
+            let asset_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
+            return sideshift.view(
+                menu,
+                cache,
+                self.usdt_balance,
+                &self.recent_transaction,
+                asset_id,
+            );
+        }
+
         let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
 
         if let Some(payment) = &self.selected_payment {
@@ -211,6 +401,7 @@ impl State for LiquidSend {
                     fiat_converter,
                     cache.bitcoin_unit,
                     usdt_asset_id(self.breez_client.network()).unwrap_or(""),
+                    &[],
                 ),
             )
         } else {
@@ -227,6 +418,9 @@ impl State for LiquidSend {
                 usdt_amount_input: &self.usdt_amount_input,
                 to_asset: self.to_asset,
                 from_asset: self.from_asset,
+                receive_network: self.receive_network,
+                send_picker_open: self.send_picker_open,
+                receive_picker_open: self.receive_picker_open,
                 uri_asset: self.uri_asset,
                 usdt_asset_id: usdt_asset_id(self.breez_client.network()).unwrap_or(""),
                 comment,
@@ -247,6 +441,12 @@ impl State for LiquidSend {
                     self.breez_client.network(),
                     breez_sdk_liquid::bitcoin::Network::Bitcoin
                 ),
+                pay_fees_with_asset: self.pay_fees_with_asset,
+                max_loading: self.max_loading,
+                sent_celebration_context: &self.sent_celebration_context,
+                sent_amount_display: &self.sent_amount_display,
+                sent_quote: &self.sent_quote,
+                sent_image_handle: &self.sent_image_handle,
             })
         }
     }
@@ -257,15 +457,58 @@ impl State for LiquidSend {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        // Handle SideShift send messages when flow is active
+        if let Message::View(view::Message::SideshiftSend(ref msg)) = message {
+            if let Some(sideshift) = &mut self.sideshift_flow {
+                // Intercept Reset/Back to return to native send
+                if matches!(
+                    msg,
+                    view::SideshiftSendMessage::Reset | view::SideshiftSendMessage::Back
+                ) && matches!(
+                    sideshift.phase(),
+                    super::sideshift_send::SendPhase::Sent
+                        | super::sideshift_send::SendPhase::Failed
+                        | super::sideshift_send::SendPhase::AddressInput
+                ) {
+                    self.sideshift_flow = None;
+                    return self.load_balance();
+                }
+                return sideshift.update(msg, &self.breez_client, self.usdt_balance);
+            }
+            return Task::none();
+        }
+
+        // When SideShift flow is active, only forward DataLoaded for balance updates
+        if self.sideshift_flow.is_some() {
+            if let Message::View(view::Message::LiquidSend(view::LiquidSendMessage::DataLoaded {
+                ..
+            })) = &message
+            {
+                // Fall through to handle DataLoaded below
+            } else {
+                return Task::none();
+            }
+        }
+
         if let Message::View(view::Message::LiquidSend(ref msg)) = message {
             match msg {
                 view::LiquidSendMessage::PresetAsset(asset) => {
-                    if *asset == SendAsset::Lbtc && self.usdt_only {
-                        // usdt_only invariant: ignore attempts to switch to BTC
-                    } else if *asset != self.to_asset {
-                        self.to_asset = *asset;
-                        self.amount = Amount::ZERO;
-                    }
+                    // Set both "You Send" and "They Receive" to the same asset
+                    self.from_asset = *asset;
+                    self.to_asset = *asset;
+                    self.home_asset = *asset;
+                    self.receive_network = match asset {
+                        SendAsset::Lbtc => ReceiveNetwork::Lightning,
+                        SendAsset::Usdt => ReceiveNetwork::Liquid,
+                    };
+                    self.amount = Amount::ZERO;
+                    self.input = form::Value::default();
+                    self.input_type = None;
+                    self.uri_asset = None;
+                    self.error = None;
+                    self.sideshift_flow = None;
+                    self.is_drain = false;
+                    return self.load_balance();
                 }
                 view::LiquidSendMessage::InputEdited(value) => {
                     self.input.value = value.clone();
@@ -335,6 +578,37 @@ impl State for LiquidSend {
                     return validate_input;
                 }
                 view::LiquidSendMessage::Send => {
+                    // Route to SideShift for cross-chain sends
+                    if self.receive_network.is_sideshift() {
+                        let flow = SideshiftSendFlow::new();
+                        // Pre-fill the address from the input and auto-select the network
+                        let addr = self.input.value.trim().to_string();
+                        if !addr.is_empty() {
+                            // Dispatch address edit + network selection + Next
+                            self.sideshift_flow = Some(flow);
+                            let addr_msg = Message::View(view::Message::SideshiftSend(
+                                view::SideshiftSendMessage::RecipientAddressEdited(addr),
+                            ));
+                            let network = self.receive_network.to_sideshift_network();
+                            let mut tasks = vec![Task::done(addr_msg)];
+                            if let Some(net) = network {
+                                tasks.push(Task::done(Message::View(
+                                    view::Message::SideshiftSend(
+                                        view::SideshiftSendMessage::DisambiguateNetwork(net),
+                                    ),
+                                )));
+                            }
+                            tasks.push(Task::done(Message::View(view::Message::SideshiftSend(
+                                view::SideshiftSendMessage::Next,
+                            ))));
+                            return Task::batch(tasks);
+                        } else {
+                            // No address yet — just open SideShift flow
+                            self.sideshift_flow = Some(flow);
+                            return Task::none();
+                        }
+                    }
+
                     let description = if let Some(input_type) = &self.input_type {
                         match input_type {
                             InputType::BitcoinAddress { address } => {
@@ -344,6 +618,7 @@ impl State for LiquidSend {
                                 )
                             }
                             InputType::Bolt11 { invoice } => {
+                                self.is_drain = false;
                                 if let Some(amt) = invoice.amount_msat {
                                     if let Ok(amount) = Amount::from_str_in(
                                         &amt.to_string(),
@@ -406,6 +681,7 @@ impl State for LiquidSend {
                             }
 
                             InputType::LiquidAddress { address } => {
+                                self.is_drain = false;
                                 if self.to_asset == SendAsset::Usdt {
                                     if let Some(amount) = address.amount {
                                         let amount_str = format!("{}", amount);
@@ -488,23 +764,13 @@ impl State for LiquidSend {
                     };
                 }
                 view::LiquidSendMessage::History => {
-                    let target = if self.usdt_only {
-                        Menu::Usdt(UsdtSubMenu::Transactions(None))
-                    } else {
-                        Menu::Liquid(LiquidSubMenu::Transactions(None))
-                    };
-                    return redirect(target);
+                    return redirect(Menu::Liquid(LiquidSubMenu::Transactions(None)));
                 }
                 view::LiquidSendMessage::SelectTransaction(idx) => {
                     if let Some(payment) = self.recent_payments.get(*idx).cloned() {
                         self.selected_payment = Some(payment.clone());
-                        let target = if self.usdt_only {
-                            Menu::Usdt(UsdtSubMenu::Transactions(None))
-                        } else {
-                            Menu::Liquid(LiquidSubMenu::Transactions(None))
-                        };
                         return Task::batch(vec![
-                            redirect(target),
+                            redirect(Menu::Liquid(LiquidSubMenu::Transactions(None))),
                             Task::done(Message::View(view::Message::PreselectPayment(payment))),
                         ]);
                     }
@@ -521,24 +787,26 @@ impl State for LiquidSend {
                     if !recent_payment.is_empty() {
                         let fiat_converter: Option<view::FiatAmountConverter> =
                             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+                        let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
                         let txns = recent_payment
                             .iter()
                             .map(|payment| {
                                 let status = payment.status;
                                 let time_ago = format_time_ago(payment.timestamp.into());
-                                let is_usdt_payment = matches!(
-                                    &payment.details,
-                                    PaymentDetails::Liquid { asset_id, .. }
-                                        if asset_id == usdt_asset_id(self.breez_client.network()).unwrap_or("")
-                                );
-                                let amount = if is_usdt_payment {
-                                    if let PaymentDetails::Liquid { asset_info: Some(ref ai), .. } = &payment.details {
-                                        Amount::from_sat((ai.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64)
-                                    } else {
-                                        Amount::from_sat(payment.amount_sat)
+                                let usdt_amount_minor = match &payment.details {
+                                    DomainPaymentDetails::LiquidAsset {
+                                        asset_id,
+                                        asset_info,
+                                        ..
+                                    } if !usdt_id.is_empty() && asset_id == usdt_id => {
+                                        asset_info.as_ref().map(|i| i.amount_minor)
                                     }
-                                } else {
-                                    Amount::from_sat(payment.amount_sat)
+                                    _ => None,
+                                };
+                                let is_usdt_payment = usdt_amount_minor.is_some();
+                                let amount = match usdt_amount_minor {
+                                    Some(minor) => Amount::from_sat(minor),
+                                    None => Amount::from_sat(payment.amount_sat),
                                 };
                                 let fiat_amount = if is_usdt_payment {
                                     None
@@ -548,36 +816,42 @@ impl State for LiquidSend {
                                         .map(|c: &view::FiatAmountConverter| c.convert(amount))
                                 };
 
-                                let desc: &str = match &payment.details {
-                                    PaymentDetails::Lightning { payer_note, description, .. } => payer_note
-                                        .as_ref()
-                                        .filter(|s| !s.is_empty())
-                                        .unwrap_or(description),
-                                    PaymentDetails::Liquid { payer_note, description, .. } => {
-                                        let fallback = if is_usdt_payment && description.is_empty() {
+                                // Description: prefer payer_note, then fall back to the
+                                // invoice description. For empty USDt Liquid payments, show
+                                // "USDt Transfer" as a friendly default.
+                                let desc: String = match &payment.details {
+                                    DomainPaymentDetails::LiquidAsset {
+                                        payer_note,
+                                        description,
+                                        ..
+                                    } if is_usdt_payment => {
+                                        let fallback = if description.is_empty() {
                                             "USDt Transfer"
                                         } else {
                                             description.as_str()
                                         };
                                         payer_note
-                                            .as_ref()
+                                            .as_deref()
                                             .filter(|s| !s.is_empty())
-                                            .map(|s| s.as_str())
                                             .unwrap_or(fallback)
+                                            .to_owned()
                                     }
-                                    PaymentDetails::Bitcoin { description, .. } => description,
+                                    _ => payment.details.description().to_owned(),
                                 };
 
-                                let is_incoming = matches!(
-                                    payment.payment_type,
-                                    breez_sdk_liquid::prelude::PaymentType::Receive
-                                );
+                                let is_incoming = payment.is_incoming();
 
                                 let fees_sat = Amount::from_sat(payment.fees_sat);
 
                                 let details = payment.details.clone();
+                                let usdt_display = if is_usdt_payment {
+                                    Some(format!("{} USDt", format_usdt_display(amount.to_sat())))
+                                } else {
+                                    None
+                                };
+
                                 view::liquid::RecentTransaction {
-                                    description: desc.to_owned(),
+                                    description: desc,
                                     time_ago,
                                     amount,
                                     fiat_amount,
@@ -585,6 +859,7 @@ impl State for LiquidSend {
                                     status,
                                     details,
                                     fees_sat,
+                                    usdt_display,
                                 }
                             })
                             .collect();
@@ -640,13 +915,15 @@ impl State for LiquidSend {
                                         network,
                                         breez_sdk_liquid::bitcoin::Network::Bitcoin
                                     );
-                                    if self.usdt_only
+                                    if self.home_asset == SendAsset::Usdt
                                         && target_asset == SendAsset::Lbtc
                                         && cross_asset_supported
                                     {
                                         self.to_asset = SendAsset::Lbtc;
                                         self.from_asset = SendAsset::Usdt;
-                                    } else if self.usdt_only && target_asset != SendAsset::Usdt {
+                                    } else if self.home_asset == SendAsset::Usdt
+                                        && target_asset != SendAsset::Usdt
+                                    {
                                         // Non-mainnet: cross-asset not available, keep USDt
                                         self.to_asset = SendAsset::Usdt;
                                         self.from_asset = self.to_asset;
@@ -660,7 +937,7 @@ impl State for LiquidSend {
                                     // clearing a previously set URI lock. Otherwise preserve
                                     // the user's current asset selection.
                                     if self.uri_asset.is_some() {
-                                        self.to_asset = if self.usdt_only {
+                                        self.to_asset = if self.home_asset == SendAsset::Usdt {
                                             SendAsset::Usdt
                                         } else {
                                             SendAsset::Lbtc
@@ -674,7 +951,7 @@ impl State for LiquidSend {
                             // No asset_id in URI — only reset to_asset if we're
                             // clearing a previously set URI lock.
                             if self.uri_asset.is_some() {
-                                self.to_asset = if self.usdt_only {
+                                self.to_asset = if self.home_asset == SendAsset::Usdt {
                                     SendAsset::Usdt
                                 } else {
                                     SendAsset::Lbtc
@@ -711,7 +988,7 @@ impl State for LiquidSend {
                     } else {
                         // Not a LiquidAddress — clear URI asset state and restore default
                         self.uri_asset = None;
-                        self.to_asset = if self.usdt_only {
+                        self.to_asset = if self.home_asset == SendAsset::Usdt {
                             SendAsset::Usdt
                         } else {
                             SendAsset::Lbtc
@@ -724,6 +1001,7 @@ impl State for LiquidSend {
                         modal: Modal::AmountInput,
                     } = &mut self.flow_state
                     {
+                        self.is_drain = false;
                         self.amount_input.value = v.clone();
 
                         if v.is_empty() {
@@ -955,6 +1233,7 @@ impl State for LiquidSend {
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatDone) => {
+                    self.is_drain = false;
                     let is_cross_asset = self.from_asset != self.to_asset;
                     if let LiquidSendFlowState::Main {
                         modal:
@@ -1045,6 +1324,7 @@ impl State for LiquidSend {
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::Done) => {
+                    self.error = None;
                     if let LiquidSendFlowState::Main {
                         modal: Modal::AmountInput,
                     } = &self.flow_state
@@ -1120,9 +1400,8 @@ impl State for LiquidSend {
                                             ))
                                         }
                                         Err(e) => Message::View(view::Message::LiquidSend(
-                                            view::LiquidSendMessage::Error(format!(
-                                                "Failed to prepare payment: {}",
-                                                e
+                                            view::LiquidSendMessage::Error(friendly_prepare_error(
+                                                &e,
                                             )),
                                         )),
                                     },
@@ -1175,7 +1454,7 @@ impl State for LiquidSend {
                                                 destination,
                                                 &to_asset_id,
                                                 amount_sat,
-                                                crate::app::breez::assets::LBTC_PRECISION,
+                                                crate::app::breez_liquid::assets::LBTC_PRECISION,
                                                 Some(&from_asset_id),
                                             )
                                             .await
@@ -1201,18 +1480,22 @@ impl State for LiquidSend {
                             let breez_client = self.breez_client.clone();
                             let breez_clone = self.breez_client.clone();
                             let amount_sat = self.amount.to_sat();
+                            let is_drain = self.is_drain;
 
                             let lightning_send = Task::perform(
                                 async move {
+                                    let pay_amount = if is_drain {
+                                        breez_sdk_liquid::prelude::PayAmount::Drain
+                                    } else {
+                                        breez_sdk_liquid::prelude::PayAmount::Bitcoin {
+                                            receiver_amount_sat: amount_sat,
+                                        }
+                                    };
                                     breez_client
                                         .prepare_send_payment(
                                             &breez_sdk_liquid::prelude::PrepareSendRequest {
                                                 destination,
-                                                amount: Some(
-                                                    breez_sdk_liquid::prelude::PayAmount::Bitcoin {
-                                                        receiver_amount_sat: amount_sat,
-                                                    },
-                                                ),
+                                                amount: Some(pay_amount),
                                                 disable_mrh: None,
                                                 payment_timeout_sec: None,
                                             },
@@ -1238,13 +1521,17 @@ impl State for LiquidSend {
 
                             let onchain_send = Task::perform(
                                 async move {
+                                    let pay_amount = if is_drain {
+                                        breez_sdk_liquid::prelude::PayAmount::Drain
+                                    } else {
+                                        breez_sdk_liquid::prelude::PayAmount::Bitcoin {
+                                            receiver_amount_sat: amount_sat,
+                                        }
+                                    };
                                     breez_clone
                                         .prepare_pay_onchain(
                                             &breez_sdk_liquid::prelude::PreparePayOnchainRequest {
-                                                amount:
-                                                    breez_sdk_liquid::prelude::PayAmount::Bitcoin {
-                                                        receiver_amount_sat: amount_sat,
-                                                    },
+                                                amount: pay_amount,
                                                 fee_rate_sat_per_vbyte: None,
                                             },
                                         )
@@ -1276,6 +1563,19 @@ impl State for LiquidSend {
                     }
                 }
                 view::LiquidSendMessage::PrepareResponseReceived(prepare_response) => {
+                    // If the preferred fee method is unavailable, fall back to the
+                    // other one automatically.
+                    if !self.pay_fees_with_asset
+                        && prepare_response.fees_sat.is_none()
+                        && prepare_response.estimated_asset_fees.is_some()
+                    {
+                        self.pay_fees_with_asset = true;
+                    } else if self.pay_fees_with_asset
+                        && prepare_response.estimated_asset_fees.is_none()
+                        && prepare_response.fees_sat.is_some()
+                    {
+                        self.pay_fees_with_asset = false;
+                    }
                     self.prepare_response = Some(prepare_response.clone());
                     self.flow_state = LiquidSendFlowState::FinalCheck;
                 }
@@ -1303,7 +1603,9 @@ impl State for LiquidSend {
                                 // Already in cross-asset mode — toggle back to same-asset.
                                 // On usdt_only screen: if to_asset was forced to Lbtc by URI,
                                 // we can't go back to same-asset Lbtc send — block the toggle.
-                                if self.usdt_only && self.to_asset != SendAsset::Usdt {
+                                if self.home_asset == SendAsset::Usdt
+                                    && self.to_asset != SendAsset::Usdt
+                                {
                                     // Can't disable cross-asset on usdt_only screen when URI
                                     // requires a non-USDt asset — ignore toggle
                                 } else {
@@ -1360,14 +1662,220 @@ impl State for LiquidSend {
                                 SendAsset::Lbtc => SendAsset::Usdt,
                                 SendAsset::Usdt => SendAsset::Lbtc,
                             };
-                            if !(next == SendAsset::Lbtc && self.usdt_only) {
-                                self.to_asset = next;
-                                self.from_asset = self.to_asset;
-                                self.amount = Amount::ZERO;
-                                self.usdt_amount_input = form::Value::default();
-                                self.amount_input = form::Value::default();
+                            self.to_asset = next;
+                            self.from_asset = self.to_asset;
+                            self.amount = Amount::ZERO;
+                            self.usdt_amount_input = form::Value::default();
+                            self.amount_input = form::Value::default();
+                            self.is_drain = false;
+                        }
+                    }
+                }
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::ToggleFeeAsset) => {
+                    if let LiquidSendFlowState::Main {
+                        modal: Modal::AmountInput,
+                    } = &self.flow_state
+                    {
+                        self.pay_fees_with_asset = !self.pay_fees_with_asset;
+                        self.error = None;
+                    }
+                }
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::SendMax) => {
+                    if let LiquidSendFlowState::Main {
+                        modal: Modal::AmountInput,
+                    } = &self.flow_state
+                    {
+                        self.error = None;
+                        if self.from_asset != self.to_asset {
+                            // Cross-asset swap: max depends on a SideSwap quote
+                            // which we don't have yet. Skip SendMax.
+                            self.error = Some(
+                                "Max send is not available for cross-asset swaps. Please enter an amount manually."
+                                    .to_string(),
+                            );
+                        } else if self.to_asset == SendAsset::Usdt {
+                            if !self.pay_fees_with_asset {
+                                // Fees paid in L-BTC — full USDt balance can be sent
+                                let display = format_usdt_display(self.usdt_balance);
+                                self.usdt_amount_input.value = display;
+                                self.usdt_amount_input.valid = true;
+                                self.usdt_amount_input.warning = None;
+                            } else if let Some(InputType::LiquidAddress { address }) =
+                                &self.input_type
+                            {
+                                // Fees paid in USDt — prepare with a small probe amount
+                                // to learn the asset fee, then subtract it from balance.
+                                let destination = address.address.clone();
+                                let network = self.breez_client.network();
+                                if let Some(to_asset_id) = usdt_asset_id(network) {
+                                    let breez_client = self.breez_client.clone();
+                                    let to_asset_id = to_asset_id.to_string();
+                                    // Use a small probe amount (0.01 USDt = 1_000_000 base units)
+                                    // just to discover the fee.
+                                    let probe_amount = 1_000_000_u64;
+                                    self.max_loading = true;
+                                    return Task::perform(
+                                        async move {
+                                            breez_client
+                                                .prepare_send_asset(
+                                                    destination,
+                                                    &to_asset_id,
+                                                    probe_amount,
+                                                    USDT_PRECISION,
+                                                    None,
+                                                )
+                                                .await
+                                                .map_err(|e| e.to_string())
+                                        },
+                                        |result| {
+                                            Message::View(view::Message::LiquidSend(
+                                                view::LiquidSendMessage::SendMaxPrepared(result),
+                                            ))
+                                        },
+                                    );
+                                }
+                            }
+                        } else if let Some(input_type) = &self.input_type {
+                            // L-BTC send: use Drain to let SDK calculate max minus fees
+                            if let InputType::BitcoinAddress { .. } = input_type {
+                                // On-chain sends use prepare_pay_onchain (different swap path)
+                                let breez_client = self.breez_client.clone();
+                                let btc_balance = self.btc_balance;
+                                self.max_loading = true;
+                                return Task::perform(
+                                    async move {
+                                        let onchain_resp = breez_client
+                                            .prepare_pay_onchain(
+                                                &breez_sdk_liquid::prelude::PreparePayOnchainRequest {
+                                                    amount: breez_sdk_liquid::prelude::PayAmount::Drain,
+                                                    fee_rate_sat_per_vbyte: None,
+                                                },
+                                            )
+                                            .await
+                                            .map_err(|e| e.to_string())?;
+                                        // Calculate max sendable: balance - total fees
+                                        let max_sat = btc_balance
+                                            .to_sat()
+                                            .saturating_sub(onchain_resp.total_fees_sat);
+                                        Ok::<u64, String>(max_sat)
+                                    },
+                                    |result| match result {
+                                        Ok(max_sat) => Message::View(view::Message::LiquidSend(
+                                            view::LiquidSendMessage::SendMaxOnChainResult(max_sat),
+                                        )),
+                                        Err(e) => Message::View(view::Message::LiquidSend(
+                                            view::LiquidSendMessage::Error(format!(
+                                                "Failed to estimate max: {e}"
+                                            )),
+                                        )),
+                                    },
+                                );
+                            }
+
+                            let destination = match input_type {
+                                InputType::Bolt11 { invoice } => invoice.bolt11.clone(),
+                                InputType::Bolt12Offer { offer, .. } => offer.offer.clone(),
+                                InputType::LiquidAddress { address } => address.address.clone(),
+                                _ => return Task::none(),
+                            };
+                            let breez_client = self.breez_client.clone();
+                            self.max_loading = true;
+                            return Task::perform(
+                                async move {
+                                    breez_client
+                                        .prepare_send_payment(
+                                            &breez_sdk_liquid::prelude::PrepareSendRequest {
+                                                destination,
+                                                amount: Some(
+                                                    breez_sdk_liquid::prelude::PayAmount::Drain,
+                                                ),
+                                                disable_mrh: None,
+                                                payment_timeout_sec: None,
+                                            },
+                                        )
+                                        .await
+                                        .map_err(|e| e.to_string())
+                                },
+                                |result| {
+                                    Message::View(view::Message::LiquidSend(
+                                        view::LiquidSendMessage::SendMaxPrepared(result),
+                                    ))
+                                },
+                            );
+                        }
+                    }
+                }
+                view::LiquidSendMessage::SendMaxPrepared(result) => {
+                    self.max_loading = false;
+                    match result {
+                        Ok(prepare_response) => {
+                            if self.to_asset == SendAsset::Usdt {
+                                // USDt with asset fees: subtract fee from balance
+                                if let Some(asset_fee) = prepare_response.estimated_asset_fees {
+                                    let fee_base =
+                                        (asset_fee * 10_u64.pow(USDT_PRECISION as u32) as f64)
+                                            .ceil() as u64;
+                                    let max_amount = self.usdt_balance.saturating_sub(fee_base);
+                                    if max_amount == 0 {
+                                        self.error =
+                                            Some("Balance too low to cover fees".to_string());
+                                    } else {
+                                        let display = format_usdt_display(max_amount);
+                                        self.usdt_amount_input.value = display;
+                                        self.usdt_amount_input.valid = true;
+                                        self.usdt_amount_input.warning = None;
+                                    }
+                                } else {
+                                    // No asset fee — use full balance
+                                    let display = format_usdt_display(self.usdt_balance);
+                                    self.usdt_amount_input.value = display;
+                                    self.usdt_amount_input.valid = true;
+                                    self.usdt_amount_input.warning = None;
+                                }
+                            } else {
+                                // L-BTC drain: SDK returns the max sendable amount
+                                // via fees_sat; calculate balance - fees
+                                let fees = prepare_response.fees_sat.unwrap_or(0);
+                                let max_sat = self.btc_balance.to_sat().saturating_sub(fees);
+                                if max_sat == 0 {
+                                    self.error = Some("Balance too low to cover fees".to_string());
+                                } else {
+                                    let max_amount = Amount::from_sat(max_sat);
+                                    self.amount = max_amount;
+                                    self.amount_input.value =
+                                        if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                            max_amount.to_btc().to_string()
+                                        } else {
+                                            max_sat.to_string()
+                                        };
+                                    self.amount_input.valid = true;
+                                    self.amount_input.warning = None;
+                                    self.is_drain = true;
+                                }
                             }
                         }
+                        Err(e) => {
+                            self.error = Some(format!("Failed to estimate max: {}", e));
+                        }
+                    }
+                }
+                view::LiquidSendMessage::SendMaxOnChainResult(max_sat) => {
+                    self.max_loading = false;
+                    let max_sat = *max_sat;
+                    if max_sat == 0 {
+                        self.error = Some("Balance too low to cover fees".to_string());
+                    } else {
+                        let max_amount = Amount::from_sat(max_sat);
+                        self.amount = max_amount;
+                        self.amount_input.value =
+                            if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                max_amount.to_btc().to_string()
+                            } else {
+                                max_sat.to_string()
+                            };
+                        self.amount_input.valid = true;
+                        self.amount_input.warning = None;
+                        self.is_drain = true;
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::UsdtAmountEdited(v)) => {
@@ -1408,12 +1916,13 @@ impl State for LiquidSend {
                     self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
                     self.error = None;
                     self.amount = Amount::ZERO;
+                    self.is_drain = false;
                     self.lightning_limits = None;
                     self.description = None;
                     self.comment = None;
                     self.amount_input = form::Value::default();
                     self.usdt_amount_input = form::Value::default();
-                    self.to_asset = if self.usdt_only {
+                    self.to_asset = if self.home_asset == SendAsset::Usdt {
                         SendAsset::Usdt
                     } else {
                         SendAsset::Lbtc
@@ -1435,12 +1944,14 @@ impl State for LiquidSend {
                             let breez_client = self.breez_client.clone();
                             let comment = self.comment.clone();
                             // Cross-asset swaps cannot use asset fees per SDK constraint.
-                            // Only same-asset USDt sends can pay fees in USDt.
+                            // For same-asset USDt sends, respect the user's fee preference.
                             let is_cross_asset = self.from_asset != self.to_asset;
                             let use_asset_fees = if is_cross_asset {
                                 false
+                            } else if matches!(self.to_asset, SendAsset::Usdt) {
+                                self.pay_fees_with_asset
                             } else {
-                                matches!(self.to_asset, SendAsset::Usdt)
+                                false
                             };
 
                             return Task::perform(
@@ -1511,6 +2022,37 @@ impl State for LiquidSend {
                     self.flow_state = LiquidSendFlowState::Sent;
                     self.prepare_response = None;
                     self.is_sending = false;
+                    self.is_drain = false;
+                    // Compute amount display for celebration screen.
+                    {
+                        use coincube_ui::component::amount::DisplayAmount;
+                        self.sent_amount_display = if self.to_asset == SendAsset::Usdt
+                            && !self.usdt_amount_input.value.trim().is_empty()
+                        {
+                            format!("{} USDt", self.usdt_amount_input.value.trim())
+                        } else {
+                            self.amount
+                                .to_formatted_string_with_unit(cache.bitcoin_unit)
+                        };
+                    }
+                    // Fresh quote for the success screen — pick the
+                    // context based on the send method/asset. USDt is
+                    // checked first so the "note" pose wins whenever
+                    // USDt is involved, matching the receive-side
+                    // priority in state/liquid/receive.rs.
+                    let context = if self.to_asset == SendAsset::Usdt {
+                        "note-send"
+                    } else if self.receive_network == ReceiveNetwork::Lightning {
+                        "lightning-send"
+                    } else if self.receive_network == ReceiveNetwork::Bitcoin {
+                        "bitcoin-send"
+                    } else {
+                        "liquid-send"
+                    };
+                    self.sent_celebration_context = context.to_string();
+                    self.sent_quote = coincube_ui::component::quote_display::random_quote(context);
+                    self.sent_image_handle =
+                        coincube_ui::component::quote_display::image_handle_for_context(context);
                     let breez_client = self.breez_client.clone();
                     return Task::perform(async move { breez_client.sync().await }, |result| {
                         match result {
@@ -1531,7 +2073,7 @@ impl State for LiquidSend {
                     self.amount = Amount::ZERO;
                     self.amount_input = form::Value::default();
                     self.usdt_amount_input = form::Value::default();
-                    self.to_asset = if self.usdt_only {
+                    self.to_asset = if self.home_asset == SendAsset::Usdt {
                         SendAsset::Usdt
                     } else {
                         SendAsset::Lbtc
@@ -1544,6 +2086,7 @@ impl State for LiquidSend {
                     self.lightning_limits = None;
                     self.prepare_response = None;
                     self.is_sending = false;
+                    self.is_drain = false;
                     self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
                 }
                 view::LiquidSendMessage::LightningLimitsFetched { min_sat, max_sat } => {
@@ -1561,6 +2104,60 @@ impl State for LiquidSend {
                 view::LiquidSendMessage::RefreshRequested => {
                     return self.load_balance();
                 }
+                view::LiquidSendMessage::OpenSendPicker => {
+                    self.send_picker_open = true;
+                    self.receive_picker_open = false;
+                    return Task::none();
+                }
+                view::LiquidSendMessage::OpenReceivePicker => {
+                    self.receive_picker_open = true;
+                    self.send_picker_open = false;
+                    return Task::none();
+                }
+                view::LiquidSendMessage::ClosePicker => {
+                    self.send_picker_open = false;
+                    self.receive_picker_open = false;
+                    return Task::none();
+                }
+                view::LiquidSendMessage::SetSendAsset(asset) => {
+                    self.send_picker_open = false;
+                    if self.from_asset != *asset {
+                        self.from_asset = *asset;
+                        self.to_asset = *asset;
+                        self.home_asset = *asset;
+                        // Reset receive network to default for the new asset
+                        self.receive_network = match asset {
+                            SendAsset::Lbtc => ReceiveNetwork::Lightning,
+                            SendAsset::Usdt => ReceiveNetwork::Liquid,
+                        };
+                        // Reset input state
+                        self.input = form::Value::default();
+                        self.input_type = None;
+                        self.uri_asset = None;
+                        self.error = None;
+                        self.sideshift_flow = None;
+                        return self.load_balance();
+                    }
+                    return Task::none();
+                }
+                view::LiquidSendMessage::SetReceiveTarget(asset, network) => {
+                    self.receive_picker_open = false;
+                    self.to_asset = *asset;
+                    self.receive_network = *network;
+                    // If cross-asset, set from_asset differently
+                    if *asset != self.from_asset {
+                        // Cross-asset swap: from_asset stays, to_asset changes
+                    } else {
+                        self.from_asset = *asset;
+                    }
+                    // Reset input state for new target
+                    self.input = form::Value::default();
+                    self.input_type = None;
+                    self.uri_asset = None;
+                    self.error = None;
+                    self.sideshift_flow = None;
+                    return self.load_balance();
+                }
             }
         }
         if let Message::View(view::Message::Close) | Message::View(view::Message::Reload) = message
@@ -1571,6 +2168,9 @@ impl State for LiquidSend {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
+        if let Some(sideshift) = &self.sideshift_flow {
+            return sideshift.subscription();
+        }
         if self.is_sending {
             iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick)
         } else {
@@ -1584,6 +2184,7 @@ impl State for LiquidSend {
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.selected_payment = None;
+        self.sideshift_flow = None;
         self.load_balance()
     }
 }

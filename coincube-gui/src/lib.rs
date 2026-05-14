@@ -5,6 +5,7 @@ pub mod delete;
 pub mod dir;
 pub mod download;
 pub mod export;
+pub mod feature_flags;
 pub mod gui;
 pub mod help;
 pub mod hw;

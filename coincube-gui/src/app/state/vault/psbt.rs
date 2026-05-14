@@ -262,9 +262,23 @@ impl PsbtState {
             }
             Message::BroadcastModal(res) => match res {
                 Ok(conflicting_txids) => {
+                    use coincube_ui::component::amount::DisplayAmount;
+                    let amount_display = self
+                        .tx
+                        .spend_amount
+                        .to_formatted_string_with_unit(cache.bitcoin_unit);
                     self.modal = Some(PsbtModal::Broadcast(BroadcastModal {
                         conflicting_txids,
-                        ..Default::default()
+                        broadcast: false,
+                        error: None,
+                        sent_quote: coincube_ui::component::quote_display::random_quote(
+                            "bitcoin-send",
+                        ),
+                        sent_image_handle:
+                            coincube_ui::component::quote_display::image_handle_for_context(
+                                "bitcoin-send",
+                            ),
+                        spend_amount_display: amount_display,
                     }));
                 }
                 Err(e) => {
@@ -286,7 +300,7 @@ impl PsbtState {
                     return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
                 }
             }
-        };
+        }
         Task::none()
     }
 
@@ -364,12 +378,16 @@ impl Modal for SaveModal {
     }
 }
 
-#[derive(Default)]
 pub struct BroadcastModal {
     broadcast: bool,
     error: Option<Error>,
     /// IDs of any directly conflicting transactions.
     conflicting_txids: HashSet<Txid>,
+    /// Quote and image handle for the celebration screen.
+    sent_quote: coincube_ui::component::quote_display::Quote,
+    sent_image_handle: iced::widget::image::Handle,
+    /// Formatted spend amount for the celebration display.
+    spend_amount_display: String,
 }
 
 impl Modal for BroadcastModal {
@@ -412,7 +430,13 @@ impl Modal for BroadcastModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
             content,
-            view::vault::psbt::broadcast_action(&self.conflicting_txids, self.broadcast),
+            view::vault::psbt::broadcast_action(
+                &self.conflicting_txids,
+                self.broadcast,
+                &self.spend_amount_display,
+                &self.sent_quote,
+                &self.sent_image_handle,
+            ),
         )
         .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
         .into()
@@ -727,9 +751,12 @@ impl Modal for SignModal {
                     );
                 }
             }
-            Message::View(view::Message::Spend(view::SpendTxMessage::SelectHotSigner)) => {
+            Message::View(view::Message::Spend(view::SpendTxMessage::SelectMasterSigner)) => {
+                if let Some(fingerprint) = self.wallet.signer.as_ref().map(|s| s.fingerprint()) {
+                    self.signing.insert(fingerprint);
+                }
                 return Task::perform(
-                    sign_psbt_with_hot_signer(self.wallet.clone(), tx.psbt.clone()),
+                    sign_psbt_with_master_signer(self.wallet.clone(), tx.psbt.clone()),
                     |(fg, res)| Message::Signed(fg, res),
                 );
             }
@@ -850,7 +877,7 @@ impl Modal for SignModal {
                 }
             },
             _ => {}
-        };
+        }
 
         // Use global toast overlay instead of local toast
         Task::none()
@@ -914,20 +941,22 @@ fn merge_signatures(psbt: &mut Psbt, signed_psbt: &Psbt) {
     }
 }
 
-async fn sign_psbt_with_hot_signer(
+async fn sign_psbt_with_master_signer(
     wallet: Arc<Wallet>,
     psbt: Psbt,
 ) -> (Fingerprint, Result<Psbt, Error>) {
     if let Some(signer) = &wallet.signer {
         let res = signer
             .sign_psbt(psbt)
-            .map_err(|e| WalletError::HotSigner(format!("Hot signer failed to sign psbt: {}", e)))
+            .map_err(|e| {
+                WalletError::MasterSigner(format!("Master signer failed to sign psbt: {}", e))
+            })
             .map_err(|e| e.into());
         (signer.fingerprint(), res)
     } else {
         (
             Fingerprint::default(),
-            Err(WalletError::HotSigner("Hot signer not loaded".to_string()).into()),
+            Err(WalletError::MasterSigner("Master signer not loaded".to_string()).into()),
         )
     }
 }

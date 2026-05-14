@@ -1,20 +1,44 @@
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::Arc;
+use std::time::Instant;
 
-use breez_sdk_liquid::model::{PaymentDetails, RefundRequest};
-use breez_sdk_liquid::prelude::{Payment, RefundableSwap};
+use breez_sdk_liquid::model::RefundRequest;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::component::form;
-use coincube_ui::widget::*;
-use iced::Task;
+use coincube_ui::component::quote_display::{self, Quote};
+use coincube_ui::widget::{Column, Element};
+use iced::{widget::image, Task};
 
-use crate::app::breez::assets::usdt_asset_id;
+use crate::app::breez_liquid::assets::usdt_asset_id;
 use crate::app::view::FeeratePriority;
-use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
+use crate::app::wallets::{
+    DomainPayment, DomainPaymentDetails, DomainPaymentDirection, DomainRefundableSwap,
+    LiquidBackend,
+};
+use crate::app::{cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::export::{ImportExportMessage, ImportExportState};
 use crate::services::feeestimation::fee_estimation::FeeEstimator;
+
+/// A refund that the user has submitted but for which we have not yet seen the
+/// SDK drop the swap from `list_refundables()`. While an entry exists, the
+/// Transactions view keeps rendering the refundable so the user gets a visible
+/// "Refund broadcasting…" / "Refund broadcast · txid …" confirmation instead
+/// of the card vanishing silently on success.
+#[derive(Debug, Clone)]
+pub struct InFlightRefund {
+    pub refund_txid: Option<String>,
+    pub submitted_at: Instant,
+}
+
+/// How long an optimistic in-flight refund (no txid yet) is preserved across
+/// `RefundablesLoaded` reconciliation even when the SDK no longer returns the
+/// swap. Covers the race where a background poll completes between our
+/// `refund_onchain_tx` broadcast and the corresponding `RefundCompleted`
+/// message.
+const IN_FLIGHT_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
 
 #[derive(Debug)]
 enum LiquidTransactionsModal {
@@ -23,11 +47,11 @@ enum LiquidTransactionsModal {
 }
 
 pub struct LiquidTransactions {
-    breez_client: Arc<BreezClient>,
-    payments: Vec<Payment>,
-    refundables: Vec<RefundableSwap>,
-    selected_payment: Option<Payment>,
-    selected_refundable: Option<RefundableSwap>,
+    breez_client: Arc<LiquidBackend>,
+    payments: Vec<DomainPayment>,
+    refundables: Vec<DomainRefundableSwap>,
+    selected_payment: Option<DomainPayment>,
+    selected_refundable: Option<DomainRefundableSwap>,
     loading: bool,
     balance: Amount,
     modal: LiquidTransactionsModal,
@@ -35,11 +59,37 @@ pub struct LiquidTransactions {
     refund_feerate: form::Value<String>,
     fee_estimator: FeeEstimator,
     refunding: bool,
-    usdt_only: bool,
+    asset_filter: AssetFilter,
+    /// While a fee-priority button is awaiting its async rate fetch, this
+    /// holds which one was pressed so the view can show a "…" spinner on it.
+    pending_fee_priority: Option<FeeratePriority>,
+    /// Refunds submitted by the user that have not yet been dropped from the
+    /// SDK's refundables list. Keyed by swap_address. See `InFlightRefund`.
+    in_flight_refunds: HashMap<String, InFlightRefund>,
+    /// Monotonically-increasing token issued each time the user taps
+    /// "Use Vault address". The task that calls `daemon.get_new_address()`
+    /// captures the token and replies with `VaultRefundAddressResolved`;
+    /// if `pending_vault_refund_id` has since moved on (because the user
+    /// typed their own address or clicked the button again), the late
+    /// response is discarded. Without this, a slow daemon could overwrite
+    /// the user's freshly-typed input with a stale Vault address.
+    next_vault_refund_id: u64,
+    pending_vault_refund_id: Option<u64>,
+    empty_state_quote: Quote,
+    empty_state_image_handle: image::Handle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetFilter {
+    All,
+    LbtcOnly,
+    UsdtOnly,
 }
 
 impl LiquidTransactions {
-    pub fn new(breez_client: Arc<BreezClient>) -> Self {
+    pub fn new(breez_client: Arc<LiquidBackend>) -> Self {
+        let empty_state_quote = quote_display::random_quote("empty-wallet");
+        let empty_state_image_handle = quote_display::image_handle_for_context("empty-wallet");
         Self {
             breez_client,
             payments: Vec::new(),
@@ -53,49 +103,86 @@ impl LiquidTransactions {
             refund_feerate: form::Value::default(),
             fee_estimator: FeeEstimator::new(),
             refunding: false,
-            usdt_only: false,
+            asset_filter: AssetFilter::All,
+            pending_fee_priority: None,
+            in_flight_refunds: HashMap::new(),
+            next_vault_refund_id: 0,
+            pending_vault_refund_id: None,
+            empty_state_quote,
+            empty_state_image_handle,
         }
     }
 
-    pub fn new_usdt_only(breez_client: Arc<BreezClient>) -> Self {
-        Self {
-            usdt_only: true,
-            ..Self::new(breez_client)
+    fn reconcile_in_flight(&mut self, mut refundables: Vec<DomainRefundableSwap>) {
+        let returned: std::collections::HashSet<String> =
+            refundables.iter().map(|r| r.swap_address.clone()).collect();
+        let now = Instant::now();
+        self.in_flight_refunds.retain(|addr, entry| {
+            if returned.contains(addr) {
+                return true;
+            }
+            // Swap is no longer listed by the SDK. Normally that means the
+            // refund broadcast propagated and the swap can be dropped. But
+            // an optimistic entry (refund_txid == None) that's still within
+            // the grace window may simply be waiting for `RefundCompleted`
+            // to land — don't erase it yet, or the "Refund broadcasting…"
+            // banner would disappear before the user sees it.
+            entry.refund_txid.is_none() && now.duration_since(entry.submitted_at) < IN_FLIGHT_GRACE
+        });
+        // Carry forward any locally-known RefundableSwap whose address still
+        // has a grace-window in_flight entry but that the SDK dropped. The
+        // view iterates `self.refundables` to render cards and only uses
+        // `in_flight_refunds` for extra metadata, so without this the
+        // "Refund broadcasting…" card would vanish the instant the SDK
+        // stopped listing the swap, defeating the grace window.
+        for prev in std::mem::take(&mut self.refundables) {
+            if !returned.contains(&prev.swap_address)
+                && self.in_flight_refunds.contains_key(&prev.swap_address)
+            {
+                refundables.push(prev);
+            }
         }
+        self.refundables = refundables;
     }
 
-    pub fn preselect(&mut self, payment: Payment) {
+    #[cfg(test)]
+    pub fn test_reconcile_in_flight(&mut self, refundables: Vec<DomainRefundableSwap>) {
+        self.reconcile_in_flight(refundables);
+    }
+
+    pub fn asset_filter(&self) -> AssetFilter {
+        self.asset_filter
+    }
+
+    pub fn preselect(&mut self, payment: DomainPayment) {
         self.selected_payment = Some(payment);
     }
 
     fn calculate_balance(&self) -> Amount {
-        use breez_sdk_liquid::prelude::PaymentType;
         let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
         let mut balance: i64 = 0;
 
         for payment in &self.payments {
-            let is_usdt = matches!(
-                &payment.details,
-                PaymentDetails::Liquid { asset_id, .. } if !usdt_id.is_empty() && asset_id == usdt_id
-            );
+            let is_usdt = is_usdt_payment(&payment.details, usdt_id);
 
-            if self.usdt_only {
-                // USDt view: only count USDt payments (amount_sat is in asset base units)
-                if !is_usdt {
-                    continue;
+            match self.asset_filter {
+                AssetFilter::UsdtOnly if !is_usdt => continue,
+                AssetFilter::LbtcOnly if is_usdt => continue,
+                AssetFilter::All => {
+                    // For All mode, skip USDt from balance calc since
+                    // USDt amount_sat is in asset base units, not sats
+                    if is_usdt {
+                        continue;
+                    }
                 }
-            } else {
-                // L-BTC view: skip USDt payments whose amount_sat is asset base units, not sats
-                if is_usdt {
-                    continue;
-                }
+                _ => {}
             }
 
-            match payment.payment_type {
-                PaymentType::Receive => {
+            match payment.direction {
+                DomainPaymentDirection::Receive => {
                     balance += payment.amount_sat as i64;
                 }
-                PaymentType::Send => {
+                DomainPaymentDirection::Send => {
                     balance -= payment.amount_sat as i64;
                 }
             }
@@ -105,9 +192,23 @@ impl LiquidTransactions {
     }
 }
 
+/// `true` if the payment carries the configured USDt asset id.
+fn is_usdt_payment(details: &DomainPaymentDetails, usdt_id: &str) -> bool {
+    matches!(
+        details,
+        DomainPaymentDetails::LiquidAsset { asset_id, .. }
+            if !usdt_id.is_empty() && asset_id == usdt_id
+    )
+}
+
 impl State for LiquidTransactions {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+        let refundable_swap_addresses: Vec<String> = self
+            .refundables
+            .iter()
+            .map(|r| r.swap_address.clone())
+            .collect();
         let content = if let Some(payment) = &self.selected_payment {
             view::dashboard(
                 menu,
@@ -117,6 +218,7 @@ impl State for LiquidTransactions {
                     fiat_converter,
                     cache.bitcoin_unit,
                     usdt_asset_id(self.breez_client.network()).unwrap_or(""),
+                    &refundable_swap_addresses,
                 ),
             )
         } else if let Some(refundable) = &self.selected_refundable {
@@ -130,6 +232,9 @@ impl State for LiquidTransactions {
                     &self.refund_address,
                     &self.refund_feerate,
                     self.refunding,
+                    self.pending_fee_priority,
+                    self.in_flight_refunds.get(&refundable.swap_address),
+                    cache.has_vault,
                 ),
             )
         } else {
@@ -139,11 +244,16 @@ impl State for LiquidTransactions {
                 view::liquid::liquid_transactions_view(
                     &self.payments,
                     &self.refundables,
+                    &self.in_flight_refunds,
                     &self.balance,
                     fiat_converter,
                     self.loading,
                     cache.bitcoin_unit,
                     usdt_asset_id(self.breez_client.network()).unwrap_or(""),
+                    self.asset_filter,
+                    cache.show_direction_badges,
+                    &self.empty_state_quote,
+                    &self.empty_state_image_handle,
                 ),
             )
         };
@@ -152,7 +262,7 @@ impl State for LiquidTransactions {
             LiquidTransactionsModal::None => content,
             LiquidTransactionsModal::Export { state } => {
                 use crate::app::view::Message as ViewMessage;
-                use coincube_ui::component::text::*;
+                use coincube_ui::component::text::{text, Text};
                 use coincube_ui::widget::modal::Modal;
 
                 let modal_content = match state {
@@ -178,7 +288,7 @@ impl State for LiquidTransactions {
 
     fn update(
         &mut self,
-        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
@@ -186,28 +296,16 @@ impl State for LiquidTransactions {
             Message::PaymentsLoaded(Ok(payments)) => {
                 self.loading = false;
                 let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
-                self.payments = if self.usdt_only {
-                    payments
+                self.payments = match self.asset_filter {
+                    AssetFilter::UsdtOnly => payments
                         .into_iter()
-                        .filter(|p| {
-                            matches!(
-                                &p.details,
-                                PaymentDetails::Liquid { asset_id, .. }
-                                    if asset_id == usdt_id
-                            )
-                        })
-                        .collect()
-                } else {
-                    payments
+                        .filter(|p| is_usdt_payment(&p.details, usdt_id))
+                        .collect(),
+                    AssetFilter::LbtcOnly => payments
                         .into_iter()
-                        .filter(|p| {
-                            !matches!(
-                                &p.details,
-                                PaymentDetails::Liquid { asset_id, .. }
-                                    if asset_id == usdt_id
-                            )
-                        })
-                        .collect()
+                        .filter(|p| !is_usdt_payment(&p.details, usdt_id))
+                        .collect(),
+                    AssetFilter::All => payments,
                 };
                 self.balance = self.calculate_balance();
                 Task::none()
@@ -217,7 +315,12 @@ impl State for LiquidTransactions {
                 Task::done(Message::View(view::Message::ShowError(e.to_string())))
             }
             Message::RefundablesLoaded(Ok(refundables)) => {
-                self.refundables = refundables;
+                // Reconcile in-flight refunds with the freshly-fetched list.
+                // A swap leaves `list_refundables` once the SDK observes our
+                // refund tx, so anything tracked locally that is no longer in
+                // the SDK's list and has an observed broadcast (or has
+                // exceeded the grace window) can be dropped.
+                self.reconcile_in_flight(refundables);
                 Task::none()
             }
             Message::RefundablesLoaded(Err(e)) => {
@@ -233,6 +336,12 @@ impl State for LiquidTransactions {
                 self.selected_payment = None;
                 self.refund_address = form::Value::default();
                 self.refund_feerate = form::Value::default();
+                self.pending_fee_priority = None;
+                // Drop any in-flight Vault address lookup from a previous
+                // refundable. Without this, switching from Refundable A to
+                // Refundable B while A's `get_new_address()` is still in
+                // flight would silently drop A's address into B's form.
+                self.pending_vault_refund_id = None;
                 Task::none()
             }
             Message::View(view::Message::Reload) => self.reload(None, None),
@@ -242,10 +351,23 @@ impl State for LiquidTransactions {
                 self.modal = LiquidTransactionsModal::None;
                 self.refund_address = form::Value::default();
                 self.refund_feerate = form::Value::default();
+                self.pending_fee_priority = None;
+                // Drop any in-flight Vault address lookup — the refundable
+                // detail screen is being torn down, so a late response must
+                // not reappear in a subsequently-opened refundable.
+                self.pending_vault_refund_id = None;
                 Task::none()
             }
             Message::View(view::Message::PreselectPayment(payment)) => {
                 self.selected_payment = Some(payment);
+                Task::none()
+            }
+            Message::View(view::Message::SetAssetFilter(filter)) => {
+                if self.asset_filter != filter {
+                    self.asset_filter = filter;
+                    // Reload with the new filter
+                    return self.reload(None, None);
+                }
                 Task::none()
             }
             Message::View(view::Message::ImportExport(ImportExportMessage::Open)) => {
@@ -272,7 +394,7 @@ impl State for LiquidTransactions {
                 self.modal = LiquidTransactionsModal::Export {
                     state: ImportExportState::Started,
                 };
-                let breez_client = self.breez_client.clone();
+                let breez_client = self.breez_client.client().clone();
                 Task::perform(
                     async move {
                         crate::export::export_liquid_payments(
@@ -315,6 +437,14 @@ impl State for LiquidTransactions {
                 Task::none()
             }
             Message::View(view::Message::RefundAddressEdited(address)) => {
+                // Any incoming edit — whether typed by the user or delivered
+                // from a matching `VaultRefundAddressResolved` — means the
+                // address input now holds a value we consider authoritative.
+                // Clearing the pending Vault request id here causes any
+                // still-in-flight `get_new_address()` call to be discarded
+                // when it eventually lands, so a slow daemon can't clobber
+                // what the user is actively typing.
+                self.pending_vault_refund_id = None;
                 self.refund_address.value = address;
                 let breez_client = self.breez_client.clone();
                 let addr = self.refund_address.value.clone();
@@ -344,74 +474,213 @@ impl State for LiquidTransactions {
                 self.refund_feerate.value = feerate;
                 self.refund_feerate.valid = true;
                 self.refund_feerate.warning = None;
+                // Any incoming edit — whether from the user or from a
+                // priority-button async resolution — clears the spinner so
+                // the pressed button stops showing "…".
+                self.pending_fee_priority = None;
                 Task::none()
             }
+            Message::View(view::Message::RefundFeeratePriorityFailed(err)) => {
+                // Async fee fetch failed — clear the spinner so the pressed
+                // button becomes interactive again, then surface the error.
+                // ShowError is intercepted by App::update into a toast and
+                // never reaches here, so we must clear the spinner ourselves
+                // before forwarding.
+                self.pending_fee_priority = None;
+                Task::done(Message::View(view::Message::ShowError(err)))
+            }
             Message::View(view::Message::RefundFeeratePrioritySelected(priority)) => {
+                // Record which button was pressed so the view can render a
+                // "…" spinner while the async fee fetch is in flight.
+                self.pending_fee_priority = Some(priority);
                 let fee_estimator = self.fee_estimator.clone();
+                let breez_client = self.breez_client.clone();
                 Task::perform(
                     async move {
-                        let rate: Option<usize> = match priority {
+                        // Primary source: local mempool FeeEstimator. Falls
+                        // through to the SDK's `recommended_fees()` if the
+                        // local estimator errors so we can still populate a
+                        // sensible rate when the user's network is flaky.
+                        let local: Option<usize> = match priority {
                             FeeratePriority::Low => {
-                                let result = fee_estimator.get_low_priority_rate().await;
-                                result.ok()
+                                fee_estimator.get_low_priority_rate().await.ok()
                             }
                             FeeratePriority::Medium => {
-                                let result = fee_estimator.get_mid_priority_rate().await;
-                                result.ok()
+                                fee_estimator.get_mid_priority_rate().await.ok()
                             }
                             FeeratePriority::High => {
-                                let result = fee_estimator.get_high_priority_rate().await;
-                                result.ok()
+                                fee_estimator.get_high_priority_rate().await.ok()
                             }
                         };
-                        rate
-                    },
-                    move |rate: Option<usize>| {
-                        if let Some(rate) = rate {
-                            Message::View(view::Message::RefundFeerateEdited(rate.to_string()))
-                        } else {
-                            Message::View(view::Message::ShowError(
-                                "Failed to fetch fee rate".to_string(),
-                            ))
+                        if let Some(rate) = local {
+                            return Some(rate);
+                        }
+                        match breez_client.recommended_fees().await {
+                            Ok(fees) => Some(match priority {
+                                FeeratePriority::Low => fees.economy_fee as usize,
+                                FeeratePriority::Medium => fees.half_hour_fee as usize,
+                                FeeratePriority::High => fees.fastest_fee as usize,
+                            }),
+                            Err(_) => None,
                         }
                     },
+                    move |rate: Option<usize>| {
+                        // Tag the result with the priority that kicked off
+                        // the fetch. The handler in the update loop will
+                        // discard it if `pending_fee_priority` has moved on.
+                        Message::View(view::Message::RefundFeeratePriorityResolved(priority, rate))
+                    },
                 )
+            }
+            Message::View(view::Message::RefundFeeratePriorityResolved(priority, rate)) => {
+                // Ignore stale responses: if the user typed a custom feerate
+                // (clearing `pending_fee_priority`) or clicked a different
+                // priority button, this in-flight result must not clobber
+                // their newer input.
+                if self.pending_fee_priority != Some(priority) {
+                    return Task::none();
+                }
+                match rate {
+                    Some(rate) => Task::done(Message::View(view::Message::RefundFeerateEdited(
+                        rate.to_string(),
+                    ))),
+                    None => Task::done(Message::View(view::Message::RefundFeeratePriorityFailed(
+                        "Failed to fetch fee rate".to_string(),
+                    ))),
+                }
+            }
+            Message::View(view::Message::GenerateVaultRefundAddress) => {
+                // Reuse the Vault wallet's existing fresh-address derivation
+                // (`daemon.get_new_address()`). This intentionally does NOT
+                // duplicate descriptor logic — the Vault remains the single
+                // source of truth for native BTC addresses in this app.
+                let Some(daemon) = daemon else {
+                    return Task::done(Message::View(view::Message::ShowError(
+                        "Vault is unavailable — cannot generate a refund address.".to_string(),
+                    )));
+                };
+                // Issue a fresh token so that late responses from earlier
+                // clicks — or responses that arrive after the user has
+                // started typing their own address — can be identified and
+                // dropped by `VaultRefundAddressResolved`.
+                self.next_vault_refund_id = self.next_vault_refund_id.wrapping_add(1);
+                let request_id = self.next_vault_refund_id;
+                self.pending_vault_refund_id = Some(request_id);
+                Task::perform(
+                    async move {
+                        daemon
+                            .get_new_address()
+                            .await
+                            .map(|res| res.address.to_string())
+                            .map_err(|e| e.to_string())
+                    },
+                    move |result| {
+                        Message::View(view::Message::VaultRefundAddressResolved(
+                            request_id, result,
+                        ))
+                    },
+                )
+            }
+            Message::View(view::Message::VaultRefundAddressResolved(request_id, result)) => {
+                // Stale response guard: ignore anything that isn't tagged
+                // with the id currently in `pending_vault_refund_id`. This
+                // covers both the "user typed their own address" case
+                // (handler cleared the pending id) and the "user clicked
+                // again" case (handler bumped the id).
+                if self.pending_vault_refund_id != Some(request_id) {
+                    return Task::none();
+                }
+                self.pending_vault_refund_id = None;
+                match result {
+                    Ok(addr) => Task::done(Message::View(view::Message::RefundAddressEdited(addr))),
+                    Err(e) => Task::done(Message::View(view::Message::ShowError(format!(
+                        "Could not generate Vault refund address: {}",
+                        e
+                    )))),
+                }
             }
             Message::View(view::Message::SubmitRefund) => {
                 if let Some(refundable) = &self.selected_refundable {
                     self.refunding = true;
-                    let breez_client = self.breez_client.clone();
                     let swap_address = refundable.swap_address.clone();
+                    // Optimistically record the in-flight refund so the view
+                    // keeps the card visible with a "broadcasting" banner
+                    // even if the SDK drops the swap from `list_refundables`
+                    // before `RefundCompleted` fires.
+                    self.in_flight_refunds.insert(
+                        swap_address.clone(),
+                        InFlightRefund {
+                            refund_txid: None,
+                            submitted_at: Instant::now(),
+                        },
+                    );
+                    let breez_client = self.breez_client.clone();
                     let refund_address = self.refund_address.value.clone();
                     let fee_rate = self.refund_feerate.value.parse::<u32>().unwrap_or(1);
+                    let swap_address_for_msg = swap_address.clone();
 
                     Task::perform(
                         async move {
-                            let result = breez_client
+                            breez_client
                                 .refund_onchain_tx(RefundRequest {
-                                    swap_address: swap_address.clone(),
-                                    refund_address: refund_address.clone(),
+                                    swap_address,
+                                    refund_address,
                                     fee_rate_sat_per_vbyte: fee_rate,
                                 })
-                                .await;
-                            result
+                                .await
                         },
-                        Message::RefundCompleted,
+                        move |result| Message::RefundCompleted {
+                            swap_address: swap_address_for_msg.clone(),
+                            result,
+                        },
                     )
                 } else {
                     log::error!(target: "refund_debug", "SubmitRefund called but no refundable selected");
                     Task::none()
                 }
             }
-            Message::RefundCompleted(Ok(_response)) => {
+            Message::RefundCompleted {
+                swap_address,
+                result: Ok(response),
+            } => {
                 self.refunding = false;
+                let txid = response.refund_tx_id.clone();
+                // Populate the refund_txid on the exact in-flight entry that
+                // originated this refund. Looking up by swap_address is
+                // deterministic even with multiple concurrent refunds — the
+                // prior `values_mut().find(...)` approach was racy because
+                // HashMap iteration order is unspecified.
+                if let Some(entry) = self.in_flight_refunds.get_mut(&swap_address) {
+                    entry.refund_txid = Some(txid.clone());
+                }
                 self.selected_refundable = None;
                 self.refund_address = form::Value::default();
                 self.refund_feerate = form::Value::default();
-                Task::done(Message::View(view::Message::Close))
+                // Do NOT emit view::Message::Close here: it routes globally
+                // through App's panel router and would land on whatever
+                // panel is currently active, resetting unrelated state if
+                // the user navigated away while the refund was broadcasting.
+                // The local field clears above already collapse this panel
+                // back to the transactions list on the next render.
+                Task::done(Message::View(view::Message::ShowToast(
+                    log::Level::Info,
+                    format!("Refund broadcast · {}", txid.get(..10).unwrap_or(&txid)),
+                )))
             }
-            Message::RefundCompleted(Err(e)) => {
+            Message::RefundCompleted {
+                swap_address,
+                result: Err(e),
+            } => {
                 self.refunding = false;
+                // Drop the in-flight entry for exactly this swap if it never
+                // reached broadcast (txid still None). Leaving it up would
+                // show a stale "broadcasting" banner for a refund that
+                // failed. Other in-flight refunds are untouched.
+                if let Some(entry) = self.in_flight_refunds.get(&swap_address) {
+                    if entry.refund_txid.is_none() {
+                        self.in_flight_refunds.remove(&swap_address);
+                    }
+                }
                 Task::done(Message::View(view::Message::ShowError(format!(
                     "Refund failed: {}",
                     e
@@ -442,5 +711,109 @@ impl State for LiquidTransactions {
                 Message::RefundablesLoaded,
             ),
         ])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::breez_liquid::BreezClient;
+    use breez_sdk_liquid::bitcoin::Network;
+
+    fn sample_refundable(addr: &str) -> DomainRefundableSwap {
+        DomainRefundableSwap {
+            swap_address: addr.to_string(),
+            timestamp: 0,
+            amount_sat: 24_869,
+        }
+    }
+
+    fn new_state() -> LiquidTransactions {
+        let client = Arc::new(BreezClient::disconnected(Network::Bitcoin));
+        LiquidTransactions::new(Arc::new(LiquidBackend::new(client)))
+    }
+
+    #[test]
+    fn in_flight_dropped_when_sdk_no_longer_returns_it() {
+        let mut state = new_state();
+        state.in_flight_refunds.insert(
+            "bc1q_gone".to_string(),
+            InFlightRefund {
+                refund_txid: Some("deadbeef".to_string()),
+                submitted_at: Instant::now(),
+            },
+        );
+        state.in_flight_refunds.insert(
+            "bc1q_still".to_string(),
+            InFlightRefund {
+                refund_txid: None,
+                submitted_at: Instant::now(),
+            },
+        );
+
+        // After reconcile: only swaps still returned by the SDK survive.
+        state.test_reconcile_in_flight(vec![sample_refundable("bc1q_still")]);
+
+        assert!(state.in_flight_refunds.contains_key("bc1q_still"));
+        assert!(!state.in_flight_refunds.contains_key("bc1q_gone"));
+        assert_eq!(state.refundables.len(), 1);
+    }
+
+    #[test]
+    fn in_flight_preserved_while_sdk_still_returns_swap() {
+        let mut state = new_state();
+        state.in_flight_refunds.insert(
+            "bc1q_active".to_string(),
+            InFlightRefund {
+                refund_txid: None,
+                submitted_at: Instant::now(),
+            },
+        );
+        state.test_reconcile_in_flight(vec![sample_refundable("bc1q_active")]);
+        assert!(state.in_flight_refunds.contains_key("bc1q_active"));
+    }
+
+    #[test]
+    fn in_flight_card_carried_forward_when_sdk_drops_optimistic_swap() {
+        // Regression: grace window preserves the in_flight entry *and* the
+        // RefundableSwap, so the view (which iterates self.refundables) keeps
+        // rendering the "Refund broadcasting…" card until RefundCompleted.
+        let mut state = new_state();
+        state.refundables = vec![sample_refundable("bc1q_racing")];
+        state.in_flight_refunds.insert(
+            "bc1q_racing".to_string(),
+            InFlightRefund {
+                refund_txid: None,
+                submitted_at: Instant::now(),
+            },
+        );
+
+        // SDK poll races ahead of RefundCompleted and no longer lists the swap.
+        state.test_reconcile_in_flight(vec![]);
+
+        assert!(state.in_flight_refunds.contains_key("bc1q_racing"));
+        assert_eq!(state.refundables.len(), 1);
+        assert_eq!(state.refundables[0].swap_address, "bc1q_racing");
+    }
+
+    #[test]
+    fn in_flight_card_dropped_once_entry_removed() {
+        // Carry-forward is tied to in_flight presence: once the entry is
+        // dropped (e.g. txid set + absent from SDK list), the refundable
+        // must also disappear.
+        let mut state = new_state();
+        state.refundables = vec![sample_refundable("bc1q_done")];
+        state.in_flight_refunds.insert(
+            "bc1q_done".to_string(),
+            InFlightRefund {
+                refund_txid: Some("deadbeef".to_string()),
+                submitted_at: Instant::now(),
+            },
+        );
+
+        state.test_reconcile_in_flight(vec![]);
+
+        assert!(!state.in_flight_refunds.contains_key("bc1q_done"));
+        assert!(state.refundables.is_empty());
     }
 }

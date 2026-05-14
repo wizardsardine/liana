@@ -1,4 +1,5 @@
-use crate::{component::text::P1_SIZE, widget::*};
+use crate::component::text::P1_SIZE;
+use crate::widget::Text;
 use iced::{alignment, Font, Length};
 
 const BOOTSTRAP_ICONS: Font = Font::with_name("bootstrap-icons");
@@ -147,6 +148,10 @@ pub fn check_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F633}')
 }
 
+pub fn check2_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F272}')
+}
+
 pub fn round_key_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F44E}')
 }
@@ -259,6 +264,10 @@ pub fn droplet_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F30C}')
 }
 
+pub fn droplet_fill_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F30B}')
+}
+
 pub fn eye_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F33E}')
 }
@@ -293,6 +302,10 @@ pub fn lock_icon<'a>() -> Text<'a> {
 
 pub fn file_earmark_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F373}')
+}
+
+pub fn cloud_arrow_down_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F295}')
 }
 
 pub fn check_circle_icon<'a>() -> Text<'a> {
@@ -349,4 +362,28 @@ pub fn sun_icon<'a>() -> Text<'a> {
 
 pub fn moon_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F497}')
+}
+
+pub fn shield_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F53F}')
+}
+
+pub fn shield_plus_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F53A}')
+}
+
+pub fn cloud_check_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F299}')
+}
+
+pub fn cloud_slash_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F2B8}')
+}
+
+pub fn grid_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F3FA}')
+}
+
+pub fn shuffle_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F544}')
 }

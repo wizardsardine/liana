@@ -2,12 +2,14 @@ pub use bitcoin::Amount;
 use iced::Color;
 use serde::{Deserialize, Serialize};
 
-use crate::{color, component::text::*, widget::*};
+use crate::color;
+use crate::component::text::{text, Text, P1_SIZE};
+use crate::widget::Row;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BitcoinDisplayUnit {
-    #[default]
     BTC,
+    #[default]
     Sats,
 }
 impl std::fmt::Display for BitcoinDisplayUnit {
@@ -214,14 +216,11 @@ fn render_amount<'a, T: 'a>(
     if let Some(color_after) = color_after {
         child_after = child_after.color(color_after);
     }
-    let row = Row::new()
-        .push(text(before).size(size).color(color_before))
-        .push(child_after);
 
-    Row::with_children(vec![
-        row.into(),
-        text(unit_text).size(size).color(color_before).into(),
-    ])
+    iced::widget::row![
+        iced::widget::row![text(before).size(size).color(color_before), child_after],
+        text(unit_text).size(size).color(color_before),
+    ]
     .spacing(spacing)
     .align_y(iced::Alignment::Center)
 }

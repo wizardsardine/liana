@@ -4,9 +4,12 @@ use iced::{Alignment, Length, Task};
 
 use coincube_core::miniscript::bitcoin::Network;
 use coincube_ui::{
-    component::{button, form, network_banner, notification, text::*},
+    component::{
+        button, form, network_banner, notification,
+        text::{h2, text, P1_SIZE},
+    },
     icon, theme,
-    widget::*,
+    widget::{Column, Container, Element, Row},
 };
 use coincubed::commands::ListCoinsResult;
 
@@ -113,7 +116,13 @@ pub struct CoincubeLiteLogin {
     pub datadir: CoincubeDirectory,
     pub network: Network,
     pub settings: WalletSettings,
-    pub breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
+    pub breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+    /// Spark backend loaded alongside the Liquid client during PIN
+    /// entry / restore. `None` for cubes without a Spark signer or
+    /// when the bridge subprocess failed to spawn. Threaded through
+    /// to `create_app_with_remote_backend` so the Connect Lightning
+    /// Address claim flow has a SparkClient to talk to.
+    pub spark_backend: Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
 
     wallet_id: String,
     email: String,
@@ -143,7 +152,8 @@ impl CoincubeLiteLogin {
         datadir: CoincubeDirectory,
         network: Network,
         settings: WalletSettings,
-        breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
+        breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+        spark_backend: Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
     ) -> (Self, Task<Message>) {
         let auth = settings.remote_backend_auth.clone().unwrap();
         (
@@ -158,6 +168,7 @@ impl CoincubeLiteLogin {
                 auth_error: None,
                 processing: true,
                 breez_client,
+                spark_backend,
             },
             Task::perform(
                 async move {

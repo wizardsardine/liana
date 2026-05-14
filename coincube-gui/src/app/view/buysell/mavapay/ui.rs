@@ -24,7 +24,14 @@ pub fn form<'a>(state: &'a MavapayState) -> iced::Element<'a, ViewMessage, theme
         MavapayFlowStep::OrderDetail { .. } => order_detail_view,
     };
 
-    let element: iced::Element<'a, BuySellMessage, theme::Theme> = form(state).into();
+    let element: iced::Element<'a, BuySellMessage, theme::Theme> = widget::column![
+        form(state),
+        widget::Space::new().height(Length::Fixed(5.0)),
+        text::caption("Powered by Mavapay").style(theme::text::secondary)
+    ]
+    .align_x(iced::Alignment::Center)
+    .into();
+
     element.map(ViewMessage::BuySell)
 }
 
@@ -48,13 +55,15 @@ fn buy_input_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMess
                             state.country.currency.name, state.country.currency.code
                         ))
                         .size(14)
-                        .color(color::GREY_2),
+                        .style(theme::text::secondary),
                         widget::Space::new().height(5),
                         iced_aw::number_input(
                             &{ state.sat_amount as f64 * (price / 100_000_000.0) }.round(),
                             ..,
                             |a| { BuySellMessage::Mavapay(MavapayMessage::FiatAmountChanged(a,)) }
                         )
+                        .ignore_buttons(true)
+                        .ignore_scroll(true)
                         .on_submit(BuySellMessage::Mavapay(MavapayMessage::NormalizeAmounts))
                         .align_x(Alignment::Center)
                         .step(500.0)
@@ -67,11 +76,13 @@ fn buy_input_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMess
                     widget::column![
                         widget::text("Satoshis (BTCSAT)")
                             .size(14)
-                            .color(color::GREY_2),
-                        widget::Space::new().height(5),
+                            .style(theme::text::secondary),
+                        widget::space().height(5),
                         iced_aw::number_input(&state.sat_amount, .., |a| {
                             BuySellMessage::Mavapay(MavapayMessage::SatAmountChanged(a as _))
                         })
+                        .ignore_buttons(true)
+                        .ignore_scroll(true)
                         .on_submit(BuySellMessage::Mavapay(MavapayMessage::NormalizeAmounts))
                         .align_x(Alignment::Center)
                         .step(1000)
@@ -111,15 +122,16 @@ fn buy_input_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMess
     .style(theme::card::simple)
     .width(Length::Fixed(600.0));
 
+    let previous_btn = button::secondary(Some(previous_icon()), "Back")
+        .width(Length::Fixed(150.0))
+        .on_press(BuySellMessage::Mavapay(MavapayMessage::NavigateBack));
+
     widget::column![
+        widget::container(previous_btn).width(Length::Fill),
         // header text
-        text::h4_bold("Buy Bitcoin using Fiat Money")
-            .color(color::WHITE)
-            .center(),
+        text::h4_bold("Buy Bitcoin using Fiat Money").center(),
         widget::Space::new().height(Length::Fixed(20.0)),
         form,
-        widget::Space::new().height(Length::Fixed(5.0)),
-        text::p2_medium("Powered by Mavapay").color(color::GREY_3)
     ]
     .align_x(Alignment::Center)
 }
@@ -139,7 +151,7 @@ fn sell_input_form<'a>(
 
     let input_field = |value: &'a str, caption: &'static str, field: &'static str| {
         widget::column![
-            text::caption(caption).color(color::BLUE),
+            text::caption(caption),
             widget::text_input("...", value)
                 .size(20)
                 .padding(10)
@@ -155,11 +167,13 @@ fn sell_input_form<'a>(
      -> Option<widget::Column<'a, BuySellMessage, theme::Theme>> {
         price.map(|p| {
             widget::column![
-                text::caption("Input Transfer Amount (in Satoshis)").color(color::BLUE),
+                text::caption("Input Transfer Amount (in Satoshis)"),
                 widget::row![
                     iced_aw::number_input(&sat_amount, .., |a| BuySellMessage::Mavapay(
                         MavapayMessage::SatAmountChanged(a as _)
                     ))
+                    .ignore_buttons(true)
+                    .ignore_scroll(true)
                     .on_submit(BuySellMessage::Mavapay(MavapayMessage::NormalizeAmounts))
                     .align_x(Alignment::Center)
                     .width(150)
@@ -196,7 +210,7 @@ fn sell_input_form<'a>(
                 validation_message = Some("Select a recipient bank");
             } else if bank_account_name.is_none() {
                 validation_message = Some("Verify your bank account details to continue");
-            };
+            }
 
             widget::column![
                 text::h3("Setup Bank Details (Nigeria)"),
@@ -212,7 +226,7 @@ fn sell_input_form<'a>(
                 match banks {
                     Some(MavapayBanks::Nigerian(banks)) => {
                         widget::column![
-                            text::caption("Select Recipient Bank").color(color::BLUE),
+                            text::caption("Select Recipient Bank"),
                             widget::row![
                                 widget::pick_list(
                                     banks.as_slice(),
@@ -247,19 +261,12 @@ fn sell_input_form<'a>(
                 bank_account_name.as_ref().map(|s| {
                     widget::column![
                         text::caption("Is this the recipient's registered name?")
-                            .color(color::GREEN),
+                            .style(theme::text::success),
                         widget::container(widget::text(s).size(20))
                             .padding(8)
-                            .style(|_| {
-                                widget::container::Style::default()
-                                    .background(color::BLACK)
-                                    .border(
-                                        iced::Border::default()
-                                            .width(2)
-                                            .rounded(2)
-                                            .color(color::GREY_4),
-                                    )
-                                    .color(color::WHITE)
+                            .style(|th| {
+                                theme::card::modal(th)
+                                    .border(iced::Border::default().width(2).rounded(2))
                             })
                     ]
                 })
@@ -276,7 +283,7 @@ fn sell_input_form<'a>(
                 validation_message = Some("Select the recipient's bank");
             } else if name.is_empty() {
                 validation_message = Some("Set the recipient's legal name");
-            };
+            }
 
             widget::column![
                 text::h3("Setup Bank Details (South Africa)"),
@@ -294,7 +301,7 @@ fn sell_input_form<'a>(
                 match banks {
                     Some(MavapayBanks::SouthAfrican(banks)) => {
                         widget::column![
-                            text::caption("Select Recipient Bank").color(color::BLUE),
+                            text::caption("Select Recipient Bank"),
                             widget::pick_list(
                                 banks.as_slice(),
                                 banks.iter().find(|b| *b == bank_name),
@@ -323,7 +330,7 @@ fn sell_input_form<'a>(
                 validation_message = Some("Set the recipient's legal name");
             } else if phone_number.is_empty() {
                 validation_message = Some("Set the recipient's phone number");
-            };
+            }
 
             widget::column![
                 text::h3("Setup Mobile Money Details (Kenya-MPESA)"),
@@ -349,7 +356,12 @@ fn sell_input_form<'a>(
     .spacing(10)
     .width(iced::Length::Fill);
 
+    let previous_btn = button::secondary(Some(previous_icon()), "Back")
+        .width(Length::Fixed(150.0))
+        .on_press(BuySellMessage::Mavapay(MavapayMessage::NavigateBack));
+
     widget::column![
+        widget::container(previous_btn).width(Length::Fill),
         widget::Space::new().height(6),
         widget::container(form).padding(20).style(|th| {
             theme::card::simple(th).border(iced::Border {
@@ -363,9 +375,7 @@ fn sell_input_form<'a>(
             widget::row![
                 card::simple(widget::space().height(iced::Length::Fill).width(5)).padding(1),
                 widget::space().width(10),
-                text::p2_medium("Sell Bitcoin to Fiat Money")
-                    .color(color::WHITE)
-                    .center(),
+                text::p2_medium("Sell Bitcoin to Fiat Money").center(),
             ]
             .align_y(iced::Alignment::Center),
             widget::space().width(iced::Length::Fill),
@@ -394,7 +404,6 @@ fn sell_input_form<'a>(
                         .style(|th, st| {
                             let mut base = theme::button::secondary(th, st);
                             base.border = iced::Border::default().rounded(2).width(1);
-                            base.text_color = color::GREY_2;
                             base
                         })
                 }
@@ -417,7 +426,10 @@ fn detail_row<'a>(
     widget::row![
         widget::column![
             text::p2_medium(label).color(color::GREY_2),
-            text::p2_bold(value.clone()).color(text_color.unwrap_or(color::WHITE))
+            text::p2_bold(value.clone()).style(move |th| match text_color {
+                Some(c) => widget::text::Style { color: Some(c) },
+                None => theme::text::secondary(th),
+            })
         ]
         .width(Length::Fill),
         widget::Button::new(clipboard_icon().style(theme::text::secondary))
@@ -462,7 +474,7 @@ fn summary_card<'a>(
                 widget::column![
                     text::p1_bold("Order Created Successfully"),
                     text::p2_medium(format!("{}: {}", reference_label, reference))
-                        .color(color::GREY_2)
+                        .style(theme::text::secondary)
                 ]
             ]
             .align_y(Alignment::Center)
@@ -503,6 +515,7 @@ fn instructions_card<'a>(
         None => quote.id.as_str(),
     };
 
+    // TODO: Generally rework this, for light mode too
     card::simple(
         widget::column![
             widget::row![
@@ -519,13 +532,13 @@ fn instructions_card<'a>(
                 widget::Space::new().width(10),
                 widget::column![
                 text::p1_bold("Payment Instructions"),
-                text::p2_medium("Follow these steps to complete your order").color(color::GREY_2)
+                text::p2_medium("Follow these steps to complete your order").style(theme::text::secondary)
             ]
             ]
             .align_y(Alignment::Center),
             widget::Space::new().height(15),
             text::p2_medium("STEP 1: TRANSFER FUNDS TO OUR ACCOUNT")
-            .color(color::GREY_2),
+            .style(theme::text::secondary),
             widget::Space::new().height(10),
             quote.bank_name.as_deref().map(|bn|
                 detail_row("Bank Name", bn, None)
@@ -546,25 +559,25 @@ fn instructions_card<'a>(
             ),
             widget::Space::new().height(20),
             text::p2_medium("STEP 2: INCLUDE THIS REFERENCE IN YOUR TRANSFER")
-                .color(color::GREY_2),
+                .style(theme::text::secondary),
             widget::Space::new().height(10),
             card::simple(
                 widget::column![
-                widget::row![
-                    warning_icon().size(20).style(theme::text::warning),
-                    widget::Space::new().width(10),
-                    text::p2_medium("Critical: Include this reference number").style(theme::text::warning),
-                ].align_y(Alignment::Center),
-                widget::Space::new().height(20),
-                widget::row![
-                    text::h4_bold(reference),
-                    widget::Button::new(clipboard_icon().style(theme::text::secondary))
-                        .on_press(BuySellMessage::Clipboard(reference.to_string()))
-                        .style(theme::button::transparent),
-                ].align_y(Alignment::Center),
-                widget::Space::new().height(20),
-                text::p2_medium("This helps us match your payment to your order. Without this reference, your order may be delayed.")
-                .color(color::GREY_2)
+                    widget::row![
+                        warning_icon().size(20).style(theme::text::warning),
+                        widget::Space::new().width(10),
+                        text::p2_medium("Critical: Include this reference number").style(theme::text::warning),
+                    ].align_y(Alignment::Center),
+                    widget::Space::new().height(20),
+                    widget::row![
+                        text::h4_bold(reference),
+                        widget::Button::new(clipboard_icon().style(theme::text::secondary))
+                            .on_press(BuySellMessage::Clipboard(reference.to_string()))
+                            .style(theme::button::transparent),
+                    ].align_y(Alignment::Center),
+                    widget::Space::new().height(20),
+                    text::p2_medium("This helps us match your payment to your order. Without this reference, your order may be delayed.")
+                    .style(theme::text::secondary)
                 ].width(Length::Fill)
             ).style(theme::card::modal),
             widget::Space::new().height(20),
@@ -574,7 +587,7 @@ fn instructions_card<'a>(
                 reload_icon().size(16).style(theme::text::secondary),
                 widget::Space::new().width(10),
                 text::p2_medium("Waiting for payment confirmation...")
-                    .color(color::GREY_2)
+                    .style(theme::text::secondary)
             ].align_y(Alignment::Center),
             widget::Space::new().height(10),
             button::primary(Some(reload_icon()), "Start Over")
@@ -635,7 +648,7 @@ fn order_success_view<'a>(
                     widget::Space::new().width(15),
                     widget::column![
                         text::h4_bold(title),
-                        text::p2_medium(subtitle).color(color::GREY_2)
+                        text::p2_medium(subtitle).style(theme::text::secondary)
                     ]
                 ]
                 .align_y(Alignment::Center)
@@ -650,12 +663,12 @@ fn order_success_view<'a>(
                     widget::Space::new().height(15),
                     widget::row![
                         widget::column![
-                            text::p2_medium("Amount Paid").color(color::GREY_2),
+                            text::p2_medium("Amount Paid").style(theme::text::secondary),
                             text::p1_bold(format_amount(order.amount, &order.currency))
                         ]
                         .width(Length::Fill),
                         widget::column![
-                            text::p2_medium("Bitcoin Received").color(color::GREY_2),
+                            text::p2_medium("Bitcoin Received").style(theme::text::secondary),
                             text::p1_bold(format!("{:.8} BTC", sats as f64 / 100_000_000.0))
                         ]
                         .width(Length::Fill)
@@ -663,43 +676,37 @@ fn order_success_view<'a>(
                     widget::Space::new().height(15),
                     widget::row![
                         widget::column![
-                            text::p2_medium("Order Status").color(color::GREY_2),
+                            text::p2_medium("Order Status").style(theme::text::secondary),
                             text::p2_bold(order_status_text(&order.status))
                                 .color(status_color(&order.status))
                         ]
                         .width(Length::Fill),
                         widget::column![
-                            text::p2_medium("Payment Method").color(color::GREY_2),
-                            text::p1_bold(format!("{}", order.payment_method))
+                            text::p2_medium("Payment Method").style(theme::text::secondary),
+                            text::p1_bold(order.payment_method.as_str())
                         ]
                         .width(Length::Fill)
                     ],
                     widget::column![
                         widget::Space::new().height(15),
-                        text::p2_medium("Order Date").color(color::GREY_2),
+                        text::p2_medium("Order Date").style(theme::text::secondary),
                         text::p2_bold(pretty_timestamp(&order.created_at))
-                    ]
-                ]
-                .width(Length::Fill)
-                .padding(20)
-            )
-            .width(Length::Fill),
-            widget::Space::new().height(10),
-            card::simple(
-                widget::column![
-                    text::p2_medium("Thank you for using Mavapay!")
-                        .color(color::GREY_2)
-                        .center()
-                        .width(Length::Fill),
-                    widget::Space::new().height(15),
+                    ],
+                    // separator
+                    widget::container(
+                        widget::Space::new()
+                            .height(Length::Fixed(3.0))
+                            .width(Length::Fill)
+                    )
+                    .style(theme::container::border_grey),
                     button::primary(Some(reload_icon()), "Start New Transaction")
                         .on_press(BuySellMessage::ResetWidget)
                         .width(Length::Fill)
                 ]
+                .spacing(15)
                 .width(Length::Fill)
                 .padding(20)
-            )
-            .width(Length::Fill)
+            ),
         ])
         .padding(10)
     ]
@@ -719,7 +726,7 @@ fn history_view<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMessag
             widget::column![
                 reload_icon().size(24).style(theme::text::secondary),
                 widget::Space::new().height(10),
-                text::p2_medium("Loading transaction history...").color(color::GREY_2),
+                text::p2_medium("Loading transaction history...").style(theme::text::secondary),
             ]
             .align_x(Alignment::Center),
         )
@@ -734,7 +741,7 @@ fn history_view<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMessag
                 text::p1_bold("No transactions found"),
                 widget::Space::new().height(5),
                 text::p2_medium("Your transactions will appear here once you buy or sell bitcoin.")
-                    .color(color::GREY_2)
+                    .style(theme::text::primary)
             ]
             .padding(40)
             .align_x(Alignment::Center)
@@ -756,8 +763,8 @@ fn history_view<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMessag
     };
 
     widget::column![
-        button::transparent(Some(previous_icon()), "Previous")
-            .width(Length::Shrink)
+        button::secondary(Some(previous_icon()), "Back")
+            .width(Length::Fixed(150.0))
             .on_press(BuySellMessage::ResetWidget),
         widget::Space::new().height(10),
         text::h4_bold("Order History"),
@@ -784,14 +791,15 @@ fn transaction_row<'a>(
     idx: usize,
     transaction: &'a OrderTransaction,
 ) -> widget::Container<'a, BuySellMessage, theme::Theme> {
-    let (order_type, order_type_color) = order_type_from_payment(&transaction.payment_method);
     let (tx_status_text, tx_status_color) = transaction_status_info(transaction);
+    let (order_type, order_type_color) =
+        order_type_from_payment(transaction.payment_method.as_ref());
 
     card::simple(
         widget::column![
             widget::row![
                 widget::column![
-                    text::p2_medium("Order ID").color(color::GREY_2),
+                    text::p2_medium("Order ID").style(theme::text::secondary),
                     text::p2_bold(&transaction.order_id)
                 ]
                 .width(Length::Fill),
@@ -803,17 +811,20 @@ fn transaction_row<'a>(
             widget::Space::new().height(12),
             widget::row![
                 widget::column![
-                    text::p2_medium("Amount").color(color::GREY_2),
+                    text::p2_medium("Amount").style(theme::text::secondary),
                     text::p2_bold(format_amount(transaction.amount, &transaction.currency))
                 ]
                 .width(Length::Fill),
+                transaction
+                    .payment_method
+                    .as_ref()
+                    .map(|pm| widget::column![
+                        text::p2_medium("Payment Method").style(theme::text::secondary),
+                        text::p2_bold(pm.as_str())
+                    ]
+                    .width(Length::Fill)),
                 widget::column![
-                    text::p2_medium("Payment").color(color::GREY_2),
-                    text::p2_bold(transaction.payment_method.to_string())
-                ]
-                .width(Length::Fill),
-                widget::column![
-                    text::p2_medium("Date").color(color::GREY_2),
+                    text::p2_medium("Date").style(theme::text::secondary),
                     text::p2_bold(pretty_timestamp(&transaction.created_at))
                 ]
                 .width(Length::Fill),
@@ -836,7 +847,7 @@ fn info_field<'a>(
     value: impl ToString,
 ) -> widget::Column<'a, BuySellMessage, theme::Theme> {
     widget::column![
-        text::p2_medium(label).color(color::GREY_2),
+        text::p2_medium(label).style(theme::text::secondary),
         text::p2_bold(value.to_string())
     ]
     .width(Length::Fill)
@@ -863,14 +874,15 @@ fn order_detail_view<'a>(
         unreachable!()
     };
 
-    let (order_type, order_type_color) = order_type_from_payment(&transaction.payment_method);
+    let (order_type, order_type_color) =
+        order_type_from_payment(transaction.payment_method.as_ref());
     let (tx_status_text, tx_status_color) = transaction_status_info(transaction);
 
     let back_button = widget::button(
         widget::row![
-            previous_icon().size(16).color(color::GREY_2),
+            previous_icon().size(16).style(theme::text::secondary),
             widget::Space::new().width(5),
-            text::p2_medium("Back to History").color(color::GREY_2)
+            text::p2_medium("Back to History").style(theme::text::secondary)
         ]
         .align_y(Alignment::Center),
     )
@@ -928,7 +940,10 @@ fn order_detail_view<'a>(
             ],
             widget::Space::new().height(8),
             widget::row![
-                info_field("Payment Method", &transaction.payment_method),
+                transaction
+                    .payment_method
+                    .as_ref()
+                    .map(|pm| info_field("Payment Method", pm.as_str())),
                 info_field("Date", pretty_timestamp(&transaction.created_at)),
             ]
         ]
@@ -943,7 +958,7 @@ fn order_detail_view<'a>(
             widget::column![
                 reload_icon().size(24).style(theme::text::secondary),
                 widget::Space::new().height(10),
-                text::p2_medium("Loading order details...").color(color::GREY_2)
+                text::p2_medium("Loading order details...").style(theme::text::secondary)
             ]
             .align_x(Alignment::Center),
         )
@@ -975,7 +990,7 @@ fn order_detail_view<'a>(
                         widget::Space::new().height(8),
                         widget::row![
                             info_field("Currency", &order.currency),
-                            info_field("Payment Method", &order.payment_method),
+                            info_field("Payment Method", order.payment_method.as_str()),
                         ],
                     ]
                     .padding(20)
@@ -1165,7 +1180,7 @@ fn invoice_qr_code_display<'a>(
     widget::container(
         widget::column![
             widget::column![
-                text::caption(caption).color(color::BLUE),
+                text::caption(caption),
                 widget::row![
                     widget::container(
                         widget::text(format!("{}…", &invoice[..45]))
@@ -1175,28 +1190,39 @@ fn invoice_qr_code_display<'a>(
                             })
                             .size(15)
                     )
-                    .style(|_| {
-                        widget::container::Style::default()
-                            .background(color::WHITE)
-                            .color(color::BLACK)
-                            .border(iced::Border::default().width(0))
+                    .style(|th| {
+                        theme::container::background(th).border(
+                            iced::Border::default()
+                                .color(color::GREY_4)
+                                .width(1)
+                                .rounded(0),
+                        )
                     })
                     .align_x(iced::Alignment::Center)
+                    .align_y(iced::Alignment::Center)
                     .width(iced::Length::Fill)
-                    .padding(7),
-                    widget::button(clipboard_icon().color(color::WHITE).size(17).width(38))
-                        .on_press(BuySellMessage::Mavapay(
-                            MavapayMessage::WriteInvoiceToClipboard
-                        ))
-                        .style(|th, st| {
-                            let mut base = theme::button::secondary(th, st);
-                            base.border = iced::Border::default().rounded(0).width(0);
-                            base.background = Some(color::GREY_6.into());
-                            base
-                        })
-                        .padding(6)
+                    .height(iced::Length::Fill),
+                    widget::button(
+                        clipboard_icon()
+                            .size(17)
+                            .width(38)
+                            .height(iced::Length::Fill)
+                            .center()
+                    )
+                    .on_press(BuySellMessage::Mavapay(
+                        MavapayMessage::WriteInvoiceToClipboard
+                    ))
+                    .style(|th, st| {
+                        let mut base = theme::button::secondary(th, st);
+                        base.border = iced::Border::default()
+                            .rounded(0)
+                            .width(1)
+                            .color(color::GREY_4);
+                        base
+                    })
+                    .height(iced::Length::Fill)
                 ]
-                .spacing(1)
+                .height(36)
             ]
             .spacing(1),
             widget::container(widget::qr_code(data).style(|_| widget::qr_code::Style {
@@ -1207,27 +1233,20 @@ fn invoice_qr_code_display<'a>(
             .width(iced::Length::Fill)
             .align_x(iced::Alignment::Center)
             .align_y(iced::Alignment::Center)
-            .style(|_| {
-                widget::container::Style::default()
-                    .background(color::WHITE)
-                    .color(iced::Color::BLACK)
-            }),
+            .style(|th| { theme::container::foreground(th).background(color::WHITE) }),
         ]
         .spacing(7),
     )
     .height(iced::Length::Shrink)
     .width(800)
-    .padding(10)
-    .style(|_| {
-        widget::container::Style::default()
-            .background(color::BLACK)
-            .color(iced::Color::WHITE)
-            .border(
-                iced::Border::default()
-                    .color(color::GREY_4)
-                    .width(1)
-                    .rounded(5),
-            )
+    .padding(8)
+    .style(|th| {
+        theme::container::foreground(th).border(
+            iced::Border::default()
+                .color(color::GREY_4)
+                .width(1)
+                .rounded(5),
+        )
     })
 }
 
@@ -1242,10 +1261,17 @@ fn status_color(status: &TransactionStatus) -> iced::Color {
 /// Determine order type based on payment method.
 /// - BankTransfer/USDT = BUY (user paying fiat to receive BTC)
 /// - Lightning/Onchain = SELL (user paying BTC to receive fiat)
-fn order_type_from_payment(payment_method: &MavapayPaymentMethod) -> (&'static str, iced::Color) {
+fn order_type_from_payment(
+    payment_method: Option<&MavapayPaymentMethod>,
+) -> (&'static str, iced::Color) {
     match payment_method {
-        MavapayPaymentMethod::BankTransfer | MavapayPaymentMethod::USDT => ("BUY", color::GREEN),
-        MavapayPaymentMethod::Lightning | MavapayPaymentMethod::Onchain => ("SELL", color::ORANGE),
+        Some(MavapayPaymentMethod::BankTransfer) | Some(MavapayPaymentMethod::USDT) => {
+            ("BUY", color::GREEN)
+        }
+        Some(MavapayPaymentMethod::Lightning) | Some(MavapayPaymentMethod::Onchain) => {
+            ("SELL", color::ORANGE)
+        }
+        None => ("N/A", color::BLUE),
     }
 }
 
@@ -1263,21 +1289,18 @@ fn order_status_text(status: &TransactionStatus) -> &'static str {
 /// For DEPOSIT transactions, even SUCCESS means "Processing" since the order
 /// isn't complete until the WITHDRAWAL succeeds.
 fn transaction_status_info(transaction: &OrderTransaction) -> (&'static str, iced::Color) {
-    match transaction.transaction_type {
-        // DEPOSIT success just means payment received, order still processing
-        TransactionType::Deposit => match transaction.status {
-            TransactionStatus::Pending => ("Processing", color::ORANGE),
-            TransactionStatus::Success | TransactionStatus::Paid => ("Processing", color::ORANGE),
-            TransactionStatus::Expired => ("Expired", color::RED),
-            TransactionStatus::Failed => ("Failed", color::RED),
-        },
-        // WITHDRAWAL success means order is actually complete
-        TransactionType::Withdrawal => match transaction.status {
-            TransactionStatus::Pending => ("Processing", color::ORANGE),
-            TransactionStatus::Success | TransactionStatus::Paid => ("Complete", color::GREEN),
-            TransactionStatus::Expired => ("Expired", color::RED),
-            TransactionStatus::Failed => ("Failed", color::RED),
-        },
+    match transaction.status {
+        TransactionStatus::Pending => ("Processing", color::ORANGE),
+        TransactionStatus::Success | TransactionStatus::Paid => {
+            match transaction.transaction_type {
+                // WITHDRAWAL success means order is actually complete
+                TransactionType::Withdrawal => ("Complete", color::GREEN),
+                // DEPOSIT success just means payment received, order still processing
+                TransactionType::Deposit => ("Processing", color::ORANGE),
+            }
+        }
+        TransactionStatus::Expired => ("Expired", color::RED),
+        TransactionStatus::Failed => ("Failed", color::RED),
     }
 }
 
@@ -1323,7 +1346,8 @@ fn success_icon_badge() -> widget::Container<'static, BuySellMessage, theme::The
             background: Some(iced::Background::Color(iced::color!(0x2FC455, 0.18))),
             border: iced::Border {
                 radius: 25.0.into(),
-                ..Default::default()
+                width: 0.8,
+                color: iced::color!(0x2FC455, 0.72),
             },
             ..Default::default()
         })

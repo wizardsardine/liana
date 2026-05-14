@@ -1,0 +1,173 @@
+# SonarQube Local Setup for Coincube
+
+A quick guide to set up SonarQube locally for the Coincube Rust project.
+
+## Prerequisites
+
+- Docker and Docker Compose installed
+- `sonar-scanner` CLI installed (`brew install sonar-scanner` on macOS)
+- Access to GitHub releases for downloading the Rust plugin
+
+## Step 1: Download the Rust Plugin
+
+The Community Rust plugin must be manually downloaded. **Use v0.1.4** — newer versions require SonarQube Plugin API 10.11.0.2468 which is not available in stable SonarQube Community images.
+
+```bash
+mkdir -p ~/sonarqube/plugins
+curl -L -o ~/sonarqube/plugins/community-rust-plugin-0.1.4.jar \
+  https://github.com/elegoff/sonar-rust/releases/download/v0.1.4/community-rust-plugin-0.1.4.jar
+```
+
+## Step 2: Configure Docker Compose
+
+Create or update `docker-compose.yml` in the `sonarqube/` folder:
+
+```yaml
+version: "3.8"
+
+services:
+  sonarqube:
+    image: sonarqube:10.6-community
+    container_name: sonarqube
+    ports:
+      - "9000:9000"
+    environment:
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - ${HOME}/sonarqube/plugins:/opt/sonarqube/extensions/plugins
+
+volumes:
+  sonarqube_data:
+```
+
+**Note:** `sonarqube:10.6-community` provides Plugin API 10.7.0.2191 which is compatible with Rust plugin v0.1.4.
+
+## Step 3: Start SonarQube
+
+```bash
+# Navigate to sonarqube folder and start
+cd sonarqube
+docker compose up -d
+
+# Wait for startup (watch for "SonarQube is up" in logs)
+docker logs -f sonarqube
+```
+
+## Step 4: Initial Setup in SonarQube UI
+
+1. Open http://localhost:9000
+2. Log in with default credentials: `admin` / `admin`
+3. Change password when prompted
+
+### Create the Project
+
+1. Go to **Administration → Projects → Management**
+2. Click **Create Project → Local Project**
+3. Set **Project Key**: `coincubetech_coincube`
+4. Set **Display Name**: `Coincube`
+
+### Generate Scanner Token
+
+1. Go to the **Coincube project → Project Settings → Project Analysis Tokens**
+2. Name: `local-scan`
+3. Type: **Project Analysis Token** (recommended for least privilege)
+4. Copy the generated token
+
+Alternatively, you can create a Global Analysis Token from **User → My Account → Security**, but project-scoped tokens follow the principle of least privilege.
+
+## Step 5: Configure Project Properties
+
+The `sonar-project.properties` file is already configured in the `sonarqube/` folder with the correct source paths. Update the token:
+
+```properties
+sonar.token=YOUR_GENERATED_TOKEN_HERE
+```
+
+**Important:** Replace `YOUR_GENERATED_TOKEN_HERE` with the actual token from Step 4. **Never commit this file with a real token to git.**
+
+## Step 6: Run Analysis
+
+From the **project root** (not the `sonarqube/` folder):
+
+```bash
+sonar-scanner -Dproject.settings=sonarqube/sonar-project.properties -Dsonar.token=YOUR_GENERATED_TOKEN_HERE
+```
+
+Or specify all options manually:
+
+```bash
+sonar-scanner \
+  -Dsonar.projectKey=coincubetech_coincube \
+  -Dsonar.sources=. \
+  -Dsonar.host.url=http://localhost:9000 \
+  -Dsonar.token=YOUR_GENERATED_TOKEN_HERE
+```
+
+The scan will:
+
+- Parse Rust source files (some modern syntax may fail to parse with v0.1.4)
+- Analyze for code smells, bugs, and security issues
+- Import coverage reports if configured
+- Upload results to SonarQube
+
+## Troubleshooting
+
+### Plugin API Version Mismatch
+
+**Error:** `Plugin Rust language analyzer requires at least Sonar Plugin API version 10.11.0.2468`
+
+**Fix:** Use Rust plugin v0.1.4 with SonarQube 10.6-community. Do NOT use v0.2.6 or v0.2.7 — they require newer API.
+
+### Parse Errors on Modern Rust Syntax
+
+**Error:** `Unable to parse file` on `async move |...|` or `impl Trait` return types
+
+**Expected:** Plugin v0.1.4 has an older Rust grammar. It will skip files it cannot parse but still analyze the rest. This is a known limitation.
+
+### 401 Unauthorized
+
+**Error:** `Failed to query server version: HTTP 401 Unauthorized`
+
+**Fix:** Verify the token in `sonar-project.properties` is correct and has "Analyze" scope.
+
+### Project Doesn't Exist
+
+**Error:** `You're not authorized to analyze this project or the project doesn't exist`
+
+**Fix:** Create the project in SonarQube UI first (Step 4) with matching project key.
+
+### Elasticsearch/Lucene Codec Errors
+
+**Error:** `fatal exception while booting Elasticsearch` with codec issues
+
+**Fix:** Clean the data volume (run from the `sonarqube/` folder):
+
+```bash
+docker compose down
+docker volume rm sonarqube_sonarqube_data
+docker compose up -d
+```
+
+## Limitations
+
+- **Rust Plugin v0.1.4** cannot parse modern Rust syntax:
+  - `async move |...|` closures
+  - `impl Trait` return types in some contexts
+  - Complex generic bounds
+- Code coverage import requires additional setup (cargo-sonar or similar)
+
+## Version Compatibility Matrix
+
+| SonarQube      | Plugin API  | Rust Plugin | Status                          |
+| -------------- | ----------- | ----------- | ------------------------------- |
+| 10.6-community | 10.7.0.2191 | v0.1.4      | ✅ Working                      |
+| 10.6-community | 10.7.0.2191 | v0.2.6+     | ❌ Requires API 10.11.0.2468    |
+| 10.4-community | 10.6.0.2114 | v0.1.4      | ✅ Working                      |
+| 25.x+          | 25.x        | Any         | ❌ Incompatible (Lucene issues) |
+
+## References
+
+- [Community Rust Plugin Releases](https://github.com/elegoff/sonar-rust/releases)
+- [SonarQube Docker Hub](https://hub.docker.com/_/sonarqube)
+- [SonarScanner Documentation](https://docs.sonarsource.com/sonarqube-server/latest/analyzing-source-code/scanners/sonarscanner/)

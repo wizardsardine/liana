@@ -7,14 +7,14 @@ use coincube_core::{
         psbt::Psbt,
         secp256k1, Network,
     },
-    signer::{self, HotSigner},
+    signer::{self, MasterSigner},
 };
 
 use crate::dir::{CoincubeDirectory, NetworkDirectory};
 
 pub struct Signer {
     curve: secp256k1::Secp256k1<secp256k1::All>,
-    key: HotSigner,
+    key: MasterSigner,
     pub fingerprint: Fingerprint,
 }
 
@@ -25,7 +25,7 @@ impl std::fmt::Debug for Signer {
 }
 
 impl Signer {
-    pub fn new(key: HotSigner) -> Self {
+    pub fn new(key: MasterSigner) -> Self {
         let curve = secp256k1::Secp256k1::new();
         let fingerprint = key.fingerprint(&curve);
         Self {
@@ -44,7 +44,7 @@ impl Signer {
     }
 
     pub fn generate(network: Network) -> Result<Self, SignerError> {
-        Ok(Self::new(HotSigner::generate(network)?))
+        Ok(Self::new(MasterSigner::generate(network)?))
     }
 
     pub fn fingerprint(&self) -> Fingerprint {
@@ -53,6 +53,16 @@ impl Signer {
 
     pub fn get_extended_pubkey(&self, path: &DerivationPath) -> Xpub {
         self.key.xpub_at(path, &self.curve)
+    }
+
+    /// Derive a Border Wallet GridRecoveryPhrase from the master key via BIP-85.
+    pub fn derive_grid_recovery_phrase(
+        &self,
+    ) -> Result<
+        coincube_core::border_wallet::GridRecoveryPhrase,
+        coincube_core::border_wallet::BorderWalletError,
+    > {
+        coincube_core::border_wallet::GridRecoveryPhrase::from_master_signer(&self.key, &self.curve)
     }
 
     pub fn sign_psbt(&self, psbt: Psbt) -> Result<Psbt, SignerError> {
@@ -71,6 +81,35 @@ impl Signer {
             network,
             &self.curve,
             Some((checksum.to_string(), timestamp)),
+        )
+    }
+
+    /// AES-encrypted variant of [`Signer::store`] — writes the
+    /// mnemonic file protected by `password` (Argon2id-derived key).
+    ///
+    /// Used by the Recovery Kit restore flow so the stored mnemonic
+    /// matches the layout a fresh-install Cube produces: the Liquid /
+    /// Spark BreezClient decrypts via the Cube's PIN on every open.
+    /// Without encryption, `MasterSigner::from_datadir_by_fingerprint`
+    /// still succeeds (it handles both shapes) but `load_breez_client`
+    /// refuses to decrypt an unencrypted blob with a password and the
+    /// app hangs on "Starting daemon…". Keeping the PIN-encrypted
+    /// layout uniform across fresh-install and restored Cubes avoids
+    /// that branch.
+    pub fn store_encrypted(
+        &self,
+        datadir_root: &CoincubeDirectory,
+        network: Network,
+        checksum: &str,
+        timestamp: i64,
+        password: &str,
+    ) -> Result<(), SignerError> {
+        self.key.store_encrypted(
+            datadir_root.path(),
+            network,
+            &self.curve,
+            Some((checksum.to_string(), timestamp)),
+            Some(password),
         )
     }
 }

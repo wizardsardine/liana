@@ -4,7 +4,7 @@ use crate::{
     color,
     component::{collapse, text},
     icon, theme,
-    widget::*,
+    widget::{Button, Column, Container, Element, Row},
 };
 use iced::{
     widget::{column, container, row},
@@ -12,46 +12,17 @@ use iced::{
 };
 
 pub fn warning<'a, T: 'a + Clone>(message: String, error: String) -> Container<'a, T> {
-    let message_clone = message.clone();
-    Container::new(Container::new(collapse::Collapse::new(
-        move || {
-            Button::new(
-                Row::new()
-                    .push(
-                        Container::new(
-                            text::p1_bold(message_clone.to_string()).color(color::LIGHT_BLACK),
-                        )
-                        .width(Length::Fill),
-                    )
-                    .push(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .spacing(10)
-                            .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
-                            .push(icon::collapse_icon().color(color::LIGHT_BLACK)),
-                    ),
-            )
-            .style(theme::button::transparent)
-        },
-        move || {
-            Button::new(
-                Row::new()
-                    .push(
-                        Container::new(text::p1_bold(message.to_owned()).color(color::LIGHT_BLACK))
-                            .width(Length::Fill),
-                    )
-                    .push(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .spacing(10)
-                            .push(text::p1_bold("Learn more").color(color::LIGHT_BLACK))
-                            .push(icon::collapsed_icon().color(color::LIGHT_BLACK)),
-                    ),
-            )
-            .style(theme::button::transparent)
-        },
-        move || Element::<'a, T>::from(text::p2_regular(error.to_owned())),
-    )))
+    // Always show both the title and the error string, stacked. Earlier
+    // versions of this component used a `Collapse` widget built on the
+    // deprecated `iced::widget::Component` API, which on some themes rendered
+    // as a blank orange rectangle with no clickable element. A simple Column
+    // is more reliable and self-explanatory.
+    Container::new(
+        Column::new()
+            .spacing(4)
+            .push(text::p1_bold(message).color(color::LIGHT_BLACK))
+            .push(text::p2_regular(error).color(color::LIGHT_BLACK)),
+    )
     .padding(15)
     .style(theme::banner::warning)
     .width(Length::Fill)

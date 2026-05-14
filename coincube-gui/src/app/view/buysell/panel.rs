@@ -84,7 +84,7 @@ pub struct BuySellPanel {
 
     // services used by several buysell providers
     pub coincube_client: crate::services::coincube::CoincubeClient,
-    pub breez_client: std::sync::Arc<crate::app::breez::BreezClient>,
+    pub breez_client: std::sync::Arc<crate::app::breez_liquid::BreezClient>,
     pub detected_country: Option<&'static crate::services::coincube::Country>,
 
     // coincube session information, restored from OS keyring
@@ -98,7 +98,7 @@ impl BuySellPanel {
     pub fn new(
         network: bitcoin::Network,
         wallet: std::sync::Arc<crate::app::wallet::Wallet>,
-        breez_client: std::sync::Arc<crate::app::breez::BreezClient>,
+        breez_client: std::sync::Arc<crate::app::breez_liquid::BreezClient>,
     ) -> Self {
         BuySellPanel {
             // Start in detecting location state
@@ -115,12 +115,6 @@ impl BuySellPanel {
 
     pub fn view<'a>(&'a self) -> iced::Element<'a, ViewMessage, theme::Theme> {
         let column = {
-            let show_start_over = matches!(
-                &self.step,
-                BuySellFlowState::Meld(super::meld::MeldState { steps, .. })
-                    if matches!(steps.last(), Some(super::meld::MeldFlowStep::ActiveSession { .. }))
-            );
-
             let column = Column::new()
                 // COINCUBE branding
                 .push(
@@ -130,10 +124,6 @@ impl BuySellPanel {
                         .push(text::h5_regular("| BUY/SELL").color(color::GREY_3))
                         .align_y(Alignment::Center),
                 )
-                .push(show_start_over.then(|| {
-                    button::secondary_compact(Some(arrow_back()), "Start Over")
-                        .on_press(ViewMessage::BuySell(BuySellMessage::ResetWidget))
-                }))
                 // render flow state
                 .push(match &self.step {
                     // user management
@@ -286,18 +276,11 @@ impl BuySellPanel {
         // TODO: include form validation messages
         iced::widget::column![
             // Top bar with previous
-            Button::new(
-                Row::new()
-                    .push(previous_icon().style(theme::text::secondary))
-                    .push(Space::new().width(Length::Fixed(5.0)))
-                    .push(text::p1_medium("Previous").style(theme::text::secondary))
-                    .spacing(5)
-                    .align_y(Alignment::Center),
-            )
-            .style(theme::button::transparent)
-            .on_press_maybe(
-                (!*loading).then_some(ViewMessage::BuySell(BuySellMessage::ResetWidget))
-            ),
+            button::secondary(Some(previous_icon()), "Back")
+                .width(Length::Fixed(150.0))
+                .on_press_maybe(
+                    (!*loading).then_some(ViewMessage::BuySell(BuySellMessage::ResetWidget))
+                ),
             Space::new().height(Length::Fixed(10.0)),
             // Title and subtitle
             iced::widget::column![
@@ -347,16 +330,9 @@ impl BuySellPanel {
         // Top bar with previous
         let top_bar = Row::new()
             .push(
-                Button::new(
-                    Row::new()
-                        .push(previous_icon().style(theme::text::secondary))
-                        .push(Space::new().width(Length::Fixed(5.0)))
-                        .push(text::text("Previous").style(theme::text::secondary))
-                        .spacing(5)
-                        .align_y(Alignment::Center),
-                )
-                .style(theme::button::transparent)
-                .on_press_maybe((!*sending).then_some(BuySellMessage::ResetWidget)),
+                button::secondary(Some(previous_icon()), "Back")
+                    .width(Length::Fixed(150.0))
+                    .on_press_maybe((!*sending).then_some(BuySellMessage::ResetWidget)),
             )
             .align_y(Alignment::Center);
 

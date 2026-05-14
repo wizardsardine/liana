@@ -23,7 +23,7 @@ pub struct VaultExportModal {
     state: ImportExportState,
     error: Option<export::Error>,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-    breez_client: Option<Arc<crate::app::breez::BreezClient>>,
+    breez_client: Option<Arc<crate::app::breez_liquid::BreezClient>>,
     import_export_type: ImportExportType,
 }
 

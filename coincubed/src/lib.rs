@@ -517,7 +517,7 @@ impl DaemonHandle {
         // an atomic to be able to stop it.
         let mut bitcoin_poller =
             poller::Poller::new(bit.clone(), db.clone(), config.main_descriptor.clone());
-        let (poller_sender, poller_receiver) = mpsc::sync_channel(0);
+        let (poller_sender, poller_receiver) = mpsc::sync_channel(1);
         let poller_handle = thread::Builder::new()
             .name("Bitcoin Network poller".to_string())
             .spawn({
@@ -851,7 +851,12 @@ mod tests {
         };
 
         // Create a dummy config with this bitcoind
-        let desc_str = "wsh(andor(pk([aabbccdd]xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/<0;1>/*),older(10000),pk([aabbccdd]xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/<0;1>/*)))#3xh8xmhn";
+        let desc_str = concat!(
+            "wsh(andor(pk([aabbccdd]xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4z",
+            "LqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/<0;1>/*),older(10000),pk([aabbccdd]xpub68JJT",
+            "Xc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8Uut",
+            "BsBbgKHzaD5HkTkifK/<0;1>/*)))#3xh8xmhn"
+        );
         let desc = CoincubeDescriptor::from_str(desc_str).unwrap();
         let receive_desc = desc.receive_descriptor().clone();
         let change_desc = desc.change_descriptor().clone();

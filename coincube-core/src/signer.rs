@@ -1,7 +1,7 @@
 //! Signer module
 //!
 //! Some helpers to facilitate the usage of a signer in client of the Coincube daemon. For now
-//! only contains a hot signer.
+//! only contains a master signer.
 
 use crate::random;
 
@@ -102,11 +102,16 @@ impl fmt::Display for SignerError {
 impl error::Error for SignerError {}
 
 pub const MNEMONICS_FOLDER_NAME: &str = "mnemonics";
+/// Label embedded in the checksum portion of mnemonic filenames for master seeds.
+pub const MASTER_SEED_LABEL: &str = "master_";
+/// Legacy label kept for backward-compat reading of old Liquid-signer files.
+pub const LEGACY_LIQUID_SEED_LABEL: &str = "liquid_";
 
 /// A signer that keeps the key on the laptop. Based on BIP39.
-pub struct HotSigner {
+pub struct MasterSigner {
     mnemonic: bip39::Mnemonic,
     master_xpriv: bip32::Xpriv,
+    network: bitcoin::Network,
 }
 
 // TODO: instead of copying them here we could have a util module with those helpers.
@@ -146,7 +151,7 @@ fn create_file(path: &path::Path) -> Result<fs::File, std::io::Error> {
     };
 }
 
-impl HotSigner {
+impl MasterSigner {
     pub fn from_mnemonic(
         network: bitcoin::Network,
         mnemonic: bip39::Mnemonic,
@@ -156,15 +161,31 @@ impl HotSigner {
         Ok(Self {
             mnemonic,
             master_xpriv,
+            network,
         })
     }
 
-    /// Create a new hot signer from random bytes. Uses a 12-words mnemonics without a passphrase.
+    /// Create a new master signer from random bytes. Uses a 12-words mnemonics without a passphrase.
     pub fn generate(network: bitcoin::Network) -> Result<Self, SignerError> {
         // We want a 12-words mnemonic so we only use 16 of the 32 bytes.
         let random_32bytes = random::random_bytes().map_err(SignerError::Randomness)?;
         let mnemonic =
             bip39::Mnemonic::from_entropy(&random_32bytes[..16]).map_err(SignerError::Mnemonic)?;
+        Self::from_mnemonic(network, mnemonic)
+    }
+
+    /// Create a MasterSigner from a 32-byte WebAuthn PRF extension output.
+    ///
+    /// The first 16 bytes of the PRF output are used directly as BIP39 entropy,
+    /// producing a deterministic 12-word mnemonic. This mirrors [`Self::generate`],
+    /// which also takes the first 16 bytes of 32 random bytes. The same PRF
+    /// output always yields the same mnemonic and master key.
+    pub fn from_prf_output(
+        network: bitcoin::Network,
+        prf_output: &[u8; 32],
+    ) -> Result<Self, SignerError> {
+        let mnemonic =
+            bip39::Mnemonic::from_entropy(&prf_output[..16]).map_err(SignerError::Mnemonic)?;
         Self::from_mnemonic(network, mnemonic)
     }
 
@@ -188,8 +209,8 @@ impl HotSigner {
         .collect()
     }
 
-    /// Read mnemonics from datadir (with optional password for encrypted files)
-    /// If `skip_liquid` is true, skip files containing "-liquid-" in the filename (Liquid wallet mnemonics)
+    /// Read mnemonics from datadir (with optional password for encrypted files).
+    /// To exclude Liquid/master-seed files, use [`Self::from_datadir_with_password_filtered`].
     pub fn from_datadir_with_password(
         datadir_root: &path::Path,
         network: bitcoin::Network,
@@ -198,12 +219,12 @@ impl HotSigner {
         Self::from_datadir_with_password_filtered(datadir_root, network, password, false)
     }
 
-    /// Read mnemonics from datadir, optionally filtering out Liquid wallet mnemonics
+    /// Read mnemonics from datadir, optionally filtering out Liquid-wallet and master-seed mnemonics.
     pub fn from_datadir_with_password_filtered(
         datadir_root: &path::Path,
         network: bitcoin::Network,
         password: Option<&str>,
-        skip_liquid: bool,
+        vault_only: bool,
     ) -> Result<Vec<Self>, SignerError> {
         let mut signers = Vec::new();
 
@@ -214,10 +235,12 @@ impl HotSigner {
         for entry in mnemonic_paths {
             let path = entry.map_err(SignerError::MnemonicStorage)?.path();
 
-            // Skip Liquid wallet mnemonics if requested (they're managed by Breez SDK)
-            if skip_liquid {
+            // Skip Liquid and master-seed mnemonics when in vault-only mode.
+            if vault_only {
                 if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                    if filename.contains("-liquid_") {
+                    if filename.contains(&format!("-{}", LEGACY_LIQUID_SEED_LABEL))
+                        || filename.contains(&format!("-{}", MASTER_SEED_LABEL))
+                    {
                         continue;
                     }
                 }
@@ -366,10 +389,16 @@ impl HotSigner {
         result
     }
 
+    /// Reconstructs an equivalent signer by re-deriving from this signer's mnemonic.
+    /// Useful when a second owner needs the same key material (e.g., the installer
+    /// re-using the cube's master seed as the vault hot-signer in dev mode).
+    pub fn try_clone(&self) -> Result<Self, SignerError> {
+        Self::from_mnemonic(self.network, self.mnemonic.clone())
+    }
+
     /// Store the mnemonic in a file within the given "data directory".
     /// The file is stored within a "mnemonics" folder, with the filename set to the fingerprint of
-    /// the master xpub corresponding to this mnemonic.
-    /// Store the mnemonic (encrypted if password provided)
+    /// the master xpub corresponding to this mnemonic. Encrypted when `password` is provided.
     pub fn store_encrypted(
         &self,
         datadir_root: &path::Path,
@@ -740,6 +769,7 @@ impl HotSigner {
     /// BIP32 encoding of those keys (xpubs, tpubs, ..) but does not affect any data (whether it is
     /// the keys or the mnemonics).
     pub fn set_network(&mut self, network: bitcoin::Network) {
+        self.network = network;
         self.master_xpriv.network = network.into();
     }
 }
@@ -858,22 +888,22 @@ mod tests {
     }
 
     #[test]
-    fn hot_signer_gen() {
+    fn master_signer_gen() {
         // Entropy isn't completely broken.
         assert_ne!(
-            HotSigner::generate(bitcoin::Network::Bitcoin)
+            MasterSigner::generate(bitcoin::Network::Bitcoin)
                 .unwrap()
                 .words(),
-            HotSigner::generate(bitcoin::Network::Bitcoin)
+            MasterSigner::generate(bitcoin::Network::Bitcoin)
                 .unwrap()
                 .words()
         );
 
         // Roundtrips.
-        let signer = HotSigner::generate(bitcoin::Network::Bitcoin).unwrap();
+        let signer = MasterSigner::generate(bitcoin::Network::Bitcoin).unwrap();
         let mnemonics_str = signer.mnemonic_str();
         assert_eq!(
-            HotSigner::from_str(bitcoin::Network::Bitcoin, &mnemonics_str)
+            MasterSigner::from_str(bitcoin::Network::Bitcoin, &mnemonics_str)
                 .unwrap()
                 .words(),
             signer.words()
@@ -888,7 +918,34 @@ mod tests {
     }
 
     #[test]
-    fn hot_signer_storage() {
+    fn master_signer_from_prf_output_deterministic() {
+        let prf_output: [u8; 32] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
+        ];
+
+        let signer1 =
+            MasterSigner::from_prf_output(bitcoin::Network::Bitcoin, &prf_output).unwrap();
+        let signer2 =
+            MasterSigner::from_prf_output(bitcoin::Network::Bitcoin, &prf_output).unwrap();
+
+        // Same PRF output must produce the same mnemonic and fingerprint.
+        assert_eq!(signer1.words(), signer2.words());
+        let secp = secp256k1::Secp256k1::signing_only();
+        assert_eq!(signer1.fingerprint(&secp), signer2.fingerprint(&secp));
+
+        // Must produce a valid 12-word mnemonic.
+        assert_eq!(signer1.words().len(), 12);
+
+        // Different PRF output must produce a different mnemonic.
+        let other_prf: [u8; 32] = [0xff; 32];
+        let signer3 = MasterSigner::from_prf_output(bitcoin::Network::Bitcoin, &other_prf).unwrap();
+        assert_ne!(signer1.words(), signer3.words());
+    }
+
+    #[test]
+    fn master_signer_storage() {
         let secp = secp256k1::Secp256k1::signing_only();
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
@@ -896,12 +953,12 @@ mod tests {
 
         let words_set: HashSet<_> = (0..10)
             .map(|_| {
-                let signer = HotSigner::generate(network).unwrap();
+                let signer = MasterSigner::generate(network).unwrap();
                 signer.store(&tmp_dir, network, &secp, None).unwrap();
                 signer.words()
             })
             .collect();
-        let words_read: HashSet<_> = HotSigner::from_datadir(&tmp_dir, network)
+        let words_read: HashSet<_> = MasterSigner::from_datadir(&tmp_dir, network)
             .unwrap()
             .into_iter()
             .map(|signer| signer.words())
@@ -912,17 +969,17 @@ mod tests {
     }
 
     #[test]
-    fn hot_signer_sign_p2wsh() {
+    fn master_signer_sign_p2wsh() {
         let secp = secp256k1::Secp256k1::new();
         let network = bitcoin::Network::Bitcoin;
 
-        // Create a Coincube descriptor with as primary path a 2-of-3 with three hot signers and a
-        // single hot signer as recovery path. (The recovery path signer is also used in the
+        // Create a Coincube descriptor with as primary path a 2-of-3 with three master signers and a
+        // single master signer as recovery path. (The recovery path signer is also used in the
         // primary path.) Use various random derivation paths.
         let (prim_signer_a, prim_signer_b, recov_signer) = (
-            HotSigner::generate(network).unwrap(),
-            HotSigner::generate(network).unwrap(),
-            HotSigner::generate(network).unwrap(),
+            MasterSigner::generate(network).unwrap(),
+            MasterSigner::generate(network).unwrap(),
+            MasterSigner::generate(network).unwrap(),
         );
         let origin_der = bip32::DerivationPath::from_str("m/0'/12'/42").unwrap();
         let xkey = prim_signer_a.xpub_at(&origin_der, &secp);
@@ -1173,17 +1230,17 @@ mod tests {
     }
 
     #[test]
-    fn hot_signer_sign_taproot() {
+    fn master_signer_sign_taproot() {
         let secp = secp256k1::Secp256k1::new();
         let network = bitcoin::Network::Bitcoin;
 
-        // Create a Coincube descriptor with as primary path a 2-of-3 with three hot signers and a
-        // single hot signer as recovery path. (The recovery path signer is also used in the
+        // Create a Coincube descriptor with as primary path a 2-of-3 with three master signers and a
+        // single master signer as recovery path. (The recovery path signer is also used in the
         // primary path.) Use various random derivation paths.
         let (prim_signer_a, prim_signer_b, recov_signer) = (
-            HotSigner::generate(network).unwrap(),
-            HotSigner::generate(network).unwrap(),
-            HotSigner::generate(network).unwrap(),
+            MasterSigner::generate(network).unwrap(),
+            MasterSigner::generate(network).unwrap(),
+            MasterSigner::generate(network).unwrap(),
         );
         let origin_der = bip32::DerivationPath::from_str("m/0'/12'/42").unwrap();
         let xkey = prim_signer_a.xpub_at(&origin_der, &secp);
@@ -1495,7 +1552,7 @@ mod tests {
     #[test]
     fn signer_set_net() {
         let secp = secp256k1::Secp256k1::signing_only();
-        let mut signer = HotSigner::from_str(
+        let mut signer = MasterSigner::from_str(
             bitcoin::Network::Bitcoin,
             "burger ball theme dog light account produce chest warrior swarm flip equip",
         )
@@ -1583,5 +1640,13 @@ mod tests {
 
         // Invalid timestamp
         assert!(MnemonicFileName::from_str("mnemonic-abcd1234-def456-notanumber.txt").is_err());
+    }
+
+    #[test]
+    fn test_try_clone_fingerprint_matches() {
+        let secp = secp256k1::Secp256k1::new();
+        let signer = MasterSigner::generate(bitcoin::Network::Bitcoin).unwrap();
+        let cloned = signer.try_clone().unwrap();
+        assert_eq!(signer.fingerprint(&secp), cloned.fingerprint(&secp));
     }
 }

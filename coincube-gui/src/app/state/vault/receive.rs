@@ -5,8 +5,7 @@ use coincube_core::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     Address, Network,
 };
-use coincube_ui::widget::modal;
-use coincube_ui::widget::*;
+use coincube_ui::widget::{modal, Element};
 use iced::{clipboard, widget::qr_code, Subscription, Task};
 
 use crate::daemon::model::LabelsLoader;
@@ -276,7 +275,7 @@ impl State for VaultReceivePanel {
                         self.warning = Some(e);
                         return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
-                };
+                }
                 Task::none()
             }
             Message::View(view::Message::Next) => {

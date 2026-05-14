@@ -3,13 +3,13 @@ pub mod connect;
 mod global_home;
 pub mod liquid;
 pub mod settings;
-pub mod usdt;
+pub mod spark;
 pub mod vault;
 
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::{Amount, OutPoint};
-use coincube_ui::widget::*;
+use coincube_ui::widget::Element;
 use iced::{Subscription, Task};
 
 use super::{cache::Cache, menu::Menu, message::Message, view, wallet::Wallet};
@@ -23,15 +23,13 @@ use crate::daemon::{
 };
 pub use connect::{ConnectAccountPanel, ConnectCubePanel, ConnectPanel};
 pub use global_home::GlobalHome;
+pub(crate) use global_home::{effective_transfer_max_sat, effective_transfer_min_sat};
 pub use liquid::overview::LiquidOverview;
 pub use liquid::receive::LiquidReceive;
 pub use liquid::send::LiquidSend;
-pub use liquid::settings::{BackupWalletState, LiquidSettings, LiquidSettingsFlowState};
+pub use liquid::settings::LiquidSettings;
 pub use liquid::transactions::LiquidTransactions;
-pub use usdt::overview::UsdtOverview;
-pub use usdt::receive::UsdtReceive;
-pub use usdt::send::UsdtSend;
-pub use usdt::transactions::UsdtTransactions;
+pub use spark::{SparkOverview, SparkReceive, SparkSend, SparkSettings, SparkTransactions};
 pub use vault::coins::CoinsPanel;
 pub use vault::label::LabelsEdited;
 pub use vault::overview::VaultOverview;
@@ -65,6 +63,18 @@ pub trait State {
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         Task::none()
+    }
+
+    /// Opt-in escape hatch for concrete-type access through a
+    /// `Box<dyn State>`. Default is `None`; implementations that need
+    /// to be reached from their parent panel (e.g. the `SettingsState`
+    /// outer wrapper needs a `&GeneralSettingsState` to render the
+    /// Recovery-Kit card alongside the rest of the General page)
+    /// override this to return `Some(self)`. Keeps the refactor local
+    /// to the cases that need it rather than forcing every impl to
+    /// participate.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
     }
 }
 

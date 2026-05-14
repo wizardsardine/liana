@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use coincube_core::miniscript::bitcoin::{Amount, OutPoint};
-use coincube_ui::widget::*;
+use coincube_ui::widget::Element;
 use coincubed::commands::CoinStatus;
 use iced::Task;
 
@@ -53,6 +53,10 @@ pub struct VaultOverview {
 
     warning: Option<Error>,
     show_rescan_warning: bool,
+    show_received_celebration: bool,
+    received_amount_display: String,
+    received_quote: coincube_ui::component::quote_display::Quote,
+    received_image_handle: iced::widget::image::Handle,
 }
 
 impl VaultOverview {
@@ -83,16 +87,33 @@ impl VaultOverview {
             processing: false,
             show_rescan_warning,
             last_reload: Instant::now(),
+            show_received_celebration: false,
+            received_amount_display: String::new(),
+            received_quote: coincube_ui::component::quote_display::random_quote("bitcoin-receive"),
+            received_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
+                "bitcoin-receive",
+            ),
         }
     }
 }
 
 impl State for VaultOverview {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
+        if self.show_received_celebration {
+            let celebration = view::vault::overview::received_celebration_page(
+                "bitcoin-receive",
+                &self.received_amount_display,
+                &self.received_quote,
+                &self.received_image_handle,
+            );
+            return view::dashboard(menu, cache, celebration);
+        }
+
         let converter: Option<view::FiatAmountConverter> =
             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
         if let Some((tx, output_index)) = &self.selected_event {
             view::vault::overview::payment_view(
+                menu,
                 cache,
                 tx,
                 *output_index,
@@ -116,6 +137,8 @@ impl State for VaultOverview {
                     cache.bitcoin_unit,
                     cache.node_bitcoind_sync_progress,
                     cache.node_bitcoind_ibd,
+                    cache.show_direction_badges,
+                    cache.display_mode,
                 ),
             )
         }
@@ -129,6 +152,10 @@ impl State for VaultOverview {
     ) -> Task<Message> {
         let daemon = daemon.expect("Daemon required for vault overview panel");
         match message {
+            Message::View(view::Message::DismissReceivedCelebration) => {
+                self.show_received_celebration = false;
+                return Task::none();
+            }
             Message::Tick => {
                 // we reload the page only when the user is not exploring the history
                 // looking at a selected event
@@ -168,6 +195,31 @@ impl State for VaultOverview {
                 }
                 Ok(events) => {
                     self.warning = None;
+                    // Detect new incoming payment by comparing newest tx
+                    if let Some(newest) = events.first() {
+                        use crate::daemon::model::PaymentKind;
+                        let is_incoming = matches!(newest.kind, PaymentKind::Incoming);
+                        let is_new = self
+                            .payments
+                            .list
+                            .first()
+                            .is_none_or(|prev| prev.outpoint != newest.outpoint);
+                        if is_incoming && is_new && !self.payments.list.is_empty() {
+                            use coincube_ui::component::amount::DisplayAmount;
+                            self.received_amount_display = newest
+                                .amount
+                                .to_formatted_string_with_unit(cache.bitcoin_unit);
+                            self.received_quote =
+                                coincube_ui::component::quote_display::random_quote(
+                                    "bitcoin-receive",
+                                );
+                            self.received_image_handle =
+                                coincube_ui::component::quote_display::image_handle_for_context(
+                                    "bitcoin-receive",
+                                );
+                            self.show_received_celebration = true;
+                        }
+                    }
                     self.payments.list = events;
                     self.payments.loaded_page_count = 1;
                     self.payments.is_last_page =
@@ -333,7 +385,7 @@ impl State for VaultOverview {
                 }
             }
             _ => {}
-        };
+        }
         Task::none()
     }
 

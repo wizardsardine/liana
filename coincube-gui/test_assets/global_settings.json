@@ -77,5 +77,8 @@
     "width": 1248.0,
     "height": 688.0
   },
-  "developer_mode": false
+  "developer_mode": false,
+  "account_tier": "free",
+  "theme_mode": "dark",
+  "show_direction_badges": true
 }

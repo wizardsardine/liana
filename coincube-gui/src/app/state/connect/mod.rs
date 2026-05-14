@@ -1,5 +1,6 @@
 pub mod account;
 pub mod cube;
+pub mod cube_members;
 
 pub(crate) const CONNECT_KEYRING_SERVICE: &str = if cfg!(debug_assertions) {
     "dev.coincube.Connect"
@@ -9,14 +10,18 @@ pub(crate) const CONNECT_KEYRING_SERVICE: &str = if cfg!(debug_assertions) {
 
 pub(crate) const CONNECT_KEYRING_USER: &str = "global_session";
 
-pub use account::{ConnectAccountPanel, ConnectFlowStep};
+pub use account::{
+    AddToCubeDialog, CheckoutPhase, CheckoutState, ConnectAccountPanel, ConnectFlowStep,
+    ContactsState, ContactsStep, InviteCubeOption,
+};
 pub use cube::ConnectCubePanel;
+pub use cube_members::ConnectCubeMembersState;
 
 use std::sync::Arc;
 
 use crate::{
     app::{
-        breez::BreezClient,
+        breez_spark::SparkClient,
         cache::Cache,
         menu::Menu,
         message::Message,
@@ -50,15 +55,29 @@ pub struct ConnectPanel {
 
 impl ConnectPanel {
     pub fn new(
-        breez_client: Arc<BreezClient>,
+        spark_client: Option<Arc<SparkClient>>,
         cube_uuid: String,
         cube_name: String,
         cube_network: String,
     ) -> Self {
+        let mut account = ConnectAccountPanel::new();
+        // W12 §2.7 tweak #1 / W14: propagate the active cube's network
+        // into ContactsState so the invite-form + add-to-cube dialogs
+        // can filter their candidate-cube lists.
+        account.set_active_network(Some(cube_network.clone()));
         ConnectPanel {
-            account: ConnectAccountPanel::new(),
-            cube: ConnectCubePanel::new(breez_client, cube_uuid, cube_name, cube_network),
+            account,
+            cube: ConnectCubePanel::new(spark_client, cube_uuid, cube_name, cube_network),
         }
+    }
+
+    /// Mirror the active Cube's server-side numeric id onto
+    /// `ContactsState` so the W14 "Add to Current Cube" action can
+    /// target the exact loaded cube (works even when the user has
+    /// multiple cubes on the same network).
+    fn sync_active_cube_server_id(&mut self) {
+        self.account
+            .set_active_cube_server_id(self.cube.server_cube_id);
     }
 
     /// Sync the authenticated client from account panel to cube panel.
@@ -70,6 +89,29 @@ impl ConnectPanel {
         } else {
             self.cube.clear_client();
         }
+    }
+
+    /// Set the current cube UUID for per-cube auto-connect tracking.
+    /// Returns a Task to trigger session check if in CheckingSession state.
+    pub fn set_cube_uuid(&mut self, cube_uuid: Option<String>) -> iced::Task<Message> {
+        self.account.set_current_cube_uuid(cube_uuid.clone());
+
+        // If we're in CheckingSession and now have a cube UUID, trigger Init to check for session
+        if matches!(self.account.step, ConnectFlowStep::CheckingSession) && cube_uuid.is_some() {
+            return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::Init,
+            )));
+        }
+
+        iced::Task::none()
+    }
+
+    /// Check if avatar should be loaded and return task if so.
+    pub fn check_and_load_avatar(&self) -> iced::Task<Message> {
+        if let Some(task) = self.cube.load_avatar_if_needed() {
+            return task;
+        }
+        iced::Task::none()
     }
 }
 
@@ -129,17 +171,39 @@ impl State for ConnectPanel {
                 let was_authenticated = self.account.is_authenticated();
                 let task = self.account.update_message(msg);
                 self.sync_client();
+                self.sync_active_cube_server_id();
                 // After first login, register the cube with the backend
                 // (idempotent — returns existing if already registered).
                 // The response includes lightning address if already claimed.
                 let now_authenticated = self.account.is_authenticated();
                 if !was_authenticated && now_authenticated {
+                    // First login - register cube, avatar will load after CubeRegistered
                     let register_task = self.cube.register_cube();
                     return iced::Task::batch([task, register_task]);
                 }
+                // Already authenticated - ensure cube is registered, then load avatar
+                if now_authenticated {
+                    if self.cube.server_cube_id.is_none() {
+                        // Need to register cube first, avatar will load after CubeRegistered
+                        let register_task = self.cube.register_cube();
+                        return iced::Task::batch([task, register_task]);
+                    } else {
+                        // Cube already registered, load avatar now
+                        let avatar_task = self.check_and_load_avatar();
+                        return iced::Task::batch([task, avatar_task]);
+                    }
+                }
                 task
             }
-            Message::View(view::Message::ConnectCube(msg)) => self.cube.update_message(msg),
+            Message::View(view::Message::ConnectCube(msg)) => {
+                let task = self.cube.update_message(msg);
+                // `CubeRegistered(Ok)` populates `server_cube_id`; mirror
+                // it into the account panel so the "Add to Current
+                // Cube" button becomes enabled as soon as the cube is
+                // known to the backend.
+                self.sync_active_cube_server_id();
+                task
+            }
             _ => iced::Task::none(),
         }
     }

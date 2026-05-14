@@ -1,3 +1,6 @@
+mod contacts;
+mod cube_members;
+
 use coincube_ui::{
     color,
     component::{button, text},
@@ -6,24 +9,28 @@ use coincube_ui::{
     theme,
     widget::*,
 };
-use iced::{widget::container, Alignment, Length};
+use iced::{
+    widget::{container, QRCode},
+    Alignment, Length,
+};
 
 use crate::{
     app::{
         menu::ConnectSubMenu,
         state::connect::{
-            AvatarFlowStep, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep, ConnectPanel,
+            AvatarFlowStep, CheckoutPhase, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep,
+            ConnectPanel,
         },
         view::{AvatarMessage, ConnectAccountMessage, ConnectCubeMessage},
     },
     services::coincube::{
         AvatarAccentMotif, AvatarAgeFeel, AvatarArchetype, AvatarArmorStyle, AvatarDemeanor,
-        AvatarGender, PlanTier,
+        AvatarGender, BillingCycle, PlanTier,
     },
 };
 
 /// Domain suffix displayed in the Lightning Address claim form.
-/// Must match the backend's `lightningAddressDomain` / `bip353Domain`.
+/// Must match the backend's `lightningAddressDomain`.
 const LN_ADDRESS_DOMAIN: &str = "@coincube.io";
 
 use crate::app::view::Message as ViewMessage;
@@ -68,7 +75,13 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
             ConnectSubMenu::PlanBilling => plan_billing_ux(acct).map(ViewMessage::ConnectAccount),
             ConnectSubMenu::Security => security_ux(acct).map(ViewMessage::ConnectAccount),
             ConnectSubMenu::Duress => duress_ux().map(ViewMessage::ConnectAccount),
+            ConnectSubMenu::Contacts => {
+                contacts::contacts_ux(acct).map(ViewMessage::ConnectAccount)
+            }
             ConnectSubMenu::Invites => invites_ux(acct).map(ViewMessage::ConnectAccount),
+            ConnectSubMenu::CubeMembers => {
+                cube_members::cube_members_ux(cube).map(ViewMessage::ConnectCube)
+            }
         },
     };
 
@@ -134,6 +147,7 @@ pub fn connect_account_panel<'a>(
             ConnectSubMenu::PlanBilling => plan_billing_ux(acct),
             ConnectSubMenu::Security => security_ux(acct),
             ConnectSubMenu::Duress => duress_ux(),
+            ConnectSubMenu::Contacts => contacts::contacts_ux(acct),
             // Cube-specific submenus shouldn't appear in the launcher
             _ => Column::new()
                 .push(
@@ -175,6 +189,16 @@ pub fn connect_account_panel<'a>(
     }
 
     col.push(body).into()
+}
+
+/// Parse an RFC 3339 timestamp and render it as `"Mon DD, YYYY"`
+/// (e.g. `"Apr 20, 2026"`). Falls back to the raw input on parse
+/// failure. Shared helper used by both the Contacts and Cube Members
+/// views.
+pub(super) fn format_date(iso: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(iso)
+        .map(|dt| dt.format("%b %d, %Y").to_string())
+        .unwrap_or_else(|_| iso.to_string())
 }
 
 fn card_style(t: &theme::Theme) -> container::Style {
@@ -259,16 +283,9 @@ fn register_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectAccountM
 
     Column::new()
         .push(
-            iced::widget::button(
-                Row::new()
-                    .push(previous_icon().color(color::GREY_2))
-                    .push(iced::widget::Space::new().width(Length::Fixed(5.0)))
-                    .push(text::p1_medium("Previous").style(theme::text::secondary))
-                    .spacing(5)
-                    .align_y(Alignment::Center),
-            )
-            .style(theme::button::transparent)
-            .on_press_maybe((!loading).then_some(ConnectAccountMessage::LogOut)),
+            button::secondary(Some(previous_icon()), "Back")
+                .width(Length::Fixed(150.0))
+                .on_press_maybe((!loading).then_some(ConnectAccountMessage::LogOut)),
         )
         .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
         .push(text::h3("Create an Account").style(theme::text::primary))
@@ -371,7 +388,7 @@ fn overview_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
     let plan_label = state
         .plan
         .as_ref()
-        .map(|p| p.tier.to_string())
+        .map(|p| p.tier().to_string())
         .unwrap_or_else(|| "Free".to_string());
 
     let verification_badge: Element<ConnectAccountMessage> = if verified {
@@ -436,90 +453,244 @@ fn plan_tier_color(tier: &PlanTier) -> iced::Color {
     match tier {
         PlanTier::Free => color::GREY_3,
         PlanTier::Pro => color::ORANGE,
-        PlanTier::Legacy => color::BLUE,
+        PlanTier::Legacy => color::LIGHT_BLUE,
     }
 }
 
+// ── Plan & Billing — top-level router ───────────────────────────────────────
+
 fn plan_billing_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
+    if let Some(checkout_state) = &state.checkout {
+        return checkout_ux(checkout_state);
+    }
+    if state.show_billing_history {
+        return billing_history_ux(state);
+    }
+    plan_selection_ux(state)
+}
+
+// ── Plan selection view ─────────────────────────────────────────────────────
+
+fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
     let current_tier = state
         .plan
         .as_ref()
-        .map(|p| &p.tier)
+        .map(|p| p.tier())
         .unwrap_or(&PlanTier::Free);
+    let current_cycle = state.plan.as_ref().and_then(|p| p.billing_cycle);
 
-    let plan_card = |name: &'static str,
-                     tier: &PlanTier,
-                     desc: &'static str,
-                     price: &'static str|
-     -> Element<'a, ConnectAccountMessage> {
-        let is_current = tier == current_tier;
-        let badge_color = plan_tier_color(tier);
+    let cycle = state.selected_billing_cycle;
 
-        container(
-            Column::new()
-                .push(
-                    Row::new()
-                        .push(text::p1_bold(name).color(badge_color))
-                        .push(iced::widget::Space::new().width(Length::Fill))
-                        .push(text::p1_regular(price).color(color::GREY_3)),
-                )
-                .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
-                .push(text::p2_regular(desc).color(color::GREY_3))
-                .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-                .push(if is_current {
-                    button::secondary(None, "Current Plan").width(Length::Fill)
-                } else {
-                    button::primary(None, "Upgrade (Coming Soon)").width(Length::Fill)
-                })
-                .padding(16)
-                .spacing(2),
-        )
-        .style(move |t| container::Style {
-            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-            border: iced::Border {
-                color: if is_current {
-                    badge_color
-                } else {
-                    t.colors.cards.simple.border.unwrap_or(color::GREY_5)
-                },
-                width: if is_current { 1.0 } else { 0.2 },
-                radius: 16.0.into(),
-            },
-            ..Default::default()
-        })
-        .width(Length::Fill)
-        .into()
+    // Billing cycle toggle
+    let monthly_btn = if cycle == BillingCycle::Monthly {
+        button::primary(None, "Monthly").width(Length::Fill)
+    } else {
+        button::secondary(None, "Monthly")
+            .on_press(ConnectAccountMessage::BillingCycleSelected(
+                BillingCycle::Monthly,
+            ))
+            .width(Length::Fill)
+    };
+    let annual_btn = if cycle == BillingCycle::Annual {
+        button::primary(None, "Annual").width(Length::Fill)
+    } else {
+        button::secondary(None, "Annual")
+            .on_press(ConnectAccountMessage::BillingCycleSelected(
+                BillingCycle::Annual,
+            ))
+            .width(Length::Fill)
+    };
+    let cycle_toggle = Row::new()
+        .push(monthly_btn)
+        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+        .push(annual_btn)
+        .width(Length::Fill);
+
+    // Determine upgrade order: Free < Pro < Legacy
+    let tier_rank = |t: &PlanTier| -> u8 {
+        match t {
+            PlanTier::Free => 0,
+            PlanTier::Pro => 1,
+            PlanTier::Legacy => 2,
+        }
     };
 
-    Column::new()
+    // Build plan cards from features response, or static fallback
+    struct PlanCardData {
+        name: String,
+        tier: PlanTier,
+        features: Vec<String>,
+        price_label: String,
+    }
+
+    let cards: Vec<PlanCardData> = if let Some(ref features) = state.features {
+        features
+            .plans
+            .iter()
+            .filter_map(|info| {
+                let tier = match info.name.as_str() {
+                    "free" => PlanTier::Free,
+                    "pro" => PlanTier::Pro,
+                    "legacy" => PlanTier::Legacy,
+                    _ => return None,
+                };
+                let price_label = match &info.price {
+                    Some(p) => match cycle {
+                        BillingCycle::Monthly => format!("${}/mo", p.monthly),
+                        BillingCycle::Annual => format!("${}/yr", p.annual),
+                    },
+                    None => "Free".to_string(),
+                };
+                Some(PlanCardData {
+                    name: tier.to_string(),
+                    tier,
+                    features: info.features.clone(),
+                    price_label,
+                })
+            })
+            .collect()
+    } else {
+        vec![
+            PlanCardData {
+                name: "Free".to_string(),
+                tier: PlanTier::Free,
+                features: vec![
+                    "Esplora access".into(),
+                    "Descriptor backup".into(),
+                    "1 signing key (no policies)".into(),
+                ],
+                price_label: "Free".to_string(),
+            },
+            PlanCardData {
+                name: "Pro".to_string(),
+                tier: PlanTier::Pro,
+                features: vec![
+                    "Signing policies".into(),
+                    "Unlimited self keys".into(),
+                    "Keychain backup/migration".into(),
+                ],
+                price_label: match cycle {
+                    BillingCycle::Monthly => "$12/mo".to_string(),
+                    BillingCycle::Annual => "$120/yr".to_string(),
+                },
+            },
+            PlanCardData {
+                name: "Legacy".to_string(),
+                tier: PlanTier::Legacy,
+                features: vec![
+                    "Invites".into(),
+                    "Linked keychains".into(),
+                    "Inheritance coordination".into(),
+                ],
+                price_label: match cycle {
+                    BillingCycle::Monthly => "$35/mo".to_string(),
+                    BillingCycle::Annual => "$350/yr".to_string(),
+                },
+            },
+        ]
+    };
+
+    let mut col = Column::new()
         .push(text::h4_bold("Plan & Billing").style(theme::text::primary))
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
-        .push(plan_card(
-            "Free",
-            &PlanTier::Free,
-            "Core features: Liquid wallet, Buy/Sell",
-            "Free",
-        ))
+        .push(cycle_toggle)
+        .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+
+    for card in cards {
+        // Paid tiers are "current" only when both tier *and* cycle match the
+        // user's actual plan. Free tier has no cycle, so tier alone suffices.
+        let is_current = card.tier == *current_tier
+            && match current_cycle {
+                Some(cc) => cc == cycle,
+                None => true,
+            };
+        let is_upgrade = tier_rank(&card.tier) > tier_rank(current_tier);
+        let badge_color = plan_tier_color(&card.tier);
+
+        let mut card_col = Column::new()
+            .push(
+                Row::new()
+                    .push(text::p1_bold(card.name).color(badge_color))
+                    .push(iced::widget::Space::new().width(Length::Fill))
+                    .push(text::p1_regular(card.price_label).color(color::GREY_3)),
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+
+        for feature in card.features {
+            card_col =
+                card_col.push(text::p2_regular(format!("• {}", feature)).color(color::GREY_3));
+        }
+
+        // Expiry line on the user's current paid plan card.
+        if is_current && card.tier != PlanTier::Free {
+            if let Some(renewal) = state.plan.as_ref().and_then(|p| p.renewal_at.as_deref()) {
+                let date_short = if renewal.len() >= 10 {
+                    &renewal[..10]
+                } else {
+                    renewal
+                };
+                card_col = card_col
+                    .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+                    .push(
+                        text::p2_regular(format!("Expires on {}", date_short)).color(color::GREY_3),
+                    );
+            }
+        }
+
+        card_col = card_col
+            .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
+            .push(if is_current {
+                button::secondary(None, "Current Plan").width(Length::Fill)
+            } else if is_upgrade {
+                let label = match &card.tier {
+                    PlanTier::Pro => "Upgrade to Pro",
+                    PlanTier::Legacy => "Upgrade to Legacy",
+                    _ => "Upgrade",
+                };
+                button::primary(None, label)
+                    .on_press(ConnectAccountMessage::StartCheckout(card.tier))
+                    .width(Length::Fill)
+            } else {
+                // Downgrade or Free — no action
+                button::secondary(None, "—").width(Length::Fill)
+            })
+            .padding(16)
+            .spacing(2);
+
+        col = col.push(
+            container(card_col)
+                .style(move |t| container::Style {
+                    background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+                    border: iced::Border {
+                        color: if is_current {
+                            badge_color
+                        } else {
+                            t.colors.cards.simple.border.unwrap_or(color::GREY_5)
+                        },
+                        width: if is_current { 1.0 } else { 0.2 },
+                        radius: 16.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .width(Length::Fill),
+        );
+        col = col.push(iced::widget::Space::new().height(Length::Fixed(10.0)));
+    }
+
+    // Billing history link
+    col = col
+        .push(iced::widget::Space::new().height(Length::Fixed(5.0)))
+        .push(
+            button::secondary(None, "View Billing History")
+                .on_press(ConnectAccountMessage::ToggleBillingHistory)
+                .width(Length::Fill),
+        )
         .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(plan_card(
-            "Pro",
-            &PlanTier::Pro,
-            "Advanced policy templates, priority support",
-            "Coming Soon",
-        ))
-        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(plan_card(
-            "Legacy",
-            &PlanTier::Legacy,
-            "Full feature access including Invites and Duress",
-            "Coming Soon",
-        ))
-        .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
         .push(
             container(
                 text::p2_regular(
-                    "Paid plans will be available via Bitcoin / Lightning (OpenNode). \
-                     No subscriptions — pay upfront, auto-renew reminders sent by email.",
+                    "Payments via Bitcoin (Lightning or on-chain). \
+                     No recurring subscriptions — pay upfront, renewal reminders sent by email.",
                 )
                 .color(color::GREY_3),
             )
@@ -533,10 +704,267 @@ fn plan_billing_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcc
                 ..Default::default()
             })
             .width(Length::Fill),
-        )
-        .spacing(0)
-        .width(Length::Fill)
-        .into()
+        );
+
+    col.spacing(0).width(Length::Fill).into()
+}
+
+// ── Checkout / payment view ─────────────────────────────────────────────────
+
+fn checkout_ux<'a>(
+    checkout_state: &'a crate::app::state::connect::CheckoutState,
+) -> Element<'a, ConnectAccountMessage> {
+    let mut col = Column::new()
+        .push(text::h4_bold("Checkout").style(theme::text::primary))
+        .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+
+    match &checkout_state.phase {
+        CheckoutPhase::Creating => {
+            col = col.push(text::p1_regular("Creating invoice…").color(color::GREY_3));
+        }
+
+        CheckoutPhase::AwaitingPayment | CheckoutPhase::Processing => {
+            if let Some(ref resp) = checkout_state.checkout {
+                let amount_line = format!(
+                    "{} {} ({} sats)",
+                    resp.amount_fiat, resp.fiat_currency, resp.amount_sats
+                );
+                let plan_line = format!("Upgrade to {} ({})", resp.plan, resp.billing_cycle);
+
+                col = col
+                    .push(text::p1_bold(plan_line).style(theme::text::primary))
+                    .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
+                    .push(text::p1_regular(amount_line).color(color::ORANGE))
+                    .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+
+                // Lightning QR
+                if let Some(ref qr) = checkout_state.lightning_qr {
+                    col = col.push(
+                        container(QRCode::new(qr).cell_size(6))
+                            .width(Length::Fill)
+                            .center_x(Length::Fill),
+                    );
+                    col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+                }
+
+                // Lightning invoice (truncated) + copy
+                let invoice_display = if resp.lightning_invoice.len() > 40 {
+                    format!("{}…", &resp.lightning_invoice[..40])
+                } else {
+                    resp.lightning_invoice.clone()
+                };
+                col = col.push(
+                    Row::new()
+                        .push(
+                            text::p2_regular(invoice_display)
+                                .color(color::GREY_3)
+                                .width(Length::Fill),
+                        )
+                        .push(
+                            button::secondary(None, "Copy")
+                                .on_press(ConnectAccountMessage::CopyToClipboard(
+                                    resp.lightning_invoice.clone(),
+                                ))
+                                .width(Length::Shrink),
+                        )
+                        .align_y(Alignment::Center)
+                        .spacing(8),
+                );
+
+                col = col.push(iced::widget::Space::new().height(Length::Fixed(10.0)));
+
+                // On-chain address + copy
+                col = col.push(
+                    Row::new()
+                        .push(
+                            text::p2_regular(format!("On-chain: {}", resp.on_chain_address))
+                                .color(color::GREY_3)
+                                .width(Length::Fill),
+                        )
+                        .push(
+                            button::secondary(None, "Copy")
+                                .on_press(ConnectAccountMessage::CopyToClipboard(
+                                    resp.on_chain_address.clone(),
+                                ))
+                                .width(Length::Shrink),
+                        )
+                        .align_y(Alignment::Center)
+                        .spacing(8),
+                );
+
+                col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+
+                // Open in browser
+                col = col.push(
+                    button::secondary(None, "Open in Browser")
+                        .on_press(ConnectAccountMessage::OpenCheckoutUrl(
+                            resp.checkout_url.clone(),
+                        ))
+                        .width(Length::Fill),
+                );
+
+                col = col.push(iced::widget::Space::new().height(Length::Fixed(10.0)));
+
+                // Expires
+                col = col.push(
+                    text::p2_regular(format!("Expires: {}", resp.expires_at)).color(color::GREY_3),
+                );
+
+                if matches!(checkout_state.phase, CheckoutPhase::Processing) {
+                    col = col
+                        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                        .push(
+                            text::p2_regular("Payment detected, confirming…").color(color::ORANGE),
+                        );
+                }
+            }
+
+            col = col
+                .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
+                .push(
+                    button::secondary(None, "Cancel")
+                        .on_press(ConnectAccountMessage::DismissCheckout)
+                        .width(Length::Fill),
+                );
+        }
+
+        CheckoutPhase::Paid => {
+            let plan_name = checkout_state
+                .checkout
+                .as_ref()
+                .map(|c| c.plan.to_string())
+                .unwrap_or_else(|| "your new plan".to_string());
+            col = col
+                .push(
+                    text::p1_bold(format!("Payment confirmed! Upgraded to {}.", plan_name))
+                        .color(color::ORANGE),
+                )
+                .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
+                .push(
+                    button::primary(None, "Done")
+                        .on_press(ConnectAccountMessage::DismissCheckout)
+                        .width(Length::Fill),
+                );
+        }
+
+        CheckoutPhase::Expired => {
+            col = col
+                .push(text::p1_regular("Invoice expired.").color(color::RED))
+                .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
+                .push(
+                    button::primary(None, "Try Again")
+                        .on_press(ConnectAccountMessage::DismissCheckout)
+                        .width(Length::Fill),
+                );
+        }
+
+        CheckoutPhase::Failed(msg) => {
+            col = col
+                .push(text::p1_regular(format!("Error: {}", msg)).color(color::RED))
+                .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
+                .push(
+                    button::primary(None, "Try Again")
+                        .on_press(ConnectAccountMessage::DismissCheckout)
+                        .width(Length::Fill),
+                );
+        }
+    }
+
+    col.spacing(0).width(Length::Fill).into()
+}
+
+// ── Billing history view ────────────────────────────────────────────────────
+
+fn billing_history_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
+    let back_button = iced::widget::button(
+        Row::new()
+            .push(previous_icon().color(color::GREY_2))
+            .push(iced::widget::Space::new().width(Length::Fixed(5.0)))
+            .push(text::p1_medium("Back").style(theme::text::secondary))
+            .spacing(5)
+            .align_y(Alignment::Center),
+    )
+    .style(theme::button::transparent)
+    .on_press(ConnectAccountMessage::ToggleBillingHistory);
+
+    let mut col = Column::new()
+        .push(back_button)
+        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+        .push(text::h4_bold("Billing History").style(theme::text::primary))
+        .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+
+    match &state.billing_history {
+        None => {
+            col = col.push(text::p1_regular("Loading…").color(color::GREY_3));
+        }
+        Some(entries) if entries.is_empty() => {
+            col = col.push(text::p1_regular("No billing history yet.").color(color::GREY_3));
+        }
+        Some(entries) => {
+            for entry in entries {
+                let status_color = match entry.status {
+                    crate::services::coincube::ChargeStatus::Paid => color::ORANGE,
+                    crate::services::coincube::ChargeStatus::Expired => color::RED,
+                    _ => color::GREY_3,
+                };
+                let status_label = match entry.status {
+                    crate::services::coincube::ChargeStatus::Unpaid => "Unpaid",
+                    crate::services::coincube::ChargeStatus::Processing => "Processing",
+                    crate::services::coincube::ChargeStatus::Paid => "Paid",
+                    crate::services::coincube::ChargeStatus::Expired => "Expired",
+                };
+                let amount_label = format!(
+                    "{} {} ({} sats)",
+                    entry.amount_fiat, entry.fiat_currency, entry.amount_sats
+                );
+                let date = entry
+                    .paid_at
+                    .as_deref()
+                    .unwrap_or(entry.created_at.as_str());
+                // Truncate ISO date to just the date portion
+                let date_short = if date.len() >= 10 { &date[..10] } else { date };
+
+                col = col.push(
+                    container(
+                        Row::new()
+                            .push(
+                                Column::new()
+                                    .push(
+                                        text::p2_bold(format!(
+                                            "{} ({})",
+                                            entry.plan, entry.billing_cycle
+                                        ))
+                                        .style(theme::text::primary),
+                                    )
+                                    .push(text::p2_regular(amount_label).color(color::GREY_3))
+                                    .width(Length::Fill),
+                            )
+                            .push(
+                                Column::new()
+                                    .push(text::p2_regular(date_short).color(color::GREY_3))
+                                    .push(text::p2_bold(status_label).color(status_color))
+                                    .align_x(Alignment::End),
+                            )
+                            .align_y(Alignment::Center)
+                            .padding(12),
+                    )
+                    .style(|t| container::Style {
+                        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+                        border: iced::Border {
+                            color: t.colors.cards.simple.border.unwrap_or(color::GREY_5),
+                            width: 0.2,
+                            radius: 12.0.into(),
+                        },
+                        ..Default::default()
+                    })
+                    .width(Length::Fill),
+                );
+                col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+            }
+        }
+    }
+
+    col.spacing(0).width(Length::Fill).into()
 }
 
 fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
@@ -625,19 +1053,133 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
 }
 
 fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage> {
-    let has_address = state
+    let current_address = state
         .lightning_address
         .as_ref()
-        .and_then(|la| la.lightning_address.as_deref())
-        .is_some();
+        .and_then(|la| la.lightning_address.clone())
+        .map(|mut a| {
+            if !a.contains('@') {
+                a.push_str(LN_ADDRESS_DOMAIN);
+            }
+            a
+        });
+    let has_address = current_address.is_some();
+    let current_username = current_address
+        .as_deref()
+        .and_then(|a| a.split('@').next())
+        .map(|u| u.to_string());
 
-    let card_content: Element<ConnectCubeMessage> = if has_address {
+    let card_content: Element<ConnectCubeMessage> = if has_address && state.ln_editing {
+        // Edit mode: in-place rename form on the claimed-address card.
+        let address = current_address.clone().unwrap_or_default();
+        let username = &state.ln_username_input;
+        let format_ok = state.ln_username_error.is_none() && !username.is_empty();
+        let available = state.ln_username_available == Some(true);
+        let differs = current_username
+            .as_deref()
+            .map(|u| u != username.as_str())
+            .unwrap_or(true);
+        let can_change = format_ok && available && differs && !state.ln_changing;
+
+        let status: Element<ConnectCubeMessage> = if state.ln_checking {
+            text::p2_regular("Checking…").color(color::GREY_3).into()
+        } else if let Some(err) = &state.ln_username_error {
+            text::p2_regular(err.as_str()).color(color::RED).into()
+        } else if !differs && !username.is_empty() {
+            text::p2_regular("This is your current username")
+                .color(color::GREY_3)
+                .into()
+        } else if state.ln_username_available == Some(true) {
+            text::p2_regular("✓ Available").color(color::GREEN).into()
+        } else if username.is_empty() {
+            text::p2_regular("Choose a new username")
+                .color(color::GREY_3)
+                .into()
+        } else {
+            text::p2_regular(" ").into()
+        };
+
+        let cancel_btn = button::secondary(None, "Cancel").on_press_maybe(
+            (!state.ln_changing).then_some(ConnectCubeMessage::CancelEditLightningAddress),
+        );
+        let change_btn: Element<ConnectCubeMessage> = if state.ln_changing {
+            iced::widget::button(
+                container(text::p1_regular("Changing…").color(color::GREY_3))
+                    .center_x(Length::Fixed(140.0))
+                    .center_y(Length::Fill),
+            )
+            .height(Length::Fixed(44.0))
+            .style(theme::button::primary)
+            .into()
+        } else {
+            button::primary(None, "Change")
+                .on_press_maybe(
+                    can_change.then_some(ConnectCubeMessage::RequestChangeLightningAddress),
+                )
+                .into()
+        };
+
+        container(
+            Column::new()
+                .push(text::p1_bold("Your Lightning Address").style(theme::text::primary))
+                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                .push(text::p2_regular(format!("Current: {}", address)).color(color::GREY_3))
+                .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
+                .push(
+                    Row::new()
+                        .push(
+                            TextInput::new("new username", username)
+                                .on_input_maybe(
+                                    (!state.ln_changing)
+                                        .then_some(ConnectCubeMessage::LnUsernameChanged),
+                                )
+                                .on_submit_maybe(
+                                    can_change.then_some(
+                                        ConnectCubeMessage::RequestChangeLightningAddress,
+                                    ),
+                                )
+                                .size(16)
+                                .padding(15),
+                        )
+                        .push(
+                            container(text::p1_regular(LN_ADDRESS_DOMAIN).color(color::GREY_3))
+                                .padding(15)
+                                .center_y(Length::Fixed(50.0)),
+                        )
+                        .align_y(Alignment::Center),
+                )
+                .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+                .push(status)
+                .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
+                .push(
+                    Row::new()
+                        .push(cancel_btn)
+                        .push(iced::widget::Space::new().width(Length::Fill))
+                        .push(change_btn)
+                        .align_y(Alignment::Center),
+                )
+                .push_maybe(state.ln_claim_error.as_deref().map(|err| {
+                    Column::new()
+                        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                        .push(text::p2_regular(err).color(color::RED))
+                }))
+                .padding(20)
+                .spacing(2),
+        )
+        .style(|t| container::Style {
+            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+            border: iced::Border {
+                color: color::ORANGE,
+                width: 0.5,
+                radius: 16.0.into(),
+            },
+            ..Default::default()
+        })
+        .width(Length::Fill)
+        .into()
+    } else if has_address {
         // Display the claimed address
-        let address = state
-            .lightning_address
-            .as_ref()
-            .and_then(|la| la.lightning_address.clone())
-            .unwrap_or_default();
+        let address = current_address.clone().unwrap_or_default();
 
         container(
             Column::new()
@@ -652,32 +1194,64 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
                                 button::secondary(Some(clipboard_icon()), "Copy")
                                     .on_press(ConnectCubeMessage::CopyToClipboard(address)),
                             )
+                            .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+                            .push(
+                                button::secondary(None, "Change")
+                                    .on_press(ConnectCubeMessage::BeginEditLightningAddress),
+                            )
                             .align_y(Alignment::Center),
                     )
                     .padding(16)
-                    .style(|t| container::Style {
-                        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-                        border: iced::Border {
-                            color: color::ORANGE,
-                            width: 0.5,
-                            radius: 12.0.into(),
-                        },
-                        ..Default::default()
-                    })
                     .width(Length::Fill),
                 )
                 .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
                 .push(
                     text::p2_regular(
                         "Anyone can send you bitcoin using this address. \
-                         It works with any wallet that supports BOLT12 / BIP353.",
+                         This app must be open and active to receive payments.",
                     )
                     .color(color::GREY_3),
                 )
+                .push_maybe(state.ln_reconcile_needs_reregister.as_deref().map(|err| {
+                    // API↔SDK divergence — the DB confirms the
+                    // address but the Spark SDK isn't bound to it on
+                    // this device. The retry button fires
+                    // `RetryLightningAddressReregister`, which does
+                    // an idempotent SDK delete followed by a fresh
+                    // register against the DB-confirmed username.
+                    let retry_label = if state.ln_reregistering {
+                        "Retrying…"
+                    } else {
+                        "Retry"
+                    };
+                    Column::new()
+                        .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
+                        .push(
+                            text::p2_bold("Lightning address needs re-registration")
+                                .color(color::RED),
+                        )
+                        .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
+                        .push(text::p2_regular(err).color(color::GREY_3))
+                        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                        .push(
+                            button::secondary(None, retry_label)
+                                .on_press_maybe((!state.ln_reregistering).then_some(
+                                    ConnectCubeMessage::RetryLightningAddressReregister,
+                                )),
+                        )
+                }))
                 .padding(20)
                 .spacing(2),
         )
-        .style(card_style)
+        .style(|t| container::Style {
+            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+            border: iced::Border {
+                color: color::ORANGE,
+                width: 0.5,
+                radius: 16.0.into(),
+            },
+            ..Default::default()
+        })
         .width(Length::Fill)
         .into()
     } else {
@@ -776,13 +1350,63 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
         .into()
     };
 
-    Column::new()
+    let body: Element<ConnectCubeMessage> = Column::new()
         .push(text::h4_bold("Lightning Address").style(theme::text::primary))
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
         .push(card_content)
         .spacing(0)
         .width(Length::Fill)
-        .into()
+        .into();
+
+    if let Some(proposed) = state.ln_change_confirm_pending.clone() {
+        let current_addr = current_address.clone().unwrap_or_default();
+        let new_addr = format!("{}{}", proposed, LN_ADDRESS_DOMAIN);
+        let confirm_card = container(
+            Column::new()
+                .push(text::h4_bold("Change your Lightning Address?").color(color::ORANGE))
+                .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
+                .push(text::p1_regular(format!(
+                    "Your current address {} will stop working immediately.",
+                    current_addr
+                )))
+                .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+                .push(text::p1_regular(
+                    "Anyone using the old address won't be able to send you bitcoin.",
+                ))
+                .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+                .push(text::p1_regular(format!(
+                    "You can claim a different name later, but {} may be taken \
+                     by someone else once you release it.",
+                    current_addr
+                )))
+                .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
+                .push(text::p1_bold(format!("New address: {}", new_addr)).color(color::ORANGE))
+                .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
+                .push(
+                    Row::new()
+                        .push(
+                            button::secondary(None, "Cancel")
+                                .on_press(ConnectCubeMessage::DismissChangeConfirmation),
+                        )
+                        .push(iced::widget::Space::new().width(Length::Fill))
+                        .push(
+                            button::primary(None, "Yes, change it")
+                                .on_press(ConnectCubeMessage::ConfirmChangeLightningAddress),
+                        )
+                        .align_y(Alignment::Center),
+                )
+                .padding(24)
+                .spacing(0),
+        )
+        .style(card_style)
+        .width(Length::Fixed(560.0));
+
+        coincube_ui::widget::modal::Modal::new(body, confirm_card)
+            .on_blur(Some(ConnectCubeMessage::DismissChangeConfirmation))
+            .into()
+    } else {
+        body
+    }
 }
 
 fn duress_ux<'a>() -> Element<'a, ConnectAccountMessage> {
@@ -1327,7 +1951,7 @@ fn invites_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountM
     let is_legacy = state
         .plan
         .as_ref()
-        .map(|p| p.tier == PlanTier::Legacy)
+        .map(|p| *p.tier() == PlanTier::Legacy)
         .unwrap_or(false);
 
     let card_content: Element<ConnectAccountMessage> = if !is_legacy {

@@ -6,7 +6,7 @@ use crate::{
     app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig, node::NodeType, signer::Signer,
 };
 
-use coincube_core::{miniscript::bitcoin, signer::HotSigner};
+use coincube_core::{miniscript::bitcoin, signer::MasterSigner};
 
 use coincube_core::descriptors::CoincubeDescriptor;
 use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
@@ -151,27 +151,28 @@ impl Wallet {
         network: bitcoin::Network,
     ) -> Result<Self, WalletError> {
         // Load only Vault mnemonics, skip Liquid wallet mnemonics (managed by Breez SDK)
-        let hot_signers = match HotSigner::from_datadir_vault_only(datadir_path.path(), network) {
-            Ok(signers) => signers,
-            Err(e) => match e {
-                coincube_core::signer::SignerError::MnemonicStorage(e) => {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        Vec::new()
-                    } else {
-                        return Err(WalletError::HotSigner(e.to_string()));
+        let master_signers =
+            match MasterSigner::from_datadir_vault_only(datadir_path.path(), network) {
+                Ok(signers) => signers,
+                Err(e) => match e {
+                    coincube_core::signer::SignerError::MnemonicStorage(e) => {
+                        if e.kind() == std::io::ErrorKind::NotFound {
+                            Vec::new()
+                        } else {
+                            return Err(WalletError::MasterSigner(e.to_string()));
+                        }
                     }
-                }
-                _ => return Err(WalletError::HotSigner(e.to_string())),
-            },
-        };
+                    _ => return Err(WalletError::MasterSigner(e.to_string())),
+                },
+            };
 
         let curve = bitcoin::secp256k1::Secp256k1::signing_only();
         let keys = self.descriptor_keys();
-        if let Some(hot_signer) = hot_signers
+        if let Some(master_signer) = master_signers
             .into_iter()
             .find(|s| keys.contains(&s.fingerprint(&curve)))
         {
-            Ok(self.with_signer(Signer::new(hot_signer)))
+            Ok(self.with_signer(Signer::new(master_signer)))
         } else {
             Ok(self)
         }
@@ -206,7 +207,7 @@ impl Wallet {
 pub enum WalletError {
     WrongWalletLoaded,
     Settings(settings::SettingsError),
-    HotSigner(String),
+    MasterSigner(String),
     BorderWallet(String),
 }
 
@@ -215,7 +216,7 @@ impl std::fmt::Display for WalletError {
         match self {
             Self::WrongWalletLoaded => write!(f, "Wrong wallet was loaded"),
             Self::Settings(e) => write!(f, "Failed to load settings: {}", e),
-            Self::HotSigner(e) => write!(f, "Failed to load hot signer: {}", e),
+            Self::MasterSigner(e) => write!(f, "Failed to load master signer: {}", e),
             Self::BorderWallet(e) => write!(f, "Border wallet signing failed: {}", e),
         }
     }

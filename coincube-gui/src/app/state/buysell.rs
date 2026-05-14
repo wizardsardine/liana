@@ -48,7 +48,7 @@ impl State for BuySellPanel {
                     self.step = BuySellFlowState::DetectingLocation(true);
 
                     return iced::Task::none();
-                };
+                }
 
                 if self.login.as_ref().is_none() {
                     // 1. Try the shared Connect global keyring first
@@ -85,13 +85,13 @@ impl State for BuySellPanel {
                                     Err(er) => {
                                         log::error!("Unable to parse user information found in OS keyring: {:?}", er)
                                     }
-                                };
-                            };
+                                }
+                            }
                         }
                         Err(e) => {
                             log::error!("Unable to restore login state from OS keyring: {e}");
                         }
-                    };
+                    }
 
                     // send user to login screen, to initialize login credentials
                     self.step = BuySellFlowState::Login {
@@ -138,7 +138,7 @@ impl State for BuySellPanel {
                         }
                     }
                     Err(e) => log::error!("[BUYSELL] Connect keyring inaccessible: {e}"),
-                };
+                }
 
                 // also write to the legacy wallet-scoped keyring
                 match keyring::Entry::new(KEYRING_SERVICE_NAME, &self.wallet.name) {
@@ -146,7 +146,7 @@ impl State for BuySellPanel {
                         let _ = entry.delete_credential();
                         if let Err(e) = entry.set_secret(&bytes) {
                             log::error!("Unable to store user data in keyring: {e}");
-                        };
+                        }
                     }
                     Err(err) => {
                         log::error!(
@@ -154,7 +154,7 @@ impl State for BuySellPanel {
                             err
                         )
                     }
-                };
+                }
 
                 // user is successfully logged in: 🥳
                 self.coincube_client.set_token(&login.token);
@@ -177,7 +177,7 @@ impl State for BuySellPanel {
                 if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE_NAME, &self.wallet.name) {
                     if let Err(e) = entry.delete_credential() {
                         log::error!("[BUYSELL] Unable to delete credentials from OS keyring: {e:?}")
-                    };
+                    }
                 }
 
                 // send user to login screen, to re-initialize login credentials
@@ -640,7 +640,7 @@ impl State for BuySellPanel {
                     (BuySellFlowState::Mavapay(state), view::BuySellMessage::Mavapay(msg)) => {
                         if let Some(task) = state.update(msg, &self.coincube_client) {
                             return task.map(Message::View);
-                        };
+                        }
                     }
                     (BuySellFlowState::Meld(state), view::BuySellMessage::Meld(msg)) => {
                         if let Some(task) = state.update(msg, cache, daemon, &self.coincube_client)
@@ -654,7 +654,7 @@ impl State for BuySellPanel {
                     }
                 }
             }
-        };
+        }
 
         iced::Task::none()
     }
@@ -723,7 +723,7 @@ impl State for BuySellPanel {
                                 )))
                             }),
                     );
-                };
+                }
 
                 iced::Subscription::batch(subs)
             }
@@ -749,8 +749,8 @@ impl State for BuySellPanel {
                                     view::BuySellMessage::Mavapay(msg),
                                 ))
                             });
-                    };
-                };
+                    }
+                }
 
                 iced::Subscription::none()
             }

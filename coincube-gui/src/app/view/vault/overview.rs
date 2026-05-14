@@ -15,21 +15,26 @@ use coincube_ui::{
         amount::*,
         button, card, form, spinner,
         text::*,
-        transaction::{
-            TransactionBadge, TransactionDirection, TransactionListItem, TransactionType,
-        },
+        transaction::{TransactionBadge, TransactionDirection, TransactionListItem},
     },
     icon::{self, cross_icon},
     theme,
-    widget::*,
+    widget::{Button, Column, ColumnExt, Element},
 };
 
 use crate::{
     app::{
         cache::Cache,
         menu::{self, Menu, VaultSubMenu},
+        settings::display::DisplayMode,
         view::{
-            balance_header_card, dashboard, message::Message, vault::coins, vault::label,
+            balance_header_card, dashboard,
+            message::Message,
+            vault::coins,
+            vault::label,
+            wallet_header::{
+                wallet_header, HeaderVariant, SyncState, UnconfirmedBalance, WalletHeaderProps,
+            },
             FiatAmountConverter,
         },
         wallet::SyncStatus,
@@ -87,92 +92,79 @@ pub fn vault_overview_view<'a>(
     bitcoin_unit: BitcoinDisplayUnit,
     node_bitcoind_sync_progress: Option<f64>,
     node_bitcoind_ibd: Option<bool>,
+    show_direction_badges: bool,
+    display_mode: DisplayMode,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
-    let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
+    let fiat_unconfirmed = fiat_converter
+        .as_ref()
+        .map(|c| c.convert(*unconfirmed_balance));
+    let sync = match sync_status {
+        SyncStatus::Synced => SyncState::Synced,
+        SyncStatus::BlockchainSync(progress) => SyncState::Syncing {
+            progress: Some(*progress),
+            label: "Syncing blockchain".to_string(),
+        },
+        SyncStatus::WalletFullScan => SyncState::Syncing {
+            progress: None,
+            label: "Syncing".to_string(),
+        },
+        SyncStatus::LatestWalletSync => SyncState::Checking,
+    };
+    let unconfirmed = (unconfirmed_balance.to_sat() != 0).then_some(UnconfirmedBalance {
+        amount: *unconfirmed_balance,
+        fiat: fiat_unconfirmed,
+    });
+    let btc_fiat_str = fiat_balance
+        .as_ref()
+        .map(|f| format!("{} {}", f.to_rounded_string(), f.currency()))
+        .unwrap_or_default();
+    let vault_btc_row = Row::new()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .push(coincube_ui::image::asset_network_logo::<Message>(
+            "btc", "bitcoin", 40.0,
+        ))
+        .push(text("BTC").size(P1_SIZE).bold().width(Length::Fixed(60.0)))
+        .push(amount_with_size_and_unit(balance, P1_SIZE, bitcoin_unit))
+        .push(
+            text(btc_fiat_str)
+                .size(P2_SIZE)
+                .style(theme::text::secondary)
+                .width(Length::Fill),
+        )
+        .push(
+            button::primary(None, "Send")
+                .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Send)))
+                .width(Length::Fixed(90.0)),
+        )
+        .push(
+            button::orange_outline(None, "Receive")
+                .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Receive)))
+                .width(Length::Fixed(90.0)),
+        );
     Column::new()
         .push(balance_header_card(
             Column::new()
-                .spacing(8)
-                .push(h4_bold("Balance"))
+                .spacing(16)
                 .push(
-                    if sync_status.is_synced() {
-                        Column::new()
-                            .spacing(5)
-                            .push(amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit))
-                            .push_maybe(fiat_balance.map(|fiat| {
-                                fiat.to_text().size(P2_SIZE).style(theme::text::secondary)
-                            }))
-                    } else {
-                        Column::new().push(Row::new().push(spinner::Carousel::new(
-                            Duration::from_millis(1000),
-                            vec![
-                                amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit),
-                                amount_with_size_colors_and_unit(
-                                    balance,
-                                    H2_SIZE,
-                                    color::GREY_3,
-                                    Some(color::GREY_3),
-                                    bitcoin_unit,
-                                ),
-                            ],
-                        )))
-                    }
-                    .wrap(),
+                    Column::new().spacing(8).push(h4_bold("Balance")).push(
+                        wallet_header::<Message>(WalletHeaderProps {
+                            sats: *balance,
+                            fiat: fiat_balance,
+                            balance_masked: false,
+                            bitcoin_unit,
+                            variant: HeaderVariant::Overview,
+                            sync,
+                            unconfirmed,
+                            pending_send_sats: 0,
+                            pending_receive_sats: 0,
+                            display_mode,
+                            on_swap: Some(Message::FlipDisplayMode),
+                        }),
+                    ),
                 )
-                .push_maybe(if !sync_status.is_synced() {
-                    Some(
-                        Row::new()
-                            .push(
-                                match sync_status {
-                                    SyncStatus::BlockchainSync(progress) => text(format!(
-                                        "Syncing blockchain ({:.1}%)",
-                                        100.0 * *progress
-                                    )),
-                                    SyncStatus::WalletFullScan => text("Syncing"),
-                                    _ => text("Checking for new transactions"),
-                                }
-                                .style(theme::text::secondary),
-                            )
-                            .push(spinner::typing_text_carousel(
-                                "...",
-                                true,
-                                Duration::from_millis(2000),
-                                |content| text(content).style(theme::text::secondary),
-                            )),
-                    )
-                } else {
-                    None
-                })
-                .push_maybe(
-                    if unconfirmed_balance.to_sat() != 0 && sync_status.is_synced() {
-                        Some(
-                            Row::new()
-                                .spacing(10)
-                                .align_y(Alignment::Center)
-                                .push(text("+").size(H3_SIZE).style(theme::text::secondary))
-                                .push(unconfirmed_amount_with_size_and_unit(
-                                    unconfirmed_balance,
-                                    H3_SIZE,
-                                    bitcoin_unit,
-                                ))
-                                .push(
-                                    text("unconfirmed")
-                                        .size(H3_SIZE)
-                                        .style(theme::text::secondary),
-                                )
-                                .push(fiat_unconfirmed.map(|fiat| {
-                                    Row::new()
-                                        .align_y(Alignment::Center)
-                                        .push(Space::new().width(10)) // total spacing = 20 including row spacing
-                                        .push(fiat.to_text().size(H4_SIZE).color(color::GREY_3))
-                                }))
-                                .wrap(),
-                        )
-                    } else {
-                        None
-                    },
-                ),
+                .push(vault_btc_row),
         ))
         .push(show_rescan_warning.then_some(rescan_warning()))
         .push(match (node_bitcoind_ibd, node_bitcoind_sync_progress) {
@@ -257,7 +249,12 @@ pub fn vault_overview_view<'a>(
                 .push(h4_bold("Last transactions"))
                 .push(events.iter().fold(Column::new().spacing(10), |col, event| {
                     if event.kind != PaymentKind::SendToSelf {
-                        col.push(event_list_view(event, bitcoin_unit, fiat_converter))
+                        col.push(event_list_view(
+                            event,
+                            bitcoin_unit,
+                            fiat_converter,
+                            show_direction_badges,
+                        ))
                     } else {
                         col
                     }
@@ -290,6 +287,59 @@ pub fn vault_overview_view<'a>(
                     None
                 }),
         )
+        .push_maybe(if !events.is_empty() {
+            Some(
+                Container::new({
+                    let tx_icon = icon::history_icon()
+                        .size(18)
+                        .style(|_theme: &theme::Theme| iced::widget::text::Style {
+                            color: Some(color::ORANGE),
+                        });
+                    let tx_label =
+                        text("View All Transactions")
+                            .size(15)
+                            .style(|_theme: &theme::Theme| iced::widget::text::Style {
+                                color: Some(color::ORANGE),
+                            });
+                    iced::widget::button(
+                        Container::new(
+                            Row::new()
+                                .spacing(8)
+                                .align_y(iced::Alignment::Center)
+                                .push(tx_icon)
+                                .push(tx_label),
+                        )
+                        .padding([10, 20])
+                        .style(|_theme: &theme::Theme| {
+                            iced::widget::container::Style {
+                                background: Some(iced::Background::Color(color::TRANSPARENT)),
+                                border: iced::Border {
+                                    color: color::ORANGE,
+                                    width: 1.5,
+                                    radius: 20.0.into(),
+                                },
+                                ..Default::default()
+                            }
+                        }),
+                    )
+                    .style(|_theme: &theme::Theme, _| iced::widget::button::Style {
+                        background: Some(iced::Background::Color(color::TRANSPARENT)),
+                        text_color: color::ORANGE,
+                        border: iced::Border {
+                            radius: 20.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })
+                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Transactions(None))))
+                })
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+            )
+        } else {
+            None
+        })
+        .push(Space::new().height(Length::Fixed(40.0)))
         .spacing(20)
         .into()
 }
@@ -298,6 +348,7 @@ fn event_list_view(
     event: &Payment,
     bitcoin_unit: BitcoinDisplayUnit,
     fiat_converter: Option<FiatAmountConverter>,
+    show_direction_badges: bool,
 ) -> Element<'_, Message> {
     let direction = if event.kind == PaymentKind::Incoming {
         TransactionDirection::Incoming
@@ -315,7 +366,10 @@ fn event_list_view(
     };
 
     let mut item = TransactionListItem::new(direction, &event.amount, bitcoin_unit)
-        .with_type(TransactionType::Bitcoin);
+        .with_custom_icon(coincube_ui::image::asset_network_logo(
+            "btc", "bitcoin", 40.0,
+        ))
+        .with_show_direction_badge(show_direction_badges);
 
     if let Some(label) = label {
         item = item.with_label(label);
@@ -329,7 +383,7 @@ fn event_list_view(
 
     if let Some(fiat_amount) = fiat_converter.map(|converter| {
         let fiat = converter.convert(event.amount);
-        format!("~{} {}", fiat.to_rounded_string(), fiat.currency())
+        format!("{} {}", fiat.to_rounded_string(), fiat.currency())
     }) {
         item = item.with_fiat_amount(fiat_amount);
     }
@@ -341,6 +395,7 @@ fn event_list_view(
 }
 
 pub fn payment_view<'a>(
+    menu: &'a Menu,
     cache: &'a Cache,
     tx: &'a HistoryTransaction,
     output_index: usize,
@@ -353,7 +408,7 @@ pub fn payment_view<'a>(
     }
     .to_string();
     dashboard(
-        &Menu::Home,
+        menu,
         cache,
         Column::new()
             .push(match tx.kind {
@@ -459,5 +514,21 @@ pub fn payment_view<'a>(
                 )),
             )
             .spacing(20),
+    )
+}
+
+/// Full-screen celebration view when a vault payment is received.
+pub fn received_celebration_page<'a>(
+    context: &str,
+    amount_display: &'a str,
+    quote: &'a coincube_ui::component::quote_display::Quote,
+    image_handle: &'a iced::widget::image::Handle,
+) -> Element<'a, Message> {
+    coincube_ui::component::received_celebration_page(
+        context,
+        amount_display,
+        quote,
+        image_handle,
+        Message::DismissReceivedCelebration,
     )
 }

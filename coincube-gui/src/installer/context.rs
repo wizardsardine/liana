@@ -6,13 +6,41 @@ use crate::{
     app::settings::KeySetting,
     backup::Backup,
     dir::CoincubeDirectory,
+    installer::descriptor::PathKind,
     node::bitcoind::{Bitcoind, InternalBitcoindConfig},
-    services::connect::client::backend::{BackendClient, BackendWalletClient},
+    services::{
+        coincube::CoincubeClient,
+        connect::client::backend::{BackendClient, BackendWalletClient},
+    },
     signer::Signer,
 };
 use async_hwi::DeviceKind;
-use coincube_core::{descriptors::CoincubeDescriptor, miniscript::bitcoin};
+use coincube_core::{
+    descriptors::CoincubeDescriptor,
+    miniscript::bitcoin::{self, bip32::Fingerprint},
+};
 use coincubed::config::{BitcoinBackend, BitcoinConfig};
+
+/// One backend `ConnectVaultMember` row to create after the descriptor
+/// is installed. Only keychain-sourced descriptor keys (W8 / W3) produce
+/// a payload — hardware-wallet, xpub-entered, master-signer and
+/// token-sourced keys are intentionally skipped (per
+/// `plans/PLAN-cube-membership-desktop.md` design decision,
+/// 2026-04-18: "only keychain-sourced keys become VaultMember rows").
+#[derive(Debug, Clone)]
+pub struct ConnectVaultMemberPayload {
+    pub fingerprint: Fingerprint,
+    /// Backend `keys.id` captured when the user selected this key in the
+    /// Vault Builder picker.
+    pub key_id: u64,
+    /// Populated when the key belongs to a contact-Keyholder, `None` when
+    /// the key belongs to the vault owner themselves.
+    pub contact_id: Option<u64>,
+    /// Path the key participates in. Carried through for future role
+    /// inference; all members currently default to `Keyholder` per the
+    /// 2026-04-18 plan direction.
+    pub path_kind: PathKind,
+}
 
 #[derive(Debug, Clone)]
 pub enum RemoteBackend {
@@ -68,6 +96,13 @@ pub struct Context {
     pub recovered_signer: Option<Arc<Signer>>,
     pub bitcoind_is_external: bool,
     pub use_coincube_connect: bool,
+    /// Connect JWT threaded across installer steps. Wrapped in
+    /// `Zeroizing<String>` so the heap allocation is scrubbed when the
+    /// `Context` (and any `Task::perform` clone of it) drops — keeps
+    /// the token off the residual heap between the step that writes it
+    /// (`CoincubeConnectStep` or `RecoveryKitRestoreStep`) and the
+    /// downstream step that copies it into `EsploraConfig.token`.
+    pub connect_jwt: Option<zeroize::Zeroizing<String>>,
     pub install_node_alongside_connect: bool,
     pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
     pub internal_bitcoind: Option<Bitcoind>,
@@ -77,6 +112,48 @@ pub struct Context {
     pub remote_backend: RemoteBackend,
     pub backup: Option<Backup>,
     pub wallet_alias: String,
+    /// Cube UUID (from CubeSettings.id) — present when the Vault installer
+    /// is launched from inside a Cube.  Used by the key picker to fetch
+    /// Cube-scoped Keychain keys from the API.
+    pub cube_id: Option<String>,
+    /// Authenticated coincube-api client, used by the key picker to
+    /// fetch Cube-scoped Keychain keys.  `None` when launched from
+    /// the Loader (user hasn't done coincube-api auth yet).
+    pub coincube_client: Option<CoincubeClient>,
+    /// Cube display name used when idempotently registering the cube
+    /// with the backend during Final. `None` when no cube settings
+    /// were passed in.
+    pub cube_name: Option<String>,
+    /// Vault members to fan out to the backend after the local install
+    /// completes. Populated by `DefineDescriptor::apply()` for every
+    /// keychain-sourced descriptor key. Empty when no such keys exist
+    /// in the descriptor.
+    pub connect_vault_members: Vec<ConnectVaultMemberPayload>,
+    /// Approximate timelock (in days) used for the backend vault's
+    /// `timelockDays` field. Derived from the longest Recovery path's
+    /// `PathSequence::Recovery(blocks)` via `max(blocks / 144, 1)` —
+    /// inherently approximate because block cadence varies. Surfaced
+    /// with an "approximate" caveat in the Final step's success caption.
+    /// `None` when the descriptor has no recovery paths.
+    pub connect_vault_timelock_days: Option<i32>,
+    /// PIN chosen by the user during a Recovery Kit restore. Populated
+    /// by `RestorePinSetupStep` (between `RecoveryKitRestoreStep` and
+    /// the node-setup step in `UserFlow::RestoreFromRecoveryKit`).
+    ///
+    /// Downstream consumers:
+    /// - `install_local_wallet` branches on this to call
+    ///   `Signer::store_encrypted(..., &pin)` rather than the
+    ///   unencrypted `store(...)` so the Liquid/Spark BreezClient can
+    ///   decrypt the mnemonic on subsequent Cube opens.
+    /// - `gui::tab::find_or_create_cube` / the `CubeSaved` handler use
+    ///   the value to populate `CubeSettings.security_pin_hash` and
+    ///   `CubeSettings.master_signer_fingerprint`, matching what a
+    ///   fresh-install Cube stores.
+    ///
+    /// Wrapped in `Zeroizing<String>` so the heap allocation is zeroed
+    /// when the `Context` clone held by `Task::perform` drops after
+    /// the install completes. `None` for non-restore flows.
+    pub restore_pin: Option<zeroize::Zeroizing<String>>,
 }
 
 impl Context {
@@ -84,6 +161,8 @@ impl Context {
         network: bitcoin::Network,
         coincube_directory: CoincubeDirectory,
         remote_backend: RemoteBackend,
+        cube_settings: Option<&crate::app::settings::CubeSettings>,
+        coincube_client: Option<CoincubeClient>,
     ) -> Self {
         Self {
             descriptor_template: DescriptorTemplate::default(),
@@ -101,6 +180,7 @@ impl Context {
             recovered_signer: None,
             bitcoind_is_external: true,
             use_coincube_connect: false,
+            connect_jwt: None,
             install_node_alongside_connect: false,
             internal_bitcoind_config: None,
             internal_bitcoind: None,
@@ -108,6 +188,28 @@ impl Context {
             remote_backend,
             wallet_alias: String::new(),
             backup: None,
+            cube_id: cube_settings.map(|cs| cs.id.clone()),
+            coincube_client,
+            cube_name: cube_settings.map(|cs| cs.name.clone()),
+            connect_vault_members: Vec::new(),
+            connect_vault_timelock_days: None,
+            restore_pin: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Context;
+
+    /// Compile-time pin: if anyone reverts `Context.connect_jwt` to a
+    /// plain `Option<String>`, this type-level assertion stops
+    /// compiling. Keeps the JWT's scrub-on-drop guarantee intact
+    /// across the installer → Esplora handoff.
+    #[test]
+    fn connect_jwt_is_zeroizing_wrapped() {
+        #[allow(dead_code)]
+        const _: fn(&Context) -> Option<&zeroize::Zeroizing<String>> =
+            |ctx| ctx.connect_jwt.as_ref();
     }
 }

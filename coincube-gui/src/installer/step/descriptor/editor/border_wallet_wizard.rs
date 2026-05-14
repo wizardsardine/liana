@@ -15,7 +15,11 @@ use coincube_core::{
         descriptor::{DescriptorPublicKey, DescriptorXKey, Wildcard},
     },
 };
-use iced::{alignment::Horizontal, widget::scrollable, Length, Task};
+use iced::{
+    alignment::{Horizontal, Vertical},
+    widget::{scrollable, Space},
+    Length, Task,
+};
 use zeroize::{Zeroize, Zeroizing};
 
 use coincube_ui::{
@@ -29,6 +33,8 @@ use coincube_ui::{
     widget::{Button, Column, Container, Element, Row, TextInput},
 };
 
+use std::sync::{Arc, Mutex};
+
 use crate::{
     hw::HardwareWallets,
     installer::{
@@ -36,6 +42,7 @@ use crate::{
         message::{self, Message},
         step::descriptor::editor::key::SelectedKey,
     },
+    signer::Signer,
 };
 
 /// Wizard step.
@@ -102,11 +109,22 @@ pub struct BorderWalletWizard {
     checksum_word: Option<String>,
     enrollment: Option<BorderWalletEnrollment>,
 
+    /// When true, allow random phrase generation. When false (default),
+    /// the "Generate" button derives from the master signer via BIP-85.
+    allow_random_grid_phrase: bool,
+    /// Master signer for BIP-85 grid phrase derivation.
+    signer: Option<Arc<Mutex<Signer>>>,
+
     error: Option<String>,
 }
 
 impl BorderWalletWizard {
-    pub fn new(network: Network, coordinates: Vec<(usize, usize)>) -> Self {
+    pub fn new(
+        network: Network,
+        coordinates: Vec<(usize, usize)>,
+        signer: Arc<Mutex<Signer>>,
+        allow_random_grid_phrase: bool,
+    ) -> Self {
         Self {
             network,
             coordinates,
@@ -117,6 +135,8 @@ impl BorderWalletWizard {
             pattern: OrderedPattern::new(),
             checksum_word: None,
             enrollment: None,
+            allow_random_grid_phrase,
+            signer: Some(signer),
             error: None,
         }
     }
@@ -216,7 +236,30 @@ impl BorderWalletWizard {
     }
 
     fn on_generate_phrase(&mut self) -> Task<Message> {
-        match GridRecoveryPhrase::generate() {
+        // Default: derive from master signer via BIP-85.
+        // Fallback to random if allow_random_grid_phrase is true or signer is unavailable.
+        let result = if !self.allow_random_grid_phrase {
+            if let Some(signer) = &self.signer {
+                match signer.lock() {
+                    Ok(signer) => signer
+                        .derive_grid_recovery_phrase()
+                        .map_err(|e| format!("{:?}", e)),
+                    Err(e) => {
+                        self.error = Some(format!(
+                            "Failed to generate recovery phrase: signer lock poisoned: {}",
+                            e
+                        ));
+                        return Task::none();
+                    }
+                }
+            } else {
+                GridRecoveryPhrase::generate().map_err(|e| format!("{:?}", e))
+            }
+        } else {
+            GridRecoveryPhrase::generate().map_err(|e| format!("{:?}", e))
+        };
+
+        match result {
             Ok(rp) => {
                 let words: Vec<&str> = rp.as_str().split_whitespace().collect();
                 for (i, word) in words.iter().enumerate() {
@@ -231,8 +274,8 @@ impl BorderWalletWizard {
                 self.phrase_valid = true;
                 self.error = None;
             }
-            Err(_) => {
-                self.error = Some("Failed to generate recovery phrase.".to_string());
+            Err(e) => {
+                self.error = Some(format!("Failed to generate recovery phrase: {}", e));
             }
         }
         Task::none()
@@ -300,11 +343,7 @@ impl BorderWalletWizard {
     }
 
     fn view_intro(&self) -> Element<Message> {
-        let header = modal::header(
-            Some("Border Wallet".to_string()),
-            None::<fn() -> Message>,
-            Some(|| Message::Close),
-        );
+        let header = modal::header(Some("Border Wallet".to_string()), Some(|| Message::Close));
 
         let description = Column::new()
             .spacing(8)
@@ -332,14 +371,29 @@ impl BorderWalletWizard {
             ));
 
         let next_btn = button::primary(None, "Get Started")
-            .on_press(self.wizard_msg(BorderWalletWizardMessage::Next))
-            .width(Length::Fill);
+            .on_press(self.wizard_msg(BorderWalletWizardMessage::Next));
+
+        // Footer: [Back] [spacer] [Get Started]. Intro is the first step
+        // of the wizard, so "Back" returns the user to the
+        // Select-key-source picker for this slot (via
+        // `DefineDescriptor::ReopenKeyModal`) rather than dropping
+        // them all the way back to the descriptor editor.
+        let coordinates = self.coordinates.clone();
+        let footer = Row::new()
+            .push(modal::back_button(move || {
+                Message::DefineDescriptor(message::DefineDescriptor::ReopenKeyModal(
+                    coordinates.clone(),
+                ))
+            }))
+            .push(Space::new().width(Length::Fill))
+            .push(next_btn)
+            .align_y(Vertical::Center);
 
         let col = Column::new()
             .spacing(15)
             .push(header)
             .push(description)
-            .push(next_btn)
+            .push(footer)
             .width(500);
 
         Container::new(col)
@@ -349,16 +403,17 @@ impl BorderWalletWizard {
     }
 
     fn view_recovery_phrase(&self) -> Element<Message> {
-        let header = modal::header(
-            Some("Recovery Phrase".to_string()),
-            None::<fn() -> Message>,
-            Some(|| Message::Close),
-        );
+        let header = modal::header(Some("Recovery Phrase".to_string()), Some(|| Message::Close));
 
         let back_btn = button::transparent(Some(icon::previous_icon()), "Back")
             .on_press(self.wizard_msg(BorderWalletWizardMessage::Previous));
 
-        let generate_btn = button::secondary(None, "Generate New Phrase")
+        let generate_label = if self.allow_random_grid_phrase {
+            "Generate Random Phrase"
+        } else {
+            "Derive from Master Key"
+        };
+        let generate_btn = button::secondary(None, generate_label)
             .on_press(self.wizard_msg(BorderWalletWizardMessage::GeneratePhrase))
             .width(Length::Fill);
 
@@ -421,11 +476,7 @@ impl BorderWalletWizard {
     }
 
     fn view_grid(&self) -> Element<Message> {
-        let header = modal::header(
-            Some("Select Pattern".to_string()),
-            None::<fn() -> Message>,
-            Some(|| Message::Close),
-        );
+        let header = modal::header(Some("Select Pattern".to_string()), Some(|| Message::Close));
 
         let back_btn = button::transparent(Some(icon::previous_icon()), "Back")
             .on_press(self.wizard_msg(BorderWalletWizardMessage::Previous));
@@ -540,11 +591,7 @@ impl BorderWalletWizard {
     }
 
     fn view_checksum(&self) -> Element<Message> {
-        let header = modal::header(
-            Some("Checksum & Key".to_string()),
-            None::<fn() -> Message>,
-            Some(|| Message::Close),
-        );
+        let header = modal::header(Some("Checksum & Key".to_string()), Some(|| Message::Close));
 
         let back_btn = button::transparent(Some(icon::previous_icon()), "Back")
             .on_press(self.wizard_msg(BorderWalletWizardMessage::Previous));
@@ -593,11 +640,7 @@ impl BorderWalletWizard {
     }
 
     fn view_confirm(&self) -> Element<Message> {
-        let header = modal::header(
-            Some("Confirm".to_string()),
-            None::<fn() -> Message>,
-            Some(|| Message::Close),
-        );
+        let header = modal::header(Some("Confirm".to_string()), Some(|| Message::Close));
 
         let back_btn = button::transparent(Some(icon::previous_icon()), "Back")
             .on_press(self.wizard_msg(BorderWalletWizardMessage::Previous));

@@ -38,7 +38,7 @@ use miniscript::bitcoin::{
 };
 use zeroize::Zeroizing;
 
-use crate::signer::HotSigner;
+use crate::signer::MasterSigner;
 
 /// A secret-bearing grid recovery phrase.
 ///
@@ -72,6 +72,38 @@ impl GridRecoveryPhrase {
         getrandom::fill(&mut *entropy).map_err(|_| BorderWalletError::InvalidRecoveryPhrase)?;
         let mnemonic = bip39::Mnemonic::from_entropy(&*entropy)
             .map_err(|_| BorderWalletError::InvalidRecoveryPhrase)?;
+        Ok(Self {
+            phrase: Zeroizing::new(mnemonic.to_string()),
+        })
+    }
+
+    /// Derive a deterministic GridRecoveryPhrase from a master signer using BIP-85.
+    ///
+    /// Uses derivation path `m/83696968'/39'/0'/12'/0'` (BIP-85: purpose / BIP-39 app
+    /// / English / 12 words / index 0). The child private key is processed through
+    /// HMAC-SHA-512 with the BIP-85 domain tag to produce 16 bytes of entropy for a
+    /// 12-word mnemonic.
+    pub fn from_master_signer(
+        signer: &MasterSigner,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
+    ) -> Result<Self, BorderWalletError> {
+        use miniscript::bitcoin::hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
+
+        let path: bip32::DerivationPath = "m/83696968'/39'/0'/12'/0'"
+            .parse()
+            .expect("hardcoded path is valid");
+        let child_xpriv = signer.xpriv_at(&path, secp);
+
+        // BIP-85: HMAC-SHA-512 with domain tag "bip-entropy-from-k"
+        let mut engine = HmacEngine::<sha512::Hash>::new(b"bip-entropy-from-k");
+        engine.input(&child_xpriv.to_priv().to_bytes());
+        let hmac = Hmac::<sha512::Hash>::from_engine(engine);
+
+        // Take first 16 bytes for 128 bits of entropy → 12-word mnemonic
+        let entropy = &hmac.to_byte_array()[..16];
+        let mnemonic = bip39::Mnemonic::from_entropy(entropy)
+            .map_err(|_| BorderWalletError::InvalidRecoveryPhrase)?;
+
         Ok(Self {
             phrase: Zeroizing::new(mnemonic.to_string()),
         })
@@ -153,7 +185,7 @@ pub fn derive_enrollment(
 /// Sign a PSBT using a transiently reconstructed Border Wallet key.
 ///
 /// This function:
-/// 1. Creates a transient `HotSigner` from the reconstructed mnemonic
+/// 1. Creates a transient `MasterSigner` from the reconstructed mnemonic
 /// 2. Verifies the fingerprint matches the expected enrollment fingerprint
 /// 3. Signs the PSBT
 /// 4. All secret material is dropped when this function returns
@@ -167,7 +199,7 @@ pub fn sign_psbt_with_border_wallet(
 ) -> Result<(Fingerprint, Psbt), BorderWalletError> {
     let secp = secp256k1::Secp256k1::new();
 
-    let signer = HotSigner::from_mnemonic(network, mnemonic)
+    let signer = MasterSigner::from_mnemonic(network, mnemonic)
         .map_err(|e| BorderWalletError::KeyDerivation(e.to_string()))?;
 
     let actual_fingerprint = signer.fingerprint(&secp);
@@ -185,11 +217,23 @@ pub fn sign_psbt_with_border_wallet(
     Ok((actual_fingerprint, signed_psbt))
 }
 
-/// The standard derivation path for Border Wallet signers.
+/// The default derivation path for Border Wallet signers.
 ///
-/// Uses BIP-48 multisig path with script type 2 (Taproot):
+/// Uses the BIP-48 native segwit multisig path:
 /// - Mainnet: m/48'/0'/0'/2'
 /// - Testnet/Signet: m/48'/1'/0'/2'
+///
+/// Per BIP-48, script type `2'` is **P2WSH** (native segwit multisig).
+/// COINCUBE currently re-uses this same path for both P2WSH and Taproot
+/// multisig vaults, because BIP-48 does not define a Taproot multisig
+/// script type and there is no consensus standard for one. A proposed
+/// extension using `3'` for Taproot multisig
+/// ([bitcoin/bips#1473](https://github.com/bitcoin/bips/pull/1473))
+/// was closed without merging in May 2024.
+///
+/// If/when a Taproot multisig path standard emerges, revisit this and
+/// the related helpers in `coincube-gui/src/utils/mod.rs` and
+/// `coincube-gui/src/installer/step/descriptor/editor/key.rs`.
 pub fn default_derivation_path(network: Network) -> bip32::DerivationPath {
     let coin_type = match network {
         Network::Bitcoin => 0,
@@ -453,5 +497,39 @@ mod tests {
         };
         let debug_str = format!("{:?}", enrollment);
         assert!(debug_str.contains("BorderWalletEnrollment"));
+    }
+
+    #[test]
+    fn test_grid_recovery_phrase_from_master_signer_deterministic() {
+        let secp = secp256k1::Secp256k1::new();
+        let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, phrase).unwrap();
+        let signer = MasterSigner::from_mnemonic(Network::Testnet, mnemonic).unwrap();
+
+        let grp1 = GridRecoveryPhrase::from_master_signer(&signer, &secp).unwrap();
+        let grp2 = GridRecoveryPhrase::from_master_signer(&signer, &secp).unwrap();
+
+        // Same master signer always produces the same grid recovery phrase.
+        assert_eq!(grp1.as_str(), grp2.as_str());
+
+        // Must be a valid 12-word BIP39 mnemonic.
+        let words: Vec<&str> = grp1.as_str().split_whitespace().collect();
+        assert_eq!(words.len(), 12);
+        assert!(bip39::Mnemonic::parse_in(bip39::Language::English, grp1.as_str()).is_ok());
+
+        // Different master signer produces a different grid phrase.
+        let other = MasterSigner::generate(Network::Testnet).unwrap();
+        let grp3 = GridRecoveryPhrase::from_master_signer(&other, &secp).unwrap();
+        assert_ne!(grp1.as_str(), grp3.as_str());
+    }
+
+    #[test]
+    fn test_grid_recovery_phrase_from_master_signer_differs_from_random() {
+        let secp = secp256k1::Secp256k1::new();
+        let signer = MasterSigner::generate(Network::Testnet).unwrap();
+        let derived = GridRecoveryPhrase::from_master_signer(&signer, &secp).unwrap();
+        // The derived phrase should produce a valid grid.
+        let grid = derived.generate_grid();
+        assert_eq!(grid.cells().len(), WordGrid::TOTAL_CELLS);
     }
 }

@@ -1,5 +1,6 @@
 //! Settings is the module to handle the GUI settings file.
 //! The settings file is used by the GUI to store useful information.
+pub mod display;
 pub mod fiat;
 pub mod unit;
 
@@ -34,6 +35,11 @@ pub struct Settings {
     pub cubes: Vec<CubeSettings>,
     #[serde(default)]
     pub wallets: Vec<WalletSettings>,
+    /// Global fiat-native vs. bitcoin-native display preference.
+    /// Drives whether wallet headers lead with the fiat or the bitcoin
+    /// value across the app. Defaults to fiat-native.
+    #[serde(default)]
+    pub display_mode: display::DisplayMode,
 }
 
 impl Settings {
@@ -118,6 +124,116 @@ where
     Ok(())
 }
 
+/// Metadata for a passkey-derived master key (stored in CubeSettings).
+///
+/// All fields are non-secret: the credential_id is a public identifier and the
+/// rp_id is the relying party domain. The actual PRF output (secret) is never stored.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PasskeyMetadata {
+    /// Base64-encoded WebAuthn credential ID
+    pub credential_id: String,
+    /// Relying Party ID used during registration (e.g., "coincube.io")
+    pub rp_id: String,
+    /// Unix timestamp when the passkey was registered
+    pub created_at: i64,
+    /// Human-readable label (e.g., "MacBook iCloud Keychain")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// Mark a cube as synced with the remote Connect API.
+pub async fn mark_cube_synced(
+    network_dir: &NetworkDirectory,
+    cube_id: &str,
+) -> Result<(), SettingsError> {
+    update_settings_file(network_dir, |mut settings| {
+        if let Some(cube) = settings.cubes.iter_mut().find(|c| c.id == cube_id) {
+            cube.remote_synced = true;
+        }
+        Some(settings)
+    })
+    .await
+}
+
+/// Backfill helper for Cubes created before
+/// [`CubeSettings::master_signer_fingerprint`] was tracked: walks
+/// `<datadir>/<network>/mnemonics/` for master-seed files
+/// (`mnemonic-<fp>-master_<ts>-<ts>.txt`) and returns the
+/// fingerprint of the file whose timestamp matches
+/// `cube_created_at` (within [`MASTER_SEED_CREATION_WINDOW_SECS`])
+/// and whose contents successfully decrypt with `pin`. Returns
+/// `None` when no master seed for this Cube lives on this device
+/// (e.g. Cube was created elsewhere and never restored here) or
+/// when no file falls inside the creation window.
+///
+/// PIN check alone is *not* sufficient evidence of ownership —
+/// two Cubes can share a PIN, and if this Cube's master file is
+/// missing/corrupted the PIN would still decrypt some *other*
+/// Cube's seed and we'd silently bind the wrong wallet. The
+/// timestamp-window guard is what makes the match safe: the file
+/// is written `Utc::now()` milliseconds before `CubeSettings.
+/// created_at` is stamped (see `launcher.rs`), so a tight window
+/// uniquely associates the file with this Cube. PIN decryption
+/// stays as a second layer.
+///
+/// Caller is responsible for persisting the result via
+/// [`update_settings_file`] and updating their in-memory
+/// [`CubeSettings`] copy. Without persistence the next launch
+/// would re-run the same scan, so callers should always write
+/// the result back.
+pub fn derive_master_signer_fingerprint(
+    datadir_root: &std::path::Path,
+    network: Network,
+    pin: &str,
+    cube_created_at: i64,
+) -> Option<Fingerprint> {
+    use coincube_core::signer::{
+        MasterSigner, MnemonicFileName, MASTER_SEED_LABEL, MNEMONICS_FOLDER_NAME,
+    };
+    use std::str::FromStr;
+
+    /// Tolerance (seconds) between a master-seed file's timestamp
+    /// and the owning Cube's `created_at`. Two seconds covers the
+    /// Argon2 + AES-GCM encryption pause between the two
+    /// `Utc::now()` reads in the create-cube path; any wider and
+    /// we'd risk admitting a different Cube's file.
+    const MASTER_SEED_CREATION_WINDOW_SECS: i64 = 2;
+
+    let mnemonics_folder = datadir_root
+        .join(network.to_string())
+        .join(MNEMONICS_FOLDER_NAME);
+    let entries = std::fs::read_dir(&mnemonics_folder).ok()?;
+
+    let mut candidates: Vec<(Fingerprint, i64)> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_str()?.to_owned();
+            let parsed = MnemonicFileName::from_str(&name).ok()?;
+            let (checksum, ts) = parsed.descriptor_info?;
+            if !checksum.starts_with(MASTER_SEED_LABEL) {
+                return None;
+            }
+            // Hard ownership filter: only consider files whose
+            // creation timestamp falls in the Cube's creation
+            // window. A PIN match alone is not enough — see fn
+            // doc above.
+            if (ts - cube_created_at).abs() > MASTER_SEED_CREATION_WINDOW_SECS {
+                return None;
+            }
+            Some((parsed.fingerprint, ts))
+        })
+        .collect();
+    // If two files happen to fall inside the window (extremely
+    // unlikely — would require two Cubes minted within 2s), prefer
+    // the closer one so the deterministic order matches user
+    // expectation.
+    candidates.sort_by_key(|(_, ts)| (ts - cube_created_at).abs());
+
+    candidates.into_iter().map(|(fp, _)| fp).find(|&fp| {
+        MasterSigner::from_datadir_by_fingerprint(datadir_root, network, fp, Some(pin)).is_ok()
+    })
+}
+
 /// Cubes represent user accounts that can contain multiple features (Vault, Liquid wallet, etc.)
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CubeSettings {
@@ -128,6 +244,10 @@ pub struct CubeSettings {
     pub backed_up: bool,
     #[serde(default)]
     pub mfa_done: bool,
+    /// Whether this cube has been registered with the Connect API.
+    /// Defaults to `false` so that existing cubes are picked up by catch-up sync.
+    #[serde(default)]
+    pub remote_synced: bool,
     pub created_at: i64,
     /// The Vault wallet for this Cube (optional - may not be set up yet)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -135,8 +255,22 @@ pub struct CubeSettings {
     /// Optional security PIN (stored as Argon2id hash with salt in PHC format)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security_pin_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub liquid_wallet_signer_fingerprint: Option<Fingerprint>,
+    /// Fingerprint of this Cube's master seed MasterSigner.
+    /// All wallets (Vault, Liquid, Spark) derive from this single seed.
+    /// The serde aliases keep existing settings.json files readable without migration.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "liquid_wallet_signer_fingerprint",
+        alias = "breez_wallet_signer_fingerprint"
+    )]
+    pub master_signer_fingerprint: Option<Fingerprint>,
+    /// Which backend should fulfill incoming Lightning Address invoices
+    /// for this cube. Starts as `Liquid` (backwards-compatible default
+    /// for existing cubes); Phase 5 flips the default to `Spark` and
+    /// adds a per-cube override in Settings.
+    #[serde(default)]
+    pub default_lightning_backend: crate::app::wallets::WalletKind,
     /// Bitcoin display unit preference for this cube
     #[serde(default)]
     pub unit_setting: unit::UnitSetting,
@@ -146,6 +280,27 @@ pub struct CubeSettings {
     /// Persisted pending Liquid -> Vault transfer, used to restore UX state across app restarts
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_liquid_to_vault_transfer: Option<PendingLiquidToVaultTransfer>,
+    /// Passkey metadata for passkey-derived master keys (None for random-generated keys)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passkey_metadata: Option<PasskeyMetadata>,
+    /// When true, the Border Wallet wizard uses a random GridRecoveryPhrase instead
+    /// of deriving it from the master seed via BIP-85. Defaults to false (use derived).
+    #[serde(default)]
+    pub allow_random_grid_phrase: bool,
+    /// Privacy toggle: when true, the Home eye-icon has hidden balances on
+    /// both the Total Balance block and per-wallet cards. Persists across
+    /// sessions so users don't have to re-hide on every launch.
+    #[serde(default)]
+    pub balance_masked: bool,
+    /// SHA-256 fingerprint (hex) of the `DescriptorBlob` plaintext that
+    /// was last successfully pushed to this Cube's Connect Recovery Kit.
+    /// `None` when no descriptor has ever been backed up. Used by W12 to
+    /// detect drift: if the live vault's descriptor/signers now hash to
+    /// a different value, the Settings card shows "descriptor changed
+    /// since last backup — update now." Cleared on vault deletion and
+    /// on `delete_recovery_kit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_kit_last_backed_up_descriptor_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -167,12 +322,18 @@ impl CubeSettings {
             created_at: chrono::Utc::now().timestamp(),
             vault_wallet_id: None,
             security_pin_hash: None,
-            liquid_wallet_signer_fingerprint: None,
+            master_signer_fingerprint: None,
+            default_lightning_backend: crate::app::wallets::WalletKind::default(),
             backed_up: false,
             mfa_done: false,
+            remote_synced: false,
             unit_setting: unit::UnitSetting::default(),
             fiat_price: Some(fiat::PriceSetting::default()), // Initialize with default (enabled: true)
             pending_liquid_to_vault_transfer: None,
+            passkey_metadata: None,
+            allow_random_grid_phrase: false,
+            balance_masked: false,
+            recovery_kit_last_backed_up_descriptor_fingerprint: None,
         }
     }
 
@@ -185,9 +346,19 @@ impl CubeSettings {
         self
     }
 
-    pub fn with_liquid_signer(mut self, fingerprint: Fingerprint) -> Self {
-        self.liquid_wallet_signer_fingerprint = Some(fingerprint);
+    pub fn with_master_signer(mut self, fingerprint: Fingerprint) -> Self {
+        self.master_signer_fingerprint = Some(fingerprint);
         self
+    }
+
+    pub fn with_passkey(mut self, metadata: PasskeyMetadata) -> Self {
+        self.passkey_metadata = Some(metadata);
+        self
+    }
+
+    /// Whether this Cube uses a passkey-derived master key (no PIN, no stored seed).
+    pub fn is_passkey_cube(&self) -> bool {
+        self.passkey_metadata.is_some()
     }
 
     pub fn with_pin(mut self, pin: &str) -> Result<Self, Box<dyn std::error::Error>> {
@@ -269,6 +440,23 @@ impl CubeSettings {
 
         Ok(Some(cube_settings))
     }
+
+    /// Convert this cube's network to the API network string.
+    pub fn api_network_string(&self) -> String {
+        network_to_api_string(self.network)
+    }
+}
+
+/// Convert a `Network` to the API network string used by the Connect backend.
+pub fn network_to_api_string(network: Network) -> String {
+    match network {
+        Network::Bitcoin => "mainnet",
+        Network::Testnet => "testnet",
+        Network::Testnet4 => "testnet4",
+        Network::Signet => "signet",
+        Network::Regtest => "regtest",
+    }
+    .to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -624,6 +812,12 @@ pub mod global {
         pub account_tier: AccountTier,
         #[serde(default)]
         pub theme_mode: coincube_ui::theme::palette::ThemeMode,
+        #[serde(default = "default_true")]
+        pub show_direction_badges: bool,
+    }
+
+    fn default_true() -> bool {
+        true
     }
 
     impl GlobalSettings {
@@ -686,6 +880,21 @@ pub mod global {
             developer_mode: bool,
         ) -> Result<(), super::SettingsError> {
             Self::update(path, |s| s.developer_mode = developer_mode, true)
+        }
+
+        pub fn load_show_direction_badges(path: &PathBuf) -> bool {
+            let mut ret = true;
+            if let Err(e) = Self::update(path, |s| ret = s.show_direction_badges, false) {
+                tracing::error!("Failed to load show_direction_badges setting: {e}");
+            }
+            ret
+        }
+
+        pub fn update_show_direction_badges(
+            path: &PathBuf,
+            show: bool,
+        ) -> Result<(), super::SettingsError> {
+            Self::update(path, |s| s.show_direction_badges = show, true)
         }
 
         pub fn load_theme_mode(path: &PathBuf) -> coincube_ui::theme::palette::ThemeMode {
@@ -1097,5 +1306,27 @@ mod test {
         assert!(cube.verify_pin("1234"));
         assert!(cube.verify_pin("0000"));
         assert!(cube.verify_pin("9999"));
+    }
+
+    #[test]
+    fn test_cube_settings_alias_backward_compat() {
+        use super::CubeSettings;
+
+        let json = r#"{
+            "id": "00000000-0000-0000-0000-000000000001",
+            "name": "My Cube",
+            "network": "bitcoin",
+            "backed_up": false,
+            "mfa_done": false,
+            "created_at": 0,
+            "liquid_wallet_signer_fingerprint": "aabbccdd"
+        }"#;
+
+        let cube: CubeSettings = serde_json::from_str(json).expect("alias must deserialise");
+        assert_eq!(
+            cube.master_signer_fingerprint.map(|f| f.to_string()),
+            Some("aabbccdd".to_string()),
+            "serde alias should map old field name to master_signer_fingerprint"
+        );
     }
 }

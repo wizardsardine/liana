@@ -3,7 +3,7 @@ use iced::{advanced::text::Shaping, widget::row, Alignment};
 use coincube_ui::{
     component::{button, form},
     icon,
-    widget::*,
+    widget::{Container, Element},
 };
 
 use crate::app::view;

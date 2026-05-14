@@ -1,5 +1,5 @@
 use crate::{
-    app::settings::unit::BitcoinDisplayUnit,
+    app::settings::{display::DisplayMode, unit::BitcoinDisplayUnit},
     daemon::{
         model::{Coin, ListCoinsResult},
         Daemon, DaemonError,
@@ -35,28 +35,76 @@ pub struct Cache {
     pub fiat_price: Option<FiatPrice>,
     /// Bitcoin display unit preference (BTC or Sats)
     pub bitcoin_unit: BitcoinDisplayUnit,
-    /// UI state: whether the Vault submenu is expanded
-    pub vault_expanded: bool,
-    /// UI state: whether the Liquid submenu is expanded
-    pub liquid_expanded: bool,
-    /// UI state: whether the Marketplace submenu is expanded
-    pub marketplace_expanded: bool,
-    /// UI state: whether the P2P sub-accordion within Marketplace is expanded
-    pub marketplace_p2p_expanded: bool,
-    /// UI state: whether the USDt submenu is expanded
-    pub usdt_expanded: bool,
-    /// UI state: whether the Connect submenu is expanded
-    pub connect_expanded: bool,
+    /// Global fiat-native vs. bitcoin-native display preference. Drives
+    /// whether wallet headers lead with the fiat or bitcoin amount across
+    /// the app. Mirrored from `Settings::display_mode` (top-level, not
+    /// per-cube) and re-read on `SettingsSaved`.
+    pub display_mode: DisplayMode,
     /// Whether the Connect user is authenticated (Dashboard step reached)
     pub connect_authenticated: bool,
     /// Whether this cube has a vault wallet configured
     pub has_vault: bool,
     /// Display name of the current Cube
     pub cube_name: String,
+    /// Whether the user has completed the master seed backup flow for this
+    /// Cube. Drives the soft "not backed up" warning banners on the Vault
+    /// and Liquid home screens. Mirrors `CubeSettings::backed_up`.
+    pub current_cube_backed_up: bool,
+    /// Session-scoped dismissal of the "not backed up" banner. Defaults
+    /// to `false` for every new `Cache`, so each Tab (one Cube per Tab)
+    /// starts with the banner visible, and it's also reset if
+    /// `current_cube_backed_up` ever transitions back to `false`. Set to
+    /// `true` only by the user clicking the dismiss button. Cleared on
+    /// app restart — the reminder keeps surfacing until the user
+    /// actually backs up.
+    pub backup_warning_dismissed: bool,
+    /// Whether the current Cube uses a passkey-derived master key (no PIN,
+    /// no stored encrypted mnemonic). Used to hide the seed-backup UI.
+    pub current_cube_is_passkey: bool,
     /// Whether the P2P panel is available (requires a valid mnemonic)
     pub has_p2p: bool,
     /// Current theme mode (dark/light) — used for theme-aware widget rendering
     pub theme_mode: coincube_ui::theme::palette::ThemeMode,
+    /// BTC price in USD, always fetched regardless of the user's selected fiat
+    /// currency. Used for converting USDt (which is pegged to USD) into sats.
+    pub btc_usd_price: Option<f64>,
+    /// Whether to show direction badges (receive/spend arrows) on transaction rows.
+    pub show_direction_badges: bool,
+    /// Cached Lightning Address for display in the sidebar across all panels
+    pub lightning_address: Option<String>,
+    /// Cached avatar image handle for display in the sidebar across all panels
+    pub avatar_handle: Option<iced::widget::image::Handle>,
+    /// Id of the current Cube — needed by Spark Settings so the
+    /// `update_settings_file` closure can find the right cube when
+    /// persisting the `default_lightning_backend` picker change.
+    pub cube_id: String,
+    /// Connect's numeric id for the active Cube (mirror of
+    /// `ConnectCubePanel::server_cube_id`). `None` when the user isn't
+    /// signed in to Connect or the cube hasn't been registered yet.
+    /// Recovery-kit calls need this because the backend identifies
+    /// cubes by numeric id, not by the local UUID carried in
+    /// `cube_id` above.
+    pub current_cube_server_id: Option<u64>,
+    /// SHA-256 hex fingerprint of the *live* descriptor blob — i.e.
+    /// what `descriptor_blob_from_wallet(...)` currently produces
+    /// given the loaded wallet. `None` when there's no wallet.
+    /// Recomputed by `App` whenever the wallet changes.
+    pub current_descriptor_fingerprint: Option<String>,
+    /// SHA-256 hex fingerprint of the descriptor blob that was last
+    /// successfully uploaded to Connect for this Cube. Mirrors
+    /// `CubeSettings::recovery_kit_last_backed_up_descriptor_fingerprint`.
+    /// The Settings card compares this to `current_descriptor_fingerprint`
+    /// to surface the "your descriptor changed since your last backup"
+    /// drift banner (W12). `None` when no descriptor has ever been
+    /// backed up, or when the kit has been removed.
+    pub recovery_kit_last_backed_up_descriptor_fingerprint: Option<String>,
+    /// Current preference for which backend fulfills incoming
+    /// Lightning Address invoices. Mirrored from
+    /// `CubeSettings::default_lightning_backend` so panels can read
+    /// it without going through the disk layer; the authoritative
+    /// copy lives on `App::cube_settings` and is re-read on
+    /// `Message::SettingsSaved`.
+    pub default_lightning_backend: crate::app::wallets::WalletKind,
 }
 
 /// only used for tests.
@@ -72,17 +120,24 @@ impl std::default::Default for Cache {
             daemon_cache: DaemonCache::default(),
             fiat_price: None,
             bitcoin_unit: BitcoinDisplayUnit::default(),
-            vault_expanded: true,
-            liquid_expanded: false,
-            marketplace_expanded: false,
-            marketplace_p2p_expanded: false,
-            usdt_expanded: false,
-            connect_expanded: false,
+            display_mode: DisplayMode::default(),
             connect_authenticated: false,
             has_vault: false,
             cube_name: String::new(),
+            current_cube_backed_up: false,
+            backup_warning_dismissed: false,
+            current_cube_is_passkey: false,
             has_p2p: false,
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
+            btc_usd_price: None,
+            show_direction_badges: true,
+            lightning_address: None,
+            avatar_handle: None,
+            cube_id: String::new(),
+            current_cube_server_id: None,
+            current_descriptor_fingerprint: None,
+            recovery_kit_last_backed_up_descriptor_fingerprint: None,
+            default_lightning_backend: crate::app::wallets::WalletKind::default(),
         }
     }
 }

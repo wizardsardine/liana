@@ -124,7 +124,7 @@ Choose to create a new wallet.
 
 Choose **Bitcoin Signet** as network. Now you will need to configure the primary key(s), the recovery
 key(s), and the time delay before the recovery keys become available (in # of blocks). We'll use
-only one key for both the primary and recovery paths. We'll derive both keys from a "hot signer", a
+only one key for both the primary and recovery paths. We'll derive both keys from a "master signer", a
 HD wallet whose seed is stored on the laptop.
 
 Click on "Set" for the primary key. Click on "This computer" and set an alias for this signer. I'll

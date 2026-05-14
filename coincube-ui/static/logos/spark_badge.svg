@@ -1,0 +1,15 @@
+<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="50" cy="50" r="50" fill="#000000"/>
+  <!--
+    Spark asterisk, centered.
+    Source path has a bounding box of roughly (0, 0.57) to (67.29, 64.57),
+    so its center sits at (33.65, 32.57). Scaling by 1.0 keeps the glyph
+    68px wide in a 100px circle (~68% of diameter — prominent without
+    crowding the circle edge). To land the center at (50, 50):
+      tx = 50 - 1.0 * 33.65 = 16.35
+      ty = 50 - 1.0 * 32.57 = 17.43
+  -->
+  <g transform="translate(16.35 17.43)">
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M39.7159 25.248L40.8727 0.570312H26.4219L27.5787 25.2483L4.46555 16.5221L0 30.2656L23.8282 36.7915L8.38717 56.0763L20.0781 64.5703L33.6483 43.9245L47.2179 64.5695L58.9089 56.0755L43.4679 36.7909L67.2937 30.2657L62.8281 16.5221L39.7159 25.248ZM33.6472 33.6013L33.647 33.6007H33.6466L33.6462 33.6021L33.6472 33.6013Z" fill="#FAFAFA"/>
+  </g>
+</svg>

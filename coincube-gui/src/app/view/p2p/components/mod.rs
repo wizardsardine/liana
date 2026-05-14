@@ -3,7 +3,9 @@ pub mod order_filters;
 pub mod trade_card;
 
 pub use order_card::{order_card, order_detail, OrderType, P2POrder, PricingMode};
-pub use order_filters::{buy_sell_tabs, trade_status_filter, BuySellFilter, TradeFilter};
+pub use order_filters::{
+    order_filter_sidebar, trade_status_filter, BuySellFilter, OrderFilterState, TradeFilter,
+};
 pub use trade_card::{trade_card, P2PTrade, TradeRole, TradeStatus};
 
 /// Format a number with thousand separators (e.g. 1234567 → "1,234,567").

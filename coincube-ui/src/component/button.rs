@@ -1,6 +1,7 @@
 use super::text::text;
 use crate::font::MEDIUM;
-use crate::{theme, widget::*};
+use crate::theme;
+use crate::widget::{Button, Container, Text};
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{button, container, row};
 
@@ -98,6 +99,22 @@ pub fn transparent_border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) ->
         text(t).align_y(iced::Alignment::Center),
     ))
     .style(theme::button::container_border)
+}
+
+/// Orange-on-transparent outline button with a solid `DARK_ORANGE`
+/// fill + black text on hover. Centered content — use this for
+/// "Receive" and similar secondary actions that should read as
+/// orange in idle and match the primary button's press feedback
+/// on hover.
+pub fn orange_outline<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+    Button::new(content(
+        icon,
+        text(t)
+            .font(MEDIUM)
+            .align_y(iced::Alignment::Center)
+            .align_x(iced::Alignment::Center),
+    ))
+    .style(theme::button::orange_outline)
 }
 
 pub fn link<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {

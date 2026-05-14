@@ -9,13 +9,19 @@ use iced::futures::{SinkExt, Stream};
 use iced::stream::channel;
 use iced::{time, Alignment, Length, Subscription, Task};
 use tokio::runtime::Handle;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use coincube_core::miniscript::bitcoin;
+use iced::widget::image;
+
 use coincube_ui::{
-    component::{button, notification, text::*},
-    icon, theme,
-    widget::*,
+    component::{
+        button, notification,
+        quote_display::{self, Quote, QuoteDisplayProps, QuoteProvider},
+        text::{p2_regular, text},
+    },
+    theme,
+    widget::{Column, Container, Element, Row},
 };
 use coincubed::{
     config::{BitcoinBackend, BitcoindRpcAuth, Config, ConfigError},
@@ -23,7 +29,7 @@ use coincubed::{
 };
 
 use crate::app;
-use crate::app::breez::BreezClient;
+use crate::app::breez_liquid::BreezClient;
 use crate::app::cache::DaemonCache;
 use crate::app::settings::{CubeSettings, WalletSettings};
 use crate::backup::Backup;
@@ -35,7 +41,7 @@ use crate::{
         config::Config as GUIConfig,
         wallet::{Wallet, WalletError},
     },
-    daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
+    daemon::{client, embedded::EmbeddedDaemon, model::GetInfoResult, Daemon, DaemonError},
     node::{
         bitcoind::{
             internal_bitcoind_datadir, internal_bitcoind_debug_log_path, Bitcoind,
@@ -44,10 +50,6 @@ use crate::{
         NodeType,
     },
 };
-
-const SYNCING_PROGRESS_1: &str = "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster.";
-const SYNCING_PROGRESS_2: &str = "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance.";
-const SYNCING_PROGRESS_3: &str = "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance.";
 
 type Coincubed = client::Coincubed<client::jsonrpc::JsonRPCClient>;
 type StartedResult = Result<
@@ -70,7 +72,17 @@ pub struct Loader {
     pub wallet_settings: Option<WalletSettings>,
     pub cube_settings: CubeSettings,
     pub breez_client: Option<std::sync::Arc<BreezClient>>,
+    /// Optional Spark backend loaded alongside `breez_client` in the PIN
+    /// flow. `None` when the cube has no Spark signer or when the bridge
+    /// subprocess failed to spawn — panels that depend on Spark surface a
+    /// "Spark unavailable" placeholder in that case. Propagated unchanged
+    /// from [`Message::BreezClientLoadedAfterPin`] through
+    /// [`Message::BreezLoaded`] into [`app::App::new`].
+    pub spark_backend: Option<std::sync::Arc<app::wallets::SparkBackend>>,
     step: Step,
+    quote_provider: QuoteProvider,
+    current_quote: Quote,
+    current_image_handle: image::Handle,
 }
 
 pub enum Step {
@@ -123,6 +135,7 @@ pub enum Message {
     ),
     BreezLoaded {
         breez: std::sync::Arc<BreezClient>,
+        spark_backend: Option<std::sync::Arc<app::wallets::SparkBackend>>,
         cache: Cache,
         wallet: Arc<Wallet>,
         config: app::Config,
@@ -151,6 +164,7 @@ impl Loader {
         wallet_settings: Option<WalletSettings>,
         cube_settings: CubeSettings,
         breez_client: Option<std::sync::Arc<BreezClient>>,
+        spark_backend: Option<std::sync::Arc<app::wallets::SparkBackend>>,
     ) -> (Self, Task<Message>) {
         let task = if let Some(ref wallet) = wallet_settings {
             let socket_path = datadir_path
@@ -162,6 +176,10 @@ impl Loader {
             // No vault configured - loader will show setup screen
             Task::none()
         };
+
+        let mut quote_provider = QuoteProvider::new();
+        let current_quote = quote_provider.select("loading");
+        let current_image_handle = quote_display::image_handle_for_context("loading");
 
         (
             Loader {
@@ -176,9 +194,18 @@ impl Loader {
                 cube_settings,
                 backup,
                 breez_client,
+                spark_backend,
+                quote_provider,
+                current_quote,
+                current_image_handle,
             },
             task,
         )
+    }
+
+    fn set_quote_context(&mut self, context: &str) {
+        self.current_quote = self.quote_provider.select(context);
+        self.current_image_handle = quote_display::image_handle_for_context(context);
     }
 
     fn is_first_esplora_scan(&self, wallet_settings: &WalletSettings) -> bool {
@@ -246,6 +273,7 @@ impl Loader {
             progress: 0.0,
             bitcoind_logs: String::new(),
         };
+        self.set_quote_context("syncing");
         Task::perform(sync(daemon, false), Message::Syncing)
     }
 
@@ -262,7 +290,9 @@ impl Loader {
             }
             Err(e) => match e {
                 Error::Config(_) => {
+                    error!("Loader: config error during connect: {}", e);
                     self.step = Step::Error(Box::new(e));
+                    self.set_quote_context("error");
                 }
                 Error::Daemon(DaemonError::ClientNotSupported)
                 | Error::Daemon(DaemonError::RpcSocket(Some(ErrorKind::ConnectionRefused), _))
@@ -272,6 +302,7 @@ impl Loader {
                         .clone()
                         .expect("wallet_settings must be Some when starting daemon");
                     self.step = if self.is_first_esplora_scan(&wallet_settings) {
+                        self.set_quote_context("syncing");
                         Step::FullScan { progress: 0.0 }
                     } else {
                         Step::StartingDaemon { progress: 0.0 }
@@ -289,7 +320,9 @@ impl Loader {
                     );
                 }
                 _ => {
+                    error!("Loader: unexpected error during connect: {}", e);
                     self.step = Step::Error(Box::new(e));
+                    self.set_quote_context("error");
                 }
             },
         }
@@ -317,7 +350,9 @@ impl Loader {
                 self.maybe_skip_syncing(daemon, info)
             }
             Err(e) => {
+                error!("Loader: start_bitcoind_and_daemon failed: {}", e);
                 self.step = Step::Error(Box::new(e));
+                self.set_quote_context("error");
                 Task::none()
             }
         }
@@ -353,10 +388,12 @@ impl Loader {
                         }
                     }
                     Err(e) => {
+                        error!("Loader: sync poll failed: {}", e);
                         self.step = Step::Error(Box::new(e.into()));
+                        self.set_quote_context("error");
                         return Task::none();
                     }
-                };
+                }
                 Task::perform(sync(daemon.clone(), true), Message::Syncing)
             }
             _ => Task::none(),
@@ -395,6 +432,7 @@ impl Loader {
                     self.wallet_settings.clone(),
                     self.cube_settings.clone(),
                     self.breez_client.clone(),
+                    self.spark_backend.clone(),
                 );
                 *self = loader;
                 cmd
@@ -419,7 +457,9 @@ impl Loader {
                 Task::none()
             }
             Message::Synced(Err(e)) => {
+                error!("Loader: load_application failed: {}", e);
                 self.step = Step::Error(Box::new(e));
+                self.set_quote_context("error");
                 Task::none()
             }
             Message::Failure(_) => {
@@ -451,7 +491,7 @@ impl Loader {
     }
 
     pub fn view(&self) -> Element<Message> {
-        view(&self.step).map(Message::View)
+        view(&self.step, &self.current_quote, &self.current_image_handle).map(Message::View)
     }
 }
 
@@ -485,7 +525,7 @@ pub fn get_bitcoind_log(log_path: PathBuf) -> impl Stream<Item = Option<String>>
                 Err(e) => {
                     log::error!("Getting bitcoind log file metadata: {}", e);
                 }
-            };
+            }
 
             // Find the latest tip update line in bitcoind's debug.log. BufReader is only
             // used to facilitates searching through the lines.
@@ -548,6 +588,12 @@ pub async fn load_application(
         .await
         .map(|res| res.coins)?;
 
+    let display_mode = crate::app::settings::Settings::from_file(
+        &config.datadir_path.network_directory(config.network),
+    )
+    .ok()
+    .map(|s| s.display_mode)
+    .unwrap_or_default();
     // Both last poll fields start with the same value.
     let cache = Cache {
         datadir_path: config.datadir_path,
@@ -562,20 +608,30 @@ pub async fn load_application(
         },
         fiat_price: None,
         bitcoin_unit,
+        display_mode,
         node_bitcoind_sync_progress: None,
         node_bitcoind_ibd: None,
         node_bitcoind_last_log: None,
-        vault_expanded: false,
-        liquid_expanded: false,
-        marketplace_expanded: false,
-        marketplace_p2p_expanded: false,
-        usdt_expanded: false,
-        connect_expanded: false,
         connect_authenticated: false,
         has_vault: true,
         cube_name: config.cube_settings.name.clone(),
+        current_cube_backed_up: config.cube_settings.backed_up,
+        backup_warning_dismissed: false,
+        current_cube_is_passkey: config.cube_settings.is_passkey_cube(),
         has_p2p: false, // Set later by App::new based on mnemonic availability
         theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
+        btc_usd_price: None,
+        show_direction_badges: true,
+        lightning_address: None,
+        avatar_handle: None,
+        cube_id: config.cube_settings.id.clone(),
+        current_cube_server_id: None,
+        current_descriptor_fingerprint: None,
+        recovery_kit_last_backed_up_descriptor_fingerprint: config
+            .cube_settings
+            .recovery_kit_last_backed_up_descriptor_fingerprint
+            .clone(),
+        default_lightning_backend: config.cube_settings.default_lightning_backend,
     };
 
     Ok((
@@ -595,22 +651,39 @@ pub enum ViewMessage {
     SetupVault,
 }
 
-pub fn view(step: &Step) -> Element<ViewMessage> {
+pub fn view<'a>(
+    step: &'a Step,
+    quote: &'a Quote,
+    image_handle: &'a image::Handle,
+) -> Element<'a, ViewMessage> {
     match &step {
-        Step::StartingDaemon { progress } => cover(
+        Step::StartingDaemon { .. } => cover(
             None,
             Column::new()
                 .width(Length::Fill)
-                .push(ProgressBar::new(0.0..=1.0, *progress).length(Length::Fill))
-                .push(text("Starting daemon...")),
+                .spacing(20)
+                .align_x(Alignment::Center)
+                .push(quote_display::display(&QuoteDisplayProps::new(
+                    "loading",
+                    quote,
+                    image_handle,
+                )))
+                .push(crate::loading::loading_indicator(None))
+                .push(text("Starting daemon...").style(theme::text::secondary)),
         ),
-        Step::FullScan { progress } => cover(
+        Step::FullScan { .. } => cover(
             None,
             Column::new()
                 .width(Length::Fill)
                 .spacing(10)
-                .push(ProgressBar::new(0.0..=1.0, *progress).length(Length::Fill))
-                .push(text("Scanning the blockchain..."))
+                .align_x(Alignment::Center)
+                .push(quote_display::display(&QuoteDisplayProps::new(
+                    "syncing",
+                    quote,
+                    image_handle,
+                )))
+                .push(crate::loading::loading_indicator(None))
+                .push(text("Scanning the blockchain...").style(theme::text::secondary))
                 .push(
                     p2_regular(
                         "Performing an initial scan of the Bitcoin blockchain via Esplora. \
@@ -623,8 +696,15 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
             None,
             Column::new()
                 .width(Length::Fill)
-                .push(ProgressBar::new(0.0..=1.0, 0.0).length(Length::Fill))
-                .push(text("Connecting to daemon...")),
+                .spacing(20)
+                .align_x(Alignment::Center)
+                .push(quote_display::display(&QuoteDisplayProps::new(
+                    "loading",
+                    quote,
+                    image_handle,
+                )))
+                .push(crate::loading::loading_indicator(None))
+                .push(text("Connecting to daemon...").style(theme::text::secondary)),
         ),
         Step::Syncing {
             progress,
@@ -635,49 +715,64 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
             Column::new()
                 .width(Length::Fill)
                 .spacing(5)
-                .push(text(format!("Progress {:.2}%", 100.0 * *progress)))
-                .push(ProgressBar::new(0.0..=1.0, *progress as f32).length(Length::Fill))
-                .push(text(if *progress > 0.98 {
-                    SYNCING_PROGRESS_3
-                } else if *progress > 0.9 {
-                    SYNCING_PROGRESS_2
-                } else {
-                    SYNCING_PROGRESS_1
-                }))
+                .align_x(Alignment::Center)
+                .push(quote_display::display(&QuoteDisplayProps::new(
+                    "syncing",
+                    quote,
+                    image_handle,
+                )))
+                .push(crate::loading::loading_indicator(None))
+                .push(
+                    text(if *progress > 0.98 {
+                        "Almost there..."
+                    } else {
+                        "Syncing blockchain..."
+                    })
+                    .style(theme::text::secondary),
+                )
                 .push(p2_regular(bitcoind_logs).style(theme::text::secondary)),
         ),
-        Step::Error(error) => cover(
-            Some(("Error while starting the internal daemon", error)),
-            Column::new()
-                .spacing(20)
-                .width(Length::Fill)
-                .align_x(Alignment::Center)
-                .push(icon::plug_icon().size(100).width(Length::Fixed(300.0)))
-                .push(
-                    if matches!(
-                        error.as_ref(),
-                        Error::Daemon(DaemonError::Start(StartupError::Bitcoind(_)))
-                    ) {
-                        text("Coincube failed to start, please check if bitcoind is running")
-                    } else {
-                        text("Coincube failed to start")
-                    },
-                )
-                .push(
-                    Row::new()
-                        .spacing(10)
-                        .push(
-                            button::secondary(None, "Back")
-                                .width(Length::Fixed(200.0))
-                                .on_press(ViewMessage::SwitchNetwork),
-                        )
-                        .push(
-                            button::secondary(None, "Retry")
-                                .width(Length::Fixed(200.0))
-                                .on_press(ViewMessage::Retry),
-                        ),
-                ),
-        ),
+        Step::Error(error) => {
+            let headline = match error.as_ref() {
+                Error::Daemon(DaemonError::Start(StartupError::Bitcoind(_))) => {
+                    "Coincube failed to start, please check if bitcoind is running"
+                }
+                Error::Daemon(DaemonError::Start(StartupError::Esplora(_))) => {
+                    "Coincube failed to start: the Esplora chain backend is unreachable"
+                }
+                Error::Daemon(DaemonError::Start(StartupError::Electrum(_))) => {
+                    "Coincube failed to start: the Electrum chain backend is unreachable"
+                }
+                _ => "Coincube failed to start",
+            };
+            cover(
+                Some(("Error while starting Coincube", error)),
+                Column::new()
+                    .spacing(20)
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center)
+                    .push(quote_display::display(&QuoteDisplayProps::new(
+                        "error",
+                        quote,
+                        image_handle,
+                    )))
+                    .push(text(headline))
+                    .push(
+                        Row::new()
+                            .spacing(10)
+                            .push(
+                                button::secondary(None, "Back")
+                                    .width(Length::Fixed(200.0))
+                                    .on_press(ViewMessage::SwitchNetwork),
+                            )
+                            .push(
+                                button::secondary(None, "Retry")
+                                    .width(Length::Fixed(200.0))
+                                    .on_press(ViewMessage::Retry),
+                            ),
+                    ),
+            )
+        }
     }
 }
 

@@ -22,6 +22,51 @@ In addition, if you want to build the project from source, you will need:
 cargo run --bin coincube
 ```
 
+Note: this builds and runs the gui alone. It does NOT build the
+[`coincube-spark-bridge`](../coincube-spark-bridge) sibling process,
+which is required for the Spark wallet to load. Without it the gui
+logs "Spark bridge unavailable" and renders "Spark is not configured"
+on the Spark panels. For Spark-enabled development, use the top-level
+[`Makefile`](../Makefile) instead:
+
+```bash
+make run        # builds the bridge, then runs the gui
+make build      # builds both without running
+```
+
+Or build the bridge manually once:
+
+```bash
+cargo build --manifest-path ../coincube-spark-bridge/Cargo.toml
+```
+
+### Spark bridge
+
+The Spark wallet is powered by [`breez-sdk-spark`](https://github.com/breez/spark-sdk),
+which cannot share a dependency graph with `breez-sdk-liquid` (incompatible
+`tokio_with_wasm` and `rusqlite` requirements). The SDK therefore runs in a
+sibling subprocess — [`coincube-spark-bridge`](../coincube-spark-bridge) — that
+the gui spawns on Cube open and speaks to over stdin/stdout JSON-RPC. The
+bridge lives in its own Cargo workspace so its dep graph stays isolated.
+
+At runtime the gui locates the bridge binary in this order:
+
+1. `$COINCUBE_SPARK_BRIDGE_PATH` (explicit override)
+2. Next to the gui executable (packaged builds)
+3. `../coincube-spark-bridge/target/{debug,release}/coincube-spark-bridge` (dev fallback)
+
+Spark support is currently limited to Bitcoin mainnet and Regtest; on other
+networks the bridge is skipped and the Spark panels stay disconnected.
+
+#### Environment variables
+
+- `$COINCUBE_SPARK_BRIDGE_PATH` — absolute path to the bridge binary, takes
+  precedence over the discovery order above.
+- `$COINCUBE_LNURL_DOMAIN` — LNURL domain the bridge registers Lightning
+  Addresses against via the Breez-hosted LNURL server. Defaults to
+  `coincube.io`. Set to an allowlisted staging domain (e.g.
+  `dev.coincube.io`) for non-production builds.
+
 ## Regtest
 In order to test out the "Liquid" wallet which utilizes the Breez Liquid SDK, please follow these directions [Breez SDK Regtest Setup](/docs/BREEZ_SDK_REGTEST.md)
 

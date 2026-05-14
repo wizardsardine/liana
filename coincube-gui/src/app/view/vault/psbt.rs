@@ -28,7 +28,7 @@ use coincube_ui::{
         text::{self, *},
     },
     icon, theme,
-    widget::*,
+    widget::{Button, Column, Container, Element, Row, RowExt, TextInput},
 };
 
 use crate::{
@@ -167,12 +167,18 @@ pub fn save_action<'a>(saved: bool) -> Element<'a, Message> {
 pub fn broadcast_action<'a>(
     conflicting_txids: &HashSet<Txid>,
     saved: bool,
+    spend_amount_display: &'a str,
+    sent_quote: &'a coincube_ui::component::quote_display::Quote,
+    sent_image_handle: &'a iced::widget::image::Handle,
 ) -> Element<'a, Message> {
     if saved {
-        card::simple(text("Transaction is broadcast"))
-            .width(Length::Fixed(400.0))
-            .align_x(iced::alignment::Horizontal::Center)
-            .into()
+        coincube_ui::component::sent_celebration_page(
+            "bitcoin-send",
+            spend_amount_display,
+            sent_quote,
+            sent_image_handle,
+            Message::Spend(super::super::SpendTxMessage::Cancel),
+        )
     } else {
         card::simple(
             Column::new()
@@ -1050,15 +1056,15 @@ pub fn sign_action<'a>(
                 let can_sign =
                     descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);
                 let btn = Button::new(if signed.contains(&fingerprint) {
-                    hw::sign_success_hot_signer(fingerprint, signer_alias)
+                    hw::sign_success_master_signer(fingerprint, signer_alias)
                 } else {
-                    hw::hot_signer(fingerprint, signer_alias, can_sign)
+                    hw::master_signer(fingerprint, signer_alias, can_sign)
                 })
                 .padding(10)
                 .style(theme::button::secondary)
                 .width(Length::Fill);
                 if can_sign {
-                    btn.on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
+                    btn.on_press(Message::Spend(SpendTxMessage::SelectMasterSigner))
                 } else {
                     btn
                 }
@@ -1109,7 +1115,6 @@ fn border_wallet_recon_phrase_view(
 ) -> Element<'_, Message> {
     let header = modal::header(
         Some("Reconstruct Border Wallet".to_string()),
-        None::<fn() -> Message>,
         Some(|| {
             Message::Spend(SpendTxMessage::BorderWalletRecon(
                 BorderWalletReconMessage::Cancel,
@@ -1183,7 +1188,6 @@ fn border_wallet_recon_phrase_view(
 fn border_wallet_recon_grid_view(recon: &BorderWalletReconstructionState) -> Element<'_, Message> {
     let header = modal::header(
         Some("Select Pattern".to_string()),
-        None::<fn() -> Message>,
         Some(|| {
             Message::Spend(SpendTxMessage::BorderWalletRecon(
                 BorderWalletReconMessage::Cancel,

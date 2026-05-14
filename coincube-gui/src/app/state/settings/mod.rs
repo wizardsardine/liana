@@ -1,6 +1,8 @@
 mod about;
-mod general;
+pub mod general;
 mod install_stats;
+mod lightning;
+pub mod recovery_kit;
 
 use std::sync::Arc;
 
@@ -11,6 +13,7 @@ use coincube_ui::widget::Element;
 use about::AboutSettingsState;
 use general::GeneralSettingsState;
 use install_stats::InstallStatsState;
+use lightning::LightningSettingsState;
 
 use crate::{
     app::{
@@ -30,6 +33,12 @@ pub struct SettingsState {
     cube_id: String,
     current_price_setting: PriceSetting,
     current_unit_setting: crate::app::settings::unit::UnitSetting,
+    /// Cube Recovery Kit wizard + cached status. Lives on the outer
+    /// wrapper rather than `GeneralSettingsState` so `App::update` can
+    /// reach it without downcasting through `Box<dyn State>`. The
+    /// Recovery-Kit card is rendered inside the General section's
+    /// view, which reads this field through a parameter.
+    pub recovery_kit: recovery_kit::RecoveryKit,
 }
 
 impl SettingsState {
@@ -43,6 +52,7 @@ impl SettingsState {
             cube_id,
             current_price_setting: price_setting,
             current_unit_setting: unit_setting,
+            recovery_kit: recovery_kit::RecoveryKit::new(),
         }
     }
 }
@@ -65,6 +75,22 @@ impl State for SettingsState {
                     )
                     .into(),
                 );
+                let reload_task = self
+                    .setting
+                    .as_mut()
+                    .map(|s| s.reload(daemon, None))
+                    .unwrap_or_else(Task::none);
+                // Kick the Recovery-Kit status fetch so the card has
+                // fresh copy by the time the user looks at it. The
+                // handler is App-level (it needs the authenticated
+                // client); we just drop a message onto the queue.
+                let load_status = Task::done(Message::View(view::Message::Settings(
+                    view::SettingsMessage::RecoveryKit(view::RecoveryKitMessage::LoadStatus),
+                )));
+                Task::batch([reload_task, load_status])
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::LightningSection)) => {
+                self.setting = Some(LightningSettingsState::new(self.cube_id.clone()).into());
                 self.setting
                     .as_mut()
                     .map(|s| s.reload(daemon, None))
@@ -118,10 +144,40 @@ impl State for SettingsState {
     }
 
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
+        use iced::widget::Column;
+        // Recovery-Kit wizard takes over the entire settings page
+        // when active, the same way `BackupSeedState != None` does.
+        if !matches!(self.recovery_kit.flow, recovery_kit::RecoveryKitState::None) {
+            if let Some(wizard) = crate::app::view::settings::recovery_kit::dispatch(
+                &self.recovery_kit.flow,
+                &self.recovery_kit.pin,
+            ) {
+                return crate::app::view::dashboard(
+                    menu,
+                    cache,
+                    Column::new().spacing(20).push(wizard),
+                );
+            }
+        }
         if let Some(setting) = &self.setting {
+            // Reach into the concrete `GeneralSettingsState` (when
+            // that's the active section) so its view can receive the
+            // Recovery-Kit status cached on this wrapper. The rest of
+            // the sections don't need it and go through the plain
+            // `State::view` path.
+            if let Some(general) = setting
+                .as_any()
+                .and_then(|a| a.downcast_ref::<GeneralSettingsState>())
+            {
+                return general.view_with_recovery_kit(menu, cache, &self.recovery_kit);
+            }
             setting.view(menu, cache)
         } else {
-            crate::app::view::settings::list(menu, cache)
+            // No setting installed yet — the tertiary rail's click would
+            // normally auto-dispatch the matching section. Render the
+            // dashboard frame only so the rails stay visible while we
+            // (effectively) wait a frame for that dispatch.
+            crate::app::view::dashboard(menu, cache, iced::widget::Space::new())
         }
     }
 

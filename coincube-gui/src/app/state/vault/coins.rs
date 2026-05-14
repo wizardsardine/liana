@@ -160,7 +160,7 @@ impl State for CoinsPanel {
                 }
             }
             _ => {}
-        };
+        }
         Task::none()
     }
 

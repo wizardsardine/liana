@@ -19,8 +19,9 @@ path = "src/main.rs"
 [dependencies]
 async-trait = "0.1"
 async-hwi = "0.0.29"
-breez-sdk-liquid = { git = "https://github.com/breez/breez-sdk-liquid" }
+breez-sdk-liquid = { git = "https://github.com/breez/breez-sdk-liquid", tag = "0.12.2" }
 coincube-core = { path = "../coincube-core" }
+coincube-spark-protocol = { path = "../coincube-spark-protocol" }
 coincubed = { path = "../coincubed", default-features = false, features = [
 	"nonblocking_shutdown",
 ] }
@@ -40,14 +41,23 @@ iced = { version = "0.14.0", default-features = false, features = [
 	"crisp",
 ] }
 iced_anim = "0.3"
-image = { version = "*", default-features = false, features = ["png"] }
+image = { version = "*", default-features = false, features = ["png", "jpeg"] }
 iced_aw = { version = "0.13.0", features = ["context_menu"] }
 iced_runtime = "0.14.0"
 
 # Used to verify RFC-compliance of an email
 email_address = "0.2.7"
 
-tokio = { version = "1", features = ["signal", "sync", "time"] }
+tokio = { version = "1", features = [
+	"signal",
+	"process",
+	"io-util",
+	"sync",
+	"time",
+	"macros",
+	"rt",
+	"rt-multi-thread",
+] }
 tokio-stream = "0.1"
 tonic = { version = "0.12", features = ["tls-native-roots"] }
 prost = "0.13"
@@ -67,7 +77,6 @@ log = "0.4"
 dirs = "6"
 toml = "0.9"
 rand = "0.8"
-
 chrono = "0.4.38"
 mostro-core = "0.7"
 nostr-sdk = { version = "0.43.0", features = ["nip06", "nip59"] }
@@ -104,12 +113,54 @@ encrypted_backup = { version = "0.0.1", default-features = false, features = [
 	"miniscript_12_0",
 ], package = "bitcoin-encrypted-backup" }
 
-zeroize = "1"
+zeroize = { version = "1", features = ["derive"] }
+chacha20poly1305 = "0.10.1"
+aes-gcm = { version = "0.10", features = ["aes"] }
+sha2 = "0.11.0"
+zxcvbn = "3"
+
+dotenvy = "0.15.7"
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features = false, features = [
 	"bzip2",
 	"deflate",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# objc2 0.6 has the PRF extension bindings (added with macOS 14 support).
+# This coexists with the 0.5 version pulled in by iced/winit/wry — we're
+# careful not to pass types between the two versions.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+	"NSData",
+	"NSString",
+	"NSError",
+	"NSObject",
+	"NSArray",
+	"NSDictionary",
+] }
+objc2-authentication-services = { version = "0.3", features = [
+	"ASFoundation",
+	"ASAuthorization",
+	"ASAuthorizationController",
+	"ASAuthorizationRequest",
+	"ASAuthorizationCredential",
+	"ASAuthorizationPlatformPublicKeyCredentialProvider",
+	"ASAuthorizationPlatformPublicKeyCredentialRegistrationRequest",
+	"ASAuthorizationPlatformPublicKeyCredentialRegistration",
+	"ASAuthorizationPlatformPublicKeyCredentialAssertionRequest",
+	"ASAuthorizationPlatformPublicKeyCredentialAssertion",
+	"ASAuthorizationPublicKeyCredentialRegistration",
+	"ASAuthorizationPublicKeyCredentialAssertion",
+	"ASAuthorizationPublicKeyCredentialRegistrationRequest",
+	"ASAuthorizationPublicKeyCredentialAssertionRequest",
+	"ASAuthorizationPublicKeyCredentialPRFRegistrationInput",
+	"ASAuthorizationPublicKeyCredentialPRFAssertionInput",
+	"ASAuthorizationPublicKeyCredentialPRFAssertionOutput",
+	"ASAuthorizationPublicKeyCredentialPRFRegistrationOutput",
+	"ASPublicKeyCredential",
+	"ASAuthorizationPublicKeyCredentialDescriptor",
 ] }
 
 [target.'cfg(unix)'.dependencies]
@@ -120,6 +171,7 @@ iced = { version = "0.14.0", features = ["x11", "wayland"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
+httpmock = "0.7"
 
 [build-dependencies]
 dotenvy = "0.15.7"
