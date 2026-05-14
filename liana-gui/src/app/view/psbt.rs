@@ -31,10 +31,11 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{dashboard, hw::hw_list_view, label, message::*, warning::warn},
+        view::{dashboard, label, message::*, warning::warn},
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
+    view::hw::{device_list_entry, HwRowMode},
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -975,7 +976,15 @@ pub fn sign_action<'a>(
                     descriptor.contains_fingerprint_in_path(f, recovery_timelock),
                 )
             });
-            col.push(hw_list_view(i, hw, signed, signing, can_sign))
+            col.push(device_list_entry(
+                hw,
+                HwRowMode::Signing {
+                    signed,
+                    signing,
+                    can_sign,
+                },
+                move || Message::SelectHardwareWallet(i),
+            ))
         });
 
     let hot_signer = signer.map(|fingerprint| {

@@ -35,7 +35,7 @@ use crate::node::electrum::validate_domain_checkbox;
 use crate::{
     app::settings,
     help,
-    hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
+    hw::{HardwareWallet, UnsupportedReason},
     installer::{
         descriptor::{PathSequence, PathWarning},
         message::{self, DefineBitcoind, DefineNode, Message},
@@ -627,18 +627,19 @@ pub fn register_descriptor<'a>(
         .iter()
         .enumerate()
         .fold(Column::new().spacing(10), |col, (i, hw)| {
-            col.push(hw_list_view(
-                i,
+            col.push(crate::view::hw::device_list_entry(
                 hw,
-                Some(i) == chosen_hw,
-                processing,
-                hw.fingerprint()
-                    .map(|fg| registered.contains(&fg))
-                    .unwrap_or(false),
-                Some(descriptor),
-                false,
-                None,
-                false,
+                crate::view::hw::HwRowMode::Registration {
+                    chosen: Some(i) == chosen_hw,
+                    processing,
+                    complete: hw
+                        .fingerprint()
+                        .map(|fg| registered.contains(&fg))
+                        .unwrap_or(false),
+                    descriptor: Some(descriptor),
+                    device_must_support_taproot: false,
+                },
+                move || Message::Select(i),
             ))
         });
     let signing_devices = column![devices_title, devices]
@@ -1586,110 +1587,6 @@ pub fn defined_sequence<'a>(
     )
     .padding(5)
     .into()
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn hw_list_view<'a>(
-    i: usize,
-    hw: &'a HardwareWallet,
-    chosen: bool,
-    processing: bool,
-    selected: bool,
-    descriptor: Option<&'a LianaDescriptor>,
-    device_must_support_taproot: bool,
-    accounts: Option<&HashMap<Fingerprint, ChildNumber>>,
-    display_account: bool,
-) -> Element<'a, Message> {
-    let mut unrelated = false;
-    let mut bttn = Button::new(match hw {
-        HardwareWallet::Supported {
-            kind,
-            version,
-            fingerprint,
-            alias,
-            ..
-        } => {
-            let device_in_descriptor = descriptor
-                .map(|d| d.contains_fingerprint(*fingerprint))
-                .unwrap_or(true);
-            let not_tapminiscript = device_must_support_taproot
-                && !is_compatible_with_tapminiscript(kind, version.as_ref());
-            if !device_in_descriptor {
-                unrelated = true;
-                hw::unrelated_hardware_wallet(kind.to_string(), version.as_ref(), fingerprint)
-            } else if chosen && processing {
-                hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
-            } else if selected {
-                let acc = accounts
-                    .as_ref()
-                    .and_then(|map| map.get(fingerprint).cloned());
-                hw::selected_hardware_wallet(
-                    kind,
-                    version.as_ref(),
-                    fingerprint,
-                    alias.as_ref(),
-                    {
-                        if not_tapminiscript {
-                            Some("Device firmware version does not support taproot miniscript")
-                        } else {
-                            None
-                        }
-                    },
-                    acc,
-                    display_account,
-                )
-            } else if not_tapminiscript {
-                hw::warning_hardware_wallet(
-                    kind,
-                    version.as_ref(),
-                    fingerprint,
-                    alias.as_ref(),
-                    "Device firmware version does not support taproot miniscript",
-                )
-            } else if let Some(accounts) = accounts {
-                hw::supported_hardware_wallet_with_account(
-                    kind,
-                    version.as_ref(),
-                    *fingerprint,
-                    alias.as_ref(),
-                    accounts.get(fingerprint).cloned(),
-                    true,
-                )
-            } else {
-                hw::supported_hardware_wallet(kind, version.as_ref(), *fingerprint, alias.as_ref())
-            }
-        }
-        HardwareWallet::Unsupported {
-            version,
-            kind,
-            reason,
-            ..
-        } => match reason {
-            UnsupportedReason::NotPartOfWallet(fg) => {
-                hw::unrelated_hardware_wallet(kind.to_string(), version.as_ref(), fg)
-            }
-            UnsupportedReason::WrongNetwork => {
-                hw::wrong_network_hardware_wallet(kind.to_string(), version.as_ref())
-            }
-            UnsupportedReason::Version {
-                minimal_supported_version,
-            } => hw::unsupported_version_hardware_wallet(
-                kind.to_string(),
-                version.as_ref(),
-                minimal_supported_version,
-            ),
-            _ => hw::unsupported_hardware_wallet(kind.to_string(), version.as_ref()),
-        },
-        HardwareWallet::Locked {
-            kind, pairing_code, ..
-        } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
-    })
-    .style(theme::button::secondary)
-    .width(Length::Fill);
-    if !processing && hw.is_supported() && !unrelated {
-        bttn = bttn.on_press(Message::Select(i));
-    }
-    bttn.into()
 }
 
 pub fn backup_mnemonic<'a>(

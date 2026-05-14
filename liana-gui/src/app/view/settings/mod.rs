@@ -27,19 +27,14 @@ use liana_ui::{
 };
 
 use crate::{
-    app::{
-        cache::Cache,
-        error::Error,
-        menu::Menu,
-        settings::ProviderKey,
-        view::{hw, warning::warn},
-    },
+    app::{cache::Cache, error::Error, menu::Menu, settings::ProviderKey, view::warning::warn},
     help,
     hw::HardwareWallet,
     node::{
         bitcoind::{RpcAuthType, RpcAuthValues},
         electrum::{self, validate_domain_checkbox},
     },
+    view::hw::{device_list_entry, HwRowMode},
 };
 
 fn header(title: &str, msg: SettingsMessage) -> Row<'static, Message> {
@@ -1340,19 +1335,24 @@ pub fn register_wallet_modal<'a>(
         .iter()
         .enumerate()
         .fold(Column::new().spacing(10), |col, (i, hw)| {
-            col.push(hw::hw_list_view_for_registration(
-                i,
+            col.push(device_list_entry(
                 hw,
-                Some(i) == chosen_hw,
-                processing,
-                hw.fingerprint()
-                    .map(|f| registered.contains(&f))
-                    .unwrap_or(false)
-                    || if let HardwareWallet::Supported { registered, .. } = hw {
-                        registered == &Some(true)
-                    } else {
-                        false
-                    },
+                HwRowMode::Registration {
+                    chosen: Some(i) == chosen_hw,
+                    processing,
+                    complete: hw
+                        .fingerprint()
+                        .map(|f| registered.contains(&f))
+                        .unwrap_or(false)
+                        || if let HardwareWallet::Supported { registered, .. } = hw {
+                            registered == &Some(true)
+                        } else {
+                            false
+                        },
+                    descriptor: None,
+                    device_must_support_taproot: false,
+                },
+                move || Message::SelectHardwareWallet(i),
             ))
         });
 
