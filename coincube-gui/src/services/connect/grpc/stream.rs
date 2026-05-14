@@ -81,7 +81,6 @@ pub fn connect_stream(
                                     match inbound.message().await {
                                         Ok(Some(envelope)) => match envelope.body {
                                             Some(Body::SessionEvent(event)) => {
-                                                last_seen_seq = event.event_seq;
                                                 if let Err(e) = tx
                                                     .send(StreamEnvelope {
                                                         body: Some(Body::ClientAck(ClientAck {
@@ -97,6 +96,7 @@ pub fn connect_stream(
                                                     );
                                                     break;
                                                 }
+                                                last_seen_seq = event.event_seq;
                                                 if let Err(e) = channel
                                                     .send(ConnectStreamMessage::SessionEvent(event))
                                                     .await
