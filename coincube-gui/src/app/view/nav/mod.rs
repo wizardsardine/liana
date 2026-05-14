@@ -27,7 +27,7 @@ use crate::app::{menu::Menu, view::Message};
 use coincube_ui::{
     color,
     component::text,
-    icon::{clipboard_icon, cube_icon},
+    icon::cube_icon,
     image::{coincube_wordmark, theme_toggle_button},
     theme,
     widget::{Button, Column, Element, Row},
@@ -158,15 +158,10 @@ fn identity_block<'a>(ctx: &NavContext<'a>) -> Element<'a, Message> {
         } else {
             format!("{}@coincube.io", addr)
         };
-        let r: Row<Message> = row![
-            text::caption(display_addr.clone()).color(color::GREY_3),
-            clipboard_icon().size(10).color(color::GREY_3),
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center);
-        let btn: Button<Message> = Button::new(r)
-            .style(theme::button::transparent)
-            .on_press(Message::Clipboard(display_addr));
+        let btn: Button<Message> =
+            Button::new(text::caption(display_addr.clone()).color(color::GREY_3))
+                .style(theme::button::transparent)
+                .on_press(Message::Clipboard(display_addr));
         col = col.push(btn);
     }
 

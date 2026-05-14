@@ -88,7 +88,8 @@ pub async fn ensure_device_registered(
     }
 
     let channel = create_channel(grpc_url).await?;
-    let mut device = GrpcDeviceClient::new(channel, AuthInterceptor::new(tokens));
+    let access_token = tokens.read().await.access_token.clone();
+    let mut device = GrpcDeviceClient::new(channel, AuthInterceptor::new(&access_token));
 
     let resp = device
         .register_device(device_name, app_version, os_version)

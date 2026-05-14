@@ -227,9 +227,14 @@ impl Panels {
                 .liquid_signer()
                 .map(|s| s.lock().expect("signer lock").mnemonic_str())
             {
-                Some(mnemonic) if !mnemonic.is_empty() => Some(
-                    crate::app::view::p2p::P2PPanel::new(None, mnemonic, default_fiat_currency),
-                ),
+                Some(mnemonic) if !mnemonic.is_empty() => {
+                    Some(crate::app::view::p2p::P2PPanel::new(
+                        None,
+                        spark_backend.clone(),
+                        mnemonic,
+                        default_fiat_currency,
+                    ))
+                }
                 _ => {
                     log::warn!("P2P panel disabled: no mnemonic available from liquid signer");
                     None
@@ -381,6 +386,7 @@ impl Panels {
                 Some(mnemonic) if !mnemonic.is_empty() => {
                     Some(crate::app::view::p2p::P2PPanel::new(
                         Some(wallet),
+                        spark_backend.clone(),
                         mnemonic,
                         default_fiat_currency,
                     ))
@@ -644,10 +650,10 @@ pub struct App {
     /// Wallet registry — owns the concrete wallet backends and exposes
     /// routing hooks. Holds a [`LiquidBackend`] and an optional
     /// [`SparkBackend`] (present when the cube has a Spark signer and
-    /// the bridge subprocess came up). Phase 5 reads
-    /// [`WalletRegistry::spark`] from the LNURL subscription hand-off
-    /// so incoming Lightning Address invoices route through Spark
-    /// when the cube's `default_lightning_backend` prefers it.
+    /// the bridge subprocess came up). The LNURL subscription hand-off
+    /// reads [`WalletRegistry::route_lightning_address`] so incoming
+    /// Lightning Address invoices route through Spark when available
+    /// and fall back to Liquid otherwise.
     wallet_registry: crate::app::wallets::WalletRegistry,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     internal_bitcoind: Option<Bitcoind>,
@@ -1006,7 +1012,6 @@ impl App {
             recovery_kit_last_backed_up_descriptor_fingerprint: cube_settings
                 .recovery_kit_last_backed_up_descriptor_fingerprint
                 .clone(),
-            default_lightning_backend: cube_settings.default_lightning_backend,
             ..Default::default()
         };
 
@@ -1128,14 +1133,13 @@ impl App {
         }
 
         match &menu {
-            // Cube → Settings → {General/Lightning/About}: auto-dispatch the
+            // Cube → Settings → {General/About/Stats}: auto-dispatch the
             // matching sub-section so the inner SettingsState installs the
             // right child panel. The third rail visible alongside drives this
             // and highlights the active option.
             menu::Menu::Home(menu::HomeSubMenu::Settings(option)) => {
                 let section_msg = match option {
                     menu::HomeSettingsOption::General => view::SettingsMessage::GeneralSection,
-                    menu::HomeSettingsOption::Lightning => view::SettingsMessage::LightningSection,
                     menu::HomeSettingsOption::About => view::SettingsMessage::AboutSection,
                     menu::HomeSettingsOption::Stats => view::SettingsMessage::InstallStatsSection,
                 };
@@ -1899,9 +1903,6 @@ impl App {
                         self.cache.current_cube_backed_up = cube.backed_up;
                         self.cache.current_cube_is_passkey = cube.is_passkey_cube();
                         self.cube_settings.backed_up = cube.backed_up;
-                        self.cube_settings.default_lightning_backend =
-                            cube.default_lightning_backend;
-                        self.cache.default_lightning_backend = cube.default_lightning_backend;
                         // Mirror the drift fingerprint cache (W12). Refreshing
                         // on every SettingsSaved keeps the Recovery-Kit card
                         // in sync after a successful upload or remove.
@@ -2337,6 +2338,17 @@ impl App {
                 // state" signal. Deposits being claimed counts as a
                 // balance change too.
                 tasks.push(self.panels.spark_overview.reload(None, None));
+
+                // Also refresh the Home (Cube → Overview) Spark card.
+                // `global_home.reload` only runs on navigation, so a
+                // cold-start `get_info` that soft-fails (SDK not ready)
+                // leaves `spark_balance_loaded = false` until the user
+                // navigates away and back. Piping the SDK's `Synced` /
+                // payment events through `RefreshSparkBalance` lets
+                // the card recover without re-navigation.
+                tasks.push(Task::done(Message::View(view::Message::Home(
+                    view::HomeMessage::RefreshSparkBalance,
+                ))));
 
                 // Payment-related events reload the Transactions list
                 // so newly surfaced rows appear without the user

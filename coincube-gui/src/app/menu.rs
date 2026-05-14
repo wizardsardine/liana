@@ -6,9 +6,8 @@ pub enum Menu {
     /// Internal name stays `Home` for churn reasons; user-visible label
     /// is `"Cube"` (see [`TopLevel::label`]).
     Home(HomeSubMenu),
-    /// Spark wallet — default for everyday Lightning UX (Phase 5 flips
-    /// the Lightning Address routing default here). Listed above Liquid
-    /// in the sidebar because it's the default wallet post-Phase 5.
+    /// Spark wallet — default for everyday Lightning UX. Listed above
+    /// Liquid in the sidebar because it's the default wallet.
     Spark(SparkSubMenu),
     Liquid(LiquidSubMenu),
     Vault(VaultSubMenu),
@@ -22,7 +21,7 @@ pub enum HomeSubMenu {
     /// Cube landing / dashboard.
     Overview,
     /// Cube-level settings. The inner enum drives the third rail —
-    /// General / Lightning / About / Stats.
+    /// General / About / Stats.
     Settings(HomeSettingsOption),
 }
 
@@ -31,7 +30,6 @@ pub enum HomeSubMenu {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HomeSettingsOption {
     General,
-    Lightning,
     About,
     Stats,
 }

@@ -1469,7 +1469,6 @@ pub fn create_app_with_remote_backend(
             recovery_kit_last_backed_up_descriptor_fingerprint: cube_settings
                 .recovery_kit_last_backed_up_descriptor_fingerprint
                 .clone(),
-            default_lightning_backend: cube_settings.default_lightning_backend,
             // grpc_url isn't known yet — `Message::ConnectStreamReady`
             // backfills both fields once `get_service_config` returns.
             // Tokens we have right now (shared Arc with the REST client)
