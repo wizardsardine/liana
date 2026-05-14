@@ -13,7 +13,7 @@ use iced::{
 use liana_connect::ws_business::Wallet;
 use liana_ui::{
     component::{
-        button::{btn_secondary, BtnWidth},
+        button::{self, btn_secondary, BtnWidth, DEVICE_BTN_H},
         text,
     },
     icon, theme,
@@ -21,7 +21,7 @@ use liana_ui::{
 };
 use miniscript::bitcoin::bip32::Fingerprint;
 
-use super::{menu_entry, INSTALLER_STEPS, MENU_ENTRY_WIDTH};
+use super::{INSTALLER_STEPS, MENU_ENTRY_WIDTH};
 
 /// Main registration view
 pub fn registration_view(state: &State) -> Element<'_, Msg> {
@@ -189,7 +189,7 @@ fn key_card(
     kind: Option<async_hwi::DeviceKind>,
     device_connected: bool,
     alias: String,
-) -> Container<'static, Msg> {
+) -> Element<'static, Msg> {
     let fg = text::p1_medium(format!("#{fingerprint}"));
     let fg_row = if let Some(device) = kind {
         row![text::p1_bold(device_kind(device)), fg].spacing(5)
@@ -216,7 +216,6 @@ fn key_card(
         .push(Space::with_width(Length::Fill))
         .push(right)
         .push(Space::with_width(Length::Fill))
-        .align_y(Alignment::Center)
-        .height(Length::Fill);
-    menu_entry(content, message)
+        .align_y(Alignment::Center);
+    button::device_with_height_clickable(content, message, Some(DEVICE_BTN_H), kind.is_some())
 }
