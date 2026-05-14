@@ -5492,6 +5492,19 @@ impl State for P2PPanel {
             }
             // Trade detail
             P2PMessage::SelectTrade(id) => {
+                // Same race-protection as `DismissPaymentInvoice` /
+                // `CancelPaymentInvoice` / `CancelTrade`: navigating to
+                // another trade while a Spark RPC is in flight would
+                // drop the session id, causing the eventual SparkPaySent
+                // to be filtered as stale — losing the
+                // `spark_funded_order_ids` entry that prevents the
+                // trade from vanishing if Mostro cancels post-payment.
+                if matches!(
+                    self.spark_pay_phase,
+                    SparkPayPhase::Preparing | SparkPayPhase::Sending
+                ) {
+                    return Task::none();
+                }
                 // Cache QR code for the hold invoice if this trade has one
                 let trade_has_hold_invoice = self
                     .trades
@@ -5578,6 +5591,16 @@ impl State for P2PPanel {
                 };
             }
             P2PMessage::CloseTradeDetail => {
+                // Same race-protection as `SelectTrade`: closing while a
+                // Spark RPC is in flight drops the session id and
+                // discards the eventual SparkPaySent as stale, losing
+                // the `spark_funded_order_ids` tracking.
+                if matches!(
+                    self.spark_pay_phase,
+                    SparkPayPhase::Preparing | SparkPayPhase::Sending
+                ) {
+                    return Task::none();
+                }
                 self.selected_trade = None;
                 self.trade_invoice_input = Default::default();
                 self.trade_rating = 0;
@@ -5956,6 +5979,26 @@ impl State for P2PPanel {
                             self.spark_pay_attempt = None;
                             let balance = self.spark_balance_fetch_task(cache, order_id.clone());
                             let parse = self.spark_parse_invoice_task(order_id.clone(), invoice);
+                            // Persist before any Spark early-return — the
+                            // shared non-chat persistence path below is
+                            // bypassed by `return Task::batch(...)` / `return b`,
+                            // and losing the PayInvoice/WaitingSellerToPay/
+                            // BuyerTookOrder DM means the trade can't be
+                            // rebuilt from disk after a restart. The
+                            // `(None, _)` arm falls through and lets the
+                            // shared path persist instead.
+                            let persist_hold_invoice_dm = |this: &Self| {
+                                super::mostro::append_trade_message(
+                                    &this.cube_name(),
+                                    &order_id,
+                                    super::mostro::TradeMessage {
+                                        timestamp: chrono::Utc::now().timestamp() as u64,
+                                        action: action.clone(),
+                                        payload_json: payload_json.clone(),
+                                        is_own: false,
+                                    },
+                                );
+                            };
                             match (balance, parse) {
                                 (Some(b), Some(p)) => {
                                     tracing::info!(
@@ -5964,6 +6007,7 @@ impl State for P2PPanel {
                                          kicking off balance fetch + invoice parse",
                                         order_id,
                                     );
+                                    persist_hold_invoice_dm(self);
                                     return Task::batch([b, p]);
                                 }
                                 (Some(b), None) => {
@@ -5973,6 +6017,7 @@ impl State for P2PPanel {
                                          kicking off balance fetch",
                                         order_id,
                                     );
+                                    persist_hold_invoice_dm(self);
                                     return b;
                                 }
                                 (None, _) => {
