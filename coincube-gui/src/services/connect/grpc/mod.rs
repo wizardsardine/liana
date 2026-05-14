@@ -24,7 +24,7 @@ pub enum ConnectStreamMessage {
 pub async fn create_channel(
     grpc_url: &str,
 ) -> Result<Channel, Box<dyn std::error::Error + Send + Sync>> {
-    let tls = ClientTlsConfig::new();
+    let tls = ClientTlsConfig::new().with_native_roots();
     let channel = Channel::from_shared(grpc_url.to_string())?
         .tls_config(tls)?
         .connect()

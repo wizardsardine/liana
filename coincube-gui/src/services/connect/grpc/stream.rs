@@ -82,14 +82,21 @@ pub fn connect_stream(
                                         Ok(Some(envelope)) => match envelope.body {
                                             Some(Body::SessionEvent(event)) => {
                                                 last_seen_seq = event.event_seq;
-                                                // Acknowledge receipt
-                                                let _ = tx
+                                                if let Err(e) = tx
                                                     .send(StreamEnvelope {
                                                         body: Some(Body::ClientAck(ClientAck {
                                                             event_seq: event.event_seq,
                                                         })),
                                                     })
-                                                    .await;
+                                                    .await
+                                                {
+                                                    log::warn!(
+                                                        "[CONNECT GRPC] Outbound channel closed while sending ClientAck (seq {}): {}; reconnecting",
+                                                        event.event_seq,
+                                                        e
+                                                    );
+                                                    break;
+                                                }
                                                 if let Err(e) = channel
                                                     .send(ConnectStreamMessage::SessionEvent(event))
                                                     .await
@@ -101,14 +108,21 @@ pub fn connect_stream(
                                                 }
                                             }
                                             Some(Body::Ping(_)) => {
-                                                let _ = tx
+                                                if let Err(e) = tx
                                                     .send(StreamEnvelope {
                                                         body: Some(Body::Pong(Pong {
                                                             ts_unix_ms: chrono::Utc::now()
                                                                 .timestamp_millis(),
                                                         })),
                                                     })
-                                                    .await;
+                                                    .await
+                                                {
+                                                    log::warn!(
+                                                        "[CONNECT GRPC] Outbound channel closed while sending Pong: {}; reconnecting",
+                                                        e
+                                                    );
+                                                    break;
+                                                }
                                             }
                                             Some(Body::Error(err)) => {
                                                 if let Err(e) = channel
