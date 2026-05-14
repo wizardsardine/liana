@@ -151,6 +151,7 @@ pub fn dashboard_with_info<'a, T: Into<Element<'a, Message>>>(
         avatar: avatar_handle,
         theme_mode: cache.theme_mode,
         connect_authenticated: cache.connect_authenticated,
+        connect_stream_status: &cache.connect_stream_status,
     };
     let content_column: Element<'_, Message> = Column::new()
         .push(warn(None))

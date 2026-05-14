@@ -289,6 +289,18 @@ pub enum SettingsMessage {
     ExportWallet,
     ImportWallet,
     AboutSection,
+    /// Triggered by the "Re-register this device" button on the
+    /// Settings → About page's Connect-device card. Clears the cached
+    /// `device_id` and re-runs `ensure_device_registered`, getting a
+    /// fresh `SignerDevice` row server-side. Useful when a device id
+    /// is suspect (compromise, machine swap) or the row went stale on
+    /// the API and signing started 404'ing.
+    ReregisterConnectDevice,
+    /// Settled result of the re-registration RPC. Payload is the new
+    /// device_id on success, or a user-facing error string. Routed
+    /// straight to the About settings state so it can refresh its
+    /// banner without going through the catchall update path.
+    ConnectDeviceReregistered(Result<String, String>),
     RegisterWallet,
     FingerprintAliasEdited(Fingerprint, String),
     WalletAliasEdited(String),

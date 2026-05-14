@@ -1,4 +1,4 @@
-mod about;
+pub mod about;
 pub mod general;
 mod install_stats;
 mod lightning;

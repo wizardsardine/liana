@@ -86,6 +86,10 @@ cargo build --manifest-path coincube-spark-bridge/Cargo.toml
 
 At runtime the gui looks for the bridge binary next to the gui executable, then falls back to `coincube-spark-bridge/target/{debug,release}/coincube-spark-bridge`. A custom location can be provided via the `COINCUBE_SPARK_BRIDGE_PATH` environment variable.
 
+## Connect signing flow
+
+Multi-signer Keychain signing — desktop collects signatures from contacts whose private keys live in the Coincube Keychain phone app, via the Connect gRPC stream. See [`docs/SIGNING_FLOW.md`](docs/SIGNING_FLOW.md) for the architecture, the happy-path sequence, the failure-mode UX inventory, and debugging guidance.
+
 ## Security
 
 See [`SECURITY.md`](SECURITY.md) for details about reporting a security vulnerability or any bug

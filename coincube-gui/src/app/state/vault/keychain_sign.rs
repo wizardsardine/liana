@@ -159,6 +159,31 @@ impl PendingSessionStatus {
     }
 }
 
+/// Error returned by any of the modal's async operations. The `auth`
+/// flag flips when the underlying transport surfaced an
+/// `Unauthenticated` / `PermissionDenied` status — the modal treats
+/// these as terminal "log in again" cases rather than retryable
+/// transient errors. Everything else stays in `Other`.
+#[derive(Debug, Clone)]
+pub struct OpError {
+    pub message: String,
+    pub auth: bool,
+}
+
+impl OpError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            auth: false,
+        }
+    }
+
+    pub fn from_status(status: tonic::Status) -> Self {
+        let (message, auth) = friendly_grpc_error(status);
+        Self { message, auth }
+    }
+}
+
 /// Sub-messages routed through `Message::KeychainSign`. Kept in this
 /// module so they can evolve alongside the modal without churning
 /// `app::message::Message`.
@@ -166,22 +191,29 @@ impl PendingSessionStatus {
 pub enum KeychainSignMessage {
     /// Result of the initial parallel fetch:
     /// `(connect_vault_response, cube_keys, viewer_user)`.
-    Classified(Result<ClassifiedSigners, String>),
+    Classified(Result<ClassifiedSigners, OpError>),
     /// Result of `ResolveSigners(vault_id)`.
-    SignersResolved(Result<ResolveSignersResponse, String>),
+    SignersResolved(Result<ResolveSignersResponse, OpError>),
     /// Result of a single `CreateSigningSession` call, keyed by the
     /// fingerprint of the signer being addressed.
-    SessionCreated(Fingerprint, Result<SigningSession, String>),
+    SessionCreated(Fingerprint, Result<SigningSession, OpError>),
     /// Result of a `GetSigningSession` fetch after a SIGNATURE_SUBMITTED
     /// event, used to pull down the signed PSBT for merge.
-    SessionFetched(String, Result<GetSigningSessionResponse, String>),
+    SessionFetched(String, Result<GetSigningSessionResponse, OpError>),
     /// Result of a `cancel_signing_session` call. Carries the session_id
     /// so the modal can mark the right row Cancelled.
-    SessionCancelled(String, Result<(), String>),
+    SessionCancelled(String, Result<(), OpError>),
     /// One `SessionEvent` forwarded from the top-level
     /// `App::handle_connect_stream`. Routed unconditionally — modals
     /// that don't recognise the session_id are no-ops.
     StreamEvent(crate::services::connect::grpc::connect_v1::SessionEvent),
+    /// Realtime-stream health change forwarded by
+    /// `App::handle_connect_stream` for every non-`SessionEvent`
+    /// variant. The modal surfaces a banner when the stream drops
+    /// while pending sessions are in flight — without this signal the
+    /// user would sit and watch a frozen "waiting…" indicator with
+    /// no indication that the desktop has stopped receiving updates.
+    StreamHealth(crate::app::ConnectionStatus),
 }
 
 /// Output of the initial fetch+classify step. Held by the modal so the
@@ -246,6 +278,12 @@ pub struct KeychainSignModal {
     unresolved: Vec<String>,
     /// Top-of-modal error banner.
     error: Option<String>,
+    /// Latest realtime-stream health relayed from the App. Drives the
+    /// "Connection lost" banner shown while sessions are pending but
+    /// the desktop can't see updates. Defaults to `Connected` — we
+    /// only flip out of that state when we receive a real signal,
+    /// avoiding a misleading "connection lost" toast at modal open.
+    stream_health: crate::app::ConnectionStatus,
     phase: Phase,
     /// When set, the on-blur action confirms cancel-all. Off by default
     /// because clicking outside the modal would otherwise silently
@@ -283,6 +321,7 @@ impl KeychainSignModal {
             pending: Vec::new(),
             unresolved: Vec::new(),
             error: None,
+            stream_health: crate::app::ConnectionStatus::Connected,
             phase: Phase::Loading,
             display_modal: true,
         }
@@ -326,10 +365,10 @@ impl KeychainSignModal {
     /// current call site inlines the same shape (we keep the closures
     /// `Send + 'static` by not capturing `&self`).
     #[allow(dead_code)]
-    async fn make_session_client(&self) -> Result<GrpcSessionClient, String> {
+    async fn make_session_client(&self) -> Result<GrpcSessionClient, OpError> {
         let channel = crate::services::connect::grpc::create_channel(&self.grpc_url)
             .await
-            .map_err(|e| format!("gRPC channel: {}", e))?;
+            .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
         Ok(GrpcSessionClient::new(
             channel,
             AuthInterceptor::new(self.tokens.clone()),
@@ -350,21 +389,41 @@ impl KeychainSignModal {
                 let vault: ConnectVaultResponse = client
                     .get_connect_vault(cube_server_id)
                     .await
-                    .map_err(|e| format!("Failed to fetch vault: {}", e))?;
-                let cube_keys: Vec<CubeKeyRaw> = client
-                    .get_cube_keys(&cube_uuid)
-                    .await
-                    .map_err(|e| format!("Failed to fetch cube keys: {}", e))?;
-                let user: User = client
-                    .get_user()
-                    .await
-                    .map_err(|e| format!("Failed to identify viewer: {}", e))?;
+                    .map_err(|e| {
+                        // CoincubeError formats include the underlying
+                        // HTTP status — we surface 401 / 403 as auth
+                        // failures so the modal can route to a "sign
+                        // in again" path rather than offering retry.
+                        let msg = e.to_string();
+                        let auth = is_rest_auth_failure(&msg);
+                        OpError {
+                            message: format!("Failed to fetch vault: {}", msg),
+                            auth,
+                        }
+                    })?;
+                let cube_keys: Vec<CubeKeyRaw> =
+                    client.get_cube_keys(&cube_uuid).await.map_err(|e| {
+                        let msg = e.to_string();
+                        let auth = is_rest_auth_failure(&msg);
+                        OpError {
+                            message: format!("Failed to fetch cube keys: {}", msg),
+                            auth,
+                        }
+                    })?;
+                let user: User = client.get_user().await.map_err(|e| {
+                    let msg = e.to_string();
+                    let auth = is_rest_auth_failure(&msg);
+                    OpError {
+                        message: format!("Failed to identify viewer: {}", msg),
+                        auth,
+                    }
+                })?;
                 let self_user_id: u64 = user.id.into();
                 let index: KeychainSignerIndex =
                     build_keychain_index(&vault.members, &cube_keys, self_user_id);
                 let required =
                     classify_signers(&psbt, &wallet.main_descriptor, &index, &wallet.keys_aliases)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| OpError::new(e.to_string()))?;
                 Ok(ClassifiedSigners {
                     vault,
                     required,
@@ -381,8 +440,20 @@ impl KeychainSignModal {
     /// case.
     fn on_classified(&mut self, classified: ClassifiedSigners) -> Task<Message> {
         let has_keychain = classified.required.iter().any(|r| r.is_keychain());
+        let vault_id = classified.vault.id;
+        let keychain_count = classified
+            .required
+            .iter()
+            .filter(|r| r.is_keychain())
+            .count();
         self.classified = Some(classified);
         if !has_keychain {
+            tracing::info!(
+                target: "coincube_gui::signing",
+                vault_id = vault_id,
+                phase = "classified",
+                "No Keychain signers required for this transaction"
+            );
             self.phase = Phase::AllDone;
             self.error = Some(
                 "No Keychain signers are required for this transaction. \
@@ -391,6 +462,13 @@ impl KeychainSignModal {
             );
             return Task::none();
         }
+        tracing::info!(
+            target: "coincube_gui::signing",
+            vault_id = vault_id,
+            phase = "classified",
+            keychain_signers = keychain_count,
+            "Classification complete, resolving signer devices"
+        );
         // Stash vault_id now that we have it.
         if let Some(c) = self.classified.as_ref() {
             self.vault_id = Some(c.vault.id);
@@ -404,12 +482,12 @@ impl KeychainSignModal {
             async move {
                 let channel = crate::services::connect::grpc::create_channel(&grpc_url)
                     .await
-                    .map_err(|e| format!("gRPC channel: {}", e))?;
+                    .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
                 let mut client = GrpcSessionClient::new(channel, AuthInterceptor::new(tokens));
                 client
                     .resolve_signers(vault_id)
                     .await
-                    .map_err(|s| format!("{}", s))
+                    .map_err(OpError::from_status)
             },
             |r| Message::KeychainSign(KeychainSignMessage::SignersResolved(r)),
         )
@@ -419,6 +497,14 @@ impl KeychainSignModal {
     /// `CreateSigningSession`. Each returns its own
     /// `KeychainSignMessage::SessionCreated` message.
     fn on_signers_resolved(&mut self, resp: ResolveSignersResponse) -> Task<Message> {
+        tracing::info!(
+            target: "coincube_gui::signing",
+            vault_id = self.vault_id.unwrap_or(0),
+            phase = "resolved",
+            targets = resp.targets.len(),
+            unresolved = resp.unresolved.len(),
+            "ResolveSigners returned"
+        );
         self.phase = Phase::Sessions;
         let classified = match self.classified.as_ref() {
             Some(c) => c,
@@ -517,12 +603,12 @@ impl KeychainSignModal {
                 async move {
                     let channel = crate::services::connect::grpc::create_channel(&grpc_url)
                         .await
-                        .map_err(|e| format!("gRPC channel: {}", e))?;
+                        .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
                     let mut client = GrpcSessionClient::new(channel, AuthInterceptor::new(tokens));
                     client
                         .create_signing_session(req)
                         .await
-                        .map_err(|s| format!("{}", s))
+                        .map_err(OpError::from_status)
                 },
                 move |r| Message::KeychainSign(KeychainSignMessage::SessionCreated(fingerprint, r)),
             ));
@@ -534,27 +620,54 @@ impl KeychainSignModal {
     fn on_session_created(
         &mut self,
         fingerprint: Fingerprint,
-        result: Result<SigningSession, String>,
-    ) {
+        result: Result<SigningSession, OpError>,
+    ) -> Task<Message> {
+        // Auth failures should close the modal — retrying won't help
+        // until the user signs back in. We surface a single top-level
+        // banner rather than mark just this entry as Failed.
+        if let Err(e) = &result {
+            if e.auth {
+                self.error = Some(e.message.clone());
+                self.phase = Phase::AllDone;
+                return Task::none();
+            }
+        }
         let Some(entry) = self
             .pending
             .iter_mut()
             .find(|p| p.fingerprint == fingerprint)
         else {
-            return;
+            return Task::none();
         };
         match result {
             Ok(session) => {
-                entry.session_id = session.session_id.clone();
+                let session_id = session.session_id.clone();
+                entry.session_id = session_id.clone();
                 entry.status =
                     PendingSessionStatus::from_proto(session_status_from_i32(session.status));
                 entry.error = None;
+                tracing::info!(
+                    target: "coincube_gui::signing",
+                    vault_id = self.vault_id.unwrap_or(0),
+                    session_id = %session_id,
+                    fingerprint = %fingerprint,
+                    "Signing session created"
+                );
             }
             Err(e) => {
+                tracing::warn!(
+                    target: "coincube_gui::signing",
+                    vault_id = self.vault_id.unwrap_or(0),
+                    fingerprint = %fingerprint,
+                    auth_failure = e.auth,
+                    "CreateSigningSession failed: {}",
+                    e.message
+                );
                 entry.status = PendingSessionStatus::Failed;
-                entry.error = Some(e);
+                entry.error = Some(e.message);
             }
         }
+        Task::none()
     }
 
     /// Route a top-level `SessionEvent` to its matching `PendingSession`.
@@ -564,13 +677,29 @@ impl KeychainSignModal {
         &mut self,
         event: crate::services::connect::grpc::connect_v1::SessionEvent,
     ) -> Task<Message> {
+        let vault_id_for_log = self.vault_id.unwrap_or(0);
         let Some(entry) = self
             .pending
             .iter_mut()
             .find(|p| p.session_id == event.session_id)
         else {
+            tracing::debug!(
+                target: "coincube_gui::signing",
+                vault_id = vault_id_for_log,
+                session_id = %event.session_id,
+                event_seq = event.event_seq,
+                "SessionEvent for unknown session — modal isn't tracking it, dropping"
+            );
             return Task::none();
         };
+        tracing::info!(
+            target: "coincube_gui::signing",
+            vault_id = vault_id_for_log,
+            session_id = %entry.session_id,
+            event_seq = event.event_seq,
+            event_type = event.event_type,
+            "SessionEvent received"
+        );
         use crate::services::connect::grpc::connect_v1::EventType;
         let event_type = event_type_from_i32(event.event_type);
         match event_type {
@@ -587,13 +716,13 @@ impl KeychainSignModal {
                     async move {
                         let channel = crate::services::connect::grpc::create_channel(&grpc_url)
                             .await
-                            .map_err(|e| format!("gRPC channel: {}", e))?;
+                            .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
                         let mut client =
                             GrpcSessionClient::new(channel, AuthInterceptor::new(tokens));
                         client
                             .get_signing_session(session_id.clone())
                             .await
-                            .map_err(|s| format!("{}", s))
+                            .map_err(OpError::from_status)
                     },
                     {
                         let sid = event.session_id.clone();
@@ -634,14 +763,19 @@ impl KeychainSignModal {
         daemon: Arc<dyn Daemon + Sync + Send>,
         tx: &mut SpendTx,
         session_id: String,
-        result: Result<GetSigningSessionResponse, String>,
+        result: Result<GetSigningSessionResponse, OpError>,
     ) -> Task<Message> {
         let resp = match result {
             Ok(r) => r,
             Err(e) => {
+                if e.auth {
+                    self.error = Some(e.message);
+                    self.phase = Phase::AllDone;
+                    return Task::none();
+                }
                 if let Some(entry) = self.pending.iter_mut().find(|p| p.session_id == session_id) {
                     entry.status = PendingSessionStatus::Failed;
-                    entry.error = Some(e);
+                    entry.error = Some(e.message);
                 }
                 return Task::none();
             }
@@ -663,6 +797,12 @@ impl KeychainSignModal {
                 return Task::none();
             }
         };
+        tracing::info!(
+            target: "coincube_gui::signing",
+            vault_id = self.vault_id.unwrap_or(0),
+            session_id = %session_id,
+            "Merging signed PSBT from session into local SpendTx"
+        );
         super::psbt::merge_signatures_pub(&mut tx.psbt, &signed_psbt);
         // Persist the merged PSBT so a restart picks it up.
         let merged = tx.psbt.clone();
@@ -678,13 +818,16 @@ impl KeychainSignModal {
         )
     }
 
-    fn on_session_cancelled(&mut self, session_id: String, result: Result<(), String>) {
+    fn on_session_cancelled(&mut self, session_id: String, result: Result<(), OpError>) {
         let Some(entry) = self.pending.iter_mut().find(|p| p.session_id == session_id) else {
             return;
         };
         match result {
             Ok(()) => entry.status = PendingSessionStatus::Cancelled,
-            Err(e) => entry.error = Some(format!("Cancel failed: {}", e)),
+            // Cancel-failed leaves the session in its previous state —
+            // best-effort, since the session is being discarded
+            // server-side too when its TTL elapses.
+            Err(e) => entry.error = Some(format!("Cancel failed: {}", e.message)),
         }
     }
 
@@ -693,6 +836,17 @@ impl KeychainSignModal {
     /// Simpler UX; matches the original `KEY_ALREADY_USED_IN_VAULT`
     /// rollback semantics.
     pub fn cancel_all(&mut self) -> Task<Message> {
+        let non_terminal = self
+            .pending
+            .iter()
+            .filter(|p| !p.status.is_terminal())
+            .count();
+        tracing::info!(
+            target: "coincube_gui::signing",
+            vault_id = self.vault_id.unwrap_or(0),
+            cancelling = non_terminal,
+            "User cancelled Keychain signing flow"
+        );
         let tokens = self.tokens.clone();
         let grpc_url = self.grpc_url.clone();
         let mut tasks = Vec::new();
@@ -707,12 +861,12 @@ impl KeychainSignModal {
                 async move {
                     let channel = crate::services::connect::grpc::create_channel(&grpc_url)
                         .await
-                        .map_err(|e| format!("gRPC channel: {}", e))?;
+                        .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
                     let mut client = GrpcSessionClient::new(channel, AuthInterceptor::new(tokens));
                     client
                         .cancel_signing_session(sid.clone(), "user_cancelled".to_string())
                         .await
-                        .map_err(|s| format!("{}", s))
+                        .map_err(OpError::from_status)
                 },
                 {
                     let sid = entry.session_id.clone();
@@ -753,7 +907,7 @@ impl KeychainSignModal {
             async move {
                 let channel = crate::services::connect::grpc::create_channel(&grpc_url)
                     .await
-                    .map_err(|e| format!("gRPC channel: {}", e))?;
+                    .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
                 let mut client = GrpcSessionClient::new(channel, AuthInterceptor::new(tokens));
                 let req = CreateSigningSessionRequest {
                     request_id: uuid_v4(),
@@ -775,7 +929,7 @@ impl KeychainSignModal {
                 client
                     .create_signing_session(req)
                     .await
-                    .map_err(|s| format!("{}", s))
+                    .map_err(OpError::from_status)
             },
             move |r| Message::KeychainSign(KeychainSignMessage::SessionCreated(fingerprint, r)),
         )
@@ -797,19 +951,23 @@ impl Modal for KeychainSignModal {
             Message::KeychainSign(KeychainSignMessage::Classified(res)) => match res {
                 Ok(c) => return self.on_classified(c),
                 Err(e) => {
-                    self.error = Some(e);
+                    self.error = Some(e.message);
                     self.phase = Phase::AllDone;
                 }
             },
             Message::KeychainSign(KeychainSignMessage::SignersResolved(res)) => match res {
                 Ok(r) => return self.on_signers_resolved(r),
                 Err(e) => {
-                    self.error = Some(format!("ResolveSigners failed: {}", e));
+                    self.error = if e.auth {
+                        Some(e.message)
+                    } else {
+                        Some(format!("ResolveSigners failed: {}", e.message))
+                    };
                     self.phase = Phase::AllDone;
                 }
             },
             Message::KeychainSign(KeychainSignMessage::SessionCreated(fp, res)) => {
-                self.on_session_created(fp, res);
+                return self.on_session_created(fp, res);
             }
             Message::KeychainSign(KeychainSignMessage::SessionFetched(sid, res)) => {
                 return self.on_session_fetched(daemon, tx, sid, res);
@@ -819,6 +977,9 @@ impl Modal for KeychainSignModal {
             }
             Message::KeychainSign(KeychainSignMessage::StreamEvent(event)) => {
                 return self.on_session_event(event);
+            }
+            Message::KeychainSign(KeychainSignMessage::StreamHealth(status)) => {
+                self.stream_health = status;
             }
             Message::View(view::Message::Spend(SpendTxMessage::CancelKeychainSign)) => {
                 return self.cancel_all();
@@ -841,14 +1002,74 @@ impl Modal for KeychainSignModal {
             .width(iced::Length::Fixed(modal_const::MODAL_WIDTH as f32));
 
         col = col.push(p1_bold("Sign via Keychain"));
-        if let Some(err) = &self.error {
-            col = col.push(p1_regular(format!("Error: {}", err)));
+
+        // Stream-health banner: surfaced only while sessions are
+        // pending and the realtime stream is unhealthy. We don't
+        // pre-cancel anything on disconnect because sessions live
+        // server-side; reconnecting catches up via `last_seen_seq`.
+        let has_pending_nonterminal = self.pending.iter().any(|p| !p.status.is_terminal());
+        if has_pending_nonterminal {
+            match &self.stream_health {
+                crate::app::ConnectionStatus::Connecting => {
+                    col = col.push(p1_regular(
+                        "Connection lost — reconnecting. Your signing requests are \
+                         still active server-side; updates will catch up once the \
+                         connection comes back.",
+                    ));
+                }
+                crate::app::ConnectionStatus::Error(e) => {
+                    col = col.push(p1_regular(format!(
+                        "Connection error ({}). Your signing requests are still \
+                         active server-side; reconnect to see updates.",
+                        e,
+                    )));
+                }
+                _ => {}
+            }
         }
+
+        if let Some(err) = &self.error {
+            // Top-level errors come from `ResolveSigners` /
+            // `CreateSigningSession` / Connect-not-ready paths. The
+            // Cancel-all button below handles the user-out for these
+            // states; we don't render a separate Retry-all because
+            // the right action depends on the error (re-open modal
+            // for transient issues, re-login for auth failures).
+            col = col.push(p1_regular(format!("Couldn't start signing: {}", err)));
+        }
+
+        // Unresolved (resolved-but-unaddressable) signers. The "owner
+        // has no registered device" case is the most common — the
+        // contact hasn't installed the Keychain app yet. Friendlier
+        // copy than the raw API reason string.
         for u in &self.unresolved {
-            col = col.push(p1_regular(format!(
-                "Cannot sign with {} — owner has no registered device",
-                u,
-            )));
+            // The format from `on_signers_resolved` is `"<fingerprint>
+            // (<reason>)"`. We surface the friendlier message but
+            // keep the original suffix so an unfamiliar reason still
+            // reaches the user verbatim (forward-compat with new API
+            // reason codes).
+            let friendly = if u.contains("no_device_registered") {
+                format!(
+                    "{} hasn't set up the Keychain app yet. Ask them to install it \
+                     and sign in, then retry.",
+                    u,
+                )
+            } else if u.contains("all_devices_revoked") {
+                format!(
+                    "{} has revoked every device on their account. They need to \
+                     register a new device before this transaction can be signed.",
+                    u,
+                )
+            } else if u.contains("owner_unknown") {
+                format!(
+                    "{} — this signer's owner isn't known to the backend. \
+                     Contact support if this persists.",
+                    u,
+                )
+            } else {
+                format!("Cannot sign with {} — owner has no registered device", u)
+            };
+            col = col.push(p1_regular(friendly));
         }
         match self.phase {
             Phase::Loading => col = col.push(p1_regular("Loading vault members…")),
@@ -877,6 +1098,33 @@ impl Modal for KeychainSignModal {
                         );
                     }
                     col = col.push(row);
+                    // Per-row error / explanation. We choose the copy
+                    // based on the status so the user sees actionable
+                    // text rather than the raw `entry.error` string
+                    // (which is occasionally a tonic Status). The raw
+                    // error is still surfaced below as a fallback /
+                    // forward-compat when an unknown error shape
+                    // arrives.
+                    let row_hint: Option<String> = match p.status {
+                        PendingSessionStatus::Rejected => Some(format!(
+                            "  {} declined the request. Tap Retry to ask again, or \
+                             Cancel all to abandon.",
+                            p.label,
+                        )),
+                        PendingSessionStatus::Expired => Some(format!(
+                            "  {} didn't respond within 24h. Tap Retry to send a \
+                             fresh request.",
+                            p.label,
+                        )),
+                        PendingSessionStatus::Failed => Some(format!(
+                            "  Couldn't reach {}'s device. Tap Retry to try again.",
+                            p.label,
+                        )),
+                        _ => None,
+                    };
+                    if let Some(hint) = row_hint {
+                        col = col.push(p1_regular(hint));
+                    }
                     if let Some(err) = &p.error {
                         col = col.push(p1_regular(format!("  {}", err)));
                     }
@@ -901,6 +1149,60 @@ impl Modal for KeychainSignModal {
 }
 
 // ───── small helpers ──────────────────────────────────────────────────
+
+/// Best-effort detector for REST-side auth failures. `CoincubeError`'s
+/// `Display` impl includes the HTTP status; we look for the standard
+/// `401` / `403` markers and the Coincube-API auth error codes that
+/// the desktop has historically used. False negatives just route to
+/// the generic "Other" path — the user still sees the original
+/// message, they just don't get the "session expired" closed-modal
+/// path.
+fn is_rest_auth_failure(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("401")
+        || lower.contains("403")
+        || lower.contains("unauthorized")
+        || lower.contains("forbidden")
+        || lower.contains("expired token")
+        || lower.contains("invalid token")
+        || lower.contains("token expired")
+        || lower.contains("jwt expired")
+}
+
+/// Convert a `tonic::Status` into a user-friendly message string.
+///
+/// The default `Display` impl prints `Status { code: Unauthenticated,
+/// message: "JWT expired", ... }` which is unhelpful as a modal banner.
+/// We hand-pick the codes that matter for the signing flow and fall
+/// back to the original message for everything else. Returns
+/// `(friendly_text, is_auth_failure)`; callers branch on the bool to
+/// decide whether to surface a "Please sign in again." path that
+/// closes the modal rather than just dismissing the error.
+fn friendly_grpc_error(status: tonic::Status) -> (String, bool) {
+    match status.code() {
+        tonic::Code::Unauthenticated => (
+            "Your Connect session has expired. Please sign in again.".to_string(),
+            true,
+        ),
+        tonic::Code::PermissionDenied => (
+            "You don't have permission to sign for this vault. \
+             Sign in with the account that owns the vault."
+                .to_string(),
+            true,
+        ),
+        tonic::Code::Unavailable => (
+            "Coincube Connect is temporarily unreachable. Check your \
+             network and try again."
+                .to_string(),
+            false,
+        ),
+        tonic::Code::DeadlineExceeded => (
+            "Request timed out. The signing service may be slow — try again.".to_string(),
+            false,
+        ),
+        _ => (status.message().to_string(), false),
+    }
+}
 
 fn uuid_v4() -> String {
     // Avoid adding a `uuid` crate dep for a single call: format eight
