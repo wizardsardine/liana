@@ -1336,40 +1336,41 @@ pub fn register_wallet_modal<'a>(
     chosen_hw: Option<usize>,
     registered: &HashSet<Fingerprint>,
 ) -> Element<'a, Message> {
+    let signers = hws
+        .iter()
+        .enumerate()
+        .fold(Column::new().spacing(10), |col, (i, hw)| {
+            col.push(hw::hw_list_view_for_registration(
+                i,
+                hw,
+                Some(i) == chosen_hw,
+                processing,
+                hw.fingerprint()
+                    .map(|f| registered.contains(&f))
+                    .unwrap_or(false)
+                    || if let HardwareWallet::Supported { registered, .. } = hw {
+                        registered == &Some(true)
+                    } else {
+                        false
+                    },
+            ))
+        });
+
+    let card_content = Column::new()
+        .push(
+            Column::new()
+                .push(text("Select device:").bold().width(Length::Fill))
+                .spacing(10)
+                .push(signers)
+                .width(Length::Fill),
+        )
+        .spacing(20)
+        .width(Length::Fill)
+        .align_x(Alignment::Center);
+
     Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))
-        .push(card::simple(
-            Column::new()
-                .push(
-                    Column::new()
-                        .push(text("Select device:").bold().width(Length::Fill))
-                        .spacing(10)
-                        .push(hws.iter().enumerate().fold(
-                            Column::new().spacing(10),
-                            |col, (i, hw)| {
-                                col.push(hw::hw_list_view_for_registration(
-                                    i,
-                                    hw,
-                                    Some(i) == chosen_hw,
-                                    processing,
-                                    hw.fingerprint()
-                                        .map(|f| registered.contains(&f))
-                                        .unwrap_or(false)
-                                        || if let HardwareWallet::Supported { registered, .. } = hw
-                                        {
-                                            registered == &Some(true)
-                                        } else {
-                                            false
-                                        },
-                                ))
-                            },
-                        ))
-                        .width(Length::Fill),
-                )
-                .spacing(20)
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        ))
+        .push(card::simple(card_content))
         .width(Length::Fixed(500.0))
         .into()
 }
