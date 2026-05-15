@@ -379,7 +379,8 @@ impl KeychainSignModal {
     /// Kick off the fetch+classify task. Yields
     /// `KeychainSignMessage::Classified` with the joined signer list.
     pub fn launch(&self) -> Task<Message> {
-        let client = self.coincube_client.clone();
+        let mut client = self.coincube_client.clone();
+        let tokens = self.tokens.clone();
         let cube_server_id = self.cube_server_id;
         let cube_uuid = self.cube_uuid.clone();
         let wallet = self.wallet.clone();
@@ -387,6 +388,11 @@ impl KeychainSignModal {
 
         Task::perform(
             async move {
+                // Bake the current access token into the REST client
+                // here — inside the async context — so the synchronous
+                // `update` path never needs a blocking lock read.
+                let access_token = tokens.read().await.access_token.clone();
+                client.set_token(&access_token);
                 let vault: ConnectVaultResponse = client
                     .get_connect_vault(cube_server_id)
                     .await
@@ -895,7 +901,16 @@ impl KeychainSignModal {
         let Some(entry) = self.pending.get_mut(index) else {
             return Task::none();
         };
-        if !entry.status.is_terminal() && !matches!(entry.status, PendingSessionStatus::Failed) {
+        // Only the recoverable failure states are retryable. Anything
+        // else — in-flight sessions, a successful `Completed`, or a
+        // user-initiated `Cancelled` — must not spawn a duplicate
+        // signing session. (Matches the UI's Retry-button gating.)
+        if !matches!(
+            entry.status,
+            PendingSessionStatus::Rejected
+                | PendingSessionStatus::Expired
+                | PendingSessionStatus::Failed
+        ) {
             return Task::none();
         }
         let fingerprint = entry.fingerprint;
