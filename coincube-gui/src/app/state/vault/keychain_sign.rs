@@ -90,6 +90,19 @@ pub struct PendingSession {
     /// Most recent error message, populated on rejected / expired /
     /// transport failure. Cleared on retry.
     pub error: Option<String>,
+    /// Set by `cancel_all` when the user cancels while this row's
+    /// `CreateSigningSession` RPC is still in flight (empty
+    /// `session_id`). `on_session_created` consults it so the
+    /// just-created session is cancelled immediately rather than
+    /// outliving the cancelled flow. Cleared on retry.
+    pub cancel_requested: bool,
+    /// True once this session's signed PSBT has been fetched, merged
+    /// into the local `SpendTx`, and successfully persisted via
+    /// `update_spend_tx` (the `Persisted { Ok }` step). The API-driven
+    /// `Completed` status can race ahead of that async fetch+merge, so
+    /// modal-close keys off this flag — not `status` — to guarantee the
+    /// signature is captured before the modal goes away. Reset on retry.
+    pub signed_psbt_persisted: bool,
 }
 
 /// View-friendly mirror of the gRPC `SessionStatus` enum, plus a
@@ -203,6 +216,16 @@ pub enum KeychainSignMessage {
     /// Result of a `cancel_signing_session` call. Carries the session_id
     /// so the modal can mark the right row Cancelled.
     SessionCancelled(String, Result<(), OpError>),
+    /// Result of persisting the merged PSBT via `Daemon::update_spend_tx`
+    /// after a signed PSBT was fetched and merged. Carries the
+    /// `session_id` so a persistence failure marks the originating row;
+    /// on success we re-emit `Message::Updated` so the PSBT panel's
+    /// existing post-save flow (saved flag, sigs recompute, keychain
+    /// modal close) still runs unchanged.
+    Persisted {
+        session_id: String,
+        result: Result<(), String>,
+    },
     /// One `SessionEvent` forwarded from the top-level
     /// `App::handle_connect_stream`. Routed unconditionally — modals
     /// that don't recognise the session_id are no-ops.
@@ -234,7 +257,9 @@ enum Phase {
     Resolving,
     /// Sessions in flight or terminal.
     Sessions,
-    /// All signers terminal-success. Modal will close on next tick.
+    /// Every signer reached terminal-success *and* its signed PSBT was
+    /// merged + persisted (see `check_all_done`). Modal closes on the
+    /// `Message::Updated(Ok)` re-emitted alongside this transition.
     AllDone,
 }
 
@@ -351,11 +376,20 @@ impl KeychainSignModal {
         matches!(self.phase, Phase::AllDone)
     }
 
-    /// True when every pending session is at a terminal-success state.
+    /// True when every pending session has both reached a
+    /// terminal-success state *and* had its signed PSBT merged and
+    /// persisted locally. The `signed_psbt_persisted` half is essential:
+    /// the API `Completed` event can arrive before the async
+    /// `GetSigningSession` fetch+merge resolves, so gating on status
+    /// alone would close the modal and silently drop a signature.
     /// Recomputed each time a status changes; cheap because `pending`
     /// is small (≤ descriptor signer count).
     fn check_all_done(&self) -> bool {
-        !self.pending.is_empty() && self.pending.iter().all(|p| p.status.is_terminal_success())
+        !self.pending.is_empty()
+            && self
+                .pending
+                .iter()
+                .all(|p| p.status.is_terminal_success() && p.signed_psbt_persisted)
     }
 
     /// Construct a fresh `GrpcSessionClient`. The shared `Arc<RwLock>` of
@@ -591,6 +625,8 @@ impl KeychainSignModal {
                 label,
                 status: PendingSessionStatus::Creating,
                 error: None,
+                cancel_requested: false,
+                signed_psbt_persisted: false,
             });
 
             let req = CreateSigningSessionRequest {
@@ -643,42 +679,74 @@ impl KeychainSignModal {
                 return Task::none();
             }
         }
-        let Some(entry) = self
-            .pending
-            .iter_mut()
-            .find(|p| p.fingerprint == fingerprint)
-        else {
+        // Decide inside a scoped borrow whether the just-created
+        // session needs an immediate cancel (user hit "Cancel all"
+        // while this RPC was in flight), then build the Task after the
+        // `&mut self.pending` borrow ends.
+        let cancel_sid = {
+            let Some(entry) = self
+                .pending
+                .iter_mut()
+                .find(|p| p.fingerprint == fingerprint)
+            else {
+                return Task::none();
+            };
+            match result {
+                Ok(session) => {
+                    let session_id = session.session_id.clone();
+                    entry.session_id = session_id.clone();
+                    entry.status =
+                        PendingSessionStatus::from_proto(session_status_from_i32(session.status));
+                    entry.error = None;
+                    tracing::info!(
+                        target: "coincube_gui::signing",
+                        vault_id = self.vault_id.unwrap_or(0),
+                        session_id = %session_id,
+                        fingerprint = %fingerprint,
+                        "Signing session created"
+                    );
+                    if entry.cancel_requested && !entry.session_id.is_empty() {
+                        Some(entry.session_id.clone())
+                    } else {
+                        None
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "coincube_gui::signing",
+                        vault_id = self.vault_id.unwrap_or(0),
+                        fingerprint = %fingerprint,
+                        auth_failure = e.auth,
+                        "CreateSigningSession failed: {}",
+                        e.message
+                    );
+                    entry.status = PendingSessionStatus::Failed;
+                    entry.error = Some(e.message);
+                    None
+                }
+            }
+        };
+        let Some(sid) = cancel_sid else {
             return Task::none();
         };
-        match result {
-            Ok(session) => {
-                let session_id = session.session_id.clone();
-                entry.session_id = session_id.clone();
-                entry.status =
-                    PendingSessionStatus::from_proto(session_status_from_i32(session.status));
-                entry.error = None;
-                tracing::info!(
-                    target: "coincube_gui::signing",
-                    vault_id = self.vault_id.unwrap_or(0),
-                    session_id = %session_id,
-                    fingerprint = %fingerprint,
-                    "Signing session created"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    target: "coincube_gui::signing",
-                    vault_id = self.vault_id.unwrap_or(0),
-                    fingerprint = %fingerprint,
-                    auth_failure = e.auth,
-                    "CreateSigningSession failed: {}",
-                    e.message
-                );
-                entry.status = PendingSessionStatus::Failed;
-                entry.error = Some(e.message);
-            }
-        }
-        Task::none()
+        let tokens = self.tokens.clone();
+        let grpc_url = self.grpc_url.clone();
+        let rpc_sid = sid.clone();
+        Task::perform(
+            async move {
+                let channel = crate::services::connect::grpc::create_channel(&grpc_url)
+                    .await
+                    .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
+                let access_token = tokens.read().await.access_token.clone();
+                let mut client =
+                    GrpcSessionClient::new(channel, AuthInterceptor::new(&access_token));
+                client
+                    .cancel_signing_session(rpc_sid, "user_cancelled".to_string())
+                    .await
+                    .map_err(OpError::from_status)
+            },
+            move |r| Message::KeychainSign(KeychainSignMessage::SessionCancelled(sid.clone(), r)),
+        )
     }
 
     /// Route a top-level `SessionEvent` to its matching `PendingSession`.
@@ -761,7 +829,18 @@ impl KeychainSignModal {
             _ => {}
         }
         if self.check_all_done() {
+            // Reachable here only when this event is the *last* missing
+            // piece and every signature was already persisted (i.e. the
+            // `Completed` events trail their merges). In the opposite
+            // ordering — `Completed` racing ahead of the in-flight
+            // fetch+merge — `check_all_done` is still false here and the
+            // `Persisted { Ok }` arm performs this transition instead.
             self.phase = Phase::AllDone;
+            // `SessionCompleted` produces no follow-up message on its
+            // own, and the panel's `Message::Updated(Ok)` arm is the
+            // sole place that closes this modal — so without this
+            // re-emit the modal would stay stuck on "Closing…".
+            return Task::done(Message::Updated(Ok(())));
         }
         Task::none()
     }
@@ -816,7 +895,10 @@ impl KeychainSignModal {
             "Merging signed PSBT from session into local SpendTx"
         );
         super::psbt::merge_signatures_pub(&mut tx.psbt, &signed_psbt);
-        // Persist the merged PSBT so a restart picks it up.
+        // Persist the merged PSBT so a restart picks it up. Carry the
+        // session_id through so a persistence failure marks the right
+        // row instead of being silently swallowed by the panel's
+        // generic `Message::Updated(Err)` path.
         let merged = tx.psbt.clone();
         let daemon = daemon.clone();
         Task::perform(
@@ -824,9 +906,14 @@ impl KeychainSignModal {
                 daemon
                     .update_spend_tx(&merged)
                     .await
-                    .map_err(AppError::from)
+                    .map_err(|e| AppError::from(e).to_string())
             },
-            Message::Updated,
+            move |result| {
+                Message::KeychainSign(KeychainSignMessage::Persisted {
+                    session_id: session_id.clone(),
+                    result,
+                })
+            },
         )
     }
 
@@ -863,7 +950,15 @@ impl KeychainSignModal {
         let grpc_url = self.grpc_url.clone();
         let mut tasks = Vec::new();
         for entry in self.pending.iter_mut() {
-            if entry.status.is_terminal() || entry.session_id.is_empty() {
+            if entry.status.is_terminal() {
+                continue;
+            }
+            if entry.session_id.is_empty() {
+                // CreateSigningSession is still in flight — there's no
+                // session_id to cancel yet. Flag the intent so
+                // `on_session_created` cancels it the moment it lands,
+                // instead of letting it outlive this cancel-all.
+                entry.cancel_requested = true;
                 continue;
             }
             let sid = entry.session_id.clone();
@@ -916,10 +1011,16 @@ impl KeychainSignModal {
         let fingerprint = entry.fingerprint;
         let device_id = entry.device_id.clone();
         let key_id = entry.key_id;
-        // Reset state to creating; clear any previous error.
+        // Reset state to creating; clear any previous error and stale
+        // cancel intent (an explicit retry overrides a prior
+        // cancel-all so the new session isn't auto-cancelled).
         entry.status = PendingSessionStatus::Creating;
         entry.session_id.clear();
         entry.error = None;
+        entry.cancel_requested = false;
+        // The retried session produces a fresh signature that must be
+        // fetched + persisted again before this row counts as done.
+        entry.signed_psbt_persisted = false;
 
         let psbt_bytes = self.psbt.serialize();
         let vault_id = self.vault_id.unwrap_or(0).to_string();
@@ -999,6 +1100,41 @@ impl Modal for KeychainSignModal {
             }
             Message::KeychainSign(KeychainSignMessage::SessionCancelled(sid, res)) => {
                 self.on_session_cancelled(sid, res);
+            }
+            Message::KeychainSign(KeychainSignMessage::Persisted { session_id, result }) => {
+                match result {
+                    Ok(()) => {
+                        // The signed PSBT for this session is now merged
+                        // and durably saved — mark the row so
+                        // `check_all_done` can count it. This (not the
+                        // API `Completed` event) is the authoritative
+                        // "this signature is captured" signal.
+                        if let Some(entry) =
+                            self.pending.iter_mut().find(|p| p.session_id == session_id)
+                        {
+                            entry.signed_psbt_persisted = true;
+                        }
+                        if self.check_all_done() {
+                            self.phase = Phase::AllDone;
+                        }
+                        // Re-emit the message the panel expects so its
+                        // existing post-save flow (saved flag, sigs
+                        // recompute, keychain modal close) runs exactly
+                        // as before this message carried session identity.
+                        // When this was the last outstanding persist the
+                        // phase is now `AllDone`, so the panel closes the
+                        // modal against a fully-merged PSBT.
+                        return Task::done(Message::Updated(Ok(())));
+                    }
+                    Err(e) => {
+                        if let Some(entry) =
+                            self.pending.iter_mut().find(|p| p.session_id == session_id)
+                        {
+                            entry.status = PendingSessionStatus::Failed;
+                            entry.error = Some(format!("Failed to persist signed PSBT: {}", e));
+                        }
+                    }
+                }
             }
             Message::KeychainSign(KeychainSignMessage::StreamEvent(event)) => {
                 return self.on_session_event(event);
