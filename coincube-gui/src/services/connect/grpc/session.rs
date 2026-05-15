@@ -3,7 +3,7 @@ use tonic::transport::Channel;
 use super::connect_v1::{
     session_service_client::SessionServiceClient, CancelSigningSessionRequest,
     CreateSigningSessionRequest, GetSigningSessionRequest, GetSigningSessionResponse,
-    ListPendingSessionsResponse, SigningSession,
+    ListPendingSessionsResponse, ResolveSignersRequest, ResolveSignersResponse, SigningSession,
 };
 use super::interceptor::AuthInterceptor;
 
@@ -69,5 +69,23 @@ impl GrpcSessionClient {
     ) -> Result<(), tonic::Status> {
         let request = CancelSigningSessionRequest { session_id, reason };
         self.inner.cancel_signing_session(request).await.map(|_| ())
+    }
+
+    /// Resolve the live signer targets for a vault.
+    ///
+    /// For each Keychain signer attached to the vault, the API looks up the
+    /// owner user's primary `SignerDevice` so the desktop can address
+    /// `CreateSigningSession`. Returns `targets` for successfully resolved
+    /// signers and `unresolved` for any whose owner has no usable device
+    /// (no device registered, all devices revoked, or owner unknown).
+    pub async fn resolve_signers(
+        &mut self,
+        vault_id: String,
+    ) -> Result<ResolveSignersResponse, tonic::Status> {
+        let request = ResolveSignersRequest { vault_id };
+        self.inner
+            .resolve_signers(request)
+            .await
+            .map(|r| r.into_inner())
     }
 }

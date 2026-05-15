@@ -142,6 +142,7 @@ pub async fn delete_wallet(
                 client,
                 auth.wallet_id.clone(),
                 service_config.backend_api_url,
+                None,
                 network,
                 network_dir,
             )

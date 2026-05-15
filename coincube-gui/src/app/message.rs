@@ -115,6 +115,16 @@ pub enum Message {
     /// bitcoind's debug.log.  `None` means no matching line found yet.
     PendingBitcoindLog(Option<String>),
     InstallStats(InstallStatsMessage),
+    /// Connect realtime stream event forwarded from the gRPC subscription.
+    /// `None` payload means "no grpc_url available; stream stays offline".
+    ConnectStreamReady(Option<crate::services::connect::grpc::stream::ConnectStreamConfig>),
+    /// One message from the live Connect realtime stream subscription.
+    /// Routed to the active vault PSBT modal in PR B; PR A logs only.
+    ConnectStream(crate::services::connect::grpc::ConnectStreamMessage),
+    /// Routed to the open `KeychainSignModal` on the active PSBT, when
+    /// any. Wraps the modal's internal lifecycle messages so they can
+    /// be dispatched through Iced's top-level update loop.
+    KeychainSign(crate::app::state::vault::keychain_sign::KeychainSignMessage),
 }
 
 #[derive(Debug)]

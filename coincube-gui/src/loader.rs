@@ -631,6 +631,10 @@ pub async fn load_application(
             .cube_settings
             .recovery_kit_last_backed_up_descriptor_fingerprint
             .clone(),
+        // Local-daemon path has no Connect tokens or gRPC URL; the user
+        // would have to sign in via the Connect tab to populate these.
+        connect_grpc_url: None,
+        connect_tokens: None,
     };
 
     Ok((

@@ -27,6 +27,49 @@ use super::client::{
     backend::{api, BackendClient, BackendWalletClient},
     cache::{self, update_connect_cache, ConnectCacheError},
 };
+use super::grpc::bootstrap::ensure_device_registered_best_effort;
+
+/// Identify this host for the `SignerDevice.device_name` field. Reads
+/// the standard `HOSTNAME` / `COMPUTERNAME` env vars when set, otherwise
+/// falls back to a generic OS-tagged label. The user can rename the
+/// device later from the Connect settings UI (Phase 4 polish).
+fn device_name_for_this_host() -> String {
+    if let Ok(h) = std::env::var("HOSTNAME") {
+        if !h.is_empty() {
+            return h;
+        }
+    }
+    if let Ok(h) = std::env::var("COMPUTERNAME") {
+        if !h.is_empty() {
+            return h;
+        }
+    }
+    format!("Coincube Desktop ({})", std::env::consts::OS)
+}
+
+/// Best-effort `RegisterDevice` after a successful login. No-op if
+/// `grpc_url` is `None` (Connect REST-only path or non-login call sites
+/// that don't need the signer-device entry).
+async fn register_signer_device_best_effort(
+    grpc_url: Option<&str>,
+    client: &BackendClient,
+    network_dir: &NetworkDirectory,
+    email: &str,
+) {
+    let Some(grpc_url) = grpc_url else {
+        return;
+    };
+    let _ = ensure_device_registered_best_effort(
+        grpc_url,
+        client.auth.clone(),
+        network_dir,
+        email,
+        device_name_for_this_host(),
+        env!("CARGO_PKG_VERSION").to_string(),
+        std::env::consts::OS.to_string(),
+    )
+    .await;
+}
 
 #[derive(Debug, Clone)]
 pub enum Error {
@@ -80,7 +123,7 @@ impl From<ConnectCacheError> for Error {
 #[derive(Debug, Clone)]
 pub enum Message {
     View(ViewMessage),
-    OTPRequested(Result<(AuthClient, String), Error>),
+    OTPRequested(Result<(AuthClient, String, Option<String>), Error>),
     OTPResent(Result<(), Error>),
     // wallet_id and result of the connect command.
     Connected(Result<BackendState, Error>),
@@ -143,6 +186,7 @@ pub enum ConnectionStep {
     EnterOtp {
         client: AuthClient,
         backend_api_url: String,
+        grpc_url: Option<String>,
         otp: form::Value<String>,
     },
 }
@@ -184,6 +228,7 @@ impl CoincubeLiteLogin {
                         client,
                         auth.wallet_id,
                         service_config.backend_api_url,
+                        service_config.grpc_url,
                         network,
                         &datadir.network_directory(network),
                     )
@@ -247,7 +292,7 @@ impl CoincubeLiteLogin {
                                 email,
                             );
                             client.sign_in_otp().await?;
-                            Ok((client, config.backend_api_url))
+                            Ok((client, config.backend_api_url, config.grpc_url))
                         },
                         Message::OTPRequested,
                     );
@@ -255,11 +300,12 @@ impl CoincubeLiteLogin {
                 Message::OTPRequested(res) => {
                     self.processing = false;
                     match res {
-                        Ok((client, backend_api_url)) => {
+                        Ok((client, backend_api_url, grpc_url)) => {
                             self.step = ConnectionStep::EnterOtp {
                                 otp: form::Value::default(),
                                 client,
                                 backend_api_url,
+                                grpc_url,
                             };
                         }
                         Err(e) => {
@@ -273,6 +319,7 @@ impl CoincubeLiteLogin {
                 client,
                 otp,
                 backend_api_url,
+                grpc_url,
             } => match message {
                 Message::View(ViewMessage::RequestOTP) => {
                     *otp = form::Value::default();
@@ -305,6 +352,7 @@ impl CoincubeLiteLogin {
                         let client = client.clone();
                         let otp = otp.value.clone();
                         let backend_api_url = backend_api_url.clone();
+                        let grpc_url = grpc_url.clone();
                         self.processing = true;
                         self.connection_error = None;
                         self.auth_error = None;
@@ -313,8 +361,16 @@ impl CoincubeLiteLogin {
                         let datadir = self.datadir.clone();
                         return Task::perform(
                             async move {
-                                connect(client, otp, wallet_id, backend_api_url, network, datadir)
-                                    .await
+                                connect(
+                                    client,
+                                    otp,
+                                    wallet_id,
+                                    backend_api_url,
+                                    grpc_url,
+                                    network,
+                                    datadir,
+                                )
+                                .await
                             },
                             Message::Connected,
                         );
@@ -465,6 +521,7 @@ pub async fn connect(
     token: String,
     wallet_id: String,
     backend_api_url: String,
+    grpc_url: Option<String>,
     network: Network,
     coincube_directory: CoincubeDirectory,
 ) -> Result<BackendState, Error> {
@@ -474,6 +531,9 @@ pub async fn connect(
         BackendClient::connect(auth.clone(), backend_api_url, access.clone(), network).await?;
 
     update_connect_cache(&network_dir, &access, &auth, false).await?;
+
+    register_signer_device_best_effort(grpc_url.as_deref(), &client, &network_dir, &auth.email)
+        .await;
 
     let wallets = client.list_wallets().await?;
     if wallets.is_empty() {
@@ -500,6 +560,7 @@ pub async fn connect_with_credentials(
     auth: AuthClient,
     wallet_id: String,
     backend_api_url: String,
+    grpc_url: Option<String>,
     network: Network,
     network_dir: &NetworkDirectory,
 ) -> Result<BackendState, Error> {
@@ -515,7 +576,10 @@ pub async fn connect_with_credentials(
         tokens = cache::update_connect_cache(network_dir, &tokens, &auth, true).await?;
     }
 
-    let client = BackendClient::connect(auth, backend_api_url, tokens, network).await?;
+    let client = BackendClient::connect(auth.clone(), backend_api_url, tokens, network).await?;
+
+    register_signer_device_best_effort(grpc_url.as_deref(), &client, network_dir, &auth.email)
+        .await;
 
     if let Some(wallet) = client
         .list_wallets()

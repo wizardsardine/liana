@@ -214,6 +214,20 @@ pub enum ImportSpendMessage {
 pub enum SpendTxMessage {
     Delete,
     Sign,
+    /// Open the Keychain signing flow: contact-signers and self-signers
+    /// whose private keys live on a Connect-registered phone. Routed to
+    /// `KeychainSignModal` which fetches vault members, classifies the
+    /// required signers, and orchestrates `SigningSession` lifecycles
+    /// via gRPC.
+    SignKeychain,
+    /// Cancel all non-terminal `SigningSession`s tracked by the open
+    /// `KeychainSignModal`. Discards any partial signatures already
+    /// returned — those are not merged into the PSBT until all signers
+    /// have responded.
+    CancelKeychainSign,
+    /// Retry a single signer whose session expired or was rejected.
+    /// Carries the per-signer position in `KeychainSignModal::pending`.
+    RetryKeychainSigner(usize),
     Broadcast,
     Save,
     Confirm,

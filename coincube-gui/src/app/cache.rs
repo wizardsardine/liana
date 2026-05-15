@@ -96,6 +96,18 @@ pub struct Cache {
     /// drift banner (W12). `None` when no descriptor has ever been
     /// backed up, or when the kit has been removed.
     pub recovery_kit_last_backed_up_descriptor_fingerprint: Option<String>,
+    /// Connect gRPC base URL, populated once `Message::ConnectStreamReady`
+    /// fires after login. `None` until then or for local-daemon installs
+    /// — the Keychain "Sign via Keychain" button stays disabled while
+    /// this is `None`.
+    pub connect_grpc_url: Option<String>,
+    /// Shared `Arc<RwLock<AccessTokenResponse>>` from the remote backend,
+    /// mirrored into Cache so deep panels (PsbtState et al.) can spin up
+    /// a `GrpcSessionClient` on demand without re-plumbing the auth
+    /// handle. `None` for local-daemon installs.
+    pub connect_tokens: Option<
+        Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>>,
+    >,
 }
 
 /// only used for tests.
@@ -128,6 +140,8 @@ impl std::default::Default for Cache {
             current_cube_server_id: None,
             current_descriptor_fingerprint: None,
             recovery_kit_last_backed_up_descriptor_fingerprint: None,
+            connect_grpc_url: None,
+            connect_tokens: None,
         }
     }
 }
