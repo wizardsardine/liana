@@ -235,14 +235,27 @@ pub fn classify_signers(
     // used elsewhere (cf. the missing-signatures calc in view::psbt).
     let remaining = threshold.saturating_sub(path_spend_info.sigs_count);
 
-    // Deterministically pick the first `remaining` still-unsigned
-    // fingerprints. Fingerprints are 32 bits, so byte-sort is cheap and
-    // intuitive in the UI ("smallest" first); `truncate` caps the set.
+    // Deterministically pick the `remaining` still-unsigned
+    // fingerprints to address. `classify_signers` only runs from the
+    // Keychain flow, so the user has already chosen to sign via
+    // Keychain: when the path needs fewer signatures than there are
+    // unsigned keys, prefer keeping Keychain signers in the kept set.
+    // A blind fingerprint sort could otherwise truncate the only
+    // Keychain signer away and make the modal falsely claim "no
+    // Keychain signers required". Fingerprint-ascending is the
+    // tiebreak within each class — cheap (32-bit) and intuitive in
+    // the UI ("smallest" first); `truncate` caps the set.
     let mut unsigned: Vec<Fingerprint> = origins
         .into_keys()
         .filter(|fg| !already_signed.contains_key(fg))
         .collect();
-    unsigned.sort_unstable();
+    unsigned.sort_by(|a, b| {
+        let a_kc = keychain_index.contains_key(a);
+        let b_kc = keychain_index.contains_key(b);
+        // `bool` orders false < true, so compare reversed to put
+        // Keychain signers (true) first.
+        b_kc.cmp(&a_kc).then_with(|| a.cmp(b))
+    });
     unsigned.truncate(remaining);
 
     let mut required: Vec<RequiredSigner> = unsigned

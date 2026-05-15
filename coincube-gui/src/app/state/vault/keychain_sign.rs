@@ -96,6 +96,13 @@ pub struct PendingSession {
     /// just-created session is cancelled immediately rather than
     /// outliving the cancelled flow. Cleared on retry.
     pub cancel_requested: bool,
+    /// True once this session's signed PSBT has been fetched, merged
+    /// into the local `SpendTx`, and successfully persisted via
+    /// `update_spend_tx` (the `Persisted { Ok }` step). The API-driven
+    /// `Completed` status can race ahead of that async fetch+merge, so
+    /// modal-close keys off this flag — not `status` — to guarantee the
+    /// signature is captured before the modal goes away. Reset on retry.
+    pub signed_psbt_persisted: bool,
 }
 
 /// View-friendly mirror of the gRPC `SessionStatus` enum, plus a
@@ -218,7 +225,9 @@ enum Phase {
     Resolving,
     /// Sessions in flight or terminal.
     Sessions,
-    /// All signers terminal-success. Modal will close on next tick.
+    /// Every signer reached terminal-success *and* its signed PSBT was
+    /// merged + persisted (see `check_all_done`). Modal closes on the
+    /// `Message::Updated(Ok)` re-emitted alongside this transition.
     AllDone,
 }
 
@@ -328,11 +337,20 @@ impl KeychainSignModal {
         matches!(self.phase, Phase::AllDone)
     }
 
-    /// True when every pending session is at a terminal-success state.
+    /// True when every pending session has both reached a
+    /// terminal-success state *and* had its signed PSBT merged and
+    /// persisted locally. The `signed_psbt_persisted` half is essential:
+    /// the API `Completed` event can arrive before the async
+    /// `GetSigningSession` fetch+merge resolves, so gating on status
+    /// alone would close the modal and silently drop a signature.
     /// Recomputed each time a status changes; cheap because `pending`
     /// is small (≤ descriptor signer count).
     fn check_all_done(&self) -> bool {
-        !self.pending.is_empty() && self.pending.iter().all(|p| p.status.is_terminal_success())
+        !self.pending.is_empty()
+            && self
+                .pending
+                .iter()
+                .all(|p| p.status.is_terminal_success() && p.signed_psbt_persisted)
     }
 
     /// Construct a fresh `GrpcSessionClient`. The shared `Arc<RwLock>` of
@@ -516,6 +534,7 @@ impl KeychainSignModal {
                 status: PendingSessionStatus::Creating,
                 error: None,
                 cancel_requested: false,
+                signed_psbt_persisted: false,
             });
 
             let req = CreateSigningSessionRequest {
@@ -676,14 +695,17 @@ impl KeychainSignModal {
             _ => {}
         }
         if self.check_all_done() {
+            // Reachable here only when this event is the *last* missing
+            // piece and every signature was already persisted (i.e. the
+            // `Completed` events trail their merges). In the opposite
+            // ordering — `Completed` racing ahead of the in-flight
+            // fetch+merge — `check_all_done` is still false here and the
+            // `Persisted { Ok }` arm performs this transition instead.
             self.phase = Phase::AllDone;
-            // `SessionCompleted` is the only path to a successful
-            // `AllDone`, and it otherwise produces no follow-up
-            // message — so the panel's `Message::Updated(Ok)` arm
-            // (the sole place that closes this modal) would never
-            // run and the modal would stay stuck on "Closing…".
-            // Re-emit the message its post-save/close flow keys
-            // off, mirroring the `Persisted { Ok }` arm.
+            // `SessionCompleted` produces no follow-up message on its
+            // own, and the panel's `Message::Updated(Ok)` arm is the
+            // sole place that closes this modal — so without this
+            // re-emit the modal would stay stuck on "Closing…".
             return Task::done(Message::Updated(Ok(())));
         }
         Task::none()
@@ -828,6 +850,9 @@ impl KeychainSignModal {
         entry.session_id.clear();
         entry.error = None;
         entry.cancel_requested = false;
+        // The retried session produces a fresh signature that must be
+        // fetched + persisted again before this row counts as done.
+        entry.signed_psbt_persisted = false;
 
         let psbt_bytes = self.psbt.serialize();
         let vault_id = self.vault_id.unwrap_or(0).to_string();
@@ -907,10 +932,26 @@ impl Modal for KeychainSignModal {
             Message::KeychainSign(KeychainSignMessage::Persisted { session_id, result }) => {
                 match result {
                     Ok(()) => {
+                        // The signed PSBT for this session is now merged
+                        // and durably saved — mark the row so
+                        // `check_all_done` can count it. This (not the
+                        // API `Completed` event) is the authoritative
+                        // "this signature is captured" signal.
+                        if let Some(entry) =
+                            self.pending.iter_mut().find(|p| p.session_id == session_id)
+                        {
+                            entry.signed_psbt_persisted = true;
+                        }
+                        if self.check_all_done() {
+                            self.phase = Phase::AllDone;
+                        }
                         // Re-emit the message the panel expects so its
                         // existing post-save flow (saved flag, sigs
                         // recompute, keychain modal close) runs exactly
                         // as before this message carried session identity.
+                        // When this was the last outstanding persist the
+                        // phase is now `AllDone`, so the panel closes the
+                        // modal against a fully-merged PSBT.
                         return Task::done(Message::Updated(Ok(())));
                     }
                     Err(e) => {
