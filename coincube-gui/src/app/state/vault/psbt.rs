@@ -224,6 +224,16 @@ impl PsbtState {
                 if matches!(self.modal, Some(PsbtModal::KeychainSign(_))) {
                     return Task::none();
                 }
+                // Don't clobber another in-progress modal — most
+                // importantly an in-flight local `SignModal`, whose
+                // hardware-signing state would be silently discarded.
+                // Require the user to finish/close it first.
+                if self.modal.is_some() {
+                    let msg = "Close the current signing dialog before \
+                               signing via Keychain."
+                        .to_string();
+                    return Task::done(Message::View(view::Message::ShowError(msg)));
+                }
                 let (Some(grpc_url), Some(tokens), Some(cube_server_id)) = (
                     cache.connect_grpc_url.clone(),
                     cache.connect_tokens.clone(),
