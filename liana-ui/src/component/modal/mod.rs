@@ -25,7 +25,6 @@ use crate::{
 use crate::widget::{Button, CheckBox, Column, ColumnExt, Element, Row, RowExt, SpaceExt, Text};
 
 pub const BTN_W: u32 = 500;
-pub const BTN_H: u32 = 40;
 pub const V_SPACING: u32 = 10;
 pub const H_SPACING: u32 = 5;
 const MODAL_PADDING: f32 = 20.0;
