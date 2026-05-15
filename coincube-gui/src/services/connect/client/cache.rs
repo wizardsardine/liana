@@ -149,7 +149,10 @@ pub async fn update_connect_cache(
     Ok(tokens)
 }
 
-/// Persist the gRPC-issued `device_id` for the account matching `email`.
+/// Persist (or clear) the gRPC-issued `device_id` for the account matching
+/// `email`. Pass `Some(id)` to set, `None` to clear so the next
+/// `ensure_device_registered` call takes the register path instead of
+/// short-circuiting on a stale entry.
 ///
 /// Acquires a write lock on the cache file so the update is atomic against
 /// concurrent `update_connect_cache` calls. If the account is not present
@@ -158,7 +161,7 @@ pub async fn update_connect_cache(
 pub async fn set_device_id_for_email(
     network_dir: &NetworkDirectory,
     email: &str,
-    device_id: &str,
+    device_id: Option<&str>,
 ) -> Result<(), ConnectCacheError> {
     let mut path = network_dir.path().to_path_buf();
     path.push(CONNECT_CACHE_FILENAME);
@@ -184,10 +187,10 @@ pub async fn set_device_id_for_email(
     let Some(account) = cache.accounts.iter_mut().find(|a| a.email == email) else {
         return Ok(());
     };
-    if account.device_id.as_deref() == Some(device_id) {
+    if account.device_id.as_deref() == device_id {
         return Ok(());
     }
-    account.device_id = Some(device_id.to_string());
+    account.device_id = device_id.map(str::to_string);
 
     let content = serde_json::to_vec_pretty(&cache)
         .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to serialize cache: {}", e)))?;

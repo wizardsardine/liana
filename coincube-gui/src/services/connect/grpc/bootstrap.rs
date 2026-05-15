@@ -95,7 +95,7 @@ pub async fn ensure_device_registered(
         .register_device(device_name, app_version, os_version)
         .await?;
 
-    cache::set_device_id_for_email(network_dir, email, &resp.device_id).await?;
+    cache::set_device_id_for_email(network_dir, email, Some(&resp.device_id)).await?;
     tracing::info!(
         "Registered SignerDevice for {} (device_id={})",
         email,

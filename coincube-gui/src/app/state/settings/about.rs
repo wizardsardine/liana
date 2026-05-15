@@ -97,7 +97,7 @@ impl State for AboutSettingsState {
                             crate::services::connect::client::cache::set_device_id_for_email(
                                 &network_dir,
                                 &email,
-                                "",
+                                None,
                             )
                             .await
                         {
