@@ -12,7 +12,7 @@ color!(BTN_PRIMARY_PRESSED_BGD, 0x00CC52);
 color!(BTN_PRIMARY_DISABLED_BGD, 0x242426);
 color!(BTN_PRIMARY_TEXT, 0x042E16);
 color!(BTN_PRIMARY_PRESSED_TEXT, 0xD1FAE5);
-color!(BTN_PRIMARY_DISABLED_TEXT, 0x525253);
+color!(BTN_PRIMARY_DISABLED_TEXT, 0x525253, 0.5);
 color!(BTN_PRIMARY_DISABLED_BORDER, 0x3A3A3C);
 
 color!(BTN_SECONDARY_HOVER_BGD, 0x183124);
@@ -162,7 +162,10 @@ impl Palette {
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::GREY_2,
+                        text: Color {
+                            a: 0.5,
+                            ..color::GREY_2
+                        },
                         border: None,
                         shadow: Default::default(),
                     }),
@@ -272,7 +275,10 @@ impl Palette {
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::WHITE,
+                        text: Color {
+                            a: 0.5,
+                            ..color::WHITE
+                        },
                         border: color::TRANSPARENT.into(),
                         shadow: Default::default(),
                     }),
@@ -298,7 +304,10 @@ impl Palette {
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::GREY_6,
-                        text: color::GREY_2,
+                        text: Color {
+                            a: 0.5,
+                            ..color::GREY_2
+                        },
                         border: color::GREY_7.into(),
                         shadow: Default::default(),
                     }),
@@ -324,7 +333,10 @@ impl Palette {
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::GREY_6,
-                        text: color::GREY_2,
+                        text: Color {
+                            a: 0.5,
+                            ..color::GREY_2
+                        },
                         border: color::GREY_7.into(),
                         shadow: Default::default(),
                     }),
@@ -350,7 +362,10 @@ impl Palette {
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::GREY_2,
+                        text: Color {
+                            a: 0.5,
+                            ..color::GREY_2
+                        },
                         border: color::TRANSPARENT.into(),
                         shadow: Default::default(),
                     }),

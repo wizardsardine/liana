@@ -148,12 +148,7 @@ fn button(p: &Button, status: Status, width: f32) -> Style {
             if let Some(disabled) = p.disabled {
                 Style {
                     background: Some(Background::Color(disabled.background)),
-                    text_color: Color {
-                        a: 0.5,
-                        r: disabled.text.r,
-                        g: disabled.text.g,
-                        b: disabled.text.b,
-                    },
+                    text_color: disabled.text,
                     border: if let Some(color) = disabled.border {
                         Border {
                             radius: BUTTON_RADIUS.into(),

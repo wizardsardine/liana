@@ -16,7 +16,7 @@ const BTN_TERTIARY_FG: Color = color::BUSINESS_BLACK;
 color!(BTN_TERTIARY_PRESSED, 0xB4B4B4);
 
 color!(BTN_DISABLED, 0xCBCBCB);
-color!(BTN_DISABLED_TEXT, 0xEDEDED);
+color!(BTN_DISABLED_TEXT, 0xEDEDED, 0.5);
 fn btn_disabled() -> Option<ButtonPalette> {
     Some(ButtonPalette {
         background: BTN_DISABLED,
@@ -380,8 +380,8 @@ impl Palette {
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::BUSINESS_BLUE,
-                        border: color::BUSINESS_BLUE_50.into(),
+                        text: BTN_DISABLED,
+                        border: BTN_DISABLED.into(),
                         shadow: Default::default(),
                     }),
                 },
