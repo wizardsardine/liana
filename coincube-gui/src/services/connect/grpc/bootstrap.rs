@@ -78,6 +78,7 @@ pub async fn ensure_device_registered(
         .ok()
         .flatten()
         .and_then(|a| a.device_id)
+        .filter(|id| !id.trim().is_empty())
     {
         tracing::debug!(
             "SignerDevice already registered for {} (device_id={})",
@@ -94,6 +95,15 @@ pub async fn ensure_device_registered(
     let resp = device
         .register_device(device_name, app_version, os_version)
         .await?;
+
+    // Guard against a malformed server response: an empty/whitespace
+    // device_id must not be persisted (it would short-circuit every
+    // future launch) nor returned as a "registered" id.
+    if resp.device_id.trim().is_empty() {
+        return Err(BootstrapError::Rpc(tonic::Status::internal(
+            "RegisterDevice returned an empty device_id",
+        )));
+    }
 
     cache::set_device_id_for_email(network_dir, email, Some(&resp.device_id)).await?;
     tracing::info!(

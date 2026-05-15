@@ -195,7 +195,17 @@ impl PsbtState {
                     }
                 }
 
+                // Dismissing a Keychain-sign modal (blur or otherwise)
+                // must also terminate any in-flight signing sessions
+                // server-side, not just hide the UI — otherwise signers
+                // keep seeing the request until its 24h TTL elapses.
+                let cancel = if let Some(PsbtModal::KeychainSign(km)) = self.modal.as_mut() {
+                    km.cancel_all()
+                } else {
+                    Task::none()
+                };
                 self.modal = None;
+                return cancel;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Delete)) => {
                 self.modal = Some(PsbtModal::Delete(DeleteModal::default()));

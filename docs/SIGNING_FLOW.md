@@ -12,7 +12,7 @@ settings panel.
 
 ## Architecture
 
-```
+```text
 ┌────────────────────────────────────────────────────────────────────┐
 │ coincube-gui (Iced app)                                            │
 │                                                                    │

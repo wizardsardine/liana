@@ -48,6 +48,10 @@ jobs:
           workspaces: coincube-gui
 
       - name: Run integration tests
+        # `secrets` is unavailable in job-level `if`, so guard here on the
+        # env-mapped required secrets. Missing secrets → step skipped (job
+        # stays green) instead of a noisy failure. VAULT_ID is optional.
+        if: env.COINCUBE_API_URL != '' && env.COINCUBE_INTEGRATION_TOKEN != ''
         run: |
           cargo test \
             -p coincube-gui \

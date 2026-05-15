@@ -92,14 +92,13 @@ async fn stream_connects_and_emits_connected_message() {
         .await
         .expect("stream produced an event within 10s")
         .expect("stream not empty");
-    assert!(
-        matches!(
-            evt,
-            ConnectStreamMessage::Connected | ConnectStreamMessage::Error(_)
-        ),
-        "first event should be Connected or Error, got {:?}",
-        evt,
-    );
+    match evt {
+        ConnectStreamMessage::Connected => {}
+        ConnectStreamMessage::Error(e) => {
+            panic!("stream emitted Error instead of Connected: {}", e)
+        }
+        other => panic!("first event should be Connected, got {:?}", other),
+    }
 }
 
 #[tokio::test]
@@ -110,7 +109,7 @@ async fn register_device_is_idempotent() {
         .expect("create_channel");
     let mut client = coincube_gui::services::connect::grpc::device::GrpcDeviceClient::new(
         channel.clone(),
-        AuthInterceptor::new(env.tokens()),
+        AuthInterceptor::new(&env.token),
     );
 
     // Two register calls with the same device_name should yield the same
@@ -151,7 +150,7 @@ async fn resolve_signers_against_fixture_vault() {
     let channel = grpc::create_channel(&env.grpc_url)
         .await
         .expect("create_channel");
-    let mut client = GrpcSessionClient::new(channel, AuthInterceptor::new(env.tokens()));
+    let mut client = GrpcSessionClient::new(channel, AuthInterceptor::new(&env.token));
     let resp: connect_v1::ResolveSignersResponse = client
         .resolve_signers(vault_id)
         .await

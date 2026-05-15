@@ -2366,6 +2366,24 @@ impl App {
                     // Logout occurred - clear the avatar
                     self.cache.avatar_handle = None;
                 }
+                // Connect logout: tear down the realtime stream. The
+                // subscription is keyed on `connect_stream_config`, so
+                // clearing it (plus the cache mirrors) drops the gRPC
+                // stream on the next `subscription()` tick — Iced's
+                // model is declarative, there is no task handle to
+                // cancel. NOTE: a subsequent in-place relogin does not
+                // yet rebuild the stream (would need the token Arc +
+                // email re-plumbed from the account panel); the stream
+                // currently only re-establishes on app restart.
+                if was_authenticated && !self.cache.connect_authenticated {
+                    self.connect_stream_config = None;
+                    self.connect_email = None;
+                    self.cache.connect_grpc_url = None;
+                    self.cache.connect_tokens = None;
+                    self.cache.connect_device_id = None;
+                    self.cache.connect_email = None;
+                    self.cache.connect_stream_status = ConnectionStatus::Inactive;
+                }
                 // Auto-return for the "Switch to Connect" flow. When the user
                 // clicked it without an active session, we routed them to the
                 // Connect tab and set this flag. Now that they've signed in,

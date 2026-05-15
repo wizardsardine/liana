@@ -182,7 +182,23 @@ pub async fn set_device_id_for_email(
     file.read_to_end(&mut file_content)
         .await
         .map_err(|e| ConnectCacheError::ReadingFile(format!("Reading file content: {}", e)))?;
-    let mut cache = serde_json::from_slice::<ConnectCache>(&file_content).unwrap_or_default();
+    let mut cache = if file_content.is_empty() {
+        // Freshly `create(true)`d (or never written) — start empty.
+        ConnectCache::default()
+    } else {
+        match serde_json::from_slice::<ConnectCache>(&file_content) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    "Connect cache at {:?} is corrupt ({}); continuing with an \
+                     empty cache for this update",
+                    path,
+                    e,
+                );
+                ConnectCache::default()
+            }
+        }
+    };
 
     let Some(account) = cache.accounts.iter_mut().find(|a| a.email == email) else {
         return Ok(());
@@ -237,7 +253,23 @@ pub async fn set_last_seen_event_seq_for_email(
     file.read_to_end(&mut file_content)
         .await
         .map_err(|e| ConnectCacheError::ReadingFile(format!("Reading file content: {}", e)))?;
-    let mut cache = serde_json::from_slice::<ConnectCache>(&file_content).unwrap_or_default();
+    let mut cache = if file_content.is_empty() {
+        // Freshly `create(true)`d (or never written) — start empty.
+        ConnectCache::default()
+    } else {
+        match serde_json::from_slice::<ConnectCache>(&file_content) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    "Connect cache at {:?} is corrupt ({}); continuing with an \
+                     empty cache for this update",
+                    path,
+                    e,
+                );
+                ConnectCache::default()
+            }
+        }
+    };
 
     let Some(account) = cache.accounts.iter_mut().find(|a| a.email == email) else {
         return Ok(());

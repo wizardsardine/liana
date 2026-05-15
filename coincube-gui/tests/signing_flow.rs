@@ -19,6 +19,7 @@
 
 #![cfg(feature = "integration-tests")]
 
+#[ignore = "requires phone-side mock"]
 #[tokio::test]
 async fn create_signing_session_round_trip() {
     eprintln!(
@@ -27,6 +28,7 @@ async fn create_signing_session_round_trip() {
     );
 }
 
+#[ignore = "requires phone-side mock"]
 #[tokio::test]
 async fn cancel_signing_session() {
     eprintln!(
@@ -35,6 +37,7 @@ async fn cancel_signing_session() {
     );
 }
 
+#[ignore = "requires phone-side mock"]
 #[tokio::test]
 async fn session_expired() {
     eprintln!(

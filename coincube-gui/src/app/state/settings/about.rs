@@ -90,6 +90,17 @@ impl State for AboutSettingsState {
                     .unwrap_or_else(|| format!("Coincube Desktop ({})", std::env::consts::OS));
                 return Task::perform(
                     async move {
+                        // Remember the currently-registered id so a failed
+                        // re-register can roll back instead of permanently
+                        // discarding a working device_id.
+                        let previous_device_id =
+                            crate::services::connect::client::cache::Account::from_cache(
+                                &network_dir,
+                                &email,
+                            )
+                            .ok()
+                            .flatten()
+                            .and_then(|a| a.device_id);
                         // Clear the cached id so `ensure_device_registered`
                         // takes the register path instead of short-circuiting
                         // on the existing entry.
@@ -107,17 +118,37 @@ impl State for AboutSettingsState {
                             // RPC on it.
                             tracing::warn!("Re-register: failed to clear cached device_id: {}", e,);
                         }
-                        crate::services::connect::grpc::bootstrap::ensure_device_registered(
-                            &grpc_url,
-                            tokens,
-                            &network_dir,
-                            &email,
-                            device_name,
-                            app_version,
-                            os_version,
-                        )
-                        .await
-                        .map_err(|e| e.to_string())
+                        let result =
+                            crate::services::connect::grpc::bootstrap::ensure_device_registered(
+                                &grpc_url,
+                                tokens,
+                                &network_dir,
+                                &email,
+                                device_name,
+                                app_version,
+                                os_version,
+                            )
+                            .await
+                            .map_err(|e| e.to_string());
+                        // On failure the cache was left cleared — restore
+                        // the prior id (best-effort) so a transient RPC
+                        // error doesn't strand the user as unregistered.
+                        if result.is_err() {
+                            if let Err(e) =
+                                crate::services::connect::client::cache::set_device_id_for_email(
+                                    &network_dir,
+                                    &email,
+                                    previous_device_id.as_deref(),
+                                )
+                                .await
+                            {
+                                tracing::warn!(
+                                    "Re-register: failed to restore previous device_id: {}",
+                                    e,
+                                );
+                            }
+                        }
+                        result
                     },
                     |r| {
                         Message::View(view::Message::Settings(

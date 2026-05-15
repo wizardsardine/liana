@@ -140,7 +140,7 @@ fn connect_device_card<'a>(
         ),
         Some(Err(e)) => Some(
             text(format!("Re-registration failed: {}", e))
-                .style(coincube_ui::theme::text::primary)
+                .style(coincube_ui::theme::text::error)
                 .into(),
         ),
         None => None,
