@@ -608,9 +608,7 @@ impl KeychainSignModal {
                     .await
                     .map_err(|s| format!("{}", s))
             },
-            move |r| {
-                Message::KeychainSign(KeychainSignMessage::SessionCancelled(sid.clone(), r))
-            },
+            move |r| Message::KeychainSign(KeychainSignMessage::SessionCancelled(sid.clone(), r)),
         )
     }
 
@@ -908,10 +906,8 @@ impl Modal for KeychainSignModal {
                         return Task::done(Message::Updated(Ok(())));
                     }
                     Err(e) => {
-                        if let Some(entry) = self
-                            .pending
-                            .iter_mut()
-                            .find(|p| p.session_id == session_id)
+                        if let Some(entry) =
+                            self.pending.iter_mut().find(|p| p.session_id == session_id)
                         {
                             entry.status = PendingSessionStatus::Failed;
                             entry.error = Some(format!("Failed to persist signed PSBT: {}", e));
