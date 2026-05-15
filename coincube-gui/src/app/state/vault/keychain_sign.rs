@@ -677,6 +677,14 @@ impl KeychainSignModal {
         }
         if self.check_all_done() {
             self.phase = Phase::AllDone;
+            // `SessionCompleted` is the only path to a successful
+            // `AllDone`, and it otherwise produces no follow-up
+            // message — so the panel's `Message::Updated(Ok)` arm
+            // (the sole place that closes this modal) would never
+            // run and the modal would stay stuck on "Closing…".
+            // Re-emit the message its post-save/close flow keys
+            // off, mirroring the `Persisted { Ok }` arm.
+            return Task::done(Message::Updated(Ok(())));
         }
         Task::none()
     }
