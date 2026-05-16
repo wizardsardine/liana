@@ -419,15 +419,15 @@ fn sell_input_form<'a>(
 fn detail_row<'a>(
     label: &'a str,
     value: impl Into<std::borrow::Cow<'a, str>>,
-    text_color: Option<iced::Color>,
+    text_style: Option<fn(&theme::Theme) -> widget::text::Style>,
 ) -> widget::Row<'a, BuySellMessage, theme::Theme> {
     let value = value.into().into_owned();
 
     widget::row![
         widget::column![
             text::p2_medium(label).color(color::GREY_2),
-            text::p2_bold(value.clone()).style(move |th| match text_color {
-                Some(c) => widget::text::Style { color: Some(c) },
+            text::p2_bold(value.clone()).style(move |th| match text_style {
+                Some(f) => f(th),
                 None => theme::text::secondary(th),
             })
         ]
@@ -487,7 +487,7 @@ fn summary_card<'a>(
         widget::row![
             widget::space().width(iced::Length::Fill),
             widget::column![
-                text::caption("You Send").color(color::GREEN),
+                text::caption("You Send").style(theme::text::success),
                 text::p1_bold(format!("{} {}", source_amount, source_currency))
             ]
             .spacing(1),
@@ -555,7 +555,7 @@ fn instructions_card<'a>(
             detail_row(
                 "Amount to Send",
                 format!("{}{}", country.currency.symbol, quote.total_amount_in_source_currency as f64 / 100.0),
-                Some(color::GREEN),
+                Some(theme::text::success),
             ),
             widget::Space::new().height(20),
             text::p2_medium("STEP 2: INCLUDE THIS REFERENCE IN YOUR TRANSFER")
@@ -678,7 +678,7 @@ fn order_success_view<'a>(
                         widget::column![
                             text::p2_medium("Order Status").style(theme::text::secondary),
                             text::p2_bold(order_status_text(&order.status))
-                                .color(status_color(&order.status))
+                                .style(status_style(&order.status))
                         ]
                         .width(Length::Fill),
                         widget::column![
@@ -1250,11 +1250,11 @@ fn invoice_qr_code_display<'a>(
     })
 }
 
-fn status_color(status: &TransactionStatus) -> iced::Color {
+fn status_style(status: &TransactionStatus) -> fn(&theme::Theme) -> widget::text::Style {
     match status {
-        TransactionStatus::Success | TransactionStatus::Paid => color::GREEN,
-        TransactionStatus::Pending => color::ORANGE,
-        TransactionStatus::Expired | TransactionStatus::Failed => color::RED,
+        TransactionStatus::Success | TransactionStatus::Paid => theme::text::success,
+        TransactionStatus::Pending => theme::text::warning,
+        TransactionStatus::Expired | TransactionStatus::Failed => theme::text::error,
     }
 }
 
