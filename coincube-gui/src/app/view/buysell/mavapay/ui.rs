@@ -428,7 +428,7 @@ fn detail_row<'a>(
             text::p2_medium(label).color(color::GREY_2),
             text::p2_bold(value.clone()).style(move |th| match text_style {
                 Some(f) => f(th),
-                None => theme::text::secondary(th),
+                None => theme::text::primary(th),
             })
         ]
         .width(Length::Fill),
