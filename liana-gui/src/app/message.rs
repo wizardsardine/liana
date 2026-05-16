@@ -2,9 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use liana::miniscript::bitcoin::{
+    address,
     bip32::{ChildNumber, Fingerprint},
     psbt::Psbt,
-    Address, Txid,
+    Address, Amount, Txid,
 };
 use lianad::config::Config as DaemonConfig;
 
@@ -51,6 +52,7 @@ pub enum Message {
     Labels(Result<HashMap<String, String>, Error>),
     SpendTxs(Result<Vec<SpendTx>, Error>),
     Psbt(Result<(Psbt, Vec<String>), Error>),
+    RedraftSpend(u64, RedraftSpendResult),
     RbfPsbt(Result<Txid, Error>),
     Recovery(Result<SpendTx, Error>),
     Signed(Fingerprint, Result<Psbt, Error>),
@@ -71,6 +73,17 @@ pub enum Message {
     BroadcastModal(Result<HashSet<Txid>, Error>),
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
     Export(ImportExportMessage),
+}
+
+#[derive(Debug)]
+pub struct RedraftSpendResult {
+    pub send_max_to_recipient: Option<usize>,
+    pub total_recipients: usize,
+    pub max_address: Address<address::NetworkUnchecked>,
+    pub is_user_coin_selection: bool,
+    pub is_recovery: bool,
+    pub result: Result<CreateSpendResult, Error>,
+    pub amount_left_to_select: Option<Amount>,
 }
 
 impl From<ImportExportMessage> for Message {
