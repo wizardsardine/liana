@@ -314,6 +314,14 @@ pub struct KeychainSignModal {
     /// because clicking outside the modal would otherwise silently
     /// discard in-flight session state.
     display_modal: bool,
+    /// Set when the user dismissed the modal while one or more
+    /// `CreateSigningSession` RPCs were still in flight. The modal stays
+    /// mounted (but hidden) so it can still receive `SessionCreated` and
+    /// fire the deferred cancels; once every pending session reaches a
+    /// terminal state it self-closes via the `Message::Updated(Ok)`
+    /// path. Without this the modal would be dropped immediately and the
+    /// just-created sessions would be orphaned server-side until TTL.
+    dismissed: bool,
 }
 
 impl KeychainSignModal {
@@ -349,6 +357,7 @@ impl KeychainSignModal {
             stream_health: crate::app::ConnectionStatus::Connected,
             phase: Phase::Loading,
             display_modal: true,
+            dismissed: false,
         }
     }
 
@@ -390,6 +399,38 @@ impl KeychainSignModal {
                 .pending
                 .iter()
                 .all(|p| p.status.is_terminal_success() && p.signed_psbt_persisted)
+    }
+
+    /// True while any pending session is non-terminal. After
+    /// `cancel_all()`, such entries still depend on the modal staying
+    /// mounted: empty-`session_id` rows are cancelled later by
+    /// `on_session_created`, and direct-cancel rows only flip to
+    /// `Cancelled` once their `SessionCancelled` reply lands. Dropping
+    /// the modal before they drain orphans the sessions server-side.
+    pub fn has_undrained_sessions(&self) -> bool {
+        self.pending.iter().any(|p| !p.status.is_terminal())
+    }
+
+    /// Mark the modal dismissed-but-mounted. The view hides immediately
+    /// (see `view`), but the struct lives on to drive the deferred
+    /// cancels until `close_if_dismissed_and_drained` tears it down.
+    pub fn mark_dismissed(&mut self) {
+        self.dismissed = true;
+    }
+
+    /// When the modal was dismissed mid-flight, close it once every
+    /// pending session has reached a terminal state — reusing the
+    /// existing `Phase::AllDone` + `Message::Updated(Ok)` close path
+    /// that the panel already drives `self.modal = None` from.
+    fn close_if_dismissed_and_drained(&mut self) -> Task<Message> {
+        if self.dismissed
+            && !self.pending.is_empty()
+            && self.pending.iter().all(|p| p.status.is_terminal())
+        {
+            self.phase = Phase::AllDone;
+            return Task::done(Message::Updated(Ok(())));
+        }
+        Task::none()
     }
 
     /// Construct a fresh `GrpcSessionClient`. The shared `Arc<RwLock>` of
@@ -874,6 +915,16 @@ impl KeychainSignModal {
         let Some(session) = resp.session else {
             return Task::none();
         };
+        // Reflect the authoritative status from the fetch response.
+        // Without this the row can stay stuck at `PartiallySigned` if
+        // the separate `SESSION_COMPLETED` stream event races, drops, or
+        // never arrives — leaving the modal unable to close even though
+        // the signature was fetched, merged, and persisted.
+        if let Some(entry) = self.pending.iter_mut().find(|p| p.session_id == session_id) {
+            entry.status =
+                PendingSessionStatus::from_proto(session_status_from_i32(session.status));
+            entry.error = None;
+        }
         // Decode the signed PSBT and merge into the local SpendTx via
         // the daemon's update path. The existing SignModal handler uses
         // the same `merge_signatures` + `update_spend_tx` shape; we
@@ -1093,13 +1144,15 @@ impl Modal for KeychainSignModal {
                 }
             },
             Message::KeychainSign(KeychainSignMessage::SessionCreated(fp, res)) => {
-                return self.on_session_created(fp, res);
+                let task = self.on_session_created(fp, res);
+                return Task::batch([task, self.close_if_dismissed_and_drained()]);
             }
             Message::KeychainSign(KeychainSignMessage::SessionFetched(sid, res)) => {
                 return self.on_session_fetched(daemon, tx, sid, res);
             }
             Message::KeychainSign(KeychainSignMessage::SessionCancelled(sid, res)) => {
                 self.on_session_cancelled(sid, res);
+                return self.close_if_dismissed_and_drained();
             }
             Message::KeychainSign(KeychainSignMessage::Persisted { session_id, result }) => {
                 match result {
@@ -1154,7 +1207,7 @@ impl Modal for KeychainSignModal {
     }
 
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
-        if !self.display_modal {
+        if !self.display_modal || self.dismissed {
             return content;
         }
         let mut col = Column::new()

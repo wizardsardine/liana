@@ -199,12 +199,28 @@ impl PsbtState {
                 // must also terminate any in-flight signing sessions
                 // server-side, not just hide the UI — otherwise signers
                 // keep seeing the request until its 24h TTL elapses.
-                let cancel = if let Some(PsbtModal::KeychainSign(km)) = self.modal.as_mut() {
-                    km.cancel_all()
-                } else {
-                    Task::none()
-                };
-                self.modal = None;
+                // `cancel_all()` cancels sessions that already have an
+                // id; entries whose `CreateSigningSession` RPC is still
+                // in flight are cancelled later by `on_session_created`,
+                // which only runs while the modal is still mounted to
+                // receive `SessionCreated`. So when sessions are still
+                // undrained, keep the modal mounted but hidden — it
+                // self-closes via `Message::Updated(Ok)` once they all
+                // reach a terminal state.
+                let (cancel, keep_modal) =
+                    if let Some(PsbtModal::KeychainSign(km)) = self.modal.as_mut() {
+                        let cancel = km.cancel_all();
+                        let keep = km.has_undrained_sessions();
+                        if keep {
+                            km.mark_dismissed();
+                        }
+                        (cancel, keep)
+                    } else {
+                        (Task::none(), false)
+                    };
+                if !keep_modal {
+                    self.modal = None;
+                }
                 return cancel;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Delete)) => {
