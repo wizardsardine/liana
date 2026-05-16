@@ -548,8 +548,27 @@ impl<S: SettingsTrait> App<S> {
                 Task::batch(commands)
             }
             Message::LoadDaemonConfig(cfg) => {
-                let res = self.load_daemon_config(self.cache.datadir_path.clone(), *cfg);
-                self.update(Message::DaemonConfigLoaded(res))
+                let daemon = self.daemon.clone();
+                let datadir_path = self.cache.datadir_path.clone();
+                let wallet_id = self.wallet.id();
+                Task::perform(
+                    reload_daemon_config(datadir_path, wallet_id, daemon, *cfg),
+                    Message::DaemonConfigReloaded,
+                )
+            }
+            Message::DaemonConfigReloaded(res) => {
+                let res = match res {
+                    Ok(daemon) => {
+                        self.daemon = daemon;
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                };
+                self.panels.current_mut().update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    Message::DaemonConfigLoaded(res),
+                )
             }
             Message::WalletUpdated(Ok(wallet)) => {
                 self.wallet = wallet.clone();
@@ -604,37 +623,6 @@ impl<S: SettingsTrait> App<S> {
         }
     }
 
-    pub fn load_daemon_config(
-        &mut self,
-        datadir_path: LianaDirectory,
-        cfg: DaemonConfig,
-    ) -> Result<(), Error> {
-        Handle::current().block_on(async { self.daemon.stop().await })?;
-        let network = cfg.bitcoin_config.network;
-        let daemon = EmbeddedDaemon::start(cfg)?;
-        self.daemon = Arc::new(daemon);
-        let mut daemon_config_path = datadir_path
-            .network_directory(network)
-            .lianad_data_directory(&self.wallet.id())
-            .path()
-            .to_path_buf();
-        daemon_config_path.push("daemon.toml");
-
-        let content =
-            toml::to_string(&self.daemon.config()).map_err(|e| Error::Config(e.to_string()))?;
-
-        OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(daemon_config_path)
-            .map_err(|e| Error::Config(e.to_string()))?
-            .write_all(content.as_bytes())
-            .map_err(|e| {
-                warn!("failed to write to file: {:?}", e);
-                Error::Config(e.to_string())
-            })
-    }
-
     pub fn view(&self) -> Element<'_, Message> {
         let content = self.panels.current().view(&self.cache).map(Message::View);
         if self.cache.network != bitcoin::Network::Bitcoin {
@@ -647,6 +635,43 @@ impl<S: SettingsTrait> App<S> {
     pub fn datadir_path(&self) -> &LianaDirectory {
         &self.cache.datadir_path
     }
+}
+
+async fn reload_daemon_config(
+    datadir_path: LianaDirectory,
+    wallet_id: WalletId,
+    old_daemon: Arc<dyn Daemon + Sync + Send>,
+    cfg: DaemonConfig,
+) -> Result<Arc<dyn Daemon + Sync + Send>, Error> {
+    old_daemon.stop().await?;
+    tokio::task::spawn_blocking(move || {
+        let network = cfg.bitcoin_config.network;
+        let daemon = EmbeddedDaemon::start(cfg)?;
+        let mut daemon_config_path = datadir_path
+            .network_directory(network)
+            .lianad_data_directory(&wallet_id)
+            .path()
+            .to_path_buf();
+        daemon_config_path.push("daemon.toml");
+
+        let content =
+            toml::to_string(&daemon.config()).map_err(|e| Error::Config(e.to_string()))?;
+
+        OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(daemon_config_path)
+            .map_err(|e| Error::Config(e.to_string()))?
+            .write_all(content.as_bytes())
+            .map_err(|e| {
+                warn!("failed to write to file: {:?}", e);
+                Error::Config(e.to_string())
+            })?;
+
+        Ok(Arc::new(daemon) as Arc<dyn Daemon + Sync + Send>)
+    })
+    .await
+    .map_err(|e| Error::Unexpected(format!("Daemon config reload task failed: {e}")))?
 }
 
 fn new_recovery_panel(wallet: Arc<Wallet>, cache: &Cache) -> CreateSpendPanel {

@@ -16,6 +16,7 @@ use crate::{
         wallet::Wallet,
     },
     daemon::model::*,
+    daemon::Daemon,
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
     services::fiat::{
@@ -34,6 +35,7 @@ pub enum Message {
     UpdatePanelCache(/* is current panel */ bool),
     View(view::Message),
     LoadDaemonConfig(Box<DaemonConfig>),
+    DaemonConfigReloaded(Result<Arc<dyn Daemon + Sync + Send>, Error>),
     DaemonConfigLoaded(Result<(), Error>),
     LoadWallet(Wallet),
     Info(Result<GetInfoResult, Error>),
