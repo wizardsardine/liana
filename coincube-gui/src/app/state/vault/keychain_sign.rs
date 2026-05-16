@@ -717,6 +717,19 @@ impl KeychainSignModal {
             if e.auth {
                 self.error = Some(e.message.clone());
                 self.phase = Phase::AllDone;
+                // Mark this signer's row terminal so the drain logic
+                // (`has_undrained_sessions` / `close_if_dismissed_and_drained`)
+                // doesn't treat it as still in flight — otherwise a
+                // dismissed modal would stay mounted forever. The
+                // single top-level banner above is the user-facing
+                // error; we deliberately leave the per-row message unset.
+                if let Some(entry) = self
+                    .pending
+                    .iter_mut()
+                    .find(|p| p.fingerprint == fingerprint)
+                {
+                    entry.status = PendingSessionStatus::Failed;
+                }
                 return Task::none();
             }
         }
