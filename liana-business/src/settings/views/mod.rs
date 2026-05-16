@@ -1,52 +1,41 @@
 //! View functions for business settings UI.
 
-use iced::widget::{scrollable, Column, Row, Space, Toggler};
-use iced::{Alignment, Length};
+use iced::{
+    widget::{scrollable, Column, Row, Space, Toggler},
+    Alignment, Length,
+};
 use liana_ui::{
-    component::{badge, button, card, pick_list, separation, text::*},
+    component::{
+        self, badge, button, card, pick_list, separation,
+        setting::{header, settings_section, SectionKind},
+        text::*,
+    },
     icon, theme,
-    widget::{ColumnExt, Container, Element, SpaceExt},
+    widget::{ColumnExt, Element, SpaceExt},
 };
 
-use crate::settings::message::{Msg, Section};
-use crate::settings::ui::BusinessSettingsUI;
-use crate::VERSION;
+use crate::{
+    settings::{
+        message::{Msg, Section},
+        ui::BusinessSettingsUI,
+    },
+    VERSION,
+};
+
+const SETTING_MSG: Msg = Msg::Home;
 
 /// Settings section list view.
 pub fn list_view() -> Element<'static, Msg> {
-    let header = panel_title("Settings");
+    let wallet = settings_section(SectionKind::Wallet, Msg::SelectSection(Section::Wallet));
+    let general = settings_section(SectionKind::General, Msg::SelectSection(Section::General));
+    let about = settings_section(SectionKind::About, Msg::SelectSection(Section::About));
 
-    let wallet = menu_entry(
-        "Wallet",
-        icon::wallet_icon(),
-        Msg::SelectSection(Section::Wallet),
-    );
-
-    let general = menu_entry(
-        "General",
-        icon::wrench_icon(),
-        Msg::SelectSection(Section::General),
-    );
-
-    let about = menu_entry(
-        "About",
-        icon::tooltip_icon(),
-        Msg::SelectSection(Section::About),
-    );
-
-    Column::new()
-        .spacing(20)
-        .width(Length::Fill)
-        .push(header)
-        .push(general)
-        .push(wallet)
-        .push(about)
-        .into()
+    component::setting::section_list(vec![general, wallet, about])
 }
 
 /// Wallet settings section view.
 pub fn wallet_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
-    let header = section_header("Wallet");
+    let header = header(Some(SETTING_MSG), Some(SectionKind::Wallet.title()), None);
 
     let descriptor = state.wallet.main_descriptor.to_string();
     let descriptor_card = card::simple(
@@ -88,7 +77,7 @@ pub fn general_view(
     fiat_enabled: bool,
     currency: crate::settings::BackendCurrency,
 ) -> Element<'static, Msg> {
-    let header = section_header("General");
+    let header = header(Some(SETTING_MSG), Some(SectionKind::General.title()), None);
 
     let fiat_card = card::simple(
         Column::new()
@@ -135,7 +124,7 @@ pub fn general_view(
 
 /// About section view.
 pub fn about_view() -> Element<'static, Msg> {
-    let header = section_header("About");
+    let header = header(Some(SETTING_MSG), Some(SectionKind::About.title()), None);
 
     let version_card = card::simple(
         Column::new()
@@ -162,45 +151,5 @@ pub fn about_view() -> Element<'static, Msg> {
         .push(header)
         .push(version_card)
         .width(Length::Fill)
-        .into()
-}
-
-// Helper functions
-
-fn menu_entry(
-    title: &str,
-    entry_icon: liana_ui::widget::Text<'static>,
-    msg: Msg,
-) -> Element<'static, Msg> {
-    Container::new(
-        iced::widget::Button::new(
-            Row::new()
-                .push(badge::badge(entry_icon))
-                .push(text(title).bold())
-                .padding(10)
-                .spacing(20)
-                .align_y(Alignment::Center)
-                .width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .style(theme::button::transparent_border)
-        .on_press(msg),
-    )
-    .width(Length::Fill)
-    .style(theme::card::button_simple)
-    .into()
-}
-
-fn section_header(title: &'static str) -> Element<'static, Msg> {
-    Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(
-            iced::widget::Button::new(panel_title("Settings"))
-                .style(theme::button::transparent_primary_text)
-                .on_press(Msg::Home),
-        )
-        .push(icon::chevron_right().size(30))
-        .push(text(title).size(30).bold())
         .into()
 }
