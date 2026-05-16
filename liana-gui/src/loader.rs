@@ -602,7 +602,7 @@ async fn sync(
     sleep: bool,
 ) -> Result<GetInfoResult, DaemonError> {
     if sleep {
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
     daemon.get_info().await
 }
