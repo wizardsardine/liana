@@ -15,12 +15,16 @@ use liana::{
     descriptors::{LianaDescriptor, LianaPolicy},
     miniscript::bitcoin::{bip32::Fingerprint, Network},
 };
+use liana_ui::component;
+use liana_ui::component::setting::{
+    export_section, header, settings_section, ImportExportKind, SectionKind,
+};
 use lianad::config::BitcoindRpcAuth;
 
 use super::{dashboard, message::*};
 
 use liana_ui::{
-    component::{badge, button, card, form, separation, text::*, tooltip::tooltip},
+    component::{badge, button, card, form, separation, text::*},
     icon,
     theme::{self},
     widget::*,
@@ -37,138 +41,52 @@ use crate::{
     view::hw::{device_list_entry, HwRowMode},
 };
 
-fn header(title: &str, msg: SettingsMessage) -> Row<'static, Message> {
-    Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(
-            Button::new(panel_title("Settings"))
-                .style(theme::button::transparent_primary_text)
-                .on_press(Message::Menu(Menu::Settings)),
-        )
-        .push(icon::chevron_right().size(30))
-        .push(
-            Button::new(panel_title(title))
-                .style(theme::button::transparent_primary_text)
-                .on_press(Message::Settings(msg)),
-        )
-}
-
-fn settings_section(
-    title: &str,
-    tool_tip: Option<&'static str>,
-    icon: liana_ui::widget::Text<'static>,
-    msg: Message,
-) -> Container<'static, Message> {
-    let tt = tool_tip.map(tooltip);
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(badge::badge(icon))
-                .push(text(title).bold())
-                .push_maybe(tt)
-                .padding(10)
-                .spacing(20)
-                .align_y(Alignment::Center)
-                .width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .style(theme::button::transparent_border)
-        .on_press(msg),
-    )
-    .width(Length::Fill)
-    .style(theme::card::button_simple)
-}
-
-fn export_section(
-    title: &str,
-    description: &str,
-    icon: liana_ui::widget::Text<'static>,
-    msg: Message,
-) -> Container<'static, Message> {
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(badge::badge(icon))
-                .push(
-                    Column::new()
-                        .push(text(title).bold())
-                        .push(caption(description)),
-                )
-                .padding(10)
-                .spacing(20)
-                .align_y(Alignment::Center)
-                .width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .style(theme::button::transparent_border)
-        .on_press(msg),
-    )
-    .width(Length::Fill)
-    .style(theme::card::button_simple)
-}
+const SETTING_MSG: Message = Message::Menu(Menu::Settings);
 
 pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<'_, Message> {
-    let header = Button::new(panel_title("Settings"))
-        .style(theme::button::transparent_primary_text)
-        .on_press(Message::Menu(Menu::Settings));
-
     let general = settings_section(
-        "General",
-        None,
-        icon::wrench_icon(),
+        SectionKind::General,
         Message::Settings(SettingsMessage::GeneralSection),
     );
 
     let node = settings_section(
-        "Node",
-        None,
-        icon::bitcoin_icon(),
+        SectionKind::Node,
         Message::Settings(SettingsMessage::EditBitcoindSettings),
     );
 
     let backend = settings_section(
-        "Backend",
-        None,
-        icon::bitcoin_icon(),
+        SectionKind::Backend,
         Message::Settings(SettingsMessage::EditRemoteBackendSettings),
     );
 
     let wallet = settings_section(
-        "Wallet",
-        None,
-        icon::wallet_icon(),
+        SectionKind::Wallet,
         Message::Settings(SettingsMessage::EditWalletSettings),
     );
 
     let import_export = settings_section(
-        "Import/Export",
-        None,
-        icon::wallet_icon(),
+        SectionKind::ImportExport,
         Message::Settings(SettingsMessage::ImportExportSection),
     );
 
     let about = settings_section(
-        "About",
-        None,
-        icon::tooltip_icon(),
+        SectionKind::About,
         Message::Settings(SettingsMessage::AboutSection),
     );
 
-    dashboard(
-        &Menu::Settings,
-        cache,
-        None,
-        Column::new()
-            .spacing(20)
-            .width(Length::Fill)
-            .push(header)
-            .push(general)
-            .push(if !is_remote_backend { node } else { backend })
-            .push(wallet)
-            .push(import_export)
-            .push(about),
-    )
+    let backend = if !is_remote_backend { node } else { backend };
+
+    #[rustfmt::skip]
+    let entries = vec![
+        general,
+        backend,
+        wallet,
+        import_export,
+        about
+    ];
+
+    let content = component::setting::section_list(entries);
+    dashboard(&Menu::Settings, cache, None, content)
 }
 
 pub fn link<'a>(url: &str, link_text: &'static str) -> Element<'a, Message> {
@@ -188,7 +106,11 @@ pub fn bitcoind_settings<'a>(
     warning: Option<&'a Error>,
     settings: Vec<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    let header = header("Node", SettingsMessage::EditBitcoindSettings);
+    let header = header(
+        Some(SETTING_MSG),
+        Some(SectionKind::Node.title()),
+        Some(SettingsMessage::EditBitcoindSettings.into()),
+    );
 
     dashboard(
         &Menu::Settings,
@@ -202,7 +124,11 @@ pub fn bitcoind_settings<'a>(
 }
 
 pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Element<'a, Message> {
-    let header = header("Import/Export", SettingsMessage::ImportExportSection);
+    let header = header(
+        Some(SETTING_MSG),
+        Some(SectionKind::ImportExport.title()),
+        Some(SettingsMessage::ImportExportSection.into()),
+    );
 
     let description = Row::new()
         .push(Space::with_width(15))
@@ -212,44 +138,32 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Elemen
         .push(Space::with_width(Length::Fill));
 
     let export_encrypted_descriptor = export_section(
-        "Encrypted descriptor",
-        ".bed file, can be decrypted with one of your signing devices or xpubs.",
-        icon::backup_icon(),
+        ImportExportKind::ExportEncryptedDescriptor,
         Message::Settings(SettingsMessage::ExportEncryptedDescriptor),
     );
 
     let export_descriptor = export_section(
-        "Descriptor only - plain-text",
-        "Plain-text (not encrypted) descriptor file only, to use with other wallets.",
-        icon::backup_icon(),
+        ImportExportKind::ExportDescriptor,
         Message::Settings(SettingsMessage::ExportPlaintextDescriptor),
     );
 
     let export_transactions = export_section(
-        "Transactions table",
-        ".CSV file of past transactions, for accounting purposes.",
-        icon::backup_icon(),
+        ImportExportKind::ExportTransactions,
         Message::Settings(SettingsMessage::ExportTransactions),
     );
 
     let export_labels = export_section(
-        "BIP 329 labels",
-        "Bip 329 label export, compatible with other wallets.",
-        icon::backup_icon(),
+        ImportExportKind::ExportLabels,
         Message::Settings(SettingsMessage::ExportLabels),
     );
 
     let export_wallet = export_section(
-        "Export wallet",
-        "File (not encrypted) with wallet info useful to sync labels and data on other devices.",
-        icon::backup_icon(),
+        ImportExportKind::ExportWallet,
         Message::Settings(SettingsMessage::ExportWallet),
     );
 
     let import_wallet = export_section(
-        "Import wallet",
-        "Upload a backup file to update wallet info.",
-        icon::restore_icon(),
+        ImportExportKind::ImportWallet,
         Message::Settings(SettingsMessage::ImportWallet),
     );
 
@@ -285,7 +199,11 @@ pub fn about_section<'a>(
     warning: Option<&'a Error>,
     lianad_version: Option<&String>,
 ) -> Element<'a, Message> {
-    let header = header("About", SettingsMessage::AboutSection);
+    let header = header(
+        Some(SETTING_MSG),
+        Some(SectionKind::About.title()),
+        Some(SettingsMessage::AboutSection.into()),
+    );
 
     let content = card::simple(
         Column::new()
@@ -330,7 +248,11 @@ pub fn remote_backend_section<'a>(
     success: bool,
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
-    let header = header("Backend", SettingsMessage::EditRemoteBackendSettings);
+    let header = header(
+        Some(SETTING_MSG),
+        Some(SectionKind::Backend.title()),
+        Some(SettingsMessage::EditRemoteBackendSettings.into()),
+    );
 
     let content = card::simple(
         Column::new()
@@ -1011,7 +933,11 @@ pub fn wallet_settings<'a>(
     processing: bool,
     updated: bool,
 ) -> Element<'a, Message> {
-    let header = header("Wallet", SettingsMessage::EditWalletSettings);
+    let header = header(
+        Some(SETTING_MSG),
+        Some(SectionKind::Wallet.title()),
+        Some(SettingsMessage::EditWalletSettings.into()),
+    );
     let r = Row::new().spacing(10).align_y(Vertical::Center)
         .push(icon::backup_icon())
         .push(text("Back up encrypted descriptor"))

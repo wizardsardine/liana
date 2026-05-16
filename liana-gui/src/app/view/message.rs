@@ -116,6 +116,12 @@ pub enum SettingsMessage {
     Fiat(FiatMessage),
 }
 
+impl From<SettingsMessage> for Message {
+    fn from(value: SettingsMessage) -> Self {
+        Message::Settings(value)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum RemoteBackendSettingsMessage {
     EditInvitationEmail(String),
