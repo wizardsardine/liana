@@ -1475,6 +1475,9 @@ pub fn create_app_with_remote_backend(
             // so populate them eagerly.
             connect_grpc_url: None,
             connect_tokens: Some(remote_backend.inner_client().auth.clone()),
+            connect_stream_status: crate::app::ConnectionStatus::default(),
+            connect_device_id: None,
+            connect_email: Some(remote_backend.user_email().to_string()),
         },
         Arc::new(
             Wallet::new(wallet.descriptor)

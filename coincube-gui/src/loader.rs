@@ -635,6 +635,9 @@ pub async fn load_application(
         // would have to sign in via the Connect tab to populate these.
         connect_grpc_url: None,
         connect_tokens: None,
+        connect_stream_status: crate::app::ConnectionStatus::default(),
+        connect_device_id: None,
+        connect_email: None,
     };
 
     Ok((

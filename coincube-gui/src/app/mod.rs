@@ -714,6 +714,53 @@ pub struct App {
     connect_stream_config: Option<crate::services::connect::grpc::stream::ConnectStreamConfig>,
 }
 
+/// Health of the Connect realtime stream as observed from the desktop.
+///
+/// Transitions are driven by `ConnectStreamMessage` events arriving on
+/// the gRPC subscription. The `Inactive` variant is distinct from
+/// `Disconnected` because we want to render *nothing* (rather than a
+/// red dot) when the user has no Connect identity yet — a fresh-install
+/// desktop on a local-daemon cube isn't "broken", it's just not using
+/// Connect.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ConnectionStatus {
+    /// No stream has been bootstrapped yet (no `Message::ConnectStreamReady`).
+    /// Render an empty slot, not a status dot.
+    #[default]
+    Inactive,
+    /// Stream subscription is mounted but no `Connected` has arrived
+    /// yet, or a `Disconnected` has fired and the next reconnect is
+    /// pending. Render amber.
+    Connecting,
+    /// `ConnectStreamMessage::Connected` was the last terminal event.
+    /// Render green.
+    Connected,
+    /// `ConnectStreamMessage::Error` carried a non-recoverable signal,
+    /// or the stream surfaced a transport failure. The string is the
+    /// most recent error suitable for a tooltip. Render red.
+    Error(String),
+}
+
+impl ConnectionStatus {
+    /// True for any state that the nav should surface (i.e. anything
+    /// non-`Inactive`). Keeps the empty-slot rendering at the call site
+    /// clean.
+    pub fn is_visible(&self) -> bool {
+        !matches!(self, Self::Inactive)
+    }
+
+    /// Short user-facing tooltip text describing the current state.
+    /// Kept here so the nav view doesn't have to spell out the variants.
+    pub fn tooltip(&self) -> String {
+        match self {
+            Self::Inactive => "Connect inactive".to_string(),
+            Self::Connecting => "Connecting to Coincube Connect…".to_string(),
+            Self::Connected => "Connected".to_string(),
+            Self::Error(e) => format!("Connection error: {}", e),
+        }
+    }
+}
+
 /// Returns true when a `DaemonError` indicates the daemon process is no longer
 /// reachable (transport / stopped), as opposed to a transient RPC application
 /// error that does not warrant a backend switch.
@@ -798,6 +845,16 @@ impl std::hash::Hash for ConnectStreamSubKey {
     }
 }
 
+/// Wrap a `ConnectionStatus` change into a Task that fires
+/// `Message::KeychainSign(StreamHealth(..))`. The standard update path
+/// then routes it to the open `KeychainSignModal` (if any) so it can
+/// surface a "connection lost" banner while sessions are pending.
+fn stream_health_dispatch(status: ConnectionStatus) -> Task<Message> {
+    Task::done(Message::KeychainSign(
+        crate::app::state::vault::keychain_sign::KeychainSignMessage::StreamHealth(status),
+    ))
+}
+
 fn make_connect_stream(
     key: &ConnectStreamSubKey,
 ) -> impl iced::futures::Stream<Item = crate::services::connect::grpc::ConnectStreamMessage> + 'static
@@ -817,6 +874,7 @@ fn connect_stream_ready_task(
     datadir: CoincubeDirectory,
     tokens: Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>>,
     email: String,
+    cube_uuid: Option<String>,
 ) -> Task<Message> {
     use crate::services::connect::client::cache::Account;
     use crate::services::connect::client::get_service_config;
@@ -851,12 +909,45 @@ fn connect_stream_ready_task(
             let last_seen_seq = cache_account
                 .and_then(|a| a.last_seen_event_seq)
                 .unwrap_or(0);
+
+            // Look up the cube's vault id so the server can scope this
+            // session's `SessionEvent` stream to just this cube. If
+            // the lookup fails (no vault yet, transient error) we fall
+            // back to an empty list — the server defaults to "all
+            // events for this user", which is functionally fine but
+            // slightly noisier. The fetch needs an authenticated
+            // CoincubeClient; we build one against the access_token
+            // we just read from the shared `Arc<RwLock>`.
+            let vault_ids = if let Some(cube_uuid) = cube_uuid.as_ref() {
+                let access_token = tokens.read().await.access_token.clone();
+                let mut client = crate::services::coincube::CoincubeClient::new();
+                client.set_token(&access_token);
+                match client.list_cubes().await {
+                    Ok(cubes) => cubes
+                        .iter()
+                        .find(|c| c.uuid == *cube_uuid)
+                        .and_then(|c| c.vault.as_ref())
+                        .map(|v| vec![v.id.to_string()])
+                        .unwrap_or_default(),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Connect stream bootstrap: failed to fetch cubes for vault \
+                             scoping: {} — subscribing to all events for this user",
+                            e,
+                        );
+                        Vec::new()
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+
             Some(ConnectStreamConfig {
                 grpc_url,
                 tokens,
                 device_id,
                 user_agent: format!("coincube-gui/{}", env!("CARGO_PKG_VERSION")),
-                vault_ids: Vec::new(),
+                vault_ids,
                 last_seen_seq,
             })
         },
@@ -926,6 +1017,7 @@ impl App {
                 data_dir.clone(),
                 auth.clone(),
                 email.to_string(),
+                Some(cube_settings.id.clone()),
             ));
         }
         let cmd = Task::batch(tasks);
@@ -1638,15 +1730,19 @@ impl App {
         match event {
             M::Connected => {
                 log::info!("[CONNECT GRPC] Stream connected");
-                Task::none()
+                self.cache.connect_stream_status = ConnectionStatus::Connected;
+                stream_health_dispatch(ConnectionStatus::Connected)
             }
             M::Disconnected(reason) => {
                 log::warn!("[CONNECT GRPC] Stream disconnected: {}", reason);
-                Task::none()
+                self.cache.connect_stream_status = ConnectionStatus::Connecting;
+                stream_health_dispatch(ConnectionStatus::Connecting)
             }
             M::Error(err) => {
                 log::warn!("[CONNECT GRPC] Stream error: {}", err);
-                Task::none()
+                let status = ConnectionStatus::Error(err);
+                self.cache.connect_stream_status = status.clone();
+                stream_health_dispatch(status)
             }
             M::SessionEvent(session_event) => {
                 log::info!(
@@ -1787,7 +1883,13 @@ impl App {
                         // GrpcSessionClient on demand.
                         self.cache.connect_grpc_url = Some(cfg.grpc_url.clone());
                         self.cache.connect_tokens = Some(cfg.tokens.clone());
+                        self.cache.connect_device_id = Some(cfg.device_id.clone());
+                        self.cache.connect_email = self.connect_email.clone();
                         self.connect_stream_config = Some(cfg);
+                        // Subscription will mount on the next render
+                        // tick — show `Connecting` until the first
+                        // `ConnectStreamMessage::Connected` lands.
+                        self.cache.connect_stream_status = ConnectionStatus::Connecting;
                     }
                     None => {
                         tracing::debug!(
@@ -2263,6 +2365,24 @@ impl App {
                 } else if was_authenticated && !self.cache.connect_authenticated {
                     // Logout occurred - clear the avatar
                     self.cache.avatar_handle = None;
+                }
+                // Connect logout: tear down the realtime stream. The
+                // subscription is keyed on `connect_stream_config`, so
+                // clearing it (plus the cache mirrors) drops the gRPC
+                // stream on the next `subscription()` tick — Iced's
+                // model is declarative, there is no task handle to
+                // cancel. NOTE: a subsequent in-place relogin does not
+                // yet rebuild the stream (would need the token Arc +
+                // email re-plumbed from the account panel); the stream
+                // currently only re-establishes on app restart.
+                if was_authenticated && !self.cache.connect_authenticated {
+                    self.connect_stream_config = None;
+                    self.connect_email = None;
+                    self.cache.connect_grpc_url = None;
+                    self.cache.connect_tokens = None;
+                    self.cache.connect_device_id = None;
+                    self.cache.connect_email = None;
+                    self.cache.connect_stream_status = ConnectionStatus::Inactive;
                 }
                 // Auto-return for the "Switch to Connect" flow. When the user
                 // clicked it without an active session, we routed them to the

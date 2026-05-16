@@ -108,6 +108,24 @@ pub struct Cache {
     pub connect_tokens: Option<
         Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>>,
     >,
+    /// Health state of the Connect realtime gRPC stream. Mirrored from
+    /// `App::handle_connect_stream` so the sidebar can render a small
+    /// status dot without re-plumbing through view function parameters.
+    /// `Inactive` for local-daemon installs and any session before the
+    /// first `Message::ConnectStreamReady` has fired.
+    pub connect_stream_status: crate::app::ConnectionStatus,
+    /// `SignerDevice.id` returned by the API's `RegisterDevice` RPC.
+    /// Surfaced on the Settings → About page so the user can confirm
+    /// this desktop is registered, and to drive the "Re-register"
+    /// affordance. Mirrored from the Connect cache on
+    /// `Message::ConnectStreamReady`. `None` when the desktop hasn't
+    /// registered yet or for local-daemon installs.
+    pub connect_device_id: Option<String>,
+    /// Email of the authenticated Connect account. Surfaced alongside
+    /// the device id for at-a-glance "which account is this device
+    /// registered to" troubleshooting. `None` for local-daemon
+    /// installs.
+    pub connect_email: Option<String>,
 }
 
 /// only used for tests.
@@ -142,6 +160,9 @@ impl std::default::Default for Cache {
             recovery_kit_last_backed_up_descriptor_fingerprint: None,
             connect_grpc_url: None,
             connect_tokens: None,
+            connect_stream_status: crate::app::ConnectionStatus::default(),
+            connect_device_id: None,
+            connect_email: None,
         }
     }
 }

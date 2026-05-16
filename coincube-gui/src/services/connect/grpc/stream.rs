@@ -39,6 +39,7 @@ pub fn connect_stream(
             let mut backoff = Duration::from_secs(1);
             let max_backoff = Duration::from_secs(30);
             let mut last_seen_seq = config.last_seen_seq;
+            let mut attempt: u64 = 0;
 
             loop {
                 match super::create_channel(&config.grpc_url).await {
@@ -74,7 +75,13 @@ pub fn connect_stream(
                                         e
                                     );
                                 }
-                                backoff = Duration::from_secs(1); // Reset on success
+                                // Reset on success: backoff so the next
+                                // disconnect retries fast, and `attempt`
+                                // so the warn-every-16 log below flags a
+                                // wedged loop of *consecutive* failures
+                                // rather than cumulative lifetime flaps.
+                                backoff = Duration::from_secs(1);
+                                attempt = 0;
 
                                 let mut inbound = response.into_inner();
                                 loop {
@@ -152,9 +159,27 @@ pub fn connect_stream(
                                 }
                             }
                             Err(e) => {
-                                if let Err(send_err) = channel
-                                    .send(ConnectStreamMessage::Error(e.to_string()))
-                                    .await
+                                // Distinguish auth failures so the App
+                                // can prompt re-login rather than
+                                // tight-looping reconnects against the
+                                // same expired bearer. The shared
+                                // `Arc<RwLock<AccessTokenResponse>>`
+                                // gets refreshed automatically by the
+                                // REST `BackendClient` on its next
+                                // call — but if that path doesn't fire
+                                // soon enough, the stream stays stuck
+                                // in this branch.
+                                let msg = if e.code() == tonic::Code::Unauthenticated {
+                                    format!(
+                                        "Connect session expired. Sign in again to resume \
+                                         real-time updates ({}).",
+                                        e.message(),
+                                    )
+                                } else {
+                                    e.to_string()
+                                };
+                                if let Err(send_err) =
+                                    channel.send(ConnectStreamMessage::Error(msg)).await
                                 {
                                     log::warn!(
                                         "[CONNECT GRPC] Failed to forward connect Error: {}",
@@ -177,7 +202,7 @@ pub fn connect_stream(
                     }
                 }
 
-                // Disconnected — reconnect with exponential backoff
+                // Disconnected — reconnect with exponential backoff + jitter.
                 if let Err(e) = channel
                     .send(ConnectStreamMessage::Disconnected(
                         "Stream disconnected, reconnecting...".into(),
@@ -186,13 +211,82 @@ pub fn connect_stream(
                 {
                     log::warn!("[CONNECT GRPC] Failed to forward Disconnected event: {}", e);
                 }
-                log::debug!(
-                    "[CONNECT GRPC] Reconnecting in {:?} (exponential backoff)",
-                    backoff
-                );
-                tokio::time::sleep(backoff).await;
+                // Jitter: scale the nominal backoff by a random factor in
+                // [0.5, 1.0). Without this every desktop in a fleet
+                // would reconnect at exactly the same offset after an
+                // API restart (a thundering herd against the gRPC
+                // gateway). The half-open window is deliberate — we
+                // never want a *longer* sleep than the configured cap,
+                // only a shorter one.
+                let jitter_factor = 0.5 + (rand::random::<f64>() * 0.5);
+                let sleep_for = backoff.mul_f64(jitter_factor);
+                attempt = attempt.saturating_add(1);
+                // Log at warn every 16 attempts so operators can spot
+                // a wedged retry loop in production logs without
+                // drowning normal flap noise. The first 15 attempts
+                // log at debug.
+                if attempt.is_multiple_of(16) {
+                    log::warn!(
+                        "[CONNECT GRPC] Reconnect attempt #{} (sleep {:?}, nominal {:?})",
+                        attempt,
+                        sleep_for,
+                        backoff,
+                    );
+                } else {
+                    log::debug!(
+                        "[CONNECT GRPC] Reconnecting in {:?} (jittered from {:?})",
+                        sleep_for,
+                        backoff,
+                    );
+                }
+                tokio::time::sleep(sleep_for).await;
                 backoff = (backoff * 2).min(max_backoff);
             }
         },
     )
+}
+
+/// Pure jitter helper exposed for unit testing the backoff math. Given
+/// a nominal backoff `d` returns a value in `[d/2, d)` — never longer
+/// than `d`, so callers can rely on the configured cap as a true upper
+/// bound on the sleep duration.
+#[cfg(test)]
+fn jittered(d: Duration) -> Duration {
+    let factor = 0.5 + (rand::random::<f64>() * 0.5);
+    d.mul_f64(factor)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jitter_stays_within_half_open_window() {
+        let nominal = Duration::from_secs(8);
+        for _ in 0..1000 {
+            let s = jittered(nominal);
+            assert!(
+                s >= nominal / 2,
+                "jittered sleep {:?} fell below the nominal/2 floor",
+                s
+            );
+            assert!(
+                s < nominal,
+                "jittered sleep {:?} exceeded the nominal ceiling",
+                s
+            );
+        }
+    }
+
+    #[test]
+    fn backoff_cap_holds_under_repeated_doubling() {
+        // Mirror the loop body: cap at 30s, double each iteration.
+        let mut backoff = Duration::from_secs(1);
+        let max = Duration::from_secs(30);
+        for _ in 0..20 {
+            backoff = (backoff * 2).min(max);
+            assert!(backoff <= max);
+        }
+        assert_eq!(backoff, max);
+    }
 }

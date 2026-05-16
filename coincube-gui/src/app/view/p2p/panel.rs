@@ -4046,6 +4046,7 @@ impl State for P2PPanel {
                                         avatar: None,
                                         theme_mode: cache.theme_mode,
                                         connect_authenticated: cache.connect_authenticated,
+                                        connect_stream_status: &cache.connect_stream_status,
                                     },
                                 ))
                                 .push(
@@ -4206,6 +4207,7 @@ impl State for P2PPanel {
                                             avatar: None,
                                             theme_mode: cache.theme_mode,
                                             connect_authenticated: cache.connect_authenticated,
+                                            connect_stream_status: &cache.connect_stream_status,
                                         },
                                     ))
                                     .push(
@@ -4262,6 +4264,7 @@ impl State for P2PPanel {
                                             avatar: None,
                                             theme_mode: cache.theme_mode,
                                             connect_authenticated: cache.connect_authenticated,
+                                            connect_stream_status: &cache.connect_stream_status,
                                         },
                                     ))
                                     .push(
@@ -4390,6 +4393,7 @@ impl State for P2PPanel {
                                             avatar: None,
                                             theme_mode: cache.theme_mode,
                                             connect_authenticated: cache.connect_authenticated,
+                                            connect_stream_status: &cache.connect_stream_status,
                                         },
                                     ))
                                     .push(
@@ -4443,6 +4447,7 @@ impl State for P2PPanel {
                                             avatar: None,
                                             theme_mode: cache.theme_mode,
                                             connect_authenticated: cache.connect_authenticated,
+                                            connect_stream_status: &cache.connect_stream_status,
                                         },
                                     ))
                                     .push(

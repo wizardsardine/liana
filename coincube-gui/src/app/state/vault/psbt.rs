@@ -195,7 +195,33 @@ impl PsbtState {
                     }
                 }
 
-                self.modal = None;
+                // Dismissing a Keychain-sign modal (blur or otherwise)
+                // must also terminate any in-flight signing sessions
+                // server-side, not just hide the UI — otherwise signers
+                // keep seeing the request until its 24h TTL elapses.
+                // `cancel_all()` cancels sessions that already have an
+                // id; entries whose `CreateSigningSession` RPC is still
+                // in flight are cancelled later by `on_session_created`,
+                // which only runs while the modal is still mounted to
+                // receive `SessionCreated`. So when sessions are still
+                // undrained, keep the modal mounted but hidden — it
+                // self-closes via `Message::Updated(Ok)` once they all
+                // reach a terminal state.
+                let (cancel, keep_modal) =
+                    if let Some(PsbtModal::KeychainSign(km)) = self.modal.as_mut() {
+                        let cancel = km.cancel_all();
+                        let keep = km.has_undrained_sessions();
+                        if keep {
+                            km.mark_dismissed();
+                        }
+                        (cancel, keep)
+                    } else {
+                        (Task::none(), false)
+                    };
+                if !keep_modal {
+                    self.modal = None;
+                }
+                return cancel;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Delete)) => {
                 self.modal = Some(PsbtModal::Delete(DeleteModal::default()));
@@ -243,17 +269,12 @@ impl PsbtState {
                         "Sign via Keychain is unavailable: Connect is not ready yet.".to_string();
                     return Task::done(Message::View(view::Message::ShowError(msg)));
                 };
-                // Construct a fresh `CoincubeClient` baked with the
-                // current access_token. Token refreshes during the
-                // session lifetime are handled by the gRPC interceptor
-                // (which reads the shared `Arc<RwLock>`) — REST calls
-                // here run before the user starts waiting, so a stale
-                // bearer is unlikely to surface in this short window.
-                let mut coincube_client = crate::services::coincube::CoincubeClient::new();
-                // Read the current access token synchronously via
-                // blocking_read — same pattern as `AuthInterceptor`.
-                let access_token = tokens.blocking_read().access_token.clone();
-                coincube_client.set_token(&access_token);
+                // The REST client's bearer is set asynchronously inside
+                // `KeychainSignModal::launch()`, which reads the shared
+                // `Arc<RwLock>` in an async context. Reading it here on
+                // the synchronous `update` path would require
+                // `blocking_read`, which panics inside a tokio runtime.
+                let coincube_client = crate::services::coincube::CoincubeClient::new();
 
                 let descriptor_id = self.wallet.main_descriptor.to_string();
                 let modal = super::keychain_sign::KeychainSignModal::new(

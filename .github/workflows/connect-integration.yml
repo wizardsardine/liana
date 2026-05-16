@@ -1,0 +1,60 @@
+name: Connect Integration Tests
+
+# Targets the Connect dev API: stream lifecycle, RegisterDevice idempotency,
+# and ResolveSigners against fixture vaults. Gated behind the
+# `integration-tests` Cargo feature so the standard PR CI matrix stays
+# hermetic. Runs nightly + on manual dispatch.
+#
+# Required repository secrets (set under Settings → Secrets and variables → Actions):
+#   - COINCUBE_INTEGRATION_API_URL   The dev API base URL.
+#   - COINCUBE_INTEGRATION_TOKEN     A long-lived JWT for the test account.
+#   - COINCUBE_INTEGRATION_VAULT_ID  (optional) Vault id with known Keychain
+#                                    members for the resolve_signers test.
+#
+# Failures notify via the default GitHub UI; wire into a Slack channel
+# once the suite is reliable enough to act on.
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # Daily at 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  connect-integration:
+    runs-on: ubuntu-latest
+
+    # Skip silently if the required secret isn't configured — keeps a
+    # fork's nightly run from spamming red Xs before the org-level
+    # secret is set.
+    if: vars.CONNECT_INTEGRATION_ENABLED == 'true'
+
+    env:
+      COINCUBE_API_URL: ${{ secrets.COINCUBE_INTEGRATION_API_URL }}
+      COINCUBE_INTEGRATION_TOKEN: ${{ secrets.COINCUBE_INTEGRATION_TOKEN }}
+      COINCUBE_INTEGRATION_VAULT_ID: ${{ secrets.COINCUBE_INTEGRATION_VAULT_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: coincube-gui
+
+      - name: Run integration tests
+        # `secrets` is unavailable in job-level `if`, so guard here on the
+        # env-mapped required secrets. Missing secrets → step skipped (job
+        # stays green) instead of a noisy failure. VAULT_ID is optional.
+        if: env.COINCUBE_API_URL != '' && env.COINCUBE_INTEGRATION_TOKEN != ''
+        run: |
+          cargo test \
+            -p coincube-gui \
+            --features integration-tests \
+            --tests \
+            -- --nocapture
