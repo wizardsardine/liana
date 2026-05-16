@@ -20,7 +20,7 @@ use liana_ui::{
         button, card,
         collapse::Collapse,
         form,
-        modal::legacy,
+        modal::{legacy, ModalWidth},
         pill, separation,
         text::{self, *},
     },
@@ -1019,7 +1019,7 @@ pub fn sign_action<'a>(
     Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))
         .push(card::simple(card_content))
-        .width(Length::Fixed(500.0))
+        .width(ModalWidth::L)
         .into()
 }
 

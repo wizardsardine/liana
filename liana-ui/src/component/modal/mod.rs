@@ -41,6 +41,12 @@ pub enum ModalWidth {
     L = 650,
 }
 
+impl From<ModalWidth> for Length {
+    fn from(val: ModalWidth) -> Self {
+        Length::Fixed(val as u16 as f32)
+    }
+}
+
 /// Keep backward compat for code referencing MODAL_WIDTH.
 pub const MODAL_WIDTH: u16 = ModalWidth::L as u16;
 

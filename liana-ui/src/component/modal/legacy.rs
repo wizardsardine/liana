@@ -1,7 +1,6 @@
 use crate::{
-    color,
-    component::{button, text},
-    icon, image,
+    component::{self, button, text},
+    icon,
     theme::{self},
     widget::*,
 };
@@ -98,12 +97,12 @@ fn provider_identity<'a, T: 'a, F: Display>(
 }
 
 /// Trailing success block: optional GREEN label followed by the 50px success-mark icon.
-fn success_marker<'a, T: 'a>(label: Option<&'static str>) -> Row<'a, T> {
+fn success_marker<T: 'static>(label: Option<&'static str>) -> Row<'static, T> {
     let mut r = Row::new().align_y(Alignment::Center).spacing(5);
     if let Some(l) = label {
-        r = r.push(text::p1_regular(l).color(color::GREEN));
+        r = r.push(text::p1_regular(l));
     }
-    r.push(image::success_mark_icon().width(Length::Fixed(50.0)))
+    r.push(component::badge::success())
 }
 
 /// Trailing warning icon with a bottom tooltip styled by `theme::card::simple`.
@@ -332,7 +331,7 @@ pub fn selected_device<'a, T: 'static + Clone, K: Display, V: Display, F: Displa
     button::device(content, msg)
 }
 
-pub fn signed_device<'a, T: 'a + Clone, K: Display, V: Display, F: Display>(
+pub fn signed_device<'a, T: 'a + Clone + 'static, K: Display, V: Display, F: Display>(
     kind: K,
     version: Option<V>,
     fingerprint: F,
@@ -351,7 +350,7 @@ pub fn signed_device<'a, T: 'a + Clone, K: Display, V: Display, F: Display>(
     button::device(content, msg)
 }
 
-pub fn registered_device<'a, T: 'a + Clone, K: Display, V: Display, F: Display>(
+pub fn registered_device<'a, T: 'a + Clone + 'static, K: Display, V: Display, F: Display>(
     kind: K,
     version: Option<V>,
     fingerprint: F,
@@ -464,7 +463,7 @@ pub fn taproot_unsupported_device<'a, T: 'static + Clone, K: Display>(
     button::device(content, msg)
 }
 
-pub fn signed_hot_key<'a, T: 'a + Clone, F: Display>(
+pub fn signed_hot_key<'a, T: 'a + Clone + 'static, F: Display>(
     fingerprint: F,
     alias: Option<impl Into<Cow<'a, str>> + Display>,
     msg: Option<T>,
@@ -480,7 +479,7 @@ pub fn signed_hot_key<'a, T: 'a + Clone, F: Display>(
     button::device(content, msg)
 }
 
-pub fn selected_hot_key<'a, T: 'a + Clone, F: Display>(
+pub fn selected_hot_key<'a, T: 'a + Clone + 'static, F: Display>(
     fingerprint: F,
     alias: Option<impl Into<Cow<'a, str>> + Display>,
     msg: Option<T>,
@@ -534,7 +533,7 @@ pub fn hot_key<'a, T: 'a + Clone, F: Display>(
     button::device(content, msg)
 }
 
-pub fn selected_provider<'a, T: 'a + Clone, F: Display>(
+pub fn selected_provider<'a, T: 'a + Clone + 'static, F: Display>(
     fingerprint: F,
     alias: impl Into<Cow<'a, str>> + Display,
     key_kind: impl Into<Cow<'a, str>> + Display,
@@ -569,7 +568,7 @@ pub fn unselected_provider<'a, T: 'a + Clone, F: Display>(
     button::device(content, msg)
 }
 
-pub fn unsaved_provider<'a, T: 'a + Clone, F: Display>(
+pub fn unsaved_provider<'a, T: 'a + Clone + 'static, F: Display>(
     fingerprint: F,
     key_kind: impl Into<Cow<'a, str>> + Display,
     token: impl Into<Cow<'a, str>> + Display,
