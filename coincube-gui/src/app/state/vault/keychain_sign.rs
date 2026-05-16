@@ -1113,12 +1113,8 @@ impl KeychainSignModal {
     }
 }
 
-impl Modal for KeychainSignModal {
-    fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
-    }
-
-    fn update(
+impl KeychainSignModal {
+    fn dispatch(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         message: Message,
@@ -1144,15 +1140,13 @@ impl Modal for KeychainSignModal {
                 }
             },
             Message::KeychainSign(KeychainSignMessage::SessionCreated(fp, res)) => {
-                let task = self.on_session_created(fp, res);
-                return Task::batch([task, self.close_if_dismissed_and_drained()]);
+                return self.on_session_created(fp, res);
             }
             Message::KeychainSign(KeychainSignMessage::SessionFetched(sid, res)) => {
                 return self.on_session_fetched(daemon, tx, sid, res);
             }
             Message::KeychainSign(KeychainSignMessage::SessionCancelled(sid, res)) => {
                 self.on_session_cancelled(sid, res);
-                return self.close_if_dismissed_and_drained();
             }
             Message::KeychainSign(KeychainSignMessage::Persisted { session_id, result }) => {
                 match result {
@@ -1204,6 +1198,27 @@ impl Modal for KeychainSignModal {
             _ => {}
         }
         Task::none()
+    }
+}
+
+impl Modal for KeychainSignModal {
+    fn subscription(&self) -> Subscription<Message> {
+        Subscription::none()
+    }
+
+    fn update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        message: Message,
+        tx: &mut SpendTx,
+    ) -> Task<Message> {
+        // Single choke point: whichever arm handled the message, if the
+        // modal was dismissed mid-flight and every pending session is
+        // now terminal, tear it down here. Centralised so no individual
+        // arm (Persisted / SessionFetched errors, stream events, …) can
+        // leak a hidden dismissed modal by forgetting to re-check.
+        let task = self.dispatch(daemon, message, tx);
+        Task::batch([task, self.close_if_dismissed_and_drained()])
     }
 
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {

@@ -76,6 +76,10 @@ pub fn connect_stream(
                                     );
                                 }
                                 backoff = Duration::from_secs(1); // Reset on success
+                                // Track *consecutive* failures so the
+                                // warn-every-16 log below flags a wedged
+                                // loop, not cumulative lifetime flaps.
+                                attempt = 0;
 
                                 let mut inbound = response.into_inner();
                                 loop {
