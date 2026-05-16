@@ -17,7 +17,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iced::{clipboard, Subscription, Task};
-use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
 pub use liana::miniscript::bitcoin;
@@ -330,14 +329,21 @@ impl<S: SettingsTrait> App<S> {
     pub fn stop(&mut self) {
         info!("Close requested");
         if self.daemon.backend().is_embedded() {
-            if let Err(e) = Handle::current().block_on(async { self.daemon.stop().await }) {
-                error!("{}", e);
-            } else {
-                info!("Internal daemon stopped");
-            }
-            if let Some(bitcoind) = self.internal_bitcoind.take() {
-                bitcoind.stop();
-            }
+            let daemon = self.daemon.clone();
+            let bitcoind = self.internal_bitcoind.take();
+            tokio::spawn(async move {
+                if let Err(e) = daemon.stop().await {
+                    error!("{}", e);
+                } else {
+                    info!("Internal daemon stopped");
+                }
+
+                if let Some(bitcoind) = bitcoind {
+                    if let Err(e) = tokio::task::spawn_blocking(move || bitcoind.stop()).await {
+                        error!("Internal bitcoind shutdown task failed: {}", e);
+                    }
+                }
+            });
         }
     }
 
