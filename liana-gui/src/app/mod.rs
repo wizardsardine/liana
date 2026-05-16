@@ -247,31 +247,37 @@ impl<S: SettingsTrait> App<S> {
 
         match &menu {
             menu::Menu::TransactionPreSelected(txid) => {
-                if let Ok(Some(tx)) = Handle::current().block_on(async {
-                    self.daemon
-                        .get_history_txs(&[*txid])
-                        .await
-                        .map(|txs| txs.first().cloned())
-                }) {
-                    self.panels.transactions.preselect(tx);
-                    self.panels.current = menu;
-                    return Task::none();
-                };
+                let txid = *txid;
+                let daemon = self.daemon.clone();
+                self.panels.current = menu;
+                return Task::perform(
+                    async move {
+                        daemon
+                            .get_history_txs(&[txid])
+                            .await
+                            .map(|txs| txs.first().cloned())
+                            .map_err(Error::from)
+                    },
+                    move |res| Message::PreselectedHistoryTransaction(txid, res),
+                );
             }
             menu::Menu::PsbtPreSelected(txid) => {
                 // Get preselected spend from DB in case it's not yet in the cache.
                 // We only need this single spend as we will go straight to its view and not show the PSBTs list.
                 // In case of any error loading the spend or if it doesn't exist, load PSBTs list in usual way.
-                if let Ok(Some(spend_tx)) = Handle::current().block_on(async {
-                    self.daemon
-                        .list_spend_transactions(Some(&[*txid]))
-                        .await
-                        .map(|txs| txs.first().cloned())
-                }) {
-                    self.panels.psbts.preselect(spend_tx);
-                    self.panels.current = menu;
-                    return Task::none();
-                };
+                let txid = *txid;
+                let daemon = self.daemon.clone();
+                self.panels.current = menu;
+                return Task::perform(
+                    async move {
+                        daemon
+                            .list_spend_transactions(Some(&[txid]))
+                            .await
+                            .map(|txs| txs.first().cloned())
+                            .map_err(Error::from)
+                    },
+                    move |res| Message::PreselectedSpendTransaction(txid, res),
+                );
             }
             menu::Menu::SettingsPreSelected(setting) => {
                 self.panels.current = menu.clone();
@@ -552,6 +558,36 @@ impl<S: SettingsTrait> App<S> {
                     &self.cache,
                     Message::WalletUpdated(Ok(wallet)),
                 )
+            }
+            Message::PreselectedHistoryTransaction(txid, Ok(Some(tx)))
+                if self.panels.current == Menu::TransactionPreSelected(txid) =>
+            {
+                self.panels.transactions.preselect(tx);
+                Task::none()
+            }
+            Message::PreselectedHistoryTransaction(txid, _) => {
+                if self.panels.current == Menu::TransactionPreSelected(txid) {
+                    return self
+                        .panels
+                        .current_mut()
+                        .reload(self.daemon.clone(), self.wallet.clone());
+                }
+                Task::none()
+            }
+            Message::PreselectedSpendTransaction(txid, Ok(Some(spend_tx)))
+                if self.panels.current == Menu::PsbtPreSelected(txid) =>
+            {
+                self.panels.psbts.preselect(spend_tx);
+                Task::none()
+            }
+            Message::PreselectedSpendTransaction(txid, _) => {
+                if self.panels.current == Menu::PsbtPreSelected(txid) {
+                    return self
+                        .panels
+                        .current_mut()
+                        .reload(self.daemon.clone(), self.wallet.clone());
+                }
+                Task::none()
             }
             Message::View(view::Message::Menu(menu)) => self.set_current_panel(menu),
             Message::View(view::Message::OpenUrl(url)) => {

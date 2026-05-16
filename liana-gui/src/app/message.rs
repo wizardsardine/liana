@@ -60,6 +60,8 @@ pub enum Message {
     HardwareWallets(HardwareWalletMessage),
     HistoryTransactionsExtension(Result<Vec<HistoryTransaction>, Error>),
     HistoryTransactions(Result<Vec<HistoryTransaction>, Error>),
+    PreselectedHistoryTransaction(Txid, Result<Option<HistoryTransaction>, Error>),
+    PreselectedSpendTransaction(Txid, Result<Option<SpendTx>, Error>),
     Payments(Result<Vec<Payment>, Error>),
     PaymentsExtension(Result<Vec<Payment>, Error>),
     Payment(Result<(HistoryTransaction, usize), Error>),
