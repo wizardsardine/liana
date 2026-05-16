@@ -485,6 +485,12 @@ impl<S: SettingsTrait> App<S> {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::RemoteBackendAliasUpdated(result) => {
+                if let Err(e) = result {
+                    tracing::error!("Failed to update wallet settings with remote alias: {}", e);
+                }
+                Task::none()
+            }
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
                 let relevant = self.wallet.fiat_price_is_relevant(&fiat_price);
                 tracing::trace!(

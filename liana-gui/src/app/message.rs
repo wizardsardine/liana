@@ -30,6 +30,7 @@ use crate::{
 pub enum Message {
     Tick,
     RedirectLianaConnectLogin,
+    RemoteBackendAliasUpdated(Result<(), String>),
     UpdateDaemonCache(Result<DaemonCache, Error>),
     CacheUpdated,
     Fiat(FiatMessage),
