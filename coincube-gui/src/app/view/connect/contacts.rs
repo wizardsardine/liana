@@ -649,7 +649,11 @@ fn contact_detail_ux<'a>(
             .push(dialog);
     }
 
-    col.spacing(0).width(Length::Fill).into()
+    // Cap the panel width so the profile/cubes cards read as a focused
+    // detail column instead of stretching edge-to-edge on wide windows.
+    // Matches the `.max_width(500)` the Invite form uses below, bumped
+    // slightly to comfortably fit the two side-by-side action buttons.
+    col.spacing(0).max_width(520).width(Length::Fill).into()
 }
 
 /// W14 multi-select dialog body. Rendered inline beneath the Associated

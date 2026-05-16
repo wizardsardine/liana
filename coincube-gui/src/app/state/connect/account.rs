@@ -383,17 +383,24 @@ impl ConnectAccountPanel {
             if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
                 if let Ok(bytes) = entry.get_secret() {
                     if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
-                        // Migrate to cube-specific key
+                        // Copy to the cube-specific key, but intentionally
+                        // KEEP the legacy global credential in place.
+                        //
+                        // The Launcher's ConnectAccountPanel has no
+                        // `current_cube_uuid`, so it can only ever read the
+                        // legacy global key. Deleting it here meant that
+                        // once any Cube was opened (App migrates + this used
+                        // to delete the global key), every subsequent return
+                        // to the Launcher — notably the Recovery → Launcher
+                        // navigation flow — found no session and forced the
+                        // user to sign in again. Retaining the legacy key
+                        // lets the Launcher restore the session. Explicit
+                        // logout still clears both keys via
+                        // `clear_keyring_session`.
                         self.save_session_to_keyring(&session);
-                        // Delete legacy credential to prevent other cubes from reusing it
-                        if let Err(e) = entry.delete_credential() {
-                            log::warn!(
-                                "[CONNECT] Failed to delete legacy session after migration: {}",
-                                e
-                            );
-                        }
                         log::info!(
-                            "[CONNECT] Migrated legacy session to cube-specific key for {}",
+                            "[CONNECT] Copied legacy session to cube-specific key for {} \
+                             (legacy key retained for Launcher session restore)",
                             key
                         );
                         return Some(session);

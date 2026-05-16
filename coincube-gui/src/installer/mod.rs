@@ -66,14 +66,13 @@ use step::{
     DefineDescriptor, DefineNode, DescriptorTemplateDescription, Final, ImportDescriptor,
     ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic, RecoveryKitRestoreStep,
     RegisterDescriptor, RemoteBackendLogin, RestorePinSetupStep, RestoreScope,
-    SelectBitcoindTypeStep, ShareXpubs, Step, WalletAlias,
+    SelectBitcoindTypeStep, Step, WalletAlias,
 };
 
 #[derive(Debug, Clone)]
 pub enum UserFlow {
     CreateWallet,
     AddWallet,
-    ShareXpubs,
     /// W13 — full install restore from a Connect Recovery Kit.
     /// Skips the descriptor-editor, backup-mnemonic, and register-
     /// descriptor steps because the kit provides both the seed and
@@ -245,7 +244,6 @@ impl Installer {
                         WalletAlias::default().into(),
                         Final::new().into(),
                     ],
-                    UserFlow::ShareXpubs => vec![ShareXpubs::new(network, signer.clone()).into()],
                     UserFlow::AddWallet => vec![
                         ChooseBackend::new(network).into(),
                         RemoteBackendLogin::new(

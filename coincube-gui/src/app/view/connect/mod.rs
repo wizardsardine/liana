@@ -556,7 +556,7 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                 tier: PlanTier::Free,
                 features: vec![
                     "Esplora access".into(),
-                    "Descriptor backup".into(),
+                    "Cube Recovery Wallet".into(),
                     "1 signing key (no policies)".into(),
                 ],
                 price_label: "Free".to_string(),
