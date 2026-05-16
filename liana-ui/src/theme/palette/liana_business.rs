@@ -196,6 +196,27 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                clickable_section: Button {
+                    active: ButtonPalette {
+                        background: BTN_TERTIARY_BG,
+                        text: color::DARK_TEXT_PRIMARY,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: BTN_TERTIARY_BG,
+                        text: color::BUSINESS_BLUE,
+                        border: color::BUSINESS_BLUE.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: BTN_TERTIARY_BG,
+                        text: color::BUSINESS_BLUE,
+                        border: color::BUSINESS_BLUE.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: btn_disabled(),
+                },
                 clickable_card: Button {
                     active: ButtonPalette {
                         background: BTN_TERTIARY_BG,

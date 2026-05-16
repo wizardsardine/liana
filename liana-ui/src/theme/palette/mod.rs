@@ -49,6 +49,8 @@ pub struct Buttons {
     pub transparent: Button,
     pub transparent_border: Button,
     pub clickable_card: Button,
+    // previously theme::button::transparent_border wrapped into theme::card::simple
+    pub clickable_section: Button,
     pub primary: Button,
     pub secondary: Button,
     pub tertiary: Button,

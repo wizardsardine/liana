@@ -1,11 +1,11 @@
 //! View functions for business settings UI.
 
-use iced::widget::{scrollable, Column, Container, Row, Space, Toggler};
+use iced::widget::{scrollable, Column, Row, Space, Toggler};
 use iced::{Alignment, Length};
 use liana_ui::{
     component::{badge, button, card, pick_list, separation, text::*},
     icon, theme,
-    widget::{ColumnExt, Element, SpaceExt},
+    widget::{ColumnExt, Container, Element, SpaceExt},
 };
 
 use crate::settings::message::{Msg, Section};

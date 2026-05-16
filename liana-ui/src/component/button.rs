@@ -1,6 +1,6 @@
 use super::{
     modal::BTN_W,
-    text::{button_text, text},
+    text::{button_text, panel_title, text},
 };
 use crate::{
     font::{BOLD, MEDIUM},
@@ -102,6 +102,10 @@ pub fn transparent<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button
     Button::new(content(icon, button_text(t))).style(theme::button::container)
 }
 
+pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+    Button::new(content(icon, panel_title(t))).style(theme::button::breadcrumb)
+}
+
 pub fn flat<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
     Button::new(content(icon, button_text(t))).style(theme::button::transparent)
 }
@@ -124,6 +128,25 @@ pub fn transparent_border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) ->
 
 pub fn link<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
     Button::new(content(icon, button_text(t))).style(theme::button::link)
+}
+
+pub fn clickable_card<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
+    content: T,
+    msg: Option<M>,
+) -> Button<'a, M> {
+    Button::new(content.into())
+        .style(theme::button::clickable_card)
+        .on_press_maybe(msg)
+}
+
+pub fn clickable_section<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
+    content: T,
+    msg: Option<M>,
+) -> Button<'a, M> {
+    Button::new(content.into())
+        .style(theme::button::clickable_section)
+        .on_press_maybe(msg)
+        .width(Length::Fill)
 }
 
 fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>) -> Container<'a, T> {

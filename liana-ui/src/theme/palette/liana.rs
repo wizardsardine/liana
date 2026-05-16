@@ -191,6 +191,27 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                clickable_section: Button {
+                    active: ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREY_2,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREY_2,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREY_2,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: btn_disabled(),
+                },
                 clickable_card: Button {
                     active: ButtonPalette {
                         background: color::GREY_6,

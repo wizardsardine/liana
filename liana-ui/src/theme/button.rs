@@ -40,6 +40,7 @@ button_styles!(
     transparent,
     transparent_border,
     clickable_card,
+    clickable_section,
     link,
     signing_devices,
 );
@@ -64,6 +65,16 @@ pub fn transparent_primary_text(theme: &Theme, status: Status) -> Style {
     let mut style = button(
         &theme.colors.buttons.transparent,
         status,
+        theme.button_border_width,
+    );
+    style.text_color = theme.colors.text.primary;
+    style
+}
+
+pub fn breadcrumb(theme: &Theme, _status: Status) -> Style {
+    let mut style = button(
+        &theme.colors.buttons.transparent,
+        Status::Active,
         theme.button_border_width,
     );
     style.text_color = theme.colors.text.primary;
