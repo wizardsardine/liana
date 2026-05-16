@@ -209,7 +209,7 @@ pub fn about_section<'a>(
         Column::new()
             .push(
                 Row::new()
-                    .push(badge::badge(icon::tooltip_icon()))
+                    .push(badge::tooltip())
                     .push(text("Version").bold())
                     .padding(10)
                     .spacing(20)
@@ -320,7 +320,7 @@ pub fn bitcoind_edit<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::network_icon()))
+                            .push(badge::network())
                             .push(
                                 Column::new()
                                     .push(text("Network:"))
@@ -331,7 +331,7 @@ pub fn bitcoind_edit<'a>(
                     )
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::block_icon()))
+                            .push(badge::block())
                             .push(
                                 Column::new()
                                     .push(text("Block Height:"))
@@ -425,7 +425,7 @@ pub fn bitcoind_edit<'a>(
         Column::new()
             .push(
                 Row::new()
-                    .push(badge::badge(icon::bitcoin_icon()))
+                    .push(badge::bitcoin())
                     .push(text("Bitcoin Core").bold())
                     .padding(10)
                     .spacing(20)
@@ -466,7 +466,7 @@ pub fn bitcoind<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::network_icon()))
+                            .push(badge::network())
                             .push(
                                 Column::new()
                                     .push(text("Network:"))
@@ -477,7 +477,7 @@ pub fn bitcoind<'a>(
                     )
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::block_icon()))
+                            .push(badge::block())
                             .push(
                                 Column::new()
                                     .push(text("Block Height:"))
@@ -547,7 +547,7 @@ pub fn bitcoind<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::bitcoin_icon()))
+                            .push(badge::bitcoin())
                             .push(text("Bitcoin Core").bold())
                             .push_maybe(if is_configured_node_type {
                                 Some(is_running_label(is_running))
@@ -590,7 +590,7 @@ pub fn electrum_edit<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::network_icon()))
+                            .push(badge::network())
                             .push(
                                 Column::new()
                                     .push(text("Network:"))
@@ -601,7 +601,7 @@ pub fn electrum_edit<'a>(
                     )
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::block_icon()))
+                            .push(badge::block())
                             .push(
                                 Column::new()
                                     .push(text("Block Height:"))
@@ -644,7 +644,7 @@ pub fn electrum_edit<'a>(
         Column::new()
             .push(
                 Row::new()
-                    .push(badge::badge(icon::bitcoin_icon()))
+                    .push(badge::bitcoin())
                     .push(text("Electrum").bold())
                     .padding(10)
                     .spacing(20)
@@ -685,7 +685,7 @@ pub fn electrum<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::network_icon()))
+                            .push(badge::network())
                             .push(
                                 Column::new()
                                     .push(text("Network:"))
@@ -696,7 +696,7 @@ pub fn electrum<'a>(
                     )
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::block_icon()))
+                            .push(badge::block())
                             .push(
                                 Column::new()
                                     .push(text("Block Height:"))
@@ -737,7 +737,7 @@ pub fn electrum<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::bitcoin_icon()))
+                            .push(badge::bitcoin())
                             .push(text("Electrum").bold())
                             .push_maybe(if is_configured_node_type {
                                 Some(is_running_label(is_running))
@@ -804,7 +804,7 @@ pub fn rescan<'a>(
         Column::new()
             .push(
                 Row::new()
-                    .push(badge::badge(icon::block_icon()))
+                    .push(badge::block())
                     .push(text("Blockchain rescan").bold().width(Length::Fill))
                     .push_maybe(if success {
                         Some(

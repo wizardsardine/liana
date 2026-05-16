@@ -504,6 +504,11 @@ impl Palette {
                     text: color::WHITE.into(),
                     border: color::TRANSPARENT.into(),
                 },
+                success: ContainerPalette {
+                    background: color::GREEN,
+                    text: color::BLACK.into(),
+                    border: color::TRANSPARENT.into(),
+                },
             },
             pills: Pills {
                 simple: ContainerPalette {

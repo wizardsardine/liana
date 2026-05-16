@@ -130,7 +130,7 @@ pub fn about_view() -> Element<'static, Msg> {
         Column::new()
             .push(
                 Row::new()
-                    .push(badge::badge(icon::tooltip_icon()))
+                    .push(badge::tooltip())
                     .push(text("Version").bold())
                     .padding(10)
                     .spacing(20)

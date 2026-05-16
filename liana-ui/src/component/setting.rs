@@ -59,10 +59,10 @@ impl SectionKind {
 
     pub fn icon<M>(&self) -> Container<'static, M> {
         match self {
-            SectionKind::General => badge::badge(icon::wrench_icon()),
-            SectionKind::Node | SectionKind::Backend => badge::badge(icon::bitcoin_icon()),
-            SectionKind::Wallet | SectionKind::ImportExport => badge::badge(icon::wallet_icon()),
-            SectionKind::About => badge::badge(icon::tooltip_icon()),
+            SectionKind::General => badge::setting(),
+            SectionKind::Node | SectionKind::Backend => badge::bitcoin(),
+            SectionKind::Wallet | SectionKind::ImportExport => badge::wallet(),
+            SectionKind::About => badge::tooltip(),
         }
     }
 }
@@ -109,8 +109,8 @@ impl ImportExportKind {
 
     pub fn badge<M>(&self) -> Container<'static, M> {
         match self {
-            ImportExportKind::ImportWallet => badge::badge(icon::restore_icon()),
-            _ => badge::badge(icon::backup_icon()),
+            ImportExportKind::ImportWallet => badge::restore(),
+            _ => badge::backup(),
         }
     }
 }

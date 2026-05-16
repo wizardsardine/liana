@@ -1,7 +1,8 @@
 use crate::{
     color,
     component::{button, text},
-    icon, image, theme,
+    icon, image,
+    theme::{self},
     widget::*,
 };
 use bitcoin::bip32::{ChildNumber, Fingerprint};

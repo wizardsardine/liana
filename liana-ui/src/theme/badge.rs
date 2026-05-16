@@ -24,3 +24,7 @@ pub fn simple(theme: &Theme) -> Style {
 pub fn bitcoin(theme: &Theme) -> Style {
     badge(&theme.colors.badges.bitcoin)
 }
+
+pub fn success(theme: &Theme) -> Style {
+    badge(&theme.colors.badges.success)
+}

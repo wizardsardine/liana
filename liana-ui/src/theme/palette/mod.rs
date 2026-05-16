@@ -117,6 +117,7 @@ pub struct Banners {
 pub struct Badges {
     pub simple: ContainerPalette,
     pub bitcoin: ContainerPalette,
+    pub success: ContainerPalette,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
