@@ -7,7 +7,7 @@ pub const ICON_SIZE_S: u16 = 16;
 
 const BOOTSTRAP_ICONS: Font = Font::with_name("bootstrap-icons");
 
-fn bootstrap_icon(unicode: char) -> Text<'static> {
+fn bootstrap_icon<'a>(unicode: char) -> Text<'a> {
     Text::new(unicode.to_string())
         .font(BOOTSTRAP_ICONS)
         .width(Length::Fixed(20.0))
@@ -75,7 +75,7 @@ pub fn person_icon() -> Text<'static> {
     bootstrap_icon('\u{F4DA}')
 }
 
-pub fn tooltip_icon() -> Text<'static> {
+pub fn tooltip_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F431}')
 }
 

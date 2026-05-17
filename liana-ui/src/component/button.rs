@@ -1,6 +1,7 @@
 use super::{
     modal::BTN_W,
     text::{button_text, panel_title, text},
+    tooltip,
 };
 use crate::{
     font::{BOLD, MEDIUM},
@@ -137,12 +138,23 @@ pub fn clickable_section<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
 }
 
 fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>) -> Container<'a, T> {
-    match icon {
-        None => container(text).align_x(Horizontal::Center).padding(5),
-        Some(i) => container(row![i, text].spacing(10).align_y(Vertical::Center))
-            .align_x(Horizontal::Center)
-            .padding(5),
+    content_with_tooltip(icon, text, None)
+}
+
+fn content_with_tooltip<'a, T: 'a>(
+    icon: Option<Text<'a>>,
+    text: Text<'a>,
+    tooltip: Option<&'a str>,
+) -> Container<'a, T> {
+    let mut row: Row<'a, T> = Row::new().spacing(10).align_y(Vertical::Center);
+    if let Some(icon) = icon {
+        row = row.push(icon);
     }
+    row = row.push(text);
+    if let Some(tt) = tooltip {
+        row = row.push(tooltip::tooltip(tt));
+    }
+    container(row).align_x(Horizontal::Center).padding(5)
 }
 
 pub fn device<'a, T: 'a + std::clone::Clone, C: Into<Element<'a, T>>>(
@@ -197,6 +209,17 @@ pub enum BtnWidth {
     XL = 200,
     /// Very long labels (Connect with another email)
     XXL = 260,
+    /// Default to Length::Shrink
+    Auto,
+}
+
+impl From<BtnWidth> for Length {
+    fn from(value: BtnWidth) -> Self {
+        match value {
+            BtnWidth::Auto => Length::Shrink,
+            v => (v as u16 as u32).into(),
+        }
+    }
 }
 
 /// Primary button with preset width.
@@ -225,6 +248,20 @@ pub fn btn_secondary<'a, T: Clone + 'a>(
         btn = btn.on_press(m);
     }
     btn
+}
+
+/// Secondary button with preset width.
+pub fn btn_secondary_with_tooltip<'a, T: Clone + 'a>(
+    icon: Option<Text<'a>>,
+    label: &'a str,
+    tooltip: Option<&'a str>,
+    width: BtnWidth,
+    msg: Option<T>,
+) -> Button<'a, T> {
+    Button::new(content_with_tooltip(icon, button_text(label), tooltip))
+        .width(width)
+        .style(theme::button::secondary)
+        .on_press_maybe(msg)
 }
 
 /// Tertiary button with preset width.
