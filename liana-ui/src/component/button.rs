@@ -10,7 +10,7 @@ use crate::{
 };
 use iced::{
     alignment::{Horizontal, Vertical},
-    widget::{button, container, row},
+    widget::{container, row},
     Length,
 };
 
@@ -86,50 +86,37 @@ fn content_menu<'a, T: 'a>(
     }
 }
 
-pub fn alert<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::destructive)
+macro_rules! button_helpers {
+    ($($entry:tt),* $(,)?) => {
+        $( button_helpers!(@one $entry); )*
+    };
+    (@one ($name:ident, $style:ident)) => {
+        pub fn $name<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+            Button::new(content(icon, button_text(t))).style(theme::button::$style)
+        }
+    };
+    (@one $name:ident) => {
+        button_helpers!(@one ($name, $name));
+    };
 }
 
-pub fn destructive<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::destructive)
-}
-
-pub fn primary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::primary)
-}
-
-pub fn transparent<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::container)
-}
+button_helpers!(
+    (alert, destructive),
+    destructive,
+    primary,
+    (transparent, container),
+    transparent_primary_text,
+    (flat, transparent),
+    secondary,
+    tertiary,
+    (border, secondary),
+    (transparent_border, container_border),
+    link,
+);
 
 pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
     Button::new(content(icon, panel_title(t))).style(theme::button::breadcrumb)
 }
-
-pub fn flat<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::transparent)
-}
-
-pub fn secondary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::secondary)
-}
-
-pub fn tertiary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::tertiary)
-}
-
-pub fn border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::secondary)
-}
-
-pub fn transparent_border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    button(content(icon, button_text(t))).style(theme::button::container_border)
-}
-
-pub fn link<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::link)
-}
-
 pub fn clickable_card<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
     content: T,
     msg: Option<M>,
