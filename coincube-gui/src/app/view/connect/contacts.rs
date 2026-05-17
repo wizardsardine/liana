@@ -60,10 +60,7 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
     // sent invites, received invites) are missing before showing the
     // spinner. Once any one of them lands the spinner gives way to the
     // section layout, which renders its own per-section loading state.
-    if cs.loading
-        && cs.contacts.is_none()
-        && cs.invites.is_none()
-        && cs.received_invites.is_none()
+    if cs.loading && cs.contacts.is_none() && cs.invites.is_none() && cs.received_invites.is_none()
     {
         col = col.push(
             text::p1_regular("Loading\u{2026}")
@@ -77,10 +74,7 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
     // (errors during initial load are silently swallowed — the empty state is shown instead)
     if !cs.loading {
         if let Some(err) = cs.error.as_deref() {
-            if cs.contacts.is_some()
-                || cs.invites.is_some()
-                || cs.received_invites.is_some()
-            {
+            if cs.contacts.is_some() || cs.invites.is_some() || cs.received_invites.is_some() {
                 col = col.push(
                     container(text::p2_regular(err).color(color::RED))
                         .padding(8)
@@ -96,10 +90,7 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
     // the first thing the user sees on the Contacts surface. Backend
     // pre-filters to pending + non-expired
     // (`invite.go:374-429`), so no client-side filter pass.
-    let received: &[ReceivedInvite] = cs
-        .received_invites
-        .as_deref()
-        .unwrap_or_default();
+    let received: &[ReceivedInvite] = cs.received_invites.as_deref().unwrap_or_default();
 
     if !received.is_empty() {
         col = col.push(text::p1_bold("Received Invites").style(theme::text::primary));
