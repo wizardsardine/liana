@@ -316,19 +316,6 @@ impl Launcher {
                     |(d, n, c)| Message::Install(d, n, UserFlow::RestoreFromRecoveryKit, c),
                 )
             }
-            Message::View(ViewMessage::ShareXpubs) => {
-                if !self.developer_mode {
-                    tracing::debug!(
-                        "Ignoring ShareXpubs action because developer mode is disabled"
-                    );
-                    return Task::none();
-                }
-                let datadir_path = self.datadir_path.clone();
-                let network = self.network;
-                Task::perform(async move { (datadir_path, network) }, |(d, n)| {
-                    Message::Install(d, n, UserFlow::ShareXpubs, None)
-                })
-            }
             Message::View(ViewMessage::ShowCreateCube(show)) => {
                 if let State::Cubes { create_cube, .. } = &mut self.state {
                     *create_cube = show;
@@ -1701,14 +1688,6 @@ impl Launcher {
                         )
                         .push(if self.developer_mode {
                             Some(
-                                button::xpubs_button(None, "Share Xpubs")
-                                    .on_press(ViewMessage::ShareXpubs),
-                            )
-                        } else {
-                            None
-                        })
-                        .push(if self.developer_mode {
-                            Some(
                                 pick_list(
                                     self.displayed_networks.as_slice(),
                                     Some(self.network),
@@ -2112,7 +2091,9 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
             ("Contacts", ConnectSubMenu::Contacts),
             ("Plan & Billing", ConnectSubMenu::PlanBilling),
             ("Security", ConnectSubMenu::Security),
-            ("Duress", ConnectSubMenu::Duress),
+            // Duress is hidden until the backend endpoint (/connect/duress)
+            // is implemented — keep the ConnectSubMenu::Duress variant and
+            // duress_ux() so re-enabling is a one-line revert.
             // Invites is per-Cube (key holders), not shown in launcher
         ];
         for (label, sub) in items {
@@ -2715,7 +2696,6 @@ pub enum ViewMessage {
     CreateCube,
     PinInput(pin_input::Message),
     PinConfirmInput(pin_input::Message),
-    ShareXpubs,
     SelectNetwork(Network),
     StartInstall(Network),
     Check,
