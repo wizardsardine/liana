@@ -434,7 +434,11 @@ impl ConnectAccountPanel {
             Ok(entry) => {
                 let _ = entry.delete_credential();
                 if let Err(e) = entry.set_secret(&bytes) {
-                    log::error!("[CONNECT] Failed to save session to keyring '{}': {}", key, e);
+                    log::error!(
+                        "[CONNECT] Failed to save session to keyring '{}': {}",
+                        key,
+                        e
+                    );
                 }
             }
             Err(e) => log::error!("[CONNECT] Keyring inaccessible for save '{}': {}", key, e),
