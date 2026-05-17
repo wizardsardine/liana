@@ -5,6 +5,60 @@ on:
   pull_request:
 
 jobs:
+  gui-tests:
+    runs-on: self-hosted
+    timeout-minutes: 30
+
+    env:
+      VERBOSE: 0
+      LOG_LEVEL: debug
+      TIMEOUT: 120
+      USE_TAPROOT: 0
+      BITCOIN_BACKEND_TYPE: bitcoind
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: cleanup /tmp
+        run: |
+          find /tmp -maxdepth 1 -type d -name 'lianad*' -mtime +0 -exec rm -rf {} +
+
+      - name: Build liana-gui
+        run: |
+          nix --extra-experimental-features "nix-command flakes" \
+            develop .#default \
+            -c cargo build -p liana-gui
+
+      - name: Run GUI tests
+        run: |
+          nix --extra-experimental-features "nix-command flakes" \
+            develop .#gui-tests \
+            -c env LIANA_GUI_PATH="$PWD/target/debug/liana-gui" \
+              pytest tests/gui -vv -s --tb=short
+
+      - name: Collect GUI test artifacts
+        if: failure()
+        run: |
+          mkdir -p gui-test-artifacts
+          shopt -s nullglob
+          for dir in /tmp/lianad-tests-*/*/x11/gui-artifacts; do
+            find "$dir" -type f -exec cp --parents {} gui-test-artifacts/ \;
+          done
+
+      - name: Upload GUI test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-test-artifacts
+          path: gui-test-artifacts
+          if-no-files-found: ignore
+
   functional-tests:
     runs-on: self-hosted
     timeout-minutes: 90
@@ -135,4 +189,5 @@ jobs:
           rm -rf ~/.cargo/registry/index
 
           # Run the functional tests
-          LIANAD_PATH=$PWD/target/release/lianad pytest tests/ -vvv -n 8
+          LIANAD_PATH=$PWD/target/release/lianad \
+            pytest tests/ --ignore=tests/gui -vvv -n 8
