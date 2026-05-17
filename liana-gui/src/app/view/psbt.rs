@@ -20,7 +20,7 @@ use liana_ui::{
         button, card,
         collapse::Collapse,
         form,
-        modal::{legacy, ModalWidth},
+        modal::{legacy, modal_view, none_fn, ModalWidth},
         pill, separation,
         text::{self, *},
     },
@@ -967,29 +967,29 @@ pub fn sign_action<'a>(
     signing: &HashSet<Fingerprint>,
     recovery_timelock: Option<u16>,
 ) -> Element<'a, Message> {
-    let signers = hws
-        .iter()
-        .enumerate()
-        .fold(Column::new().spacing(10), |col, (i, hw)| {
-            let (signed, signing, can_sign) = hw.fingerprint().map_or((false, false, false), |f| {
-                (
-                    signed.contains(&f),
-                    signing.contains(&f),
-                    descriptor.contains_fingerprint_in_path(f, recovery_timelock),
-                )
-            });
-            col.push(device_list_entry(
-                hw,
-                HwRowMode::Signing {
-                    signed,
-                    signing,
-                    can_sign,
-                },
-                move || Message::SelectHardwareWallet(i),
-            ))
-        });
+    let title = "Select signing device to sign with:".to_string();
 
-    let hot_signer = signer.map(|fingerprint| {
+    let mut signers = vec![];
+    hws.iter().enumerate().for_each(|(i, hw)| {
+        let (signed, signing, can_sign) = hw.fingerprint().map_or((false, false, false), |f| {
+            (
+                signed.contains(&f),
+                signing.contains(&f),
+                descriptor.contains_fingerprint_in_path(f, recovery_timelock),
+            )
+        });
+        signers.push(device_list_entry(
+            hw,
+            HwRowMode::Signing {
+                signed,
+                signing,
+                can_sign,
+            },
+            move || Message::SelectHardwareWallet(i),
+        ))
+    });
+
+    if let Some(hot_signer) = signer.map(|fingerprint| {
         let can_sign = descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);
         let select_msg = can_sign.then_some(Message::Spend(SpendTxMessage::SelectHotSigner));
         if signed.contains(&fingerprint) {
@@ -997,29 +997,24 @@ pub fn sign_action<'a>(
         } else {
             legacy::hot_key(fingerprint, signer_alias, can_sign, select_msg)
         }
-    });
+    }) {
+        signers.push(hot_signer);
+    }
 
-    let card_content = Column::new()
-        .push(
-            Column::new()
-                .push(
-                    text("Select signing device to sign with:")
-                        .bold()
-                        .width(Length::Fill),
-                )
-                .spacing(10)
-                .push(signers)
-                .push_maybe(hot_signer)
-                .width(Length::Fill),
-        )
-        .spacing(20)
-        .width(Length::Fill)
-        .align_x(Alignment::Center);
+    let modal_content = Column::from_vec(signers)
+        .align_x(Alignment::Center)
+        .spacing(10)
+        .width(Length::Fill);
 
+    let width = ModalWidth::M;
+    let content = modal_view(Some(title), none_fn(), none_fn(), width, modal_content);
+
+    let width = width as u32 + 50;
     Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))
-        .push(card::simple(card_content))
-        .width(ModalWidth::L)
+        .push(content)
+        .spacing(10)
+        .width(width)
         .into()
 }
 

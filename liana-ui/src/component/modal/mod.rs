@@ -36,7 +36,7 @@ pub enum ModalWidth {
     /// Small modals (confirmations, simple dialogs)
     S = 400,
     /// Medium modals (forms, editors)
-    M = 500,
+    M = 550,
     /// Large modals (device selection, complex forms)
     L = 650,
 }
