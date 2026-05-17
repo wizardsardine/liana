@@ -1158,15 +1158,12 @@ impl ConnectAccountPanel {
 
             ContactsMessage::ReceivedInviteAccepted(invite_id) => {
                 self.contacts_state.accepting_invite_ids.remove(&invite_id);
-                // Optimistically drop the row so the user gets instant
-                // feedback before the refetch lands. The
-                // `reload_contacts()` call below also resets
-                // `received_invites = None`, which will trigger the
-                // skeleton briefly — that's the same UX the existing
-                // Resend / Revoke flows have, so it's consistent.
-                if let Some(received) = self.contacts_state.received_invites.as_mut() {
-                    received.retain(|i| i.id != invite_id);
-                }
+                // Reload from the API. This resets `received_invites = None`
+                // and shows the skeleton briefly before the refetch lands —
+                // the same UX as the InviteCreated / Resend flows. (An
+                // optimistic `retain()` here would be a dead store: the view
+                // only renders after `update()` returns, by which point
+                // `reload_contacts()` has already cleared the list.)
                 return self.reload_contacts();
             }
 
