@@ -9,8 +9,8 @@ use crate::{
     services::coincube::{
         BillingCycle, BillingHistoryEntry, ChargeStatus, CheckoutRequest, CheckoutResponse,
         CoincubeClient, ConnectPlan, Contact, ContactCube, ContactRole, CreateInviteRequest,
-        FeaturesResponse, Invite, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest, User,
-        VerifiedDevice,
+        FeaturesResponse, Invite, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
+        ReceivedInvite, User, VerifiedDevice,
     },
 };
 
@@ -72,6 +72,18 @@ pub struct ContactsState {
     pub step: ContactsStep,
     pub contacts: Option<Vec<Contact>>,
     pub invites: Option<Vec<Invite>>,
+    /// Pending invites addressed to the authenticated user (inbound).
+    /// `None` while the initial fetch is in flight; `Some(vec)` once
+    /// loaded (possibly empty). The backend filters server-side to
+    /// pending + non-expired
+    /// (`coincube-api/services/connect/invite/handlers/invite.go:374-429`),
+    /// so the view renders it as-is without a second filter pass.
+    pub received_invites: Option<Vec<ReceivedInvite>>,
+    /// Invite ids whose Accept request is currently in flight. Prevents
+    /// a double-tap from firing two `accept_invite_by_id` calls (the
+    /// second would race against the server-side row lock and surface
+    /// an opaque error); also drives the per-row "Accepting…" label.
+    pub accepting_invite_ids: std::collections::HashSet<u64>,
     pub invite_email: String,
     pub invite_role: ContactRole,
     pub invite_sending: bool,
@@ -147,6 +159,8 @@ impl ContactsState {
             step: ContactsStep::List,
             contacts: None,
             invites: None,
+            received_invites: None,
+            accepting_invite_ids: std::collections::HashSet::new(),
             invite_email: String::new(),
             invite_role: ContactRole::Keyholder,
             invite_sending: false,
@@ -364,6 +378,7 @@ impl ConnectAccountPanel {
         self.contacts_state.step = ContactsStep::List;
         self.contacts_state.contacts = None;
         self.contacts_state.invites = None;
+        self.contacts_state.received_invites = None;
         self.contacts_state.error = None;
         self.contacts_state.loading = true;
         load_contacts_data(&self.client, self.session_generation)
@@ -1077,8 +1092,13 @@ impl ConnectAccountPanel {
             ContactsMessage::ContactsLoaded(contacts, gen) => {
                 if gen == self.session_generation {
                     self.contacts_state.contacts = Some(contacts);
-                    // Clear loading only when both are done
-                    if self.contacts_state.invites.is_some() {
+                    // Clear loading only when all three sibling fetches
+                    // (contacts, sent invites, received invites) have
+                    // landed; otherwise the view flips from spinner to
+                    // empty-state before the late arrival paints.
+                    if self.contacts_state.invites.is_some()
+                        && self.contacts_state.received_invites.is_some()
+                    {
                         self.contacts_state.loading = false;
                     }
                 }
@@ -1087,10 +1107,72 @@ impl ConnectAccountPanel {
             ContactsMessage::InvitesLoaded(invites, gen) => {
                 if gen == self.session_generation {
                     self.contacts_state.invites = Some(invites);
-                    if self.contacts_state.contacts.is_some() {
+                    if self.contacts_state.contacts.is_some()
+                        && self.contacts_state.received_invites.is_some()
+                    {
                         self.contacts_state.loading = false;
                     }
                 }
+            }
+
+            ContactsMessage::ReceivedInvitesLoaded(received, gen) => {
+                if gen == self.session_generation {
+                    self.contacts_state.received_invites = Some(received);
+                    if self.contacts_state.contacts.is_some()
+                        && self.contacts_state.invites.is_some()
+                    {
+                        self.contacts_state.loading = false;
+                    }
+                }
+            }
+
+            ContactsMessage::AcceptReceivedInvite(invite_id) => {
+                // Guard against double-tap. The button is disabled
+                // while the id is in-flight, but the message can still
+                // arrive twice via keyboard activation; we drop the
+                // second silently.
+                if !self.contacts_state.accepting_invite_ids.insert(invite_id) {
+                    return iced::Task::none();
+                }
+                self.contacts_state.error = None;
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move { client.accept_invite_by_id(invite_id).await },
+                    move |res| match res {
+                        Ok(()) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Contacts(
+                                ContactsMessage::ReceivedInviteAccepted(invite_id),
+                            ),
+                        )),
+                        Err(e) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Contacts(
+                                ContactsMessage::AcceptReceivedInviteFailed(
+                                    invite_id,
+                                    e.to_string(),
+                                ),
+                            ),
+                        )),
+                    },
+                );
+            }
+
+            ContactsMessage::ReceivedInviteAccepted(invite_id) => {
+                self.contacts_state.accepting_invite_ids.remove(&invite_id);
+                // Optimistically drop the row so the user gets instant
+                // feedback before the refetch lands. The
+                // `reload_contacts()` call below also resets
+                // `received_invites = None`, which will trigger the
+                // skeleton briefly — that's the same UX the existing
+                // Resend / Revoke flows have, so it's consistent.
+                if let Some(received) = self.contacts_state.received_invites.as_mut() {
+                    received.retain(|i| i.id != invite_id);
+                }
+                return self.reload_contacts();
+            }
+
+            ContactsMessage::AcceptReceivedInviteFailed(invite_id, msg) => {
+                self.contacts_state.accepting_invite_ids.remove(&invite_id);
+                self.contacts_state.error = Some(msg);
             }
 
             ContactsMessage::ShowInviteForm => {
@@ -1582,6 +1664,7 @@ impl Default for ConnectAccountPanel {
 pub fn load_contacts_data(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
     let c1 = client.clone();
     let c2 = client.clone();
+    let c3 = client.clone();
     iced::Task::batch([
         iced::Task::perform(
             async move { c1.get_contacts().await },
@@ -1602,6 +1685,19 @@ pub fn load_contacts_data(client: &CoincubeClient, generation: u64) -> iced::Tas
                 Ok(invites) => Message::View(view::Message::ConnectAccount(
                     ConnectAccountMessage::Contacts(ContactsMessage::InvitesLoaded(
                         invites, generation,
+                    )),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
+                )),
+            },
+        ),
+        iced::Task::perform(
+            async move { c3.get_received_invites().await },
+            move |res| match res {
+                Ok(received) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::ReceivedInvitesLoaded(
+                        received, generation,
                     )),
                 )),
                 Err(e) => Message::View(view::Message::ConnectAccount(
