@@ -383,8 +383,10 @@ impl ConnectAccountPanel {
             if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
                 if let Ok(bytes) = entry.get_secret() {
                     if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
-                        // Copy to the cube-specific key, but intentionally
-                        // KEEP the legacy global credential in place.
+                        // Migrate into the per-cube key. `save_session_to_keyring`
+                        // writes BOTH the per-cube key and the legacy global
+                        // key (kept in sync), so we intentionally do NOT delete
+                        // the legacy credential here.
                         //
                         // The Launcher's ConnectAccountPanel has no
                         // `current_cube_uuid`, so it can only ever read the
@@ -393,14 +395,14 @@ impl ConnectAccountPanel {
                         // to delete the global key), every subsequent return
                         // to the Launcher — notably the Recovery → Launcher
                         // navigation flow — found no session and forced the
-                        // user to sign in again. Retaining the legacy key
-                        // lets the Launcher restore the session. Explicit
-                        // logout still clears both keys via
+                        // user to sign in again. Keeping the legacy key in
+                        // sync lets the Launcher restore the current session.
+                        // Explicit logout still clears both keys via
                         // `clear_keyring_session`.
                         self.save_session_to_keyring(&session);
                         log::info!(
-                            "[CONNECT] Copied legacy session to cube-specific key for {} \
-                             (legacy key retained for Launcher session restore)",
+                            "[CONNECT] Migrated legacy session to cube-specific key for {} \
+                             (legacy key kept in sync for Launcher session restore)",
                             key
                         );
                         return Some(session);
@@ -421,26 +423,43 @@ impl ConnectAccountPanel {
     }
 
     fn save_session_to_keyring(&self, session: &StoredSession) {
-        // Use cube-specific key if available, otherwise fall back to legacy global key
-        let (key, is_legacy) = match self.keyring_key_for_cube() {
-            Some(key) => (key, false),
-            None => {
-                log::info!("[CONNECT] No cube UUID set, using legacy global session key");
-                (CONNECT_KEYRING_USER.to_string(), true)
+        let bytes = match serde_json::to_vec(session) {
+            Ok(b) => b,
+            Err(e) => {
+                log::error!("[CONNECT] Failed to serialize session for keyring: {}", e);
+                return;
             }
         };
-        match keyring::Entry::new(CONNECT_KEYRING_SERVICE, &key) {
+        let write = |key: &str| match keyring::Entry::new(CONNECT_KEYRING_SERVICE, key) {
             Ok(entry) => {
                 let _ = entry.delete_credential();
-                if let Ok(bytes) = serde_json::to_vec(session) {
-                    if let Err(e) = entry.set_secret(&bytes) {
-                        log::error!("[CONNECT] Failed to save session to keyring: {}", e);
-                    } else if is_legacy {
-                        log::info!("[CONNECT] Saved session to legacy global key");
-                    }
+                if let Err(e) = entry.set_secret(&bytes) {
+                    log::error!("[CONNECT] Failed to save session to keyring '{}': {}", key, e);
                 }
             }
-            Err(e) => log::error!("[CONNECT] Keyring inaccessible for save: {}", e),
+            Err(e) => log::error!("[CONNECT] Keyring inaccessible for save '{}': {}", key, e),
+        };
+
+        match self.keyring_key_for_cube() {
+            Some(cube_key) => {
+                // A Cube is open. Write the isolated per-cube key AND
+                // mirror to the legacy global key. The Launcher's
+                // ConnectAccountPanel has no `current_cube_uuid` and can
+                // only read the global key, so the two MUST stay in sync —
+                // otherwise a token refresh while a Cube is open would
+                // leave the global key holding a stale session and the
+                // Recovery → Launcher restore would fail (or restore an
+                // expired token). Every save path (login, refresh,
+                // migration) funnels here, so mirroring here keeps them
+                // consistent. Explicit logout clears both keys via
+                // `clear_keyring_session`.
+                write(cube_key.as_str());
+                write(CONNECT_KEYRING_USER);
+            }
+            None => {
+                log::info!("[CONNECT] No cube UUID set, using legacy global session key");
+                write(CONNECT_KEYRING_USER);
+            }
         }
     }
 
