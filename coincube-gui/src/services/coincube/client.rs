@@ -5,10 +5,11 @@ use super::{
     ContactCube, Country, CreateConnectVaultRequest, CreateInviteRequest, CubeInviteOrAddResult,
     CubeKeyRaw, CubeLimitsResponse, CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData,
     Invite, LightningAddress, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
-    PublicAvatarData, RecoveryKit, RecoveryKitStatus, RefreshTokenRequest, RegenerationData,
-    RegisterCubeRequest, ReserveLightningAddressRequest, SaveQuoteRequest, SaveQuoteResponse,
-    StatsPeriod, TimeseriesResponse, TodayStats, UpdateCubeRequest, UpdateLightningAddressRequest,
-    UpsertRecoveryKitRequest, User, VaultMemberResponse, VerifiedDevice,
+    PublicAvatarData, ReceivedInvite, RecoveryKit, RecoveryKitStatus, RefreshTokenRequest,
+    RegenerationData, RegisterCubeRequest, ReserveLightningAddressRequest, SaveQuoteRequest,
+    SaveQuoteResponse, StatsPeriod, TimeseriesResponse, TodayStats, UpdateCubeRequest,
+    UpdateLightningAddressRequest, UpsertRecoveryKitRequest, User, VaultMemberResponse,
+    VerifiedDevice,
 };
 use reqwest::{Client, Method};
 use serde::Deserialize;
@@ -729,6 +730,42 @@ impl CoincubeClient {
     pub async fn revoke_invite(&self, invite_id: u64) -> Result<(), CoincubeError> {
         let url = format!(
             "{}/api/v1/connect/invites/{}/revoke",
+            self.base_url, invite_id
+        );
+        let res = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({}))
+            .send()
+            .await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// GET /api/v1/connect/invites/received
+    ///
+    /// Returns the list of pending, non-expired invites addressed to
+    /// the authenticated user. The backend filters server-side
+    /// (see `services/connect/invite/handlers/invite.go:374-429`), so
+    /// callers should render the list as-is.
+    pub async fn get_received_invites(&self) -> Result<Vec<ReceivedInvite>, CoincubeError> {
+        let url = format!("{}/api/v1/connect/invites/received", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<Vec<ReceivedInvite>> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// POST /api/v1/connect/invites/{id}/accept
+    ///
+    /// Accepts a received invite by its id. The handler returns
+    /// `{status, ownerEmail, role}` but we discard it — the caller
+    /// refetches the contacts + sent + received lists after a
+    /// successful accept, which is the single source of truth for the
+    /// new contact pairing and the dropped received-invite row.
+    pub async fn accept_invite_by_id(&self, invite_id: u64) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/invites/{}/accept",
             self.base_url, invite_id
         );
         let res = self

@@ -975,6 +975,23 @@ pub struct Invite {
     pub created_at: String,
 }
 
+/// A pending invite addressed to the authenticated user, returned by
+/// `GET /api/v1/connect/invites/received`. Distinct from [`Invite`] —
+/// `Invite` is outbound (sender's view) while `ReceivedInvite` is
+/// inbound (recipient's view). The backend filters this list to
+/// pending, non-expired invites only
+/// (`coincube-api/services/connect/invite/handlers/invite.go:374-429`),
+/// so the desktop renders it as-is without further filtering.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceivedInvite {
+    pub id: u64,
+    pub owner_email: String,
+    pub role: ContactRole,
+    pub expires_at: String,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateInviteRequest {
