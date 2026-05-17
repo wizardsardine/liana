@@ -1,13 +1,13 @@
 pub mod general;
 
-use std::collections::{HashMap, HashSet};
-use std::str::FromStr;
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+};
 
-use iced::alignment::{Horizontal, Vertical};
-use iced::widget::{container, rule, Column};
 use iced::{
-    alignment,
-    widget::{radio, scrollable, tooltip as iced_tooltip, Space},
+    alignment::{self, Vertical},
+    widget::{column, radio, row, rule, scrollable, tooltip as iced_tooltip, Column, Space},
     Alignment, Length,
 };
 
@@ -15,20 +15,21 @@ use liana::{
     descriptors::{LianaDescriptor, LianaPolicy},
     miniscript::bitcoin::{bip32::Fingerprint, Network},
 };
-use liana_ui::component;
-use liana_ui::component::setting::{
-    export_section, header, settings_section, ImportExportKind, SectionKind,
-};
-use lianad::config::BitcoindRpcAuth;
-
-use super::{dashboard, message::*};
-
 use liana_ui::{
-    component::{badge, button, card, form, separation, text::*},
+    component::{
+        self, badge,
+        button::{self, btn_secondary_with_tooltip, BtnWidth},
+        card, form, separation,
+        setting::{export_section, header, settings_section, ImportExportKind, SectionKind},
+        text::*,
+    },
     icon,
     theme::{self},
     widget::*,
 };
+use lianad::config::BitcoindRpcAuth;
+
+use super::{dashboard, message::*};
 
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, settings::ProviderKey, view::warning::warn},
@@ -938,114 +939,117 @@ pub fn wallet_settings<'a>(
         Some(SectionKind::Wallet.title()),
         Some(SettingsMessage::EditWalletSettings.into()),
     );
-    let r = Row::new().spacing(10).align_y(Vertical::Center)
-        .push(icon::backup_icon())
-        .push(text("Back up encrypted descriptor"))
-        .push(
 
-    Container::new(
-        iced::widget::tooltip::Tooltip::new(
-            icon::tooltip_icon(),
-            "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.",
-            iced::widget::tooltip::Position::Bottom,
-        )
-        .style(theme::card::simple),
-    )
-        );
-    let back_up_encrypted_descriptor =
-        Button::new(container(r).align_x(Horizontal::Center).padding(5))
-            .on_press(Message::Settings(
-                SettingsMessage::ExportEncryptedDescriptor,
-            ))
-            .style(theme::button::secondary);
+    let backup_label = "Back up encrypted descriptor";
+    let backup_tooltip = "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.";
+    let backup_msg = Message::Settings(SettingsMessage::ExportEncryptedDescriptor);
 
-    let descr = card::simple(
+    // ------------------------- Descriptor card -------------------------
+    let title = text("Wallet descriptor:").bold();
+    let descriptor_s = scrollable(
         Column::new()
-            .push(text("Wallet descriptor:").bold())
-            .push(
-                scrollable(
-                    Column::new()
-                        .push(text(descriptor.to_string()).small())
-                        .push(Space::with_height(Length::Fixed(5.0))),
-                )
-                .direction(scrollable::Direction::Horizontal(
-                    scrollable::Scrollbar::new().width(5).scroller_width(5),
-                )),
-            )
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .push(Column::new().width(Length::Fill))
-                    .push(back_up_encrypted_descriptor)
-                    .push(
-                        button::secondary(Some(icon::clipboard_icon()), "Copy")
-                            .on_press(Message::Clipboard(descriptor.to_string())),
-                    )
-                    .push(
-                        button::secondary(Some(icon::chip_icon()), "Register on hardware device")
-                            .on_press(Message::Settings(SettingsMessage::RegisterWallet)),
-                    ),
-            )
-            .spacing(10),
+            .push(text(descriptor.to_string()).small())
+            .push(Space::with_height(Length::Fixed(5.0))),
+    )
+    .direction(scrollable::Direction::Horizontal(
+        scrollable::Scrollbar::new().width(5).scroller_width(5),
+    ));
+
+    let btn_backup = btn_secondary_with_tooltip(
+        Some(icon::backup_icon()),
+        backup_label,
+        Some(backup_tooltip),
+        BtnWidth::Auto,
+        Some(backup_msg),
+    );
+    let btn_copy = button::secondary(Some(icon::clipboard_icon()), "Copy")
+        .on_press(Message::Clipboard(descriptor.to_string()));
+    let btn_register = button::secondary(Some(icon::chip_icon()), "Register on hardware device")
+        .on_press(Message::Settings(SettingsMessage::RegisterWallet));
+
+    let btn_row = row![Space::fill_width(), btn_backup, btn_copy, btn_register]
+        .spacing(10)
+        .width(Length::Fill);
+    let descriptor_card = card::simple(
+        column![title, descriptor_s, btn_row]
+            .spacing(10)
+            .width(Length::Fill),
     )
     .width(Length::Fill);
 
-    let aliases = card::simple(
-        Column::new()
-            .push(text("Wallet alias:").bold())
+    // --------------------------- Policy card ---------------------------
+    let policy_card = card::simple(display_policy(
+        descriptor.policy(),
+        keys_aliases,
+        provider_keys,
+    ))
+    .width(Length::Fill);
+
+    // -------------------------- Aliases card ---------------------------
+    let w_alias_title = text("Wallet alias:").bold().into();
+    let w_alias_input = form::Form::new("Alias", wallet_alias, move |msg| {
+        Message::Settings(SettingsMessage::WalletAliasEdited(msg))
+    })
+    .warning("Please enter alias that is not too long")
+    .size(P1_SIZE)
+    .padding(10)
+    .into();
+
+    let k_alias_title = text("Fingerprint aliases:").bold().into();
+
+    fn key_alias_entry<'a>(
+        fg: &'a Fingerprint,
+        name: &'a form::Value<String>,
+    ) -> Element<'a, Message> {
+        let fg = *fg;
+        Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(text(fg.to_string()).bold().width(Length::Fixed(100.0)))
             .push(
-                form::Form::new("Alias", wallet_alias, move |msg| {
-                    Message::Settings(SettingsMessage::WalletAliasEdited(msg))
+                form::Form::new("Alias", name, move |msg| {
+                    Message::Settings(SettingsMessage::FingerprintAliasEdited(fg, msg))
                 })
-                .warning("Please enter alias that is not too long")
+                .warning("Please enter correct alias")
                 .size(P1_SIZE)
                 .padding(10),
             )
-            .push(text("Fingerprint aliases:").bold())
-            .push(keys_aliases.iter().fold(
-                Column::new().spacing(10),
-                |col, (fingerprint, name)| {
-                    let fg = *fingerprint;
-                    col.push(
-                        Row::new()
-                            .spacing(10)
-                            .align_y(Alignment::Center)
-                            .push(text(fg.to_string()).bold().width(Length::Fixed(100.0)))
-                            .push(
-                                form::Form::new("Alias", name, move |msg| {
-                                    Message::Settings(SettingsMessage::FingerprintAliasEdited(
-                                        fg, msg,
-                                    ))
-                                })
-                                .warning("Please enter correct alias")
-                                .size(P1_SIZE)
-                                .padding(10),
-                            ),
-                    )
-                },
-            ))
-            .push(
+            .width(Length::Fill)
+            .into()
+    }
+
+    let mut col_content: Vec<Element<'a, Message>> =
+        vec![w_alias_title, w_alias_input, k_alias_title];
+
+    for (fg, name) in keys_aliases.iter() {
+        col_content.push(key_alias_entry(fg, name));
+    }
+
+    let last_row = Row::new()
+        .align_y(Alignment::Center)
+        .push(Space::with_width(Length::Fill))
+        .push_maybe(if updated {
+            Some(
                 Row::new()
                     .align_y(Alignment::Center)
-                    .push(Space::with_width(Length::Fill))
-                    .push_maybe(if updated {
-                        Some(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .push(icon::circle_check_icon().style(theme::text::success))
-                                .push(text("Updated").style(theme::text::success)),
-                        )
-                    } else {
-                        None
-                    })
-                    .push(if !processing && wallet_alias.valid {
-                        button::secondary(None, "Update")
-                            .on_press(Message::Settings(SettingsMessage::Save))
-                    } else {
-                        button::secondary(None, "Updating")
-                    }),
+                    .push(icon::circle_check_icon().style(theme::text::success))
+                    .push(text("Updated").style(theme::text::success)),
             )
-            .spacing(10),
+        } else {
+            None
+        })
+        .push(if !processing && wallet_alias.valid {
+            button::secondary(None, "Update").on_press(Message::Settings(SettingsMessage::Save))
+        } else {
+            button::secondary(None, "Updating")
+        });
+
+    col_content.push(last_row.into());
+
+    let alias_card = card::simple(
+        Column::from_vec(col_content)
+            .spacing(10)
+            .width(Length::Fill),
     )
     .width(Length::Fill);
 
@@ -1056,16 +1060,9 @@ pub fn wallet_settings<'a>(
         Column::new()
             .spacing(20)
             .push(header)
-            .push(descr)
-            .push(
-                card::simple(display_policy(
-                    descriptor.policy(),
-                    keys_aliases,
-                    provider_keys,
-                ))
-                .width(Length::Fill),
-            )
-            .push(aliases),
+            .push(descriptor_card)
+            .push(policy_card)
+            .push(alias_card),
     )
 }
 
