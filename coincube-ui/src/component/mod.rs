@@ -113,14 +113,10 @@ pub fn sent_celebration_page<'a, M: Clone + 'a>(
                             ..Default::default()
                         }),
                 )
-                .push(
-                    iced::widget::text(verb_suffix)
-                        .size(20)
-                        .font(iced::Font {
-                            style: iced::font::Style::Italic,
-                            ..Default::default()
-                        }),
-                ),
+                .push(iced::widget::text(verb_suffix).size(20).font(iced::Font {
+                    style: iced::font::Style::Italic,
+                    ..Default::default()
+                })),
         )
         .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
         .push(

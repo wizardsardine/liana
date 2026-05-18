@@ -787,14 +787,17 @@ pub fn outputs_view<'a>(
             } else {
                 Container::new(
                     Column::new()
+                        .push(h4_bold("Self-transfer").style(|t| {
+                            theme::text::custom(t.colors.buttons.transparent_border.active.text)
+                        }))
                         .push(
-                            h4_bold("Self-transfer").style(|t| {
+                            p2_regular(
+                                "No external recipients — every output returns to this wallet.",
+                            )
+                            .style(|t| {
                                 theme::text::custom(t.colors.buttons.transparent_border.active.text)
                             }),
                         )
-                        .push(p2_regular("No external recipients — every output returns to this wallet.").style(
-                            |t| theme::text::custom(t.colors.buttons.transparent_border.active.text),
-                        ))
                         .spacing(6),
                 )
                 .padding(20)

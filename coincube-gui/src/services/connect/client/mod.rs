@@ -60,7 +60,6 @@ fn runtime_grpc_url_override() -> Option<String> {
 fn runtime_backend_api_url_override() -> Option<String> {
     std::env::var("COINCUBE_API_URL")
         .ok()
-        .or_else(|| option_env!("COINCUBE_API_URL").map(str::to_string))
         .map(|v| v.trim().trim_end_matches('/').to_string())
         .filter(|v| !v.is_empty())
 }
