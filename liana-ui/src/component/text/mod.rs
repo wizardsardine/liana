@@ -76,3 +76,82 @@ impl Text for iced::widget::Text<'_, Theme> {
         self.size(legacy::P1_SIZE)
     }
 }
+
+pub fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+    }
+}
+
+pub fn truncate(str: &str, len: usize) -> String {
+    let str = str.to_string();
+    if str.len() <= len {
+        return str;
+    }
+    if len < 3 {
+        let mut str = str;
+        while str.len() > len {
+            str.pop();
+        }
+        return str;
+    }
+    let budget = len - 3;
+    let mut str = str;
+    while str.len() > budget {
+        str.pop();
+    }
+    str.push_str("...");
+    str
+}
+
+const SHORT_MARKER: &str = "[...]";
+
+pub fn short_string(str: &str, len: usize) -> String {
+    if str.len() <= len {
+        return str.to_string();
+    }
+    shorten_middle(str, len)
+}
+
+pub fn short_email(str: &str, len: usize) -> String {
+    if str.matches('@').count() == 1 {
+        if let Some((local, domain)) = str.split_once('@') {
+            let tail_len = 1 + domain.len();
+            if len > tail_len + SHORT_MARKER.len() {
+                let local_budget = len - tail_len;
+                return format!("{}@{domain}", shorten_middle(local, local_budget));
+            }
+        }
+    }
+    shorten_middle(str, len)
+}
+
+fn shorten_middle(str: &str, len: usize) -> String {
+    if str.len() <= len {
+        return str.to_string();
+    }
+    if len <= SHORT_MARKER.len() {
+        let mut out = String::from(str);
+        while out.len() > len {
+            out.pop();
+        }
+        return out;
+    }
+    let budget = len - SHORT_MARKER.len();
+    let head_budget = budget.div_ceil(2);
+    let tail_budget = budget - head_budget;
+
+    let mut head_end = head_budget;
+    while !str.is_char_boundary(head_end) {
+        head_end -= 1;
+    }
+
+    let mut tail_start = str.len() - tail_budget;
+    while !str.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
+
+    format!("{}{SHORT_MARKER}{}", &str[..head_end], &str[tail_start..])
+}

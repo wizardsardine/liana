@@ -15,7 +15,7 @@ use liana_ui::{
         form,
         modal::{self, modal_view, none_fn, ModalWidth},
         pick_list, scrollable,
-        text::{self, p1_bold},
+        text::{self, capitalize_first, p1_bold},
         tooltip,
     },
     icon, theme,
@@ -23,15 +23,6 @@ use liana_ui::{
 };
 
 use miniscript::bitcoin::bip32::ChildNumber;
-
-/// Capitalize the first letter of a string
-fn capitalize_first(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-    }
-}
 
 /// Render the xpub entry modal if it's open
 pub fn xpub_modal_view(state: &State) -> Option<Element<'_, Msg>> {
