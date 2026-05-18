@@ -32,7 +32,7 @@ use liana_ui::{
         form::Value,
         modal::{self, widget_style, BTN_W},
         scrollable,
-        text::{self, p1_regular},
+        text::{self, capitalize_first, p1_regular},
     },
     icon, theme,
     widget::{modal::Modal, Button, Container, Element, Row, SpaceExt},
@@ -352,12 +352,11 @@ impl DecryptModal {
         devices: &mut HardwareWallets,
     ) -> Option<Task<installer::Message>> {
         fn name(kind: DeviceKind, version: Option<Version>) -> String {
-            // FIXME: Capitalize first letter
-            if let Some(v) = version {
+            capitalize_first(&if let Some(v) = version {
                 format!("{kind} {v}")
             } else {
                 kind.to_string()
-            }
+            })
         }
 
         let mut new_cant_fetch = BTreeMap::new();
