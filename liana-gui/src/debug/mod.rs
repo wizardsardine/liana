@@ -22,8 +22,12 @@
 
 use std::{cell::Cell, sync::OnceLock};
 
-use iced::{widget::scrollable, Alignment, Length};
-use liana_ui::{component::text, theme, widget::*};
+use iced::{Alignment, Length};
+use liana_ui::{
+    component::{scrollable, text},
+    theme,
+    widget::*,
+};
 
 use crate::app::{cache::Cache, menu::Menu, view::Message as ViewMessage};
 
@@ -423,7 +427,7 @@ pub fn render_location(
         if let Some(menu) = stack.menu {
             return dashboard_chrome(menu, stack.name, placeholder);
         }
-        Container::new(scrollable(
+        Container::new(scrollable::vertical(
             Column::new()
                 .spacing(30)
                 .padding(30)
@@ -515,7 +519,7 @@ pub fn debug_chrome<T>(
 where
     T: 'static,
 {
-    Container::new(scrollable(
+    Container::new(scrollable::vertical(
         Column::new()
             .spacing(30)
             .padding(30)

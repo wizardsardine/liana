@@ -1,12 +1,12 @@
 use iced::{
     alignment::Horizontal,
-    widget::{checkbox, scrollable, Button, Space},
+    widget::{checkbox, Button, Space},
     Alignment, Length, Subscription, Task,
 };
 
 use liana::miniscript::bitcoin::Network;
 use liana_ui::{
-    component::{button, card, network_banner, notification, pick_list, text::*},
+    component::{button, card, network_banner, notification, pick_list, scrollable, text::*},
     icon, image, theme,
     widget::{modal::Modal, Column, ColumnExt, Container, Element, Row, RowExt, SpaceExt},
 };
@@ -212,7 +212,7 @@ impl Launcher {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let content = Into::<Element<ViewMessage>>::into(scrollable(
+        let content = Into::<Element<ViewMessage>>::into(scrollable::vertical(
             Column::new()
                 .push(
                     Row::new()

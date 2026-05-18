@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::{
-    widget::{scrollable, tooltip, Space},
+    widget::{tooltip, Space},
     Alignment, Length,
 };
 
@@ -21,7 +21,7 @@ use liana_ui::{
         collapse::Collapse,
         form,
         modal::{legacy, modal_view, none_fn, ModalWidth},
-        pill, separation,
+        pill, scrollable, separation,
         text::{self, *},
     },
     icon, theme,
@@ -447,30 +447,26 @@ pub fn signatures<'a>(
 ) -> Element<'a, Message> {
     Column::new()
         .push(if let Some(sigs) = tx.path_ready() {
-            Container::new(
-                scrollable(
-                    Row::new()
-                        .spacing(5)
-                        .align_y(Alignment::Center)
-                        .spacing(10)
-                        .push(p1_bold("Status"))
-                        .push(icon::circle_check_icon().style(theme::text::success))
-                        .push(text("Ready").bold().style(theme::text::success))
-                        .push(text("  signed by"))
-                        .push(sigs.signed_pubkeys.keys().fold(
-                            Row::new().spacing(5),
-                            |row, value| {
+            Container::new(scrollable::horizontal_thin(
+                Row::new()
+                    .spacing(5)
+                    .align_y(Alignment::Center)
+                    .spacing(10)
+                    .push(p1_bold("Status"))
+                    .push(icon::circle_check_icon().style(theme::text::success))
+                    .push(text("Ready").bold().style(theme::text::success))
+                    .push(text("  signed by"))
+                    .push(
+                        sigs.signed_pubkeys
+                            .keys()
+                            .fold(Row::new().spacing(5), |row, value| {
                                 row.push(pill::fingerprint(
                                     value.to_string(),
                                     keys_aliases.get(value).map(String::as_str),
                                 ))
-                            },
-                        )),
-                )
-                .direction(scrollable::Direction::Horizontal(
-                    scrollable::Scrollbar::new().width(2).scroller_width(2),
-                )),
-            )
+                            }),
+                    ),
+            ))
             .padding(15)
         } else {
             Container::new(
@@ -561,7 +557,7 @@ pub fn path_view<'a>(
             row.push(container_from_fg(*fg, key_aliases))
         });
 
-    scrollable(
+    scrollable::horizontal_thin(
         Row::new()
             .align_y(Alignment::Center)
             .push(
@@ -594,9 +590,6 @@ pub fn path_view<'a>(
             )
             .push(row_signed),
     )
-    .direction(scrollable::Direction::Horizontal(
-        scrollable::Scrollbar::new().width(2).scroller_width(2),
-    ))
     .into()
 }
 

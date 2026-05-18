@@ -7,7 +7,7 @@ use std::{
 
 use iced::{
     alignment::{self, Vertical},
-    widget::{column, radio, row, rule, scrollable, tooltip as iced_tooltip, Column, Space},
+    widget::{column, radio, row, rule, tooltip as iced_tooltip, Column, Space},
     Alignment, Length,
 };
 
@@ -19,7 +19,7 @@ use liana_ui::{
     component::{
         self, badge,
         button::{self, btn_secondary_with_tooltip, BtnWidth},
-        card, form, separation,
+        card, form, scrollable, separation,
         setting::{export_section, header, settings_section, ImportExportKind, SectionKind},
         text::*,
     },
@@ -516,18 +516,11 @@ pub fn bitcoind<'a>(
             Row::new()
                 .push(Container::new(text(k).bold().small()).width(Length::FillPortion(1)))
                 .push(
-                    Container::new(
-                        scrollable(
-                            Column::new()
-                                .push(Space::with_height(Length::Fixed(10.0)))
-                                .push(text(t).small())
-                                // Space between the text and the scrollbar
-                                .push(Space::with_height(Length::Fixed(10.0))),
-                        )
-                        .direction(scrollable::Direction::Horizontal(
-                            scrollable::Scrollbar::new().width(2).scroller_width(2),
-                        )),
-                    )
+                    Container::new(scrollable::horizontal_thin(
+                        Column::new()
+                            .push(Space::with_height(Length::Fixed(10.0)))
+                            .push(text(t).small()),
+                    ))
                     .align_x(alignment::Horizontal::Right)
                     .padding(10)
                     .width(Length::FillPortion(3)),
@@ -946,14 +939,8 @@ pub fn wallet_settings<'a>(
 
     // ------------------------- Descriptor card -------------------------
     let title = text("Wallet descriptor:").bold();
-    let descriptor_s = scrollable(
-        Column::new()
-            .push(text(descriptor.to_string()).small())
-            .push(Space::with_height(Length::Fixed(5.0))),
-    )
-    .direction(scrollable::Direction::Horizontal(
-        scrollable::Scrollbar::new().width(5).scroller_width(5),
-    ));
+    let descriptor_s =
+        scrollable::horizontal_thin(Column::new().push(text(descriptor.to_string()).small()));
 
     let btn_backup = btn_secondary_with_tooltip(
         Some(icon::backup_icon()),
@@ -1203,9 +1190,7 @@ fn display_policy<'a>(
     Column::new()
         .spacing(10)
         .push(text("The wallet policy:").bold())
-        .push(scrollable(col).direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new().width(5).scroller_width(5),
-        )))
+        .push(scrollable::horizontal_thin(col))
         .into()
 }
 

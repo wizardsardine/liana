@@ -20,12 +20,12 @@ pub use message::*;
 use warning::warn;
 
 use iced::{
-    widget::{column, responsive, row, scrollable, stack, Space},
+    widget::{column, responsive, row, stack, Space},
     Length,
 };
 
 use liana_ui::{
-    component::{button, pill},
+    component::{button, pill, scrollable},
     icon::cross_icon,
     image::*,
     theme,
@@ -118,7 +118,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                     Container::new(column![
                         Space::with_height(25),
                         Container::new(
-                            scrollable(row!(
+                            scrollable::vertical(row!(
                                 Space::with_width(Length::FillPortion(1)),
                                 column!(Space::with_height(Length::Fixed(150.0)), content.into())
                                     .width(Length::FillPortion(8))
@@ -168,7 +168,7 @@ pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
             .padding(10)
             .style(theme::container::background),
         )
-        .push(modal_section(Container::new(scrollable(content))))
+        .push(modal_section(Container::new(scrollable::vertical(content))))
         .push_maybe(fixed_footer)
         .width(Length::Fill)
         .height(Length::Fill)

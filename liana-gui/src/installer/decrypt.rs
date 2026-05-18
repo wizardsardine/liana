@@ -10,7 +10,7 @@ use encrypted_backup::{Decrypted, EncryptedBackup};
 use iced::{
     alignment::{self, Horizontal},
     clipboard,
-    widget::{column, row, scrollable, tooltip, Column, Space},
+    widget::{column, row, tooltip, Column, Space},
     Length, Task,
 };
 use liana::{
@@ -31,6 +31,7 @@ use liana_ui::{
         card,
         form::Value,
         modal::{self, widget_style, BTN_W},
+        scrollable,
         text::{self, p1_regular},
     },
     icon, theme,
@@ -705,7 +706,7 @@ pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Messag
         None => valid_content(state),
     };
 
-    let content = scrollable(
+    let content = scrollable::vertical(
         Container::new(content)
             .padding(15)
             .align_x(Horizontal::Center),

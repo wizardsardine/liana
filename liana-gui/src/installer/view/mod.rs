@@ -2,9 +2,7 @@ pub mod editor;
 
 use async_hwi::utils::extract_keys_and_template;
 use iced::widget::column;
-use iced::widget::{
-    checkbox, radio, scrollable, scrollable::Scrollbar, tooltip, Button, Space, TextInput,
-};
+use iced::widget::{checkbox, radio, tooltip, Button, Space, TextInput};
 use iced::{
     alignment,
     widget::{progress_bar, tooltip as iced_tooltip},
@@ -26,7 +24,7 @@ use liana_ui::{
     component::{
         button, card, collapse, form,
         modal::legacy,
-        separation,
+        scrollable, separation,
         text::{h2, h3, h4_bold, p1_bold, p1_regular, text, Text},
     },
     icon, theme,
@@ -407,12 +405,9 @@ pub fn signer_xpubs<'a>(
                             .spacing(5)
                             .align_y(Alignment::Center)
                             .push(
-                                Container::new(
-                                    scrollable(Container::new(text(xpub).small()).padding(10))
-                                        .direction(scrollable::Direction::Horizontal(
-                                            Scrollbar::new().width(5).scroller_width(5),
-                                        )),
-                                )
+                                Container::new(scrollable::horizontal_thin(
+                                    Container::new(text(xpub).small()).padding(10),
+                                ))
                                 .width(Length::Fill),
                             )
                             .push(
@@ -510,12 +505,9 @@ pub fn hardware_wallet_xpubs<'a>(
                             .spacing(5)
                             .align_y(Alignment::Center)
                             .push(
-                                Container::new(
-                                    scrollable(Container::new(text(xpub).small()).padding(10))
-                                        .direction(scrollable::Direction::Horizontal(
-                                            Scrollbar::new().width(5).scroller_width(5),
-                                        )),
-                                )
+                                Container::new(scrollable::horizontal_thin(
+                                    Container::new(text(xpub).small()).padding(10),
+                                ))
                                 .width(Length::Fill),
                             )
                             .push(
@@ -575,9 +567,7 @@ pub fn share_xpubs<'a>(
 
 pub fn policy_entry_card(title: String, content: String) -> Container<'static, Message> {
     let title = text(title).small().bold();
-    let scroll = scrollable(column![text(content).small(), Space::with_height(5)]).direction(
-        scrollable::Direction::Horizontal(scrollable::Scrollbar::new().width(5).scroller_width(5)),
-    );
+    let scroll = scrollable::horizontal_thin(column![text(content).small()]);
     card::simple(column![title, scroll].spacing(10)).width(Length::Fill)
 }
 
@@ -734,18 +724,9 @@ pub fn backup_descriptor<'a>(
                 card::simple(
                     Column::new()
                         .push(text("The descriptor:").small().bold())
-                        .push(
-                            scrollable(
-                                Column::new()
-                                    .push(text(descriptor.to_string()).small())
-                                    .push(Space::with_height(Length::Fixed(5.0))),
-                            )
-                            .direction(
-                                scrollable::Direction::Horizontal(
-                                    scrollable::Scrollbar::new().width(5).scroller_width(5),
-                                ),
-                            ),
-                        )
+                        .push(scrollable::horizontal_thin(
+                            Column::new().push(text(descriptor.to_string()).small()),
+                        ))
                         .push(
                             Row::new()
                                 .push(Space::with_width(Length::Fill))
@@ -908,9 +889,7 @@ fn display_policy(
     Column::new()
         .spacing(10)
         .push(text("The wallet policy:").bold())
-        .push(scrollable(col).direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new().width(5).scroller_width(5),
-        )))
+        .push(scrollable::horizontal_thin(col))
         .into()
 }
 
@@ -2020,7 +1999,7 @@ fn layout<'a>(
     if let Some(msg) = previous_message {
         prev_button = prev_button.on_press(msg);
     }
-    Container::new(scrollable(
+    Container::new(scrollable::vertical(
         Column::new()
             .width(Length::Fill)
             .push(
