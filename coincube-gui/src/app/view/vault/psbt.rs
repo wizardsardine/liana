@@ -164,6 +164,7 @@ pub fn save_action<'a>(saved: bool) -> Element<'a, Message> {
 ///
 /// `conflicting_txids` contains the IDs of any directly conflicting transactions
 /// of the transaction to be broadcast.
+#[allow(clippy::too_many_arguments)]
 pub fn broadcast_action<'a>(
     conflicting_txids: &HashSet<Txid>,
     saved: bool,
