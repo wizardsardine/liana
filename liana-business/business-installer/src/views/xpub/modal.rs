@@ -14,7 +14,7 @@ use liana_ui::{
         button::{btn_cancel, btn_clear, btn_retry, btn_save},
         form,
         modal::{self, modal_view, none_fn, ModalWidth},
-        pick_list,
+        pick_list, scrollable,
         text::{self, p1_bold},
         tooltip,
     },
@@ -100,11 +100,12 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
             .push(text::p2_medium("Current xpub:").style(theme::text::primary))
             .push(Space::with_width(Length::Fill));
 
-        let input_value =
-            Container::new(text::p2_medium(&modal_state.xpub_input).style(theme::text::secondary))
-                .padding(10)
-                .style(theme::card::simple)
-                .width(Length::Fill);
+        let input_value = Container::new(scrollable::horizontal_thin(
+            text::p2_medium(&modal_state.xpub_input).style(theme::text::secondary),
+        ))
+        .padding(10)
+        .style(theme::card::simple)
+        .width(Length::Fill);
 
         Column::new()
             .push(Space::with_height(5))
@@ -216,10 +217,12 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         && !modal_state.processing
         && validation_error.is_none())
     .then_some({
-        Container::new(text::p2_medium(&modal_state.xpub_input).style(theme::text::secondary))
-            .padding(10)
-            .style(theme::card::simple)
-            .width(Length::Fill)
+        Container::new(scrollable::horizontal_thin(
+            text::p2_medium(&modal_state.xpub_input).style(theme::text::secondary),
+        ))
+        .padding(10)
+        .style(theme::card::simple)
+        .width(Length::Fill)
     });
 
     let body = Column::new()
