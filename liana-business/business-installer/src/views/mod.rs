@@ -20,14 +20,14 @@ pub use xpub::xpub_view;
 
 use crate::{backend::Backend, state::message::Msg, state::State};
 use iced::{
-    widget::{container, scrollable, Space},
+    widget::{container, Space},
     Alignment, Length,
 };
 use liana_ui::{
     component::{
         button::{btn_flat, icon_btn, BtnWidth},
         card::clickable_card,
-        text,
+        scrollable, text,
     },
     icon, theme,
     widget::*,
@@ -173,7 +173,7 @@ fn layout_inner<'a>(
                 )
                 .push_maybe(right_spacer());
 
-            Container::new(scrollable(
+            Container::new(scrollable::vertical(
                 Column::new()
                     .width(Length::Fill)
                     .push(email_row)
@@ -200,7 +200,7 @@ fn layout_inner<'a>(
             let list_area = Row::new()
                 .push(Space::with_width(Length::FillPortion(2)))
                 .push(
-                    Container::new(scrollable(list).height(Length::Fill))
+                    Container::new(scrollable::vertical(list).height(Length::Fill))
                         .width(Length::FillPortion(fill_portion))
                         .align_x(Alignment::Center),
                 )

@@ -1,12 +1,12 @@
 //! View functions for business settings UI.
 
 use iced::{
-    widget::{scrollable, Column, Row, Space, Toggler},
+    widget::{Column, Row, Space, Toggler},
     Alignment, Length,
 };
 use liana_ui::{
     component::{
-        self, badge, button, card, pick_list, separation,
+        self, badge, button, card, pick_list, scrollable, separation,
         setting::{header, settings_section, SectionKind},
         text::*,
     },
@@ -41,16 +41,9 @@ pub fn wallet_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
     let descriptor_card = card::simple(
         Column::new()
             .push(text("Wallet descriptor:").bold())
-            .push(
-                scrollable(
-                    Column::new()
-                        .push(text(&descriptor).small())
-                        .push(Space::with_height(Length::Fixed(5.0))),
-                )
-                .direction(scrollable::Direction::Horizontal(
-                    scrollable::Scrollbar::new().width(5).scroller_width(5),
-                )),
-            )
+            .push(scrollable::horizontal_thin(
+                Column::new().push(text(&descriptor).small()),
+            ))
             .push(
                 Row::new()
                     .spacing(10)
