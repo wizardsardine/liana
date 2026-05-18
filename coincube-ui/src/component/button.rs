@@ -121,23 +121,6 @@ pub fn link<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T>
     Button::new(content_left_aligned(icon, text(t))).style(theme::button::link)
 }
 
-/// Xpubs button - compact button specifically for hardware wallet xpubs actions
-/// Uses completely minimal layout to ensure it never stretches
-pub fn xpubs_button<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    // Minimal content - no width constraints, just natural padding
-    let content = match icon {
-        None => container(text(t).align_y(iced::Alignment::Center)).padding(5),
-        Some(i) => container(
-            row![i, text(t)]
-                .spacing(10)
-                .align_y(iced::alignment::Vertical::Center),
-        )
-        .padding(5),
-    };
-
-    Button::new(content).style(theme::button::secondary)
-}
-
 // Content function for centered buttons (primary, secondary, transparent)
 fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>) -> Container<'a, T> {
     match icon {

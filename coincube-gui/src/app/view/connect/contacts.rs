@@ -12,7 +12,7 @@ use crate::{
         state::connect::{ConnectAccountPanel, ContactsStep},
         view::{ConnectAccountMessage, ContactsMessage},
     },
-    services::coincube::{ContactRole, Invite},
+    services::coincube::{ContactRole, Invite, ReceivedInvite},
 };
 
 use super::{card_style, format_date};
@@ -56,8 +56,12 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
         .spacing(0)
         .width(Length::Fill);
 
-    // Loading state
-    if cs.loading && cs.contacts.is_none() && cs.invites.is_none() {
+    // Loading state — wait until all three sibling fetches (contacts,
+    // sent invites, received invites) are missing before showing the
+    // spinner. Once any one of them lands the spinner gives way to the
+    // section layout, which renders its own per-section loading state.
+    if cs.loading && cs.contacts.is_none() && cs.invites.is_none() && cs.received_invites.is_none()
+    {
         col = col.push(
             text::p1_regular("Loading\u{2026}")
                 .color(color::GREY_3)
@@ -70,7 +74,7 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
     // (errors during initial load are silently swallowed — the empty state is shown instead)
     if !cs.loading {
         if let Some(err) = cs.error.as_deref() {
-            if cs.contacts.is_some() || cs.invites.is_some() {
+            if cs.contacts.is_some() || cs.invites.is_some() || cs.received_invites.is_some() {
                 col = col.push(
                     container(text::p2_regular(err).color(color::RED))
                         .padding(8)
@@ -79,6 +83,25 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
                 col = col.push(iced::widget::Space::new().height(Length::Fixed(10.0)));
             }
         }
+    }
+
+    // Received invites section (invites addressed to this user).
+    // Rendered above "Pending Invites" so a freshly-arrived invite is
+    // the first thing the user sees on the Contacts surface. Backend
+    // pre-filters to pending + non-expired
+    // (`invite.go:374-429`), so no client-side filter pass.
+    let received: &[ReceivedInvite] = cs.received_invites.as_deref().unwrap_or_default();
+
+    if !received.is_empty() {
+        col = col.push(text::p1_bold("Received Invites").style(theme::text::primary));
+        col = col.push(iced::widget::Space::new().height(Length::Fixed(8.0)));
+
+        for invite in received {
+            let accepting = cs.accepting_invite_ids.contains(&invite.id);
+            col = col.push(received_invite_card(invite, accepting));
+            col = col.push(iced::widget::Space::new().height(Length::Fixed(8.0)));
+        }
+        col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
     }
 
     // Pending invites section
@@ -101,9 +124,12 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
         col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
     }
 
-    // Contacts list
+    // Contacts list. Show the empty-state card only when all three
+    // sections (contacts, pending sent, received) are empty — a Free
+    // invitee with zero contacts but one received invite should see
+    // the invite, not "No contacts yet".
     let contacts = cs.contacts.as_deref().unwrap_or_default();
-    if contacts.is_empty() && pending.is_empty() {
+    if contacts.is_empty() && pending.is_empty() && received.is_empty() {
         // Empty state
         col = col.push(
             container(
@@ -224,6 +250,59 @@ fn invite_card<'a>(invite: &'a Invite) -> Element<'a, ConnectAccountMessage> {
             .push(info)
             .push(iced::widget::Space::new().width(Length::Fill))
             .push(actions)
+            .align_y(Alignment::Center)
+            .padding(12),
+    )
+    .style(card_style)
+    .width(Length::Fill)
+    .into()
+}
+
+/// Row for an invite addressed *to* the current user. Mirrors
+/// `invite_card` but flips inviter/invitee — shows the **sender's**
+/// email (`owner_email`), role, expiry, and a single primary Accept
+/// button. While the accept request is in flight the button reads
+/// "Accepting…" and is disabled (no `on_press`); the per-row state
+/// comes from `accepting_invite_ids` on `ContactsState`.
+fn received_invite_card<'a>(
+    invite: &'a ReceivedInvite,
+    accepting: bool,
+) -> Element<'a, ConnectAccountMessage> {
+    let role_label = invite.role.to_string();
+    let expiry_elem = expiry_element(&invite.expires_at);
+
+    let info = Column::new()
+        .push(text::p1_regular(invite.owner_email.as_str()).style(theme::text::primary))
+        .push(
+            Row::new()
+                .push(text::p2_regular(role_label).color(role_color(&invite.role)))
+                .push(iced::widget::Space::new().width(Length::Fixed(12.0)))
+                .push(expiry_elem)
+                .align_y(Alignment::Center),
+        )
+        .spacing(2);
+
+    let invite_id = invite.id;
+    let accept_button: Element<ConnectAccountMessage> = if accepting {
+        // Disabled "Accepting…" — `on_press_maybe(None)` keeps the
+        // primary styling while suppressing the click handler, so the
+        // button stays visually anchored in the row.
+        button::primary(None, "Accepting\u{2026}")
+            .on_press_maybe(None)
+            .into()
+    } else {
+        button::primary(None, "Accept")
+            .on_press(ConnectAccountMessage::Contacts(
+                ContactsMessage::AcceptReceivedInvite(invite_id),
+            ))
+            .into()
+    };
+
+    container(
+        Row::new()
+            .push(info)
+            .push(iced::widget::Space::new().width(Length::Fill))
+            .push(accept_button)
             .align_y(Alignment::Center)
             .padding(12),
     )
@@ -649,7 +728,11 @@ fn contact_detail_ux<'a>(
             .push(dialog);
     }
 
-    col.spacing(0).width(Length::Fill).into()
+    // Cap the panel width so the profile/cubes cards read as a focused
+    // detail column instead of stretching edge-to-edge on wide windows.
+    // Matches the `.max_width(500)` the Invite form uses below, bumped
+    // slightly to comfortably fit the two side-by-side action buttons.
+    col.spacing(0).max_width(520).width(Length::Fill).into()
 }
 
 /// W14 multi-select dialog body. Rendered inline beneath the Associated

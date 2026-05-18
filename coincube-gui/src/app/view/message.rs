@@ -1009,6 +1009,21 @@ pub enum ContactsMessage {
     ContactsLoaded(Vec<crate::services::coincube::Contact>, u64),
     /// Invites list loaded.
     InvitesLoaded(Vec<crate::services::coincube::Invite>, u64),
+    /// Received-invites list loaded (invites addressed to the current
+    /// user). Carries `session_generation` for stale-response guarding,
+    /// matching the existing `ContactsLoaded` / `InvitesLoaded` pattern.
+    ReceivedInvitesLoaded(Vec<crate::services::coincube::ReceivedInvite>, u64),
+    /// User tapped Accept on a received-invite row.
+    AcceptReceivedInvite(u64),
+    /// Result of a successful accept. Carries the invite id so the row
+    /// can be removed optimistically before the contacts refetch lands.
+    ReceivedInviteAccepted(u64),
+    /// Accept request failed. Removes the id from the in-flight set so
+    /// the button re-enables, then surfaces the error via the contacts
+    /// `error` field. Plain `Error(String)` would also surface the
+    /// message but wouldn't know which invite to clear from the
+    /// in-flight set, leaving its Accept button stuck on "Accepting…".
+    AcceptReceivedInviteFailed(u64, String),
     /// Navigate to invite form.
     ShowInviteForm,
     /// Navigate back to list.

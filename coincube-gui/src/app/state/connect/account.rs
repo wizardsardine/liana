@@ -9,8 +9,8 @@ use crate::{
     services::coincube::{
         BillingCycle, BillingHistoryEntry, ChargeStatus, CheckoutRequest, CheckoutResponse,
         CoincubeClient, ConnectPlan, Contact, ContactCube, ContactRole, CreateInviteRequest,
-        FeaturesResponse, Invite, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest, User,
-        VerifiedDevice,
+        FeaturesResponse, Invite, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
+        ReceivedInvite, User, VerifiedDevice,
     },
 };
 
@@ -72,6 +72,18 @@ pub struct ContactsState {
     pub step: ContactsStep,
     pub contacts: Option<Vec<Contact>>,
     pub invites: Option<Vec<Invite>>,
+    /// Pending invites addressed to the authenticated user (inbound).
+    /// `None` while the initial fetch is in flight; `Some(vec)` once
+    /// loaded (possibly empty). The backend filters server-side to
+    /// pending + non-expired
+    /// (`coincube-api/services/connect/invite/handlers/invite.go:374-429`),
+    /// so the view renders it as-is without a second filter pass.
+    pub received_invites: Option<Vec<ReceivedInvite>>,
+    /// Invite ids whose Accept request is currently in flight. Prevents
+    /// a double-tap from firing two `accept_invite_by_id` calls (the
+    /// second would race against the server-side row lock and surface
+    /// an opaque error); also drives the per-row "Accepting…" label.
+    pub accepting_invite_ids: std::collections::HashSet<u64>,
     pub invite_email: String,
     pub invite_role: ContactRole,
     pub invite_sending: bool,
@@ -147,6 +159,8 @@ impl ContactsState {
             step: ContactsStep::List,
             contacts: None,
             invites: None,
+            received_invites: None,
+            accepting_invite_ids: std::collections::HashSet::new(),
             invite_email: String::new(),
             invite_role: ContactRole::Keyholder,
             invite_sending: false,
@@ -364,6 +378,7 @@ impl ConnectAccountPanel {
         self.contacts_state.step = ContactsStep::List;
         self.contacts_state.contacts = None;
         self.contacts_state.invites = None;
+        self.contacts_state.received_invites = None;
         self.contacts_state.error = None;
         self.contacts_state.loading = true;
         load_contacts_data(&self.client, self.session_generation)
@@ -383,17 +398,26 @@ impl ConnectAccountPanel {
             if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
                 if let Ok(bytes) = entry.get_secret() {
                     if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
-                        // Migrate to cube-specific key
+                        // Migrate into the per-cube key. `save_session_to_keyring`
+                        // writes BOTH the per-cube key and the legacy global
+                        // key (kept in sync), so we intentionally do NOT delete
+                        // the legacy credential here.
+                        //
+                        // The Launcher's ConnectAccountPanel has no
+                        // `current_cube_uuid`, so it can only ever read the
+                        // legacy global key. Deleting it here meant that
+                        // once any Cube was opened (App migrates + this used
+                        // to delete the global key), every subsequent return
+                        // to the Launcher — notably the Recovery → Launcher
+                        // navigation flow — found no session and forced the
+                        // user to sign in again. Keeping the legacy key in
+                        // sync lets the Launcher restore the current session.
+                        // Explicit logout still clears both keys via
+                        // `clear_keyring_session`.
                         self.save_session_to_keyring(&session);
-                        // Delete legacy credential to prevent other cubes from reusing it
-                        if let Err(e) = entry.delete_credential() {
-                            log::warn!(
-                                "[CONNECT] Failed to delete legacy session after migration: {}",
-                                e
-                            );
-                        }
                         log::info!(
-                            "[CONNECT] Migrated legacy session to cube-specific key for {}",
+                            "[CONNECT] Migrated legacy session to cube-specific key for {} \
+                             (legacy key kept in sync for Launcher session restore)",
                             key
                         );
                         return Some(session);
@@ -414,26 +438,47 @@ impl ConnectAccountPanel {
     }
 
     fn save_session_to_keyring(&self, session: &StoredSession) {
-        // Use cube-specific key if available, otherwise fall back to legacy global key
-        let (key, is_legacy) = match self.keyring_key_for_cube() {
-            Some(key) => (key, false),
-            None => {
-                log::info!("[CONNECT] No cube UUID set, using legacy global session key");
-                (CONNECT_KEYRING_USER.to_string(), true)
+        let bytes = match serde_json::to_vec(session) {
+            Ok(b) => b,
+            Err(e) => {
+                log::error!("[CONNECT] Failed to serialize session for keyring: {}", e);
+                return;
             }
         };
-        match keyring::Entry::new(CONNECT_KEYRING_SERVICE, &key) {
+        let write = |key: &str| match keyring::Entry::new(CONNECT_KEYRING_SERVICE, key) {
             Ok(entry) => {
                 let _ = entry.delete_credential();
-                if let Ok(bytes) = serde_json::to_vec(session) {
-                    if let Err(e) = entry.set_secret(&bytes) {
-                        log::error!("[CONNECT] Failed to save session to keyring: {}", e);
-                    } else if is_legacy {
-                        log::info!("[CONNECT] Saved session to legacy global key");
-                    }
+                if let Err(e) = entry.set_secret(&bytes) {
+                    log::error!(
+                        "[CONNECT] Failed to save session to keyring '{}': {}",
+                        key,
+                        e
+                    );
                 }
             }
-            Err(e) => log::error!("[CONNECT] Keyring inaccessible for save: {}", e),
+            Err(e) => log::error!("[CONNECT] Keyring inaccessible for save '{}': {}", key, e),
+        };
+
+        match self.keyring_key_for_cube() {
+            Some(cube_key) => {
+                // A Cube is open. Write the isolated per-cube key AND
+                // mirror to the legacy global key. The Launcher's
+                // ConnectAccountPanel has no `current_cube_uuid` and can
+                // only read the global key, so the two MUST stay in sync —
+                // otherwise a token refresh while a Cube is open would
+                // leave the global key holding a stale session and the
+                // Recovery → Launcher restore would fail (or restore an
+                // expired token). Every save path (login, refresh,
+                // migration) funnels here, so mirroring here keeps them
+                // consistent. Explicit logout clears both keys via
+                // `clear_keyring_session`.
+                write(cube_key.as_str());
+                write(CONNECT_KEYRING_USER);
+            }
+            None => {
+                log::info!("[CONNECT] No cube UUID set, using legacy global session key");
+                write(CONNECT_KEYRING_USER);
+            }
         }
     }
 
@@ -1091,8 +1136,13 @@ impl ConnectAccountPanel {
             ContactsMessage::ContactsLoaded(contacts, gen) => {
                 if gen == self.session_generation {
                     self.contacts_state.contacts = Some(contacts);
-                    // Clear loading only when both are done
-                    if self.contacts_state.invites.is_some() {
+                    // Clear loading only when all three sibling fetches
+                    // (contacts, sent invites, received invites) have
+                    // landed; otherwise the view flips from spinner to
+                    // empty-state before the late arrival paints.
+                    if self.contacts_state.invites.is_some()
+                        && self.contacts_state.received_invites.is_some()
+                    {
                         self.contacts_state.loading = false;
                     }
                 }
@@ -1101,10 +1151,69 @@ impl ConnectAccountPanel {
             ContactsMessage::InvitesLoaded(invites, gen) => {
                 if gen == self.session_generation {
                     self.contacts_state.invites = Some(invites);
-                    if self.contacts_state.contacts.is_some() {
+                    if self.contacts_state.contacts.is_some()
+                        && self.contacts_state.received_invites.is_some()
+                    {
                         self.contacts_state.loading = false;
                     }
                 }
+            }
+
+            ContactsMessage::ReceivedInvitesLoaded(received, gen) => {
+                if gen == self.session_generation {
+                    self.contacts_state.received_invites = Some(received);
+                    if self.contacts_state.contacts.is_some()
+                        && self.contacts_state.invites.is_some()
+                    {
+                        self.contacts_state.loading = false;
+                    }
+                }
+            }
+
+            ContactsMessage::AcceptReceivedInvite(invite_id) => {
+                // Guard against double-tap. The button is disabled
+                // while the id is in-flight, but the message can still
+                // arrive twice via keyboard activation; we drop the
+                // second silently.
+                if !self.contacts_state.accepting_invite_ids.insert(invite_id) {
+                    return iced::Task::none();
+                }
+                self.contacts_state.error = None;
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move { client.accept_invite_by_id(invite_id).await },
+                    move |res| match res {
+                        Ok(()) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Contacts(
+                                ContactsMessage::ReceivedInviteAccepted(invite_id),
+                            ),
+                        )),
+                        Err(e) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Contacts(
+                                ContactsMessage::AcceptReceivedInviteFailed(
+                                    invite_id,
+                                    e.to_string(),
+                                ),
+                            ),
+                        )),
+                    },
+                );
+            }
+
+            ContactsMessage::ReceivedInviteAccepted(invite_id) => {
+                self.contacts_state.accepting_invite_ids.remove(&invite_id);
+                // Reload from the API. This resets `received_invites = None`
+                // and shows the skeleton briefly before the refetch lands —
+                // the same UX as the InviteCreated / Resend flows. (An
+                // optimistic `retain()` here would be a dead store: the view
+                // only renders after `update()` returns, by which point
+                // `reload_contacts()` has already cleared the list.)
+                return self.reload_contacts();
+            }
+
+            ContactsMessage::AcceptReceivedInviteFailed(invite_id, msg) => {
+                self.contacts_state.accepting_invite_ids.remove(&invite_id);
+                self.contacts_state.error = Some(msg);
             }
 
             ContactsMessage::ShowInviteForm => {
@@ -1596,6 +1705,7 @@ impl Default for ConnectAccountPanel {
 pub fn load_contacts_data(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
     let c1 = client.clone();
     let c2 = client.clone();
+    let c3 = client.clone();
     iced::Task::batch([
         iced::Task::perform(
             async move { c1.get_contacts().await },
@@ -1616,6 +1726,19 @@ pub fn load_contacts_data(client: &CoincubeClient, generation: u64) -> iced::Tas
                 Ok(invites) => Message::View(view::Message::ConnectAccount(
                     ConnectAccountMessage::Contacts(ContactsMessage::InvitesLoaded(
                         invites, generation,
+                    )),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
+                )),
+            },
+        ),
+        iced::Task::perform(
+            async move { c3.get_received_invites().await },
+            move |res| match res {
+                Ok(received) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::ReceivedInvitesLoaded(
+                        received, generation,
                     )),
                 )),
                 Err(e) => Message::View(view::Message::ConnectAccount(
