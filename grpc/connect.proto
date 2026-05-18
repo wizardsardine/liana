@@ -74,6 +74,13 @@ message TxSummary {
   string network = 5;
 }
 
+message SubmittedSignature {
+  string device_id = 1;
+  bytes signed_psbt = 2;
+  repeated string signed_key_ids = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
 message SigningSession {
   string session_id = 1;
   string request_id = 2;
@@ -89,6 +96,7 @@ message SigningSession {
   google.protobuf.Timestamp expires_at = 12;
   string created_by_device_id = 13;
   string note = 14;
+  repeated SubmittedSignature submitted_signatures = 15;
 }
 
 message CreateSigningSessionRequest {

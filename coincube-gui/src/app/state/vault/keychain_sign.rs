@@ -35,8 +35,8 @@ use coincube_ui::{
         button, modal as modal_const,
         text::{p1_bold, p1_regular},
     },
-    icon,
-    widget::{modal, Column, Element, Row},
+    icon, theme,
+    widget::{modal, Column, Container, Element, Row},
 };
 
 use crate::{
@@ -103,6 +103,10 @@ pub struct PendingSession {
     /// modal-close keys off this flag — not `status` — to guarantee the
     /// signature is captured before the modal goes away. Reset on retry.
     pub signed_psbt_persisted: bool,
+    /// True while a `GetSigningSession` fetch is in flight for this row.
+    /// `SIGNATURE_SUBMITTED` and `SESSION_COMPLETED` can both ask for the
+    /// signed PSBT; this prevents duplicate fetch/persist races.
+    pub signed_psbt_fetching: bool,
 }
 
 /// View-friendly mirror of the gRPC `SessionStatus` enum, plus a
@@ -274,6 +278,7 @@ pub struct KeychainSignModal {
     /// instances on demand (`make_session_client`).
     tokens: Arc<RwLock<AccessTokenResponse>>,
     grpc_url: String,
+    desktop_device_id: String,
     /// Vault ID on the API — sourced from `ConnectVaultResponse.id`.
     /// Populated after the classification fetch returns.
     vault_id: Option<u64>,
@@ -335,6 +340,7 @@ impl KeychainSignModal {
         coincube_client: CoincubeClient,
         tokens: Arc<RwLock<AccessTokenResponse>>,
         grpc_url: String,
+        desktop_device_id: String,
         cube_server_id: u64,
         cube_uuid: String,
         descriptor_id: String,
@@ -345,6 +351,7 @@ impl KeychainSignModal {
             coincube_client,
             tokens,
             grpc_url,
+            desktop_device_id,
             vault_id: None,
             cube_server_id,
             cube_uuid,
@@ -447,7 +454,7 @@ impl KeychainSignModal {
         let access_token = self.tokens.read().await.access_token.clone();
         Ok(GrpcSessionClient::new(
             channel,
-            AuthInterceptor::new(&access_token),
+            AuthInterceptor::with_device_id(&access_token, self.desktop_device_id.clone()),
         ))
     }
 
@@ -560,14 +567,17 @@ impl KeychainSignModal {
         let vault_id = self.vault_id.unwrap_or(0).to_string();
         let tokens = self.tokens.clone();
         let grpc_url = self.grpc_url.clone();
+        let desktop_device_id = self.desktop_device_id.clone();
         Task::perform(
             async move {
                 let channel = crate::services::connect::grpc::create_channel(&grpc_url)
                     .await
                     .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
                 let access_token = tokens.read().await.access_token.clone();
-                let mut client =
-                    GrpcSessionClient::new(channel, AuthInterceptor::new(&access_token));
+                let mut client = GrpcSessionClient::new(
+                    channel,
+                    AuthInterceptor::with_device_id(&access_token, desktop_device_id),
+                );
                 client
                     .resolve_signers(vault_id)
                     .await
@@ -622,6 +632,7 @@ impl KeychainSignModal {
         let descriptor_id = self.descriptor_id.clone();
         let tokens = self.tokens.clone();
         let grpc_url = self.grpc_url.clone();
+        let desktop_device_id = self.desktop_device_id.clone();
 
         // Owned clone of the classification rows so the per-target
         // dispatch below can borrow without lifetime gymnastics.
@@ -668,6 +679,7 @@ impl KeychainSignModal {
                 error: None,
                 cancel_requested: false,
                 signed_psbt_persisted: false,
+                signed_psbt_fetching: false,
             });
 
             let req = CreateSigningSessionRequest {
@@ -685,14 +697,17 @@ impl KeychainSignModal {
             };
             let tokens = tokens.clone();
             let grpc_url = grpc_url.clone();
+            let desktop_device_id = desktop_device_id.clone();
             tasks.push(Task::perform(
                 async move {
                     let channel = crate::services::connect::grpc::create_channel(&grpc_url)
                         .await
                         .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
                     let access_token = tokens.read().await.access_token.clone();
-                    let mut client =
-                        GrpcSessionClient::new(channel, AuthInterceptor::new(&access_token));
+                    let mut client = GrpcSessionClient::new(
+                        channel,
+                        AuthInterceptor::with_device_id(&access_token, desktop_device_id),
+                    );
                     client
                         .create_signing_session(req)
                         .await
@@ -772,6 +787,7 @@ impl KeychainSignModal {
         };
         let tokens = self.tokens.clone();
         let grpc_url = self.grpc_url.clone();
+        let desktop_device_id = self.desktop_device_id.clone();
         let rpc_sid = sid.clone();
         Task::perform(
             async move {
@@ -779,8 +795,10 @@ impl KeychainSignModal {
                     .await
                     .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
                 let access_token = tokens.read().await.access_token.clone();
-                let mut client =
-                    GrpcSessionClient::new(channel, AuthInterceptor::new(&access_token));
+                let mut client = GrpcSessionClient::new(
+                    channel,
+                    AuthInterceptor::with_device_id(&access_token, desktop_device_id),
+                );
                 client
                     .cancel_signing_session(rpc_sid, "user_cancelled".to_string())
                     .await
@@ -822,41 +840,25 @@ impl KeychainSignModal {
         );
         use crate::services::connect::grpc::connect_v1::EventType;
         let event_type = event_type_from_i32(event.event_type);
+        let mut fetch_session_id = None;
         match event_type {
             EventType::SessionDelivered => entry.status = PendingSessionStatus::Delivered,
             EventType::SessionViewed => entry.status = PendingSessionStatus::Viewed,
             EventType::SessionApproved => entry.status = PendingSessionStatus::Approved,
             EventType::SignatureSubmitted => {
                 entry.status = PendingSessionStatus::PartiallySigned;
-                // Fetch the session to get the signed PSBT.
-                let session_id = event.session_id.clone();
-                let tokens = self.tokens.clone();
-                let grpc_url = self.grpc_url.clone();
-                return Task::perform(
-                    async move {
-                        let channel = crate::services::connect::grpc::create_channel(&grpc_url)
-                            .await
-                            .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
-                        let access_token = tokens.read().await.access_token.clone();
-                        let mut client =
-                            GrpcSessionClient::new(channel, AuthInterceptor::new(&access_token));
-                        client
-                            .get_signing_session(session_id.clone())
-                            .await
-                            .map_err(OpError::from_status)
-                    },
-                    {
-                        let sid = event.session_id.clone();
-                        move |r| {
-                            Message::KeychainSign(KeychainSignMessage::SessionFetched(
-                                sid.clone(),
-                                r,
-                            ))
-                        }
-                    },
-                );
+                if !entry.signed_psbt_fetching && !entry.signed_psbt_persisted {
+                    entry.signed_psbt_fetching = true;
+                    fetch_session_id = Some(event.session_id.clone());
+                }
             }
-            EventType::SessionCompleted => entry.status = PendingSessionStatus::Completed,
+            EventType::SessionCompleted => {
+                entry.status = PendingSessionStatus::Completed;
+                if !entry.signed_psbt_fetching && !entry.signed_psbt_persisted {
+                    entry.signed_psbt_fetching = true;
+                    fetch_session_id = Some(event.session_id.clone());
+                }
+            }
             EventType::SessionRejected => {
                 entry.status = PendingSessionStatus::Rejected;
                 entry.error = Some(event.message.clone());
@@ -868,6 +870,33 @@ impl KeychainSignModal {
                 entry.error = Some(event.message.clone());
             }
             _ => {}
+        }
+        if let Some(session_id) = fetch_session_id {
+            let tokens = self.tokens.clone();
+            let grpc_url = self.grpc_url.clone();
+            let desktop_device_id = self.desktop_device_id.clone();
+            return Task::perform(
+                async move {
+                    let channel = crate::services::connect::grpc::create_channel(&grpc_url)
+                        .await
+                        .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
+                    let access_token = tokens.read().await.access_token.clone();
+                    let mut client = GrpcSessionClient::new(
+                        channel,
+                        AuthInterceptor::with_device_id(&access_token, desktop_device_id),
+                    );
+                    client
+                        .get_signing_session(session_id.clone())
+                        .await
+                        .map_err(OpError::from_status)
+                },
+                {
+                    let sid = event.session_id.clone();
+                    move |r| {
+                        Message::KeychainSign(KeychainSignMessage::SessionFetched(sid.clone(), r))
+                    }
+                },
+            );
         }
         if self.check_all_done() {
             // Reachable here only when this event is the *last* missing
@@ -906,6 +935,7 @@ impl KeychainSignModal {
                     return Task::none();
                 }
                 if let Some(entry) = self.pending.iter_mut().find(|p| p.session_id == session_id) {
+                    entry.signed_psbt_fetching = false;
                     entry.status = PendingSessionStatus::Failed;
                     entry.error = Some(e.message);
                 }
@@ -913,6 +943,11 @@ impl KeychainSignModal {
             }
         };
         let Some(session) = resp.session else {
+            if let Some(entry) = self.pending.iter_mut().find(|p| p.session_id == session_id) {
+                entry.signed_psbt_fetching = false;
+                entry.status = PendingSessionStatus::Failed;
+                entry.error = Some("API response missing signing session".to_string());
+            }
             return Task::none();
         };
         // Reflect the authoritative status from the fetch response.
@@ -921,24 +956,50 @@ impl KeychainSignModal {
         // never arrives — leaving the modal unable to close even though
         // the signature was fetched, merged, and persisted.
         if let Some(entry) = self.pending.iter_mut().find(|p| p.session_id == session_id) {
+            entry.signed_psbt_fetching = false;
             entry.status =
                 PendingSessionStatus::from_proto(session_status_from_i32(session.status));
             entry.error = None;
         }
-        // Decode the signed PSBT and merge into the local SpendTx via
+        if session.submitted_signatures.is_empty() {
+            if let Some(entry) = self.pending.iter_mut().find(|p| p.session_id == session_id) {
+                entry.status = PendingSessionStatus::Failed;
+                entry.error = Some(
+                    "API session completed without returning a submitted signed PSBT".to_string(),
+                );
+            }
+            return Task::none();
+        }
+        // Decode the submitted signed PSBT(s) and merge into the local SpendTx via
         // the daemon's update path. The existing SignModal handler uses
         // the same `merge_signatures` + `update_spend_tx` shape; we
         // replicate it inline rather than refactor for one call site.
-        let signed_psbt = match Psbt::deserialize(&session.psbt) {
+        let mut submitted = session.submitted_signatures.into_iter();
+        let first = submitted.next().expect("checked non-empty above");
+        let mut signed_psbt = match Psbt::deserialize(&first.signed_psbt) {
             Ok(p) => p,
             Err(e) => {
                 if let Some(entry) = self.pending.iter_mut().find(|p| p.session_id == session_id) {
                     entry.status = PendingSessionStatus::Failed;
-                    entry.error = Some(format!("Malformed PSBT from API: {}", e));
+                    entry.error = Some(format!("Malformed signed PSBT from API: {}", e));
                 }
                 return Task::none();
             }
         };
+        for sig in submitted {
+            match Psbt::deserialize(&sig.signed_psbt) {
+                Ok(psbt) => super::psbt::merge_signatures_pub(&mut signed_psbt, &psbt),
+                Err(e) => {
+                    if let Some(entry) =
+                        self.pending.iter_mut().find(|p| p.session_id == session_id)
+                    {
+                        entry.status = PendingSessionStatus::Failed;
+                        entry.error = Some(format!("Malformed signed PSBT from API: {}", e));
+                    }
+                    return Task::none();
+                }
+            }
+        }
         tracing::info!(
             target: "coincube_gui::signing",
             vault_id = self.vault_id.unwrap_or(0),
@@ -999,6 +1060,7 @@ impl KeychainSignModal {
         );
         let tokens = self.tokens.clone();
         let grpc_url = self.grpc_url.clone();
+        let desktop_device_id = self.desktop_device_id.clone();
         let mut tasks = Vec::new();
         for entry in self.pending.iter_mut() {
             if entry.status.is_terminal() {
@@ -1015,14 +1077,17 @@ impl KeychainSignModal {
             let sid = entry.session_id.clone();
             let tokens = tokens.clone();
             let grpc_url = grpc_url.clone();
+            let desktop_device_id = desktop_device_id.clone();
             tasks.push(Task::perform(
                 async move {
                     let channel = crate::services::connect::grpc::create_channel(&grpc_url)
                         .await
                         .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
                     let access_token = tokens.read().await.access_token.clone();
-                    let mut client =
-                        GrpcSessionClient::new(channel, AuthInterceptor::new(&access_token));
+                    let mut client = GrpcSessionClient::new(
+                        channel,
+                        AuthInterceptor::with_device_id(&access_token, desktop_device_id),
+                    );
                     client
                         .cancel_signing_session(sid.clone(), "user_cancelled".to_string())
                         .await
@@ -1072,20 +1137,24 @@ impl KeychainSignModal {
         // The retried session produces a fresh signature that must be
         // fetched + persisted again before this row counts as done.
         entry.signed_psbt_persisted = false;
+        entry.signed_psbt_fetching = false;
 
         let psbt_bytes = self.psbt.serialize();
         let vault_id = self.vault_id.unwrap_or(0).to_string();
         let descriptor_id = self.descriptor_id.clone();
         let tokens = self.tokens.clone();
         let grpc_url = self.grpc_url.clone();
+        let desktop_device_id = self.desktop_device_id.clone();
         Task::perform(
             async move {
                 let channel = crate::services::connect::grpc::create_channel(&grpc_url)
                     .await
                     .map_err(|e| OpError::new(format!("gRPC channel: {}", e)))?;
                 let access_token = tokens.read().await.access_token.clone();
-                let mut client =
-                    GrpcSessionClient::new(channel, AuthInterceptor::new(&access_token));
+                let mut client = GrpcSessionClient::new(
+                    channel,
+                    AuthInterceptor::with_device_id(&access_token, desktop_device_id),
+                );
                 let req = CreateSigningSessionRequest {
                     request_id: uuid_v4(),
                     vault_id,
@@ -1178,6 +1247,7 @@ impl KeychainSignModal {
                             self.pending.iter_mut().find(|p| p.session_id == session_id)
                         {
                             entry.status = PendingSessionStatus::Failed;
+                            entry.signed_psbt_fetching = false;
                             entry.error = Some(format!("Failed to persist signed PSBT: {}", e));
                         }
                     }
@@ -1371,7 +1441,14 @@ impl Modal for KeychainSignModal {
                 .on_press(view::Message::Spend(SpendTxMessage::CancelKeychainSign)),
         );
 
-        modal::Modal::new(content, col)
+        // Wrap the column in a card-styled Container so it has its own
+        // backdrop on top of the modal's dim layer. Without this the text
+        // renders directly over the 80%-black dim and is invisible on
+        // themes whose default text colour is dark; the only thing the
+        // user sees is the "Cancel all" button (which has its own style).
+        let modal_card = Container::new(col).style(theme::card::simple);
+
+        modal::Modal::new(content, modal_card)
             .on_blur(Some(view::Message::Spend(SpendTxMessage::Cancel)))
             .into()
     }

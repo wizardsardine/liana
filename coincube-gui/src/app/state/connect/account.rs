@@ -459,10 +459,24 @@ impl ConnectAccountPanel {
         self.save_session_to_keyring(&session);
         self.client.set_token(&session.login.token);
 
-        let user = session.login.user;
-        iced::Task::done(Message::View(view::Message::ConnectAccount(
-            ConnectAccountMessage::SessionLoaded { user, plan: None },
-        )))
+        let user = session.login.user.clone();
+        // Fire two messages: the in-panel state transition + the
+        // app-level bootstrap that persists JWTs to `connect.json`,
+        // registers the signer device via gRPC, and starts the
+        // realtime stream. The launcher login path does this at
+        // app-init via `register_signer_device_best_effort`; the
+        // in-app login path previously skipped it, which left
+        // "Sign via Keychain" unreachable until a full app restart.
+        iced::Task::batch([
+            iced::Task::done(Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::SessionLoaded { user, plan: None },
+            ))),
+            iced::Task::done(Message::InAppConnectLoginCompleted {
+                token: session.login.token.clone(),
+                refresh_token: session.login.refresh_token.clone(),
+                email: session.login.user.email.clone(),
+            }),
+        ])
     }
 
     pub fn update_message(&mut self, msg: ConnectAccountMessage) -> iced::Task<Message> {

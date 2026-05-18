@@ -125,6 +125,32 @@ pub enum Message {
     /// any. Wraps the modal's internal lifecycle messages so they can
     /// be dispatched through Iced's top-level update loop.
     KeychainSign(crate::app::state::vault::keychain_sign::KeychainSignMessage),
+    /// Fired by the in-app Connect panel right after a successful login
+    /// (REST OTP-verify or password). Carries the freshly-issued JWTs so
+    /// the App can persist them to `connect.json`, register a signer
+    /// device via gRPC `RegisterDevice`, and bootstrap the realtime
+    /// stream — work that the launcher path does via
+    /// `register_signer_device_best_effort` + `connect_stream_ready_task`
+    /// at app-init time, but which the runtime in-app login flow
+    /// previously skipped. See PLAN comment near `mod.rs:2374`.
+    InAppConnectLoginCompleted {
+        token: String,
+        refresh_token: String,
+        email: String,
+    },
+    /// Internal: chains from `InAppConnectLoginCompleted` once
+    /// tokens have been persisted and a device_id registered. The
+    /// payload carries everything `connect_stream_ready_task` needs
+    /// so we can fire it from a non-init context.
+    TriggerConnectStreamReady {
+        network: coincube_core::miniscript::bitcoin::Network,
+        datadir: crate::dir::CoincubeDirectory,
+        tokens: std::sync::Arc<
+            tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>,
+        >,
+        email: String,
+        cube_uuid: Option<String>,
+    },
 }
 
 #[derive(Debug)]

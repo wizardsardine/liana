@@ -190,6 +190,7 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
                 config.sent_amount_display,
                 config.sent_quote,
                 config.sent_image_handle,
+                "has been sent successfully.",
                 LiquidSendMessage::BackToHome,
             )
             .map(Message::LiquidSend);

@@ -167,23 +167,46 @@ pub fn save_action<'a>(saved: bool) -> Element<'a, Message> {
 pub fn broadcast_action<'a>(
     conflicting_txids: &HashSet<Txid>,
     saved: bool,
+    broadcasting: bool,
+    error: Option<String>,
     spend_amount_display: &'a str,
     sent_quote: &'a coincube_ui::component::quote_display::Quote,
     sent_image_handle: &'a iced::widget::image::Handle,
+    is_self_transfer: bool,
 ) -> Element<'a, Message> {
     if saved {
+        let verb_suffix = if is_self_transfer {
+            "has been transferred."
+        } else {
+            "has been sent successfully."
+        };
         coincube_ui::component::sent_celebration_page(
             "bitcoin-send",
             spend_amount_display,
             sent_quote,
             sent_image_handle,
+            verb_suffix,
             Message::Spend(super::super::SpendTxMessage::Cancel),
         )
     } else {
+        let broadcast_button = button::primary(
+            None,
+            if broadcasting {
+                "Broadcasting..."
+            } else {
+                "Broadcast"
+            },
+        );
+        let broadcast_button = if broadcasting {
+            broadcast_button
+        } else {
+            broadcast_button.on_press(Message::Spend(SpendTxMessage::Confirm))
+        };
         card::simple(
             Column::new()
                 .spacing(10)
                 .push(Container::new(h4_bold("Broadcast the transaction")).width(Length::Fill))
+                .push(error.map(|err| card::error("Broadcast failed", err)))
                 .push(if conflicting_txids.is_empty() {
                     None
                 } else {
@@ -238,10 +261,9 @@ pub fn broadcast_action<'a>(
                     )
                 })
                 .push(
-                    Row::new().push(Column::new().width(Length::Fill)).push(
-                        button::primary(None, "Broadcast")
-                            .on_press(Message::Spend(SpendTxMessage::Confirm)),
-                    ),
+                    Row::new()
+                        .push(Column::new().width(Length::Fill))
+                        .push(broadcast_button),
                 ),
         )
         .width(Length::Fixed(if conflicting_txids.is_empty() {
@@ -763,9 +785,18 @@ pub fn outputs_view<'a>(
                 )
                 .style(theme::card::simple)
             } else {
-                Container::new(h4_bold("0 payment").style(|t| {
-                    theme::text::custom(t.colors.buttons.transparent_border.active.text)
-                }))
+                Container::new(
+                    Column::new()
+                        .push(
+                            h4_bold("Self-transfer").style(|t| {
+                                theme::text::custom(t.colors.buttons.transparent_border.active.text)
+                            }),
+                        )
+                        .push(p2_regular("No external recipients — every output returns to this wallet.").style(
+                            |t| theme::text::custom(t.colors.buttons.transparent_border.active.text),
+                        ))
+                        .spacing(6),
+                )
                 .padding(20)
                 .width(Length::Fill)
                 .style(theme::card::simple)

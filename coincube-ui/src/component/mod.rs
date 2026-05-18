@@ -87,11 +87,12 @@ pub fn sent_celebration_page<'a, M: Clone + 'a>(
     amount_display: &'a str,
     quote: &'a quote_display::Quote,
     image_handle: &'a iced::widget::image::Handle,
+    verb_suffix: &'a str,
     on_dismiss: M,
 ) -> Element<'a, M> {
     use quote_display::{self as qd, QuoteDisplayProps};
 
-    Column::new()
+    let inner = Column::new()
         .spacing(20)
         .width(Length::Fill)
         .align_x(iced::Alignment::Center)
@@ -113,7 +114,7 @@ pub fn sent_celebration_page<'a, M: Clone + 'a>(
                         }),
                 )
                 .push(
-                    iced::widget::text("has been sent successfully.")
+                    iced::widget::text(verb_suffix)
                         .size(20)
                         .font(iced::Font {
                             style: iced::font::Style::Italic,
@@ -126,7 +127,16 @@ pub fn sent_celebration_page<'a, M: Clone + 'a>(
             button::primary(None, "Back")
                 .width(Length::Fixed(150.0))
                 .on_press(on_dismiss),
-        )
+        );
+
+    // The modal widget dims the underlying content with a translucent backdrop
+    // but does not draw a surface behind its child, so without an opaque
+    // wrapper the celebration text floats over the dimmed PSBT view. Wrap in
+    // a card-styled Container so the celebration has a solid backing.
+    Container::new(inner)
+        .padding(30)
+        .max_width(640)
+        .style(theme::card::modal)
         .into()
 }
 

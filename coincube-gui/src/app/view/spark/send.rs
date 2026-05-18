@@ -57,6 +57,7 @@ impl<'a> SparkSendView<'a> {
                 self.sent_amount_display,
                 self.sent_quote,
                 self.sent_image_handle,
+                "has been sent successfully.",
                 Message::SparkSend(crate::app::view::SparkSendMessage::Reset),
             );
         }
