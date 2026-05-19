@@ -483,7 +483,6 @@ fn other_options(modal_state: &XpubEntryModalState, is_wallet_manager: bool) -> 
         .spacing(modal::V_SPACING)
         .push(section_header)
         .push_maybe(expanded_content)
-        .width(modal::BTN_W)
         .into()
 }
 
