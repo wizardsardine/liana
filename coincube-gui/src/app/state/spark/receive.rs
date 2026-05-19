@@ -41,6 +41,7 @@ use crate::app::wallets::SparkBackend;
 pub enum SparkReceiveMethod {
     Bolt11,
     OnchainBitcoin,
+    Spark,
 }
 
 impl SparkReceiveMethod {
@@ -48,6 +49,7 @@ impl SparkReceiveMethod {
         match self {
             Self::Bolt11 => "Lightning (BOLT11)",
             Self::OnchainBitcoin => "On-chain Bitcoin",
+            Self::Spark => "Spark",
         }
     }
 }
@@ -271,6 +273,17 @@ impl State for SparkReceive {
                     }
                     SparkReceiveMethod::OnchainBitcoin => Task::perform(
                         async move { backend.receive_onchain(None).await },
+                        |result| match result {
+                            Ok(ok) => Message::View(crate::app::view::Message::SparkReceive(
+                                SparkReceiveMessage::GenerateSucceeded(ok),
+                            )),
+                            Err(e) => Message::View(crate::app::view::Message::SparkReceive(
+                                SparkReceiveMessage::GenerateFailed(e.to_string()),
+                            )),
+                        },
+                    ),
+                    SparkReceiveMethod::Spark => Task::perform(
+                        async move { backend.receive_spark().await },
                         |result| match result {
                             Ok(ok) => Message::View(crate::app::view::Message::SparkReceive(
                                 SparkReceiveMessage::GenerateSucceeded(ok),

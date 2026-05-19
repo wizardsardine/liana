@@ -361,7 +361,11 @@ async fn resolve_and_prepare(
                 .await
                 .map_err(|e| format!("prepare_lnurl_pay failed: {e}"))
         }
-        ParseInputKind::Bolt11Invoice | ParseInputKind::BitcoinAddress | ParseInputKind::Other => {
+        ParseInputKind::Bolt11Invoice
+        | ParseInputKind::BitcoinAddress
+        | ParseInputKind::SparkAddress
+        | ParseInputKind::SparkInvoice
+        | ParseInputKind::Other => {
             backend
                 .prepare_send(input, amount_sat)
                 .await

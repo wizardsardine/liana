@@ -211,6 +211,7 @@ async fn handle_request(request: Request, state: Arc<ServerState>) -> Response {
         Method::SendPayment(params) => handle_send_payment(id, params, state).await,
         Method::ReceiveBolt11(params) => handle_receive_bolt11(id, params, state).await,
         Method::ReceiveOnchain(params) => handle_receive_onchain(id, params, state).await,
+        Method::ReceiveSpark => handle_receive_spark(id, state).await,
         Method::ListUnclaimedDeposits => handle_list_unclaimed_deposits(id, state).await,
         Method::ClaimDeposit(params) => handle_claim_deposit(id, params, state).await,
         Method::GetUserSettings => handle_get_user_settings(id, state).await,
@@ -768,6 +769,34 @@ async fn handle_receive_onchain(
     }
 }
 
+async fn handle_receive_spark(id: u64, state: Arc<ServerState>) -> Response {
+    let sdk = match state.sdk.read().await.clone() {
+        Some(s) => s,
+        None => {
+            return Response::err(
+                id,
+                ErrorKind::NotConnected,
+                "init must succeed before receive_spark",
+            );
+        }
+    };
+
+    let request = ReceivePaymentRequest {
+        payment_method: ReceivePaymentMethod::SparkAddress,
+    };
+
+    match sdk.sdk.receive_payment(request).await {
+        Ok(resp) => Response::ok(
+            id,
+            OkPayload::ReceivePayment(ReceivePaymentOk {
+                payment_request: resp.payment_request,
+                fee_sat: clamp_u128_to_u64(resp.fee),
+            }),
+        ),
+        Err(e) => Response::err(id, ErrorKind::Sdk, format!("receive_spark failed: {e}")),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Phase 4e: LNURL-pay support
 // ---------------------------------------------------------------------------
@@ -849,11 +878,34 @@ fn input_type_to_ok(input: InputType) -> ParseInputOk {
             lnurl_comment_allowed: addr.pay_request.comment_allowed,
             lnurl_address: Some(addr.address),
         },
+        InputType::SparkAddress(_details) => ParseInputOk {
+            // Static, identity-bound Spark address — no amount.
+            kind: ParseInputKind::SparkAddress,
+            amount_sat: None,
+            lnurl_min_sendable_sat: None,
+            lnurl_max_sendable_sat: None,
+            lnurl_comment_allowed: 0,
+            lnurl_address: None,
+        },
+        InputType::SparkInvoice(details) => ParseInputOk {
+            kind: ParseInputKind::SparkInvoice,
+            // `amount` is sats only for Bitcoin invoices; for token
+            // invoices it's token base units, which the sats-typed
+            // field can't represent — surface None in that case.
+            amount_sat: if details.token_identifier.is_none() {
+                details.amount.map(clamp_u128_to_u64)
+            } else {
+                None
+            },
+            lnurl_min_sendable_sat: None,
+            lnurl_max_sendable_sat: None,
+            lnurl_comment_allowed: 0,
+            lnurl_address: None,
+        },
         // Everything else — BOLT12 invoices/offers, LNURL-auth,
-        // LNURL-withdraw, silent payment, Spark-native types, bare
-        // URLs — falls through to `Other`. The gui shows a "not
-        // supported yet" error; future phases can break each one out
-        // as demand appears.
+        // LNURL-withdraw, silent payment, bare URLs — falls through
+        // to `Other`. The gui shows a "not supported yet" error;
+        // future phases can break each one out as demand appears.
         _ => ParseInputOk {
             kind: ParseInputKind::Other,
             amount_sat: None,

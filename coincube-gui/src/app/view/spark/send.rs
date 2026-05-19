@@ -13,7 +13,7 @@ use coincube_ui::{
         text::{h4_bold, p1_regular, p2_regular},
     },
     theme,
-    widget::{Column, Container, Element, Row},
+    widget::{Column, ColumnExt, Container, Element, Row},
 };
 use iced::{
     widget::{text_input, Space},
@@ -65,7 +65,7 @@ impl<'a> SparkSendView<'a> {
 
         // ── Input card ────────────────────────────────────────────────
         let destination = text_input(
-            "BOLT11 invoice, Lightning address, BIP21 URI, or Bitcoin address",
+            "Spark address/invoice, BOLT11 invoice, Lightning address, BIP21 URI, or Bitcoin address",
             self.destination_input,
         )
         .on_input(|v| {
@@ -151,6 +151,11 @@ fn phase_body<'a>(phase: &SparkSendPhase) -> Element<'a, Message> {
                     "Total",
                     format!("{} sats", ok.amount_sat.saturating_add(ok.fee_sat)),
                 ))
+                .push_maybe(ok.method.starts_with("Spark").then(|| {
+                    p2_regular(
+                        "Spark transfer — instant, lower fee than Lightning or on-chain.",
+                    )
+                }))
                 .push(Space::new().height(Length::Fixed(8.0)))
                 .push(
                     Row::new()

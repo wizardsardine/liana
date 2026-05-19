@@ -386,6 +386,19 @@ impl SparkClient {
         }
     }
 
+    /// Generate a static, reusable Spark address for native
+    /// Spark-to-Spark transfers. No amount/invoice — the address is
+    /// identity-bound and token-agnostic, with zero receive fee.
+    pub async fn receive_spark(&self) -> Result<ReceivePaymentOk, SparkClientError> {
+        match self.request(Method::ReceiveSpark).await? {
+            OkPayload::ReceivePayment(resp) => Ok(resp),
+            other => Err(SparkClientError::Protocol(format!(
+                "receive_spark returned unexpected payload: {:?}",
+                other
+            ))),
+        }
+    }
+
     /// Phase 4f: list on-chain deposits the SDK has noticed but not
     /// yet claimed into the Spark wallet. Drives the "Pending
     /// deposits" card in the Receive panel.
