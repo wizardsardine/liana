@@ -2,7 +2,6 @@ pub mod about;
 pub mod backup;
 pub mod general;
 pub mod install_stats;
-pub mod lightning;
 pub mod recovery_kit;
 
 use coincube_ui::{component::text::*, widget::*};

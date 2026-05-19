@@ -58,6 +58,10 @@ tokio = { version = "1", features = [
 	"rt",
 	"rt-multi-thread",
 ] }
+tokio-stream = "0.1"
+tonic = { version = "0.13", features = ["tls-native-roots"] }
+prost = "0.13"
+prost-types = "0.13"
 async-fd-lock = "0.2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -169,8 +173,17 @@ iced = { version = "0.14.0", features = ["x11", "wayland"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 httpmock = "0.7"
 
+[features]
+# Opt-in tests that hit a real `coincube-api` dev endpoint. Requires
+# the `COINCUBE_API_URL` env var (and, for the auth-flavoured tests,
+# `COINCUBE_INTEGRATION_TOKEN`) at run time. Always off in the default
+# `cargo test` matrix so PR CI stays hermetic; enabled by the nightly
+# job that targets the dev environment.
+integration-tests = []
+
 [build-dependencies]
 dotenvy = "0.15.7"
+tonic-build = "0.13"
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

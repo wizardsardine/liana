@@ -27,7 +27,7 @@ use crate::app::{menu::Menu, view::Message};
 use coincube_ui::{
     color,
     component::text,
-    icon::{clipboard_icon, cube_icon},
+    icon::cube_icon,
     image::{coincube_wordmark, theme_toggle_button},
     theme,
     widget::{Button, Column, Element, Row},
@@ -145,10 +145,16 @@ fn identity_block<'a>(ctx: &NavContext<'a>) -> Element<'a, Message> {
         .push(avatar_button);
 
     if !ctx.cube_name.is_empty() {
+        // Cube name + (optional) Connect status dot. We render the dot
+        // inline with the name rather than on its own row so the
+        // header height doesn't grow for users on local-daemon cubes.
+        let name = text::p2_bold(ctx.cube_name)
+            .style(theme::text::primary)
+            .align_x(Alignment::Center);
         col = col.push(
-            text::p2_bold(ctx.cube_name)
-                .style(theme::text::primary)
-                .align_x(Alignment::Center),
+            row![name, connect_status_dot(ctx.connect_stream_status),]
+                .spacing(4)
+                .align_y(Alignment::Center),
         );
     }
 
@@ -158,15 +164,10 @@ fn identity_block<'a>(ctx: &NavContext<'a>) -> Element<'a, Message> {
         } else {
             format!("{}@coincube.io", addr)
         };
-        let r: Row<Message> = row![
-            text::caption(display_addr.clone()).color(color::GREY_3),
-            clipboard_icon().size(10).color(color::GREY_3),
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center);
-        let btn: Button<Message> = Button::new(r)
-            .style(theme::button::transparent)
-            .on_press(Message::Clipboard(display_addr));
+        let btn: Button<Message> =
+            Button::new(text::caption(display_addr.clone()).color(color::GREY_3))
+                .style(theme::button::transparent)
+                .on_press(Message::Clipboard(display_addr));
         col = col.push(btn);
     }
 
@@ -195,6 +196,49 @@ fn theme_toggle_row<'a>(ctx: &NavContext<'a>) -> Element<'a, Message> {
     .into()
 }
 
+/// Small 8px colored dot showing the Connect realtime-stream health.
+/// `Inactive` collapses to an empty `Space` so users without Connect
+/// (local-daemon installs, fresh launches before `ConnectStreamReady`)
+/// don't see a confusing red dot in their sidebar.
+fn connect_status_dot<'a>(status: &'a crate::app::ConnectionStatus) -> Element<'a, Message> {
+    use iced::widget::{container, tooltip as iced_tooltip};
+    if !status.is_visible() {
+        return Space::new().width(Length::Fixed(0.0)).into();
+    }
+    let dot_color = match status {
+        crate::app::ConnectionStatus::Connected => color::GREEN,
+        crate::app::ConnectionStatus::Connecting => color::ORANGE,
+        crate::app::ConnectionStatus::Error(_) => color::RED,
+        // Unreachable due to the early-return above, but keep the
+        // match exhaustive so adding a new variant produces a compile
+        // error instead of a silent default.
+        crate::app::ConnectionStatus::Inactive => color::GREY_3,
+    };
+    let dot = container(
+        Space::new()
+            .width(Length::Fixed(0.0))
+            .height(Length::Fixed(0.0)),
+    )
+    .width(Length::Fixed(8.0))
+    .height(Length::Fixed(8.0))
+    .style(
+        move |_t: &coincube_ui::theme::Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(dot_color)),
+            border: iced::Border {
+                radius: 4.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    iced_tooltip(
+        dot,
+        coincube_ui::component::text::caption(status.tooltip()),
+        iced_tooltip::Position::Bottom,
+    )
+    .into()
+}
+
 /// Ambient data both rails need while rendering.
 pub struct NavContext<'a> {
     pub has_vault: bool,
@@ -204,4 +248,8 @@ pub struct NavContext<'a> {
     pub avatar: Option<&'a iced::widget::image::Handle>,
     pub theme_mode: coincube_ui::theme::palette::ThemeMode,
     pub connect_authenticated: bool,
+    /// Latest realtime-stream health for the small status dot rendered
+    /// under the cube name in [`identity_block`]. `Inactive` renders
+    /// no dot (e.g. local-daemon installs without Connect).
+    pub connect_stream_status: &'a crate::app::ConnectionStatus,
 }

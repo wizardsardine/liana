@@ -13,6 +13,7 @@ const LIANALITE_MAINNET_URL: &str = "https://api.lianalite.com";
 struct ServiceConfigResource {
     pub auth_api_url: String,
     pub auth_api_public_key: String,
+    pub grpc_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -20,6 +21,7 @@ pub struct ServiceConfig {
     pub auth_api_url: String,
     pub auth_api_public_key: String,
     pub backend_api_url: String,
+    pub grpc_url: Option<String>,
 }
 
 pub async fn get_service_config(
@@ -38,5 +40,6 @@ pub async fn get_service_config(
         auth_api_url: res.auth_api_url,
         auth_api_public_key: res.auth_api_public_key,
         backend_api_url: backend_api_url.to_string(),
+        grpc_url: res.grpc_url,
     })
 }

@@ -15,6 +15,37 @@ use crate::{
     },
 };
 use coincubed::config::BitcoindConfig;
+use zeroize::Zeroizing;
+
+/// Wrapper around a Connect bearer token that redacts its contents from
+/// `Debug` output and zeroes the heap allocation on drop.
+///
+/// Carried by [`NodeSettingsMessage::SwitchToConnectFastPath`] so the JWT
+/// does not leak through `{:?}` on a parent message — `NodeSettingsMessage`
+/// derives `Debug`, and tracing/panic dumps elsewhere format messages
+/// transitively. Mirrors the pattern used by `CoincubeClient` and
+/// `EsploraConfig` (services/coincube/client.rs, coincubed/src/config.rs).
+#[derive(Clone)]
+pub struct ConnectJwt(Zeroizing<String>);
+
+impl ConnectJwt {
+    pub fn new(token: String) -> Self {
+        Self(Zeroizing::new(token))
+    }
+
+    /// Consume the wrapper and yield the bearer token. The original
+    /// `Zeroizing<String>` is dropped here and its heap bytes are wiped;
+    /// the returned `String` is a fresh allocation owned by the caller.
+    pub fn into_string(self) -> String {
+        (*self.0).clone()
+    }
+}
+
+impl std::fmt::Debug for ConnectJwt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectJwt(<redacted>)")
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FeeratePriority {
@@ -183,6 +214,20 @@ pub enum ImportSpendMessage {
 pub enum SpendTxMessage {
     Delete,
     Sign,
+    /// Open the Keychain signing flow: contact-signers and self-signers
+    /// whose private keys live on a Connect-registered phone. Routed to
+    /// `KeychainSignModal` which fetches vault members, classifies the
+    /// required signers, and orchestrates `SigningSession` lifecycles
+    /// via gRPC.
+    SignKeychain,
+    /// Cancel all non-terminal `SigningSession`s tracked by the open
+    /// `KeychainSignModal`. Discards any partial signatures already
+    /// returned — those are not merged into the PSBT until all signers
+    /// have responded.
+    CancelKeychainSign,
+    /// Retry a single signer whose session expired or was rejected.
+    /// Carries the per-signer position in `KeychainSignModal::pending`.
+    RetryKeychainSigner(usize),
     Broadcast,
     Save,
     Confirm,
@@ -244,17 +289,23 @@ pub enum SettingsMessage {
     ExportWallet,
     ImportWallet,
     AboutSection,
+    /// Triggered by the "Re-register this device" button on the
+    /// Settings → About page's Connect-device card. Clears the cached
+    /// `device_id` and re-runs `ensure_device_registered`, getting a
+    /// fresh `SignerDevice` row server-side. Useful when a device id
+    /// is suspect (compromise, machine swap) or the row went stale on
+    /// the API and signing started 404'ing.
+    ReregisterConnectDevice,
+    /// Settled result of the re-registration RPC. Payload is the new
+    /// device_id on success, or a user-facing error string. Routed
+    /// straight to the About settings state so it can refresh its
+    /// banner without going through the catchall update path.
+    ConnectDeviceReregistered(Result<String, String>),
     RegisterWallet,
     FingerprintAliasEdited(Fingerprint, String),
     WalletAliasEdited(String),
     Save,
     GeneralSection,
-    /// Navigate to the app-level Lightning preferences page.
-    LightningSection,
-    /// User picked a new default Lightning backend on the
-    /// Settings → Lightning page. The state panel persists the
-    /// choice and re-reads it on `SettingsSaved`.
-    DefaultLightningBackendChanged(crate::app::wallets::WalletKind),
     DisplayUnitChanged(BitcoinDisplayUnit),
     Fiat(FiatMessage),
     NodeSettings(NodeSettingsMessage),
@@ -280,16 +331,18 @@ pub enum InstallStatsViewMessage {
 
 #[derive(Debug, Clone)]
 pub enum NodeSettingsMessage {
+    /// Trigger from the "Switch to COINCUBE | Connect" button. Always
+    /// rewritten by the App-level dispatcher into either
+    /// `SwitchToConnectFastPath(jwt)` (when a Connect session is live) or a
+    /// navigation to the Connect tab to sign in. Never reaches the per-panel
+    /// state.
     SwitchToConnect,
+    /// Carries an existing Connect JWT directly to the per-panel state so the
+    /// switch can complete without the user signing in again. The JWT is
+    /// wrapped in [`ConnectJwt`] so `{:?}` on this message redacts the token
+    /// rather than printing it verbatim.
+    SwitchToConnectFastPath(ConnectJwt),
     SwitchToBitcoind,
-    // COINCUBE | Connect re-authentication sub-flow (gates the Switch to Connect action)
-    ConnectLoginEmailChanged(String),
-    ConnectLoginRequestOtp,
-    ConnectLoginOtpRequested(Result<(), String>),
-    ConnectLoginOtpChanged(String),
-    ConnectLoginVerifyOtp,
-    ConnectLoginVerified(Result<String, String>), // Ok(jwt_token)
-    ConnectLoginCancel,
     // "Set up local node while on Connect" sub-flow
     SetupLocalNode,
     SetupLocalNodeCancel,
@@ -956,6 +1009,21 @@ pub enum ContactsMessage {
     ContactsLoaded(Vec<crate::services::coincube::Contact>, u64),
     /// Invites list loaded.
     InvitesLoaded(Vec<crate::services::coincube::Invite>, u64),
+    /// Received-invites list loaded (invites addressed to the current
+    /// user). Carries `session_generation` for stale-response guarding,
+    /// matching the existing `ContactsLoaded` / `InvitesLoaded` pattern.
+    ReceivedInvitesLoaded(Vec<crate::services::coincube::ReceivedInvite>, u64),
+    /// User tapped Accept on a received-invite row.
+    AcceptReceivedInvite(u64),
+    /// Result of a successful accept. Carries the invite id so the row
+    /// can be removed optimistically before the contacts refetch lands.
+    ReceivedInviteAccepted(u64),
+    /// Accept request failed. Removes the id from the in-flight set so
+    /// the button re-enables, then surfaces the error via the contacts
+    /// `error` field. Plain `Error(String)` would also surface the
+    /// message but wouldn't know which invite to clear from the
+    /// in-flight set, leaving its Accept button stuck on "Accepting…".
+    AcceptReceivedInviteFailed(u64, String),
     /// Navigate to invite form.
     ShowInviteForm,
     /// Navigate back to list.
@@ -1259,6 +1327,7 @@ pub enum HomeMessage {
     BackToHome,
     BreezOnchainAddress(String),
     RefreshLiquidBalance,
+    RefreshSparkBalance,
     SignVaultToLiquidTx,
     TransferPsbtReady(TransferPsbtResult),
     TransferSigningComplete,
@@ -1316,7 +1385,10 @@ pub enum P2PMessage {
     AddCustomPaymentMethod,
     MinAmountEdited(String),
     MaxAmountEdited(String),
+    RangeOrderToggled(bool),
     LightningAddressEdited(String),
+    EditLightningAddress,
+    UseRegisteredLightningAddress,
     SubmitOrder,
     ClearForm,
     MostroOrdersReceived(Vec<super::p2p::components::P2POrder>),
@@ -1360,6 +1432,66 @@ pub enum P2PMessage {
     CopyPaymentInvoice(String),
     ResetInvoiceCopied,
     CancelPaymentInvoice(String),
+    /// Spark balance lookup for the pending-payment modal completed.
+    /// Drives the Spark-pay-first UX: when the balance covers the hold
+    /// invoice (plus a small fee buffer), the modal opens with a
+    /// "Pay from Spark" button instead of a QR code.
+    ///
+    /// `order_id` identifies the originating Mostro order so a stale
+    /// response from a previous session can't mutate state for the
+    /// active one — see `P2PPanel::spark_pay_session_id`.
+    SparkBalanceLoaded {
+        order_id: String,
+        balance_sat: u64,
+    },
+    SparkBalanceFailed {
+        order_id: String,
+        err: String,
+    },
+    /// Result of pre-parsing the hold-invoice via `spark.parse_input`
+    /// alongside the balance fetch. Carries the BOLT11 amount so the
+    /// Spark-pay summary can show "Lock amount: X sats" before the
+    /// user clicks "Pay from Spark" — even for market-priced sell
+    /// orders where Mostro leaves `trade.sats_amount = None`.
+    /// `amount_sat` is `None` when the parse failed or the invoice
+    /// carried no amount (an unusual case for Mostro hold invoices).
+    SparkInvoiceAmountParsed {
+        order_id: String,
+        amount_sat: Option<u64>,
+    },
+    /// User pressed "Pay from Spark" — either in the payment-required
+    /// modal (right after taking a buy order) or in the trade-detail
+    /// view (after navigating back to a trade with a pending hold
+    /// invoice). `order_id` scopes the resulting prepare/send chain
+    /// so a dismissed session can't pay against a fresh modal.
+    SparkPayPrepare {
+        order_id: String,
+        invoice: String,
+    },
+    /// `prepare_send` succeeded — preview is ready (amount + fee).
+    SparkPayPrepared {
+        order_id: String,
+        ok: coincube_spark_protocol::PrepareSendOk,
+    },
+    /// User confirmed the Spark-pay preview. Triggers `send_payment`.
+    SparkPayConfirm,
+    /// `send_payment` finished successfully — dismiss the modal.
+    SparkPaySent {
+        order_id: String,
+        ok: coincube_spark_protocol::SendPaymentOk,
+    },
+    /// Any Spark prepare/send step failed. Stays in the modal so the
+    /// user can retry or fall through to the QR.
+    SparkPayFailed {
+        order_id: String,
+        err: String,
+    },
+    /// Abandon the in-progress Spark pay (drops a prepared handle, returns
+    /// to the Spark-pay idle button).
+    SparkPayCancel,
+    /// Flip the "Pay from another wallet" toggle. `true` reveals the
+    /// QR/Copy Invoice body, `false` returns to Spark-pay mode.
+    ToggleQrFallback(bool),
     // Trade detail
     SelectTrade(String),
     CloseTradeDetail,

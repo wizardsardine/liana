@@ -1,11 +1,8 @@
 use coincube_core::{
     descriptors::CoincubeDescriptor,
-    miniscript::{
-        bitcoin::{
-            bip32::{ChildNumber, Fingerprint},
-            Network,
-        },
-        DescriptorPublicKey,
+    miniscript::bitcoin::{
+        bip32::{ChildNumber, Fingerprint},
+        Network,
     },
 };
 use std::collections::HashMap;
@@ -60,7 +57,6 @@ pub enum Message {
     Close,
     Reload,
     Select(usize),
-    UseMasterSigner,
     Installed(settings::WalletId, Result<settings::WalletSettings, Error>),
     CreateTaprootDescriptor(bool),
     SelectDescriptorTemplate(context::DescriptorTemplate),
@@ -70,7 +66,6 @@ pub enum Message {
     InternalBitcoind(InternalBitcoindMsg),
     DefineNode(DefineNode),
     DefineDescriptor(DefineDescriptor),
-    ImportXpub(Fingerprint, Result<DescriptorPublicKey, Error>),
     HardwareWallets(HardwareWalletMessage),
     HardwareWalletUpdate,
     WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
@@ -81,7 +76,6 @@ pub enum Message {
     AllKeysRedeemed,
     BackupDescriptor,
     ExportEncryptedDescriptor(Result<Box<CoincubeDescriptor>, encrypted_backup::Error>),
-    ExportXpub(String),
     ImportExport(ImportExportMessage),
     ImportBackup,
     WalletFromBackup((HashMap<Fingerprint, settings::KeySetting>, Backup)),

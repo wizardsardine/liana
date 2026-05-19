@@ -1,10 +1,12 @@
 pub mod coins;
 pub mod export;
+pub mod keychain_sign;
 pub mod label;
 pub mod overview;
 pub mod psbt;
 pub mod psbts;
 pub mod receive;
 pub mod settings;
+pub mod signers;
 pub mod spend;
 pub mod transactions;

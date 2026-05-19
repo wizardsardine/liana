@@ -74,9 +74,7 @@ pub struct Cache {
     pub lightning_address: Option<String>,
     /// Cached avatar image handle for display in the sidebar across all panels
     pub avatar_handle: Option<iced::widget::image::Handle>,
-    /// Id of the current Cube — needed by Spark Settings so the
-    /// `update_settings_file` closure can find the right cube when
-    /// persisting the `default_lightning_backend` picker change.
+    /// Id of the current Cube.
     pub cube_id: String,
     /// Connect's numeric id for the active Cube (mirror of
     /// `ConnectCubePanel::server_cube_id`). `None` when the user isn't
@@ -98,13 +96,36 @@ pub struct Cache {
     /// drift banner (W12). `None` when no descriptor has ever been
     /// backed up, or when the kit has been removed.
     pub recovery_kit_last_backed_up_descriptor_fingerprint: Option<String>,
-    /// Current preference for which backend fulfills incoming
-    /// Lightning Address invoices. Mirrored from
-    /// `CubeSettings::default_lightning_backend` so panels can read
-    /// it without going through the disk layer; the authoritative
-    /// copy lives on `App::cube_settings` and is re-read on
-    /// `Message::SettingsSaved`.
-    pub default_lightning_backend: crate::app::wallets::WalletKind,
+    /// Connect gRPC base URL, populated once `Message::ConnectStreamReady`
+    /// fires after login. `None` until then or for local-daemon installs
+    /// — the Keychain "Sign via Keychain" button stays disabled while
+    /// this is `None`.
+    pub connect_grpc_url: Option<String>,
+    /// Shared `Arc<RwLock<AccessTokenResponse>>` from the remote backend,
+    /// mirrored into Cache so deep panels (PsbtState et al.) can spin up
+    /// a `GrpcSessionClient` on demand without re-plumbing the auth
+    /// handle. `None` for local-daemon installs.
+    pub connect_tokens: Option<
+        Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>>,
+    >,
+    /// Health state of the Connect realtime gRPC stream. Mirrored from
+    /// `App::handle_connect_stream` so the sidebar can render a small
+    /// status dot without re-plumbing through view function parameters.
+    /// `Inactive` for local-daemon installs and any session before the
+    /// first `Message::ConnectStreamReady` has fired.
+    pub connect_stream_status: crate::app::ConnectionStatus,
+    /// `SignerDevice.id` returned by the API's `RegisterDevice` RPC.
+    /// Surfaced on the Settings → About page so the user can confirm
+    /// this desktop is registered, and to drive the "Re-register"
+    /// affordance. Mirrored from the Connect cache on
+    /// `Message::ConnectStreamReady`. `None` when the desktop hasn't
+    /// registered yet or for local-daemon installs.
+    pub connect_device_id: Option<String>,
+    /// Email of the authenticated Connect account. Surfaced alongside
+    /// the device id for at-a-glance "which account is this device
+    /// registered to" troubleshooting. `None` for local-daemon
+    /// installs.
+    pub connect_email: Option<String>,
 }
 
 /// only used for tests.
@@ -137,7 +158,11 @@ impl std::default::Default for Cache {
             current_cube_server_id: None,
             current_descriptor_fingerprint: None,
             recovery_kit_last_backed_up_descriptor_fingerprint: None,
-            default_lightning_backend: crate::app::wallets::WalletKind::default(),
+            connect_grpc_url: None,
+            connect_tokens: None,
+            connect_stream_status: crate::app::ConnectionStatus::default(),
+            connect_device_id: None,
+            connect_email: None,
         }
     }
 }

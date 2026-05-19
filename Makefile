@@ -11,6 +11,7 @@
 CARGO ?= cargo
 PROFILE ?= debug
 BRIDGE_MANIFEST := coincube-spark-bridge/Cargo.toml
+COINCUBE_API_PATH ?= ../coincube-api
 
 ifeq ($(PROFILE),release)
   CARGO_PROFILE_FLAG := --release
@@ -20,7 +21,7 @@ else
   CARGO_PROFILE_FLAG := --profile $(PROFILE)
 endif
 
-.PHONY: all build bridge gui run release test clean
+.PHONY: all build bridge gui run release test clean sync-proto
 
 all: build
 
@@ -45,3 +46,10 @@ test:
 clean:
 	$(CARGO) clean
 	$(CARGO) clean --manifest-path $(BRIDGE_MANIFEST)
+
+sync-proto:
+	@test -f $(COINCUBE_API_PATH)/grpc/connect.proto || \
+		(echo "Error: expected $(COINCUBE_API_PATH)/grpc/connect.proto — set COINCUBE_API_PATH if your checkout is elsewhere" && exit 1)
+	cp $(COINCUBE_API_PATH)/grpc/connect.proto grpc/connect.proto
+	@echo "Synced grpc/connect.proto from $(COINCUBE_API_PATH)"
+	@echo "Run 'make build' to regenerate Rust stubs."

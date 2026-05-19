@@ -64,6 +64,13 @@ pub trait Modal {
 pub enum PsbtModal {
     Save(SaveModal),
     Sign(SignModal),
+    /// Multi-signer Keychain signing flow. Coexists with `Sign` (local
+    /// signers) — the user picks which to open. Keychain sessions run
+    /// independently; signatures returned by Keychain signers are
+    /// merged into the same SpendTx via the daemon's `update_spend_tx`,
+    /// so the local-only "Sign" path can broadcast as today once every
+    /// path threshold is met.
+    KeychainSign(super::keychain_sign::KeychainSignModal),
     Broadcast(BroadcastModal),
     Delete(DeleteModal),
     Export(VaultExportModal),
@@ -74,6 +81,7 @@ impl<'a> AsRef<dyn Modal + 'a> for PsbtModal {
         match &self {
             Self::Save(a) => a,
             Self::Sign(a) => a,
+            Self::KeychainSign(a) => a,
             Self::Broadcast(a) => a,
             Self::Delete(a) => a,
             Self::Export(a) => a,
@@ -86,6 +94,7 @@ impl<'a> AsMut<dyn Modal + 'a> for PsbtModal {
         match self {
             Self::Save(a) => a,
             Self::Sign(a) => a,
+            Self::KeychainSign(a) => a,
             Self::Broadcast(a) => a,
             Self::Delete(a) => a,
             Self::Export(a) => a,
@@ -186,7 +195,33 @@ impl PsbtState {
                     }
                 }
 
-                self.modal = None;
+                // Dismissing a Keychain-sign modal (blur or otherwise)
+                // must also terminate any in-flight signing sessions
+                // server-side, not just hide the UI — otherwise signers
+                // keep seeing the request until its 24h TTL elapses.
+                // `cancel_all()` cancels sessions that already have an
+                // id; entries whose `CreateSigningSession` RPC is still
+                // in flight are cancelled later by `on_session_created`,
+                // which only runs while the modal is still mounted to
+                // receive `SessionCreated`. So when sessions are still
+                // undrained, keep the modal mounted but hidden — it
+                // self-closes via `Message::Updated(Ok)` once they all
+                // reach a terminal state.
+                let (cancel, keep_modal) =
+                    if let Some(PsbtModal::KeychainSign(km)) = self.modal.as_mut() {
+                        let cancel = km.cancel_all();
+                        let keep = km.has_undrained_sessions();
+                        if keep {
+                            km.mark_dismissed();
+                        }
+                        (cancel, keep)
+                    } else {
+                        (Task::none(), false)
+                    };
+                if !keep_modal {
+                    self.modal = None;
+                }
+                return cancel;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Delete)) => {
                 self.modal = Some(PsbtModal::Delete(DeleteModal::default()));
@@ -208,6 +243,53 @@ impl PsbtState {
                 let cmd = modal.load(daemon);
                 self.modal = Some(PsbtModal::Sign(modal));
                 return cmd;
+            }
+            Message::View(view::Message::Spend(view::SpendTxMessage::SignKeychain)) => {
+                // Idempotent: re-opening the modal while one is already
+                // attached just brings it back to the foreground.
+                if matches!(self.modal, Some(PsbtModal::KeychainSign(_))) {
+                    return Task::none();
+                }
+                // Don't clobber another in-progress modal — most
+                // importantly an in-flight local `SignModal`, whose
+                // hardware-signing state would be silently discarded.
+                // Require the user to finish/close it first.
+                if self.modal.is_some() {
+                    let msg = "Close the current signing dialog before \
+                               signing via Keychain."
+                        .to_string();
+                    return Task::done(Message::View(view::Message::ShowError(msg)));
+                }
+                let (Some(grpc_url), Some(tokens), Some(cube_server_id)) = (
+                    cache.connect_grpc_url.clone(),
+                    cache.connect_tokens.clone(),
+                    cache.current_cube_server_id,
+                ) else {
+                    let msg =
+                        "Sign via Keychain is unavailable: Connect is not ready yet.".to_string();
+                    return Task::done(Message::View(view::Message::ShowError(msg)));
+                };
+                // The REST client's bearer is set asynchronously inside
+                // `KeychainSignModal::launch()`, which reads the shared
+                // `Arc<RwLock>` in an async context. Reading it here on
+                // the synchronous `update` path would require
+                // `blocking_read`, which panics inside a tokio runtime.
+                let coincube_client = crate::services::coincube::CoincubeClient::new();
+
+                let descriptor_id = self.wallet.main_descriptor.to_string();
+                let modal = super::keychain_sign::KeychainSignModal::new(
+                    self.wallet.clone(),
+                    coincube_client,
+                    tokens,
+                    grpc_url,
+                    cube_server_id,
+                    cache.cube_id.clone(),
+                    descriptor_id,
+                    self.tx.psbt.clone(),
+                );
+                let launch = modal.launch();
+                self.modal = Some(PsbtModal::KeychainSign(modal));
+                return launch;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Broadcast)) => {
                 let outpoints: Vec<_> = self.tx.coins.keys().cloned().collect();
@@ -250,11 +332,32 @@ impl PsbtState {
                 self.saved = true;
                 if let Some(modal) = self.modal.as_mut() {
                     let cmd = modal.as_mut().update(daemon.clone(), message, &mut self.tx);
-                    // if modal is only the pending notif then we remove it once the psbt was
-                    // updated.
-                    if let PsbtModal::Sign(SignModal { display_modal, .. }) = modal {
-                        if !*display_modal {
-                            self.modal = None;
+                    // Decide modal-close intent before mutating
+                    // `self.modal` so the borrow checker stays happy.
+                    let close_sign = matches!(
+                        modal,
+                        PsbtModal::Sign(SignModal {
+                            display_modal: false,
+                            ..
+                        }),
+                    );
+                    let close_keychain = matches!(
+                        modal,
+                        PsbtModal::KeychainSign(km) if km.is_done(),
+                    );
+                    if close_sign || close_keychain {
+                        self.modal = None;
+                    }
+                    if close_keychain {
+                        // Recompute path_ready / sigs against the
+                        // newly merged PSBT so the outer view knows
+                        // to swap the Sign buttons for Broadcast.
+                        if let Ok(sigs) = self
+                            .wallet
+                            .main_descriptor
+                            .partial_spend_info(&self.tx.psbt)
+                        {
+                            self.tx.sigs = sigs;
                         }
                     }
                     return cmd;
@@ -939,6 +1042,12 @@ fn merge_signatures(psbt: &mut Psbt, signed_psbt: &Psbt) {
             psbtin.tap_key_sig = Some(sig);
         }
     }
+}
+
+/// Merge BIP32 / Tapscript signatures from `signed_psbt` into `psbt`.
+/// Public so the Keychain sign flow can reuse the same merge semantics.
+pub(crate) fn merge_signatures_pub(psbt: &mut Psbt, signed_psbt: &Psbt) {
+    merge_signatures(psbt, signed_psbt)
 }
 
 async fn sign_psbt_with_master_signer(

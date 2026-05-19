@@ -227,9 +227,14 @@ impl Panels {
                 .liquid_signer()
                 .map(|s| s.lock().expect("signer lock").mnemonic_str())
             {
-                Some(mnemonic) if !mnemonic.is_empty() => Some(
-                    crate::app::view::p2p::P2PPanel::new(None, mnemonic, default_fiat_currency),
-                ),
+                Some(mnemonic) if !mnemonic.is_empty() => {
+                    Some(crate::app::view::p2p::P2PPanel::new(
+                        None,
+                        spark_backend.clone(),
+                        mnemonic,
+                        default_fiat_currency,
+                    ))
+                }
                 _ => {
                     log::warn!("P2P panel disabled: no mnemonic available from liquid signer");
                     None
@@ -381,6 +386,7 @@ impl Panels {
                 Some(mnemonic) if !mnemonic.is_empty() => {
                     Some(crate::app::view::p2p::P2PPanel::new(
                         Some(wallet),
+                        spark_backend.clone(),
                         mnemonic,
                         default_fiat_currency,
                     ))
@@ -644,10 +650,10 @@ pub struct App {
     /// Wallet registry — owns the concrete wallet backends and exposes
     /// routing hooks. Holds a [`LiquidBackend`] and an optional
     /// [`SparkBackend`] (present when the cube has a Spark signer and
-    /// the bridge subprocess came up). Phase 5 reads
-    /// [`WalletRegistry::spark`] from the LNURL subscription hand-off
-    /// so incoming Lightning Address invoices route through Spark
-    /// when the cube's `default_lightning_backend` prefers it.
+    /// the bridge subprocess came up). The LNURL subscription hand-off
+    /// reads [`WalletRegistry::route_lightning_address`] so incoming
+    /// Lightning Address invoices route through Spark when available
+    /// and fall back to Liquid otherwise.
     wallet_registry: crate::app::wallets::WalletRegistry,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     internal_bitcoind: Option<Bitcoind>,
@@ -682,6 +688,77 @@ pub struct App {
     /// Prevents duplicate concurrent SDK calls when several BreezEvents arrive
     /// in quick succession. Cleared in the `RefundablesLoaded` handler.
     refundables_fetch_in_flight: bool,
+    /// Set when the user clicked "Switch to COINCUBE | Connect" on Vault →
+    /// Settings → Node while not signed in to Connect. We routed them to the
+    /// Connect tab to sign in; on the next auth transition (false → true) we
+    /// jump back to Vault Settings → Node and re-fire the switch.
+    pending_switch_to_connect_after_login: bool,
+    /// Shared `Arc<RwLock<AccessTokenResponse>>` from the remote backend,
+    /// reused by the gRPC interceptor so token refreshes are observed by
+    /// both the REST and gRPC paths. `None` for local-daemon installs.
+    /// Stored on the App so PR B's `resolve_signers` /
+    /// `create_signing_session` call sites can construct a
+    /// `GrpcSessionClient` without re-plumbing.
+    #[allow(dead_code)]
+    connect_auth: Option<
+        Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>>,
+    >,
+    /// Email of the currently authenticated Connect account. Used to
+    /// scope cache writes (device_id, last_seen_event_seq). `None` for
+    /// local-daemon installs.
+    connect_email: Option<String>,
+    /// Live `ConnectStreamConfig` once it has been assembled from
+    /// `ServiceConfig` + cache state. `None` until the bootstrap task
+    /// fires `Message::ConnectStreamReady`, or permanently `None` if the
+    /// service config returned no `grpc_url`.
+    connect_stream_config: Option<crate::services::connect::grpc::stream::ConnectStreamConfig>,
+}
+
+/// Health of the Connect realtime stream as observed from the desktop.
+///
+/// Transitions are driven by `ConnectStreamMessage` events arriving on
+/// the gRPC subscription. The `Inactive` variant is distinct from
+/// `Disconnected` because we want to render *nothing* (rather than a
+/// red dot) when the user has no Connect identity yet — a fresh-install
+/// desktop on a local-daemon cube isn't "broken", it's just not using
+/// Connect.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ConnectionStatus {
+    /// No stream has been bootstrapped yet (no `Message::ConnectStreamReady`).
+    /// Render an empty slot, not a status dot.
+    #[default]
+    Inactive,
+    /// Stream subscription is mounted but no `Connected` has arrived
+    /// yet, or a `Disconnected` has fired and the next reconnect is
+    /// pending. Render amber.
+    Connecting,
+    /// `ConnectStreamMessage::Connected` was the last terminal event.
+    /// Render green.
+    Connected,
+    /// `ConnectStreamMessage::Error` carried a non-recoverable signal,
+    /// or the stream surfaced a transport failure. The string is the
+    /// most recent error suitable for a tooltip. Render red.
+    Error(String),
+}
+
+impl ConnectionStatus {
+    /// True for any state that the nav should surface (i.e. anything
+    /// non-`Inactive`). Keeps the empty-slot rendering at the call site
+    /// clean.
+    pub fn is_visible(&self) -> bool {
+        !matches!(self, Self::Inactive)
+    }
+
+    /// Short user-facing tooltip text describing the current state.
+    /// Kept here so the nav view doesn't have to spell out the variants.
+    pub fn tooltip(&self) -> String {
+        match self {
+            Self::Inactive => "Connect inactive".to_string(),
+            Self::Connecting => "Connecting to Coincube Connect…".to_string(),
+            Self::Connected => "Connected".to_string(),
+            Self::Error(e) => format!("Connection error: {}", e),
+        }
+    }
 }
 
 /// Returns true when a `DaemonError` indicates the daemon process is no longer
@@ -749,6 +826,135 @@ async fn check_bitcoind_sync_progress(
     Ok((progress, ibd))
 }
 
+/// Hashable wrapper around `ConnectStreamConfig` so it can be used as
+/// the identity key for `iced::Subscription::run_with`. We hash only the
+/// fields that should force a fresh subscription: `device_id`,
+/// `grpc_url`, and `last_seen_seq`. The shared `Arc<RwLock<tokens>>` is
+/// intentionally excluded — a token refresh must not tear down the
+/// stream.
+struct ConnectStreamSubKey {
+    cfg: crate::services::connect::grpc::stream::ConnectStreamConfig,
+}
+
+impl std::hash::Hash for ConnectStreamSubKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        "connect-stream".hash(state);
+        self.cfg.device_id.hash(state);
+        self.cfg.grpc_url.hash(state);
+        self.cfg.last_seen_seq.hash(state);
+    }
+}
+
+/// Wrap a `ConnectionStatus` change into a Task that fires
+/// `Message::KeychainSign(StreamHealth(..))`. The standard update path
+/// then routes it to the open `KeychainSignModal` (if any) so it can
+/// surface a "connection lost" banner while sessions are pending.
+fn stream_health_dispatch(status: ConnectionStatus) -> Task<Message> {
+    Task::done(Message::KeychainSign(
+        crate::app::state::vault::keychain_sign::KeychainSignMessage::StreamHealth(status),
+    ))
+}
+
+fn make_connect_stream(
+    key: &ConnectStreamSubKey,
+) -> impl iced::futures::Stream<Item = crate::services::connect::grpc::ConnectStreamMessage> + 'static
+{
+    crate::services::connect::grpc::stream::connect_stream(&key.cfg)
+}
+
+/// Background task that assembles a `ConnectStreamConfig` from
+/// `ServiceConfig` + the on-disk Connect cache. Runs once at App startup
+/// when a remote backend is in play. Yields `Message::ConnectStreamReady`
+/// with `None` if the API config lacks a `grpc_url` (gRPC not enabled
+/// for this environment), or with `Some(cfg)` otherwise. The handler
+/// stashes the config and the next `subscription()` tick wires the
+/// stream.
+fn connect_stream_ready_task(
+    network: coincube_core::miniscript::bitcoin::Network,
+    datadir: CoincubeDirectory,
+    tokens: Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>>,
+    email: String,
+    cube_uuid: Option<String>,
+) -> Task<Message> {
+    use crate::services::connect::client::cache::Account;
+    use crate::services::connect::client::get_service_config;
+    use crate::services::connect::grpc::stream::ConnectStreamConfig;
+
+    Task::perform(
+        async move {
+            let service_config = match get_service_config(network).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        "Connect stream bootstrap: failed to fetch ServiceConfig: {}",
+                        e,
+                    );
+                    return None;
+                }
+            };
+            let Some(grpc_url) = service_config.grpc_url else {
+                tracing::info!("Connect stream bootstrap: ServiceConfig has no grpc_url");
+                return None;
+            };
+            let network_dir = datadir.network_directory(network);
+            let cache_account = Account::from_cache(&network_dir, &email).ok().flatten();
+            let Some(device_id) = cache_account.as_ref().and_then(|a| a.device_id.clone()) else {
+                tracing::info!(
+                    "Connect stream bootstrap: no device_id in cache for {} — \
+                     skipping stream until next launch",
+                    email,
+                );
+                return None;
+            };
+            let last_seen_seq = cache_account
+                .and_then(|a| a.last_seen_event_seq)
+                .unwrap_or(0);
+
+            // Look up the cube's vault id so the server can scope this
+            // session's `SessionEvent` stream to just this cube. If
+            // the lookup fails (no vault yet, transient error) we fall
+            // back to an empty list — the server defaults to "all
+            // events for this user", which is functionally fine but
+            // slightly noisier. The fetch needs an authenticated
+            // CoincubeClient; we build one against the access_token
+            // we just read from the shared `Arc<RwLock>`.
+            let vault_ids = if let Some(cube_uuid) = cube_uuid.as_ref() {
+                let access_token = tokens.read().await.access_token.clone();
+                let mut client = crate::services::coincube::CoincubeClient::new();
+                client.set_token(&access_token);
+                match client.list_cubes().await {
+                    Ok(cubes) => cubes
+                        .iter()
+                        .find(|c| c.uuid == *cube_uuid)
+                        .and_then(|c| c.vault.as_ref())
+                        .map(|v| vec![v.id.to_string()])
+                        .unwrap_or_default(),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Connect stream bootstrap: failed to fetch cubes for vault \
+                             scoping: {} — subscribing to all events for this user",
+                            e,
+                        );
+                        Vec::new()
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+
+            Some(ConnectStreamConfig {
+                grpc_url,
+                tokens,
+                device_id,
+                user_agent: format!("coincube-gui/{}", env!("CARGO_PKG_VERSION")),
+                vault_ids,
+                last_seen_seq,
+            })
+        },
+        Message::ConnectStreamReady,
+    )
+}
+
 impl App {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -762,6 +968,10 @@ impl App {
         internal_bitcoind: Option<Bitcoind>,
         restored_from_backup: bool,
         cube_settings: settings::CubeSettings,
+        connect_auth: Option<(
+            Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>>,
+            String,
+        )>,
     ) -> (App, Task<Message>) {
         let config_arc = Arc::new(config);
         let liquid_backend = Arc::new(LiquidBackend::new(breez_client.clone()));
@@ -797,6 +1007,19 @@ impl App {
         );
         let set_cube_task = panels.connect.set_cube_uuid(Some(cube_settings.id.clone()));
         tasks.push(set_cube_task);
+        let (connect_auth_arc, connect_email) = match connect_auth {
+            Some((a, e)) => (Some(a), Some(e)),
+            None => (None, None),
+        };
+        if let (Some(auth), Some(email)) = (connect_auth_arc.as_ref(), connect_email.as_deref()) {
+            tasks.push(connect_stream_ready_task(
+                cache.network,
+                data_dir.clone(),
+                auth.clone(),
+                email.to_string(),
+                Some(cube_settings.id.clone()),
+            ));
+        }
         let cmd = Task::batch(tasks);
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
@@ -829,6 +1052,10 @@ impl App {
                 toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
                 last_refundables_fetch: None,
                 refundables_fetch_in_flight: false,
+                pending_switch_to_connect_after_login: false,
+                connect_auth: connect_auth_arc,
+                connect_email,
+                connect_stream_config: None,
             },
             cmd,
         )
@@ -877,7 +1104,6 @@ impl App {
             recovery_kit_last_backed_up_descriptor_fingerprint: cube_settings
                 .recovery_kit_last_backed_up_descriptor_fingerprint
                 .clone(),
-            default_lightning_backend: cube_settings.default_lightning_backend,
             ..Default::default()
         };
 
@@ -925,6 +1151,10 @@ impl App {
                 toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
                 last_refundables_fetch: None,
                 refundables_fetch_in_flight: false,
+                pending_switch_to_connect_after_login: false,
+                connect_auth: None,
+                connect_email: None,
+                connect_stream_config: None,
             },
             cmd,
         )
@@ -995,14 +1225,13 @@ impl App {
         }
 
         match &menu {
-            // Cube → Settings → {General/Lightning/About}: auto-dispatch the
+            // Cube → Settings → {General/About/Stats}: auto-dispatch the
             // matching sub-section so the inner SettingsState installs the
             // right child panel. The third rail visible alongside drives this
             // and highlights the active option.
             menu::Menu::Home(menu::HomeSubMenu::Settings(option)) => {
                 let section_msg = match option {
                     menu::HomeSettingsOption::General => view::SettingsMessage::GeneralSection,
-                    menu::HomeSettingsOption::Lightning => view::SettingsMessage::LightningSection,
                     menu::HomeSettingsOption::About => view::SettingsMessage::AboutSection,
                     menu::HomeSettingsOption::Stats => view::SettingsMessage::InstallStatsSection,
                 };
@@ -1335,6 +1564,20 @@ impl App {
             }
         }
 
+        // Connect realtime gRPC stream. Active once `Message::ConnectStreamReady`
+        // has populated `connect_stream_config`. The subscription identity is
+        // keyed on `(device_id, grpc_url, last_seen_seq)` so reconnecting after
+        // any of those change produces a fresh stream instead of stale wiring.
+        if let Some(cfg) = self.connect_stream_config.as_ref() {
+            subscriptions.push(
+                iced::Subscription::run_with(
+                    ConnectStreamSubKey { cfg: cfg.clone() },
+                    make_connect_stream,
+                )
+                .map(Message::ConnectStream),
+            );
+        }
+
         Subscription::batch(subscriptions)
     }
 
@@ -1476,6 +1719,80 @@ impl App {
         )
     }
 
+    /// Top-level handler for `Message::ConnectStream`. PR A logs and
+    /// persists the latest event seq; PR B's session-routing logic is
+    /// folded in here when the per-modal dispatch lands.
+    fn handle_connect_stream(
+        &mut self,
+        event: crate::services::connect::grpc::ConnectStreamMessage,
+    ) -> Task<Message> {
+        use crate::services::connect::grpc::ConnectStreamMessage as M;
+        match event {
+            M::Connected => {
+                log::info!("[CONNECT GRPC] Stream connected");
+                self.cache.connect_stream_status = ConnectionStatus::Connected;
+                stream_health_dispatch(ConnectionStatus::Connected)
+            }
+            M::Disconnected(reason) => {
+                log::warn!("[CONNECT GRPC] Stream disconnected: {}", reason);
+                self.cache.connect_stream_status = ConnectionStatus::Connecting;
+                stream_health_dispatch(ConnectionStatus::Connecting)
+            }
+            M::Error(err) => {
+                log::warn!("[CONNECT GRPC] Stream error: {}", err);
+                let status = ConnectionStatus::Error(err);
+                self.cache.connect_stream_status = status.clone();
+                stream_health_dispatch(status)
+            }
+            M::SessionEvent(session_event) => {
+                log::info!(
+                    "[CONNECT GRPC] SessionEvent seq={} type={:?} session={}",
+                    session_event.event_seq,
+                    session_event.event_type,
+                    session_event.session_id,
+                );
+                // Persist the latest seq so a restart resumes from the
+                // right cursor. Best-effort — log and continue on error.
+                let seq = session_event.event_seq;
+                let persist_task = if let Some(email) = self.connect_email.clone() {
+                    let network_dir = self.datadir.network_directory(self.cache.network);
+                    Task::perform(
+                        async move {
+                            if let Err(e) =
+                                crate::services::connect::client::cache::set_last_seen_event_seq_for_email(
+                                    &network_dir,
+                                    &email,
+                                    seq,
+                                )
+                                .await
+                            {
+                                log::warn!(
+                                    "[CONNECT GRPC] Failed to persist last_seen_event_seq={}: {}",
+                                    seq,
+                                    e,
+                                );
+                            }
+                        },
+                        |_| Message::CacheUpdated,
+                    )
+                } else {
+                    Task::none()
+                };
+                // Fan the event out via Message::KeychainSign(StreamEvent).
+                // It travels through the standard update path and is
+                // delegated to the active PSBT modal (if any) by
+                // `PsbtState`'s catchall arm — modals that don't
+                // recognise the session_id are no-ops.
+                let dispatch_task = Task::done(Message::KeychainSign(
+                    crate::app::state::vault::keychain_sign::KeychainSignMessage::StreamEvent(
+                        session_event,
+                    ),
+                ));
+                Task::batch([persist_task, dispatch_task])
+            }
+        }
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.update_dispatch(message);
         // Sync *after* dispatch: if this update just mutated
@@ -1553,6 +1870,37 @@ impl App {
                     self.cache.node_bitcoind_last_log = Some(line);
                 }
             }
+            Message::ConnectStreamReady(cfg) => {
+                match cfg {
+                    Some(cfg) => {
+                        tracing::info!(
+                            "Connect stream ready (device_id={}, last_seen_seq={})",
+                            cfg.device_id,
+                            cfg.last_seen_seq,
+                        );
+                        // Mirror into Cache so deep panels (the open
+                        // PSBT modal in particular) can spin up a
+                        // GrpcSessionClient on demand.
+                        self.cache.connect_grpc_url = Some(cfg.grpc_url.clone());
+                        self.cache.connect_tokens = Some(cfg.tokens.clone());
+                        self.cache.connect_device_id = Some(cfg.device_id.clone());
+                        self.cache.connect_email = self.connect_email.clone();
+                        self.connect_stream_config = Some(cfg);
+                        // Subscription will mount on the next render
+                        // tick — show `Connecting` until the first
+                        // `ConnectStreamMessage::Connected` lands.
+                        self.cache.connect_stream_status = ConnectionStatus::Connecting;
+                    }
+                    None => {
+                        tracing::debug!(
+                            "Connect stream not started: missing grpc_url or device_id",
+                        );
+                    }
+                }
+            }
+            Message::ConnectStream(event) => {
+                return self.handle_connect_stream(event);
+            }
             Message::InstallStats(_) => {
                 if let Some(panel) = self.panels.current_mut() {
                     return panel.update(self.daemon.clone(), &self.cache, message);
@@ -1587,9 +1935,10 @@ impl App {
                         self.cache.node_bitcoind_ibd = Some(ibd);
                         // Only auto-switch when we have observed the node transition
                         // OUT of IBD (was_in_ibd=true → ibd=false).  This prevents
-                        // the immediately reversal that occurs when ConnectLoginVerified
-                        // saves an already-synced Bitcoind into pending_bitcoind: the
-                        // first poll would otherwise see ibd=false and switch back.
+                        // the immediate reversal that occurs when the
+                        // SwitchToConnect flow saves an already-synced Bitcoind
+                        // into pending_bitcoind: the first poll would otherwise
+                        // see ibd=false and switch back.
                         if !ibd && was_in_ibd {
                             let switch =
                                 self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
@@ -1656,9 +2005,6 @@ impl App {
                         self.cache.current_cube_backed_up = cube.backed_up;
                         self.cache.current_cube_is_passkey = cube.is_passkey_cube();
                         self.cube_settings.backed_up = cube.backed_up;
-                        self.cube_settings.default_lightning_backend =
-                            cube.default_lightning_backend;
-                        self.cache.default_lightning_backend = cube.default_lightning_backend;
                         // Mirror the drift fingerprint cache (W12). Refreshing
                         // on every SettingsSaved keeps the Recovery-Kit card
                         // in sync after a successful upload or remove.
@@ -1758,9 +2104,24 @@ impl App {
                             .and_then(|c| {
                                 c.fallback_esplora.as_ref().map(|fb| {
                                     let mut new_cfg = c.clone();
+                                    // Demote the current Bitcoind to
+                                    // `pending_bitcoind` so the syncing card
+                                    // reappears and the user can retry once
+                                    // the node is healthy. Without this the
+                                    // fallback strands the user on Connect
+                                    // with an empty pending slot, which
+                                    // surfaces the "Set up local node" prompt
+                                    // and forces a full re-install.
+                                    let preserved_bitcoind = match &c.bitcoin_backend {
+                                        Some(coincubed::config::BitcoinBackend::Bitcoind(bc)) => {
+                                            Some(bc.clone())
+                                        }
+                                        _ => None,
+                                    };
                                     new_cfg.bitcoin_backend = Some(
                                         coincubed::config::BitcoinBackend::Esplora(fb.clone()),
                                     );
+                                    new_cfg.pending_bitcoind = preserved_bitcoind;
                                     new_cfg.fallback_esplora = None;
                                     new_cfg
                                 })
@@ -1954,6 +2315,14 @@ impl App {
                 // orphan route like Marketplace(BuySell) with no vault).
                 // Otherwise rail clicks get silently dropped and the
                 // user is trapped on whichever screen is rendering.
+                if self.pending_switch_to_connect_after_login
+                    && !matches!(menu, menu::Menu::Connect(_))
+                {
+                    // User abandoned the auto-return trip by going somewhere
+                    // else; don't surprise them with a backend swap on a
+                    // future, unrelated Connect login.
+                    self.pending_switch_to_connect_after_login = false;
+                }
                 let close_task = self
                     .panels
                     .current_mut()
@@ -1985,6 +2354,9 @@ impl App {
                             }
                         })
                     });
+                if let Some(p2p) = self.panels.p2p.as_mut() {
+                    p2p.sync_lightning_address_from_cache(&self.cache);
+                }
                 // Sync avatar handle to cache for sidebar display across all panels.
                 // Only update when Some to avoid blinking during in-flight image loads.
                 // Clear on logout when auth state transitions from true to false.
@@ -1993,6 +2365,44 @@ impl App {
                 } else if was_authenticated && !self.cache.connect_authenticated {
                     // Logout occurred - clear the avatar
                     self.cache.avatar_handle = None;
+                }
+                // Connect logout: tear down the realtime stream. The
+                // subscription is keyed on `connect_stream_config`, so
+                // clearing it (plus the cache mirrors) drops the gRPC
+                // stream on the next `subscription()` tick — Iced's
+                // model is declarative, there is no task handle to
+                // cancel. NOTE: a subsequent in-place relogin does not
+                // yet rebuild the stream (would need the token Arc +
+                // email re-plumbed from the account panel); the stream
+                // currently only re-establishes on app restart.
+                if was_authenticated && !self.cache.connect_authenticated {
+                    self.connect_stream_config = None;
+                    self.connect_email = None;
+                    self.cache.connect_grpc_url = None;
+                    self.cache.connect_tokens = None;
+                    self.cache.connect_device_id = None;
+                    self.cache.connect_email = None;
+                    self.cache.connect_stream_status = ConnectionStatus::Inactive;
+                }
+                // Auto-return for the "Switch to Connect" flow. When the user
+                // clicked it without an active session, we routed them to the
+                // Connect tab and set this flag. Now that they've signed in,
+                // jump back to Vault → Settings → Node and re-fire the switch
+                // — which will fast-path through the new session's JWT.
+                if !was_authenticated
+                    && self.cache.connect_authenticated
+                    && self.pending_switch_to_connect_after_login
+                {
+                    self.pending_switch_to_connect_after_login = false;
+                    let nav = self.set_current_panel(menu::Menu::Vault(
+                        menu::VaultSubMenu::Settings(Some(menu::SettingsOption::Node)),
+                    ));
+                    let switch = Task::done(Message::View(view::Message::Settings(
+                        view::SettingsMessage::NodeSettings(
+                            view::NodeSettingsMessage::SwitchToConnect,
+                        ),
+                    )));
+                    return Task::batch([task, nav, switch]);
                 }
                 return task;
             }
@@ -2048,6 +2458,17 @@ impl App {
                 // state" signal. Deposits being claimed counts as a
                 // balance change too.
                 tasks.push(self.panels.spark_overview.reload(None, None));
+
+                // Also refresh the Home (Cube → Overview) Spark card.
+                // `global_home.reload` only runs on navigation, so a
+                // cold-start `get_info` that soft-fails (SDK not ready)
+                // leaves `spark_balance_loaded = false` until the user
+                // navigates away and back. Piping the SDK's `Synced` /
+                // payment events through `RefreshSparkBalance` lets
+                // the card recover without re-navigation.
+                tasks.push(Task::done(Message::View(view::Message::Home(
+                    view::HomeMessage::RefreshSparkBalance,
+                ))));
 
                 // Payment-related events reload the Transactions list
                 // so newly surfaced rows appear without the user
@@ -2429,6 +2850,39 @@ impl App {
                     .panels
                     .global_settings
                     .update(self.daemon.clone(), &self.cache, msg);
+            }
+
+            // Vault → Settings → Node "Switch to COINCUBE | Connect". The
+            // canonical Connect session lives in `panels.connect.account`; we
+            // either reuse its JWT for an immediate switch, or send the user
+            // to the Connect tab to sign in and auto-return on success.
+            Message::View(view::Message::Settings(view::SettingsMessage::NodeSettings(
+                view::NodeSettingsMessage::SwitchToConnect,
+            ))) => {
+                let existing_jwt = self
+                    .panels
+                    .connect
+                    .account
+                    .authenticated_client()
+                    .and_then(|c| c.token().map(str::to_owned));
+                if let Some(jwt) = existing_jwt {
+                    let routed = Message::View(view::Message::Settings(
+                        view::SettingsMessage::NodeSettings(
+                            view::NodeSettingsMessage::SwitchToConnectFastPath(
+                                view::ConnectJwt::new(jwt),
+                            ),
+                        ),
+                    ));
+                    if let (Some(daemon), Some(panel)) =
+                        (self.daemon.clone(), self.panels.current_mut())
+                    {
+                        return panel.update(Some(daemon), &self.cache, routed);
+                    }
+                } else {
+                    self.pending_switch_to_connect_after_login = true;
+                    return self
+                        .set_current_panel(menu::Menu::Connect(menu::ConnectSubMenu::Overview));
+                }
             }
 
             // Cube Recovery Kit dispatch. Handled at App level because

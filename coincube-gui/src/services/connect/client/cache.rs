@@ -24,6 +24,8 @@ impl ConnectCache {
             self.accounts.push(Account {
                 email: email.to_string(),
                 tokens,
+                device_id: None,
+                last_seen_event_seq: None,
             })
         }
     }
@@ -49,6 +51,10 @@ impl ConnectCache {
 pub struct Account {
     pub email: String,
     pub tokens: AccessTokenResponse,
+    #[serde(default)]
+    pub device_id: Option<String>,
+    #[serde(default)]
+    pub last_seen_event_seq: Option<i64>,
 }
 
 impl Account {
@@ -141,6 +147,151 @@ pub async fn update_connect_cache(
         .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {}", e)))?;
 
     Ok(tokens)
+}
+
+/// Persist (or clear) the gRPC-issued `device_id` for the account matching
+/// `email`. Pass `Some(id)` to set, `None` to clear so the next
+/// `ensure_device_registered` call takes the register path instead of
+/// short-circuiting on a stale entry.
+///
+/// Acquires a write lock on the cache file so the update is atomic against
+/// concurrent `update_connect_cache` calls. If the account is not present
+/// in the cache (caller never logged in, or the cache was cleared), this
+/// is a silent no-op — `ensure_device_registered` retries next launch.
+pub async fn set_device_id_for_email(
+    network_dir: &NetworkDirectory,
+    email: &str,
+    device_id: Option<&str>,
+) -> Result<(), ConnectCacheError> {
+    let mut path = network_dir.path().to_path_buf();
+    path.push(CONNECT_CACHE_FILENAME);
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .await
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Opening file: {}", e)))?
+        .lock_write()
+        .await
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Locking file: {:?}", e)))?;
+
+    let mut file_content = Vec::new();
+    file.read_to_end(&mut file_content)
+        .await
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Reading file content: {}", e)))?;
+    let mut cache = if file_content.is_empty() {
+        // Freshly `create(true)`d (or never written) — start empty.
+        ConnectCache::default()
+    } else {
+        match serde_json::from_slice::<ConnectCache>(&file_content) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    "Connect cache at {:?} is corrupt ({}); continuing with an \
+                     empty cache for this update",
+                    path,
+                    e,
+                );
+                ConnectCache::default()
+            }
+        }
+    };
+
+    let Some(account) = cache.accounts.iter_mut().find(|a| a.email == email) else {
+        return Ok(());
+    };
+    if account.device_id.as_deref() == device_id {
+        return Ok(());
+    }
+    account.device_id = device_id.map(str::to_string);
+
+    let content = serde_json::to_vec_pretty(&cache)
+        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to serialize cache: {}", e)))?;
+
+    file.seek(SeekFrom::Start(0)).await.map_err(|e| {
+        ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {}", e))
+    })?;
+    file.write_all(&content).await.map_err(|e| {
+        tracing::warn!("failed to write to file: {:?}", e);
+        ConnectCacheError::WritingFile(e.to_string())
+    })?;
+    file.inner_mut()
+        .set_len(content.len() as u64)
+        .await
+        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {}", e)))?;
+    Ok(())
+}
+
+/// Persist the highest event_seq observed on the realtime stream for the
+/// account matching `email`. Idempotent — only writes when the new value is
+/// strictly greater, so concurrent stream writers can't move the cursor
+/// backwards.
+pub async fn set_last_seen_event_seq_for_email(
+    network_dir: &NetworkDirectory,
+    email: &str,
+    event_seq: i64,
+) -> Result<(), ConnectCacheError> {
+    let mut path = network_dir.path().to_path_buf();
+    path.push(CONNECT_CACHE_FILENAME);
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .await
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Opening file: {}", e)))?
+        .lock_write()
+        .await
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Locking file: {:?}", e)))?;
+
+    let mut file_content = Vec::new();
+    file.read_to_end(&mut file_content)
+        .await
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Reading file content: {}", e)))?;
+    let mut cache = if file_content.is_empty() {
+        // Freshly `create(true)`d (or never written) — start empty.
+        ConnectCache::default()
+    } else {
+        match serde_json::from_slice::<ConnectCache>(&file_content) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    "Connect cache at {:?} is corrupt ({}); continuing with an \
+                     empty cache for this update",
+                    path,
+                    e,
+                );
+                ConnectCache::default()
+            }
+        }
+    };
+
+    let Some(account) = cache.accounts.iter_mut().find(|a| a.email == email) else {
+        return Ok(());
+    };
+    if account.last_seen_event_seq.unwrap_or(0) >= event_seq {
+        return Ok(());
+    }
+    account.last_seen_event_seq = Some(event_seq);
+
+    let content = serde_json::to_vec_pretty(&cache)
+        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to serialize cache: {}", e)))?;
+    file.seek(SeekFrom::Start(0)).await.map_err(|e| {
+        ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {}", e))
+    })?;
+    file.write_all(&content)
+        .await
+        .map_err(|e| ConnectCacheError::WritingFile(e.to_string()))?;
+    file.inner_mut()
+        .set_len(content.len() as u64)
+        .await
+        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {}", e)))?;
+    Ok(())
 }
 
 pub async fn filter_connect_cache(

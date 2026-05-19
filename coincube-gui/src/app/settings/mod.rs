@@ -265,12 +265,6 @@ pub struct CubeSettings {
         alias = "breez_wallet_signer_fingerprint"
     )]
     pub master_signer_fingerprint: Option<Fingerprint>,
-    /// Which backend should fulfill incoming Lightning Address invoices
-    /// for this cube. Starts as `Liquid` (backwards-compatible default
-    /// for existing cubes); Phase 5 flips the default to `Spark` and
-    /// adds a per-cube override in Settings.
-    #[serde(default)]
-    pub default_lightning_backend: crate::app::wallets::WalletKind,
     /// Bitcoin display unit preference for this cube
     #[serde(default)]
     pub unit_setting: unit::UnitSetting,
@@ -323,7 +317,6 @@ impl CubeSettings {
             vault_wallet_id: None,
             security_pin_hash: None,
             master_signer_fingerprint: None,
-            default_lightning_backend: crate::app::wallets::WalletKind::default(),
             backed_up: false,
             mfa_done: false,
             remote_synced: false,

@@ -7,7 +7,7 @@ use std::{
 use bdk_electrum::bdk_chain::{
     bitcoin::{self, bip32, BlockHash, OutPoint, ScriptBuf, TxOut},
     keychain::KeychainTxOutIndex,
-    local_chain::{ChangeSet as ChainChangeSet, CheckPoint, LocalChain},
+    local_chain::{CannotConnectError, ChangeSet as ChainChangeSet, CheckPoint, LocalChain},
     miniscript::{Descriptor, DescriptorPublicKey},
     tx_graph::{self, TxGraph},
     ChainOracle, ChainPosition, ConfirmationTimeHeightAnchor, IndexedTxGraph,
@@ -313,11 +313,18 @@ impl BdkWallet {
     }
 
     /// Apply an update to the local chain.
-    /// Panics if update does not connect to the local chain.
-    pub fn apply_connected_chain_update(&mut self, chain_update: CheckPoint) -> ChainChangeSet {
-        self.local_chain
-            .apply_update(chain_update)
-            .expect("update must connect to local chain")
+    ///
+    /// Returns `Err(CannotConnectError)` when the update cannot be spliced
+    /// onto the wallet's existing chain — typically right after switching
+    /// backends, when the new server's first sync update doesn't share a
+    /// checkpoint with the local chain that came from the old backend. The
+    /// caller's correct response is to trigger a full scan, which always
+    /// connects (worst case at genesis).
+    pub fn apply_connected_chain_update(
+        &mut self,
+        chain_update: CheckPoint,
+    ) -> Result<ChainChangeSet, CannotConnectError> {
+        self.local_chain.apply_update(chain_update)
     }
 
     /// Apply a graph update.
