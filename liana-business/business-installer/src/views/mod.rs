@@ -10,6 +10,7 @@ pub mod wallet_select;
 pub mod xpub;
 
 pub use keys::keys_view;
+use liana_connect::ws_business;
 pub use loading::loading_view;
 pub use login::login_view;
 pub use org_select::org_select_view;
@@ -20,14 +21,15 @@ pub use xpub::xpub_view;
 
 use crate::{backend::Backend, state::message::Msg, state::State};
 use iced::{
-    widget::{container, Space},
+    widget::{column, container, row, Space},
     Alignment, Length,
 };
 use liana_ui::{
     component::{
         button::{btn_flat, icon_btn, BtnWidth},
         card::clickable_card,
-        scrollable, text,
+        scrollable,
+        text::{self, short_email, truncate},
     },
     icon, theme,
     widget::*,
@@ -37,7 +39,7 @@ use uuid::Uuid;
 pub const INSTALLER_STEPS: usize = 5;
 pub const MENU_ENTRY_WIDTH: u32 = 600;
 pub const ACCOUNT_ENTRY_WIDTH: u32 = MENU_ENTRY_WIDTH - 80;
-pub const MENU_ENTRY_HEIGHT: u32 = 80;
+pub const MENU_ENTRY_HEIGHT: u32 = 100;
 const EMAIL_ROW_HEIGHT: u32 = 56;
 
 /// Format last edit information as "Edited by [You|email] [relative_time]".
@@ -298,4 +300,34 @@ fn account_entry(content: Row<'_, Msg>, message: Option<Msg>) -> Container<'_, M
 
 fn delete_btn(message: Option<Msg>) -> Button<'static, Msg> {
     icon_btn(icon::trash_icon(), message)
+}
+
+pub fn menu_key_entry(
+    key: &ws_business::Key,
+    last_edit_info: Option<String>,
+    icon: Text<'static>,
+    pill: Element<'static, Msg>,
+    msg: Option<Msg>,
+) -> Container<'static, Msg> {
+    let identity_str = short_email(&key.identity.to_string(), 40);
+    let identity_display = (!identity_str.is_empty())
+        .then(|| text::p2_medium(identity_str).style(theme::text::accent));
+
+    let alias = truncate(&key.alias, 25);
+    let alias = text::h3(alias).style(theme::text::primary);
+
+    let _last_edit =
+        last_edit_info.map(|info| text::caption(info).style(liana_ui::theme::text::secondary));
+
+    let left = column![row![icon, alias].spacing(10).align_y(Alignment::Center)]
+        .push_maybe(identity_display)
+        // .push_maybe(last_edit)
+        .spacing(5);
+
+    let content = row![left, Space::fill_width(), pill]
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+    menu_entry(content, msg)
 }

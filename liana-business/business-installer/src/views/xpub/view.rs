@@ -1,7 +1,7 @@
 use crate::{
     backend::Backend,
     state::{Msg, State},
-    views::{format_last_edit_info, layout_with_scrollable_list, menu_entry, MENU_ENTRY_WIDTH},
+    views::{format_last_edit_info, layout_with_scrollable_list, menu_key_entry, MENU_ENTRY_WIDTH},
 };
 use iced::{
     widget::{row, Space},
@@ -9,7 +9,10 @@ use iced::{
 };
 use liana_connect::ws_business::{self, UserRole};
 use liana_ui::{
-    component::{pill, text},
+    component::{
+        pill,
+        text::{self},
+    },
     icon, theme,
     widget::*,
 };
@@ -29,37 +32,11 @@ fn xpub_key_card(
     key: &ws_business::Key,
     last_edit_info: Option<String>,
 ) -> Container<'static, Msg> {
-    // First row: |<icon>|<alias>|<identity>|<spacer>|<status_badge>
-    let identity_str = key.identity.to_string();
-    let header_row = Row::new()
-        .spacing(10)
-        .align_y(Alignment::End)
-        .push(icon::key_icon())
-        .push(text::h3(&key.alias).style(theme::text::primary))
-        .push(text::p2_medium(identity_str).style(theme::text::accent))
-        .push(Space::with_width(Length::Fill))
-        .push(xpub_status_badge(key.xpub.is_some()));
+    let icon = icon::key_icon();
+    let pill = xpub_status_badge(key.xpub.is_some());
+    let msg = Some(Msg::XpubSelectKey(key_id));
 
-    // Second row: Description
-    let description = text::p2_medium(&key.description).style(theme::text::primary);
-
-    // Third row: Key type
-    let key_type_str = format!("{:?}", key.key_type);
-    let key_type = text::p2_medium(key_type_str).style(theme::text::primary);
-
-    // Fourth row: Last edit info (optional)
-    let edit_info = last_edit_info.map(text::caption);
-
-    let content = Column::new()
-        .push(header_row)
-        .push(description)
-        .push(key_type)
-        .push_maybe(edit_info)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .spacing(5);
-
-    menu_entry(row![content], Some(Msg::XpubSelectKey(key_id)))
+    menu_key_entry(key, last_edit_info, icon, pill, msg)
 }
 
 pub fn xpub_view(state: &State) -> Element<'_, Msg> {

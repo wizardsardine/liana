@@ -18,7 +18,9 @@ use liana_ui::{
     widget::*,
 };
 
-use super::{delete_btn, format_last_edit_info, layout_with_scrollable_list, menu_entry};
+use super::{
+    delete_btn, format_last_edit_info, layout_with_scrollable_list, menu_entry, menu_key_entry,
+};
 
 pub fn pill<'a, T: 'a>(key_type: &KeyType) -> Container<'a, T> {
     match key_type {
@@ -35,40 +37,11 @@ fn key_card(
     key: &ws_business::Key,
     last_edit_info: Option<String>,
 ) -> Container<'static, Msg> {
-    // Identity (optional - display email or other identity)
-    let identity_str = key.identity.to_string();
-    let identity_display = (!identity_str.is_empty())
-        .then(|| text::p2_medium(identity_str).style(theme::text::accent));
+    let msg = Some(Msg::KeyEdit(key_id));
+    let icon = icon::key_icon();
+    let pill = pill(&key.key_type).into();
 
-    let pill = pill(&key.key_type);
-
-    // Header row: |<icon>|<Key_name>|<identity>|<spacer>|<key_type_badge>
-    let header_row = Row::new()
-        .spacing(10)
-        .align_y(Alignment::End)
-        .push(icon::key_icon())
-        .push(text::h3(&key.alias).style(theme::text::primary))
-        .push_maybe(identity_display)
-        .push(Space::with_width(Length::Fill))
-        .push(pill);
-
-    // Description (optional)
-    let description = (!key.description.is_empty())
-        .then(|| text::p2_medium(&key.description).style(theme::text::primary));
-
-    // Last edit info (optional)
-    let last_edit =
-        last_edit_info.map(|info| text::caption(&info).style(liana_ui::theme::text::secondary));
-
-    let content = row![Column::new()
-        .spacing(5)
-        .push(header_row)
-        .push_maybe(description)
-        .push_maybe(last_edit)]
-    .width(Length::Fill)
-    .height(Length::Fill);
-
-    menu_entry(content, Some(Msg::KeyEdit(key_id)))
+    menu_key_entry(key, last_edit_info, icon, pill, msg)
 }
 
 pub fn keys_view(state: &State) -> Element<'_, Msg> {
