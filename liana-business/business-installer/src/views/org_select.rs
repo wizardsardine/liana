@@ -8,7 +8,10 @@ use iced::{
 };
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
 use liana_ui::{
-    component::{form, text},
+    component::{
+        form,
+        text::{self, truncate},
+    },
     theme,
     widget::*,
 };
@@ -87,6 +90,7 @@ pub fn org_card<'a>(
         c => format!("({c} wallets)"),
     };
 
+    let name = truncate(&name, 30);
     let header = row![text::h3(name), text::h4_bold(wallets)]
         .spacing(10)
         .align_y(Alignment::End);

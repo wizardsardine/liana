@@ -8,7 +8,10 @@ use iced::{
 };
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
 use liana_ui::{
-    component::{form, pill, text},
+    component::{
+        form, pill,
+        text::{self, truncate},
+    },
     theme,
     widget::*,
 };
@@ -95,11 +98,12 @@ pub fn wallet_card<'a>(
         c => format!("({c} keys)"),
     };
 
+    let alias = truncate(&wallet.alias, 25);
     // Left side: wallet name, key count, and edit info
     let mut left_col = Column::new()
         .push(
             row![
-                text::h3(wallet.alias.clone()),
+                text::h3(alias),
                 text::p1_medium(keys).style(theme::text::primary)
             ]
             .spacing(5)

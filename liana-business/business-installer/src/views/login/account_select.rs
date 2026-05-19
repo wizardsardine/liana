@@ -55,7 +55,8 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
                 .push(text::p2_medium("Connecting..."))
                 .push(Space::with_width(Length::Fill))
         } else {
-            row![text::p1_medium(&account.email)]
+            let email = liana_ui::component::text::short_email(&account.email, 55);
+            row![text::p1_medium(email)]
         }
         .align_y(iced::Alignment::Center);
 
@@ -80,7 +81,10 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
             .spacing(15)
             .align_y(Alignment::Center)
             .push(account_card_element)
-            .push(delete_btn);
+            .push(delete_btn)
+            // for an obscure reason we have to add a small
+            // spacer, else the scrollable padding is not applied
+            .push(Space::with_width(1));
 
         list_content = list_content.push(account_row);
     }

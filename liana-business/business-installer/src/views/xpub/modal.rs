@@ -15,7 +15,7 @@ use liana_ui::{
         form,
         modal::{self, modal_view, none_fn, ModalWidth},
         pick_list, scrollable,
-        text::{self, capitalize_first, p1_bold},
+        text::{self, capitalize_first, p1_bold, truncate},
         tooltip,
     },
     icon, theme,
@@ -120,8 +120,9 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
         .spacing(15)
         .align_x(Alignment::Center);
 
+    let alias = truncate(&modal_state.key_alias, 25);
     modal_view(
-        Some(format!("Select key source - {}", modal_state.key_alias)),
+        Some(format!("Select key source - {alias}")),
         none_fn(),
         Some(|| Msg::XpubCancelModal),
         ModalWidth::L,
@@ -226,8 +227,9 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         .push(btn_row)
         .spacing(15);
 
+    let alias = truncate(&modal_state.key_alias, 25);
     modal_view(
-        Some(modal_state.key_alias.clone()),
+        Some(alias),
         Some(|| Msg::XpubDeviceBack),
         Some(|| Msg::XpubCancelModal),
         ModalWidth::M,
