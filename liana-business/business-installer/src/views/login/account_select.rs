@@ -97,7 +97,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
         None,
         "Connect with another email",
         BtnWidth::XXL,
-        Some(Msg::AccountSelectNewEmail),
+        (!processing).then_some(Msg::AccountSelectNewEmail),
     );
 
     // Wrap in a container to maintain alignment with account rows
