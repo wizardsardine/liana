@@ -601,10 +601,10 @@ impl Modal for BroadcastModal {
                         tx.status = SpendStatus::Broadcast;
                         self.broadcast = true;
                         tracing::info!(
-                          target: "coincube_gui::broadcast",
-                          txid = %tx.psbt.unsigned_tx.compute_txid(),
-                          "Broadcast completed"
-                      );
+                            target: "coincube_gui::broadcast",
+                            txid = %tx.psbt.unsigned_tx.compute_txid(),
+                            "Broadcast completed"
+                        );
                     }
                     Err(e) => {
                         let err_msg = e.to_string();
