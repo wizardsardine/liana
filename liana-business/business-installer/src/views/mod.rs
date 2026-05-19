@@ -372,7 +372,7 @@ pub fn select_list_view(cfg: SelectListView<'_>) -> Element<'_, Msg> {
         .push(Space::with_height(30))
         .spacing(10)
         .align_x(Alignment::Center)
-        .padding(20);
+        .padding([0, 20]);
 
     if let Some(search) = cfg.search {
         let value = form::Value {
@@ -383,10 +383,8 @@ pub fn select_list_view(cfg: SelectListView<'_>) -> Element<'_, Msg> {
         let search_form = form::Form::new_trimmed(search.placeholder, &value, search.on_change)
             .size(16)
             .padding(10);
-        let search_container = Container::new(search_form)
-            .width(500)
-            .align_x(Alignment::Center);
-        header = header.push(search_container).push(Space::with_height(10));
+        let search_container = Container::new(search_form).align_x(Alignment::Center);
+        header = header.push(search_container);
     }
 
     let list = cfg.list.push(Space::with_height(50));
