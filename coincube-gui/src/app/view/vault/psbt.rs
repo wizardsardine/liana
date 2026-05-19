@@ -164,6 +164,10 @@ pub fn save_action<'a>(saved: bool) -> Element<'a, Message> {
 ///
 /// `conflicting_txids` contains the IDs of any directly conflicting transactions
 /// of the transaction to be broadcast.
+/// `broadcasting` is `true` while the daemon's `broadcast_spend_tx` RPC is in
+/// flight — between the user pressing "Broadcast" and the daemon's reply.
+/// In that window the button swaps to a disabled "Broadcasting…" label so the
+/// user can see their click registered and isn't tempted to click again.
 #[allow(clippy::too_many_arguments)]
 pub fn broadcast_action<'a>(
     conflicting_txids: &HashSet<Txid>,
@@ -261,11 +265,19 @@ pub fn broadcast_action<'a>(
                         ),
                     )
                 })
-                .push(
-                    Row::new()
-                        .push(Column::new().width(Length::Fill))
-                        .push(broadcast_button),
-                ),
+                .push(Row::new().push(Column::new().width(Length::Fill)).push(
+                    // Disabled "Broadcasting…" state mirrors the
+                    // "Processing…" pattern used by the PSBT
+                    // update form below — leaving `on_press`
+                    // unset is this codebase's idiom for a
+                    // visually-disabled button.
+                    if broadcasting {
+                        button::primary(None, "Broadcasting…")
+                    } else {
+                        button::primary(None, "Broadcast")
+                            .on_press(Message::Spend(SpendTxMessage::Confirm))
+                    },
+                )),
         )
         .width(Length::Fixed(if conflicting_txids.is_empty() {
             400.0

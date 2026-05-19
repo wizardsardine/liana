@@ -195,6 +195,21 @@ impl PsbtState {
                     }
                 }
 
+                // The celebration page dismisses via this same Cancel
+                // message. Detect that case before we clear `self.modal`
+                // so we can chain a Reload onto the close — that
+                // returns the user to the PSBTs list with their newly
+                // broadcast tx already marked unconfirmed, instead of
+                // leaving them on the now-stale PSBT detail page
+                // wondering whether the broadcast made it through.
+                let just_broadcast = matches!(
+                    &self.modal,
+                    Some(PsbtModal::Broadcast(BroadcastModal {
+                        broadcast: true,
+                        ..
+                    }))
+                );
+
                 // Dismissing a Keychain-sign modal (blur or otherwise)
                 // must also terminate any in-flight signing sessions
                 // server-side, not just hide the UI — otherwise signers
@@ -220,6 +235,9 @@ impl PsbtState {
                     };
                 if !keep_modal {
                     self.modal = None;
+                }
+                if just_broadcast {
+                    return Task::batch([cancel, Task::done(Message::View(view::Message::Reload))]);
                 }
                 return cancel;
             }
@@ -520,7 +538,13 @@ impl Modal for SaveModal {
 }
 
 pub struct BroadcastModal {
+    /// Set once `broadcast_spend_tx` has returned successfully —
+    /// drives the celebration screen.
     broadcast: bool,
+    /// True while the daemon's `broadcast_spend_tx` RPC is in flight.
+    /// Used to give the user clear "Broadcasting…" feedback and to
+    /// suppress accidental duplicate clicks / blur-cancel during the
+    /// window between pressing Broadcast and the daemon's reply.
     broadcasting: bool,
     error: Option<Error>,
     /// IDs of any directly conflicting transactions.
@@ -544,9 +568,16 @@ impl Modal for BroadcastModal {
     ) -> Task<Message> {
         match message {
             Message::View(view::Message::Spend(view::SpendTxMessage::Confirm)) => {
-                if self.broadcasting {
+                // Ignore re-clicks while a broadcast is already in
+                // flight or has succeeded — without this guard, the
+                // "Broadcast" button could fire `broadcast_spend_tx`
+                // twice on rapid double-taps, and the second call
+                // would error out with "unknown spend" after the first
+                // one drained the PSBT from the daemon's DB.
+                if self.broadcasting || self.broadcast {
                     return Task::none();
                 }
+                self.broadcasting = true;
                 let daemon = daemon.clone();
                 let psbt = tx.psbt.clone();
                 self.error = None;
@@ -562,29 +593,42 @@ impl Modal for BroadcastModal {
                     Message::Updated,
                 );
             }
-            Message::Updated(res) => match res {
-                Ok(()) => {
-                    self.broadcasting = false;
-                    tx.status = SpendStatus::Broadcast;
-                    self.broadcast = true;
-                    tracing::info!(
-                        target: "coincube_gui::broadcast",
-                        txid = %tx.psbt.unsigned_tx.compute_txid(),
-                        "Broadcast completed"
-                    );
+            Message::Updated(res) => {
+                // Either outcome ends the in-flight state.
+                self.broadcasting = false;
+                match res {
+                    Ok(()) => {
+                        tx.status = SpendStatus::Broadcast;
+                        self.broadcast = true;
+                        tracing::info!(
+                          target: "coincube_gui::broadcast",
+                          txid = %tx.psbt.unsigned_tx.compute_txid(),
+                          "Broadcast completed"
+                      );
+                    }
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        self.error = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                    }
                 }
-                Err(e) => {
-                    let err_msg = e.to_string();
-                    self.broadcasting = false;
-                    self.error = Some(e);
-                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                }
-            },
+            }
             _ => {}
         }
         Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
+        // While the broadcast RPC is in flight, suppress blur-to-cancel.
+        // An accidental tap outside the modal at that moment would
+        // dismiss the user's only visual confirmation that something
+        // is happening and look like an aborted broadcast — even
+        // though the daemon call itself is unaffected by closing the
+        // modal.
+        let on_blur = if self.broadcasting {
+            None
+        } else {
+            Some(view::Message::Spend(view::SpendTxMessage::Cancel))
+        };
         modal::Modal::new(
             content,
             view::vault::psbt::broadcast_action(
@@ -598,7 +642,7 @@ impl Modal for BroadcastModal {
                 self.is_self_transfer,
             ),
         )
-        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+        .on_blur(on_blur)
         .into()
     }
 }

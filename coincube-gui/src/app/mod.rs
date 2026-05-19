@@ -2614,6 +2614,29 @@ impl App {
             }
             Message::View(view::Message::DismissReceivedCelebration) => {
                 self.show_received_celebration = false;
+                // Panels that render their own celebration overlay
+                // (e.g. the Vault overview) keep a separate
+                // `show_received_celebration` flag and reuse this same
+                // global dismiss message. Clearing only the app-level
+                // flag here would leave the panel stuck on the
+                // celebration screen, so forward the dismiss to the
+                // active panel as well — mirrors the generic
+                // message-forwarding catch-all below.
+                if let (Some(daemon), Some(panel)) =
+                    (self.daemon.clone(), self.panels.current_mut())
+                {
+                    return panel.update(
+                        Some(daemon),
+                        &self.cache,
+                        Message::View(view::Message::DismissReceivedCelebration),
+                    );
+                } else if let Some(panel) = self.panels.current_mut() {
+                    return panel.update(
+                        None,
+                        &self.cache,
+                        Message::View(view::Message::DismissReceivedCelebration),
+                    );
+                }
             }
             Message::View(view::Message::DismissBackupWarning) => {
                 self.cache.backup_warning_dismissed = true;

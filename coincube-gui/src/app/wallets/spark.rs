@@ -114,6 +114,12 @@ impl SparkBackend {
         self.client.receive_onchain(new_address).await
     }
 
+    /// Generate a static, reusable Spark address (native
+    /// Spark-to-Spark receive). No amount/invoice; zero receive fee.
+    pub async fn receive_spark(&self) -> Result<ReceivePaymentOk, SparkClientError> {
+        self.client.receive_spark().await
+    }
+
     /// Phase 4f: list pending on-chain deposits.
     pub async fn list_unclaimed_deposits(
         &self,
