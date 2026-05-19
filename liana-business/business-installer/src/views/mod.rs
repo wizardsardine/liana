@@ -108,7 +108,7 @@ fn layout_inner<'a>(
     let (txt, msg) = if let Some(msg) = previous_message {
         ("Previous", Some(msg))
     } else if email.is_some() {
-        ("Disconnect", Some(Msg::Disconnect))
+        ("Previous", Some(Msg::Disconnect))
     } else {
         ("Previous", None)
     };

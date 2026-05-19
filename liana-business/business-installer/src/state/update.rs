@@ -1071,31 +1071,15 @@ impl State {
     }
 
     fn on_logout(&mut self) -> Task<Msg> {
-        // Call backend logout to clear token, close connection
         self.backend.logout();
 
-        // Clear email and code form values
-        self.views.login.email.form.value = String::new();
-        self.views.login.email.form.valid = false;
-        self.views.login.email.form.warning = None;
-        self.views.login.email.processing = false;
-        self.views.login.code.form.value = String::new();
-        self.views.login.code.form.valid = false;
-        self.views.login.code.form.warning = None;
-        self.views.login.code.processing = false;
+        // Re-read connect.json so the login view reflects the cache as it
+        // is now, not the snapshot taken at app startup.
+        let (valid_accounts, to_remove) = self.backend.validate_all_cached_tokens();
+        self.backend.clear_invalid_tokens(&to_remove);
+        self.views.login = views::login::Login::with_cached_accounts(valid_accounts);
 
-        // Reset account select state
-        self.views.login.account_select.processing = false;
-        self.views.login.account_select.selected_email = None;
-
-        // Decide next login state based on remaining cached accounts
-        if self.views.login.account_select.accounts.is_empty() {
-            self.views.login.current = views::LoginState::EmailEntry;
-        } else {
-            self.views.login.current = views::LoginState::AccountSelect;
-        }
-
-        // Reset application state
+        // Reset application-level selections.
         self.app.selected_org = None;
         self.app.selected_wallet = None;
         self.app.current_wallet_template = None;
@@ -1103,10 +1087,8 @@ impl State {
         self.app.reconnecting = false;
         self.app.exit = false;
 
-        // Navigate to login view
         self.current_view = View::Login;
 
-        // Focus email input if going to EmailEntry
         if self.views.login.current == views::LoginState::EmailEntry {
             text_input::focus("login_email")
         } else {
