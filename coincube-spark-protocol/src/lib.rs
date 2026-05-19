@@ -94,6 +94,14 @@ pub enum Method {
     /// the gui watches for incoming deposits via
     /// [`Event::DepositsChanged`] and lets the user claim mature ones.
     ReceiveOnchain(ReceiveOnchainParams),
+    /// Generate a static, reusable Spark address for native
+    /// Spark-to-Spark transfers. Unlike Lightning/on-chain receive
+    /// there is no amount or invoice — the address is identity-bound
+    /// and token-agnostic. Maps to the SDK's
+    /// `ReceivePaymentMethod::SparkAddress` (no params, fee 0). The
+    /// reused [`OkPayload::ReceivePayment`] carries the address as
+    /// `payment_request`.
+    ReceiveSpark,
     /// Phase 4f: enumerate on-chain deposits the SDK has noticed but
     /// not yet claimed. Returns a [`Vec<DepositInfo>`] the gui renders
     /// as a "pending deposits" card in the Receive panel.
@@ -417,11 +425,18 @@ pub enum ParseInputKind {
     /// A Lightning address in the form `user@domain`. Resolves to an
     /// LNURL-pay flow internally. Use [`Method::PrepareLnurlPay`].
     LightningAddress,
+    /// A static Spark address (identity-bound, reusable). Native
+    /// Spark-to-Spark transfer. Use [`Method::PrepareSend`] — the
+    /// SDK auto-detects and routes it as a Spark send.
+    SparkAddress,
+    /// A Spark invoice (single-use, may carry an amount / token /
+    /// expiry). Native Spark-to-Spark transfer. Use
+    /// [`Method::PrepareSend`].
+    SparkInvoice,
     /// Anything else the SDK could parse (BOLT12, Bolt12 offer,
-    /// silent payment, Spark-native types, etc.). Phase 4e falls
-    /// through to [`Method::PrepareSend`] which handles the ones the
-    /// SDK supports; the gui shows a "not supported" error for the
-    /// rest.
+    /// silent payment, etc.). Phase 4e falls through to
+    /// [`Method::PrepareSend`] which handles the ones the SDK
+    /// supports; the gui shows a "not supported" error for the rest.
     Other,
 }
 
