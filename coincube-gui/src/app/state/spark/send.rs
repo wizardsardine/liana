@@ -365,12 +365,10 @@ async fn resolve_and_prepare(
         | ParseInputKind::BitcoinAddress
         | ParseInputKind::SparkAddress
         | ParseInputKind::SparkInvoice
-        | ParseInputKind::Other => {
-            backend
-                .prepare_send(input, amount_sat)
-                .await
-                .map_err(|e| format!("prepare_send failed: {e}"))
-        }
+        | ParseInputKind::Other => backend
+            .prepare_send(input, amount_sat)
+            .await
+            .map_err(|e| format!("prepare_send failed: {e}")),
     }
 }
 

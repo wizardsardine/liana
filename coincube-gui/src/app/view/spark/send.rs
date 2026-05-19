@@ -152,9 +152,7 @@ fn phase_body<'a>(phase: &SparkSendPhase) -> Element<'a, Message> {
                     format!("{} sats", ok.amount_sat.saturating_add(ok.fee_sat)),
                 ))
                 .push_maybe(ok.method.starts_with("Spark").then(|| {
-                    p2_regular(
-                        "Spark transfer — instant, lower fee than Lightning or on-chain.",
-                    )
+                    p2_regular("Spark transfer — instant, lower fee than Lightning or on-chain.")
                 }))
                 .push(Space::new().height(Length::Fixed(8.0)))
                 .push(
