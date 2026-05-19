@@ -980,12 +980,18 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
             for d in devices {
                 let name = d.device_name.as_deref().unwrap_or("Unknown Device");
                 let suffix = if d.is_current { " (this device)" } else { "" };
+                
                 let label = format!("{name}{suffix}");
+                let time_label = if let Some(ref last_used) = d.last_used_at {
+                    format!("Last active: {}", last_used)
+                } else {
+                    format!("Added: {}", d.created_at)
+                };
                 col = col.push(
                     Row::new()
                         .push(text::p2_regular(label).style(theme::text::primary))
                         .push(iced::widget::Space::new().width(Length::Fill))
-                        .push(text::p2_regular(d.created_at.as_str()).color(color::GREY_3)),
+                        .push(text::p2_regular(time_label).color(color::GREY_3)),
                 );
             }
             col.into()
@@ -1006,11 +1012,13 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                 let status = if ok { "✓" } else { "✗" };
                 let status_color = if ok { color::ORANGE } else { color::RED };
                 let ip = a.ip_address.as_deref().unwrap_or("unknown").to_string();
+                let ua = a.user_agent.as_deref().unwrap_or("Unknown device/browser");
+                let ip_and_ua = format!("{} - {}", ip, ua);
                 col = col.push(
                     Row::new()
                         .push(text::p2_regular(status).color(status_color))
                         .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
-                        .push(text::p2_regular(ip).style(theme::text::primary))
+                        .push(text::p2_regular(ip_and_ua).style(theme::text::primary))
                         .push(iced::widget::Space::new().width(Length::Fill))
                         .push(text::p2_regular(a.created_at.as_str()).color(color::GREY_3)),
                 );
