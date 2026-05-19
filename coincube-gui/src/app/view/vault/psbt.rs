@@ -194,19 +194,6 @@ pub fn broadcast_action<'a>(
             Message::Spend(super::super::SpendTxMessage::Cancel),
         )
     } else {
-        let broadcast_button = button::primary(
-            None,
-            if broadcasting {
-                "Broadcasting..."
-            } else {
-                "Broadcast"
-            },
-        );
-        let broadcast_button = if broadcasting {
-            broadcast_button
-        } else {
-            broadcast_button.on_press(Message::Spend(SpendTxMessage::Confirm))
-        };
         card::simple(
             Column::new()
                 .spacing(10)
