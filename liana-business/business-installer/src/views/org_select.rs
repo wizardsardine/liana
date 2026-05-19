@@ -8,17 +8,17 @@ use iced::{
 };
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
 use liana_ui::{
-    component::{
-        form,
-        text::{self, truncate},
-    },
+    component::text::{self, truncate},
     theme,
     widget::*,
 };
 
 use uuid::Uuid;
 
-use super::{format_last_edit_info, layout_with_scrollable_list, menu_entry, INSTALLER_STEPS};
+use super::{
+    format_last_edit_info, menu_entry, select_list_view, SelectListView, SelectSearch,
+    INSTALLER_STEPS,
+};
 
 /// Derive the user's role for a specific wallet based on wallet data and global role
 /// Returns None if the user has no access to this wallet
@@ -124,22 +124,6 @@ pub fn no_org_card() -> Container<'static, Msg> {
 
 pub fn org_select_view(state: &State) -> Element<'_, Msg> {
     let current_user_email = &state.views.login.email.form.value;
-
-    let title = text::h2("Select an Organization");
-    let title = row![
-        Space::with_width(Length::Fill),
-        title,
-        Space::with_width(Length::Fill),
-    ];
-
-    // Fixed header content: title and search bar
-    let mut header_content = Column::new()
-        .push(title)
-        .push(Space::with_height(30))
-        .spacing(10)
-        .align_x(Alignment::Center)
-        .padding(20);
-
     let orgs = state.backend.get_orgs();
 
     // Determine if user is WSAdmin (use global role from User record)
@@ -147,27 +131,6 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
         state.app.global_user_role,
         Some(UserRole::WizardSardineAdmin)
     );
-
-    // Add search bar for WSAdmin users
-    if is_ws_admin && !orgs.is_empty() {
-        let search_value = form::Value {
-            value: state.views.org_select.search_filter.clone(),
-            warning: None,
-            valid: true,
-        };
-        let search_form = form::Form::new_trimmed(
-            "Filter organizations...",
-            &search_value,
-            Msg::OrgSelectUpdateSearchFilter,
-        )
-        .size(16)
-        .padding(10);
-        let search_container = Container::new(search_form)
-            .width(Length::Fixed(500.0))
-            .align_x(Alignment::Center);
-        header_content = header_content.push(search_container);
-        header_content = header_content.push(Space::with_height(10));
-    }
 
     // Scrollable list content: organization cards
     let mut list_content = Column::new()
@@ -247,17 +210,19 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
             list_content = list_content.push(card);
         }
     }
-    list_content = list_content.push(Space::with_height(50));
 
-    layout_with_scrollable_list(
-        (3, INSTALLER_STEPS),
-        Some(current_user_email),
+    select_list_view(SelectListView {
+        progress: (3, INSTALLER_STEPS),
+        email: current_user_email,
         is_ws_admin,
-        &["Organizations".to_string()],
-        header_content,
-        list_content,
-        None, // footer_content
-        true,
-        None,
-    )
+        breadcrumb: vec!["Organizations".to_string()],
+        title: "Select an Organization".to_string(),
+        search: (is_ws_admin && !orgs.is_empty()).then_some(SelectSearch {
+            placeholder: "Filter organizations...",
+            value: &state.views.org_select.search_filter,
+            on_change: Msg::OrgSelectUpdateSearchFilter,
+        }),
+        list: list_content,
+        previous_message: None,
+    })
 }

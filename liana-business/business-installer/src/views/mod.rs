@@ -28,7 +28,7 @@ use liana_ui::{
     component::{
         button::{btn_flat, icon_btn, BtnWidth},
         card::clickable_card,
-        scrollable,
+        form, scrollable,
         text::{self, short_email, truncate},
     },
     icon, theme,
@@ -330,4 +330,66 @@ pub fn menu_key_entry(
         .height(Length::Fill);
 
     menu_entry(content, msg)
+}
+
+/// Optional centered search bar inside a select list view.
+pub struct SelectSearch<'a> {
+    pub placeholder: &'static str,
+    pub value: &'a str,
+    pub on_change: fn(String) -> Msg,
+}
+
+/// Standard "pick one from a list" page used by org_select and wallet_select.
+pub struct SelectListView<'a> {
+    pub progress: (usize, usize),
+    pub email: &'a str,
+    pub is_ws_admin: bool,
+    pub breadcrumb: Vec<String>,
+    pub title: String,
+    pub search: Option<SelectSearch<'a>>,
+    pub list: Column<'static, Msg>,
+    pub previous_message: Option<Msg>,
+}
+
+pub fn select_list_view(cfg: SelectListView<'_>) -> Element<'_, Msg> {
+    let title_row = Row::new()
+        .push(Space::with_width(Length::Fill))
+        .push(text::h2(cfg.title))
+        .push(Space::with_width(Length::Fill));
+
+    let mut header = Column::new()
+        .push(title_row)
+        .push(Space::with_height(30))
+        .spacing(10)
+        .align_x(Alignment::Center)
+        .padding(20);
+
+    if let Some(search) = cfg.search {
+        let value = form::Value {
+            value: search.value.to_string(),
+            warning: None,
+            valid: true,
+        };
+        let search_form = form::Form::new_trimmed(search.placeholder, &value, search.on_change)
+            .size(16)
+            .padding(10);
+        let search_container = Container::new(search_form)
+            .width(500)
+            .align_x(Alignment::Center);
+        header = header.push(search_container).push(Space::with_height(10));
+    }
+
+    let list = cfg.list.push(Space::with_height(50));
+
+    layout_with_scrollable_list(
+        cfg.progress,
+        Some(cfg.email),
+        cfg.is_ws_admin,
+        &cfg.breadcrumb,
+        header,
+        list,
+        None,
+        true,
+        cfg.previous_message,
+    )
 }

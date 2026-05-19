@@ -9,14 +9,17 @@ use iced::{
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
 use liana_ui::{
     component::{
-        form, pill,
+        pill,
         text::{self, truncate},
     },
     theme,
     widget::*,
 };
 
-use super::{format_last_edit_info, layout_with_scrollable_list, menu_entry, INSTALLER_STEPS};
+use super::{
+    format_last_edit_info, menu_entry, select_list_view, SelectListView, SelectSearch,
+    INSTALLER_STEPS,
+};
 
 /// Derive the user's role for a specific wallet based on wallet data and global role
 /// Returns None if the user has no access to this wallet
@@ -158,12 +161,6 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
     } else {
         "Create a wallet"
     };
-    let title = text::h2(title_text);
-    let title = row![
-        Space::with_width(Length::Fill),
-        title,
-        Space::with_width(Length::Fill),
-    ];
 
     // Get current user email for role derivation
     let current_user_email = &state.views.login.email.form.value;
@@ -174,45 +171,6 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         state.app.global_user_role,
         Some(UserRole::WizardSardineAdmin)
     );
-
-    // Fixed header content: title, filter checkbox, and search bar
-    let mut header_content = Column::new()
-        .push(title)
-        .push(Space::with_height(30))
-        .spacing(10)
-        .align_x(Alignment::Center)
-        .padding(20);
-
-    // Add filter checkbox for WS Admin users (centered)
-    if is_ws_admin && has_wallets {
-        let filter_checkbox = Row::new()
-            .push(Space::with_width(Length::Fill))
-            .push(Space::with_width(Length::Fill))
-            .width(Length::Fill);
-        header_content = header_content.push(filter_checkbox);
-        header_content = header_content.push(Space::with_height(10));
-    }
-
-    // Add search bar for all users when there are wallets
-    if has_wallets {
-        let search_value = form::Value {
-            value: state.views.wallet_select.search_filter.clone(),
-            warning: None,
-            valid: true,
-        };
-        let search_form = form::Form::new_trimmed(
-            "Filter wallets...",
-            &search_value,
-            Msg::WalletSelectUpdateSearchFilter,
-        )
-        .size(16)
-        .padding(10);
-        let search_container = Container::new(search_form)
-            .width(Length::Fixed(500.0))
-            .align_x(Alignment::Center);
-        header_content = header_content.push(search_container);
-        header_content = header_content.push(Space::with_height(10));
-    }
 
     // Scrollable list content: wallet cards
     let mut list_content = Column::new()
@@ -307,8 +265,6 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         // FIXME: doe we display something if no wallet?
     }
 
-    list_content = list_content.push(Space::with_height(50));
-
     // Build breadcrumb: org_name > Wallets
     let org_name = state
         .app
@@ -318,15 +274,18 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         .unwrap_or_else(|| "Organization".to_string());
     let breadcrumb = vec![org_name, "Wallets".to_string()];
 
-    layout_with_scrollable_list(
-        (4, INSTALLER_STEPS),
-        Some(&state.views.login.email.form.value),
+    select_list_view(SelectListView {
+        progress: (4, INSTALLER_STEPS),
+        email: current_user_email,
         is_ws_admin,
-        &breadcrumb,
-        header_content,
-        list_content,
-        None, // footer_content
-        true,
-        Some(Msg::NavigateBack),
-    )
+        breadcrumb,
+        title: title_text.to_string(),
+        search: has_wallets.then_some(SelectSearch {
+            placeholder: "Filter wallets...",
+            value: &state.views.wallet_select.search_filter,
+            on_change: Msg::WalletSelectUpdateSearchFilter,
+        }),
+        list: list_content,
+        previous_message: Some(Msg::NavigateBack),
+    })
 }
