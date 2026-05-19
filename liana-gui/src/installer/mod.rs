@@ -1,5 +1,5 @@
 mod context;
-mod decrypt;
+pub mod decrypt;
 mod descriptor;
 mod message;
 mod prompt;
@@ -20,6 +20,10 @@ use liana_ui::{
 };
 use lianad::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Config};
 use std::{collections::HashMap, fmt::Debug, ops::Deref};
+pub use step::descriptor::editor::{
+    key::{EditKeyAlias, PathData, SelectKeySource, SelectKeySourceMessage},
+    DescriptorEditModal,
+};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 

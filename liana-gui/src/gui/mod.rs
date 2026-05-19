@@ -66,6 +66,8 @@ where
     debug_stacks: &'static [&'static debug::DebugStack],
     #[cfg(feature = "debugger")]
     ctrl_d_held: bool,
+    #[cfg(feature = "debugger")]
+    hw_polling: debug::hw_polling::HwPollingState,
     _phantom: PhantomData<M>,
 }
 
@@ -102,6 +104,8 @@ where
     Event(iced::Event),
     #[cfg(feature = "debugger")]
     DebugNoOp,
+    #[cfg(feature = "debugger")]
+    HwPolling(debug::hw_polling::HwPollingMessage),
 
     Clicked(pane_grid::Pane),
     Dragged(pane_grid::DragEvent),
@@ -192,6 +196,12 @@ where
             Box::leak(combined.into_boxed_slice())
         };
 
+        #[cfg(feature = "debugger")]
+        let hw_polling = debug::hw_polling::HwPollingState::new(
+            config.liana_directory.clone(),
+            config.network.unwrap_or(bitcoin::Network::Bitcoin),
+        );
+
         (
             Self {
                 panes,
@@ -208,6 +218,8 @@ where
                 debug_stacks,
                 #[cfg(feature = "debugger")]
                 ctrl_d_held: false,
+                #[cfg(feature = "debugger")]
+                hw_polling,
                 _phantom: PhantomData,
             },
             Task::batch(cmds),
@@ -612,6 +624,8 @@ where
             }
             #[cfg(feature = "debugger")]
             Message::DebugNoOp => Task::none(),
+            #[cfg(feature = "debugger")]
+            Message::HwPolling(msg) => self.hw_polling.update(msg).map(Message::HwPolling),
             Message::Tick => {
                 let mut tasks = vec![];
 
@@ -786,7 +800,27 @@ where
                     .map(|(id, msg)| Message::Pane(id, msg)),
             );
         }
+        #[cfg(feature = "debugger")]
+        if self.is_hw_polling_active() {
+            vec.push(self.hw_polling.subscription().map(Message::HwPolling));
+        }
         Subscription::batch(vec)
+    }
+
+    /// Returns true when the debug overlay is currently showing the
+    /// stateful HW-polling page. Matched by pointer equality with the
+    /// static [`debug::hw_polling::ENTRY`] so the rest of the debug
+    /// framework can stay stateless.
+    #[cfg(feature = "debugger")]
+    fn is_hw_polling_active(&self) -> bool {
+        let Some((stack, page)) = self.debug_view else {
+            return false;
+        };
+        self.debug_stacks
+            .get(stack)
+            .and_then(|s| s.pages.get(page))
+            .map(|entry| std::ptr::eq(*entry, &debug::hw_polling::ENTRY))
+            .unwrap_or(false)
     }
 
     #[cfg(not(feature = "debugger"))]
@@ -799,8 +833,12 @@ where
         let base = self.base_view();
         match self.debug_view {
             Some((stack, page)) => {
-                let overlay = debug::render_location(self.debug_stacks, stack, page)
-                    .map(|_| Message::DebugNoOp);
+                let overlay = if self.is_hw_polling_active() {
+                    self.hw_polling.view().map(Message::HwPolling)
+                } else {
+                    debug::render_location(self.debug_stacks, stack, page)
+                        .map(|_| Message::DebugNoOp)
+                };
                 iced::widget::stack![base, overlay].into()
             }
             None => base,

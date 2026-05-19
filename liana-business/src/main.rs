@@ -68,7 +68,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             LianaBusiness::new(
                 (config.clone(), log_level, VERSION),
                 #[cfg(feature = "debugger")]
-                &[], // Pass liana-business debug stack later here
+                liana_business::debug::EXTRA_STACKS,
             )
         },
         LianaBusiness::update,

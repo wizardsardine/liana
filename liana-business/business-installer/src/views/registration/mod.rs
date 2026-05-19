@@ -26,8 +26,22 @@ use super::{INSTALLER_STEPS, MENU_ENTRY_WIDTH};
 /// Main registration view
 pub fn registration_view(state: &State) -> Element<'_, Msg> {
     let reg_state = &state.views.registration;
+    let list_content = if reg_state.user_devices.is_empty() {
+        no_devices_view()
+    } else {
+        device_list_view(state)
+    };
+    registration_view_with_cards(state, list_content, !reg_state.user_devices.is_empty())
+}
 
-    // Get org name and wallet name from backend
+/// Variant of [`registration_view`] that takes a pre-built device-list element.
+/// The production view computes its list from `state.views.registration.user_devices`;
+/// the debug gallery passes a custom list of `key_card` variants.
+pub(crate) fn registration_view_with_cards<'a>(
+    state: &'a State,
+    list_content: Element<'a, Msg>,
+    has_devices: bool,
+) -> Element<'a, Msg> {
     let org_name = state
         .app
         .selected_org
@@ -42,10 +56,8 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
         .unwrap_or_else(|| "Wallet".to_string());
     let breadcrumb = vec![org_name, wallet_name, "Register Devices".to_string()];
 
-    // Get current user email
     let current_user_email = &state.views.login.email.form.value;
 
-    // Header content
     let header_content = Column::new()
         .spacing(10)
         .align_x(Alignment::Center)
@@ -63,17 +75,7 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
         Space::with_width(Length::Fill)
     ];
 
-    // List content: device cards or info message
-    let list_content = if reg_state.user_devices.is_empty() {
-        no_devices_view()
-    } else {
-        device_list_view(state)
-    };
-
-    // Footer with Skip button (only if there are devices to skip)
-    let footer_content = if reg_state.user_devices.is_empty() {
-        None
-    } else {
+    let footer_content = if has_devices {
         let spacer = MENU_ENTRY_WIDTH - BtnWidth::XL as u32;
         let skip_btn = btn_skip(Some(Msg::RegistrationSkipAll));
         let footer = row![
@@ -83,7 +85,6 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
             Space::with_width(Length::Fill),
         ]
         .align_y(Alignment::Center);
-
         Some(
             Container::new(footer)
                 .padding(20)
@@ -91,6 +92,8 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
                 .center_x(Length::Fill)
                 .into(),
         )
+    } else {
+        None
     };
 
     layout_with_scrollable_list(

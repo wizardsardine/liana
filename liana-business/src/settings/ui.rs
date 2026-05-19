@@ -108,6 +108,26 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
     }
 }
 
+/// Test/debug helpers. Visible only when the `debugger` feature is on so
+/// the production code path doesn't grow new public surface.
+#[cfg(feature = "debugger")]
+impl BusinessSettingsUI {
+    /// Build a snapshot of `BusinessSettingsUI` from a wallet, with all
+    /// other fields set to their inert defaults. Used by the debug
+    /// overlay (`liana_business::debug`) to render `wallet_view` and
+    /// friends without standing up a real settings flow.
+    pub(crate) fn for_debug(wallet: Arc<Wallet>) -> Self {
+        Self {
+            data_dir: LianaDirectory::new(std::path::PathBuf::new()),
+            wallet,
+            current_section: None,
+            fiat_setting: PriceSetting::default(),
+            processing: false,
+            register_modal: None,
+        }
+    }
+}
+
 // Update handlers
 impl BusinessSettingsUI {
     fn on_select_section(&mut self, section: Section) -> Task<Msg> {

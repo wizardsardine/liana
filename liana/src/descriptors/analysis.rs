@@ -821,6 +821,16 @@ pub struct PartialSpendInfo {
 }
 
 impl PartialSpendInfo {
+    /// Build a `PartialSpendInfo` from its parts. Intended for tests and
+    /// downstream tooling (e.g. debug overlays) that need to construct
+    /// the type without going through `LianaDescriptor::partial_spend_info`.
+    pub fn new(primary_path: PathSpendInfo, recovery_paths: BTreeMap<u16, PathSpendInfo>) -> Self {
+        Self {
+            primary_path,
+            recovery_paths,
+        }
+    }
+
     /// Get the number of signatures present for the primary path
     pub fn primary_path(&self) -> &PathSpendInfo {
         &self.primary_path

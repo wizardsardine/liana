@@ -121,6 +121,36 @@ impl State {
         }
     }
 
+    /// Build a stripped-down `State` suitable for the debug overlay:
+    /// no tokio runtime handle, no HW bridge thread, stub channels.
+    /// View functions never read `backend` / `hw`, so they render
+    /// faithfully against this; do not use for `update()`.
+    #[cfg(feature = "debugger")]
+    pub(crate) fn for_debug(network: Network, datadir: LianaDirectory) -> Self {
+        let (notif_sender, notif_receiver) = channel::unbounded();
+        let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
+        let (hw_sender, _hw_receiver) = channel::unbounded::<Message>();
+        let bitbox_config: Arc<dyn NoiseConfig> =
+            Arc::new(PersistedBitboxNoiseConfig::new(&datadir));
+        let hw = HwiService::new(network, None);
+        Self {
+            app: AppState::new(),
+            views: views::ViewsState::new(),
+            backend: Client::new(notif_sender.clone(), notif_waker.clone()),
+            current_view: View::Login,
+            notif_sender,
+            notif_receiver,
+            notif_waker,
+            hw,
+            hw_running: false,
+            network,
+            hw_sender,
+            _hw_bridge_handle: None,
+            bitbox_config,
+            connection_error: None,
+        }
+    }
+
     /// Start hardware wallet listening (call when modal opens)
     pub fn start_hw(&mut self) {
         if !self.hw_running {

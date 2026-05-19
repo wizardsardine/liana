@@ -3245,6 +3245,7 @@ dependencies = [
  "bitcoin-encrypted-backup",
  "bitcoin_hashes 0.12.0",
  "chrono",
+ "crossbeam",
  "dirs",
  "email_address",
  "flate2",

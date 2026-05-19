@@ -32,6 +32,9 @@ use crate::debug::{debug_chrome, DebugMessage, DebugPageEntry};
 
 pub static ENTRY_LEGACY: DebugPageEntry = DebugPageEntry { view: legacy_view };
 pub static ENTRY_NEW: DebugPageEntry = DebugPageEntry { view: new_view };
+pub static ENTRY_REPLACEMENT: DebugPageEntry = DebugPageEntry {
+    view: replacement_view,
+};
 pub static ENTRY_THEMES: DebugPageEntry = DebugPageEntry { view: themes_view };
 
 const ROW_SPACING: f32 = 5.0;
@@ -159,6 +162,81 @@ fn new_view() -> Element<'static, DebugMessage> {
     ];
 
     render("Texts - new design system", make_rows(entries))
+}
+
+// ----- Replacements (legacy -> new) ---------------------------------------
+
+const REPLACEMENT_SIDE_WIDTH: Length = Length::Fixed(380.0 + 12.0 + 200.0);
+
+fn legacy_side(spec: TextSpec) -> Row<'static, DebugMessage> {
+    Row::new().push(Container::new(text::apply(SAMPLE, spec)).width(REPLACEMENT_SIDE_WIDTH))
+}
+
+fn new_side(spec: TextSpec) -> Row<'static, DebugMessage> {
+    Row::new()
+        .spacing(12)
+        .align_y(Alignment::Center)
+        .push(Container::new(text::apply(SAMPLE, spec)).width(Length::Fill))
+}
+
+fn dropped_side() -> Row<'static, DebugMessage> {
+    Row::new().push(
+        Container::new(text::p1_regular("- dropped -").style(theme::text::secondary))
+            .center_x(REPLACEMENT_SIDE_WIDTH),
+    )
+}
+
+type Replacement = Option<(&'static str, TextSpec)>;
+
+fn replacement_view() -> Element<'static, DebugMessage> {
+    use text::new;
+
+    #[rustfmt::skip]
+    let pairs: Vec<(&'static str, TextSpec, Replacement)> = vec![
+        ("panel_title", PANEL_TITLE_SPEC, Some(("d2",        D2_SPEC))),
+        ("h1",          H1_SPEC,          None),
+        ("h2",          H2_SPEC,          Some(("d2",        D2_SPEC))),
+        ("h3",          H3_SPEC,          Some(("d3",        D3_SPEC))),
+        ("h4_bold",     H4_BOLD_SPEC,     Some(("d4",        D4_SPEC))),
+        ("h4_regular",  H4_REGULAR_SPEC,  Some(("b2",        B2_SPEC))),
+        ("h5_medium",   H5_MEDIUM_SPEC,   Some(("b2_medium", B2_MEDIUM_SPEC))),
+        ("h5_regular",  H5_REGULAR_SPEC,  Some(("b3",        B3_SPEC))),
+        ("p1_bold",     P1_BOLD_SPEC,     Some(("b4_medium", B4_MEDIUM_SPEC))),
+        ("p1_medium",   P1_MEDIUM_SPEC,   Some(("b4_medium", B4_MEDIUM_SPEC))),
+        ("p1_regular",  P1_REGULAR_SPEC,  Some(("b3",        B3_SPEC))),
+        ("p2_medium",   P2_MEDIUM_SPEC,   Some(("b4_medium", B4_MEDIUM_SPEC))),
+        ("p2_regular",  P2_REGULAR_SPEC,  Some(("caption",   new::CAPTION_SPEC))),
+        ("caption",     CAPTION_SPEC,     Some(("caption",   new::CAPTION_SPEC))),
+    ];
+
+    let rows = pairs
+        .into_iter()
+        .map(|(_legacy_name, legacy_spec, replacement)| {
+            let right = match replacement {
+                Some((_, spec)) => new_side(spec),
+                None => dropped_side(),
+            };
+
+            let inner = Row::new()
+                .spacing(20)
+                .align_y(Alignment::Center)
+                .push(Space::with_width(20))
+                .push(legacy_side(legacy_spec))
+                .push(text::p1_regular("->").style(theme::text::secondary))
+                .push(right)
+                .push(Space::with_width(20));
+
+            Row::new()
+                .push(
+                    liana_ui::component::card::simple(inner)
+                        .padding(2)
+                        .width(Length::Fill),
+                )
+                .width(1350)
+        })
+        .collect();
+
+    render("Texts - replacements (legacy -> new)", rows)
 }
 
 // ----- Themes --------------------------------------------------------------

@@ -131,7 +131,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
 }
 
 /// Render the Details view - shows account picker and fetch status
-fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
+pub(crate) fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
     // Account selection picker
     let accounts: Vec<_> = (0..10)
         .map(|i| ChildNumber::from_hardened_idx(i).expect("hardcoded"))

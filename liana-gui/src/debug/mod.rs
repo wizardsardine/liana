@@ -22,7 +22,7 @@
 
 use std::{cell::Cell, sync::OnceLock};
 
-use iced::{Alignment, Length};
+use iced::{widget::column, Alignment, Length};
 use liana_ui::{
     component::{scrollable, text},
     theme,
@@ -32,9 +32,24 @@ use liana_ui::{
 use crate::app::{cache::Cache, menu::Menu, view::Message as ViewMessage};
 
 pub mod badges;
+pub mod buttons;
+pub mod cards;
+pub mod decrypt_modal;
+pub mod forms;
+pub mod home;
+pub mod hw;
+pub mod hw_modals;
+pub mod hw_polling;
+pub mod icons;
+pub mod installer_modals;
+pub mod panels;
+pub mod payment_cards;
 pub mod pill_styles;
 pub mod pills;
+pub mod psbts;
+pub mod settings;
 pub mod texts;
+pub mod transactions;
 
 pub const DESIGN_SYSTEM: DebugStack = DebugStack {
     name: "Design system",
@@ -44,34 +59,87 @@ pub const DESIGN_SYSTEM: DebugStack = DebugStack {
         &badges::ENTRY,
         &pills::ENTRY,
         &pill_styles::ENTRY,
+        &buttons::ENTRY_CONSTRUCTORS_THEMED,
+        &buttons::ENTRY_CONSTRUCTORS_HELPERS,
+        &buttons::ENTRY_CONSTRUCTORS_WIDTHS,
+        &buttons::ENTRY_THEMES,
         &texts::ENTRY_LEGACY,
         &texts::ENTRY_NEW,
+        &texts::ENTRY_REPLACEMENT,
         &texts::ENTRY_THEMES,
+        &hw::ENTRY_PAGE_1,
+        &hw::ENTRY_PAGE_2,
+        &forms::ENTRY,
+        &cards::ENTRY_CONSTRUCTORS,
+        &cards::ENTRY_THEMES,
+        &cards::ENTRY_WRAPPED,
+        &payment_cards::ENTRY,
+        &icons::ENTRY_HELPERS,
+        &icons::ENTRY_BOOTSTRAP_1,
+        &icons::ENTRY_BOOTSTRAP_2,
+        &icons::ENTRY_BOOTSTRAP_3,
+        &icons::ENTRY_BOOTSTRAP_4,
+        &icons::ENTRY_ICONEX,
     ],
 };
 
 pub const HOME_PANEL: DebugStack = DebugStack {
     name: "Home panel",
     menu: Some(&HOME_MENU),
-    pages: &[],
+    pages: &[
+        &home::ENTRY_PAYMENTS,
+        &home::ENTRY_EMPTY,
+        &home::ENTRY_SYNCING,
+        &home::ENTRY_UNCONFIRMED,
+        &home::ENTRY_FIAT,
+        &home::ENTRY_RESCAN_WARNING,
+        &home::ENTRY_EXPIRING,
+        &home::ENTRY_SEQUENCE_HINT,
+        &home::ENTRY_PAGINATION,
+        &home::ENTRY_SIDEBAR_RESCAN,
+    ],
 };
 
 pub const SEND_PANEL: DebugStack = DebugStack {
     name: "Send panel",
     menu: Some(&SEND_MENU),
-    pages: &[],
+    pages: &[
+        &panels::ENTRY_SPEND_DRAFTING,
+        &panels::ENTRY_SPEND_REVIEWING,
+        &panels::ENTRY_RECIPIENT_VALID,
+        &panels::ENTRY_CREATE_SPEND_SELF,
+        &panels::ENTRY_CREATE_SPEND_FILLED,
+    ],
 };
 
 pub const RECEIVE_PANEL: DebugStack = DebugStack {
     name: "Receive panel",
     menu: Some(&RECEIVE_MENU),
-    pages: &[],
+    pages: &[
+        &panels::ENTRY_RECEIVE,
+        &panels::ENTRY_RECEIVE_WITH_PREV,
+        &panels::ENTRY_VERIFY_ADDRESS,
+        &panels::ENTRY_QR_MODAL,
+    ],
 };
 
 pub const PSBT_PANEL: DebugStack = DebugStack {
     name: "PSBT",
     menu: Some(&PSBTS_MENU),
-    pages: &[],
+    pages: &[
+        &psbts::ENTRY,
+        &psbts::ENTRY_IMPORT_EMPTY,
+        &psbts::ENTRY_IMPORT_TYPED,
+        &psbts::ENTRY_IMPORT_PROCESSING,
+        &psbts::ENTRY_IMPORT_SUCCESS,
+        &psbts::ENTRY_RBF_BUMP,
+        &psbts::ENTRY_RBF_REPLACED,
+        &psbts::ENTRY_RBF_CANCEL,
+        &psbts::ENTRY_PSBT_PENDING,
+        &psbts::ENTRY_PSBT_BROADCAST,
+        &psbts::ENTRY_PSBT_SPENT,
+        &psbts::ENTRY_PSBT_RECOVERY,
+    ],
 };
 
 pub const RECOVERY_PANEL: DebugStack = DebugStack {
@@ -83,7 +151,12 @@ pub const RECOVERY_PANEL: DebugStack = DebugStack {
 pub const TRANSACTIONS_PANEL: DebugStack = DebugStack {
     name: "Transactions",
     menu: Some(&TRANSACTIONS_MENU),
-    pages: &[],
+    pages: &[
+        &transactions::ENTRY,
+        &panels::ENTRY_TX_OUTGOING,
+        &panels::ENTRY_TX_INCOMING,
+        &panels::ENTRY_TX_SELF,
+    ],
 };
 
 pub const COINS_PANEL: DebugStack = DebugStack {
@@ -95,19 +168,72 @@ pub const COINS_PANEL: DebugStack = DebugStack {
 pub const SETTINGS_PANEL: DebugStack = DebugStack {
     name: "Settings",
     menu: Some(&SETTINGS_MENU),
-    pages: &[],
+    pages: &[
+        &settings::ENTRY_LIST_LOCAL,
+        &settings::ENTRY_LIST_REMOTE,
+        &settings::ENTRY_ABOUT,
+        &settings::ENTRY_IMPORT_EXPORT,
+        &settings::ENTRY_GENERAL_OFF,
+        &settings::ENTRY_GENERAL_ON,
+        &settings::ENTRY_REMOTE_BACKEND_IDLE,
+        &settings::ENTRY_REMOTE_BACKEND_PROCESSING,
+        &settings::ENTRY_REMOTE_BACKEND_SUCCESS,
+        &settings::ENTRY_BITCOIND_RUNNING,
+        &settings::ENTRY_BITCOIND_STOPPED,
+        &settings::ENTRY_BITCOIND_EDIT,
+        &settings::ENTRY_ELECTRUM_RUNNING,
+        &settings::ENTRY_ELECTRUM_EDIT,
+        &settings::ENTRY_RESCAN_IDLE,
+        &settings::ENTRY_RESCAN_SCANNING,
+        &settings::ENTRY_RESCAN_SUCCESS,
+        &settings::ENTRY_RESCAN_INVALID_DATE,
+        &settings::ENTRY_WALLET_SETTINGS,
+        &settings::ENTRY_WALLET_SETTINGS_PROCESSING,
+        &settings::ENTRY_WALLET_SETTINGS_UPDATED,
+        &settings::ENTRY_REGISTER_WALLET_MODAL,
+    ],
 };
 
 pub const HW_MODALS: DebugStack = DebugStack {
     name: "HW modals",
     menu: None,
-    pages: &[],
+    pages: &[
+        &hw_modals::ENTRY_SIGNING,
+        &hw_modals::ENTRY_REGISTRATION,
+        &hw_modals::ENTRY_VERIFY_ADDRESS,
+    ],
 };
 
 pub const INSTALLER_MODALS: DebugStack = DebugStack {
     name: "Installer modals",
     menu: None,
-    pages: &[],
+    pages: &[
+        &installer_modals::ENTRY_EMPTY,
+        &installer_modals::ENTRY_OPTIONS_OPEN,
+        &installer_modals::ENTRY_WITH_HWS,
+        &installer_modals::ENTRY_TAPROOT_PATH,
+        &installer_modals::ENTRY_SAFETY_NET,
+        &installer_modals::ENTRY_EDIT_ALIAS,
+    ],
+};
+
+pub const HW_POLLING: DebugStack = DebugStack {
+    name: "HW polling",
+    menu: None,
+    pages: &[&hw_polling::ENTRY],
+};
+
+pub const DECRYPT_MODAL: DebugStack = DebugStack {
+    name: "Decrypt backup modal",
+    menu: None,
+    pages: &[
+        &decrypt_modal::ENTRY_INITIAL,
+        &decrypt_modal::ENTRY_OPTIONS_OPEN,
+        &decrypt_modal::ENTRY_MNEMONIC_NO_ACK,
+        &decrypt_modal::ENTRY_MNEMONIC_ACKED,
+        &decrypt_modal::ENTRY_FETCHED,
+        &decrypt_modal::ENTRY_INVALID_ENCODING,
+    ],
 };
 
 /// All registered debug stacks, in navigation order. `Ctrl + D + ↑/↓`
@@ -124,6 +250,8 @@ pub const STACKS: &[&DebugStack] = &[
     &SETTINGS_PANEL,
     &HW_MODALS,
     &INSTALLER_MODALS,
+    &DECRYPT_MODAL,
+    &HW_POLLING,
 ];
 
 /// Navigation hint shown in every debug page's chrome.
@@ -215,6 +343,22 @@ fn static_cache() -> &'static Cache {
         .0
 }
 
+/// Like [`static_cache`] but with an in-progress rescan, so `view::dashboard`
+/// shows the sidebar's rescan pill.
+pub fn rescanning_cache() -> &'static Cache {
+    static CACHE: OnceLock<CacheCell> = OnceLock::new();
+    &CACHE
+        .get_or_init(|| {
+            let mut cache = Cache::default();
+            if let Some(v) = DEBUG_VARIANT.get() {
+                cache.variant = *v;
+            }
+            cache.daemon_cache.rescan_progress = Some(0.42);
+            CacheCell(cache)
+        })
+        .0
+}
+
 /// Wrap a debug-page body in the production sidebar/dashboard chrome,
 /// highlighting the given menu entry. Sidebar click messages are swallowed
 /// at the boundary via `.map(|_| ())`.
@@ -226,12 +370,28 @@ pub fn dashboard_chrome<B>(
 where
     B: Into<Element<'static, DebugMessage>>,
 {
+    dashboard_chrome_with_cache(menu, title, static_cache(), body)
+}
+
+/// [`dashboard_chrome`] with an explicit cache, for pages that need to drive
+/// sidebar state (e.g. the rescan pill via [`rescanning_cache`]).
+pub fn dashboard_chrome_with_cache<B>(
+    menu: &'static Menu,
+    title: &'static str,
+    cache: &'static Cache,
+    body: B,
+) -> Element<'static, DebugMessage>
+where
+    B: Into<Element<'static, DebugMessage>>,
+{
     let body_msg: Element<'static, ViewMessage> = body.into().map(|_| ViewMessage::Reload);
-    let content: Column<'static, ViewMessage> = Column::new()
+    let dash: Element<'static, DebugMessage> =
+        crate::app::view::dashboard(menu, cache, None, body_msg).map(|_| ());
+    Column::new()
         .spacing(30)
-        .push(header_row::<ViewMessage>(title, None))
-        .push(body_msg);
-    crate::app::view::dashboard(menu, static_cache(), None, content).map(|_| ())
+        .push(header_row::<DebugMessage>(title, None))
+        .push(dash)
+        .into()
 }
 
 /// Variant of [`debug_chrome`] for installer / wizard / modal pages.
@@ -447,8 +607,7 @@ pub fn render_location(
 /// next to it, optional production function path, then a stretch and the
 /// chord-navigation reminder right-aligned. Aligned on the baseline so
 /// the big h2 reads naturally next to the smaller captions.
-fn header_row<T: 'static>(title: &'static str, path: Option<&'static str>) -> Row<'static, T> {
-    use liana_ui::widget::SpaceExt;
+fn header_row<T: 'static>(title: &'static str, path: Option<&'static str>) -> Column<'static, T> {
     let mut row = Row::new()
         .spacing(15)
         .align_y(Alignment::End)
@@ -459,10 +618,8 @@ fn header_row<T: 'static>(title: &'static str, path: Option<&'static str>) -> Ro
     if let Some(path) = path {
         row = row.push(text::caption(path).style(theme::text::secondary));
     }
-    row = row
-        .push(iced::widget::Space::fill_width())
-        .push(text::p1_regular(NAV_HINT).style(theme::text::secondary));
-    row
+    let row2 = Row::new().push(text::p1_regular(NAV_HINT).style(theme::text::secondary));
+    column![row, row2]
 }
 
 /// Message type produced by debug widgets.

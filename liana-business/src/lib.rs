@@ -10,6 +10,9 @@ pub use business_installer::{BusinessInstaller, Message};
 pub mod settings;
 pub use settings::BusinessSettings;
 
+#[cfg(feature = "debugger")]
+pub mod debug;
+
 pub const VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION_MAJOR"),
     ".",

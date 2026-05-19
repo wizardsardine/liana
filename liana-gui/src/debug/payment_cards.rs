@@ -5,7 +5,9 @@
 
 use liana::miniscript::bitcoin::Amount;
 use liana_ui::{
-    component::payment::{payment_card, FiatPrice, FiatSource, PaymentKind, UIPayment},
+    component::panels::home::payment::{
+        payment_card, FiatPrice, FiatSource, PaymentKind, UIPayment,
+    },
     widget::*,
 };
 

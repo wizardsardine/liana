@@ -18,7 +18,8 @@ path = "src/main.rs"
 
 [dependencies]
 async-trait = { workspace = true }
-async-hwi = { workspace = true }
+async-hwi = { workspace = true, features = ["service", "ledger", "jade", "coldcard", "bitbox", "specter"] }
+crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
 liana = { path = "../liana" }
 liana-connect = { workspace = true }
 lianad = { path = "../lianad", default-features = false, features = ["nonblocking_shutdown"] }
