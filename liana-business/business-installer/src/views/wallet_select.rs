@@ -201,7 +201,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
             valid: true,
         };
         let search_form = form::Form::new_trimmed(
-            "Search wallets...",
+            "Filter wallets...",
             &search_value,
             Msg::WalletSelectUpdateSearchFilter,
         )

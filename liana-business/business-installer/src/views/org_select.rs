@@ -156,7 +156,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
             valid: true,
         };
         let search_form = form::Form::new_trimmed(
-            "Search organizations...",
+            "Filter organizations...",
             &search_value,
             Msg::OrgSelectUpdateSearchFilter,
         )
