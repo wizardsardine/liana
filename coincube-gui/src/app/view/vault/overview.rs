@@ -95,7 +95,12 @@ pub fn vault_overview_view<'a>(
     show_direction_badges: bool,
     display_mode: DisplayMode,
 ) -> Element<'a, Message> {
-    let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
+    // Show external-unconfirmed coins as part of the headline balance
+    // (matching the Cube → Overview Vault card). The `unconfirmed`
+    // breakout below keeps the "+ X SATS unconfirmed" indicator so the
+    // user can still see how much of the total is not yet final.
+    let total_balance = *balance + *unconfirmed_balance;
+    let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(total_balance));
     let fiat_unconfirmed = fiat_converter
         .as_ref()
         .map(|c| c.convert(*unconfirmed_balance));
@@ -126,7 +131,11 @@ pub fn vault_overview_view<'a>(
             "btc", "bitcoin", 40.0,
         ))
         .push(text("BTC").size(P1_SIZE).bold().width(Length::Fixed(60.0)))
-        .push(amount_with_size_and_unit(balance, P1_SIZE, bitcoin_unit))
+        .push(amount_with_size_and_unit(
+            &total_balance,
+            P1_SIZE,
+            bitcoin_unit,
+        ))
         .push(
             text(btc_fiat_str)
                 .size(P2_SIZE)
@@ -150,7 +159,7 @@ pub fn vault_overview_view<'a>(
                 .push(
                     Column::new().spacing(8).push(h4_bold("Balance")).push(
                         wallet_header::<Message>(WalletHeaderProps {
-                            sats: *balance,
+                            sats: total_balance,
                             fiat: fiat_balance,
                             balance_masked: false,
                             bitcoin_unit,
