@@ -7,21 +7,21 @@ use crate::{
 };
 use async_hwi::service::{is_compatible_with_tapminiscript, SigningDevice};
 use iced::{
-    widget::{column, row, Row, Space},
+    widget::{row, Space},
     Alignment, Length,
 };
 use liana_connect::ws_business::Wallet;
 use liana_ui::{
     component::{
         button::{btn_secondary, BtnWidth},
-        text,
+        modal as ui_modal, text,
     },
     icon, theme,
     widget::*,
 };
 use miniscript::bitcoin::bip32::Fingerprint;
 
-use super::{menu_entry, INSTALLER_STEPS, MENU_ENTRY_WIDTH};
+use super::{INSTALLER_STEPS, MENU_ENTRY_WIDTH};
 
 /// Main registration view
 pub fn registration_view(state: &State) -> Element<'_, Msg> {
@@ -96,7 +96,7 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
     layout_with_scrollable_list(
         (5, INSTALLER_STEPS),
         Some(current_user_email),
-        None,
+        false,
         &breadcrumb,
         header_content,
         list_content,
@@ -154,18 +154,18 @@ fn device_list_view(state: &State) -> Element<'_, Msg> {
             Some(SigningDevice::Supported(hw)) => {
                 // Connected and ready to register - clickable
                 if is_compatible_with_tapminiscript(hw.kind(), hw.version()) {
-                    key_card(*fingerprint, Some(*hw.kind()), true, alias)
+                    registration_key_entry(*fingerprint, Some(*hw.kind()), true, alias)
                 } else {
-                    key_card(*fingerprint, None, true, alias)
+                    registration_key_entry(*fingerprint, None, true, alias)
                 }
             }
             Some(_) => {
                 // Connected but locked/unsupported
-                key_card(*fingerprint, None, true, alias)
+                registration_key_entry(*fingerprint, None, true, alias)
             }
             None => {
                 // Not connected
-                key_card(*fingerprint, None, false, alias)
+                registration_key_entry(*fingerprint, None, false, alias)
             }
         };
 
@@ -184,39 +184,29 @@ fn device_kind(kind: async_hwi::DeviceKind) -> String {
     }
 }
 
-fn key_card(
+pub fn registration_key_entry(
     fingerprint: Fingerprint,
     kind: Option<async_hwi::DeviceKind>,
     device_connected: bool,
     alias: String,
-) -> Container<'static, Msg> {
-    let fg = text::p1_medium(format!("#{fingerprint}"));
-    let fg_row = if let Some(device) = kind {
-        row![text::p1_bold(device_kind(device)), fg].spacing(5)
-    } else {
-        row![fg]
-    };
-
-    let left = column![text::h3(alias), fg_row];
-    let right = if kind.is_some() {
+) -> Element<'static, Msg> {
+    let kind_name = kind.map(device_kind);
+    let alias = (!alias.is_empty()).then_some(alias);
+    let status = if kind.is_some() {
         "Register"
     } else if device_connected {
         "Device not supported or locked"
     } else {
         "Connect the associated device to register"
     };
-    let right = text::p1_medium(right);
-
-    let message = kind
+    let on_press = kind
         .is_some()
-        .then_some(Msg::RegistrationSelectDevice(fingerprint));
-
-    let content = Row::new()
-        .push(left)
-        .push(Space::with_width(Length::Fill))
-        .push(right)
-        .push(Space::with_width(Length::Fill))
-        .align_y(Alignment::Center)
-        .height(Length::Fill);
-    menu_entry(content, message)
+        .then_some(move || Msg::RegistrationSelectDevice(fingerprint));
+    ui_modal::registration_key_entry(
+        format!("#{fingerprint}"),
+        kind_name,
+        alias,
+        Some(status.to_string()),
+        on_press,
+    )
 }

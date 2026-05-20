@@ -10,7 +10,11 @@ use iced::{
 use liana_connect::ws_business::{
     self, UserRole, WalletStatus, BLOCKS_PER_DAY, BLOCKS_PER_HOUR, BLOCKS_PER_MONTH,
 };
-use liana_ui::{component::text, theme, widget::*};
+use liana_ui::{
+    component::{self, text},
+    theme,
+    widget::*,
+};
 use std::collections::BTreeMap;
 
 // Colors for paths
@@ -186,7 +190,9 @@ fn path_card(
         last_edit_info.map(|info| text::caption(info).style(liana_ui::theme::text::secondary));
 
     let content = row![Column::new()
-        .push(text::h3(keys_text).style(theme::text::primary))
+        .push(component::scrollable::horizontal_thin(
+            text::h3(keys_text).style(theme::text::primary)
+        ))
         .push(text::p2_medium(timelock_text).style(theme::text::primary))
         .push_maybe(last_edit_info)
         .spacing(5)]

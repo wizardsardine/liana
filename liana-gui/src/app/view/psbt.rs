@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::{
-    widget::{scrollable, tooltip, Space},
+    widget::{tooltip, Space},
     Alignment, Length,
 };
 
@@ -17,9 +17,11 @@ use liana::{
 use liana_ui::{
     component::{
         amount::*,
-        badge, button, card,
+        button, card,
         collapse::Collapse,
-        form, hw, separation,
+        form,
+        modal::{legacy, modal_view, none_fn, ModalWidth},
+        pill, scrollable, separation,
         text::{self, *},
     },
     icon, theme,
@@ -31,10 +33,11 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{dashboard, hw::hw_list_view, label, message::*, warning::warn},
+        view::{dashboard, label, message::*, warning::warn},
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
+    view::hw::{device_list_entry, HwRowMode},
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -61,14 +64,14 @@ pub fn psbt_view<'a>(
                     .spacing(10)
                     .push(Container::new(h3("PSBT")).width(Length::Fill))
                     .push_maybe(if !tx.sigs.recovery_paths().is_empty() {
-                        Some(badge::recovery())
+                        Some(pill::recovery())
                     } else {
                         None
                     })
                     .push_maybe(match tx.status {
-                        SpendStatus::Deprecated => Some(badge::deprecated()),
-                        SpendStatus::Broadcast => Some(badge::unconfirmed()),
-                        SpendStatus::Spent => Some(badge::spent()),
+                        SpendStatus::Deprecated => Some(pill::deprecated()),
+                        SpendStatus::Broadcast => Some(pill::unconfirmed()),
+                        SpendStatus::Spent => Some(pill::spent()),
                         _ => None,
                     }),
             )
@@ -444,39 +447,26 @@ pub fn signatures<'a>(
 ) -> Element<'a, Message> {
     Column::new()
         .push(if let Some(sigs) = tx.path_ready() {
-            Container::new(
-                scrollable(
-                    Row::new()
-                        .spacing(5)
-                        .align_y(Alignment::Center)
-                        .spacing(10)
-                        .push(p1_bold("Status"))
-                        .push(icon::circle_check_icon().style(theme::text::success))
-                        .push(text("Ready").bold().style(theme::text::success))
-                        .push(text("  signed by"))
-                        .push(sigs.signed_pubkeys.keys().fold(
-                            Row::new().spacing(5),
-                            |row, value| {
-                                row.push(if let Some(alias) = keys_aliases.get(value) {
-                                    Container::new(tooltip::Tooltip::new(
-                                        Container::new(text(alias))
-                                            .padding(10)
-                                            .style(theme::pill::simple),
-                                        text(value.to_string()),
-                                        tooltip::Position::Bottom,
-                                    ))
-                                } else {
-                                    Container::new(text(value.to_string()))
-                                        .padding(10)
-                                        .style(theme::pill::simple)
-                                })
-                            },
-                        )),
-                )
-                .direction(scrollable::Direction::Horizontal(
-                    scrollable::Scrollbar::new().width(2).scroller_width(2),
-                )),
-            )
+            Container::new(scrollable::horizontal_thin(
+                Row::new()
+                    .spacing(5)
+                    .align_y(Alignment::Center)
+                    .spacing(10)
+                    .push(p1_bold("Status"))
+                    .push(icon::circle_check_icon().style(theme::text::success))
+                    .push(text("Ready").bold().style(theme::text::success))
+                    .push(text("  signed by"))
+                    .push(
+                        sigs.signed_pubkeys
+                            .keys()
+                            .fold(Row::new().spacing(5), |row, value| {
+                                row.push(pill::fingerprint(
+                                    value.to_string(),
+                                    keys_aliases.get(value).map(String::as_str),
+                                ))
+                            }),
+                    ),
+            ))
             .padding(15)
         } else {
             Container::new(
@@ -535,22 +525,7 @@ fn container_from_fg(
     fg: Fingerprint,
     aliases: &HashMap<Fingerprint, String>,
 ) -> Container<'_, Message> {
-    if let Some(alias) = aliases.get(&fg) {
-        Container::new(
-            tooltip::Tooltip::new(
-                Container::new(text(alias))
-                    .padding(10)
-                    .style(theme::pill::simple),
-                liana_ui::widget::Text::new(fg.to_string()),
-                tooltip::Position::Bottom,
-            )
-            .style(theme::card::simple),
-        )
-    } else {
-        Container::new(text(fg.to_string()))
-            .padding(10)
-            .style(theme::pill::simple)
-    }
+    pill::fingerprint(fg.to_string(), aliases.get(&fg).map(String::as_str))
 }
 
 pub fn path_view<'a>(
@@ -582,7 +557,7 @@ pub fn path_view<'a>(
             row.push(container_from_fg(*fg, key_aliases))
         });
 
-    scrollable(
+    scrollable::horizontal_thin(
         Row::new()
             .align_y(Alignment::Center)
             .push(
@@ -615,9 +590,6 @@ pub fn path_view<'a>(
             )
             .push(row_signed),
     )
-    .direction(scrollable::Direction::Horizontal(
-        scrollable::Scrollbar::new().width(2).scroller_width(2),
-    ))
     .into()
 }
 
@@ -988,59 +960,54 @@ pub fn sign_action<'a>(
     signing: &HashSet<Fingerprint>,
     recovery_timelock: Option<u16>,
 ) -> Element<'a, Message> {
+    let title = "Select signing device to sign with:".to_string();
+
+    let mut signers = vec![];
+    hws.iter().enumerate().for_each(|(i, hw)| {
+        let (signed, signing, can_sign) = hw.fingerprint().map_or((false, false, false), |f| {
+            (
+                signed.contains(&f),
+                signing.contains(&f),
+                descriptor.contains_fingerprint_in_path(f, recovery_timelock),
+            )
+        });
+        signers.push(device_list_entry(
+            hw,
+            HwRowMode::Signing {
+                signed,
+                signing,
+                can_sign,
+            },
+            move || Message::SelectHardwareWallet(i),
+        ))
+    });
+
+    if let Some(hot_signer) = signer.map(|fingerprint| {
+        let can_sign = descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);
+        let select_msg = can_sign.then_some(Message::Spend(SpendTxMessage::SelectHotSigner));
+        if signed.contains(&fingerprint) {
+            legacy::signed_hot_key(fingerprint, signer_alias, select_msg)
+        } else {
+            legacy::hot_key(fingerprint, signer_alias, can_sign, select_msg)
+        }
+    }) {
+        signers.push(hot_signer);
+    }
+
+    let modal_content = Column::from_vec(signers)
+        .align_x(Alignment::Center)
+        .spacing(10)
+        .width(Length::Fill);
+
+    let width = ModalWidth::M;
+    let content = modal_view(Some(title), none_fn(), none_fn(), width, modal_content);
+
+    let width = width as u32 + 50;
     Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))
-        .push(card::simple(
-            Column::new()
-                .push(
-                    Column::new()
-                        .push(
-                            text("Select signing device to sign with:")
-                                .bold()
-                                .width(Length::Fill),
-                        )
-                        .spacing(10)
-                        .push(hws.iter().enumerate().fold(
-                            Column::new().spacing(10),
-                            |col, (i, hw)| {
-                                let (signed, signing, can_sign) =
-                                    hw.fingerprint().map_or((false, false, false), |f| {
-                                        (
-                                            signed.contains(&f),
-                                            signing.contains(&f),
-                                            descriptor
-                                                .contains_fingerprint_in_path(f, recovery_timelock),
-                                        )
-                                    });
-                                col.push(hw_list_view(i, hw, signed, signing, can_sign))
-                            },
-                        ))
-                        .push_maybe({
-                            signer.map(|fingerprint| {
-                                let can_sign = descriptor
-                                    .contains_fingerprint_in_path(fingerprint, recovery_timelock);
-                                let btn = Button::new(if signed.contains(&fingerprint) {
-                                    hw::sign_success_hot_signer(fingerprint, signer_alias)
-                                } else {
-                                    hw::hot_signer(fingerprint, signer_alias, can_sign)
-                                })
-                                .padding(10)
-                                .style(theme::button::secondary)
-                                .width(Length::Fill);
-                                if can_sign {
-                                    btn.on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
-                                } else {
-                                    btn
-                                }
-                            })
-                        })
-                        .width(Length::Fill),
-                )
-                .spacing(20)
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        ))
-        .width(Length::Fixed(500.0))
+        .push(content)
+        .spacing(10)
+        .width(width)
         .into()
 }
 

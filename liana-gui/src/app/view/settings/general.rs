@@ -1,7 +1,8 @@
 use iced::widget::{tooltip, Column, Row, Space, Toggler};
 use iced::{Alignment, Length};
+use liana_ui::component::setting::SectionKind;
 
-use super::header;
+use super::{header, SETTING_MSG};
 
 use liana_ui::color;
 use liana_ui::component::card;
@@ -27,7 +28,11 @@ pub fn general_section<'a>(
     currencies_list: &'a [Currency],
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
-    let header = header("General", SettingsMessage::GeneralSection);
+    let header = header(
+        Some(SETTING_MSG),
+        Some(SectionKind::General.title()),
+        Some(SettingsMessage::GeneralSection.into()),
+    );
 
     dashboard(
         &Menu::Settings,

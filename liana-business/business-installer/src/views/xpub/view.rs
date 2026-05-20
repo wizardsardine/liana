@@ -1,39 +1,28 @@
 use crate::{
     backend::Backend,
     state::{Msg, State},
-    views::{format_last_edit_info, layout_with_scrollable_list, menu_entry, MENU_ENTRY_WIDTH},
+    views::{format_last_edit_info, layout_with_scrollable_list, menu_key_entry, MENU_ENTRY_WIDTH},
 };
 use iced::{
     widget::{row, Space},
     Alignment, Length,
 };
 use liana_connect::ws_business::{self, UserRole};
-use liana_ui::{component::text, icon, theme, widget::*};
+use liana_ui::{
+    component::{
+        pill,
+        text::{self},
+    },
+    icon, theme,
+    widget::*,
+};
 
 /// Create a status badge for xpub population status
 fn xpub_status_badge(has_xpub: bool) -> Element<'static, Msg> {
-    const BADGE_WIDTH: f32 = 100.0;
-
     if has_xpub {
-        Container::new(
-            Container::new(text::caption("✓ Set"))
-                .padding([4, 12])
-                .style(liana_ui::theme::pill::success)
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-        )
-        .width(Length::Fixed(BADGE_WIDTH))
-        .into()
+        pill::xpub_set().into()
     } else {
-        Container::new(
-            Container::new(text::caption("Not Set"))
-                .padding([4, 12])
-                .style(liana_ui::theme::pill::warning)
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-        )
-        .width(Length::Fixed(BADGE_WIDTH))
-        .into()
+        pill::xpub_not_set().into()
     }
 }
 
@@ -43,37 +32,11 @@ fn xpub_key_card(
     key: &ws_business::Key,
     last_edit_info: Option<String>,
 ) -> Container<'static, Msg> {
-    // First row: |<icon>|<alias>|<identity>|<spacer>|<status_badge>
-    let identity_str = key.identity.to_string();
-    let header_row = Row::new()
-        .spacing(10)
-        .align_y(Alignment::End)
-        .push(icon::key_icon())
-        .push(text::h3(&key.alias).style(theme::text::primary))
-        .push(text::p2_medium(identity_str).style(theme::text::accent))
-        .push(Space::with_width(Length::Fill))
-        .push(xpub_status_badge(key.xpub.is_some()));
+    let icon = icon::key_icon();
+    let pill = xpub_status_badge(key.xpub.is_some());
+    let msg = Some(Msg::XpubSelectKey(key_id));
 
-    // Second row: Description
-    let description = text::p2_medium(&key.description).style(theme::text::primary);
-
-    // Third row: Key type
-    let key_type_str = format!("{:?}", key.key_type);
-    let key_type = text::p2_medium(key_type_str).style(theme::text::primary);
-
-    // Fourth row: Last edit info (optional)
-    let edit_info = last_edit_info.map(text::caption);
-
-    let content = Column::new()
-        .push(header_row)
-        .push(description)
-        .push(key_type)
-        .push_maybe(edit_info)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .spacing(5);
-
-    menu_entry(row![content], Some(Msg::XpubSelectKey(key_id)))
+    menu_key_entry(key, last_edit_info, icon, pill, msg)
 }
 
 pub fn xpub_view(state: &State) -> Element<'_, Msg> {
@@ -217,12 +180,10 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
 
     list_content = list_content.push(Space::with_height(50));
 
-    let role_badge = if is_ws_admin { Some("WS Admin") } else { None };
-
     layout_with_scrollable_list(
         (0, 0), // No progress indicator
         Some(current_user_email),
-        role_badge,
+        is_ws_admin,
         &breadcrumb,
         header_content,
         list_content,

@@ -7,7 +7,7 @@ pub const ICON_SIZE_S: u16 = 16;
 
 const BOOTSTRAP_ICONS: Font = Font::with_name("bootstrap-icons");
 
-fn bootstrap_icon(unicode: char) -> Text<'static> {
+fn bootstrap_icon<'a>(unicode: char) -> Text<'a> {
     Text::new(unicode.to_string())
         .font(BOOTSTRAP_ICONS)
         .width(Length::Fixed(20.0))
@@ -75,7 +75,7 @@ pub fn person_icon() -> Text<'static> {
     bootstrap_icon('\u{F4DA}')
 }
 
-pub fn tooltip_icon() -> Text<'static> {
+pub fn tooltip_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F431}')
 }
 
@@ -191,6 +191,14 @@ pub fn settings_icon() -> Text<'static> {
     bootstrap_icon('\u{F3E5}')
 }
 
+pub fn clock_icon() -> Text<'static> {
+    bootstrap_icon('\u{F293}')
+}
+
+pub fn clock_fill_icon() -> Text<'static> {
+    bootstrap_icon('\u{F291}')
+}
+
 const ICONEX_ICONS: Font = Font::with_name("Untitled1");
 
 fn iconex_icon(unicode: char) -> Text<'static> {
@@ -215,10 +223,6 @@ pub fn key_icon() -> Text<'static> {
 
 pub fn history_icon() -> Text<'static> {
     iconex_icon('\u{BEBA}')
-}
-
-pub fn clock_icon() -> Text<'static> {
-    iconex_icon('\u{B0CA}')
 }
 
 pub fn clipboard_icon() -> Text<'static> {

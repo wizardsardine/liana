@@ -1,6 +1,4 @@
-use liana_connect::ws_business::{
-    Key, KeyIdentity, KeyType, PolicyTemplate, SecondaryPath, SpendingPath, Timelock, UserRole,
-};
+use liana_connect::ws_business::{Key, PolicyTemplate, SecondaryPath, SpendingPath, UserRole};
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -98,88 +96,14 @@ impl AppState {
         }
     }
 
+    /// Empty initial state. Debug overlays seed test data via the
+    /// `seed_test_data` helper in `crate::debug`.
     pub fn new() -> Self {
-        // Test data keys
-        let mut keys = BTreeMap::new();
-        keys.insert(
-            0,
-            Key {
-                id: 0,
-                alias: "Wallet Manager".to_string(),
-                description: "Wallet Manager key".to_string(),
-                identity: KeyIdentity::Email("owner@example.com".to_string()),
-                key_type: KeyType::Internal,
-                xpub: None,
-                xpub_source: None,
-                xpub_device_kind: None,
-                xpub_device_version: None,
-                xpub_file_name: None,
-                last_edited: None,
-                last_editor: None,
-            },
-        );
-        keys.insert(
-            1,
-            Key {
-                id: 1,
-                alias: "Bob".to_string(),
-                description: "Bob's key".to_string(),
-                identity: KeyIdentity::Email("bob@example.com".to_string()),
-                key_type: KeyType::External,
-                xpub: None,
-                xpub_source: None,
-                xpub_device_kind: None,
-                xpub_device_version: None,
-                xpub_file_name: None,
-                last_edited: None,
-                last_editor: None,
-            },
-        );
-        keys.insert(
-            2,
-            Key {
-                id: 2,
-                alias: "Alice".to_string(),
-                description: "Alice's key".to_string(),
-                identity: KeyIdentity::Email("alice@example.com".to_string()),
-                key_type: KeyType::External,
-                xpub: None,
-                xpub_source: None,
-                xpub_device_kind: None,
-                xpub_device_version: None,
-                xpub_file_name: None,
-                last_edited: None,
-                last_editor: None,
-            },
-        );
-
-        // Primary path: All of Wallet Manager, Bob (threshold 2 of 2)
-        let primary_path = SpendingPath::new(true, 2, vec![0, 1]);
-
-        // Secondary paths
-        let mut secondary_paths = Vec::new();
-
-        // Secondary path 1: 1 of Alice, Bob - After 2 months (8760 blocks)
-        let secondary1 = SpendingPath::new(false, 1, vec![2, 1]);
-        let timelock1 = Timelock::new(8760); // 2 months
-        secondary_paths.push(SecondaryPath {
-            path: secondary1,
-            timelock: timelock1,
-        });
-
-        // Secondary path 2: All of Wallet Manager - After 5 months (21900 blocks)
-        let secondary2 = SpendingPath::new(false, 1, vec![0]);
-        let timelock2 = Timelock::new(21900); // 5 months
-        secondary_paths.push(SecondaryPath {
-            path: secondary2,
-            timelock: timelock2,
-        });
-
         Self {
-            keys,
-            primary_path,
-            secondary_paths,
-            next_key_id: 3,
+            keys: BTreeMap::new(),
+            primary_path: SpendingPath::new(true, 0, Vec::new()),
+            secondary_paths: Vec::new(),
+            next_key_id: 0,
             selected_org: None,
             selected_wallet: None,
             current_wallet_template: None,

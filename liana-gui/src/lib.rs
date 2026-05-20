@@ -19,6 +19,7 @@ pub mod node;
 pub mod services;
 pub mod signer;
 pub mod utils;
+pub mod view;
 pub mod window;
 
 pub const VERSION: &str = concat!(

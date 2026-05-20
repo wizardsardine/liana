@@ -49,6 +49,8 @@ pub struct Buttons {
     pub transparent: Button,
     pub transparent_border: Button,
     pub clickable_card: Button,
+    // previously theme::button::transparent_border wrapped into theme::card::simple
+    pub clickable_section: Button,
     pub primary: Button,
     pub secondary: Button,
     pub tertiary: Button,
@@ -60,6 +62,7 @@ pub struct Buttons {
     pub tab: Button,
     pub link: Button,
     pub pick_list: Button,
+    pub signing_devices: Button,
     pub border_width: f32,
 }
 
@@ -114,17 +117,20 @@ pub struct Banners {
 pub struct Badges {
     pub simple: ContainerPalette,
     pub bitcoin: ContainerPalette,
+    pub success: ContainerPalette,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Pills {
     pub simple: ContainerPalette,
-    pub primary: ContainerPalette,
+    pub simple_fill: ContainerPalette,
     pub success: ContainerPalette,
     pub warning: ContainerPalette,
+    pub soft_warning: ContainerPalette,
     pub internal: ContainerPalette,
     pub external: ContainerPalette,
     pub safety_net: ContainerPalette,
+    pub fingerprint: ContainerPalette,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

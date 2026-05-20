@@ -20,12 +20,12 @@ pub use message::*;
 use warning::warn;
 
 use iced::{
-    widget::{column, responsive, row, scrollable, stack, Space},
+    widget::{column, responsive, row, stack, Space},
     Length,
 };
 
 use liana_ui::{
-    component::{button, text::*},
+    component::{button, pill, scrollable},
     icon::cross_icon,
     image::*,
     theme,
@@ -64,14 +64,16 @@ pub fn sidebar<'a>(
         .height(Length::Fill)
         .spacing(10);
 
+    let rescan = cache.rescan_progress().and_then(|p| match menu_width {
+        MenuWidth::Normal => Some(pill::rescan(p, false)),
+        MenuWidth::Compact => Some(pill::rescan(p, true)),
+        MenuWidth::Small => None,
+    });
+
     let bottom_buttons = Container::new(
         Column::new()
             .spacing(10)
-            .push_maybe(cache.rescan_progress().map(|p| {
-                Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
-                    .padding(5)
-                    .style(theme::pill::simple)
-            }))
+            .push_maybe(rescan)
             .push(Menu::Recovery.entry(active, menu_width))
             .push(Menu::Transactions.entry(active, menu_width))
             .push(Menu::Coins.entry(active, menu_width))
@@ -116,7 +118,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                     Container::new(column![
                         Space::with_height(25),
                         Container::new(
-                            scrollable(row!(
+                            scrollable::vertical(row!(
                                 Space::with_width(Length::FillPortion(1)),
                                 column!(Space::with_height(Length::Fixed(150.0)), content.into())
                                     .width(Length::FillPortion(8))
@@ -166,7 +168,7 @@ pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
             .padding(10)
             .style(theme::container::background),
         )
-        .push(modal_section(Container::new(scrollable(content))))
+        .push(modal_section(Container::new(scrollable::vertical(content))))
         .push_maybe(fixed_footer)
         .width(Length::Fill)
         .height(Length::Fill)

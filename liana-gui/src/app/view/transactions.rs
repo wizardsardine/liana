@@ -8,7 +8,7 @@ use iced::{
 };
 
 use liana_ui::{
-    component::{amount::*, badge, button, card, form, text::*},
+    component::{amount::*, badge, button, card, form, pill, text::*},
     icon, theme,
     widget::*,
 };
@@ -133,12 +133,12 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                         .width(Length::Fill),
                 )
                 .push_maybe(if tx.time.is_none() {
-                    Some(badge::unconfirmed())
+                    Some(pill::unconfirmed())
                 } else {
                     None
                 })
                 .push_maybe(if tx.is_batch() {
-                    Some(badge::batch())
+                    Some(pill::batch())
                 } else {
                     None
                 })

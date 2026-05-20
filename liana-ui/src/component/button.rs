@@ -1,4 +1,8 @@
-use super::text::{button_text, text};
+use super::{
+    modal::BTN_W,
+    text::{button_text, panel_title, text},
+    tooltip,
+};
 use crate::{
     font::{BOLD, MEDIUM},
     icon::ICON_SIZE_L,
@@ -7,7 +11,7 @@ use crate::{
 };
 use iced::{
     alignment::{Horizontal, Vertical},
-    widget::{button, container, row},
+    widget::{container, row},
     Length,
 };
 
@@ -18,6 +22,7 @@ const MENU_ICON_SIZE: u32 = ICON_SIZE_L as u32;
 
 const ICON_BTN_SIZE: f32 = 40.0;
 const ICON_BTN_PADDING: f32 = 10.0;
+pub const DEVICE_BTN_H: u32 = 40;
 
 pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str, compact: bool) -> Button<'a, T> {
     Button::new(
@@ -82,53 +87,113 @@ fn content_menu<'a, T: 'a>(
     }
 }
 
-pub fn alert<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::destructive)
+macro_rules! button_helpers {
+    ($($entry:tt),* $(,)?) => {
+        $( button_helpers!(@one $entry); )*
+    };
+    (@one ($name:ident, $style:ident)) => {
+        pub fn $name<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+            Button::new(content(icon, button_text(t))).style(theme::button::$style)
+        }
+    };
+    (@one $name:ident) => {
+        button_helpers!(@one ($name, $name));
+    };
 }
 
-pub fn destructive<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::destructive)
+button_helpers!(
+    (alert, destructive),
+    destructive,
+    primary,
+    (transparent, container),
+    transparent_primary_text,
+    (flat, transparent),
+    secondary,
+    tertiary,
+    (border, secondary),
+    (transparent_border, container_border),
+    link,
+);
+
+pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+    Button::new(content(icon, panel_title(t))).style(theme::button::breadcrumb)
+}
+pub fn clickable_card<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
+    content: T,
+    msg: Option<M>,
+) -> Button<'a, M> {
+    Button::new(content.into())
+        .style(theme::button::clickable_card)
+        .on_press_maybe(msg)
 }
 
-pub fn primary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::primary)
-}
-
-pub fn transparent<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::container)
-}
-
-pub fn flat<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::transparent)
-}
-
-pub fn secondary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::secondary)
-}
-
-pub fn tertiary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::tertiary)
-}
-
-pub fn border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::secondary)
-}
-
-pub fn transparent_border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    button(content(icon, button_text(t))).style(theme::button::container_border)
-}
-
-pub fn link<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, button_text(t))).style(theme::button::link)
+pub fn clickable_section<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
+    content: T,
+    msg: Option<M>,
+) -> Button<'a, M> {
+    Button::new(content.into())
+        .style(theme::button::clickable_section)
+        .on_press_maybe(msg)
+        .width(Length::Fill)
 }
 
 fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>) -> Container<'a, T> {
-    match icon {
-        None => container(text).align_x(Horizontal::Center).padding(5),
-        Some(i) => container(row![i, text].spacing(10).align_y(Vertical::Center))
-            .align_x(Horizontal::Center)
-            .padding(5),
+    content_with_tooltip(icon, text, None)
+}
+
+fn content_with_tooltip<'a, T: 'a>(
+    icon: Option<Text<'a>>,
+    text: Text<'a>,
+    tooltip: Option<&'a str>,
+) -> Container<'a, T> {
+    let mut row: Row<'a, T> = Row::new().spacing(10).align_y(Vertical::Center);
+    if let Some(icon) = icon {
+        row = row.push(icon);
     }
+    row = row.push(text);
+    if let Some(tt) = tooltip {
+        row = row.push(tooltip::tooltip(tt));
+    }
+    container(row).align_x(Horizontal::Center).padding(5)
+}
+
+pub fn device<'a, T: 'a + std::clone::Clone, C: Into<Element<'a, T>>>(
+    content: C,
+    msg: Option<T>,
+) -> Element<'a, T> {
+    device_with_height(content, msg, DEVICE_BTN_H)
+}
+
+pub fn device_with_height<'a, T: 'a + std::clone::Clone, C: Into<Element<'a, T>>>(
+    content: C,
+    msg: Option<T>,
+    height: u32,
+) -> Element<'a, T> {
+    device_with_height_clickable(content, msg, Some(height), true)
+}
+
+pub fn device_with_height_clickable<'a, T: 'a + std::clone::Clone, C: Into<Element<'a, T>>>(
+    content: C,
+    msg: Option<T>,
+    height: Option<u32>,
+    clickable: bool,
+) -> Element<'a, T> {
+    let mut content = Container::new(content).width(BTN_W);
+    if let Some(h) = height {
+        content = content.center_y(h);
+    }
+    let style = if clickable {
+        theme::button::signing_devices
+    } else {
+        theme::button::signing_devices_non_clickable
+    };
+    Button::new(content)
+        .style(style)
+        .on_press_maybe(msg)
+        .padding(10)
+        .width(Length::Shrink)
+        .height(Length::Shrink)
+        .into()
 }
 
 /// Button width presets.
@@ -144,6 +209,17 @@ pub enum BtnWidth {
     XL = 200,
     /// Very long labels (Connect with another email)
     XXL = 260,
+    /// Default to Length::Shrink
+    Auto,
+}
+
+impl From<BtnWidth> for Length {
+    fn from(value: BtnWidth) -> Self {
+        match value {
+            BtnWidth::Auto => Length::Shrink,
+            v => (v as u16 as u32).into(),
+        }
+    }
 }
 
 /// Primary button with preset width.
@@ -172,6 +248,20 @@ pub fn btn_secondary<'a, T: Clone + 'a>(
         btn = btn.on_press(m);
     }
     btn
+}
+
+/// Secondary button with preset width.
+pub fn btn_secondary_with_tooltip<'a, T: Clone + 'a>(
+    icon: Option<Text<'a>>,
+    label: &'a str,
+    tooltip: Option<&'a str>,
+    width: BtnWidth,
+    msg: Option<T>,
+) -> Button<'a, T> {
+    Button::new(content_with_tooltip(icon, button_text(label), tooltip))
+        .width(width)
+        .style(theme::button::secondary)
+        .on_press_maybe(msg)
 }
 
 /// Tertiary button with preset width.

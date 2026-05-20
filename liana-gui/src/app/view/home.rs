@@ -197,7 +197,7 @@ pub fn home_view<'a>(
                 .width(Length::Fill),
             )
             .push(
-                button::tertiary(Some(icon::arrow_repeat()), "Reset timelock")
+                button::primary(Some(icon::arrow_repeat()), "Reset timelock")
                     .on_press(Message::Menu(Menu::RefreshCoins(expiring_coins.to_owned()))),
             )
             .spacing(15)

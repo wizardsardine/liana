@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use iced::{
     alignment,
-    widget::{checkbox, column, scrollable, tooltip, Column, Container, Row, Space},
+    widget::{checkbox, column, tooltip, Column, Container, Row, Space},
     Alignment, Length,
 };
 
@@ -13,7 +13,7 @@ use liana::{
 
 use liana_ui::{
     color,
-    component::{amount::*, badge, button, form, text::*},
+    component::{amount::*, button, form, pill, scrollable, text::*},
     icon, theme,
     widget::*,
 };
@@ -23,7 +23,7 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{coins, dashboard, message::*, psbt, FiatAmountConverter},
+        view::{dashboard, message::*, psbt, FiatAmountConverter},
     },
     daemon::model::{remaining_sequence, Coin, SpendTx},
 };
@@ -287,7 +287,7 @@ pub fn create_spend_tx<'a>(
         .push_maybe(hint)
         .width(Length::Fill);
     let coins = Container::new(
-        scrollable(coins.iter().enumerate().fold(
+        scrollable::vertical(coins.iter().enumerate().fold(
             Column::new().spacing(10),
             |col, (i, (coin, selected))| {
                 col.push(coin_list_view(
@@ -586,12 +586,12 @@ fn coin_list_view<'a>(
                     },
                 )
                 .push(if coin.spend_info.is_some() {
-                    badge::spent()
+                    pill::spent()
                 } else if coin.block_height.is_none() {
-                    badge::unconfirmed()
+                    pill::unconfirmed()
                 } else {
                     let seq = remaining_sequence(coin, blockheight, timelock);
-                    coins::coin_sequence_label(seq, timelock as u32)
+                    pill::coin_sequence(seq)
                 })
                 .spacing(10)
                 .align_y(Alignment::Center)

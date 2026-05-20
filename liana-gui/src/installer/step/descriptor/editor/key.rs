@@ -24,8 +24,7 @@ use liana_ui::{
     color,
     component::{
         button, card, form,
-        hw::Account,
-        modal::{self, collapsible_input_button},
+        modal::{self, collapsible_input_button, legacy},
         pick_list,
         text::{p1_bold, p1_regular},
         tooltip,
@@ -955,7 +954,7 @@ impl SelectKeySource {
 
         let accounts: Vec<_> = (0..10)
             .map(|i| {
-                Account::new(
+                legacy::Account::new(
                     ChildNumber::from_hardened_idx(i).expect("hardcoded"),
                     fingerprint,
                 )
@@ -964,7 +963,7 @@ impl SelectKeySource {
         let child = self
             .form_account
             .unwrap_or(ChildNumber::Hardened { index: 0 });
-        let account = Account::new(child, fingerprint);
+        let account = legacy::Account::new(child, fingerprint);
 
         let pick_enabled = !self.processing && matches!(self.focus, Focus::Device(_));
 

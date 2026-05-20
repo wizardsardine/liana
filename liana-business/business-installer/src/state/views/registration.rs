@@ -57,6 +57,11 @@ impl RegistrationViewState {
     /// Set error on modal
     pub fn set_modal_error(&mut self, error: String) {
         if let Some(modal) = &mut self.modal {
+            let error = if error.contains("status: Unknown,") {
+                "Device disconnected".into()
+            } else {
+                error
+            };
             modal.step = RegistrationModalStep::Error;
             modal.error = Some(error);
         }

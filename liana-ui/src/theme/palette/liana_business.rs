@@ -1,7 +1,9 @@
 use iced::Color;
 
-use crate::color;
-use crate::theme::card::CARD_SHADOW;
+use crate::{
+    color::{self, TRANSPARENT},
+    theme::card::CARD_SHADOW,
+};
 
 use super::*;
 
@@ -14,7 +16,7 @@ const BTN_TERTIARY_FG: Color = color::BUSINESS_BLACK;
 color!(BTN_TERTIARY_PRESSED, 0xB4B4B4);
 
 color!(BTN_DISABLED, 0xCBCBCB);
-color!(BTN_DISABLED_TEXT, 0xEDEDED);
+color!(BTN_DISABLED_TEXT, 0xEDEDED, 0.5);
 fn btn_disabled() -> Option<ButtonPalette> {
     Some(ButtonPalette {
         background: BTN_DISABLED,
@@ -23,6 +25,8 @@ fn btn_disabled() -> Option<ButtonPalette> {
         shadow: Default::default(),
     })
 }
+
+color!(DEVICE_DISABLED, 0xA6A6A6);
 
 const BTN_SHADOW: Shadow = Shadow {
     color: color::BLACK_25,
@@ -44,6 +48,7 @@ color!(MENU_BG_HOVER, 0xE9ECEF);
 
 color!(EXTERNAL, 0x0F172A);
 color!(SAFETY_NET, 0x475569);
+color!(FINGERPRINT_BACKGROUND, 0xE9F4FF);
 
 impl Palette {
     pub fn business() -> Self {
@@ -185,6 +190,27 @@ impl Palette {
                     },
                     pressed: Some(ButtonPalette {
                         background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLUE,
+                        border: color::BUSINESS_BLUE.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: btn_disabled(),
+                },
+                clickable_section: Button {
+                    active: ButtonPalette {
+                        background: BTN_TERTIARY_BG,
+                        text: color::DARK_TEXT_PRIMARY,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: BTN_TERTIARY_BG,
+                        text: color::BUSINESS_BLUE,
+                        border: color::BUSINESS_BLUE.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: BTN_TERTIARY_BG,
                         text: color::BUSINESS_BLUE,
                         border: color::BUSINESS_BLUE.into(),
                         shadow: Default::default(),
@@ -354,6 +380,32 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                signing_devices: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_PRIMARY_BG,
+                        border: BTN_PRIMARY_BG.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_PRIMARY_BG,
+                        border: BTN_PRIMARY_BG.into(),
+                        shadow: BTN_SHADOW,
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_PRIMARY_PRESSED,
+                        border: BTN_PRIMARY_PRESSED.into(),
+                        shadow: BTN_SHADOW,
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: BTN_DISABLED,
+                        border: BTN_DISABLED.into(),
+                        shadow: Default::default(),
+                    }),
+                },
             },
             cards: Cards {
                 simple: ContainerPalette {
@@ -425,27 +477,37 @@ impl Palette {
                     text: color::WHITE.into(),
                     border: color::TRANSPARENT.into(),
                 },
-            },
-            pills: Pills {
-                primary: ContainerPalette {
-                    background: color::BUSINESS_BLUE,
+                success: ContainerPalette {
+                    background: color::SUCCESS_GREEN,
                     text: color::WHITE.into(),
                     border: color::TRANSPARENT.into(),
                 },
+            },
+            pills: Pills {
                 simple: ContainerPalette {
-                    background: color::LIGHT_BLUE_TINT,
-                    text: color::BUSINESS_BLUE_DARK.into(),
-                    border: color::SOFT_BLUE.into(),
+                    background: TRANSPARENT,
+                    text: color::BUSINESS_PILL_SIMPLE.into(),
+                    border: color::BUSINESS_PILL_SIMPLE.into(),
+                },
+                simple_fill: ContainerPalette {
+                    background: color::BUSINESS_PILL_SIMPLE,
+                    text: color::WHITE.into(),
+                    border: color::BUSINESS_PILL_SIMPLE.into(),
                 },
                 warning: ContainerPalette {
                     background: color::AMBER,
                     text: color::DARK_TEXT_SECONDARY.into(),
                     border: color::AMBER.into(),
                 },
+                soft_warning: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: color::AMBER.into(),
+                    border: color::AMBER.into(),
+                },
                 success: ContainerPalette {
-                    background: color::DARK_GREEN,
+                    background: color::SUCCESS_GREEN,
                     text: color::WHITE.into(),
-                    border: color::DARK_GREEN.into(),
+                    border: color::SUCCESS_GREEN.into(),
                 },
                 internal: ContainerPalette {
                     background: color::BUSINESS_BLUE,
@@ -461,6 +523,11 @@ impl Palette {
                     background: SAFETY_NET,
                     text: color::WHITE.into(),
                     border: SAFETY_NET.into(),
+                },
+                fingerprint: ContainerPalette {
+                    background: FINGERPRINT_BACKGROUND,
+                    text: SAFETY_NET.into(),
+                    border: FINGERPRINT_BACKGROUND.into(),
                 },
             },
             notifications: Notifications {

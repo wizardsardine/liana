@@ -8,12 +8,18 @@ use iced::{
 };
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
 use liana_ui::{
-    component::{form, text},
+    component::{
+        pill,
+        text::{self, truncate},
+    },
     theme,
     widget::*,
 };
 
-use super::{format_last_edit_info, layout_with_scrollable_list, menu_entry, INSTALLER_STEPS};
+use super::{
+    format_last_edit_info, menu_entry, select_list_view, SelectListView, SelectSearch,
+    INSTALLER_STEPS,
+};
 
 /// Derive the user's role for a specific wallet based on wallet data and global role
 /// Returns None if the user has no access to this wallet
@@ -49,49 +55,16 @@ fn derive_user_role(
     None
 }
 
-/// Fixed width for status badges to ensure alignment
-const STATUS_BADGE_WIDTH: f32 = 90.0;
-
 /// Render a colored status badge for wallet status
 fn status_badge(wallet: &Wallet, user_email: &str) -> Element<'static, Msg> {
-    let status = wallet.effective_status(user_email);
-    let width = STATUS_BADGE_WIDTH;
-    if status == WalletStatus::Registration {
-        return Container::new(text::caption("Register"))
-            .padding([4, 12])
-            .width(width)
-            .center_x(width)
-            .style(theme::pill::warning)
-            .into();
+    match wallet.effective_status(user_email) {
+        WalletStatus::Registration => pill::register(),
+        WalletStatus::Created | WalletStatus::Drafted => pill::draft(),
+        WalletStatus::Locked => pill::to_approve(),
+        WalletStatus::Validated => pill::set_keys(),
+        WalletStatus::Finalized => pill::active(),
     }
-
-    match status {
-        WalletStatus::Registration => unreachable!(), // Handled above
-        WalletStatus::Created | WalletStatus::Drafted => Container::new(text::caption("Draft"))
-            .padding([4, 12])
-            .width(width)
-            .center_x(width)
-            .style(theme::pill::simple)
-            .into(),
-        WalletStatus::Locked => Container::new(text::caption("To Approve"))
-            .padding([4, 12])
-            .width(width)
-            .center_x(width)
-            .style(theme::pill::warning)
-            .into(),
-        WalletStatus::Validated => Container::new(text::caption("Set keys"))
-            .padding([4, 12])
-            .width(width)
-            .center_x(width)
-            .style(theme::pill::warning)
-            .into(),
-        WalletStatus::Finalized => Container::new(text::caption("Active"))
-            .padding([4, 12])
-            .width(width)
-            .center_x(width)
-            .style(theme::pill::success)
-            .into(),
-    }
+    .into()
 }
 
 /// Get a display label for the user role
@@ -128,11 +101,12 @@ pub fn wallet_card<'a>(
         c => format!("({c} keys)"),
     };
 
+    let alias = truncate(&wallet.alias, 25);
     // Left side: wallet name, key count, and edit info
     let mut left_col = Column::new()
         .push(
             row![
-                text::h3(wallet.alias.clone()),
+                text::h3(alias),
                 text::p1_medium(keys).style(theme::text::primary)
             ]
             .spacing(5)
@@ -149,7 +123,7 @@ pub fn wallet_card<'a>(
     let mut right_col = Column::new()
         .push(status_badge(wallet, user_email))
         .spacing(4)
-        .width(STATUS_BADGE_WIDTH)
+        .width(pill::PillWidth::M)
         .align_x(Alignment::Center);
 
     // Only show role for Wallet Manager and Participant (not WS Admin)
@@ -187,12 +161,6 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
     } else {
         "Create a wallet"
     };
-    let title = text::h2(title_text);
-    let title = row![
-        Space::with_width(Length::Fill),
-        title,
-        Space::with_width(Length::Fill),
-    ];
 
     // Get current user email for role derivation
     let current_user_email = &state.views.login.email.form.value;
@@ -203,45 +171,6 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         state.app.global_user_role,
         Some(UserRole::WizardSardineAdmin)
     );
-
-    // Fixed header content: title, filter checkbox, and search bar
-    let mut header_content = Column::new()
-        .push(title)
-        .push(Space::with_height(30))
-        .spacing(10)
-        .align_x(Alignment::Center)
-        .padding(20);
-
-    // Add filter checkbox for WS Admin users (centered)
-    if is_ws_admin && has_wallets {
-        let filter_checkbox = Row::new()
-            .push(Space::with_width(Length::Fill))
-            .push(Space::with_width(Length::Fill))
-            .width(Length::Fill);
-        header_content = header_content.push(filter_checkbox);
-        header_content = header_content.push(Space::with_height(10));
-    }
-
-    // Add search bar for all users when there are wallets
-    if has_wallets {
-        let search_value = form::Value {
-            value: state.views.wallet_select.search_filter.clone(),
-            warning: None,
-            valid: true,
-        };
-        let search_form = form::Form::new_trimmed(
-            "Search wallets...",
-            &search_value,
-            Msg::WalletSelectUpdateSearchFilter,
-        )
-        .size(16)
-        .padding(10);
-        let search_container = Container::new(search_form)
-            .width(Length::Fixed(500.0))
-            .align_x(Alignment::Center);
-        header_content = header_content.push(search_container);
-        header_content = header_content.push(Space::with_height(10));
-    }
 
     // Scrollable list content: wallet cards
     let mut list_content = Column::new()
@@ -336,10 +265,6 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         // FIXME: doe we display something if no wallet?
     }
 
-    list_content = list_content.push(Space::with_height(50));
-
-    let role_badge = if is_ws_admin { Some("WS Admin") } else { None };
-
     // Build breadcrumb: org_name > Wallets
     let org_name = state
         .app
@@ -349,15 +274,18 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         .unwrap_or_else(|| "Organization".to_string());
     let breadcrumb = vec![org_name, "Wallets".to_string()];
 
-    layout_with_scrollable_list(
-        (4, INSTALLER_STEPS),
-        Some(&state.views.login.email.form.value),
-        role_badge,
-        &breadcrumb,
-        header_content,
-        list_content,
-        None, // footer_content
-        true,
-        Some(Msg::NavigateBack),
-    )
+    select_list_view(SelectListView {
+        progress: (4, INSTALLER_STEPS),
+        email: current_user_email,
+        is_ws_admin,
+        breadcrumb,
+        title: title_text.to_string(),
+        search: has_wallets.then_some(SelectSearch {
+            placeholder: "Filter wallets...",
+            value: &state.views.wallet_select.search_filter,
+            on_change: Msg::WalletSelectUpdateSearchFilter,
+        }),
+        list: list_content,
+        previous_message: Some(Msg::NavigateBack),
+    })
 }

@@ -37,6 +37,17 @@ fn paragraphs() -> Sample<4> {
     ]
 }
 
+/// New design-system helpers alongside their closest legacy counterparts.
+#[rustfmt::skip]
+fn new_helpers() -> Sample<4> {
+    [
+        (Container::new(text::new::h1("h1 - Manrope Medium (vs legacy h1)")), "liana_ui::component::text::new::h1"),
+        (Container::new(text::new::h2_semi("h2_semi - Manrope SemiBold (vs legacy h2)")), "liana_ui::component::text::new::h2_semi"),
+        (Container::new(text::new::b1("b1 - body large (vs legacy p1_regular)")), "liana_ui::component::text::new::b1"),
+        (Container::new(text::new::caption("caption (vs legacy caption)")), "liana_ui::component::text::new::caption"),
+    ]
+}
+
 /// Two ways to build the view:
 ///
 /// **Option A** — reuse `crate::debug::layout_page` for the standard chrome +
@@ -55,10 +66,15 @@ fn paragraphs() -> Sample<4> {
 /// like; the only contract is the `fn() -> Element<'static, DebugMessage>`
 /// signature on [`ENTRY`].
 fn view() -> Element<'static, DebugMessage> {
-    let body = Row::new()
+    let legacy = Row::new()
         .spacing(40)
         .push(debug_section("Headings", headings()))
         .push(debug_section("Paragraphs", paragraphs()));
+
+    let body = Column::new()
+        .spacing(40)
+        .push(legacy)
+        .push(debug_section("New design-system helpers", new_helpers()));
 
     Container::new(
         Column::new()

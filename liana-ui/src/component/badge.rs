@@ -1,87 +1,49 @@
-use iced::{widget::tooltip, Length};
+use iced::widget::container::Style;
 
-use crate::{component::text, icon, image, theme, widget::*};
+use crate::{icon, image, theme, widget::*};
 
-pub fn badge<T>(icon: crate::widget::Text<'static>) -> Container<'static, T> {
-    Container::new(icon.width(Length::Fixed(20.0)))
-        .style(theme::badge::simple)
-        .center_x(Length::Fixed(40.0))
-        .center_y(Length::Fixed(40.0))
+const BADGE_SIZE: u32 = 40;
+const ICON_SIZE: u32 = BADGE_SIZE / 2;
+const LIANA_ICON_SIZE: u32 = 25;
+
+pub fn badge_with_style<T, S>(icon: crate::widget::Text<'static>, style: S) -> Container<'static, T>
+where
+    S: Fn(&theme::Theme) -> Style + 'static,
+{
+    Container::new(icon.width(ICON_SIZE))
+        .style(style)
+        .center_x(BADGE_SIZE)
+        .center_y(BADGE_SIZE)
 }
 
-pub fn receive<T>() -> Container<'static, T> {
-    Container::new(icon::receive_icon().width(Length::Fixed(20.0)))
-        .style(theme::badge::simple)
-        .style(theme::badge::simple)
-        .center_x(Length::Fixed(40.0))
-        .center_y(Length::Fixed(40.0))
+macro_rules! icon_badge {
+    ($name:ident, $icon:ident, $style:ident) => {
+        pub fn $name<T>() -> Container<'static, T> {
+            badge_with_style(icon::$icon(), theme::badge::$style)
+        }
+    };
 }
 
-pub fn cycle<T>() -> Container<'static, T> {
-    Container::new(icon::arrow_repeat().width(Length::Fixed(20.0)))
-        .style(theme::badge::simple)
-        .center_x(Length::Fixed(40.0))
-        .center_y(Length::Fixed(40.0))
-}
-
-pub fn spend<T>() -> Container<'static, T> {
-    Container::new(icon::send_icon().width(Length::Fixed(20.0)))
-        .style(theme::badge::simple)
-        .center_x(Length::Fixed(40.0))
-        .center_y(Length::Fixed(40.0))
-}
+icon_badge!(receive, receive_icon, simple);
+icon_badge!(cycle, arrow_repeat, simple);
+icon_badge!(spend, send_icon, simple);
+icon_badge!(success, check_icon, success);
+icon_badge!(tooltip, tooltip_icon, simple);
+icon_badge!(network, network_icon, simple);
+icon_badge!(block, block_icon, simple);
+icon_badge!(bitcoin, bitcoin_icon, simple);
+icon_badge!(setting, wrench_icon, simple);
+icon_badge!(wallet, wallet_icon, simple);
+icon_badge!(backup, backup_icon, simple);
+icon_badge!(restore, restore_icon, simple);
 
 pub fn coin<T>() -> Container<'static, T> {
     Container::new(
         image::liana_grey_logo()
-            .height(Length::Fixed(25.0))
-            .width(Length::Fixed(25.0)),
+            .height(LIANA_ICON_SIZE)
+            .width(LIANA_ICON_SIZE),
     )
     .style(theme::badge::simple)
-    .center_x(Length::Fixed(40.0))
-    .center_y(Length::Fixed(40.0))
-}
-
-pub fn recovery<'a, T: 'a>() -> Container<'a, T> {
-    badge_pill("  Recovery  ", "This transaction is using a recovery path")
-}
-
-pub fn unconfirmed<'a, T: 'a>() -> Container<'a, T> {
-    badge_pill(
-        "  Unconfirmed  ",
-        "Do not treat this as a payment until it is confirmed",
-    )
-}
-
-pub fn batch<'a, T: 'a>() -> Container<'a, T> {
-    badge_pill("  Batch  ", "This transaction contains multiple payments")
-}
-
-pub fn deprecated<'a, T: 'a>() -> Container<'a, T> {
-    badge_pill(
-        "  Deprecated  ",
-        "This transaction cannot be included in the blockchain anymore.",
-    )
-}
-
-pub fn spent<'a, T: 'a>() -> Container<'a, T> {
-    badge_pill(
-        "  Spent  ",
-        "The transaction was included in the blockchain.",
-    )
-}
-
-pub fn badge_pill<'a, T: 'a>(label: &'a str, tooltip: &'a str) -> Container<'a, T> {
-    Container::new({
-        tooltip::Tooltip::new(
-            Container::new(text::p2_regular(label))
-                .padding(10)
-                .center_x(Length::Shrink)
-                .style(theme::pill::simple),
-            Container::new(text::p1_regular(tooltip))
-                .padding(10)
-                .style(theme::card::simple),
-            tooltip::Position::Top,
-        )
-    })
+    .center_x(BADGE_SIZE)
+    .center_y(BADGE_SIZE)
 }

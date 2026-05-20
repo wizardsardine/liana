@@ -2,9 +2,7 @@ pub mod editor;
 
 use async_hwi::utils::extract_keys_and_template;
 use iced::widget::column;
-use iced::widget::{
-    checkbox, radio, scrollable, scrollable::Scrollbar, tooltip, Button, Space, TextInput,
-};
+use iced::widget::{checkbox, radio, tooltip, Button, Space, TextInput};
 use iced::{
     alignment,
     widget::{progress_bar, tooltip as iced_tooltip},
@@ -24,7 +22,9 @@ use liana::{
 };
 use liana_ui::{
     component::{
-        button, card, collapse, form, hw, separation,
+        button, card, collapse, form,
+        modal::legacy,
+        scrollable, separation,
         text::{h2, h3, h4_bold, p1_bold, p1_regular, text, Text},
     },
     icon, theme,
@@ -35,7 +35,7 @@ use crate::node::electrum::validate_domain_checkbox;
 use crate::{
     app::settings,
     help,
-    hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
+    hw::{HardwareWallet, UnsupportedReason},
     installer::{
         descriptor::{PathSequence, PathWarning},
         message::{self, DefineBitcoind, DefineNode, Message},
@@ -405,12 +405,9 @@ pub fn signer_xpubs<'a>(
                             .spacing(5)
                             .align_y(Alignment::Center)
                             .push(
-                                Container::new(
-                                    scrollable(Container::new(text(xpub).small()).padding(10))
-                                        .direction(scrollable::Direction::Horizontal(
-                                            Scrollbar::new().width(5).scroller_width(5),
-                                        )),
-                                )
+                                Container::new(scrollable::horizontal_thin(
+                                    Container::new(text(xpub).small()).padding(10),
+                                ))
                                 .width(Length::Fill),
                             )
                             .push(
@@ -439,7 +436,12 @@ pub fn hardware_wallet_xpubs<'a>(
     error: Option<&Error>,
     accounts: &HashMap<Fingerprint, ChildNumber>,
 ) -> Element<'a, Message> {
-    let mut bttn = Button::new(match hw {
+    let select_msg = if !processing && hw.is_supported() {
+        Some(Message::Select(i))
+    } else {
+        None
+    };
+    let bttn: Element<'a, Message> = match hw {
         HardwareWallet::Supported {
             kind,
             version,
@@ -448,15 +450,16 @@ pub fn hardware_wallet_xpubs<'a>(
             ..
         } => {
             if processing {
-                hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
+                legacy::processing_device(kind, version.as_ref(), fingerprint, alias.as_ref(), None)
             } else {
-                hw::supported_hardware_wallet_with_account(
+                legacy::supported_device_with_account(
                     kind,
                     version.as_ref(),
                     *fingerprint,
                     alias.as_ref(),
                     accounts.get(fingerprint).cloned(),
                     true,
+                    select_msg,
                 )
             }
         }
@@ -467,29 +470,25 @@ pub fn hardware_wallet_xpubs<'a>(
             ..
         } => match reason {
             UnsupportedReason::NotPartOfWallet(fg) => {
-                hw::unrelated_hardware_wallet(kind.to_string(), version.as_ref(), fg)
+                legacy::unrelated_device(kind.to_string(), version.as_ref(), fg, None)
             }
             UnsupportedReason::WrongNetwork => {
-                hw::wrong_network_hardware_wallet(kind.to_string(), version.as_ref())
+                legacy::wrong_network_device(kind.to_string(), version.as_ref(), None)
             }
             UnsupportedReason::Version {
                 minimal_supported_version,
-            } => hw::unsupported_version_hardware_wallet(
+            } => legacy::unsupported_version_device(
                 kind.to_string(),
                 version.as_ref(),
                 minimal_supported_version,
+                None,
             ),
-            _ => hw::unsupported_hardware_wallet(kind.to_string(), version.as_ref()),
+            _ => legacy::unsupported_device(kind.to_string(), version.as_ref(), None),
         },
         HardwareWallet::Locked {
             kind, pairing_code, ..
-        } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
-    })
-    .style(theme::button::secondary)
-    .width(Length::Fill);
-    if !processing && hw.is_supported() {
-        bttn = bttn.on_press(Message::Select(i));
-    }
+        } => legacy::locked_device(kind, pairing_code.as_ref(), None),
+    };
     Container::new(
         Column::new()
             .push_maybe(error.map(|e| card::warning(e.to_string()).width(Length::Fill)))
@@ -506,12 +505,9 @@ pub fn hardware_wallet_xpubs<'a>(
                             .spacing(5)
                             .align_y(Alignment::Center)
                             .push(
-                                Container::new(
-                                    scrollable(Container::new(text(xpub).small()).padding(10))
-                                        .direction(scrollable::Direction::Horizontal(
-                                            Scrollbar::new().width(5).scroller_width(5),
-                                        )),
-                                )
+                                Container::new(scrollable::horizontal_thin(
+                                    Container::new(text(xpub).small()).padding(10),
+                                ))
                                 .width(Length::Fill),
                             )
                             .push(
@@ -571,9 +567,7 @@ pub fn share_xpubs<'a>(
 
 pub fn policy_entry_card(title: String, content: String) -> Container<'static, Message> {
     let title = text(title).small().bold();
-    let scroll = scrollable(column![text(content).small(), Space::with_height(5)]).direction(
-        scrollable::Direction::Horizontal(scrollable::Scrollbar::new().width(5).scroller_width(5)),
-    );
+    let scroll = scrollable::horizontal_thin(column![text(content).small()]);
     card::simple(column![title, scroll].spacing(10)).width(Length::Fill)
 }
 
@@ -627,18 +621,19 @@ pub fn register_descriptor<'a>(
         .iter()
         .enumerate()
         .fold(Column::new().spacing(10), |col, (i, hw)| {
-            col.push(hw_list_view(
-                i,
+            col.push(crate::view::hw::device_list_entry(
                 hw,
-                Some(i) == chosen_hw,
-                processing,
-                hw.fingerprint()
-                    .map(|fg| registered.contains(&fg))
-                    .unwrap_or(false),
-                Some(descriptor),
-                false,
-                None,
-                false,
+                crate::view::hw::HwRowMode::Registration {
+                    chosen: Some(i) == chosen_hw,
+                    processing,
+                    complete: hw
+                        .fingerprint()
+                        .map(|fg| registered.contains(&fg))
+                        .unwrap_or(false),
+                    descriptor: Some(descriptor),
+                    device_must_support_taproot: false,
+                },
+                move || Message::Select(i),
             ))
         });
     let signing_devices = column![devices_title, devices]
@@ -729,18 +724,9 @@ pub fn backup_descriptor<'a>(
                 card::simple(
                     Column::new()
                         .push(text("The descriptor:").small().bold())
-                        .push(
-                            scrollable(
-                                Column::new()
-                                    .push(text(descriptor.to_string()).small())
-                                    .push(Space::with_height(Length::Fixed(5.0))),
-                            )
-                            .direction(
-                                scrollable::Direction::Horizontal(
-                                    scrollable::Scrollbar::new().width(5).scroller_width(5),
-                                ),
-                            ),
-                        )
+                        .push(scrollable::horizontal_thin(
+                            Column::new().push(text(descriptor.to_string()).small()),
+                        ))
                         .push(
                             Row::new()
                                 .push(Space::with_width(Length::Fill))
@@ -903,9 +889,7 @@ fn display_policy(
     Column::new()
         .spacing(10)
         .push(text("The wallet policy:").bold())
-        .push(scrollable(col).direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new().width(5).scroller_width(5),
-        )))
+        .push(scrollable::horizontal_thin(col))
         .into()
 }
 
@@ -1588,110 +1572,6 @@ pub fn defined_sequence<'a>(
     .into()
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn hw_list_view<'a>(
-    i: usize,
-    hw: &'a HardwareWallet,
-    chosen: bool,
-    processing: bool,
-    selected: bool,
-    descriptor: Option<&'a LianaDescriptor>,
-    device_must_support_taproot: bool,
-    accounts: Option<&HashMap<Fingerprint, ChildNumber>>,
-    display_account: bool,
-) -> Element<'a, Message> {
-    let mut unrelated = false;
-    let mut bttn = Button::new(match hw {
-        HardwareWallet::Supported {
-            kind,
-            version,
-            fingerprint,
-            alias,
-            ..
-        } => {
-            let device_in_descriptor = descriptor
-                .map(|d| d.contains_fingerprint(*fingerprint))
-                .unwrap_or(true);
-            let not_tapminiscript = device_must_support_taproot
-                && !is_compatible_with_tapminiscript(kind, version.as_ref());
-            if !device_in_descriptor {
-                unrelated = true;
-                hw::unrelated_hardware_wallet(kind.to_string(), version.as_ref(), fingerprint)
-            } else if chosen && processing {
-                hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
-            } else if selected {
-                let acc = accounts
-                    .as_ref()
-                    .and_then(|map| map.get(fingerprint).cloned());
-                hw::selected_hardware_wallet(
-                    kind,
-                    version.as_ref(),
-                    fingerprint,
-                    alias.as_ref(),
-                    {
-                        if not_tapminiscript {
-                            Some("Device firmware version does not support taproot miniscript")
-                        } else {
-                            None
-                        }
-                    },
-                    acc,
-                    display_account,
-                )
-            } else if not_tapminiscript {
-                hw::warning_hardware_wallet(
-                    kind,
-                    version.as_ref(),
-                    fingerprint,
-                    alias.as_ref(),
-                    "Device firmware version does not support taproot miniscript",
-                )
-            } else if let Some(accounts) = accounts {
-                hw::supported_hardware_wallet_with_account(
-                    kind,
-                    version.as_ref(),
-                    *fingerprint,
-                    alias.as_ref(),
-                    accounts.get(fingerprint).cloned(),
-                    true,
-                )
-            } else {
-                hw::supported_hardware_wallet(kind, version.as_ref(), *fingerprint, alias.as_ref())
-            }
-        }
-        HardwareWallet::Unsupported {
-            version,
-            kind,
-            reason,
-            ..
-        } => match reason {
-            UnsupportedReason::NotPartOfWallet(fg) => {
-                hw::unrelated_hardware_wallet(kind.to_string(), version.as_ref(), fg)
-            }
-            UnsupportedReason::WrongNetwork => {
-                hw::wrong_network_hardware_wallet(kind.to_string(), version.as_ref())
-            }
-            UnsupportedReason::Version {
-                minimal_supported_version,
-            } => hw::unsupported_version_hardware_wallet(
-                kind.to_string(),
-                version.as_ref(),
-                minimal_supported_version,
-            ),
-            _ => hw::unsupported_hardware_wallet(kind.to_string(), version.as_ref()),
-        },
-        HardwareWallet::Locked {
-            kind, pairing_code, ..
-        } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
-    })
-    .style(theme::button::secondary)
-    .width(Length::Fill);
-    if !processing && hw.is_supported() && !unrelated {
-        bttn = bttn.on_press(Message::Select(i));
-    }
-    bttn.into()
-}
-
 pub fn backup_mnemonic<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
@@ -2119,7 +1999,7 @@ fn layout<'a>(
     if let Some(msg) = previous_message {
         prev_button = prev_button.on_press(msg);
     }
-    Container::new(scrollable(
+    Container::new(scrollable::vertical(
         Column::new()
             .width(Length::Fill)
             .push(

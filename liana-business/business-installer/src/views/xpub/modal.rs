@@ -12,10 +12,10 @@ use liana_gui::hw::{is_compatible_with_tapminiscript, min_taproot_version, Unsup
 use liana_ui::{
     component::{
         button::{btn_cancel, btn_clear, btn_retry, btn_save},
-        form, hw,
+        form,
         modal::{self, modal_view, none_fn, ModalWidth},
-        pick_list,
-        text::{self, p1_bold},
+        pick_list, scrollable,
+        text::{self, capitalize_first, p1_bold, truncate},
         tooltip,
     },
     icon, theme,
@@ -24,21 +24,30 @@ use liana_ui::{
 
 use miniscript::bitcoin::bip32::ChildNumber;
 
-/// Capitalize the first letter of a string
-fn capitalize_first(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-    }
-}
-
 /// Render the xpub entry modal if it's open
 pub fn xpub_modal_view(state: &State) -> Option<Element<'_, Msg>> {
     let modal_state = state.views.xpub.modal.as_ref()?;
+
     Some(match modal_state.step {
         ModalStep::Select => select_view(state, modal_state),
-        ModalStep::Details => details_view(modal_state),
+        ModalStep::Details => {
+            let selected_device = modal_state.selected_device?;
+            let device_list = state.hw.list();
+            let mut connected = false;
+            for device in device_list.values() {
+                if device.fingerprint() == Some(selected_device) {
+                    if matches!(device, SigningDevice::Supported(..)) {
+                        connected = true;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+            if !connected {
+                return None;
+            }
+            details_view(modal_state)
+        }
     })
 }
 
@@ -82,11 +91,12 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
             .push(text::p2_medium("Current xpub:").style(theme::text::primary))
             .push(Space::with_width(Length::Fill));
 
-        let input_value =
-            Container::new(text::p2_medium(&modal_state.xpub_input).style(theme::text::secondary))
-                .padding(10)
-                .style(theme::card::simple)
-                .width(Length::Fill);
+        let input_value = Container::new(scrollable::horizontal_thin(
+            text::p2_medium(&modal_state.xpub_input).style(theme::text::secondary),
+        ))
+        .padding(10)
+        .style(theme::card::simple)
+        .width(Length::Fill);
 
         Column::new()
             .push(Space::with_height(5))
@@ -110,8 +120,9 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
         .spacing(15)
         .align_x(Alignment::Center);
 
+    let alias = truncate(&modal_state.key_alias, 25);
     modal_view(
-        Some(format!("Select key source - {}", modal_state.key_alias)),
+        Some(format!("Select key source - {alias}")),
         none_fn(),
         Some(|| Msg::XpubCancelModal),
         ModalWidth::L,
@@ -198,10 +209,12 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         && !modal_state.processing
         && validation_error.is_none())
     .then_some({
-        Container::new(text::p2_medium(&modal_state.xpub_input).style(theme::text::secondary))
-            .padding(10)
-            .style(theme::card::simple)
-            .width(Length::Fill)
+        Container::new(scrollable::horizontal_thin(
+            text::p2_medium(&modal_state.xpub_input).style(theme::text::secondary),
+        ))
+        .padding(10)
+        .style(theme::card::simple)
+        .width(Length::Fill)
     });
 
     let body = Column::new()
@@ -214,8 +227,9 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         .push(btn_row)
         .spacing(15);
 
+    let alias = truncate(&modal_state.key_alias, 25);
     modal_view(
-        Some(modal_state.key_alias.clone()),
+        Some(alias),
         Some(|| Msg::XpubDeviceBack),
         Some(|| Msg::XpubCancelModal),
         ModalWidth::M,
@@ -289,7 +303,7 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
         Some(v) => format!("{kind_name} {v}"),
         None => kind_name,
     };
-    let version = data.version;
+    let fp_str = data.fingerprint.map(|fp| format!("#{fp}"));
 
     match data.state {
         DeviceState::Supported => {
@@ -305,15 +319,24 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
             )
         }
         DeviceState::Locked { pairing_code } => {
-            let card_content = match kind {
-                async_hwi::DeviceKind::Jade => hw::taproot_not_supported_device(kind),
-                _ => hw::locked_hardware_wallet(kind, pairing_code),
+            let message = match kind {
+                async_hwi::DeviceKind::Jade => {
+                    "This device doesn't support taproot miniscript".to_string()
+                }
+                _ => match pairing_code {
+                    Some(code) => format!("Pairing code: {code}"),
+                    None => "Please unlock the device".to_string(),
+                },
             };
-
-            Button::new(card_content)
-                .style(theme::button::secondary)
-                .width(Length::Fill)
-                .into()
+            modal::key_entry(
+                Some(icon::usb_drive_icon()),
+                name,
+                fp_str,
+                None,
+                None,
+                Some(message),
+                none_fn(),
+            )
         }
         DeviceState::Unsupported { reason } => {
             let message = match &reason {
@@ -325,21 +348,15 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
                     minimal_supported_version,
                 } => match kind {
                     async_hwi::DeviceKind::Jade => {
-                        return hw::taproot_not_supported_device(kind).into()
+                        "This device doesn't support taproot miniscript".to_string()
                     }
-                    _ => {
-                        return hw::unsupported_version_hardware_wallet(
-                            kind,
-                            version.as_ref(),
-                            minimal_supported_version,
-                        )
-                        .into()
-                    }
+                    _ => format!(
+                        "Device version not supported, upgrade to version > {minimal_supported_version}"
+                    ),
                 },
                 UnsupportedReason::Method(m) => format!("Unsupported method: {m}"),
                 UnsupportedReason::AppIsNotOpen => "Please open the app on device".to_string(),
             };
-            let fp_str = data.fingerprint.map(|fp| format!("#{fp}"));
             modal::key_entry(
                 Some(icon::usb_drive_icon()),
                 name,
@@ -466,7 +483,6 @@ fn other_options(modal_state: &XpubEntryModalState, is_wallet_manager: bool) -> 
         .spacing(modal::V_SPACING)
         .push(section_header)
         .push_maybe(expanded_content)
-        .width(modal::BTN_W)
         .into()
 }
 

@@ -1,13 +1,13 @@
 pub mod general;
 
-use std::collections::{HashMap, HashSet};
-use std::str::FromStr;
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+};
 
-use iced::alignment::{Horizontal, Vertical};
-use iced::widget::{container, rule, Column};
 use iced::{
-    alignment,
-    widget::{radio, scrollable, tooltip as iced_tooltip, Space},
+    alignment::{self, Vertical},
+    widget::{column, radio, row, rule, tooltip as iced_tooltip, Column, Space},
     Alignment, Length,
 };
 
@@ -15,165 +15,79 @@ use liana::{
     descriptors::{LianaDescriptor, LianaPolicy},
     miniscript::bitcoin::{bip32::Fingerprint, Network},
 };
-use lianad::config::BitcoindRpcAuth;
-
-use super::{dashboard, message::*};
-
 use liana_ui::{
-    component::{badge, button, card, form, separation, text::*, tooltip::tooltip},
+    component::{
+        self, badge,
+        button::{self, btn_secondary_with_tooltip, BtnWidth},
+        card, form, scrollable, separation,
+        setting::{export_section, header, settings_section, ImportExportKind, SectionKind},
+        text::*,
+    },
     icon,
     theme::{self},
     widget::*,
 };
+use lianad::config::BitcoindRpcAuth;
+
+use super::{dashboard, message::*};
 
 use crate::{
-    app::{
-        cache::Cache,
-        error::Error,
-        menu::Menu,
-        settings::ProviderKey,
-        view::{hw, warning::warn},
-    },
+    app::{cache::Cache, error::Error, menu::Menu, settings::ProviderKey, view::warning::warn},
     help,
     hw::HardwareWallet,
     node::{
         bitcoind::{RpcAuthType, RpcAuthValues},
         electrum::{self, validate_domain_checkbox},
     },
+    view::hw::{device_list_entry, HwRowMode},
 };
 
-fn header(title: &str, msg: SettingsMessage) -> Row<'static, Message> {
-    Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(
-            Button::new(panel_title("Settings"))
-                .style(theme::button::transparent_primary_text)
-                .on_press(Message::Menu(Menu::Settings)),
-        )
-        .push(icon::chevron_right().size(30))
-        .push(
-            Button::new(panel_title(title))
-                .style(theme::button::transparent_primary_text)
-                .on_press(Message::Settings(msg)),
-        )
-}
-
-fn settings_section(
-    title: &str,
-    tool_tip: Option<&'static str>,
-    icon: liana_ui::widget::Text<'static>,
-    msg: Message,
-) -> Container<'static, Message> {
-    let tt = tool_tip.map(tooltip);
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(badge::badge(icon))
-                .push(text(title).bold())
-                .push_maybe(tt)
-                .padding(10)
-                .spacing(20)
-                .align_y(Alignment::Center)
-                .width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .style(theme::button::transparent_border)
-        .on_press(msg),
-    )
-    .width(Length::Fill)
-    .style(theme::card::button_simple)
-}
-
-fn export_section(
-    title: &str,
-    description: &str,
-    icon: liana_ui::widget::Text<'static>,
-    msg: Message,
-) -> Container<'static, Message> {
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(badge::badge(icon))
-                .push(
-                    Column::new()
-                        .push(text(title).bold())
-                        .push(caption(description)),
-                )
-                .padding(10)
-                .spacing(20)
-                .align_y(Alignment::Center)
-                .width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .style(theme::button::transparent_border)
-        .on_press(msg),
-    )
-    .width(Length::Fill)
-    .style(theme::card::button_simple)
-}
+const SETTING_MSG: Message = Message::Menu(Menu::Settings);
 
 pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<'_, Message> {
-    let header = Button::new(panel_title("Settings"))
-        .style(theme::button::transparent_primary_text)
-        .on_press(Message::Menu(Menu::Settings));
-
     let general = settings_section(
-        "General",
-        None,
-        icon::wrench_icon(),
+        SectionKind::General,
         Message::Settings(SettingsMessage::GeneralSection),
     );
 
     let node = settings_section(
-        "Node",
-        None,
-        icon::bitcoin_icon(),
+        SectionKind::Node,
         Message::Settings(SettingsMessage::EditBitcoindSettings),
     );
 
     let backend = settings_section(
-        "Backend",
-        None,
-        icon::bitcoin_icon(),
+        SectionKind::Backend,
         Message::Settings(SettingsMessage::EditRemoteBackendSettings),
     );
 
     let wallet = settings_section(
-        "Wallet",
-        None,
-        icon::wallet_icon(),
+        SectionKind::Wallet,
         Message::Settings(SettingsMessage::EditWalletSettings),
     );
 
     let import_export = settings_section(
-        "Import/Export",
-        None,
-        icon::wallet_icon(),
+        SectionKind::ImportExport,
         Message::Settings(SettingsMessage::ImportExportSection),
     );
 
     let about = settings_section(
-        "About",
-        None,
-        icon::tooltip_icon(),
+        SectionKind::About,
         Message::Settings(SettingsMessage::AboutSection),
     );
 
-    dashboard(
-        &Menu::Settings,
-        cache,
-        None,
-        Column::new()
-            .spacing(20)
-            .width(Length::Fill)
-            .push(header)
-            .push(general)
-            .push(if !is_remote_backend { node } else { backend })
-            .push(wallet)
-            .push(import_export)
-            .push(about),
-    )
+    let backend = if !is_remote_backend { node } else { backend };
+
+    #[rustfmt::skip]
+    let entries = vec![
+        general,
+        backend,
+        wallet,
+        import_export,
+        about
+    ];
+
+    let content = component::setting::section_list(entries);
+    dashboard(&Menu::Settings, cache, None, content)
 }
 
 pub fn link<'a>(url: &str, link_text: &'static str) -> Element<'a, Message> {
@@ -193,7 +107,11 @@ pub fn bitcoind_settings<'a>(
     warning: Option<&'a Error>,
     settings: Vec<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    let header = header("Node", SettingsMessage::EditBitcoindSettings);
+    let header = header(
+        Some(SETTING_MSG),
+        Some(SectionKind::Node.title()),
+        Some(SettingsMessage::EditBitcoindSettings.into()),
+    );
 
     dashboard(
         &Menu::Settings,
@@ -207,7 +125,11 @@ pub fn bitcoind_settings<'a>(
 }
 
 pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Element<'a, Message> {
-    let header = header("Import/Export", SettingsMessage::ImportExportSection);
+    let header = header(
+        Some(SETTING_MSG),
+        Some(SectionKind::ImportExport.title()),
+        Some(SettingsMessage::ImportExportSection.into()),
+    );
 
     let description = Row::new()
         .push(Space::with_width(15))
@@ -217,44 +139,32 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Elemen
         .push(Space::with_width(Length::Fill));
 
     let export_encrypted_descriptor = export_section(
-        "Encrypted descriptor",
-        ".bed file, can be decrypted with one of your signing devices or xpubs.",
-        icon::backup_icon(),
+        ImportExportKind::ExportEncryptedDescriptor,
         Message::Settings(SettingsMessage::ExportEncryptedDescriptor),
     );
 
     let export_descriptor = export_section(
-        "Descriptor only - plain-text",
-        "Plain-text (not encrypted) descriptor file only, to use with other wallets.",
-        icon::backup_icon(),
+        ImportExportKind::ExportDescriptor,
         Message::Settings(SettingsMessage::ExportPlaintextDescriptor),
     );
 
     let export_transactions = export_section(
-        "Transactions table",
-        ".CSV file of past transactions, for accounting purposes.",
-        icon::backup_icon(),
+        ImportExportKind::ExportTransactions,
         Message::Settings(SettingsMessage::ExportTransactions),
     );
 
     let export_labels = export_section(
-        "BIP 329 labels",
-        "Bip 329 label export, compatible with other wallets.",
-        icon::backup_icon(),
+        ImportExportKind::ExportLabels,
         Message::Settings(SettingsMessage::ExportLabels),
     );
 
     let export_wallet = export_section(
-        "Export wallet",
-        "File (not encrypted) with wallet info useful to sync labels and data on other devices.",
-        icon::backup_icon(),
+        ImportExportKind::ExportWallet,
         Message::Settings(SettingsMessage::ExportWallet),
     );
 
     let import_wallet = export_section(
-        "Import wallet",
-        "Upload a backup file to update wallet info.",
-        icon::restore_icon(),
+        ImportExportKind::ImportWallet,
         Message::Settings(SettingsMessage::ImportWallet),
     );
 
@@ -290,13 +200,17 @@ pub fn about_section<'a>(
     warning: Option<&'a Error>,
     lianad_version: Option<&String>,
 ) -> Element<'a, Message> {
-    let header = header("About", SettingsMessage::AboutSection);
+    let header = header(
+        Some(SETTING_MSG),
+        Some(SectionKind::About.title()),
+        Some(SettingsMessage::AboutSection.into()),
+    );
 
     let content = card::simple(
         Column::new()
             .push(
                 Row::new()
-                    .push(badge::badge(icon::tooltip_icon()))
+                    .push(badge::tooltip())
                     .push(text("Version").bold())
                     .padding(10)
                     .spacing(20)
@@ -335,7 +249,11 @@ pub fn remote_backend_section<'a>(
     success: bool,
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
-    let header = header("Backend", SettingsMessage::EditRemoteBackendSettings);
+    let header = header(
+        Some(SETTING_MSG),
+        Some(SectionKind::Backend.title()),
+        Some(SettingsMessage::EditRemoteBackendSettings.into()),
+    );
 
     let content = card::simple(
         Column::new()
@@ -403,7 +321,7 @@ pub fn bitcoind_edit<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::network_icon()))
+                            .push(badge::network())
                             .push(
                                 Column::new()
                                     .push(text("Network:"))
@@ -414,7 +332,7 @@ pub fn bitcoind_edit<'a>(
                     )
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::block_icon()))
+                            .push(badge::block())
                             .push(
                                 Column::new()
                                     .push(text("Block Height:"))
@@ -508,7 +426,7 @@ pub fn bitcoind_edit<'a>(
         Column::new()
             .push(
                 Row::new()
-                    .push(badge::badge(icon::bitcoin_icon()))
+                    .push(badge::bitcoin())
                     .push(text("Bitcoin Core").bold())
                     .padding(10)
                     .spacing(20)
@@ -549,7 +467,7 @@ pub fn bitcoind<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::network_icon()))
+                            .push(badge::network())
                             .push(
                                 Column::new()
                                     .push(text("Network:"))
@@ -560,7 +478,7 @@ pub fn bitcoind<'a>(
                     )
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::block_icon()))
+                            .push(badge::block())
                             .push(
                                 Column::new()
                                     .push(text("Block Height:"))
@@ -598,18 +516,11 @@ pub fn bitcoind<'a>(
             Row::new()
                 .push(Container::new(text(k).bold().small()).width(Length::FillPortion(1)))
                 .push(
-                    Container::new(
-                        scrollable(
-                            Column::new()
-                                .push(Space::with_height(Length::Fixed(10.0)))
-                                .push(text(t).small())
-                                // Space between the text and the scrollbar
-                                .push(Space::with_height(Length::Fixed(10.0))),
-                        )
-                        .direction(scrollable::Direction::Horizontal(
-                            scrollable::Scrollbar::new().width(2).scroller_width(2),
-                        )),
-                    )
+                    Container::new(scrollable::horizontal_thin(
+                        Column::new()
+                            .push(Space::with_height(Length::Fixed(10.0)))
+                            .push(text(t).small()),
+                    ))
                     .align_x(alignment::Horizontal::Right)
                     .padding(10)
                     .width(Length::FillPortion(3)),
@@ -630,7 +541,7 @@ pub fn bitcoind<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::bitcoin_icon()))
+                            .push(badge::bitcoin())
                             .push(text("Bitcoin Core").bold())
                             .push_maybe(if is_configured_node_type {
                                 Some(is_running_label(is_running))
@@ -673,7 +584,7 @@ pub fn electrum_edit<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::network_icon()))
+                            .push(badge::network())
                             .push(
                                 Column::new()
                                     .push(text("Network:"))
@@ -684,7 +595,7 @@ pub fn electrum_edit<'a>(
                     )
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::block_icon()))
+                            .push(badge::block())
                             .push(
                                 Column::new()
                                     .push(text("Block Height:"))
@@ -727,7 +638,7 @@ pub fn electrum_edit<'a>(
         Column::new()
             .push(
                 Row::new()
-                    .push(badge::badge(icon::bitcoin_icon()))
+                    .push(badge::bitcoin())
                     .push(text("Electrum").bold())
                     .padding(10)
                     .spacing(20)
@@ -768,7 +679,7 @@ pub fn electrum<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::network_icon()))
+                            .push(badge::network())
                             .push(
                                 Column::new()
                                     .push(text("Network:"))
@@ -779,7 +690,7 @@ pub fn electrum<'a>(
                     )
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::block_icon()))
+                            .push(badge::block())
                             .push(
                                 Column::new()
                                     .push(text("Block Height:"))
@@ -820,7 +731,7 @@ pub fn electrum<'a>(
                 Row::new()
                     .push(
                         Row::new()
-                            .push(badge::badge(icon::bitcoin_icon()))
+                            .push(badge::bitcoin())
                             .push(text("Electrum").bold())
                             .push_maybe(if is_configured_node_type {
                                 Some(is_running_label(is_running))
@@ -887,7 +798,7 @@ pub fn rescan<'a>(
         Column::new()
             .push(
                 Row::new()
-                    .push(badge::badge(icon::block_icon()))
+                    .push(badge::block())
                     .push(text("Blockchain rescan").bold().width(Length::Fill))
                     .push_maybe(if success {
                         Some(
@@ -1016,115 +927,116 @@ pub fn wallet_settings<'a>(
     processing: bool,
     updated: bool,
 ) -> Element<'a, Message> {
-    let header = header("Wallet", SettingsMessage::EditWalletSettings);
-    let r = Row::new().spacing(10).align_y(Vertical::Center)
-        .push(icon::backup_icon())
-        .push(text("Back up encrypted descriptor"))
-        .push(
+    let header = header(
+        Some(SETTING_MSG),
+        Some(SectionKind::Wallet.title()),
+        Some(SettingsMessage::EditWalletSettings.into()),
+    );
 
-    Container::new(
-        iced::widget::tooltip::Tooltip::new(
-            icon::tooltip_icon(),
-            "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.",
-            iced::widget::tooltip::Position::Bottom,
-        )
-        .style(theme::card::simple),
-    )
-        );
-    let back_up_encrypted_descriptor =
-        Button::new(container(r).align_x(Horizontal::Center).padding(5))
-            .on_press(Message::Settings(
-                SettingsMessage::ExportEncryptedDescriptor,
-            ))
-            .style(theme::button::secondary);
+    let backup_label = "Back up encrypted descriptor";
+    let backup_tooltip = "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.";
+    let backup_msg = Message::Settings(SettingsMessage::ExportEncryptedDescriptor);
 
-    let descr = card::simple(
-        Column::new()
-            .push(text("Wallet descriptor:").bold())
-            .push(
-                scrollable(
-                    Column::new()
-                        .push(text(descriptor.to_string()).small())
-                        .push(Space::with_height(Length::Fixed(5.0))),
-                )
-                .direction(scrollable::Direction::Horizontal(
-                    scrollable::Scrollbar::new().width(5).scroller_width(5),
-                )),
-            )
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .push(Column::new().width(Length::Fill))
-                    .push(back_up_encrypted_descriptor)
-                    .push(
-                        button::secondary(Some(icon::clipboard_icon()), "Copy")
-                            .on_press(Message::Clipboard(descriptor.to_string())),
-                    )
-                    .push(
-                        button::secondary(Some(icon::chip_icon()), "Register on hardware device")
-                            .on_press(Message::Settings(SettingsMessage::RegisterWallet)),
-                    ),
-            )
-            .spacing(10),
+    // ------------------------- Descriptor card -------------------------
+    let title = text("Wallet descriptor:").bold();
+    let descriptor_s =
+        scrollable::horizontal_thin(Column::new().push(text(descriptor.to_string()).small()));
+
+    let btn_backup = btn_secondary_with_tooltip(
+        Some(icon::backup_icon()),
+        backup_label,
+        Some(backup_tooltip),
+        BtnWidth::Auto,
+        Some(backup_msg),
+    );
+    let btn_copy = button::secondary(Some(icon::clipboard_icon()), "Copy")
+        .on_press(Message::Clipboard(descriptor.to_string()));
+    let btn_register = button::secondary(Some(icon::chip_icon()), "Register on hardware device")
+        .on_press(Message::Settings(SettingsMessage::RegisterWallet));
+
+    let btn_row = row![Space::fill_width(), btn_backup, btn_copy, btn_register]
+        .spacing(10)
+        .width(Length::Fill);
+    let descriptor_card = card::simple(
+        column![title, descriptor_s, btn_row]
+            .spacing(10)
+            .width(Length::Fill),
     )
     .width(Length::Fill);
 
-    let aliases = card::simple(
-        Column::new()
-            .push(text("Wallet alias:").bold())
+    // --------------------------- Policy card ---------------------------
+    let policy_card = card::simple(display_policy(
+        descriptor.policy(),
+        keys_aliases,
+        provider_keys,
+    ))
+    .width(Length::Fill);
+
+    // -------------------------- Aliases card ---------------------------
+    let w_alias_title = text("Wallet alias:").bold().into();
+    let w_alias_input = form::Form::new("Alias", wallet_alias, move |msg| {
+        Message::Settings(SettingsMessage::WalletAliasEdited(msg))
+    })
+    .warning("Please enter alias that is not too long")
+    .size(P1_SIZE)
+    .padding(10)
+    .into();
+
+    let k_alias_title = text("Fingerprint aliases:").bold().into();
+
+    fn key_alias_entry<'a>(
+        fg: &'a Fingerprint,
+        name: &'a form::Value<String>,
+    ) -> Element<'a, Message> {
+        let fg = *fg;
+        Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(text(fg.to_string()).bold().width(Length::Fixed(100.0)))
             .push(
-                form::Form::new("Alias", wallet_alias, move |msg| {
-                    Message::Settings(SettingsMessage::WalletAliasEdited(msg))
+                form::Form::new("Alias", name, move |msg| {
+                    Message::Settings(SettingsMessage::FingerprintAliasEdited(fg, msg))
                 })
-                .warning("Please enter alias that is not too long")
+                .warning("Please enter correct alias")
                 .size(P1_SIZE)
                 .padding(10),
             )
-            .push(text("Fingerprint aliases:").bold())
-            .push(keys_aliases.iter().fold(
-                Column::new().spacing(10),
-                |col, (fingerprint, name)| {
-                    let fg = *fingerprint;
-                    col.push(
-                        Row::new()
-                            .spacing(10)
-                            .align_y(Alignment::Center)
-                            .push(text(fg.to_string()).bold().width(Length::Fixed(100.0)))
-                            .push(
-                                form::Form::new("Alias", name, move |msg| {
-                                    Message::Settings(SettingsMessage::FingerprintAliasEdited(
-                                        fg, msg,
-                                    ))
-                                })
-                                .warning("Please enter correct alias")
-                                .size(P1_SIZE)
-                                .padding(10),
-                            ),
-                    )
-                },
-            ))
-            .push(
+            .width(Length::Fill)
+            .into()
+    }
+
+    let mut col_content: Vec<Element<'a, Message>> =
+        vec![w_alias_title, w_alias_input, k_alias_title];
+
+    for (fg, name) in keys_aliases.iter() {
+        col_content.push(key_alias_entry(fg, name));
+    }
+
+    let last_row = Row::new()
+        .align_y(Alignment::Center)
+        .push(Space::with_width(Length::Fill))
+        .push_maybe(if updated {
+            Some(
                 Row::new()
                     .align_y(Alignment::Center)
-                    .push(Space::with_width(Length::Fill))
-                    .push_maybe(if updated {
-                        Some(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .push(icon::circle_check_icon().style(theme::text::success))
-                                .push(text("Updated").style(theme::text::success)),
-                        )
-                    } else {
-                        None
-                    })
-                    .push(if !processing && wallet_alias.valid {
-                        button::secondary(None, "Update")
-                            .on_press(Message::Settings(SettingsMessage::Save))
-                    } else {
-                        button::secondary(None, "Updating")
-                    }),
+                    .push(icon::circle_check_icon().style(theme::text::success))
+                    .push(text("Updated").style(theme::text::success)),
             )
-            .spacing(10),
+        } else {
+            None
+        })
+        .push(if !processing && wallet_alias.valid {
+            button::secondary(None, "Update").on_press(Message::Settings(SettingsMessage::Save))
+        } else {
+            button::secondary(None, "Updating")
+        });
+
+    col_content.push(last_row.into());
+
+    let alias_card = card::simple(
+        Column::from_vec(col_content)
+            .spacing(10)
+            .width(Length::Fill),
     )
     .width(Length::Fill);
 
@@ -1135,16 +1047,9 @@ pub fn wallet_settings<'a>(
         Column::new()
             .spacing(20)
             .push(header)
-            .push(descr)
-            .push(
-                card::simple(display_policy(
-                    descriptor.policy(),
-                    keys_aliases,
-                    provider_keys,
-                ))
-                .width(Length::Fill),
-            )
-            .push(aliases),
+            .push(descriptor_card)
+            .push(policy_card)
+            .push(alias_card),
     )
 }
 
@@ -1285,9 +1190,7 @@ fn display_policy<'a>(
     Column::new()
         .spacing(10)
         .push(text("The wallet policy:").bold())
-        .push(scrollable(col).direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new().width(5).scroller_width(5),
-        )))
+        .push(scrollable::horizontal_thin(col))
         .into()
 }
 
@@ -1336,40 +1239,46 @@ pub fn register_wallet_modal<'a>(
     chosen_hw: Option<usize>,
     registered: &HashSet<Fingerprint>,
 ) -> Element<'a, Message> {
+    let signers = hws
+        .iter()
+        .enumerate()
+        .fold(Column::new().spacing(10), |col, (i, hw)| {
+            col.push(device_list_entry(
+                hw,
+                HwRowMode::Registration {
+                    chosen: Some(i) == chosen_hw,
+                    processing,
+                    complete: hw
+                        .fingerprint()
+                        .map(|f| registered.contains(&f))
+                        .unwrap_or(false)
+                        || if let HardwareWallet::Supported { registered, .. } = hw {
+                            registered == &Some(true)
+                        } else {
+                            false
+                        },
+                    descriptor: None,
+                    device_must_support_taproot: false,
+                },
+                move || Message::SelectHardwareWallet(i),
+            ))
+        });
+
+    let card_content = Column::new()
+        .push(
+            Column::new()
+                .push(text("Select device:").bold().width(Length::Fill))
+                .spacing(10)
+                .push(signers)
+                .width(Length::Fill),
+        )
+        .spacing(20)
+        .width(Length::Fill)
+        .align_x(Alignment::Center);
+
     Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))
-        .push(card::simple(
-            Column::new()
-                .push(
-                    Column::new()
-                        .push(text("Select device:").bold().width(Length::Fill))
-                        .spacing(10)
-                        .push(hws.iter().enumerate().fold(
-                            Column::new().spacing(10),
-                            |col, (i, hw)| {
-                                col.push(hw::hw_list_view_for_registration(
-                                    i,
-                                    hw,
-                                    Some(i) == chosen_hw,
-                                    processing,
-                                    hw.fingerprint()
-                                        .map(|f| registered.contains(&f))
-                                        .unwrap_or(false)
-                                        || if let HardwareWallet::Supported { registered, .. } = hw
-                                        {
-                                            registered == &Some(true)
-                                        } else {
-                                            false
-                                        },
-                                ))
-                            },
-                        ))
-                        .width(Length::Fill),
-                )
-                .spacing(20)
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        ))
+        .push(card::simple(card_content))
         .width(Length::Fixed(500.0))
         .into()
 }

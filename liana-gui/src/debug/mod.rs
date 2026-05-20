@@ -22,13 +22,109 @@
 
 use std::{cell::Cell, sync::OnceLock};
 
-use iced::{widget::scrollable, Alignment, Length};
-use liana_ui::{component::text, theme, widget::*};
+use iced::{Alignment, Length};
+use liana_ui::{
+    component::{scrollable, text},
+    theme,
+    widget::*,
+};
 
 use crate::app::{cache::Cache, menu::Menu, view::Message as ViewMessage};
 
 pub mod badges;
+pub mod pill_styles;
+pub mod pills;
 pub mod texts;
+
+pub const DESIGN_SYSTEM: DebugStack = DebugStack {
+    name: "Design system",
+    menu: None,
+    #[rustfmt::skip]
+    pages: &[
+        &badges::ENTRY,
+        &pills::ENTRY,
+        &pill_styles::ENTRY,
+        &texts::ENTRY_LEGACY,
+        &texts::ENTRY_NEW,
+        &texts::ENTRY_THEMES,
+    ],
+};
+
+pub const HOME_PANEL: DebugStack = DebugStack {
+    name: "Home panel",
+    menu: Some(&HOME_MENU),
+    pages: &[],
+};
+
+pub const SEND_PANEL: DebugStack = DebugStack {
+    name: "Send panel",
+    menu: Some(&SEND_MENU),
+    pages: &[],
+};
+
+pub const RECEIVE_PANEL: DebugStack = DebugStack {
+    name: "Receive panel",
+    menu: Some(&RECEIVE_MENU),
+    pages: &[],
+};
+
+pub const PSBT_PANEL: DebugStack = DebugStack {
+    name: "PSBT",
+    menu: Some(&PSBTS_MENU),
+    pages: &[],
+};
+
+pub const RECOVERY_PANEL: DebugStack = DebugStack {
+    name: "Recovery",
+    menu: Some(&RECOVERY_MENU),
+    pages: &[],
+};
+
+pub const TRANSACTIONS_PANEL: DebugStack = DebugStack {
+    name: "Transactions",
+    menu: Some(&TRANSACTIONS_MENU),
+    pages: &[],
+};
+
+pub const COINS_PANEL: DebugStack = DebugStack {
+    name: "Coins",
+    menu: Some(&COINS_MENU),
+    pages: &[],
+};
+
+pub const SETTINGS_PANEL: DebugStack = DebugStack {
+    name: "Settings",
+    menu: Some(&SETTINGS_MENU),
+    pages: &[],
+};
+
+pub const HW_MODALS: DebugStack = DebugStack {
+    name: "HW modals",
+    menu: None,
+    pages: &[],
+};
+
+pub const INSTALLER_MODALS: DebugStack = DebugStack {
+    name: "Installer modals",
+    menu: None,
+    pages: &[],
+};
+
+/// All registered debug stacks, in navigation order. `Ctrl + D + ↑/↓`
+/// cycles through this slice (wrapping at both ends).
+pub const STACKS: &[&DebugStack] = &[
+    &DESIGN_SYSTEM,
+    &HOME_PANEL,
+    &SEND_PANEL,
+    &RECEIVE_PANEL,
+    &PSBT_PANEL,
+    &RECOVERY_PANEL,
+    &TRANSACTIONS_PANEL,
+    &COINS_PANEL,
+    &SETTINGS_PANEL,
+    &HW_MODALS,
+    &INSTALLER_MODALS,
+];
 
 /// Navigation hint shown in every debug page's chrome.
 pub const NAV_HINT: &str = "Ctrl + D + ←/→ pages · Ctrl + D + ↑/↓ stacks · Ctrl + D + Esc close";
@@ -305,93 +401,6 @@ pub struct DebugStack {
     pub pages: &'static [&'static DebugPageEntry],
 }
 
-pub const DESIGN_SYSTEM: DebugStack = DebugStack {
-    name: "Design system",
-    menu: None,
-    #[rustfmt::skip]
-    pages: &[
-        &badges::ENTRY,
-        &texts::ENTRY_CONSTRUCTORS,
-        &texts::ENTRY_THEMES,
-    ],
-};
-
-pub const HOME_PANEL: DebugStack = DebugStack {
-    name: "Home panel",
-    menu: Some(&HOME_MENU),
-    pages: &[],
-};
-
-pub const SEND_PANEL: DebugStack = DebugStack {
-    name: "Send panel",
-    menu: Some(&SEND_MENU),
-    pages: &[],
-};
-
-pub const RECEIVE_PANEL: DebugStack = DebugStack {
-    name: "Receive panel",
-    menu: Some(&RECEIVE_MENU),
-    pages: &[],
-};
-
-pub const PSBT_PANEL: DebugStack = DebugStack {
-    name: "PSBT",
-    menu: Some(&PSBTS_MENU),
-    pages: &[],
-};
-
-pub const RECOVERY_PANEL: DebugStack = DebugStack {
-    name: "Recovery",
-    menu: Some(&RECOVERY_MENU),
-    pages: &[],
-};
-
-pub const TRANSACTIONS_PANEL: DebugStack = DebugStack {
-    name: "Transactions",
-    menu: Some(&TRANSACTIONS_MENU),
-    pages: &[],
-};
-
-pub const COINS_PANEL: DebugStack = DebugStack {
-    name: "Coins",
-    menu: Some(&COINS_MENU),
-    pages: &[],
-};
-
-pub const SETTINGS_PANEL: DebugStack = DebugStack {
-    name: "Settings",
-    menu: Some(&SETTINGS_MENU),
-    pages: &[],
-};
-
-pub const HW_MODALS: DebugStack = DebugStack {
-    name: "HW modals",
-    menu: None,
-    pages: &[],
-};
-
-pub const INSTALLER_MODALS: DebugStack = DebugStack {
-    name: "Installer modals",
-    menu: None,
-    pages: &[],
-};
-
-/// All registered debug stacks, in navigation order. `Ctrl + D + ↑/↓`
-/// cycles through this slice (wrapping at both ends).
-pub const STACKS: &[&DebugStack] = &[
-    &DESIGN_SYSTEM,
-    &HOME_PANEL,
-    &SEND_PANEL,
-    &RECEIVE_PANEL,
-    &PSBT_PANEL,
-    &RECOVERY_PANEL,
-    &TRANSACTIONS_PANEL,
-    &COINS_PANEL,
-    &SETTINGS_PANEL,
-    &HW_MODALS,
-    &INSTALLER_MODALS,
-];
-
 /// Render the page at `(stack_idx, page_idx)` within the given `stacks`
 /// slice. The slice is supplied by the host binary so that downstream
 /// crates (`liana-business`, `business-installer`) can extend the default
@@ -418,7 +427,7 @@ pub fn render_location(
         if let Some(menu) = stack.menu {
             return dashboard_chrome(menu, stack.name, placeholder);
         }
-        Container::new(scrollable(
+        Container::new(scrollable::vertical(
             Column::new()
                 .spacing(30)
                 .padding(30)
@@ -492,7 +501,7 @@ where
                 Row::new()
                     .spacing(20)
                     .align_y(Alignment::Center)
-                    .push(Container::new(sample.into()).width(Length::Fixed(160.0)))
+                    .push(Container::new(sample.into()))
                     .push(text::p1_regular(path)),
             )
         },
@@ -510,7 +519,7 @@ pub fn debug_chrome<T>(
 where
     T: 'static,
 {
-    Container::new(scrollable(
+    Container::new(scrollable::vertical(
         Column::new()
             .spacing(30)
             .padding(30)

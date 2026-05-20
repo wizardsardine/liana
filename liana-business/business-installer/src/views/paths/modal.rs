@@ -14,7 +14,8 @@ use liana_ui::{
         button::{btn_cancel, btn_save},
         form,
         modal::{modal_view, none_fn, ModalWidth},
-        pick_list, text,
+        pick_list,
+        text::{self, short_email, truncate},
     },
     theme,
     widget::*,
@@ -83,15 +84,26 @@ pub fn edit_path_modal_view<'a>(
         let mut col = Column::new().spacing(8);
         for (key_id, key) in state.app.keys.iter() {
             let is_selected = modal_state.selected_key_ids.contains(key_id);
-            let name = if key.alias.is_empty() {
+            let mut name = if key.alias.is_empty() {
                 format!("Key {key_id}")
             } else {
                 key.alias.clone()
             };
-            let identity_str = key.identity.to_string();
+            let mut identity_str = key.identity.to_string();
             let label = if identity_str.is_empty() {
-                name
+                truncate(&name, 40)
             } else {
+                let mut name_len = name.chars().count();
+                let id_len = identity_str.chars().count();
+                if (name_len + id_len) > 50 {
+                    if name_len > 20 {
+                        name_len = 20;
+                        name = truncate(&name, name_len);
+                    }
+                    if (name_len + id_len) > 50 {
+                        identity_str = short_email(&identity_str, 30);
+                    }
+                }
                 format!("{name} ({identity_str})")
             };
             col = col.push(

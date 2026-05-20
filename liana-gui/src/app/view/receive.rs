@@ -4,7 +4,7 @@ use iced::{
     alignment::Horizontal,
     widget::{
         qr_code::{self, QRCode},
-        scrollable, Button, Space,
+        Button, Space,
     },
     Alignment, Length,
 };
@@ -17,7 +17,7 @@ use liana::miniscript::bitcoin::{
 
 use liana_ui::{
     component::{
-        button, card, form,
+        button, card, form, scrollable,
         text::{self, *},
     },
     icon, theme,
@@ -52,20 +52,11 @@ fn address_card<'a>(
             .push(
                 Row::new()
                     .push(
-                        Container::new(
-                            scrollable(
-                                Column::new()
-                                    .push(Space::with_height(Length::Fixed(10.0)))
-                                    .push(p2_regular(address).small().style(theme::text::secondary))
-                                    // Space between the address and the scrollbar
-                                    .push(Space::with_height(Length::Fixed(10.0))),
-                            )
-                            .direction(
-                                scrollable::Direction::Horizontal(
-                                    scrollable::Scrollbar::new().width(2).scroller_width(2),
-                                ),
-                            ),
-                        )
+                        Container::new(scrollable::horizontal_thin(
+                            Column::new()
+                                .push(Space::with_height(Length::Fixed(10.0)))
+                                .push(p2_regular(address).small().style(theme::text::secondary)),
+                        ))
                         .width(Length::Fill),
                     )
                     .push(
@@ -193,31 +184,20 @@ pub fn receive<'a>(
                                     .width(Length::Fixed(350.0)),
                                 )
                                 .push(
-                                    Container::new(
-                                        scrollable(
-                                            Column::new()
-                                                .push(Space::with_height(Length::Fixed(10.0)))
-                                                .push(
-                                                    text(
-                                                        prev_labels
-                                                            .get(&address.to_string())
-                                                            .cloned()
-                                                            .unwrap_or_default(),
-                                                    )
-                                                    .small()
-                                                    .style(theme::text::secondary),
+                                    Container::new(scrollable::horizontal_thin(
+                                        Column::new()
+                                            .push(Space::with_height(Length::Fixed(10.0)))
+                                            .push(
+                                                text(
+                                                    prev_labels
+                                                        .get(&address.to_string())
+                                                        .cloned()
+                                                        .unwrap_or_default(),
                                                 )
-                                                // Space between the label and the scrollbar
-                                                .push(Space::with_height(Length::Fixed(10.0))),
-                                        )
-                                        .direction(
-                                            scrollable::Direction::Horizontal(
-                                                scrollable::Scrollbar::new()
-                                                    .width(2)
-                                                    .scroller_width(2),
+                                                .small()
+                                                .style(theme::text::secondary),
                                             ),
-                                        ),
-                                    )
+                                    ))
                                     .padding(10)
                                     .width(Length::Fill),
                                 )
