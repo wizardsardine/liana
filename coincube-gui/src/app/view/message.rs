@@ -1328,6 +1328,24 @@ pub enum HomeMessage {
     BreezOnchainAddress(String),
     RefreshLiquidBalance,
     RefreshSparkBalance,
+    /// Bridge has emitted `Event::Synced`. The next (or already
+    /// in-flight) Spark `get_info` response can be trusted — until
+    /// this fires, the value the SDK returns may be whatever it
+    /// persisted from a previous session, before incremental sync.
+    SparkSyncedObserved,
+    /// Tick from the fallback poll subscription that runs while the
+    /// Spark card is in its loading state. Bumps the retry counter
+    /// and re-fetches the balance; force-releases the loading UI if
+    /// the counter hits its cap without ever observing `Synced`.
+    /// Distinct from `RefreshSparkBalance` (which is dispatched on
+    /// every SparkEvent) so SDK event bursts don't burn through the
+    /// retry budget.
+    SparkLoadRetry,
+    /// `load_spark_balance`'s `get_info` RPC failed (bridge unreachable
+    /// or timed out). Clears the in-flight guard so a subsequent
+    /// refresh / retry can fire. Soft-fail: the previously displayed
+    /// balance, if any, is left intact.
+    SparkLoadFailed,
     SignVaultToLiquidTx,
     TransferPsbtReady(TransferPsbtResult),
     TransferSigningComplete,
