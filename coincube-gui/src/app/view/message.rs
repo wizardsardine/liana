@@ -155,6 +155,14 @@ pub enum Message {
     LiquidSettings(LiquidSettingsMessage),
     PreselectPayment(DomainPayment),
     SetAssetFilter(crate::app::state::liquid::transactions::AssetFilter),
+    /// Liquid Transactions: navigate to previous page.
+    LiquidPrevPage,
+    /// Liquid Transactions: navigate to next page.
+    LiquidNextPage,
+    /// Vault Transactions: navigate to previous page.
+    VaultPrevPage,
+    /// Vault Transactions: navigate to next page.
+    VaultNextPage,
     ShowError(String),
     ShowSuccess(String),
     ShowToast(log::Level, String),

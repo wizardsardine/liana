@@ -15,7 +15,11 @@ use coincube_ui::{
 use coincubed::commands::CoinStatus;
 use iced::Task;
 
-pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
+/// Bump to a larger value (e.g. 50) once Prev/Next pagination is verified
+/// end-to-end on real wallets. Kept low during rollout so QA can exercise
+/// pagination without needing 50+ transactions in a single wallet. Matches
+/// the PAGE_SIZE used by the Spark and Liquid Transactions panels.
+pub const HISTORY_EVENT_PAGE_SIZE: u64 = 10;
 
 use crate::{
     app::{
@@ -48,13 +52,26 @@ pub enum VaultTransactionsModal {
 
 pub struct VaultTransactionsPanel {
     wallet: Arc<Wallet>,
-    txs: Vec<HistoryTransaction>,
+    /// Cached pages keyed by page index. `page_cache[i]` holds the
+    /// transactions for page `i` (Prev navigation re-reads from cache so
+    /// there's no need to invert the daemon's blocktime cursor). Cleared
+    /// on `reload`.
+    page_cache: Vec<Vec<HistoryTransaction>>,
+    /// Pending (unconfirmed) txs from `list_pending_txs()`, fetched at
+    /// reload time and only shown on page 0.
+    pending_txs: Vec<HistoryTransaction>,
+    /// Materialised view of the current page (pending + cache[0] on page
+    /// 0, just cache[N] otherwise). Recomputed via `refresh_displayed`
+    /// whenever the displayed page or its underlying data changes, so the
+    /// view function can borrow it directly with `&self`'s lifetime.
+    displayed_txs: Vec<HistoryTransaction>,
     labels_edited: LabelsEdited,
     selected_tx: Option<HistoryTransaction>,
     warning: Option<Error>,
     modal: VaultTransactionsModal,
     is_last_page: bool,
     processing: bool,
+    current_page: u32,
 }
 
 impl VaultTransactionsPanel {
@@ -62,13 +79,34 @@ impl VaultTransactionsPanel {
         Self {
             wallet,
             selected_tx: None,
-            txs: Vec::new(),
+            page_cache: Vec::new(),
+            pending_txs: Vec::new(),
+            displayed_txs: Vec::new(),
             labels_edited: LabelsEdited::default(),
             warning: None,
             modal: VaultTransactionsModal::None,
             is_last_page: false,
             processing: false,
+            current_page: 0,
         }
+    }
+
+    /// Recompute `displayed_txs` from the current page + pending list.
+    /// Call after any change to `current_page`, `page_cache`, or
+    /// `pending_txs`.
+    fn refresh_displayed(&mut self) {
+        let page = self
+            .page_cache
+            .get(self.current_page as usize)
+            .cloned()
+            .unwrap_or_default();
+        self.displayed_txs = if self.current_page == 0 {
+            let mut combined = self.pending_txs.clone();
+            combined.extend(page);
+            combined
+        } else {
+            page
+        };
     }
 
     pub fn preselect(&mut self, tx: HistoryTransaction) {
@@ -96,7 +134,8 @@ impl State for VaultTransactionsPanel {
             let content = view::vault::transactions::transactions_view(
                 menu,
                 cache,
-                &self.txs,
+                &self.displayed_txs,
+                self.current_page,
                 self.is_last_page,
                 self.processing,
             );
@@ -124,10 +163,14 @@ impl State for VaultTransactionsPanel {
                     self.warning = Some(e);
                     return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
-                Ok(txs) => {
+                Ok((pending_txs, page_txs)) => {
                     self.warning = None;
-                    self.txs = txs;
-                    self.is_last_page = (self.txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    self.pending_txs = pending_txs;
+                    self.is_last_page = (page_txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    self.page_cache = vec![page_txs];
+                    self.current_page = 0;
+                    self.processing = false;
+                    self.refresh_displayed();
                 }
             },
             Message::HistoryTransactionsExtension(res) => match res {
@@ -137,26 +180,26 @@ impl State for VaultTransactionsPanel {
                     self.warning = Some(e);
                     return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
-                Ok(txs) => {
+                Ok(mut txs) => {
                     self.processing = false;
                     self.warning = None;
-                    self.is_last_page = (txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
-                    if let Some(tx) = txs.first() {
-                        if let Some(position) = self.txs.iter().position(|tx2| tx2.txid == tx.txid)
-                        {
-                            let len = self.txs.len();
-                            for tx in txs {
-                                if !self.txs[position..len]
-                                    .iter()
-                                    .any(|tx2| tx2.txid == tx.txid)
-                                {
-                                    self.txs.push(tx);
-                                }
-                            }
-                        } else {
-                            self.txs.extend(txs);
-                        }
+                    // The cursor we used (last tx's blocktime) is inclusive,
+                    // so the response can repeat txs that already appeared on
+                    // the current page. Drop those by txid before storing the
+                    // next page, then advance.
+                    if let Some(prev_page) = self.page_cache.get(self.current_page as usize) {
+                        let prev_ids: std::collections::HashSet<_> =
+                            prev_page.iter().map(|t| t.tx.compute_txid()).collect();
+                        txs.retain(|t| !prev_ids.contains(&t.tx.compute_txid()));
                     }
+                    self.is_last_page = (txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    self.current_page += 1;
+                    if (self.current_page as usize) < self.page_cache.len() {
+                        self.page_cache[self.current_page as usize] = txs;
+                    } else {
+                        self.page_cache.push(txs);
+                    }
+                    self.refresh_displayed();
                 }
             },
             Message::RbfModal(tx, is_cancel, res) => match res {
@@ -175,7 +218,7 @@ impl State for VaultTransactionsPanel {
                 return self.reload(Some(daemon), Some(self.wallet.clone()));
             }
             Message::View(view::Message::Select(i)) => {
-                self.selected_tx = self.txs.get(i).cloned();
+                self.selected_tx = self.displayed_txs.get(i).cloned();
                 // Clear modal if it's for a different tx.
                 if let VaultTransactionsModal::CreateRbf(modal) = &self.modal {
                     if Some(modal.tx.tx.compute_txid())
@@ -227,8 +270,9 @@ impl State for VaultTransactionsPanel {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    self.txs
+                    self.pending_txs
                         .iter_mut()
+                        .chain(self.page_cache.iter_mut().flat_map(|p| p.iter_mut()))
                         .map(|tx| tx as &mut dyn LabelsLoader)
                         .chain(
                             self.selected_tx
@@ -246,45 +290,77 @@ impl State for VaultTransactionsPanel {
                     }
                 };
             }
-            Message::View(view::Message::Next) => {
-                if let Some(last) = self.txs.last() {
-                    let daemon = daemon.clone();
-                    let last_tx_date = last.time.unwrap();
-                    self.processing = true;
-                    return Task::perform(
-                        async move {
-                            let mut limit = HISTORY_EVENT_PAGE_SIZE;
-                            let mut txs =
-                                daemon.list_history_txs(0_u32, last_tx_date, limit).await?;
-
-                            // because gethistory cursor is inclusive and use blocktime
-                            // multiple txs can occur in the same block.
-                            // If there is more tx in the same block that the
-                            // HISTORY_EVENT_PAGE_SIZE they can not be retrieved by changing
-                            // the cursor value (blocktime) but by increasing the limit.
-                            //
-                            // 1. Check if the txs retrieved have all the same blocktime
-                            let blocktime = if let Some(tx) = txs.first() {
-                                tx.time
-                            } else {
-                                return Ok(txs);
-                            };
-
-                            // 2. Retrieve a larger batch of tx with the same cursor but
-                            //    a larger limit.
-                            while !txs.iter().any(|evt| evt.time != blocktime)
-                                && txs.len() as u64 == limit
-                            {
-                                // increments of the equivalent of one page more.
-                                limit += HISTORY_EVENT_PAGE_SIZE;
-                                txs = daemon.list_history_txs(0, last_tx_date, limit).await?;
-                            }
-                            txs.sort_by(|a, b| a.compare(b));
-                            Ok(txs)
-                        },
-                        Message::HistoryTransactionsExtension,
-                    );
+            Message::View(view::Message::VaultPrevPage) => {
+                if self.current_page > 0 && !self.processing {
+                    self.current_page -= 1;
+                    self.is_last_page = false;
+                    self.refresh_displayed();
                 }
+            }
+            Message::View(view::Message::VaultNextPage) => {
+                if self.is_last_page || self.processing {
+                    return Task::none();
+                }
+                let next_page = (self.current_page as usize) + 1;
+                // Already cached — jump straight there. Avoids a redundant
+                // round-trip when the user pages back and forth.
+                if next_page < self.page_cache.len() {
+                    self.current_page += 1;
+                    self.is_last_page =
+                        (self.page_cache[next_page].len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    self.refresh_displayed();
+                    return Task::none();
+                }
+                // Need to fetch. Cursor is the blocktime of the last
+                // confirmed tx on the current page (mirrors the original
+                // "See more" forward-scan logic, including the
+                // duplicate-blocktime overflow handling — see comment in
+                // the async block).
+                let current_page_txs = self
+                    .page_cache
+                    .get(self.current_page as usize)
+                    .cloned()
+                    .unwrap_or_default();
+                let Some(last) = current_page_txs.last() else {
+                    return Task::none();
+                };
+                let Some(last_tx_date) = last.time else {
+                    return Task::none();
+                };
+                let daemon = daemon.clone();
+                self.processing = true;
+                return Task::perform(
+                    async move {
+                        let mut limit = HISTORY_EVENT_PAGE_SIZE;
+                        let mut txs = daemon.list_history_txs(0_u32, last_tx_date, limit).await?;
+
+                        // because gethistory cursor is inclusive and use blocktime
+                        // multiple txs can occur in the same block.
+                        // If there is more tx in the same block that the
+                        // HISTORY_EVENT_PAGE_SIZE they can not be retrieved by changing
+                        // the cursor value (blocktime) but by increasing the limit.
+                        //
+                        // 1. Check if the txs retrieved have all the same blocktime
+                        let blocktime = if let Some(tx) = txs.first() {
+                            tx.time
+                        } else {
+                            return Ok(txs);
+                        };
+
+                        // 2. Retrieve a larger batch of tx with the same cursor but
+                        //    a larger limit.
+                        while !txs.iter().any(|evt| evt.time != blocktime)
+                            && txs.len() as u64 == limit
+                        {
+                            // increments of the equivalent of one page more.
+                            limit += HISTORY_EVENT_PAGE_SIZE;
+                            txs = daemon.list_history_txs(0, last_tx_date, limit).await?;
+                        }
+                        txs.sort_by(|a, b| a.compare(b));
+                        Ok(txs)
+                    },
+                    Message::HistoryTransactionsExtension,
+                );
             }
             Message::View(view::Message::ImportExport(ImportExportMessage::Open)) => {
                 if let VaultTransactionsModal::None = &self.modal {
@@ -331,6 +407,12 @@ impl State for VaultTransactionsPanel {
             return Task::none();
         };
         self.selected_tx = None;
+        self.current_page = 0;
+        self.is_last_page = false;
+        self.processing = true;
+        self.page_cache.clear();
+        self.pending_txs.clear();
+        self.displayed_txs.clear();
         let now: u32 = now().as_secs().try_into().unwrap();
         Task::batch(vec![Task::perform(
             async move {
@@ -339,9 +421,8 @@ impl State for VaultTransactionsPanel {
                     .await?;
                 txs.sort_by(|a, b| a.compare(b));
 
-                let mut pending_txs = daemon.list_pending_txs().await?;
-                pending_txs.extend(txs);
-                Ok(pending_txs)
+                let pending_txs = daemon.list_pending_txs().await?;
+                Ok((pending_txs, txs))
             },
             Message::HistoryTransactions,
         )])

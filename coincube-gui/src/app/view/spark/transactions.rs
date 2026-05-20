@@ -27,6 +27,7 @@ use coincube_ui::{
     component::{
         amount::{amount_with_size_and_unit, BitcoinDisplayUnit},
         button, card,
+        pagination::pagination_controls,
         quote_display::{self, Quote, QuoteDisplayProps},
         text::*,
         transaction::{TransactionDirection, TransactionListItem},
@@ -36,7 +37,10 @@ use coincube_ui::{
     theme,
     widget::*,
 };
-use iced::{widget::Space, Alignment, Length};
+use iced::{
+    widget::{scrollable, Space},
+    Alignment, Length,
+};
 
 use crate::app::menu::{Menu, SparkSubMenu};
 use crate::app::view::message::Message;
@@ -61,6 +65,9 @@ pub struct SparkTransactionsView<'a> {
     pub show_direction_badges: bool,
     pub empty_state_quote: &'a Quote,
     pub empty_state_image_handle: &'a image::Handle,
+    pub current_page: u32,
+    pub is_last_page: bool,
+    pub processing: bool,
 }
 
 impl<'a> SparkTransactionsView<'a> {
@@ -104,7 +111,10 @@ impl<'a> SparkTransactionsView<'a> {
             SparkTransactionsStatus::Loaded(_) => {}
         }
 
-        if self.recent_transactions.is_empty() {
+        // On page 0 with no rows we render the empty state; on later
+        // pages an empty response just means we've paged past the end, so
+        // keep the list shell + Prev control visible.
+        if self.recent_transactions.is_empty() && self.current_page == 0 {
             // Same empty-state layout as Liquid, minus the Liquid copy.
             content = content.push(
                 Column::new()
@@ -147,7 +157,7 @@ impl<'a> SparkTransactionsView<'a> {
             return content.into();
         }
 
-        content = content.push(self.recent_transactions.iter().enumerate().fold(
+        let list = self.recent_transactions.iter().enumerate().fold(
             Column::new().spacing(10),
             |col, (i, tx)| {
                 col.push(transaction_row(
@@ -158,6 +168,16 @@ impl<'a> SparkTransactionsView<'a> {
                     self.show_direction_badges,
                 ))
             },
+        );
+
+        content = content.push(scrollable(list).height(Length::Fill));
+        content = content.push(pagination_controls(
+            Message::SparkTransactions(crate::app::view::spark::SparkTransactionsMessage::PrevPage),
+            Message::SparkTransactions(crate::app::view::spark::SparkTransactionsMessage::NextPage),
+            self.current_page > 0,
+            !self.is_last_page,
+            self.processing,
+            self.current_page,
         ));
 
         content.into()

@@ -31,6 +31,11 @@ use crate::app::view::{self, FiatAmountConverter};
 use crate::app::wallets::SparkBackend;
 use crate::export::{ImportExportMessage, ImportExportState};
 
+/// Bump to a larger value (e.g. 50) once Prev/Next pagination is verified
+/// end-to-end on real wallets. Kept low during rollout so QA can exercise
+/// pagination without needing 50+ transactions in a single wallet.
+pub const PAGE_SIZE: u32 = 10;
+
 #[derive(Debug)]
 enum SparkTransactionsModal {
     None,
@@ -51,6 +56,9 @@ pub struct SparkTransactions {
     /// constructed so repeated reloads don't re-randomize the quote.
     empty_state_quote: Quote,
     empty_state_image_handle: image::Handle,
+    current_page: u32,
+    is_last_page: bool,
+    processing: bool,
 }
 
 impl SparkTransactions {
@@ -67,7 +75,28 @@ impl SparkTransactions {
             selected_payment: None,
             empty_state_quote,
             empty_state_image_handle,
+            current_page: 0,
+            is_last_page: false,
+            processing: false,
         }
+    }
+
+    fn fetch_page(&self) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        let offset = self.current_page.saturating_mul(PAGE_SIZE);
+        Task::perform(
+            async move { backend.list_payments(Some(PAGE_SIZE), Some(offset)).await },
+            |result| match result {
+                Ok(list) => Message::View(crate::app::view::Message::SparkTransactions(
+                    crate::app::view::SparkTransactionsMessage::DataLoaded(list.payments),
+                )),
+                Err(e) => Message::View(crate::app::view::Message::SparkTransactions(
+                    crate::app::view::SparkTransactionsMessage::Error(e.to_string()),
+                )),
+            },
+        )
     }
 
     fn rebuild_rows(&mut self, cache: &Cache) {
@@ -132,6 +161,9 @@ impl State for SparkTransactions {
                 show_direction_badges: cache.show_direction_badges,
                 empty_state_quote: &self.empty_state_quote,
                 empty_state_image_handle: &self.empty_state_image_handle,
+                current_page: self.current_page,
+                is_last_page: self.is_last_page,
+                processing: self.processing,
             }
             .render(),
         );
@@ -171,22 +203,15 @@ impl State for SparkTransactions {
         _daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
         _wallet: Option<Arc<crate::app::wallet::Wallet>>,
     ) -> Task<Message> {
-        let Some(backend) = self.backend.clone() else {
+        if self.backend.is_none() {
             return Task::none();
-        };
+        }
         self.loading = true;
         self.error = None;
-        Task::perform(
-            async move { backend.list_payments(Some(100)).await },
-            |result| match result {
-                Ok(list) => Message::View(crate::app::view::Message::SparkTransactions(
-                    crate::app::view::SparkTransactionsMessage::DataLoaded(list.payments),
-                )),
-                Err(e) => Message::View(crate::app::view::Message::SparkTransactions(
-                    crate::app::view::SparkTransactionsMessage::Error(e.to_string()),
-                )),
-            },
-        )
+        self.current_page = 0;
+        self.is_last_page = false;
+        self.processing = false;
+        self.fetch_page()
     }
 
     fn update(
@@ -199,13 +224,31 @@ impl State for SparkTransactions {
             Message::View(view::Message::SparkTransactions(msg)) => match msg {
                 view::SparkTransactionsMessage::DataLoaded(payments) => {
                     self.loading = false;
+                    self.processing = false;
+                    self.is_last_page = (payments.len() as u32) < PAGE_SIZE;
                     self.payments = payments;
                     self.error = None;
                     self.rebuild_rows(cache);
                 }
                 view::SparkTransactionsMessage::Error(err) => {
                     self.loading = false;
+                    self.processing = false;
                     self.error = Some(err);
+                }
+                view::SparkTransactionsMessage::PrevPage => {
+                    if self.current_page > 0 && !self.processing {
+                        self.current_page -= 1;
+                        self.is_last_page = false;
+                        self.processing = true;
+                        return self.fetch_page();
+                    }
+                }
+                view::SparkTransactionsMessage::NextPage => {
+                    if !self.is_last_page && !self.processing {
+                        self.current_page += 1;
+                        self.processing = true;
+                        return self.fetch_page();
+                    }
                 }
                 view::SparkTransactionsMessage::Select(idx) => {
                     self.selected_payment = self.recent_transactions.get(idx).cloned();

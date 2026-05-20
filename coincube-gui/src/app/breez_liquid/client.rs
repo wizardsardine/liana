@@ -444,16 +444,26 @@ impl BreezClient {
     pub async fn list_payments(
         &self,
         limit: Option<u32>,
+        offset: Option<u32>,
+        asset_id: Option<String>,
     ) -> Result<Vec<breez::Payment>, BreezError> {
+        // `details = Liquid { asset_id }` is the SDK's only per-asset filter,
+        // and it restricts the result to Liquid-asset payments (i.e. Lightning
+        // and on-chain Bitcoin payments are excluded). The Transactions panel
+        // uses this for the L-BTC and USDt tabs; the "All" tab passes None.
+        let details = asset_id.map(|id| breez::ListPaymentDetails::Liquid {
+            asset_id: Some(id),
+            destination: None,
+        });
         self.get_sdk()?
             .list_payments(&breez::ListPaymentsRequest {
                 filters: None,
                 states: None,
                 from_timestamp: None,
                 to_timestamp: None,
-                offset: None,
+                offset,
                 limit,
-                details: None,
+                details,
                 sort_ascending: Some(false), // Most recent first
             })
             .await

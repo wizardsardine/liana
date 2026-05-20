@@ -11,6 +11,7 @@ use coincube_ui::{
     component::{
         amount::DisplayAmount,
         button, card, form,
+        pagination::pagination_controls,
         quote_display::{self, Quote, QuoteDisplayProps},
         text::*,
         transaction::{TransactionDirection, TransactionListItem},
@@ -123,6 +124,9 @@ pub fn liquid_transactions_view<'a>(
     show_direction_badges: bool,
     empty_state_quote: &'a Quote,
     empty_state_image_handle: &'a image::Handle,
+    current_page: u32,
+    is_last_page: bool,
+    processing: bool,
 ) -> Element<'a, Message> {
     let mut content = Column::new().spacing(20).width(Length::Fill);
 
@@ -165,7 +169,10 @@ pub fn liquid_transactions_view<'a>(
         content = content.push(filter_row);
     }
 
-    if payments.is_empty() {
+    // On page 0 with no rows we render the empty state; on later pages an
+    // empty response just means we've paged past the end — keep the list
+    // shell and pagination controls visible so the user can Prev back.
+    if payments.is_empty() && current_page == 0 {
         // Empty state with Kage quote
         content = content.push(
             Column::new()
@@ -202,24 +209,32 @@ pub fn liquid_transactions_view<'a>(
                 ),
         );
     } else {
-        // Transaction list
-        content = content.push(
-            Column::new()
-                .spacing(10)
-                .push(payments.iter().enumerate().fold(
-                    Column::new().spacing(10),
-                    |col, (i, payment)| {
-                        col.push(transaction_row(
-                            i,
-                            payment,
-                            fiat_converter,
-                            bitcoin_unit,
-                            usdt_id,
-                            show_direction_badges,
-                        ))
-                    },
-                )),
-        );
+        // Transaction list — wrapped in a scrollable so a full page of rows
+        // stays bounded to the panel viewport instead of pushing the
+        // pagination controls (and the refundables card) off-screen.
+        let list =
+            payments
+                .iter()
+                .enumerate()
+                .fold(Column::new().spacing(10), |col, (i, payment)| {
+                    col.push(transaction_row(
+                        i,
+                        payment,
+                        fiat_converter,
+                        bitcoin_unit,
+                        usdt_id,
+                        show_direction_badges,
+                    ))
+                });
+        content = content.push(scrollable(list).height(Length::Fill));
+        content = content.push(pagination_controls(
+            Message::LiquidPrevPage,
+            Message::LiquidNextPage,
+            current_page > 0,
+            !is_last_page,
+            processing,
+            current_page,
+        ));
     }
 
     // Refundables are always BTC → L-BTC swap refunds, so they only belong

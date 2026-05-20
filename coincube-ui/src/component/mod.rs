@@ -7,6 +7,7 @@ pub mod form;
 pub mod hw;
 pub mod modal;
 pub mod notification;
+pub mod pagination;
 pub mod quote_display;
 pub mod spinner;
 pub mod tabs;

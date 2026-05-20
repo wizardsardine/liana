@@ -637,7 +637,7 @@ pub async fn export_spark_payments(
     file.write_all(header.as_bytes())?;
 
     let list = spark_backend
-        .list_payments(None)
+        .list_payments(None, None)
         .await
         .map_err(|e| Error::Daemon(e.to_string()))?;
 
@@ -741,7 +741,7 @@ pub async fn export_liquid_payments(
     // short-lived `LiquidBackend` just to get the domain read API.
     let backend = LiquidBackend::new(breez_client);
     let payments = backend
-        .list_payments(None)
+        .list_payments(None, None, None)
         .await
         .map_err(|e| Error::Daemon(e.to_string()))?;
 

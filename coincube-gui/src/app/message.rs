@@ -63,7 +63,9 @@ pub enum Message {
     StartRescan(Result<(), Error>),
     HardwareWallets(HardwareWalletMessage),
     HistoryTransactionsExtension(Result<Vec<HistoryTransaction>, Error>),
-    HistoryTransactions(Result<Vec<HistoryTransaction>, Error>),
+    /// Initial Vault transactions page-0 fetch result.
+    /// Tuple: `(pending_txs, page_0_confirmed_txs)`.
+    HistoryTransactions(Result<(Vec<HistoryTransaction>, Vec<HistoryTransaction>), Error>),
     Payments(Result<Vec<Payment>, Error>),
     /// Extension of payments for pagination.
     /// Tuple contains (Vec<Payment>, u64) where the u64 is the actual page limit used

@@ -117,7 +117,7 @@ impl State for SparkOverview {
                 let backend = backend.clone();
                 async move {
                     let info = backend.get_info().await;
-                    let payments = backend.list_payments(Some(20)).await;
+                    let payments = backend.list_payments(Some(20), None).await;
                     (info, payments)
                 }
             },

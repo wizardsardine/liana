@@ -215,12 +215,10 @@ impl SparkClient {
     pub async fn list_payments(
         &self,
         limit: Option<u32>,
+        offset: Option<u32>,
     ) -> Result<ListPaymentsOk, SparkClientError> {
         match self
-            .request(Method::ListPayments(ListPaymentsParams {
-                limit,
-                offset: Some(0),
-            }))
+            .request(Method::ListPayments(ListPaymentsParams { limit, offset }))
             .await?
         {
             OkPayload::ListPayments(list) => Ok(list),

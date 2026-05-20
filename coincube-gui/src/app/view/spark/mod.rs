@@ -66,6 +66,10 @@ pub enum SparkTransactionsMessage {
     SendBtc,
     /// Empty-state navigation: "Receive sats" button.
     ReceiveBtc,
+    /// Go to the previous page in the paginated list.
+    PrevPage,
+    /// Go to the next page in the paginated list.
+    NextPage,
 }
 
 /// View-level messages for the Spark Settings panel.

@@ -10,7 +10,7 @@ use coincube_ui::component::quote_display::{self, Quote};
 use coincube_ui::widget::{Column, Element};
 use iced::{widget::image, Task};
 
-use crate::app::breez_liquid::assets::usdt_asset_id;
+use crate::app::breez_liquid::assets::{lbtc_asset_id, usdt_asset_id};
 use crate::app::view::FeeratePriority;
 use crate::app::wallets::{
     DomainPayment, DomainPaymentDetails, DomainPaymentDirection, DomainRefundableSwap,
@@ -39,6 +39,11 @@ pub struct InFlightRefund {
 /// `refund_onchain_tx` broadcast and the corresponding `RefundCompleted`
 /// message.
 const IN_FLIGHT_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Bump to a larger value (e.g. 50) once Prev/Next pagination is verified
+/// end-to-end on real wallets. Kept low during rollout so QA can exercise
+/// pagination without needing 50+ transactions per asset filter.
+pub const PAGE_SIZE: u32 = 10;
 
 #[derive(Debug)]
 enum LiquidTransactionsModal {
@@ -77,6 +82,9 @@ pub struct LiquidTransactions {
     pending_vault_refund_id: Option<u64>,
     empty_state_quote: Quote,
     empty_state_image_handle: image::Handle,
+    current_page: u32,
+    is_last_page: bool,
+    processing: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,7 +118,40 @@ impl LiquidTransactions {
             pending_vault_refund_id: None,
             empty_state_quote,
             empty_state_image_handle,
+            current_page: 0,
+            is_last_page: false,
+            processing: false,
         }
+    }
+
+    /// Asset id to pass to the server-side filter for the active tab.
+    /// `All` returns `None` (server returns every payment type / asset).
+    /// `LbtcOnly` / `UsdtOnly` return the matching Liquid asset id, which
+    /// the SDK applies via `ListPaymentsRequest.details = Liquid { asset_id }`
+    /// — note that this narrows the result to Liquid-asset payments only, so
+    /// Lightning and on-chain Bitcoin payments no longer appear under the
+    /// L-BTC tab (they remain visible under "All").
+    fn active_filter_asset_id(&self) -> Option<String> {
+        let network = self.breez_client.network();
+        match self.asset_filter {
+            AssetFilter::All => None,
+            AssetFilter::LbtcOnly => lbtc_asset_id(network).map(|s| s.to_string()),
+            AssetFilter::UsdtOnly => usdt_asset_id(network).map(|s| s.to_string()),
+        }
+    }
+
+    fn fetch_page(&self) -> Task<Message> {
+        let client = self.breez_client.clone();
+        let offset = self.current_page.saturating_mul(PAGE_SIZE);
+        let asset_id = self.active_filter_asset_id();
+        Task::perform(
+            async move {
+                client
+                    .list_payments(Some(PAGE_SIZE), Some(offset), asset_id)
+                    .await
+            },
+            Message::PaymentsLoaded,
+        )
     }
 
     fn reconcile_in_flight(&mut self, mut refundables: Vec<DomainRefundableSwap>) {
@@ -254,6 +295,9 @@ impl State for LiquidTransactions {
                     cache.show_direction_badges,
                     &self.empty_state_quote,
                     &self.empty_state_image_handle,
+                    self.current_page,
+                    self.is_last_page,
+                    self.processing,
                 ),
             )
         };
@@ -295,23 +339,18 @@ impl State for LiquidTransactions {
         match message {
             Message::PaymentsLoaded(Ok(payments)) => {
                 self.loading = false;
-                let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
-                self.payments = match self.asset_filter {
-                    AssetFilter::UsdtOnly => payments
-                        .into_iter()
-                        .filter(|p| is_usdt_payment(&p.details, usdt_id))
-                        .collect(),
-                    AssetFilter::LbtcOnly => payments
-                        .into_iter()
-                        .filter(|p| !is_usdt_payment(&p.details, usdt_id))
-                        .collect(),
-                    AssetFilter::All => payments,
-                };
+                self.processing = false;
+                // Server-side filtering (see `active_filter_asset_id`) means
+                // the payments arrived already restricted to the active tab;
+                // no further client-side asset filter is needed here.
+                self.is_last_page = (payments.len() as u32) < PAGE_SIZE;
+                self.payments = payments;
                 self.balance = self.calculate_balance();
                 Task::none()
             }
             Message::PaymentsLoaded(Err(e)) => {
                 self.loading = false;
+                self.processing = false;
                 Task::done(Message::View(view::Message::ShowError(e.to_string())))
             }
             Message::RefundablesLoaded(Ok(refundables)) => {
@@ -365,8 +404,26 @@ impl State for LiquidTransactions {
             Message::View(view::Message::SetAssetFilter(filter)) => {
                 if self.asset_filter != filter {
                     self.asset_filter = filter;
-                    // Reload with the new filter
+                    // Reload with the new filter — also resets pagination
+                    // back to page 0 (see `reload`).
                     return self.reload(None, None);
+                }
+                Task::none()
+            }
+            Message::View(view::Message::LiquidPrevPage) => {
+                if self.current_page > 0 && !self.processing {
+                    self.current_page -= 1;
+                    self.is_last_page = false;
+                    self.processing = true;
+                    return self.fetch_page();
+                }
+                Task::none()
+            }
+            Message::View(view::Message::LiquidNextPage) => {
+                if !self.is_last_page && !self.processing {
+                    self.current_page += 1;
+                    self.processing = true;
+                    return self.fetch_page();
                 }
                 Task::none()
             }
@@ -698,14 +755,14 @@ impl State for LiquidTransactions {
         self.loading = true;
         self.selected_payment = None;
         self.selected_refundable = None;
-        let client = self.breez_client.clone();
+        self.current_page = 0;
+        self.is_last_page = false;
+        self.processing = false;
+        self.payments.clear();
         let client2 = self.breez_client.clone();
 
         Task::batch(vec![
-            Task::perform(
-                async move { client.list_payments(None).await },
-                Message::PaymentsLoaded,
-            ),
+            self.fetch_page(),
             Task::perform(
                 async move { client2.list_refundables().await },
                 Message::RefundablesLoaded,
