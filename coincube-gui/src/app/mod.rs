@@ -2689,12 +2689,23 @@ impl App {
                 tasks.push(self.panels.spark_overview.reload(None, None));
 
                 // Also refresh the Home (Cube → Overview) Spark card.
-                // `global_home.reload` only runs on navigation, so a
-                // cold-start `get_info` that soft-fails (SDK not ready)
-                // leaves `spark_balance_loaded = false` until the user
-                // navigates away and back. Piping the SDK's `Synced` /
-                // payment events through `RefreshSparkBalance` lets
-                // the card recover without re-navigation.
+                // `global_home.reload` only runs on navigation, so on
+                // cold start the first `get_info` may return the SDK's
+                // persisted pre-sync value (e.g. zero before this
+                // session's incoming payments landed). The Home state
+                // gates `spark_balance_loaded` on observing at least
+                // one `Synced` from the bridge — `SparkSyncedObserved`
+                // (sent only for `SparkEvent::Synced`) flips that gate,
+                // and the `RefreshSparkBalance` dispatched alongside
+                // re-fetches whatever the SDK can now report.
+                // A periodic poll in `GlobalHome::subscription` is the
+                // safety net for the case where `Synced` fires before
+                // iced subscribes (tokio broadcast doesn't replay).
+                if matches!(event, SparkEvent::Synced) {
+                    tasks.push(Task::done(Message::View(view::Message::Home(
+                        view::HomeMessage::SparkSyncedObserved,
+                    ))));
+                }
                 tasks.push(Task::done(Message::View(view::Message::Home(
                     view::HomeMessage::RefreshSparkBalance,
                 ))));

@@ -1328,6 +1328,11 @@ pub enum HomeMessage {
     BreezOnchainAddress(String),
     RefreshLiquidBalance,
     RefreshSparkBalance,
+    /// Bridge has emitted `Event::Synced`. The next (or already
+    /// in-flight) Spark `get_info` response can be trusted — until
+    /// this fires, the value the SDK returns may be whatever it
+    /// persisted from a previous session, before incremental sync.
+    SparkSyncedObserved,
     SignVaultToLiquidTx,
     TransferPsbtReady(TransferPsbtResult),
     TransferSigningComplete,

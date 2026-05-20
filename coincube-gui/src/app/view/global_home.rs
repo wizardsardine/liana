@@ -1329,6 +1329,11 @@ pub struct GlobalViewConfig<'a> {
     /// (or its first error). Drives the Total Balance loading placeholder
     /// so the aggregate doesn't briefly read as a misleadingly low partial.
     pub total_balance_loading: bool,
+    /// True once the bridge has corroborated the Spark balance via a
+    /// `Synced` event. While false the Spark card renders a `…`
+    /// placeholder — avoids flashing a stale pre-sync value (e.g. zero
+    /// before the session's incoming payments have landed).
+    pub spark_balance_loaded: bool,
     /// Global fiat-native vs. bitcoin-native display preference. Mirrored
     /// from `cache.display_mode`.
     pub display_mode: crate::app::settings::display::DisplayMode,
@@ -1412,6 +1417,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         fiat_converter,
         balance_masked,
         total_balance_loading,
+        spark_balance_loaded,
         display_mode,
         has_vault,
         has_spark,
@@ -1750,11 +1756,16 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
             )
             .push(if balance_masked {
                 Row::new().push(text("********").size(P1_SIZE))
+            } else if !spark_balance_loaded {
+                // Pre-Synced placeholder — see the comment on the
+                // Spark wallet_header below for why we don't render
+                // the raw value yet.
+                Row::new().push(text("…").size(P1_SIZE).style(theme::text::secondary))
             } else {
                 amount_with_size_and_unit(&spark_balance, P1_SIZE, bitcoin_unit)
             })
             .push_maybe(
-                (!balance_masked)
+                (!balance_masked && spark_balance_loaded)
                     .then(|| {
                         spark_fiat
                             .as_ref()
@@ -1773,6 +1784,31 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 Message::Home(HomeMessage::ReceiveSparkBtc),
             ));
 
+        // Headline balance — placeholder while the bridge hasn't
+        // corroborated the Spark balance with a `Synced` event yet,
+        // since the SDK can return a stale persisted value before
+        // incremental sync completes. Mirrors the `—` placeholder
+        // used by the Total Balance block above; we use `…` here per
+        // the design decision on Spark-specific loading state.
+        let spark_header: Element<'a, Message> = if spark_balance_loaded {
+            wallet_header::<Message>(WalletHeaderProps::new(
+                spark_balance,
+                spark_fiat,
+                balance_masked,
+                bitcoin_unit,
+                HeaderVariant::Card,
+                display_mode,
+                Some(Message::FlipDisplayMode),
+            ))
+            .into()
+        } else {
+            Column::new()
+                .spacing(4)
+                .push(text("…").size(H2_SIZE).bold())
+                .push(text("…").size(P1_SIZE).style(theme::text::secondary))
+                .into()
+        };
+
         let spark_card_content = Column::new()
             .spacing(12)
             .push(
@@ -1782,15 +1818,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                     .push(lightning_icon().size(16).style(theme::text::secondary))
                     .push(text("Spark").size(14).style(theme::text::secondary)),
             )
-            .push(wallet_header::<Message>(WalletHeaderProps::new(
-                spark_balance,
-                spark_fiat,
-                balance_masked,
-                bitcoin_unit,
-                HeaderVariant::Card,
-                display_mode,
-                Some(Message::FlipDisplayMode),
-            )))
+            .push(spark_header)
             .push(spark_btc_row)
             .push_maybe(pending_spark_incoming.and_then(|pt| {
                 (pt.stage != TransferStage::Completed)
