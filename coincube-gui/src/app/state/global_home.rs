@@ -213,6 +213,15 @@ pub struct GlobalHome {
     /// persisted value; `SparkBalanceUpdated` checks this flag and
     /// discards the response in favor of a fresh fetch instead.
     spark_pending_resync: bool,
+    /// Set the first time a non-discarded `SparkBalanceUpdated` lands
+    /// (i.e. an actual `get_info` response was written into
+    /// `spark_balance`). Required for the `SparkLoadRetry` cap-
+    /// release path to flip `spark_balance_loaded`: without it, a
+    /// completely broken bridge could leave `spark_balance` at
+    /// `Amount::ZERO` and the cap-release would publish a false zero
+    /// as the authoritative balance, which `validate_entered_amount`
+    /// would then use as the Spark source cap for transfers.
+    spark_balance_received: bool,
     usdt_balance: u64,
     usdt_balance_error: bool,
     usdt_balance_loaded: bool,
@@ -319,6 +328,7 @@ impl GlobalHome {
             spark_load_retry_count: 0,
             spark_balance_loading: false,
             spark_pending_resync: false,
+            spark_balance_received: false,
             usdt_balance: 0,
             usdt_balance_error: false,
             usdt_balance_loaded: false,
@@ -383,6 +393,7 @@ impl GlobalHome {
             spark_load_retry_count: 0,
             spark_balance_loading: false,
             spark_pending_resync: false,
+            spark_balance_received: false,
             usdt_balance: 0,
             usdt_balance_error: false,
             usdt_balance_loaded: false,
@@ -673,6 +684,7 @@ impl State for GlobalHome {
                         }
                         self.spark_balance =
                             Amount::from_sat(btc.to_sat().saturating_add(usdb_as_sats));
+                        self.spark_balance_received = true;
                         // Only trust the response once the bridge has
                         // confirmed at least one `Synced` event — until
                         // then this could be the SDK's pre-sync persisted
@@ -2034,9 +2046,18 @@ impl State for GlobalHome {
                         // leave the user staring at `…` indefinitely.
                         // Shows whatever the last `get_info` returned —
                         // best-effort fallback when the event path is
-                        // genuinely broken.
+                        // genuinely broken. Skipped when no response
+                        // ever landed (`spark_balance` is still the
+                        // `Amount::ZERO` default): publishing that zero
+                        // would mislead the user and become a false
+                        // source cap in `validate_entered_amount`. In
+                        // that scenario we deliberately stay in the
+                        // loading state — Transfer remains disabled
+                        // and the placeholder honestly reflects that
+                        // we don't know the balance.
                         if self.spark_load_retry_count >= SPARK_LOAD_RETRY_CAP
                             && !self.spark_balance_loaded
+                            && self.spark_balance_received
                         {
                             self.spark_balance_loaded = true;
                         }
