@@ -2051,16 +2051,14 @@ impl State for GlobalHome {
                         // could blow through the cap before `Synced`
                         // lands and prematurely flip the gate.
                         //
-                        // Also skip the increment when a fetch is
-                        // already in flight: a single slow get_info
-                        // (up to the bridge's 30s timeout) would
-                        // otherwise consume the entire budget while
-                        // never actually firing a follow-up attempt.
-                        // The cap measures *attempts*, not wall-clock
-                        // ticks.
-                        if self.spark_balance_loading {
-                            return Task::none();
-                        }
+                        // The counter advances on every tick (wall-
+                        // clock semantics) so a single slow get_info
+                        // can't postpone the cap indefinitely. The
+                        // single-flight guard lives inside
+                        // `load_spark_balance`, which returns `None`
+                        // when a previous RPC is still in flight — so
+                        // we don't start an overlapping fetch even
+                        // though the tick still counts.
                         self.spark_load_retry_count = self.spark_load_retry_count.saturating_add(1);
                         // Final-attempt graceful exit: if the fallback
                         // poll has hit its cap without ever seeing a
