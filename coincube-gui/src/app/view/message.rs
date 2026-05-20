@@ -1333,6 +1333,14 @@ pub enum HomeMessage {
     /// this fires, the value the SDK returns may be whatever it
     /// persisted from a previous session, before incremental sync.
     SparkSyncedObserved,
+    /// Tick from the fallback poll subscription that runs while the
+    /// Spark card is in its loading state. Bumps the retry counter
+    /// and re-fetches the balance; force-releases the loading UI if
+    /// the counter hits its cap without ever observing `Synced`.
+    /// Distinct from `RefreshSparkBalance` (which is dispatched on
+    /// every SparkEvent) so SDK event bursts don't burn through the
+    /// retry budget.
+    SparkLoadRetry,
     SignVaultToLiquidTx,
     TransferPsbtReady(TransferPsbtResult),
     TransferSigningComplete,

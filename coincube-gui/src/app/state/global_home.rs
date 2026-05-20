@@ -561,14 +561,15 @@ impl State for GlobalHome {
         // seconds until either a `Synced` lands or the retry cap is
         // reached. Self-cancels the moment `spark_balance_loaded`
         // flips true (iced re-evaluates subscriptions on each render).
+        // Uses `SparkLoadRetry` (not `RefreshSparkBalance`) so SDK-
+        // event-driven refreshes don't count against the retry cap.
         if self.spark_backend.is_some()
             && !self.spark_balance_loaded
             && self.spark_load_retry_count < SPARK_LOAD_RETRY_CAP
         {
             subscriptions.push(
-                iced::time::every(std::time::Duration::from_secs(3)).map(|_| {
-                    Message::View(view::Message::Home(HomeMessage::RefreshSparkBalance))
-                }),
+                iced::time::every(std::time::Duration::from_secs(3))
+                    .map(|_| Message::View(view::Message::Home(HomeMessage::SparkLoadRetry))),
             );
         }
 
@@ -1989,8 +1990,16 @@ impl State for GlobalHome {
                     }
                     HomeMessage::RefreshLiquidBalance => self.load_liquid_balance(),
                     HomeMessage::RefreshSparkBalance => {
-                        self.spark_load_retry_count =
-                            self.spark_load_retry_count.saturating_add(1);
+                        self.load_spark_balance().unwrap_or_else(Task::none)
+                    }
+                    HomeMessage::SparkLoadRetry => {
+                        // Only the fallback poll bumps the retry
+                        // counter — SDK-event-driven refreshes
+                        // (`RefreshSparkBalance`) must not, or a burst
+                        // of payment / deposit events on cold start
+                        // could blow through the cap before `Synced`
+                        // lands and prematurely flip the gate.
+                        self.spark_load_retry_count = self.spark_load_retry_count.saturating_add(1);
                         // Final-attempt graceful exit: if the fallback
                         // poll has hit its cap without ever seeing a
                         // `Synced`, release the loading UI rather than
@@ -2006,14 +2015,18 @@ impl State for GlobalHome {
                         self.load_spark_balance().unwrap_or_else(Task::none)
                     }
                     HomeMessage::SparkSyncedObserved => {
+                        // Flip the synced gate, but do NOT flip
+                        // `spark_balance_loaded` here — the value
+                        // currently in `spark_balance` may still be
+                        // the SDK's pre-sync persisted snapshot.
+                        // `mod.rs` dispatches `RefreshSparkBalance`
+                        // alongside this message on every `Synced`;
+                        // the fresh `SparkBalanceUpdated` it triggers
+                        // is what flips the gate (its handler checks
+                        // `spark_synced_seen`), so the placeholder
+                        // only goes away once the post-sync value
+                        // has actually landed.
                         self.spark_synced_seen = true;
-                        // If a `get_info` response already landed
-                        // before this `Synced`, its value is now
-                        // trustable — flip the load flag so the
-                        // card stops showing the placeholder.
-                        if self.spark_backend.is_some() {
-                            self.spark_balance_loaded = true;
-                        }
                         Task::none()
                     }
                     HomeMessage::TransferPsbtReady(result) => {
