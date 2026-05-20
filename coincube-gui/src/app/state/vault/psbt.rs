@@ -278,15 +278,30 @@ impl PsbtState {
                         .to_string();
                     return Task::done(Message::View(view::Message::ShowError(msg)));
                 }
-                let (Some(grpc_url), Some(tokens), Some(cube_server_id)) = (
-                    cache.connect_grpc_url.clone(),
-                    cache.connect_tokens.clone(),
-                    cache.current_cube_server_id,
-                ) else {
-                    let msg =
-                        "Sign via Keychain is unavailable: Connect is not ready yet.".to_string();
+                let missing: Vec<&'static str> = [
+                    ("connect_grpc_url", cache.connect_grpc_url.is_none()),
+                    ("connect_tokens", cache.connect_tokens.is_none()),
+                    ("connect_device_id", cache.connect_device_id.is_none()),
+                    (
+                        "current_cube_server_id",
+                        cache.current_cube_server_id.is_none(),
+                    ),
+                ]
+                .iter()
+                .filter_map(|(name, is_missing)| is_missing.then_some(*name))
+                .collect();
+                if !missing.is_empty() {
+                    let msg = format!(
+                        "Sign via Keychain is unavailable: Connect is not ready yet \
+                         (missing {}).",
+                        missing.join(", ")
+                    );
                     return Task::done(Message::View(view::Message::ShowError(msg)));
-                };
+                }
+                let grpc_url = cache.connect_grpc_url.clone().expect("checked above");
+                let tokens = cache.connect_tokens.clone().expect("checked above");
+                let device_id = cache.connect_device_id.clone().expect("checked above");
+                let cube_server_id = cache.current_cube_server_id.expect("checked above");
                 // The REST client's bearer is set asynchronously inside
                 // `KeychainSignModal::launch()`, which reads the shared
                 // `Arc<RwLock>` in an async context. Reading it here on
@@ -300,6 +315,7 @@ impl PsbtState {
                     coincube_client,
                     tokens,
                     grpc_url,
+                    device_id,
                     cube_server_id,
                     cache.cube_id.clone(),
                     descriptor_id,
@@ -384,10 +400,30 @@ impl PsbtState {
             Message::BroadcastModal(res) => match res {
                 Ok(conflicting_txids) => {
                     use coincube_ui::component::amount::DisplayAmount;
-                    let amount_display = self
-                        .tx
-                        .spend_amount
-                        .to_formatted_string_with_unit(cache.bitcoin_unit);
+                    let is_self_transfer = self.tx.is_send_to_self();
+                    // For a self-transfer every output is change, so `spend_amount`
+                    // is 0 by construction. Showing "0 has been sent" is nonsense;
+                    // surface the total moved (sum of change outputs) instead.
+                    let display_amount = if is_self_transfer {
+                        self.tx
+                            .psbt
+                            .unsigned_tx
+                            .output
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, o)| {
+                                if self.tx.change_indexes.contains(&i) {
+                                    Some(o.value)
+                                } else {
+                                    None
+                                }
+                            })
+                            .sum()
+                    } else {
+                        self.tx.spend_amount
+                    };
+                    let amount_display =
+                        display_amount.to_formatted_string_with_unit(cache.bitcoin_unit);
                     self.modal = Some(PsbtModal::Broadcast(BroadcastModal {
                         conflicting_txids,
                         broadcast: false,
@@ -401,6 +437,7 @@ impl PsbtState {
                                 "bitcoin-send",
                             ),
                         spend_amount_display: amount_display,
+                        is_self_transfer,
                     }));
                 }
                 Err(e) => {
@@ -517,6 +554,9 @@ pub struct BroadcastModal {
     sent_image_handle: iced::widget::image::Handle,
     /// Formatted spend amount for the celebration display.
     spend_amount_display: String,
+    /// True when every output of the tx returns to the wallet's own change
+    /// addresses. Used by the celebration view to render the right phrasing.
+    is_self_transfer: bool,
 }
 
 impl Modal for BroadcastModal {
@@ -541,13 +581,15 @@ impl Modal for BroadcastModal {
                 let daemon = daemon.clone();
                 let psbt = tx.psbt.clone();
                 self.error = None;
+                self.broadcasting = true;
+                let txid = psbt.unsigned_tx.compute_txid();
+                tracing::info!(
+                    target: "coincube_gui::broadcast",
+                    %txid,
+                    "Broadcast requested"
+                );
                 return Task::perform(
-                    async move {
-                        daemon
-                            .broadcast_spend_tx(&psbt.unsigned_tx.compute_txid())
-                            .await
-                            .map_err(|e| e.into())
-                    },
+                    async move { daemon.broadcast_spend_tx(&txid).await.map_err(|e| e.into()) },
                     Message::Updated,
                 );
             }
@@ -558,6 +600,11 @@ impl Modal for BroadcastModal {
                     Ok(()) => {
                         tx.status = SpendStatus::Broadcast;
                         self.broadcast = true;
+                        tracing::info!(
+                            target: "coincube_gui::broadcast",
+                            txid = %tx.psbt.unsigned_tx.compute_txid(),
+                            "Broadcast completed"
+                        );
                     }
                     Err(e) => {
                         let err_msg = e.to_string();
@@ -588,9 +635,11 @@ impl Modal for BroadcastModal {
                 &self.conflicting_txids,
                 self.broadcast,
                 self.broadcasting,
+                self.error.as_ref().map(|e| e.to_string()),
                 &self.spend_amount_display,
                 &self.sent_quote,
                 &self.sent_image_handle,
+                self.is_self_transfer,
             ),
         )
         .on_blur(on_blur)
