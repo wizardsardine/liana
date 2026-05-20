@@ -685,13 +685,24 @@ impl State for GlobalHome {
                         self.spark_balance =
                             Amount::from_sat(btc.to_sat().saturating_add(usdb_as_sats));
                         self.spark_balance_received = true;
-                        // Only trust the response once the bridge has
+                        // Trust the response once the bridge has
                         // confirmed at least one `Synced` event — until
                         // then this could be the SDK's pre-sync persisted
                         // value (e.g. zero before this session's incoming
                         // interest payments landed). Until corroborated,
                         // the card renders a `…` placeholder.
-                        if self.spark_synced_seen {
+                        //
+                        // Also release the gate when the fallback poll
+                        // has already exhausted its budget: the
+                        // subscription stops firing once
+                        // `spark_load_retry_count` reaches the cap, so
+                        // any response that lands after that point has
+                        // no other path to release the loading UI.
+                        // Best-effort — better to show the last
+                        // received value than stay stuck on `…`.
+                        if self.spark_synced_seen
+                            || self.spark_load_retry_count >= SPARK_LOAD_RETRY_CAP
+                        {
                             self.spark_balance_loaded = true;
                         }
                         Task::none()
@@ -2039,6 +2050,17 @@ impl State for GlobalHome {
                         // of payment / deposit events on cold start
                         // could blow through the cap before `Synced`
                         // lands and prematurely flip the gate.
+                        //
+                        // Also skip the increment when a fetch is
+                        // already in flight: a single slow get_info
+                        // (up to the bridge's 30s timeout) would
+                        // otherwise consume the entire budget while
+                        // never actually firing a follow-up attempt.
+                        // The cap measures *attempts*, not wall-clock
+                        // ticks.
+                        if self.spark_balance_loading {
+                            return Task::none();
+                        }
                         self.spark_load_retry_count = self.spark_load_retry_count.saturating_add(1);
                         // Final-attempt graceful exit: if the fallback
                         // poll has hit its cap without ever seeing a
