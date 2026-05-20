@@ -76,6 +76,7 @@ pub fn multisig_security_template<'a>(
     primary_path: &'a Path,
     recovery_path: &'a Path,
     valid: bool,
+    processing: bool,
 ) -> Element<'a, Message> {
     let advanced_settings = super::advanced_settings_collapse(use_taproot);
 
@@ -194,7 +195,7 @@ pub fn multisig_security_template<'a>(
         }
     });
 
-    let footer = super::template_footer(valid, true);
+    let footer = super::template_footer(valid, processing, true);
 
     layout(
         progress,

@@ -50,7 +50,7 @@ pub fn advanced_settings_collapse<'a>(use_taproot: bool) -> Element<'a, Message>
     .into()
 }
 
-pub fn template_footer<'a>(valid: bool, customize: bool) -> Row<'a, Message> {
+pub fn template_footer<'a>(valid: bool, processing: bool, customize: bool) -> Row<'a, Message> {
     let clear_all = button::secondary(None, "Clear All")
         .width(BtnWidth::M)
         .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset));
@@ -63,9 +63,15 @@ pub fn template_footer<'a>(valid: bool, customize: bool) -> Row<'a, Message> {
             )),
     );
 
-    let contin = button::primary(None, "Continue")
+    let msg = (!processing & valid).then_some(Message::Next);
+    let msg_label = if processing {
+        "Processing..."
+    } else {
+        "Continue"
+    };
+    let contin = button::primary(None, msg_label)
         .width(210)
-        .on_press_maybe(if valid { Some(Message::Next) } else { None });
+        .on_press_maybe(msg);
 
     row![clear_all, Space::with_width(40)]
         .push_maybe(customize)

@@ -69,6 +69,7 @@ pub fn inheritance_template<'a>(
     primary_path: &'a Path,
     recovery_path: &'a Path,
     valid: bool,
+    processing: bool,
 ) -> Element<'a, Message> {
     let primary_key = if let Some(first) = primary_path.keys.first() {
         first.as_ref()
@@ -130,7 +131,7 @@ pub fn inheritance_template<'a>(
     )
     .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(1, msg)));
 
-    let footer = super::template_footer(valid, true);
+    let footer = super::template_footer(valid, processing, true);
 
     layout(
         progress,

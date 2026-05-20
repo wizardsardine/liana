@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::bip32::ChildNumber;
 use liana::{
-    descriptors::{LianaDescriptor, LianaPolicy, PathInfo},
+    descriptors::{LianaDescriptor, PathInfo},
     miniscript::{
         bitcoin::{bip32::Fingerprint, Network},
         descriptor::DescriptorPublicKey,
@@ -25,7 +25,7 @@ use crate::{
     app::settings::KeySetting,
     hw::HardwareWallets,
     installer::{
-        context::DescriptorTemplate,
+        context::{CompileInputs, DescriptorTemplate},
         descriptor::{Key, Path, PathKind, PathSequence, PathWarning},
         message::{self, Message},
         step::{Context, Step},
@@ -63,6 +63,8 @@ pub struct DefineDescriptor {
     descriptor_template: DescriptorTemplate,
 
     error: Option<String>,
+    processing: bool,
+    compiled: Option<LianaDescriptor>,
 }
 
 impl DefineDescriptor {
@@ -78,6 +80,8 @@ impl DefineDescriptor {
             descriptor_template: DescriptorTemplate::default(),
             paths: Vec::new(),
             accounts: Default::default(),
+            processing: false,
+            compiled: None,
         }
     }
 
@@ -126,6 +130,7 @@ impl DefineDescriptor {
 
     fn check_setup(&mut self) {
         self.check_for_warning();
+        self.compiled = None;
     }
 
     fn load_template(&mut self, template: DescriptorTemplate) {
@@ -218,7 +223,12 @@ impl DefineDescriptor {
 
 impl Step for DefineDescriptor {
     fn load_context(&mut self, ctx: &Context) {
-        self.load_template(ctx.descriptor_template)
+        self.load_template(ctx.descriptor_template);
+        // Drop any transient state from a previous visit (failed compile,
+        // in-flight task we navigated away from, stale mailbox).
+        self.error = None;
+        self.processing = false;
+        self.compiled = None;
     }
     // form value is set as valid each time it is edited.
     // Verification of the values is happening when the user click on Next button.
@@ -428,6 +438,18 @@ impl Step for DefineDescriptor {
                     }
                 }
             }
+            Message::DefineDescriptor(message::DefineDescriptor::Compiled(res)) => {
+                self.processing = false;
+                match res {
+                    Ok(desc) => {
+                        self.compiled = Some(*desc);
+                        return Task::done(Message::Next);
+                    }
+                    Err(e) => {
+                        self.error = Some(e);
+                    }
+                }
+            }
             Message::EditKeyAlias(msg) => match msg.clone() {
                 key::EditKeyAliasMessage::Alias(_)
                 | key::EditKeyAliasMessage::Save
@@ -554,27 +576,25 @@ impl Step for DefineDescriptor {
             return false;
         }
 
-        let spending_keys = if spending_keys.len() == 1 {
+        let primary = if spending_keys.len() == 1 {
             PathInfo::Single(spending_keys[0].clone())
         } else {
             PathInfo::Multi(self.paths[0].threshold, spending_keys)
         };
 
-        let policy = match if self.use_taproot {
-            LianaPolicy::new(spending_keys, recovery_paths)
-        } else {
-            LianaPolicy::new_legacy(spending_keys, recovery_paths)
-        } {
-            Ok(policy) => policy,
-            Err(e) => {
-                self.error = Some(e.to_string());
-                return false;
-            }
-        };
+        if let Some(desc) = self.compiled.take() {
+            ctx.descriptor = Some(desc);
+            ctx.hw_is_used = hw_is_used;
+            return true;
+        }
 
-        ctx.descriptor = Some(LianaDescriptor::new(policy));
-        ctx.hw_is_used = hw_is_used;
-        true
+        ctx.pending_compile = Some(CompileInputs {
+            primary,
+            recovery: recovery_paths,
+            use_taproot: self.use_taproot,
+        });
+        self.processing = true;
+        false
     }
 
     fn view<'a>(
@@ -591,6 +611,7 @@ impl Step for DefineDescriptor {
                     &self.paths[0],
                     &self.paths[1],
                     self.valid(),
+                    self.processing,
                 )
             }
             DescriptorTemplate::MultisigSecurity => {
@@ -600,6 +621,7 @@ impl Step for DefineDescriptor {
                     &self.paths[0],
                     &self.paths[1],
                     self.valid(),
+                    self.processing,
                 )
             }
             DescriptorTemplate::Custom => view::editor::template::custom::custom_template(
@@ -616,6 +638,7 @@ impl Step for DefineDescriptor {
                     .find(|(_, p)| p.kind() == PathKind::SafetyNet),
                 self.paths[1..].len(),
                 self.valid(),
+                self.processing,
             ),
         };
         if let Some(modal) = &self.modal {
@@ -766,6 +789,7 @@ mod tests {
 
     use crate::installer::step::descriptor::editor::key::{SelectKeySource, SelectedKey};
     use crate::{dir::LianaDirectory, installer::descriptor::KeySource};
+    use liana::descriptors::LianaPolicy;
 
     pub struct Sandbox<S: Step> {
         step: Arc<Mutex<S>>,
@@ -781,6 +805,10 @@ mod tests {
         pub fn check<F: FnOnce(&mut S)>(&self, check: F) {
             let mut step = self.step.lock().unwrap();
             check(&mut step)
+        }
+
+        pub fn check_apply(&self, ctx: &mut Context) -> bool {
+            self.step.lock().unwrap().apply(ctx)
         }
 
         pub async fn update(&self, message: Message) {
@@ -800,6 +828,37 @@ mod tests {
         pub async fn load(&self, ctx: &Context) {
             self.step.lock().unwrap().load_context(ctx);
         }
+    }
+
+    // Drive `apply()` end-to-end like the real installer does on
+    // `Message::Next`: try the direct path, and if compilation was deferred to
+    // a `CompileInputs` task, run it synchronously and feed `Compiled(...)`
+    // back into the step so the second `apply()` returns `true`.
+    async fn run_apply(sandbox: &Sandbox<DefineDescriptor>, ctx: &mut Context) -> bool {
+        if sandbox.check_apply(ctx) {
+            return true;
+        }
+        let Some(inputs) = ctx.pending_compile.take() else {
+            return false;
+        };
+        let CompileInputs {
+            primary,
+            recovery,
+            use_taproot,
+        } = inputs;
+        let policy = if use_taproot {
+            LianaPolicy::new(primary, recovery)
+        } else {
+            LianaPolicy::new_legacy(primary, recovery)
+        }
+        .expect("test inputs should compile");
+        let desc = LianaDescriptor::new(policy);
+        sandbox
+            .update(Message::DefineDescriptor(
+                message::DefineDescriptor::Compiled(Ok(Box::new(desc))),
+            ))
+            .await;
+        sandbox.check_apply(ctx)
     }
 
     #[tokio::test]
@@ -872,9 +931,9 @@ mod tests {
         sandbox
             .update(SelectKeySource::route(key::SelectKeySourceMessage::Next))
             .await;
+        sandbox.check(|step| assert!(step.modal.is_none()));
+        assert!(run_apply(&sandbox, &mut ctx).await);
         sandbox.check(|step| {
-            assert!(step.modal.is_none());
-            assert!((step).apply(&mut ctx));
             assert!(ctx
                 .descriptor
                 .as_ref()
@@ -942,11 +1001,9 @@ mod tests {
         sandbox
             .update(SelectKeySource::route(key::SelectKeySourceMessage::Next))
             .await;
-        sandbox.check(|step| {
-            assert!(step.modal.is_none());
-            assert!((step).apply(&mut ctx));
-            assert!(ctx.hw_is_used);
-        });
+        sandbox.check(|step| assert!(step.modal.is_none()));
+        assert!(run_apply(&sandbox, &mut ctx).await);
+        assert!(ctx.hw_is_used);
 
         // Now edit primary key to use hot signer instead of Specter device
         sandbox
@@ -969,11 +1026,9 @@ mod tests {
         sandbox
             .update(SelectKeySource::route(key::SelectKeySourceMessage::Next))
             .await;
-        sandbox.check(|step| {
-            assert!(step.modal.is_none());
-            assert!((step).apply(&mut ctx));
-            assert!(!ctx.hw_is_used);
-        });
+        sandbox.check(|step| assert!(step.modal.is_none()));
+        assert!(run_apply(&sandbox, &mut ctx).await);
+        assert!(!ctx.hw_is_used);
 
         // Now edit the recovery key to use Specter device
         sandbox
@@ -984,9 +1039,7 @@ mod tests {
                 ),
             ))
             .await;
-        sandbox.check(|step| {
-            assert!((step).apply(&mut ctx));
-            assert!(ctx.hw_is_used);
-        });
+        assert!(run_apply(&sandbox, &mut ctx).await);
+        assert!(ctx.hw_is_used);
     }
 }

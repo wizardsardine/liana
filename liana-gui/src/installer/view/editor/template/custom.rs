@@ -53,6 +53,7 @@ pub fn custom_template_description(progress: (usize, usize)) -> Element<'static,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn custom_template<'a>(
     progress: (usize, usize),
     use_taproot: bool,
@@ -61,6 +62,7 @@ pub fn custom_template<'a>(
     safety_net_path: Option<(usize, &'a Path)>,
     num_non_primary_paths: usize,
     valid: bool,
+    processing: bool,
 ) -> Element<'a, Message> {
     let prim_keys_fixed = primary_path.keys.len() < 2; // can only delete a primary key if there are 2 or more
 
@@ -226,7 +228,7 @@ pub fn custom_template<'a>(
         })
     });
 
-    let last_btn_row = super::template_footer(valid, false);
+    let last_btn_row = super::template_footer(valid, processing, false);
 
     layout(
         progress,

@@ -6,9 +6,14 @@ mod prompt;
 mod step;
 mod view;
 
-pub use context::{Context, RemoteBackend};
+pub use context::{CompileInputs, Context, RemoteBackend};
+
+pub use descriptor::Key;
 use iced::{clipboard, Subscription, Task};
-use liana::miniscript::bitcoin::{self, Network};
+use liana::{
+    descriptors::{LianaDescriptor, LianaPolicy},
+    miniscript::bitcoin::{self, Network},
+};
 use liana_ui::{
     component::network_banner,
     widget::{Column, Element},
@@ -280,7 +285,30 @@ impl LianaInstaller {
                 }
                 Task::none()
             }
-            Message::Next => self.next(),
+            Message::Next => {
+                let task = self.next();
+                if let Some(inputs) = self.context.pending_compile.take() {
+                    let CompileInputs {
+                        primary,
+                        recovery,
+                        use_taproot,
+                    } = inputs;
+                    let compile = Task::perform(
+                        async move {
+                            let policy = if use_taproot {
+                                LianaPolicy::new(primary, recovery)
+                            } else {
+                                LianaPolicy::new_legacy(primary, recovery)
+                            }
+                            .map_err(|e| e.to_string())?;
+                            Ok(Box::new(LianaDescriptor::new(policy)))
+                        },
+                        |res| Message::DefineDescriptor(message::DefineDescriptor::Compiled(res)),
+                    );
+                    return Task::batch([task, compile]);
+                }
+                task
+            }
             Message::Previous => self.previous(),
             Message::Install => {
                 let _cmd = self

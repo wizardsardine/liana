@@ -181,6 +181,7 @@ pub enum DefineDescriptor {
     ThresholdSequenceModal(ThresholdSequenceModal),
     Reset,
     AliasEdited(Fingerprint, String /* alias*/),
+    Compiled(Result<Box<LianaDescriptor>, String>),
 }
 
 #[allow(clippy::large_enum_variant)]
