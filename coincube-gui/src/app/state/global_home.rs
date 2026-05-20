@@ -207,6 +207,12 @@ pub struct GlobalHome {
     /// otherwise pile on. Cleared by `SparkBalanceUpdated` /
     /// `SparkLoadFailed` when the response (or the soft-fail) lands.
     spark_balance_loading: bool,
+    /// Set when `SparkSyncedObserved` arrives while a `load_spark_balance`
+    /// is in flight. The pending response was issued pre-Synced and
+    /// would otherwise trip `spark_balance_loaded` on the SDK's stale
+    /// persisted value; `SparkBalanceUpdated` checks this flag and
+    /// discards the response in favor of a fresh fetch instead.
+    spark_pending_resync: bool,
     usdt_balance: u64,
     usdt_balance_error: bool,
     usdt_balance_loaded: bool,
@@ -312,6 +318,7 @@ impl GlobalHome {
             spark_synced_seen: false,
             spark_load_retry_count: 0,
             spark_balance_loading: false,
+            spark_pending_resync: false,
             usdt_balance: 0,
             usdt_balance_error: false,
             usdt_balance_loaded: false,
@@ -375,6 +382,7 @@ impl GlobalHome {
             spark_synced_seen: false,
             spark_load_retry_count: 0,
             spark_balance_loading: false,
+            spark_pending_resync: false,
             usdt_balance: 0,
             usdt_balance_error: false,
             usdt_balance_loaded: false,
@@ -653,9 +661,18 @@ impl State for GlobalHome {
                                 )
                             })
                             .unwrap_or(0);
+                        self.spark_balance_loading = false;
+                        // The in-flight fetch was issued before
+                        // `Synced` arrived — its value reflects the
+                        // SDK's pre-sync state. Discard it and fire a
+                        // fresh post-sync fetch; the next response
+                        // will flip the gate.
+                        if self.spark_pending_resync {
+                            self.spark_pending_resync = false;
+                            return self.load_spark_balance().unwrap_or_else(Task::none);
+                        }
                         self.spark_balance =
                             Amount::from_sat(btc.to_sat().saturating_add(usdb_as_sats));
-                        self.spark_balance_loading = false;
                         // Only trust the response once the bridge has
                         // confirmed at least one `Synced` event — until
                         // then this could be the SDK's pre-sync persisted
@@ -2038,13 +2055,30 @@ impl State for GlobalHome {
                         // only goes away once the post-sync value
                         // has actually landed.
                         self.spark_synced_seen = true;
+                        // If a get_info is already in flight, the
+                        // companion `RefreshSparkBalance` will be
+                        // skipped by the in-flight guard. Mark the
+                        // pending response as stale-on-arrival so
+                        // `SparkBalanceUpdated` discards it instead
+                        // of flipping the gate on a pre-Synced value.
+                        if self.spark_balance_loading {
+                            self.spark_pending_resync = true;
+                        }
                         Task::none()
                     }
                     HomeMessage::SparkLoadFailed => {
-                        // Soft-fail terminal: just release the
-                        // in-flight guard so the next poll tick or
-                        // SparkEvent can fire a fresh `get_info`.
+                        // Soft-fail terminal: release the in-flight
+                        // guard so the next poll tick or SparkEvent
+                        // can fire a fresh `get_info`. If a `Synced`
+                        // arrived during the failed fetch, the
+                        // companion `RefreshSparkBalance` was skipped
+                        // by the in-flight guard — fire a fresh one
+                        // now so the placeholder can converge.
                         self.spark_balance_loading = false;
+                        if self.spark_pending_resync {
+                            self.spark_pending_resync = false;
+                            return self.load_spark_balance().unwrap_or_else(Task::none);
+                        }
                         Task::none()
                     }
                     HomeMessage::TransferPsbtReady(result) => {
