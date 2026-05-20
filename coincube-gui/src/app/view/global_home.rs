@@ -2063,6 +2063,12 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         .push(liquid_card)
         .push(vault_card_element)
         .push_maybe(transfer_available(has_vault, has_spark).then(|| {
+            // Disable Transfer while any wallet's balance hasn't been
+            // corroborated yet. The amount-entry view and wallet picker
+            // both consume the raw balance values to render available-
+            // funds hints and to cap validation; opening Transfer
+            // pre-load would surface a misleading zero / stale cap for
+            // whichever wallet hasn't finished syncing.
             Container::new(
                 button::secondary(Some(arrow_down_up_icon()), "Transfer")
                     .style(|t, _s| iced::widget::button::Style {
@@ -2076,7 +2082,9 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                         ..Default::default()
                     })
                     .width(Length::Fixed(150.0))
-                    .on_press(Message::Home(HomeMessage::NextStep)),
+                    .on_press_maybe(
+                        (!total_balance_loading).then_some(Message::Home(HomeMessage::NextStep)),
+                    ),
             )
             .width(Length::Fill)
             .center_x(Length::Fill)

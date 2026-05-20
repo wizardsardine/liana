@@ -32,9 +32,7 @@ use crate::{
             message::Message,
             vault::coins,
             vault::label,
-            wallet_header::{
-                wallet_header, HeaderVariant, SyncState, UnconfirmedBalance, WalletHeaderProps,
-            },
+            wallet_header::{wallet_header, HeaderVariant, SyncState, WalletHeaderProps},
             FiatAmountConverter,
         },
         wallet::SyncStatus,
@@ -96,14 +94,14 @@ pub fn vault_overview_view<'a>(
     display_mode: DisplayMode,
 ) -> Element<'a, Message> {
     // Show external-unconfirmed coins as part of the headline balance
-    // (matching the Cube → Overview Vault card). The `unconfirmed`
-    // breakout below keeps the "+ X SATS unconfirmed" indicator so the
-    // user can still see how much of the total is not yet final.
+    // (matching the Cube → Overview Vault card). The per-transaction
+    // "Unconfirmed" pill in the recent-payments list below still
+    // surfaces which inputs are pending — we deliberately omit the
+    // `wallet_header` "+ X SATS unconfirmed" breakout here because
+    // its leading `+` reads as additive next to an already-inclusive
+    // headline.
     let total_balance = *balance + *unconfirmed_balance;
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(total_balance));
-    let fiat_unconfirmed = fiat_converter
-        .as_ref()
-        .map(|c| c.convert(*unconfirmed_balance));
     let sync = match sync_status {
         SyncStatus::Synced => SyncState::Synced,
         SyncStatus::BlockchainSync(progress) => SyncState::Syncing {
@@ -116,10 +114,6 @@ pub fn vault_overview_view<'a>(
         },
         SyncStatus::LatestWalletSync => SyncState::Checking,
     };
-    let unconfirmed = (unconfirmed_balance.to_sat() != 0).then_some(UnconfirmedBalance {
-        amount: *unconfirmed_balance,
-        fiat: fiat_unconfirmed,
-    });
     let btc_fiat_str = fiat_balance
         .as_ref()
         .map(|f| format!("{} {}", f.to_rounded_string(), f.currency()))
@@ -165,7 +159,7 @@ pub fn vault_overview_view<'a>(
                             bitcoin_unit,
                             variant: HeaderVariant::Overview,
                             sync,
-                            unconfirmed,
+                            unconfirmed: None,
                             pending_send_sats: 0,
                             pending_receive_sats: 0,
                             display_mode,

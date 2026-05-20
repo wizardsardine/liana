@@ -1341,6 +1341,11 @@ pub enum HomeMessage {
     /// every SparkEvent) so SDK event bursts don't burn through the
     /// retry budget.
     SparkLoadRetry,
+    /// `load_spark_balance`'s `get_info` RPC failed (bridge unreachable
+    /// or timed out). Clears the in-flight guard so a subsequent
+    /// refresh / retry can fire. Soft-fail: the previously displayed
+    /// balance, if any, is left intact.
+    SparkLoadFailed,
     SignVaultToLiquidTx,
     TransferPsbtReady(TransferPsbtResult),
     TransferSigningComplete,

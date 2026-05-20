@@ -199,6 +199,14 @@ pub struct GlobalHome {
     /// doesn't replay events, so a `Synced` firing before iced
     /// subscribes would otherwise leave us stuck.
     spark_load_retry_count: u8,
+    /// Set while a `load_spark_balance` task is in flight. Prevents
+    /// overlapping `get_info` RPCs — the 3-second poll and SparkEvent-
+    /// driven refreshes both call `load_spark_balance`, and a slow
+    /// initial sync can hold a get_info request open for the full
+    /// 30-second timeout, during which several more callers could
+    /// otherwise pile on. Cleared by `SparkBalanceUpdated` /
+    /// `SparkLoadFailed` when the response (or the soft-fail) lands.
+    spark_balance_loading: bool,
     usdt_balance: u64,
     usdt_balance_error: bool,
     usdt_balance_loaded: bool,
@@ -303,6 +311,7 @@ impl GlobalHome {
             spark_balance_loaded: false,
             spark_synced_seen: false,
             spark_load_retry_count: 0,
+            spark_balance_loading: false,
             usdt_balance: 0,
             usdt_balance_error: false,
             usdt_balance_loaded: false,
@@ -365,6 +374,7 @@ impl GlobalHome {
             spark_balance_loaded: false,
             spark_synced_seen: false,
             spark_load_retry_count: 0,
+            spark_balance_loading: false,
             usdt_balance: 0,
             usdt_balance_error: false,
             usdt_balance_loaded: false,
@@ -645,6 +655,7 @@ impl State for GlobalHome {
                             .unwrap_or(0);
                         self.spark_balance =
                             Amount::from_sat(btc.to_sat().saturating_add(usdb_as_sats));
+                        self.spark_balance_loading = false;
                         // Only trust the response once the bridge has
                         // confirmed at least one `Synced` event — until
                         // then this could be the SDK's pre-sync persisted
@@ -2029,6 +2040,13 @@ impl State for GlobalHome {
                         self.spark_synced_seen = true;
                         Task::none()
                     }
+                    HomeMessage::SparkLoadFailed => {
+                        // Soft-fail terminal: just release the
+                        // in-flight guard so the next poll tick or
+                        // SparkEvent can fire a fresh `get_info`.
+                        self.spark_balance_loading = false;
+                        Task::none()
+                    }
                     HomeMessage::TransferPsbtReady(result) => {
                         self.is_sending = false;
                         match result {
@@ -2459,9 +2477,17 @@ impl GlobalHome {
 
     /// Fetch the Spark wallet balance via `get_info` on the bridge.
     /// Returns `None` when no Spark backend is wired up for the cube
-    /// so the caller can skip scheduling the task entirely.
-    fn load_spark_balance(&self) -> Option<Task<Message>> {
+    /// (so the caller can skip scheduling the task entirely) or when
+    /// a previous `get_info` is still in flight (so we don't pile up
+    /// concurrent RPCs during slow initial sync or SparkEvent bursts).
+    /// Sets `spark_balance_loading` for the duration of the task; the
+    /// `SparkBalanceUpdated` / `SparkLoadFailed` handlers clear it.
+    fn load_spark_balance(&mut self) -> Option<Task<Message>> {
         let backend = self.spark_backend.clone()?;
+        if self.spark_balance_loading {
+            return None;
+        }
+        self.spark_balance_loading = true;
         Some(Task::perform(
             async move { backend.get_info().await },
             |result| match result {
@@ -2472,10 +2498,10 @@ impl GlobalHome {
                 Err(e) => {
                     tracing::warn!("Home: spark get_info failed: {}", e);
                     // Soft-fail: leave the card showing whatever the
-                    // last successful fetch returned by not emitting a
-                    // balance update at all. CacheUpdated is a no-op
-                    // ping that doesn't touch the Spark balance.
-                    Message::CacheUpdated
+                    // last successful fetch returned. The Home handler
+                    // just clears the in-flight guard so the next
+                    // refresh / retry can fire.
+                    Message::View(view::Message::Home(HomeMessage::SparkLoadFailed))
                 }
             },
         ))
