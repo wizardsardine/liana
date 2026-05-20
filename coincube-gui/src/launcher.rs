@@ -2094,7 +2094,6 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
             // Duress is hidden until the backend endpoint (/connect/duress)
             // is implemented — keep the ConnectSubMenu::Duress variant and
             // duress_ux() so re-enabling is a one-line revert.
-            // Invites is per-Cube (key holders), not shown in launcher
         ];
         for (label, sub) in items {
             let is_active = matches!(

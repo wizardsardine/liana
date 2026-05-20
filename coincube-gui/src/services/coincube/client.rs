@@ -2329,4 +2329,117 @@ mod cube_member_tests {
         assert!(cube.members.is_empty());
         assert!(cube.pending_invites.is_empty());
     }
+
+    #[tokio::test]
+    async fn get_received_invites_parses_list() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/api/v1/connect/invites/received");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": [
+                        {
+                            "id": 42,
+                            "ownerEmail": "alice@example.com",
+                            "role": "keyholder",
+                            "expiresAt": "2026-05-25T12:00:00Z",
+                            "createdAt": "2026-05-18T12:00:00Z"
+                        }
+                    ]
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let received = client
+            .get_received_invites()
+            .await
+            .expect("get_received_invites should succeed");
+        mock.assert();
+
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].id, 42);
+        assert_eq!(received[0].owner_email, "alice@example.com");
+    }
+
+    #[tokio::test]
+    async fn get_received_invites_surfaces_unauthorized() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/api/v1/connect/invites/received");
+            then.status(401)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": false,
+                    "error": { "code": "unauthorized", "message": "missing token" }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .get_received_invites()
+            .await
+            .expect_err("401 should produce an error");
+        mock.assert();
+        assert!(err.is_auth_error(), "expected auth error; got {:?}", err);
+    }
+
+    #[tokio::test]
+    async fn accept_invite_by_id_returns_ok_on_success() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/invites/42/accept");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "status": "accepted",
+                        "ownerEmail": "alice@example.com",
+                        "role": "keyholder"
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        client
+            .accept_invite_by_id(42)
+            .await
+            .expect("accept_invite_by_id should succeed");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn accept_invite_by_id_surfaces_revoked_error() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/connect/invites/42/accept");
+            then.status(400)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": false,
+                    "error": { "code": "invalid_request", "message": "Invite has been revoked" }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .accept_invite_by_id(42)
+            .await
+            .expect_err("400 should produce an error");
+        mock.assert();
+        assert!(
+            matches!(
+                &err,
+                CoincubeError::Unsuccessful(info) if info.status_code == 400
+            ),
+            "expected 400 Unsuccessful; got {:?}",
+            err
+        );
+    }
 }
