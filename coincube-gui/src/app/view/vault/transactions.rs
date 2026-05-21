@@ -25,8 +25,7 @@ use crate::{
         cache::Cache,
         menu::{Menu, VaultSubMenu},
         view::{
-            dashboard,
-            loading_placeholder,
+            dashboard, loading_placeholder,
             message::{CreateRbfMessage, Message},
             placeholder,
             vault::label,

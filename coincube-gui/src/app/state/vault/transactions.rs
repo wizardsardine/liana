@@ -78,6 +78,11 @@ pub struct VaultTransactionsPanel {
     last_page_index: Option<u32>,
     processing: bool,
     current_page: u32,
+    /// Target page of an in-flight `VaultNextPage` extension fetch. Set on
+    /// dispatch, cleared on the result *or* by `reload`. The extension
+    /// handler ignores any response that arrives once this is `None`, so a
+    /// reload mid-fetch can't let a stale page advance `current_page`.
+    pending_page: Option<u32>,
 }
 
 impl VaultTransactionsPanel {
@@ -97,6 +102,7 @@ impl VaultTransactionsPanel {
             // loading state rather than briefly flashing "No transactions".
             processing: true,
             current_page: 0,
+            pending_page: None,
         }
     }
 
@@ -174,6 +180,10 @@ impl State for VaultTransactionsPanel {
         match message {
             Message::HistoryTransactions(res) => match res {
                 Err(e) => {
+                    // Must clear `processing` here: `reload` sets it true, so
+                    // a failed initial fetch would otherwise leave the panel
+                    // stuck on the loading indicator with Prev/Next disabled.
+                    self.processing = false;
                     let err_msg = e.to_string();
                     self.warning = Some(e);
                     return Task::done(Message::View(view::Message::ShowError(err_msg)));
@@ -196,12 +206,28 @@ impl State for VaultTransactionsPanel {
             },
             Message::HistoryTransactionsExtension(res) => match res {
                 Err(e) => {
+                    // Stale-response guard (see the Ok arm): if `pending_page`
+                    // is already cleared a `reload` superseded this fetch —
+                    // discard the late error without touching `processing`,
+                    // which the reload's own fetch now owns.
+                    if self.pending_page.take().is_none() {
+                        return Task::none();
+                    }
                     self.processing = false;
                     let err_msg = e.to_string();
                     self.warning = Some(e);
                     return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
                 Ok((mut txs, server_exhausted)) => {
+                    // Stale-response guard: this extension result is only
+                    // valid if `pending_page` still records the NextPage
+                    // fetch that produced it. A `reload` between dispatch and
+                    // arrival clears `pending_page`, so a late response is
+                    // discarded rather than advancing `current_page` and
+                    // injecting stale rows into `page_cache`.
+                    let Some(target) = self.pending_page.take() else {
+                        return Task::none();
+                    };
                     self.processing = false;
                     self.warning = None;
                     // The cursor we used (last tx's blocktime) is inclusive,
@@ -223,12 +249,12 @@ impl State for VaultTransactionsPanel {
                         // last. Don't advance onto an empty page.
                         self.last_page_index = Some(self.current_page);
                     } else {
-                        self.current_page += 1;
+                        self.current_page = target;
                         if server_exhausted {
                             self.last_page_index = Some(self.current_page);
                         }
-                        if (self.current_page as usize) < self.page_cache.len() {
-                            self.page_cache[self.current_page as usize] = txs;
+                        if (target as usize) < self.page_cache.len() {
+                            self.page_cache[target as usize] = txs;
                         } else {
                             self.page_cache.push(txs);
                         }
@@ -365,6 +391,7 @@ impl State for VaultTransactionsPanel {
                     return Task::none();
                 };
                 let daemon = daemon.clone();
+                self.pending_page = Some(self.current_page + 1);
                 self.processing = true;
                 return Task::perform(
                     async move {
@@ -452,6 +479,9 @@ impl State for VaultTransactionsPanel {
         self.current_page = 0;
         self.last_page_index = None;
         self.processing = true;
+        // Drop any in-flight NextPage fetch: its result must not advance
+        // pages once this reload has reset pagination back to page 0.
+        self.pending_page = None;
         self.page_cache.clear();
         self.pending_txs.clear();
         self.displayed_txs.clear();
