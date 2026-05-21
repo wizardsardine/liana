@@ -81,6 +81,157 @@ pub fn multisig_security_template<'a>(
     recovery_path: &'a Path,
     valid: bool,
 ) -> Element<'a, Message> {
+    let advanced_settings = collapse::Collapse::new(
+        Row::new()
+            .align_y(Alignment::Center)
+            .spacing(10)
+            .push(text("Advanced settings").small().bold())
+            .push(icon::collapse_icon()),
+        Row::new()
+            .align_y(Alignment::Center)
+            .spacing(10)
+            .push(text("Advanced settings").small().bold())
+            .push(icon::collapsed_icon()),
+        define_descriptor_advanced_settings(use_taproot),
+    )
+    .style(theme::button::transparent);
+
+    let primary = path(
+        color::GREEN,
+        None,
+        PathSequence::Primary,
+        primary_path.warning,
+        primary_path.keys.len(),
+        primary_path
+            .keys
+            .iter()
+            .enumerate()
+            .map(|(i, primary_key)| {
+                if let Some(key) = primary_key {
+                    defined_key(
+                        &key.name,
+                        color::GREEN,
+                        format!("Primary key #{}", i + 1),
+                        if use_taproot && !key.source.is_compatible_taproot() {
+                            Some("This device does not support Taproot")
+                        } else {
+                            None
+                        },
+                        true,
+                    )
+                } else {
+                    undefined_key(
+                        color::GREEN,
+                        format!("Primary key #{}", i + 1),
+                        !primary_path.keys[0..i].iter().any(|k| k.is_none()),
+                        true,
+                    )
+                }
+                .map(move |msg| message::DefinePath::Key(i, msg))
+            })
+            .collect(),
+        true,
+    )
+    .map(move |msg| {
+        if let message::DefinePath::Key(i, message::DefineKey::Edit) = msg {
+            Message::DefineDescriptor(message::DefineDescriptor::KeysEdit(
+                PathKind::Primary,
+                vec![(0, i), (1, i)],
+            ))
+        } else {
+            Message::DefineDescriptor(message::DefineDescriptor::Path(0, msg))
+        }
+    });
+
+    let recovery = path(
+        color::ORANGE,
+        None,
+        recovery_path.sequence,
+        recovery_path.warning,
+        recovery_path.threshold,
+        recovery_path
+            .keys
+            .iter()
+            .enumerate()
+            .map(|(j, recovery_key)| {
+                if let Some(key) = recovery_key {
+                    if j < 2 {
+                        uneditable_defined_key(
+                            &key.name,
+                            color::GREEN,
+                            format!("Primary key #{}", j + 1),
+                            if use_taproot && !key.source.is_compatible_taproot() {
+                                Some("This device does not support Taproot")
+                            } else {
+                                None
+                            },
+                        )
+                    } else {
+                        defined_key(
+                            &key.name,
+                            color::ORANGE,
+                            "Recovery key".to_string(),
+                            if use_taproot && !key.source.is_compatible_taproot() {
+                                Some("This device does not support Taproot")
+                            } else {
+                                None
+                            },
+                            true,
+                        )
+                    }
+                } else {
+                    undefined_key(
+                        if j < 2 { color::GREEN } else { color::ORANGE },
+                        if j < 2 {
+                            format!("Primary key #{}", j + 1)
+                        } else {
+                            "Recovery key".to_string()
+                        },
+                        !(primary_path.keys.iter().any(|k| k.is_none())
+                            || recovery_path.keys[0..j].iter().any(|k| k.is_none())),
+                        true,
+                    )
+                }
+                .map(move |msg| message::DefinePath::Key(j, msg))
+            })
+            .collect(),
+        true,
+    )
+    .map(move |msg| {
+        if let message::DefinePath::Key(i, message::DefineKey::Edit) = msg {
+            let (path_kind, keys) = if i < 2 {
+                (PathKind::Primary, vec![(0, i), (1, i)])
+            } else {
+                // recovery path is the path with three keys
+                (PathKind::Recovery, vec![(1, i)])
+            };
+            Message::DefineDescriptor(message::DefineDescriptor::KeysEdit(path_kind, keys))
+        } else {
+            Message::DefineDescriptor(message::DefineDescriptor::Path(1, msg))
+        }
+    });
+
+    let footer = Row::new()
+        .push(
+            button::secondary(None, "Clear All")
+                .width(Length::Fixed(120.0))
+                .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset)),
+        )
+        .push(Space::with_width(40))
+        .push(
+            button::secondary(None, "Customize")
+                .width(Length::Fixed(120.0))
+                .on_press(Message::DefineDescriptor(
+                    message::DefineDescriptor::ChangeTemplate(context::DescriptorTemplate::Custom),
+                )),
+        )
+        .push(Space::with_width(Length::Fill))
+        .push(
+            button::primary(None, "Continue")
+                .width(Length::Fixed(200.0))
+                .on_press_maybe(if valid { Some(Message::Next) } else { None }),
+        );
+
     layout(
         progress,
         None,
@@ -88,166 +239,11 @@ pub fn multisig_security_template<'a>(
         Column::new()
             .align_x(Alignment::Start)
             .max_width(1000.0)
-            .push(
-                collapse::Collapse::new(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .spacing(10)
-                        .push(text("Advanced settings").small().bold())
-                        .push(icon::collapse_icon()),
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .spacing(10)
-                        .push(text("Advanced settings").small().bold())
-                        .push(icon::collapsed_icon()),
-                    define_descriptor_advanced_settings(use_taproot),
-                )
-                .style(theme::button::transparent),
-            )
-            .push(
-                path(
-                    color::GREEN,
-                    None,
-                    PathSequence::Primary,
-                    primary_path.warning,
-                    primary_path.keys.len(),
-                    primary_path
-                        .keys
-                        .iter()
-                        .enumerate()
-                        .map(|(i, primary_key)| {
-                            if let Some(key) = primary_key {
-                                defined_key(
-                                    &key.name,
-                                    color::GREEN,
-                                    format!("Primary key #{}", i + 1),
-                                    if use_taproot && !key.source.is_compatible_taproot() {
-                                        Some("This device does not support Taproot")
-                                    } else {
-                                        None
-                                    },
-                                    true,
-                                )
-                            } else {
-                                undefined_key(
-                                    color::GREEN,
-                                    format!("Primary key #{}", i + 1),
-                                    !primary_path.keys[0..i].iter().any(|k| k.is_none()),
-                                    true,
-                                )
-                            }
-                            .map(move |msg| message::DefinePath::Key(i, msg))
-                        })
-                        .collect(),
-                    true,
-                )
-                .map(move |msg| {
-                    if let message::DefinePath::Key(i, message::DefineKey::Edit) = msg {
-                        Message::DefineDescriptor(message::DefineDescriptor::KeysEdit(
-                            PathKind::Primary,
-                            vec![(0, i), (1, i)],
-                        ))
-                    } else {
-                        Message::DefineDescriptor(message::DefineDescriptor::Path(0, msg))
-                    }
-                }),
-            )
-            .push(
-                path(
-                    color::ORANGE,
-                    None,
-                    recovery_path.sequence,
-                    recovery_path.warning,
-                    recovery_path.threshold,
-                    recovery_path
-                        .keys
-                        .iter()
-                        .enumerate()
-                        .map(|(j, recovery_key)| {
-                            if let Some(key) = recovery_key {
-                                if j < 2 {
-                                    uneditable_defined_key(
-                                        &key.name,
-                                        color::GREEN,
-                                        format!("Primary key #{}", j + 1),
-                                        if use_taproot && !key.source.is_compatible_taproot() {
-                                            Some("This device does not support Taproot")
-                                        } else {
-                                            None
-                                        },
-                                    )
-                                } else {
-                                    defined_key(
-                                        &key.name,
-                                        color::ORANGE,
-                                        "Recovery key".to_string(),
-                                        if use_taproot && !key.source.is_compatible_taproot() {
-                                            Some("This device does not support Taproot")
-                                        } else {
-                                            None
-                                        },
-                                        true,
-                                    )
-                                }
-                            } else {
-                                undefined_key(
-                                    if j < 2 { color::GREEN } else { color::ORANGE },
-                                    if j < 2 {
-                                        format!("Primary key #{}", j + 1)
-                                    } else {
-                                        "Recovery key".to_string()
-                                    },
-                                    !(primary_path.keys.iter().any(|k| k.is_none())
-                                        || recovery_path.keys[0..j].iter().any(|k| k.is_none())),
-                                    true,
-                                )
-                            }
-                            .map(move |msg| message::DefinePath::Key(j, msg))
-                        })
-                        .collect(),
-                    true,
-                )
-                .map(move |msg| {
-                    if let message::DefinePath::Key(i, message::DefineKey::Edit) = msg {
-                        let (path_kind, keys) = if i < 2 {
-                            (PathKind::Primary, vec![(0, i), (1, i)])
-                        } else {
-                            // recovery path is the path with three keys
-                            (PathKind::Recovery, vec![(1, i)])
-                        };
-                        Message::DefineDescriptor(message::DefineDescriptor::KeysEdit(
-                            path_kind, keys,
-                        ))
-                    } else {
-                        Message::DefineDescriptor(message::DefineDescriptor::Path(1, msg))
-                    }
-                }),
-            )
+            .push(advanced_settings)
+            .push(primary)
+            .push(recovery)
             .push(Space::with_height(10))
-            .push(
-                Row::new()
-                    .push(
-                        button::secondary(None, "Clear All")
-                            .width(Length::Fixed(120.0))
-                            .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset)),
-                    )
-                    .push(Space::with_width(40))
-                    .push(
-                        button::secondary(None, "Customize")
-                            .width(Length::Fixed(120.0))
-                            .on_press(Message::DefineDescriptor(
-                                message::DefineDescriptor::ChangeTemplate(
-                                    context::DescriptorTemplate::Custom,
-                                ),
-                            )),
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        button::primary(None, "Continue")
-                            .width(Length::Fixed(200.0))
-                            .on_press_maybe(if valid { Some(Message::Next) } else { None }),
-                    ),
-            )
+            .push(footer)
             .push(Space::with_height(100.0))
             .spacing(20),
         true,

@@ -76,6 +76,95 @@ pub fn inheritance_template<'a>(
     } else {
         None
     };
+
+    let advanced_settings = collapse::Collapse::new(
+        Row::new()
+            .align_y(Alignment::Center)
+            .spacing(10)
+            .push(text("Advanced settings").small().bold())
+            .push(icon::collapse_icon()),
+        Row::new()
+            .align_y(Alignment::Center)
+            .spacing(10)
+            .push(text("Advanced settings").small().bold())
+            .push(icon::collapsed_icon()),
+        define_descriptor_advanced_settings(use_taproot),
+    )
+    .style(theme::button::transparent);
+
+    let primary = path(
+        color::GREEN,
+        None,
+        PathSequence::Primary,
+        primary_path.warning,
+        1,
+        vec![if let Some(key) = primary_key {
+            defined_key(
+                &key.name,
+                color::GREEN,
+                "Primary key",
+                if use_taproot && !key.source.is_compatible_taproot() {
+                    Some("This device does not support Taproot")
+                } else {
+                    None
+                },
+                true,
+            )
+        } else {
+            undefined_key(color::GREEN, "Primary key", true, true)
+        }
+        .map(|msg| message::DefinePath::Key(0, msg))],
+        true,
+    )
+    .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(0, msg)));
+
+    let recovery = path(
+        color::WHITE,
+        None,
+        recovery_path.sequence,
+        recovery_path.warning,
+        1,
+        vec![if let Some(Some(key)) = recovery_path.keys.first() {
+            defined_key(
+                &key.name,
+                color::WHITE,
+                "Inheritance key",
+                if use_taproot && !key.source.is_compatible_taproot() {
+                    Some("This device does not support Taproot")
+                } else {
+                    None
+                },
+                true,
+            )
+        } else {
+            undefined_key(color::WHITE, "Inheritance key", primary_key.is_some(), true)
+        }
+        .map(|msg| message::DefinePath::Key(0, msg))],
+        true,
+    )
+    .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(1, msg)));
+
+    let footer = Row::new()
+        .push(
+            button::secondary(None, "Clear All")
+                .width(Length::Fixed(120.0))
+                .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset)),
+        )
+        .push(Space::with_width(40))
+        .push(
+            button::secondary(None, "Customize")
+                .width(Length::Fixed(120.0))
+                .on_press(Message::DefineDescriptor(
+                    message::DefineDescriptor::ChangeTemplate(context::DescriptorTemplate::Custom),
+                )),
+        )
+        .push(Space::with_width(Length::Fill))
+        .push(
+            button::primary(None, "Continue")
+                .width(Length::Fixed(200.0))
+                .on_press_maybe(if valid { Some(Message::Next) } else { None }),
+        );
+
     layout(
         progress,
         None,
@@ -83,101 +172,11 @@ pub fn inheritance_template<'a>(
         Column::new()
             .align_x(Alignment::Start)
             .max_width(1000.0)
-            .push(
-                collapse::Collapse::new(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .spacing(10)
-                        .push(text("Advanced settings").small().bold())
-                        .push(icon::collapse_icon()),
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .spacing(10)
-                        .push(text("Advanced settings").small().bold())
-                        .push(icon::collapsed_icon()),
-                    define_descriptor_advanced_settings(use_taproot),
-                )
-                .style(theme::button::transparent),
-            )
-            .push(
-                path(
-                    color::GREEN,
-                    None,
-                    PathSequence::Primary,
-                    primary_path.warning,
-                    1,
-                    vec![if let Some(key) = primary_key {
-                        defined_key(
-                            &key.name,
-                            color::GREEN,
-                            "Primary key",
-                            if use_taproot && !key.source.is_compatible_taproot() {
-                                Some("This device does not support Taproot")
-                            } else {
-                                None
-                            },
-                            true,
-                        )
-                    } else {
-                        undefined_key(color::GREEN, "Primary key", true, true)
-                    }
-                    .map(|msg| message::DefinePath::Key(0, msg))],
-                    true,
-                )
-                .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(0, msg))),
-            )
-            .push(
-                path(
-                    color::WHITE,
-                    None,
-                    recovery_path.sequence,
-                    recovery_path.warning,
-                    1,
-                    vec![if let Some(Some(key)) = recovery_path.keys.first() {
-                        defined_key(
-                            &key.name,
-                            color::WHITE,
-                            "Inheritance key",
-                            if use_taproot && !key.source.is_compatible_taproot() {
-                                Some("This device does not support Taproot")
-                            } else {
-                                None
-                            },
-                            true,
-                        )
-                    } else {
-                        undefined_key(color::WHITE, "Inheritance key", primary_key.is_some(), true)
-                    }
-                    .map(|msg| message::DefinePath::Key(0, msg))],
-                    true,
-                )
-                .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(1, msg))),
-            )
+            .push(advanced_settings)
+            .push(primary)
+            .push(recovery)
             .push(Space::with_height(10))
-            .push(
-                Row::new()
-                    .push(
-                        button::secondary(None, "Clear All")
-                            .width(Length::Fixed(120.0))
-                            .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset)),
-                    )
-                    .push(Space::with_width(40))
-                    .push(
-                        button::secondary(None, "Customize")
-                            .width(Length::Fixed(120.0))
-                            .on_press(Message::DefineDescriptor(
-                                message::DefineDescriptor::ChangeTemplate(
-                                    context::DescriptorTemplate::Custom,
-                                ),
-                            )),
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        button::primary(None, "Continue")
-                            .width(Length::Fixed(200.0))
-                            .on_press_maybe(if valid { Some(Message::Next) } else { None }),
-                    ),
-            )
+            .push(footer)
             .spacing(20),
         true,
         Some(Message::Previous),
