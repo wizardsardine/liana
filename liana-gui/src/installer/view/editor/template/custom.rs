@@ -1,14 +1,15 @@
 use iced::{
     alignment,
-    widget::{tooltip, Container, Space},
+    widget::{row, tooltip, Container, Space},
     Alignment, Length,
 };
 
 use liana_ui::{
     color,
     component::{
-        button, collapse,
-        text::{h3, p1_regular, text, Text},
+        button::{self, BtnWidth},
+        collapse,
+        text::{h3, p1_bold, p1_regular, text},
     },
     icon, image, theme,
     widget::*,
@@ -65,16 +66,12 @@ pub fn custom_template<'a>(
     let prim_keys_fixed = primary_path.keys.len() < 2; // can only delete a primary key if there are 2 or more
 
     let advanced_settings = collapse::Collapse::new(
-        Row::new()
+        row![p1_bold("Advanced settings"), icon::collapse_icon()]
             .align_y(Alignment::Center)
-            .spacing(10)
-            .push(text("Advanced settings").small().bold())
-            .push(icon::collapse_icon()),
-        Row::new()
+            .spacing(10),
+        row![p1_bold("Advanced settings"), icon::collapsed_icon()]
             .align_y(Alignment::Center)
-            .spacing(10)
-            .push(text("Advanced settings").small().bold())
-            .push(icon::collapsed_icon()),
+            .spacing(10),
         define_descriptor_advanced_settings(use_taproot),
     )
     .style(theme::button::transparent);
@@ -173,7 +170,7 @@ pub fn custom_template<'a>(
     let btn_row = Row::new()
         .push(
             button::secondary(Some(icon::plus_icon()), "Add recovery option")
-                .width(Length::Fixed(210.0))
+                .width(210)
                 .on_press(Message::DefineDescriptor(
                     message::DefineDescriptor::AddRecoveryPath,
                 )),
@@ -181,7 +178,7 @@ pub fn custom_template<'a>(
         .push_maybe(
             safety_net_path.is_none().then_some(tooltip::Tooltip::new(
                 button::secondary(Some(icon::plus_icon()), "Add Safety Net")
-                    .width(Length::Fixed(210.0))
+                    .width(210)
                     .on_press(Message::DefineDescriptor(
                         message::DefineDescriptor::AddSafetyNetPath,
                     )),
@@ -239,18 +236,13 @@ pub fn custom_template<'a>(
         })
     });
 
-    let last_btn_row = Row::new()
-        .push(
-            button::secondary(None, "Clear All")
-                .width(Length::Fixed(200.0))
-                .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset)),
-        )
-        .push(Space::with_width(Length::Fill))
-        .push(
-            button::primary(None, "Continue")
-                .width(Length::Fixed(200.0))
-                .on_press_maybe(if valid { Some(Message::Next) } else { None }),
-        );
+    let clear_all = button::secondary(None, "Clear All")
+        .width(BtnWidth::XL)
+        .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset));
+    let contin = button::primary(None, "Continue")
+        .width(BtnWidth::XL)
+        .on_press_maybe(if valid { Some(Message::Next) } else { None });
+    let last_btn_row = row![clear_all, Space::fill_width(), contin];
 
     layout(
         progress,
@@ -258,7 +250,7 @@ pub fn custom_template<'a>(
         "Set keys",
         Column::new()
             .align_x(Alignment::Start)
-            .max_width(1000.0)
+            .max_width(super::MAX_WIDTH)
             .push(advanced_settings)
             .push(primary)
             .push(recovery_paths)
@@ -266,7 +258,7 @@ pub fn custom_template<'a>(
             .push_maybe(safety_net)
             .push(Space::with_height(10))
             .push(last_btn_row)
-            .push(Space::with_height(100.0))
+            .push(Space::with_height(super::BOTTOM_PADDING))
             .spacing(20),
         true,
         Some(Message::Previous),

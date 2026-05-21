@@ -13,6 +13,12 @@ use liana_ui::{
 use crate::installer::context;
 use crate::installer::{message::Message, view::layout};
 
+/// Max width of the editor templates' main content column.
+pub const MAX_WIDTH: f32 = 1000.0;
+
+/// Bottom padding below the footer of the editor templates.
+pub const BOTTOM_PADDING: f32 = 100.0;
+
 pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, Message> {
     layout(
         progress,

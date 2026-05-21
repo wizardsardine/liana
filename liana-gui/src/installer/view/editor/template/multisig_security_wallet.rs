@@ -1,10 +1,15 @@
-use iced::{alignment, widget::Space, Alignment, Length};
+use iced::{
+    alignment,
+    widget::{row, Space},
+    Alignment, Length,
+};
 
 use liana_ui::{
     color,
     component::{
-        button, collapse,
-        text::{h3, p1_regular, text, Text, H3_SIZE},
+        button::{self, BtnWidth},
+        collapse,
+        text::{h3, p1_bold, p1_regular, Text, H3_SIZE},
     },
     icon, image, theme,
     widget::*,
@@ -82,16 +87,12 @@ pub fn multisig_security_template<'a>(
     valid: bool,
 ) -> Element<'a, Message> {
     let advanced_settings = collapse::Collapse::new(
-        Row::new()
+        row![p1_bold("Advanced settings"), icon::collapse_icon()]
             .align_y(Alignment::Center)
-            .spacing(10)
-            .push(text("Advanced settings").small().bold())
-            .push(icon::collapse_icon()),
-        Row::new()
+            .spacing(10),
+        row![p1_bold("Advanced settings"), icon::collapsed_icon()]
             .align_y(Alignment::Center)
-            .spacing(10)
-            .push(text("Advanced settings").small().bold())
-            .push(icon::collapsed_icon()),
+            .spacing(10),
         define_descriptor_advanced_settings(use_taproot),
     )
     .style(theme::button::transparent);
@@ -211,26 +212,24 @@ pub fn multisig_security_template<'a>(
         }
     });
 
-    let footer = Row::new()
-        .push(
-            button::secondary(None, "Clear All")
-                .width(Length::Fixed(120.0))
-                .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset)),
-        )
-        .push(Space::with_width(40))
-        .push(
-            button::secondary(None, "Customize")
-                .width(Length::Fixed(120.0))
-                .on_press(Message::DefineDescriptor(
-                    message::DefineDescriptor::ChangeTemplate(context::DescriptorTemplate::Custom),
-                )),
-        )
-        .push(Space::with_width(Length::Fill))
-        .push(
-            button::primary(None, "Continue")
-                .width(Length::Fixed(200.0))
-                .on_press_maybe(if valid { Some(Message::Next) } else { None }),
-        );
+    let clear_all = button::secondary(None, "Clear All")
+        .width(BtnWidth::M)
+        .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset));
+    let customize = button::secondary(None, "Customize")
+        .width(BtnWidth::M)
+        .on_press(Message::DefineDescriptor(
+            message::DefineDescriptor::ChangeTemplate(context::DescriptorTemplate::Custom),
+        ));
+    let contin = button::primary(None, "Continue")
+        .width(210)
+        .on_press_maybe(if valid { Some(Message::Next) } else { None });
+    let footer = row![
+        clear_all,
+        Space::with_width(40),
+        customize,
+        Space::fill_width(),
+        contin
+    ];
 
     layout(
         progress,
@@ -238,13 +237,13 @@ pub fn multisig_security_template<'a>(
         "Set keys",
         Column::new()
             .align_x(Alignment::Start)
-            .max_width(1000.0)
+            .max_width(super::MAX_WIDTH)
             .push(advanced_settings)
             .push(primary)
             .push(recovery)
             .push(Space::with_height(10))
             .push(footer)
-            .push(Space::with_height(100.0))
+            .push(Space::with_height(super::BOTTOM_PADDING))
             .spacing(20),
         true,
         Some(Message::Previous),
