@@ -198,23 +198,31 @@ where
                     .on_press(ViewMessage::FocusTab(i)),
                 ),
                 move || {
-                    Column::new()
+                    let has_split = tabs_len > 1;
+                    let close_style = if has_split {
+                        theme::button::tab_menu
+                    } else {
+                        theme::button::tab_menu_bottom
+                    };
+                    let items = Column::new()
                         .push(
-                            Button::new(p1_regular("Close"))
-                                .style(theme::button::tab_menu)
+                            MenuButton::new(p1_regular("Close"))
+                                .style(close_style)
                                 .on_press(ViewMessage::CloseTab(i))
-                                .width(100),
+                                .width(120),
                         )
-                        .push_maybe(if tabs_len > 1 {
+                        .push_maybe(if has_split {
                             Some(
-                                Button::new(p1_regular("Split"))
-                                    .style(theme::button::tab_menu)
+                                MenuButton::new(p1_regular("Split"))
+                                    .style(theme::button::tab_menu_bottom)
                                     .on_press(ViewMessage::SplitTab(i))
-                                    .width(100),
+                                    .width(120),
                             )
                         } else {
                             None
-                        })
+                        });
+                    Container::new(items)
+                        .style(theme::container::tab_menu_panel)
                         .into()
                 },
             ));

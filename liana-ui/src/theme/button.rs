@@ -36,7 +36,6 @@ button_styles!(
     container,
     container_border,
     menu,
-    tab_menu,
     transparent,
     transparent_border,
     clickable_card,
@@ -44,6 +43,33 @@ button_styles!(
     link,
     signing_devices,
 );
+
+pub fn tab_menu(theme: &Theme, status: Status) -> Style {
+    let mut style = button(
+        &theme.colors.buttons.tab_menu,
+        status,
+        theme.button_border_width,
+    );
+    style.border.radius = 3.0.into();
+    style.border.width = 1.0;
+    style
+}
+
+pub fn tab_menu_bottom(theme: &Theme, status: Status) -> Style {
+    let mut style = button(
+        &theme.colors.buttons.tab_menu,
+        status,
+        theme.button_border_width,
+    );
+    style.border.radius = iced::border::Radius {
+        top_left: 3.0,
+        top_right: 3.0,
+        bottom_right: 6.0,
+        bottom_left: 6.0,
+    };
+    style.border.width = 1.0;
+    style
+}
 
 pub fn signing_devices_non_clickable(theme: &Theme, _status: Status) -> Style {
     button(

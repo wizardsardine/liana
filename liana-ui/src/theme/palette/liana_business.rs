@@ -1,7 +1,7 @@
 use iced::Color;
 
 use crate::{
-    color::{self, TRANSPARENT},
+    color::{self, BUSINESS_BLUE, BUSINESS_BLUE_50, TRANSPARENT},
     theme::card::CARD_SHADOW,
 };
 
@@ -298,22 +298,22 @@ impl Palette {
                 },
                 tab_menu: Button {
                     active: ButtonPalette {
-                        background: BTN_TERTIARY_BG,
+                        background: color::WHITE,
                         text: BTN_PRIMARY_BG,
-                        border: BTN_PRIMARY_BG.into(),
+                        border: TRANSPARENT.into(),
                         shadow: Default::default(),
                     },
                     hovered: ButtonPalette {
-                        background: BTN_TERTIARY_BG,
-                        text: BTN_PRIMARY_BG,
-                        border: BTN_PRIMARY_BG.into(),
-                        shadow: BTN_SHADOW,
+                        background: color::WHITE,
+                        text: BUSINESS_BLUE,
+                        border: BUSINESS_BLUE.into(),
+                        shadow: Default::default(),
                     },
                     pressed: Some(ButtonPalette {
-                        background: BTN_TERTIARY_BG,
-                        text: BTN_PRIMARY_PRESSED,
-                        border: BTN_PRIMARY_PRESSED.into(),
-                        shadow: BTN_SHADOW,
+                        background: color::WHITE,
+                        text: BUSINESS_BLUE_50,
+                        border: BUSINESS_BLUE_50.into(),
+                        shadow: Default::default(),
                     }),
                     disabled: btn_disabled(),
                 },
