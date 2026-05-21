@@ -1385,13 +1385,10 @@ impl ConnectAccountPanel {
 
             ContactsMessage::InviteResent(_invite_id) => {
                 log::info!("[CONTACTS] Invite resent successfully");
-            ContactsMessage::InviteResent(_invite_id) => {
-                log::info!("[CONTACTS] Invite resent successfully");
                 self.contacts_state.error = None;
                 return iced::Task::done(Message::View(view::Message::ShowSuccess(
                     "Invite resent".to_string(),
                 )));
-            }
             }
 
             ContactsMessage::RevokeInvite(invite_id) => {
