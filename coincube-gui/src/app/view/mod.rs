@@ -271,6 +271,37 @@ pub fn placeholder<'a, T: Into<Element<'a, Message>>>(
         .into()
 }
 
+/// Loading-state card mirroring [`placeholder`]'s layout, but with the
+/// app's pulsing-dots `loading_indicator` (the same one shown while a Cube
+/// loads) below the title instead of a subtitle. Shown while an initial
+/// fetch is in flight so panels don't briefly flash an empty
+/// "No transactions" state before data arrives.
+pub fn loading_placeholder<'a, T: Into<Element<'a, Message>>>(
+    icon: T,
+    title: &'a str,
+) -> Element<'a, Message> {
+    let content = Column::new()
+        .push(icon)
+        .push(text(title).style(theme::text::secondary).bold())
+        .push(crate::loading::loading_indicator::<Message>(None))
+        .spacing(16)
+        .align_x(Alignment::Center);
+
+    Container::new(content)
+        .width(Length::Fill)
+        .padding(60)
+        .center_x(Length::Fill)
+        .style(|t| container::Style {
+            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+            border: iced::Border {
+                radius: 20.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
 pub fn toast_overlay<'a, I: Iterator<Item = (usize, log::Level, &'a str)>>(
     iter: I,
     theme: &coincube_ui::theme::Theme,

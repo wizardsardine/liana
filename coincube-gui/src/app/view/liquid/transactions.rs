@@ -209,9 +209,11 @@ pub fn liquid_transactions_view<'a>(
                 ),
         );
     } else {
-        // Transaction list — wrapped in a scrollable so a full page of rows
-        // stays bounded to the panel viewport instead of pushing the
-        // pagination controls (and the refundables card) off-screen.
+        // The dashboard already wraps the whole panel in a page-level
+        // scrollable, so the list is pushed directly — nesting another
+        // scrollable here would make its `Fill` height resolve against an
+        // unbounded parent and break layout. Pagination keeps each page
+        // bounded (PAGE_SIZE rows), so the page scroll is enough.
         let list =
             payments
                 .iter()
@@ -226,7 +228,7 @@ pub fn liquid_transactions_view<'a>(
                         show_direction_badges,
                     ))
                 });
-        content = content.push(scrollable(list).height(Length::Fill));
+        content = content.push(list);
         content = content.push(pagination_controls(
             Message::LiquidPrevPage,
             Message::LiquidNextPage,
@@ -264,6 +266,7 @@ pub fn liquid_transactions_view<'a>(
         );
     }
 
+    content = content.push(Space::new().height(Length::Fixed(30.0)));
     content.into()
 }
 

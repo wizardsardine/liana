@@ -62,7 +62,12 @@ pub enum Message {
     Verified(Fingerprint, Result<(), Error>),
     StartRescan(Result<(), Error>),
     HardwareWallets(HardwareWalletMessage),
-    HistoryTransactionsExtension(Result<Vec<HistoryTransaction>, Error>),
+    /// Vault transactions next-page fetch result.
+    /// Tuple: `(page_txs, server_exhausted)` where `server_exhausted` is
+    /// `true` when the daemon returned fewer rows than the requested limit
+    /// (i.e. end of history). It is measured on the raw response, before
+    /// the inclusive-cursor overlap is deduplicated.
+    HistoryTransactionsExtension(Result<(Vec<HistoryTransaction>, bool), Error>),
     /// Initial Vault transactions page-0 fetch result.
     /// Tuple: `(pending_txs, page_0_confirmed_txs)`.
     HistoryTransactions(Result<(Vec<HistoryTransaction>, Vec<HistoryTransaction>), Error>),

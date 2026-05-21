@@ -69,7 +69,13 @@ pub struct VaultTransactionsPanel {
     selected_tx: Option<HistoryTransaction>,
     warning: Option<Error>,
     modal: VaultTransactionsModal,
-    is_last_page: bool,
+    /// Index of the final page, once discovered. `None` means we don't yet
+    /// know where history ends. Stored as an index (rather than a per-page
+    /// bool derived from row count) because the daemon's blocktime cursor
+    /// is inclusive: a fetch can return a full page from the server yet,
+    /// after stripping the rows that overlap the previous page, leave a
+    /// short Vec — so row count is not a reliable end-of-history signal.
+    last_page_index: Option<u32>,
     processing: bool,
     current_page: u32,
 }
@@ -85,10 +91,19 @@ impl VaultTransactionsPanel {
             labels_edited: LabelsEdited::default(),
             warning: None,
             modal: VaultTransactionsModal::None,
-            is_last_page: false,
-            processing: false,
+            last_page_index: None,
+            // Starts true: the panel always fires a `reload` fetch the
+            // moment it's shown, so the first render should display the
+            // loading state rather than briefly flashing "No transactions".
+            processing: true,
             current_page: 0,
         }
+    }
+
+    /// True when the current page is the last page of history. Derived
+    /// from `last_page_index` rather than the displayed row count.
+    fn is_last_page(&self) -> bool {
+        self.last_page_index == Some(self.current_page)
     }
 
     /// Recompute `displayed_txs` from the current page + pending list.
@@ -136,7 +151,7 @@ impl State for VaultTransactionsPanel {
                 cache,
                 &self.displayed_txs,
                 self.current_page,
-                self.is_last_page,
+                self.is_last_page(),
                 self.processing,
             );
             match &self.modal {
@@ -166,7 +181,13 @@ impl State for VaultTransactionsPanel {
                 Ok((pending_txs, page_txs)) => {
                     self.warning = None;
                     self.pending_txs = pending_txs;
-                    self.is_last_page = (page_txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    // Page 0 is fetched with a flat limit and no dedup, so a
+                    // short response here genuinely means end-of-history.
+                    if (page_txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE {
+                        self.last_page_index = Some(0);
+                    } else {
+                        self.last_page_index = None;
+                    }
                     self.page_cache = vec![page_txs];
                     self.current_page = 0;
                     self.processing = false;
@@ -180,24 +201,37 @@ impl State for VaultTransactionsPanel {
                     self.warning = Some(e);
                     return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
-                Ok(mut txs) => {
+                Ok((mut txs, server_exhausted)) => {
                     self.processing = false;
                     self.warning = None;
                     // The cursor we used (last tx's blocktime) is inclusive,
                     // so the response can repeat txs that already appeared on
                     // the current page. Drop those by txid before storing the
-                    // next page, then advance.
+                    // next page. NOTE: `server_exhausted` is derived in the
+                    // fetch task from the *raw* response length vs. the
+                    // request limit — it must not be re-derived from the
+                    // post-dedup `txs.len()`, which can be short even when
+                    // more history exists.
                     if let Some(prev_page) = self.page_cache.get(self.current_page as usize) {
                         let prev_ids: std::collections::HashSet<_> =
                             prev_page.iter().map(|t| t.tx.compute_txid()).collect();
                         txs.retain(|t| !prev_ids.contains(&t.tx.compute_txid()));
                     }
-                    self.is_last_page = (txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
-                    self.current_page += 1;
-                    if (self.current_page as usize) < self.page_cache.len() {
-                        self.page_cache[self.current_page as usize] = txs;
+                    if txs.is_empty() {
+                        // Every row overlapped the current page — there is
+                        // nothing new beyond it, so the current page is the
+                        // last. Don't advance onto an empty page.
+                        self.last_page_index = Some(self.current_page);
                     } else {
-                        self.page_cache.push(txs);
+                        self.current_page += 1;
+                        if server_exhausted {
+                            self.last_page_index = Some(self.current_page);
+                        }
+                        if (self.current_page as usize) < self.page_cache.len() {
+                            self.page_cache[self.current_page as usize] = txs;
+                        } else {
+                            self.page_cache.push(txs);
+                        }
                     }
                     self.refresh_displayed();
                 }
@@ -281,6 +315,12 @@ impl State for VaultTransactionsPanel {
                         ),
                 ) {
                     Ok(cmd) => {
+                        // `labels_edited.update` mutates labels in-place on
+                        // `pending_txs` / `page_cache`, but the view renders
+                        // the `displayed_txs` clone — rematerialise it so the
+                        // edited label is visible immediately rather than only
+                        // after a page change or reload.
+                        self.refresh_displayed();
                         return cmd;
                     }
                     Err(e) => {
@@ -293,12 +333,11 @@ impl State for VaultTransactionsPanel {
             Message::View(view::Message::VaultPrevPage) => {
                 if self.current_page > 0 && !self.processing {
                     self.current_page -= 1;
-                    self.is_last_page = false;
                     self.refresh_displayed();
                 }
             }
             Message::View(view::Message::VaultNextPage) => {
-                if self.is_last_page || self.processing {
+                if self.is_last_page() || self.processing {
                     return Task::none();
                 }
                 let next_page = (self.current_page as usize) + 1;
@@ -306,8 +345,6 @@ impl State for VaultTransactionsPanel {
                 // round-trip when the user pages back and forth.
                 if next_page < self.page_cache.len() {
                     self.current_page += 1;
-                    self.is_last_page =
-                        (self.page_cache[next_page].len() as u64) < HISTORY_EVENT_PAGE_SIZE;
                     self.refresh_displayed();
                     return Task::none();
                 }
@@ -344,7 +381,7 @@ impl State for VaultTransactionsPanel {
                         let blocktime = if let Some(tx) = txs.first() {
                             tx.time
                         } else {
-                            return Ok(txs);
+                            return Ok((txs, true));
                         };
 
                         // 2. Retrieve a larger batch of tx with the same cursor but
@@ -356,8 +393,13 @@ impl State for VaultTransactionsPanel {
                             limit += HISTORY_EVENT_PAGE_SIZE;
                             txs = daemon.list_history_txs(0, last_tx_date, limit).await?;
                         }
+                        // The server is exhausted when it returned fewer rows
+                        // than the (possibly bumped) limit we asked for. This
+                        // is measured on the raw response — the caller must
+                        // not re-derive it from the post-dedup length.
+                        let server_exhausted = (txs.len() as u64) < limit;
                         txs.sort_by(|a, b| a.compare(b));
-                        Ok(txs)
+                        Ok((txs, server_exhausted))
                     },
                     Message::HistoryTransactionsExtension,
                 );
@@ -408,7 +450,7 @@ impl State for VaultTransactionsPanel {
         };
         self.selected_tx = None;
         self.current_page = 0;
-        self.is_last_page = false;
+        self.last_page_index = None;
         self.processing = true;
         self.page_cache.clear();
         self.pending_txs.clear();

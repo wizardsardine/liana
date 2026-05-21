@@ -3,7 +3,7 @@ use std::convert::TryInto;
 
 use chrono::{DateTime, Local, Utc};
 use iced::{
-    widget::{scrollable, tooltip, Space},
+    widget::{tooltip, Space},
     Alignment, Length,
 };
 
@@ -26,6 +26,7 @@ use crate::{
         menu::{Menu, VaultSubMenu},
         view::{
             dashboard,
+            loading_placeholder,
             message::{CreateRbfMessage, Message},
             placeholder,
             vault::label,
@@ -47,7 +48,13 @@ pub fn transactions_view<'a>(
 ) -> Element<'a, Message> {
     let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
 
-    let show_empty_state = txs.is_empty() && current_page == 0;
+    // While the initial page-0 fetch is in flight, `txs` is empty but the
+    // wallet may well have history — show a loading state instead of the
+    // "No transactions" empty state, which would otherwise flash for a few
+    // seconds before the data lands.
+    let is_initial_empty = txs.is_empty() && current_page == 0;
+    let show_loading = is_initial_empty && processing;
+    let show_empty_state = is_initial_empty && !processing;
 
     let list = txs
         .iter()
@@ -62,17 +69,23 @@ pub fn transactions_view<'a>(
             ))
         });
 
-    let body: Element<'a, Message> = if show_empty_state {
+    let body: Element<'a, Message> = if show_loading {
+        loading_placeholder(receipt_icon().size(80), "Loading transactions")
+    } else if show_empty_state {
         placeholder(
             receipt_icon().size(80),
             "No transactions yet",
             "Your transaction history will appear here once you send or receive coins.",
         )
-        .into()
     } else {
+        // The dashboard already wraps the whole panel in a page-level
+        // scrollable, so the list is pushed directly — nesting another
+        // scrollable here would make its `Fill` height resolve against an
+        // unbounded parent and break layout. Pagination keeps each page
+        // bounded (PAGE_SIZE rows), so the page scroll is enough.
         Column::new()
             .spacing(10)
-            .push(scrollable(list).height(Length::Fill))
+            .push(list)
             .push(pagination_controls(
                 Message::VaultPrevPage,
                 Message::VaultNextPage,
@@ -81,6 +94,7 @@ pub fn transactions_view<'a>(
                 processing,
                 current_page,
             ))
+            .push(Space::new().height(Length::Fixed(30.0)))
             .into()
     };
 

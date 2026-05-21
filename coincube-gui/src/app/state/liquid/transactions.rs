@@ -82,7 +82,12 @@ pub struct LiquidTransactions {
     pending_vault_refund_id: Option<u64>,
     empty_state_quote: Quote,
     empty_state_image_handle: image::Handle,
+    /// Page currently displayed (0-indexed).
     current_page: u32,
+    /// Target page of an in-flight Prev/Next fetch. Committed to
+    /// `current_page` only on `PaymentsLoaded(Ok)`; dropped on error so a
+    /// failed fetch doesn't desync the page counter from the shown data.
+    pending_page: Option<u32>,
     is_last_page: bool,
     processing: bool,
 }
@@ -119,6 +124,7 @@ impl LiquidTransactions {
             empty_state_quote,
             empty_state_image_handle,
             current_page: 0,
+            pending_page: None,
             is_last_page: false,
             processing: false,
         }
@@ -140,9 +146,12 @@ impl LiquidTransactions {
         }
     }
 
-    fn fetch_page(&self) -> Task<Message> {
+    /// Fetch `page` (0-indexed). `current_page` is *not* moved here — it is
+    /// only committed once `PaymentsLoaded(Ok)` lands, so a failed fetch
+    /// leaves the panel showing the page it was already on.
+    fn fetch_page(&self, page: u32) -> Task<Message> {
         let client = self.breez_client.clone();
-        let offset = self.current_page.saturating_mul(PAGE_SIZE);
+        let offset = page.saturating_mul(PAGE_SIZE);
         let asset_id = self.active_filter_asset_id();
         Task::perform(
             async move {
@@ -340,6 +349,12 @@ impl State for LiquidTransactions {
             Message::PaymentsLoaded(Ok(payments)) => {
                 self.loading = false;
                 self.processing = false;
+                // Commit the page navigation now that the fetch succeeded.
+                // `pending_page` is `None` for a reload/initial fetch, where
+                // `current_page` was already set to 0 by `reload`.
+                if let Some(page) = self.pending_page.take() {
+                    self.current_page = page;
+                }
                 // Server-side filtering (see `active_filter_asset_id`) means
                 // the payments arrived already restricted to the active tab;
                 // no further client-side asset filter is needed here.
@@ -351,6 +366,9 @@ impl State for LiquidTransactions {
             Message::PaymentsLoaded(Err(e)) => {
                 self.loading = false;
                 self.processing = false;
+                // Discard the in-flight navigation: `current_page` stays on
+                // the page whose data is still displayed.
+                self.pending_page = None;
                 Task::done(Message::View(view::Message::ShowError(e.to_string())))
             }
             Message::RefundablesLoaded(Ok(refundables)) => {
@@ -412,18 +430,19 @@ impl State for LiquidTransactions {
             }
             Message::View(view::Message::LiquidPrevPage) => {
                 if self.current_page > 0 && !self.processing {
-                    self.current_page -= 1;
-                    self.is_last_page = false;
+                    let target = self.current_page - 1;
+                    self.pending_page = Some(target);
                     self.processing = true;
-                    return self.fetch_page();
+                    return self.fetch_page(target);
                 }
                 Task::none()
             }
             Message::View(view::Message::LiquidNextPage) => {
                 if !self.is_last_page && !self.processing {
-                    self.current_page += 1;
+                    let target = self.current_page + 1;
+                    self.pending_page = Some(target);
                     self.processing = true;
-                    return self.fetch_page();
+                    return self.fetch_page(target);
                 }
                 Task::none()
             }
@@ -756,13 +775,14 @@ impl State for LiquidTransactions {
         self.selected_payment = None;
         self.selected_refundable = None;
         self.current_page = 0;
+        self.pending_page = None;
         self.is_last_page = false;
         self.processing = false;
         self.payments.clear();
         let client2 = self.breez_client.clone();
 
         Task::batch(vec![
-            self.fetch_page(),
+            self.fetch_page(0),
             Task::perform(
                 async move { client2.list_refundables().await },
                 Message::RefundablesLoaded,

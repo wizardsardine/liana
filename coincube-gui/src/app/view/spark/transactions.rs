@@ -37,10 +37,7 @@ use coincube_ui::{
     theme,
     widget::*,
 };
-use iced::{
-    widget::{scrollable, Space},
-    Alignment, Length,
-};
+use iced::{widget::Space, Alignment, Length};
 
 use crate::app::menu::{Menu, SparkSubMenu};
 use crate::app::view::message::Message;
@@ -170,7 +167,12 @@ impl<'a> SparkTransactionsView<'a> {
             },
         );
 
-        content = content.push(scrollable(list).height(Length::Fill));
+        // The dashboard already wraps the whole panel in a page-level
+        // scrollable, so the list is pushed directly — nesting another
+        // scrollable here would make its `Fill` height resolve against an
+        // unbounded parent and break layout. Pagination keeps each page
+        // bounded (PAGE_SIZE rows), so the page scroll is enough.
+        content = content.push(list);
         content = content.push(pagination_controls(
             Message::SparkTransactions(crate::app::view::spark::SparkTransactionsMessage::PrevPage),
             Message::SparkTransactions(crate::app::view::spark::SparkTransactionsMessage::NextPage),
@@ -179,6 +181,7 @@ impl<'a> SparkTransactionsView<'a> {
             self.processing,
             self.current_page,
         ));
+        content = content.push(Space::new().height(Length::Fixed(30.0)));
 
         content.into()
     }

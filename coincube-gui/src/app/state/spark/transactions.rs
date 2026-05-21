@@ -56,7 +56,12 @@ pub struct SparkTransactions {
     /// constructed so repeated reloads don't re-randomize the quote.
     empty_state_quote: Quote,
     empty_state_image_handle: image::Handle,
+    /// Page currently displayed (0-indexed).
     current_page: u32,
+    /// Target page of an in-flight Prev/Next fetch. Committed to
+    /// `current_page` only on `DataLoaded`; dropped on `Error` so a failed
+    /// fetch doesn't desync the page counter from the shown data.
+    pending_page: Option<u32>,
     is_last_page: bool,
     processing: bool,
 }
@@ -76,16 +81,20 @@ impl SparkTransactions {
             empty_state_quote,
             empty_state_image_handle,
             current_page: 0,
+            pending_page: None,
             is_last_page: false,
             processing: false,
         }
     }
 
-    fn fetch_page(&self) -> Task<Message> {
+    /// Fetch `page` (0-indexed). `current_page` is *not* moved here — it is
+    /// only committed once `DataLoaded` lands, so a failed fetch leaves the
+    /// panel showing the page it was already on.
+    fn fetch_page(&self, page: u32) -> Task<Message> {
         let Some(backend) = self.backend.clone() else {
             return Task::none();
         };
-        let offset = self.current_page.saturating_mul(PAGE_SIZE);
+        let offset = page.saturating_mul(PAGE_SIZE);
         Task::perform(
             async move { backend.list_payments(Some(PAGE_SIZE), Some(offset)).await },
             |result| match result {
@@ -209,9 +218,10 @@ impl State for SparkTransactions {
         self.loading = true;
         self.error = None;
         self.current_page = 0;
+        self.pending_page = None;
         self.is_last_page = false;
         self.processing = false;
-        self.fetch_page()
+        self.fetch_page(0)
     }
 
     fn update(
@@ -225,6 +235,12 @@ impl State for SparkTransactions {
                 view::SparkTransactionsMessage::DataLoaded(payments) => {
                     self.loading = false;
                     self.processing = false;
+                    // Commit the page navigation now that the fetch
+                    // succeeded. `pending_page` is `None` for a reload, where
+                    // `current_page` was already set to 0 by `reload`.
+                    if let Some(page) = self.pending_page.take() {
+                        self.current_page = page;
+                    }
                     self.is_last_page = (payments.len() as u32) < PAGE_SIZE;
                     self.payments = payments;
                     self.error = None;
@@ -233,21 +249,25 @@ impl State for SparkTransactions {
                 view::SparkTransactionsMessage::Error(err) => {
                     self.loading = false;
                     self.processing = false;
+                    // Discard the in-flight navigation: `current_page` stays
+                    // on the page whose data is still displayed.
+                    self.pending_page = None;
                     self.error = Some(err);
                 }
                 view::SparkTransactionsMessage::PrevPage => {
                     if self.current_page > 0 && !self.processing {
-                        self.current_page -= 1;
-                        self.is_last_page = false;
+                        let target = self.current_page - 1;
+                        self.pending_page = Some(target);
                         self.processing = true;
-                        return self.fetch_page();
+                        return self.fetch_page(target);
                     }
                 }
                 view::SparkTransactionsMessage::NextPage => {
                     if !self.is_last_page && !self.processing {
-                        self.current_page += 1;
+                        let target = self.current_page + 1;
+                        self.pending_page = Some(target);
                         self.processing = true;
-                        return self.fetch_page();
+                        return self.fetch_page(target);
                     }
                 }
                 view::SparkTransactionsMessage::Select(idx) => {

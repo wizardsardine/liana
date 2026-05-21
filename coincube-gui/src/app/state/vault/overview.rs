@@ -132,6 +132,13 @@ impl State for VaultOverview {
                     &self.payments.list,
                     self.payments.is_last_page,
                     self.processing,
+                    // "Loading transactions" while the very first page fetch
+                    // is still in flight: no page loaded yet, nothing to
+                    // show, and no error reported. A background Tick reload
+                    // keeps `list` populated, so it won't flash to loading.
+                    self.payments.list.is_empty()
+                        && self.payments.loaded_page_count == 0
+                        && self.warning.is_none(),
                     &self.sync_status,
                     self.show_rescan_warning,
                     cache.bitcoin_unit,
