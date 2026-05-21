@@ -1,15 +1,14 @@
 use iced::{
     alignment,
-    widget::{row, tooltip, Container, Space},
+    widget::{tooltip, Container, Space},
     Alignment, Length,
 };
 
 use liana_ui::{
     color,
     component::{
-        button::{self, BtnWidth},
-        collapse,
-        text::{h3, p1_bold, p1_regular, text},
+        button::{self},
+        text::{h3, p1_regular, text},
     },
     icon, image, theme,
     widget::*,
@@ -19,7 +18,7 @@ use crate::installer::{
     descriptor::Path,
     message::{self, Message},
     view::{
-        editor::{define_descriptor_advanced_settings, defined_key, path, undefined_key},
+        editor::{defined_key, path, undefined_key},
         layout,
     },
 };
@@ -65,16 +64,7 @@ pub fn custom_template<'a>(
 ) -> Element<'a, Message> {
     let prim_keys_fixed = primary_path.keys.len() < 2; // can only delete a primary key if there are 2 or more
 
-    let advanced_settings = collapse::Collapse::new(
-        row![p1_bold("Advanced settings"), icon::collapse_icon()]
-            .align_y(Alignment::Center)
-            .spacing(10),
-        row![p1_bold("Advanced settings"), icon::collapsed_icon()]
-            .align_y(Alignment::Center)
-            .spacing(10),
-        define_descriptor_advanced_settings(use_taproot),
-    )
-    .style(theme::button::transparent);
+    let advanced_settings = super::advanced_settings_collapse(use_taproot);
 
     let primary = path(
         color::GREEN,
@@ -236,13 +226,7 @@ pub fn custom_template<'a>(
         })
     });
 
-    let clear_all = button::secondary(None, "Clear All")
-        .width(BtnWidth::XL)
-        .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset));
-    let contin = button::primary(None, "Continue")
-        .width(BtnWidth::XL)
-        .on_press_maybe(if valid { Some(Message::Next) } else { None });
-    let last_btn_row = row![clear_all, Space::fill_width(), contin];
+    let last_btn_row = super::template_footer(valid, false);
 
     layout(
         progress,

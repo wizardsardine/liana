@@ -1,26 +1,20 @@
-use iced::{
-    alignment,
-    widget::{row, Space},
-    Alignment, Length,
-};
+use iced::{alignment, widget::Space, Alignment, Length};
 
 use liana_ui::{
     color,
     component::{
-        button::{self, BtnWidth},
-        collapse,
-        text::{h3, p1_bold, p1_regular, Text, H3_SIZE},
+        button,
+        text::{h3, p1_regular, Text, H3_SIZE},
     },
     icon, image, theme,
     widget::*,
 };
 
 use crate::installer::{
-    context,
     descriptor::{Path, PathSequence},
     message::{self, Message},
     view::{
-        editor::{define_descriptor_advanced_settings, defined_key, path, undefined_key},
+        editor::{defined_key, path, undefined_key},
         layout,
     },
 };
@@ -82,16 +76,7 @@ pub fn inheritance_template<'a>(
         None
     };
 
-    let advanced_settings = collapse::Collapse::new(
-        row![p1_bold("Advanced settings"), icon::collapse_icon()]
-            .align_y(Alignment::Center)
-            .spacing(10),
-        row![p1_bold("Advanced settings"), icon::collapsed_icon()]
-            .align_y(Alignment::Center)
-            .spacing(10),
-        define_descriptor_advanced_settings(use_taproot),
-    )
-    .style(theme::button::transparent);
+    let advanced_settings = super::advanced_settings_collapse(use_taproot);
 
     let primary = path(
         color::GREEN,
@@ -145,24 +130,7 @@ pub fn inheritance_template<'a>(
     )
     .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(1, msg)));
 
-    let clear_all = button::secondary(None, "Clear All")
-        .width(BtnWidth::M)
-        .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset));
-    let customize = button::secondary(None, "Customize")
-        .width(BtnWidth::M)
-        .on_press(Message::DefineDescriptor(
-            message::DefineDescriptor::ChangeTemplate(context::DescriptorTemplate::Custom),
-        ));
-    let contin = button::primary(None, "Continue")
-        .width(210)
-        .on_press_maybe(if valid { Some(Message::Next) } else { None });
-    let footer = row![
-        clear_all,
-        Space::with_width(40),
-        customize,
-        Space::fill_width(),
-        contin
-    ];
+    let footer = super::template_footer(valid, true);
 
     layout(
         progress,
