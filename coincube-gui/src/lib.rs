@@ -10,7 +10,7 @@ pub mod gui;
 pub mod help;
 pub mod hw;
 pub mod installer;
-pub mod launcher;
+pub mod home;
 pub mod loader;
 pub mod loading;
 pub mod logger;

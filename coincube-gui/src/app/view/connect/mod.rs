@@ -117,7 +117,7 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
     col.push(body).into()
 }
 
-/// Renders account-level Connect views (used by the launcher).
+/// Renders account-level Connect views (used by the home).
 /// Returns Element<ConnectAccountMessage> (not ViewMessage) so the caller can map it.
 pub fn connect_account_panel<'a>(
     acct: &'a ConnectAccountPanel,
@@ -147,7 +147,7 @@ pub fn connect_account_panel<'a>(
             ConnectSubMenu::Security => security_ux(acct),
             ConnectSubMenu::Duress => duress_ux(),
             ConnectSubMenu::Contacts => contacts::contacts_ux(acct),
-            // Cube-specific submenus shouldn't appear in the launcher
+            // Cube-specific submenus shouldn't appear in the home
             _ => Column::new()
                 .push(
                     text::p1_regular("This feature is available inside a Cube.")

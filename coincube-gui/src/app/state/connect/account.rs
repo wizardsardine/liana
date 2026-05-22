@@ -403,21 +403,21 @@ impl ConnectAccountPanel {
                         // key (kept in sync), so we intentionally do NOT delete
                         // the legacy credential here.
                         //
-                        // The Launcher's ConnectAccountPanel has no
+                        // The Home's ConnectAccountPanel has no
                         // `current_cube_uuid`, so it can only ever read the
                         // legacy global key. Deleting it here meant that
                         // once any Cube was opened (App migrates + this used
                         // to delete the global key), every subsequent return
-                        // to the Launcher — notably the Recovery → Launcher
+                        // to the Home — notably the Recovery → Home
                         // navigation flow — found no session and forced the
                         // user to sign in again. Keeping the legacy key in
-                        // sync lets the Launcher restore the current session.
+                        // sync lets the Home restore the current session.
                         // Explicit logout still clears both keys via
                         // `clear_keyring_session`.
                         self.save_session_to_keyring(&session);
                         log::info!(
                             "[CONNECT] Migrated legacy session to cube-specific key for {} \
-                             (legacy key kept in sync for Launcher session restore)",
+                             (legacy key kept in sync for Home session restore)",
                             key
                         );
                         return Some(session);
@@ -462,12 +462,12 @@ impl ConnectAccountPanel {
         match self.keyring_key_for_cube() {
             Some(cube_key) => {
                 // A Cube is open. Write the isolated per-cube key AND
-                // mirror to the legacy global key. The Launcher's
+                // mirror to the legacy global key. The Home's
                 // ConnectAccountPanel has no `current_cube_uuid` and can
                 // only read the global key, so the two MUST stay in sync —
                 // otherwise a token refresh while a Cube is open would
                 // leave the global key holding a stale session and the
-                // Recovery → Launcher restore would fail (or restore an
+                // Recovery → Home restore would fail (or restore an
                 // expired token). Every save path (login, refresh,
                 // migration) funnels here, so mirroring here keeps them
                 // consistent. Explicit logout clears both keys via
@@ -508,7 +508,7 @@ impl ConnectAccountPanel {
         // Fire two messages: the in-panel state transition + the
         // app-level bootstrap that persists JWTs to `connect.json`,
         // registers the signer device via gRPC, and starts the
-        // realtime stream. The launcher login path does this at
+        // realtime stream. The home login path does this at
         // app-init via `register_signer_device_best_effort`; the
         // in-app login path previously skipped it, which left
         // "Sign via Keychain" unreachable until a full app restart.

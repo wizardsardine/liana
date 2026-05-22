@@ -408,9 +408,9 @@ impl Step for RecoveryKitRestoreStep {
     /// `Context` the first time this step becomes active.
     ///
     /// Today the Recovery-Kit restore flow is typically launched from
-    /// a launcher row whose "remote cubes" list only exists because
+    /// a home row whose "remote cubes" list only exists because
     /// the user already signed into Connect. That session lives on
-    /// the launcher's `ConnectAccountPanel` and gets forwarded into
+    /// the home's `ConnectAccountPanel` and gets forwarded into
     /// the installer as `ctx.coincube_client`. Without this hook the
     /// step would start at `Phase::Email` and ask the user to retype
     /// their email + OTP for the same account — the "two sign-ins"
@@ -439,7 +439,7 @@ impl Step for RecoveryKitRestoreStep {
             return;
         };
         // Clone the client (not just the token) so we inherit whatever
-        // base URL / HTTP plumbing the launcher has already configured.
+        // base URL / HTTP plumbing the home has already configured.
         // Stash the JWT in `Zeroizing` so it gets scrubbed from the
         // heap when the step drops — matches the handling of tokens
         // captured via the in-step OTP path.

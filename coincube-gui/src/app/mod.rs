@@ -1913,7 +1913,7 @@ impl App {
                 email,
             } => {
                 // Bridge the in-app Connect login → realtime stream
-                // bootstrap that the launcher path gets at App init.
+                // bootstrap that the home path gets at App init.
                 // Persists JWTs to `connect.json`, registers a signer
                 // device via gRPC, and re-fires
                 // `connect_stream_ready_task` to populate
@@ -1950,7 +1950,7 @@ impl App {
                         // Coincube backend issues 30-day JWTs (see
                         // `CLAUDE.md`); we approximate expires_at as
                         // now + 30d so the AccessTokenResponse shape
-                        // matches what the launcher path produces.
+                        // matches what the home path produces.
                         let now = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_secs() as i64)
