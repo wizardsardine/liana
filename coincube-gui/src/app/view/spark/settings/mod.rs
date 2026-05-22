@@ -1,6 +1,6 @@
 //! View renderer for [`crate::app::state::spark::settings::SparkSettings`].
 //!
-//! Renders:
+//! Renders the General sub-page:
 //! - A "Stable Balance" toggle card (USD-pegging feature) with a
 //!   clear on/off status line and a toggle button. Disabled while
 //!   the bridge is unavailable or an `update_user_settings` RPC
@@ -9,12 +9,12 @@
 //!   Spark bridge subprocess is reachable (`get_info` round-trip
 //!   successful on the last reload).
 //!
-//! The Default Lightning backend picker lives on the app-level
-//! **Settings → Lightning** page, not here. The balance, identity
-//! pubkey, and network read-outs moved elsewhere too: balance is
-//! already in the Overview/Send panels, the network lives in
-//! **Settings → General**, and the identity pubkey wasn't actually
-//! useful to surface.
+//! The Lightning Address sub-page lives in [`lightning_address`] and
+//! is rendered by `App::view` directly so it can pass a borrow of the
+//! `ConnectCubePanel` into the form (the `State::view` trait signature
+//! doesn't reach Connect state).
+
+pub mod lightning_address;
 
 use coincube_ui::{
     color,

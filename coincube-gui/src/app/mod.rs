@@ -3317,6 +3317,21 @@ impl App {
                 view::Message::DismissReceivedCelebration,
             );
             view::dashboard(&self.panels.current, &self.cache, celebration)
+        } else if matches!(
+            &self.panels.current,
+            Menu::Spark(menu::SparkSubMenu::Settings(Some(
+                menu::SparkSettingsOption::LightningAddress
+            )))
+        ) {
+            // Spark → Settings → Lightning Address needs both the
+            // SparkSettings state and the ConnectCubePanel. The State
+            // trait's `view` only sees the active panel + Cache, so the
+            // dispatch lives here — App owns both panels.
+            let content = view::spark::settings::lightning_address::lightning_address_ux(
+                &self.panels.connect.cube,
+            )
+            .map(view::Message::ConnectCube);
+            view::dashboard(&self.panels.current, &self.cache, content)
         } else {
             self.panels
                 .current()
