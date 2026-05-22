@@ -10,7 +10,7 @@ use coincube_ui::component::quote_display::{self, Quote};
 use coincube_ui::widget::{Column, Element};
 use iced::{widget::image, Task};
 
-use crate::app::breez_liquid::assets::usdt_asset_id;
+use crate::app::breez_liquid::assets::{lbtc_asset_id, usdt_asset_id};
 use crate::app::view::FeeratePriority;
 use crate::app::wallets::{
     DomainPayment, DomainPaymentDetails, DomainPaymentDirection, DomainRefundableSwap,
@@ -39,6 +39,11 @@ pub struct InFlightRefund {
 /// `refund_onchain_tx` broadcast and the corresponding `RefundCompleted`
 /// message.
 const IN_FLIGHT_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Bump to a larger value (e.g. 50) once Prev/Next pagination is verified
+/// end-to-end on real wallets. Kept low during rollout so QA can exercise
+/// pagination without needing 50+ transactions per asset filter.
+pub const PAGE_SIZE: u32 = 10;
 
 #[derive(Debug)]
 enum LiquidTransactionsModal {
@@ -77,6 +82,19 @@ pub struct LiquidTransactions {
     pending_vault_refund_id: Option<u64>,
     empty_state_quote: Quote,
     empty_state_image_handle: image::Handle,
+    /// Page currently displayed (0-indexed).
+    current_page: u32,
+    /// Target page of an in-flight Prev/Next fetch. Committed to
+    /// `current_page` only on `PaymentsLoaded(Ok)`; dropped on error so a
+    /// failed fetch doesn't desync the page counter from the shown data.
+    pending_page: Option<u32>,
+    /// Monotonic fetch-generation counter. Every `fetch_page` (reload,
+    /// filter change, Prev/Next) bumps it and tags its result; the handler
+    /// discards any `PaymentsLoaded` whose token isn't the latest, so a
+    /// stale response can't clobber `payments` with wrong-page data.
+    fetch_token: u64,
+    is_last_page: bool,
+    processing: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,7 +128,57 @@ impl LiquidTransactions {
             pending_vault_refund_id: None,
             empty_state_quote,
             empty_state_image_handle,
+            current_page: 0,
+            pending_page: None,
+            fetch_token: 0,
+            is_last_page: false,
+            processing: false,
         }
+    }
+
+    /// Asset id to pass to the server-side filter for the active tab.
+    /// `All` returns `None` (server returns every payment type / asset).
+    /// `LbtcOnly` / `UsdtOnly` return the matching Liquid asset id, which
+    /// the SDK applies via `ListPaymentsRequest.details = Liquid { asset_id }`
+    /// — note that this narrows the result to Liquid-asset payments only, so
+    /// Lightning and on-chain Bitcoin payments no longer appear under the
+    /// L-BTC tab (they remain visible under "All").
+    fn active_filter_asset_id(&self) -> Option<String> {
+        let network = self.breez_client.network();
+        match self.asset_filter {
+            AssetFilter::All => None,
+            AssetFilter::LbtcOnly => lbtc_asset_id(network).map(|s| s.to_string()),
+            AssetFilter::UsdtOnly => usdt_asset_id(network).map(|s| s.to_string()),
+        }
+    }
+
+    /// Fetch `page` (0-indexed). `current_page` is *not* moved here — it is
+    /// only committed once `PaymentsLoaded(Ok)` lands, so a failed fetch
+    /// leaves the panel showing the page it was already on.
+    ///
+    /// Bumps `fetch_token` and tags the result with it; the handler drops
+    /// any response that isn't the latest, so a stale page response can't
+    /// overwrite data from a newer reload / filter change.
+    ///
+    /// Requests `PAGE_SIZE + 1` rows: the extra row is a probe for whether
+    /// a further page exists. The handler trims it off before display and
+    /// sets `is_last_page` from whether it was returned — without it, a
+    /// total that is an exact multiple of `PAGE_SIZE` would leave Next
+    /// enabled onto an empty page.
+    fn fetch_page(&mut self, page: u32) -> Task<Message> {
+        self.fetch_token = self.fetch_token.wrapping_add(1);
+        let token = self.fetch_token;
+        let client = self.breez_client.clone();
+        let offset = page.saturating_mul(PAGE_SIZE);
+        let asset_id = self.active_filter_asset_id();
+        Task::perform(
+            async move {
+                client
+                    .list_payments(Some(PAGE_SIZE + 1), Some(offset), asset_id)
+                    .await
+            },
+            move |result| Message::PaymentsLoaded(token, result),
+        )
     }
 
     fn reconcile_in_flight(&mut self, mut refundables: Vec<DomainRefundableSwap>) {
@@ -254,6 +322,9 @@ impl State for LiquidTransactions {
                     cache.show_direction_badges,
                     &self.empty_state_quote,
                     &self.empty_state_image_handle,
+                    self.current_page,
+                    self.is_last_page,
+                    self.processing,
                 ),
             )
         };
@@ -293,25 +364,45 @@ impl State for LiquidTransactions {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::PaymentsLoaded(Ok(payments)) => {
+            Message::PaymentsLoaded(token, Ok(mut payments)) => {
+                // Discard a stale response: a newer fetch (reload, filter
+                // change, or another Prev/Next) has since been dispatched, so
+                // applying this page would show wrong-page data.
+                if token != self.fetch_token {
+                    return Task::none();
+                }
                 self.loading = false;
-                let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
-                self.payments = match self.asset_filter {
-                    AssetFilter::UsdtOnly => payments
-                        .into_iter()
-                        .filter(|p| is_usdt_payment(&p.details, usdt_id))
-                        .collect(),
-                    AssetFilter::LbtcOnly => payments
-                        .into_iter()
-                        .filter(|p| !is_usdt_payment(&p.details, usdt_id))
-                        .collect(),
-                    AssetFilter::All => payments,
-                };
+                self.processing = false;
+                // Commit the page navigation now that the fetch succeeded.
+                // `pending_page` is `None` for a reload/initial fetch, where
+                // `current_page` was already set to 0 by `reload`.
+                if let Some(page) = self.pending_page.take() {
+                    self.current_page = page;
+                }
+                // `fetch_page` over-fetches one probe row: receiving more
+                // than `PAGE_SIZE` means a further page exists. Trim the
+                // probe row off before display.
+                self.is_last_page = (payments.len() as u32) <= PAGE_SIZE;
+                payments.truncate(PAGE_SIZE as usize);
+                // Server-side filtering (see `active_filter_asset_id`) means
+                // the payments arrived already restricted to the active tab;
+                // no further client-side asset filter is needed here.
+                self.payments = payments;
                 self.balance = self.calculate_balance();
                 Task::none()
             }
-            Message::PaymentsLoaded(Err(e)) => {
+            Message::PaymentsLoaded(token, Err(e)) => {
+                // Stale error from a superseded fetch — ignore it so it
+                // can't clear `pending_page` for the newer in-flight fetch
+                // or raise a spurious toast.
+                if token != self.fetch_token {
+                    return Task::none();
+                }
                 self.loading = false;
+                self.processing = false;
+                // Discard the in-flight navigation: `current_page` stays on
+                // the page whose data is still displayed.
+                self.pending_page = None;
                 Task::done(Message::View(view::Message::ShowError(e.to_string())))
             }
             Message::RefundablesLoaded(Ok(refundables)) => {
@@ -365,8 +456,27 @@ impl State for LiquidTransactions {
             Message::View(view::Message::SetAssetFilter(filter)) => {
                 if self.asset_filter != filter {
                     self.asset_filter = filter;
-                    // Reload with the new filter
+                    // Reload with the new filter — also resets pagination
+                    // back to page 0 (see `reload`).
                     return self.reload(None, None);
+                }
+                Task::none()
+            }
+            Message::View(view::Message::LiquidPrevPage) => {
+                if self.current_page > 0 && !self.processing {
+                    let target = self.current_page - 1;
+                    self.pending_page = Some(target);
+                    self.processing = true;
+                    return self.fetch_page(target);
+                }
+                Task::none()
+            }
+            Message::View(view::Message::LiquidNextPage) => {
+                if !self.is_last_page && !self.processing {
+                    let target = self.current_page + 1;
+                    self.pending_page = Some(target);
+                    self.processing = true;
+                    return self.fetch_page(target);
                 }
                 Task::none()
             }
@@ -698,14 +808,15 @@ impl State for LiquidTransactions {
         self.loading = true;
         self.selected_payment = None;
         self.selected_refundable = None;
-        let client = self.breez_client.clone();
+        self.current_page = 0;
+        self.pending_page = None;
+        self.is_last_page = false;
+        self.processing = false;
+        self.payments.clear();
         let client2 = self.breez_client.clone();
 
         Task::batch(vec![
-            Task::perform(
-                async move { client.list_payments(None).await },
-                Message::PaymentsLoaded,
-            ),
+            self.fetch_page(0),
             Task::perform(
                 async move { client2.list_refundables().await },
                 Message::RefundablesLoaded,

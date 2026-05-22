@@ -2606,7 +2606,7 @@ impl GlobalHome {
         let network = self.network;
         Task::perform(
             async move {
-                match breez_client.list_payments(Some(20)).await {
+                match breez_client.list_payments(Some(20), None, None).await {
                     Ok(payments) => {
                         let mut liquid_send_sats: u64 = 0;
                         let mut usdt_send_sats: u64 = 0;
@@ -2794,7 +2794,7 @@ impl GlobalHome {
                     .and_then(|cube| cube.pending_liquid_to_vault_transfer.clone())?;
 
                 let mut stage = TransferStage::Initiated;
-                let payments = breez_client.list_payments(None).await.ok();
+                let payments = breez_client.list_payments(None, None, None).await.ok();
 
                 if let Some(payment) = payments.and_then(|ps| {
                     ps.into_iter().find(|payment| {

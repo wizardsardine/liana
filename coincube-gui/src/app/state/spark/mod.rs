@@ -39,7 +39,7 @@ pub(crate) fn fetch_payments_task(
         return Task::none();
     };
     Task::perform(
-        async move { backend.list_payments(Some(20)).await },
+        async move { backend.list_payments(Some(20), None).await },
         move |result| match result {
             Ok(list) => on_loaded(list.payments),
             Err(e) => on_failed(e.to_string()),

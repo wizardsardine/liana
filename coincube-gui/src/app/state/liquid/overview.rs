@@ -44,7 +44,7 @@ impl LiquidOverview {
         Task::perform(
             async move {
                 let info = breez_client.info().await;
-                let payments = breez_client.list_payments(Some(20)).await;
+                let payments = breez_client.list_payments(Some(20), None, None).await;
 
                 let balance = info
                     .as_ref()

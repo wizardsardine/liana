@@ -28,7 +28,7 @@ use crate::{
         menu::{self, Menu, VaultSubMenu},
         settings::display::DisplayMode,
         view::{
-            balance_header_card, dashboard,
+            balance_header_card, dashboard, loading_placeholder,
             message::Message,
             vault::coins,
             vault::label,
@@ -85,6 +85,7 @@ pub fn vault_overview_view<'a>(
     events: &'a [Payment],
     is_last_page: bool,
     processing: bool,
+    loading: bool,
     sync_status: &SyncStatus,
     show_rescan_warning: bool,
     bitcoin_unit: BitcoinDisplayUnit,
@@ -250,6 +251,9 @@ pub fn vault_overview_view<'a>(
             Column::new()
                 .spacing(10)
                 .push(h4_bold("Last transactions"))
+                .push_maybe(loading.then(|| {
+                    loading_placeholder(icon::receipt_icon().size(48), "Loading transactions")
+                }))
                 .push(events.iter().fold(Column::new().spacing(10), |col, event| {
                     if event.kind != PaymentKind::SendToSelf {
                         col.push(event_list_view(
