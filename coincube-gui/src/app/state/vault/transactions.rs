@@ -83,6 +83,12 @@ pub struct VaultTransactionsPanel {
     /// handler ignores any response that arrives once this is `None`, so a
     /// reload mid-fetch can't let a stale page advance `current_page`.
     pending_page: Option<u32>,
+    /// Monotonic counter bumped on every `reload`. The fetch carries the
+    /// value at dispatch; the `HistoryTransactions` handler drops any
+    /// response whose token isn't the latest, so a superseded reload can't
+    /// overwrite fresher state. (Pagination fetches are guarded separately
+    /// by `pending_page`.)
+    reload_token: u64,
 }
 
 impl VaultTransactionsPanel {
@@ -103,6 +109,7 @@ impl VaultTransactionsPanel {
             processing: true,
             current_page: 0,
             pending_page: None,
+            reload_token: 0,
         }
     }
 
@@ -178,7 +185,13 @@ impl State for VaultTransactionsPanel {
             return Task::none();
         };
         match message {
-            Message::HistoryTransactions(res) => match res {
+            Message::HistoryTransactions(token, res) => match res {
+                // Stale-response guard: a `reload` fired after this fetch was
+                // dispatched bumps `reload_token`, so a late response from a
+                // superseded reload is dropped without touching any state
+                // (otherwise it could overwrite fresher page-0 data or flip
+                // `processing` while the newer reload is still loading).
+                _ if token != self.reload_token => return Task::none(),
                 Err(e) => {
                     // Must clear `processing` here: `reload` sets it true, so
                     // a failed initial fetch would otherwise leave the panel
@@ -390,12 +403,22 @@ impl State for VaultTransactionsPanel {
                 let Some(last_tx_date) = last.time else {
                     return Task::none();
                 };
+                // The cursor is inclusive of `last_tx_date`, so the fetch
+                // re-returns every current-page row sharing that blocktime
+                // and the handler dedups them out. Over-fetch by exactly
+                // that count so the post-dedup page is still a full
+                // HISTORY_EVENT_PAGE_SIZE rows — without it, every page
+                // after page 0 renders underfilled.
+                let overlap = current_page_txs
+                    .iter()
+                    .filter(|t| t.time == Some(last_tx_date))
+                    .count() as u64;
                 let daemon = daemon.clone();
                 self.pending_page = Some(self.current_page + 1);
                 self.processing = true;
                 return Task::perform(
                     async move {
-                        let mut limit = HISTORY_EVENT_PAGE_SIZE;
+                        let mut limit = HISTORY_EVENT_PAGE_SIZE + overlap;
                         let mut txs = daemon.list_history_txs(0_u32, last_tx_date, limit).await?;
 
                         // because gethistory cursor is inclusive and use blocktime
@@ -482,6 +505,10 @@ impl State for VaultTransactionsPanel {
         // Drop any in-flight NextPage fetch: its result must not advance
         // pages once this reload has reset pagination back to page 0.
         self.pending_page = None;
+        // Bump the reload token so a slower, superseded reload's response is
+        // dropped by the `HistoryTransactions` handler.
+        self.reload_token = self.reload_token.wrapping_add(1);
+        let token = self.reload_token;
         self.page_cache.clear();
         self.pending_txs.clear();
         self.displayed_txs.clear();
@@ -496,7 +523,7 @@ impl State for VaultTransactionsPanel {
                 let pending_txs = daemon.list_pending_txs().await?;
                 Ok((pending_txs, txs))
             },
-            Message::HistoryTransactions,
+            move |result| Message::HistoryTransactions(token, result),
         )])
     }
 

@@ -88,6 +88,11 @@ pub struct LiquidTransactions {
     /// `current_page` only on `PaymentsLoaded(Ok)`; dropped on error so a
     /// failed fetch doesn't desync the page counter from the shown data.
     pending_page: Option<u32>,
+    /// Monotonic fetch-generation counter. Every `fetch_page` (reload,
+    /// filter change, Prev/Next) bumps it and tags its result; the handler
+    /// discards any `PaymentsLoaded` whose token isn't the latest, so a
+    /// stale response can't clobber `payments` with wrong-page data.
+    fetch_token: u64,
     is_last_page: bool,
     processing: bool,
 }
@@ -125,6 +130,7 @@ impl LiquidTransactions {
             empty_state_image_handle,
             current_page: 0,
             pending_page: None,
+            fetch_token: 0,
             is_last_page: false,
             processing: false,
         }
@@ -149,17 +155,29 @@ impl LiquidTransactions {
     /// Fetch `page` (0-indexed). `current_page` is *not* moved here — it is
     /// only committed once `PaymentsLoaded(Ok)` lands, so a failed fetch
     /// leaves the panel showing the page it was already on.
-    fn fetch_page(&self, page: u32) -> Task<Message> {
+    ///
+    /// Bumps `fetch_token` and tags the result with it; the handler drops
+    /// any response that isn't the latest, so a stale page response can't
+    /// overwrite data from a newer reload / filter change.
+    ///
+    /// Requests `PAGE_SIZE + 1` rows: the extra row is a probe for whether
+    /// a further page exists. The handler trims it off before display and
+    /// sets `is_last_page` from whether it was returned — without it, a
+    /// total that is an exact multiple of `PAGE_SIZE` would leave Next
+    /// enabled onto an empty page.
+    fn fetch_page(&mut self, page: u32) -> Task<Message> {
+        self.fetch_token = self.fetch_token.wrapping_add(1);
+        let token = self.fetch_token;
         let client = self.breez_client.clone();
         let offset = page.saturating_mul(PAGE_SIZE);
         let asset_id = self.active_filter_asset_id();
         Task::perform(
             async move {
                 client
-                    .list_payments(Some(PAGE_SIZE), Some(offset), asset_id)
+                    .list_payments(Some(PAGE_SIZE + 1), Some(offset), asset_id)
                     .await
             },
-            Message::PaymentsLoaded,
+            move |result| Message::PaymentsLoaded(token, result),
         )
     }
 
@@ -346,7 +364,13 @@ impl State for LiquidTransactions {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::PaymentsLoaded(Ok(payments)) => {
+            Message::PaymentsLoaded(token, Ok(mut payments)) => {
+                // Discard a stale response: a newer fetch (reload, filter
+                // change, or another Prev/Next) has since been dispatched, so
+                // applying this page would show wrong-page data.
+                if token != self.fetch_token {
+                    return Task::none();
+                }
                 self.loading = false;
                 self.processing = false;
                 // Commit the page navigation now that the fetch succeeded.
@@ -355,15 +379,25 @@ impl State for LiquidTransactions {
                 if let Some(page) = self.pending_page.take() {
                     self.current_page = page;
                 }
+                // `fetch_page` over-fetches one probe row: receiving more
+                // than `PAGE_SIZE` means a further page exists. Trim the
+                // probe row off before display.
+                self.is_last_page = (payments.len() as u32) <= PAGE_SIZE;
+                payments.truncate(PAGE_SIZE as usize);
                 // Server-side filtering (see `active_filter_asset_id`) means
                 // the payments arrived already restricted to the active tab;
                 // no further client-side asset filter is needed here.
-                self.is_last_page = (payments.len() as u32) < PAGE_SIZE;
                 self.payments = payments;
                 self.balance = self.calculate_balance();
                 Task::none()
             }
-            Message::PaymentsLoaded(Err(e)) => {
+            Message::PaymentsLoaded(token, Err(e)) => {
+                // Stale error from a superseded fetch — ignore it so it
+                // can't clear `pending_page` for the newer in-flight fetch
+                // or raise a spurious toast.
+                if token != self.fetch_token {
+                    return Task::none();
+                }
                 self.loading = false;
                 self.processing = false;
                 // Discard the in-flight navigation: `current_page` stays on

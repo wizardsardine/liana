@@ -50,10 +50,14 @@ pub enum SparkOverviewMessage {
 /// View-level messages for the Spark Transactions panel.
 #[derive(Debug, Clone)]
 pub enum SparkTransactionsMessage {
-    /// Bridge returned `list_payments` success — carries the page.
-    DataLoaded(Vec<coincube_spark_protocol::PaymentSummary>),
-    /// Bridge returned an error response for `list_payments`.
-    Error(String),
+    /// Bridge returned `list_payments` success. The `u64` is the
+    /// fetch-generation token — the panel discards any response whose
+    /// token isn't the latest, so a stale pagination response can't
+    /// overwrite data from a newer reload.
+    DataLoaded(u64, Vec<coincube_spark_protocol::PaymentSummary>),
+    /// Bridge returned an error response for `list_payments`. The `u64`
+    /// is the fetch-generation token (see [`Self::DataLoaded`]).
+    Error(u64, String),
     /// User clicked a row. Opens the detail pane for the payment
     /// at that index in the current `recent_transactions` list.
     Select(usize),

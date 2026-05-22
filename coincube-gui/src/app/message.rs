@@ -68,9 +68,14 @@ pub enum Message {
     /// (i.e. end of history). It is measured on the raw response, before
     /// the inclusive-cursor overlap is deduplicated.
     HistoryTransactionsExtension(Result<(Vec<HistoryTransaction>, bool), Error>),
-    /// Initial Vault transactions page-0 fetch result.
-    /// Tuple: `(pending_txs, page_0_confirmed_txs)`.
-    HistoryTransactions(Result<(Vec<HistoryTransaction>, Vec<HistoryTransaction>), Error>),
+    /// Initial Vault transactions page-0 fetch result. The `u64` is the
+    /// reload-generation token: the panel discards any response whose
+    /// token isn't the latest, so a superseded reload can't overwrite
+    /// fresher state. The inner tuple is `(pending_txs, page_0_confirmed_txs)`.
+    HistoryTransactions(
+        u64,
+        Result<(Vec<HistoryTransaction>, Vec<HistoryTransaction>), Error>,
+    ),
     Payments(Result<Vec<Payment>, Error>),
     /// Extension of payments for pagination.
     /// Tuple contains (Vec<Payment>, u64) where the u64 is the actual page limit used
@@ -82,7 +87,14 @@ pub enum Message {
     BroadcastModal(Result<HashSet<Txid>, Error>),
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
     Export(ImportExportMessage),
-    PaymentsLoaded(Result<Vec<crate::app::wallets::DomainPayment>, BreezError>),
+    /// Liquid transactions page fetch result. The `u64` is the
+    /// fetch-generation token: the panel discards any response whose token
+    /// is not the latest dispatched, so a stale pagination response can't
+    /// overwrite data fetched by a subsequent reload / filter change.
+    PaymentsLoaded(
+        u64,
+        Result<Vec<crate::app::wallets::DomainPayment>, BreezError>,
+    ),
     RefundablesLoaded(Result<Vec<crate::app::wallets::DomainRefundableSwap>, BreezError>),
     /// Result of a debounced background poll started by
     /// `App::refresh_refundables_task`. Distinct from `RefundablesLoaded`
