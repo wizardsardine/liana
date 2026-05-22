@@ -13,14 +13,14 @@ use super::{NavContext, SubItem};
 use crate::app::{
     menu::{
         CubeSettingsOption, CubeSubMenu, MarketplaceSubMenu, Menu, P2PSubMenu, SettingsOption,
-        VaultSubMenu,
+        SparkSettingsOption, SparkSubMenu, VaultSubMenu,
     },
     view::Message,
 };
 use coincube_ui::{
     icon::{
-        bitcoin_icon, chat_icon, graph_icon, home_icon, plus_icon, receipt_icon, settings_icon,
-        tooltip_icon, wallet_icon, wrench_icon,
+        bitcoin_icon, chat_icon, graph_icon, home_icon, lightning_icon, plus_icon, receipt_icon,
+        settings_icon, tooltip_icon, wallet_icon, wrench_icon,
     },
     theme,
     widget::{Column, Element},
@@ -34,6 +34,7 @@ pub const RAIL_WIDTH: f32 = 72.0;
 pub fn items_for(menu: &Menu, _ctx: &NavContext) -> Option<Vec<SubItem>> {
     match menu {
         Menu::Cube(CubeSubMenu::Settings(_)) => Some(cube_settings_items()),
+        Menu::Spark(SparkSubMenu::Settings(_)) => Some(spark_settings_items()),
         Menu::Marketplace(MarketplaceSubMenu::P2P(_)) => Some(p2p_items()),
         Menu::Vault(VaultSubMenu::Settings(_)) => Some(vault_settings_items()),
         _ => None,
@@ -94,6 +95,41 @@ fn cube_settings_items() -> Vec<SubItem> {
                 matches!(
                     m,
                     Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Stats))
+                )
+            },
+        },
+    ]
+}
+
+fn spark_settings_items() -> Vec<SubItem> {
+    vec![
+        SubItem {
+            label: "General",
+            icon: wrench_icon,
+            route: Menu::Spark(SparkSubMenu::Settings(Some(SparkSettingsOption::General))),
+            // `None` is treated as General by `set_current_panel`, so the
+            // landing route (Settings(None) from a deep link) highlights here.
+            matches: |m| {
+                matches!(
+                    m,
+                    Menu::Spark(SparkSubMenu::Settings(
+                        Some(SparkSettingsOption::General) | None
+                    ))
+                )
+            },
+        },
+        SubItem {
+            label: "Lightning Address",
+            icon: lightning_icon,
+            route: Menu::Spark(SparkSubMenu::Settings(Some(
+                SparkSettingsOption::LightningAddress,
+            ))),
+            matches: |m| {
+                matches!(
+                    m,
+                    Menu::Spark(SparkSubMenu::Settings(Some(
+                        SparkSettingsOption::LightningAddress
+                    )))
                 )
             },
         },

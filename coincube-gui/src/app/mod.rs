@@ -1254,6 +1254,31 @@ impl App {
                 }
                 return Task::none();
             }
+            // Spark → Settings → {General/Lightning Address}: dispatch the
+            // sub-section so the panel swaps its tertiary page, then reload
+            // so the bridge-status diagnostics stay fresh.
+            menu::Menu::Spark(menu::SparkSubMenu::Settings(option)) => {
+                let section_msg = match option {
+                    Some(menu::SparkSettingsOption::LightningAddress) => {
+                        view::SparkSettingsMessage::LightningAddressSection
+                    }
+                    // `None` (deep-link / landing route) defaults to General.
+                    Some(menu::SparkSettingsOption::General) | None => {
+                        view::SparkSettingsMessage::GeneralSection
+                    }
+                };
+                self.panels.current = menu.clone();
+                if let Some(panel) = self.panels.current_mut() {
+                    let nav_task = panel.update(
+                        self.daemon.clone(),
+                        &self.cache,
+                        Message::View(view::Message::SparkSettings(section_msg)),
+                    );
+                    let reload_task = panel.reload(self.daemon.clone(), self.wallet.clone());
+                    return Task::batch(vec![nav_task, reload_task]);
+                }
+                return Task::none();
+            }
             menu::Menu::Vault(submenu) => {
                 // Only process vault menu if we have a wallet
                 if let Some(wallet) = &self.wallet {

@@ -79,6 +79,11 @@ pub enum SparkTransactionsMessage {
 /// View-level messages for the Spark Settings panel.
 #[derive(Debug, Clone)]
 pub enum SparkSettingsMessage {
+    /// Tertiary-rail navigation: show the General sub-page (Stable
+    /// Balance + Bridge status).
+    GeneralSection,
+    /// Tertiary-rail navigation: show the Lightning Address sub-page.
+    LightningAddressSection,
     /// Bridge `get_info` reload succeeded — the subprocess is
     /// reachable and the SDK is past init. Drives the "Bridge
     /// status" card on the Settings page.

@@ -28,6 +28,7 @@ use coincube_ui::{
 use iced::widget::Space;
 use iced::{Alignment, Length};
 
+use crate::app::menu::SparkSettingsOption;
 use crate::app::view::{Message, SparkSettingsMessage};
 
 /// Coarse status the panel knows about. Only "Unavailable" needs
@@ -56,10 +57,32 @@ pub struct SparkSettingsView {
     /// flight. Disables the toggle buttons so the user can't queue
     /// a second flip mid-rpc.
     pub stable_balance_saving: bool,
+    /// Which tertiary-rail sub-page to render.
+    pub active_sub: SparkSettingsOption,
 }
 
 impl SparkSettingsView {
     pub fn render<'a>(self) -> Element<'a, Message> {
+        match self.active_sub {
+            SparkSettingsOption::General => self.general_view(),
+            SparkSettingsOption::LightningAddress => Self::lightning_address_view(),
+        }
+    }
+
+    /// Lightning Address sub-page. Placeholder — the claim / manage
+    /// flow is moved here from the per-Cube Connect panel in a
+    /// follow-up commit.
+    fn lightning_address_view<'a>() -> Element<'a, Message> {
+        Column::new()
+            .spacing(20)
+            .push(h3("Lightning Address").bold())
+            .push(p1_regular(
+                "Lightning Address management is coming to this page.",
+            ))
+            .into()
+    }
+
+    fn general_view<'a>(self) -> Element<'a, Message> {
         // Match the Cube/Vault settings pages: plain `h3` heading, no
         // container wrapper. The rail already shows Spark → Settings.
         let heading = h3("Settings").bold();

@@ -73,17 +73,28 @@ pub enum LiquidSubMenu {
 
 /// Spark wallet sub-panels.
 ///
-/// Mirrors [`LiquidSubMenu`] on purpose — the Phase 4 plan is to copy
-/// the Liquid panels into `state/spark/` and `view/spark/` and strip
-/// the Liquid-only flows, so keeping the enum shape identical lets that
-/// work land without menu churn.
+/// Closely mirrors [`LiquidSubMenu`] — the Phase 4 plan copied the
+/// Liquid panels into `state/spark/` and `view/spark/`. Settings
+/// diverges: Spark Settings has its own tertiary rail driven by
+/// [`SparkSettingsOption`] (General / Lightning Address).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SparkSubMenu {
     Overview,
     Send,
     Receive,
     Transactions(Option<Txid>),
-    Settings(Option<SettingsOption>),
+    Settings(Option<SparkSettingsOption>),
+}
+
+/// Third-rail options under Spark → Settings. Kept distinct from
+/// [`SettingsOption`] (Vault-specific) so the two tertiary rails don't
+/// form false sibling relationships.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SparkSettingsOption {
+    /// Stable Balance toggle + Bridge status diagnostics.
+    General,
+    /// Lightning Address claim / manage page.
+    LightningAddress,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
