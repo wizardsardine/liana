@@ -34,7 +34,7 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
     let current: TopLevel = menu.into();
 
     let mut top: Column<Message> = Column::new().width(Length::Fixed(RAIL_WIDTH)).spacing(0);
-    for &t in &[TopLevel::Home, TopLevel::Spark, TopLevel::Liquid] {
+    for &t in &[TopLevel::Cube, TopLevel::Spark, TopLevel::Liquid] {
         top = top.push(item(t, current == t));
     }
 
@@ -137,7 +137,7 @@ fn marketplace_landing_menu(ctx: &NavContext<'_>) -> Menu {
 
 fn icon_for<'a>(t: TopLevel) -> Text<'a> {
     match t {
-        TopLevel::Home => cube_icon(),
+        TopLevel::Cube => cube_icon(),
         TopLevel::Spark => lightning_icon(),
         TopLevel::Liquid => droplet_fill_icon(),
         TopLevel::Vault => vault_icon(),

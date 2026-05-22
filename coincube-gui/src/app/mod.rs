@@ -159,7 +159,7 @@ impl Panels {
         let initial_balance_masked = Self::initial_balance_masked(datadir, network, &cube_id);
 
         Self {
-            current: Menu::Home(crate::app::menu::HomeSubMenu::Overview),
+            current: Menu::Cube(crate::app::menu::CubeSubMenu::Overview),
             // Liquid panels always available (use LiquidBackend, not Vault wallet)
             global_home: if let Some(w) = &wallet {
                 GlobalHome::new(
@@ -272,7 +272,7 @@ impl Panels {
             Self::initial_balance_masked(&data_dir, cache.network, &cube_id);
 
         Self {
-            current: Menu::Home(crate::app::menu::HomeSubMenu::Overview),
+            current: Menu::Cube(crate::app::menu::CubeSubMenu::Overview),
             global_home: GlobalHome::new(
                 wallet.clone(),
                 liquid_backend.clone(),
@@ -483,8 +483,8 @@ impl Panels {
 
     fn current(&self) -> Option<&dyn State> {
         match &self.current {
-            Menu::Home(crate::app::menu::HomeSubMenu::Overview) => Some(&self.global_home),
-            Menu::Home(crate::app::menu::HomeSubMenu::Settings(_)) => {
+            Menu::Cube(crate::app::menu::CubeSubMenu::Overview) => Some(&self.global_home),
+            Menu::Cube(crate::app::menu::CubeSubMenu::Settings(_)) => {
                 Some(&self.global_settings as &dyn State)
             }
             Menu::Liquid(submenu) => match submenu {
@@ -548,8 +548,8 @@ impl Panels {
 
     fn current_mut(&mut self) -> Option<&mut dyn State> {
         match &self.current {
-            Menu::Home(crate::app::menu::HomeSubMenu::Overview) => Some(&mut self.global_home),
-            Menu::Home(crate::app::menu::HomeSubMenu::Settings(_)) => {
+            Menu::Cube(crate::app::menu::CubeSubMenu::Overview) => Some(&mut self.global_home),
+            Menu::Cube(crate::app::menu::CubeSubMenu::Settings(_)) => {
                 Some(&mut self.global_settings as &mut dyn State)
             }
             Menu::Liquid(submenu) => match submenu {
@@ -620,7 +620,7 @@ impl Panels {
     /// already sends a separate RefreshLiquidBalance message).
     fn active_liquid_refresh(&self, exclude_home: bool) -> Option<Message> {
         match &self.current {
-            Menu::Home(crate::app::menu::HomeSubMenu::Overview) if !exclude_home => Some(
+            Menu::Cube(crate::app::menu::CubeSubMenu::Overview) if !exclude_home => Some(
                 Message::View(view::Message::Home(view::HomeMessage::RefreshLiquidBalance)),
             ),
             Menu::Liquid(sub) => match sub {
@@ -1235,11 +1235,11 @@ impl App {
             // matching sub-section so the inner SettingsState installs the
             // right child panel. The third rail visible alongside drives this
             // and highlights the active option.
-            menu::Menu::Home(menu::HomeSubMenu::Settings(option)) => {
+            menu::Menu::Cube(menu::CubeSubMenu::Settings(option)) => {
                 let section_msg = match option {
-                    menu::HomeSettingsOption::General => view::SettingsMessage::GeneralSection,
-                    menu::HomeSettingsOption::About => view::SettingsMessage::AboutSection,
-                    menu::HomeSettingsOption::Stats => view::SettingsMessage::InstallStatsSection,
+                    menu::CubeSettingsOption::General => view::SettingsMessage::GeneralSection,
+                    menu::CubeSettingsOption::About => view::SettingsMessage::AboutSection,
+                    menu::CubeSettingsOption::Stats => view::SettingsMessage::InstallStatsSection,
                 };
                 self.panels.current = menu.clone();
                 // Fire even if daemon is None — the inner settings
@@ -2359,7 +2359,7 @@ impl App {
                 // it actually owns.
                 let is_global_settings_current = matches!(
                     &self.panels.current,
-                    Menu::Home(crate::app::menu::HomeSubMenu::Settings(_))
+                    Menu::Cube(crate::app::menu::CubeSubMenu::Settings(_))
                 );
                 let mut commands = vec![self.panels.global_settings.update(
                     self.daemon.clone(),

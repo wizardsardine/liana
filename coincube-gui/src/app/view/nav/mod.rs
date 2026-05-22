@@ -5,7 +5,7 @@
 //! - The avatar + cube name + Lightning Address header sits above both rails
 //!   (see [`identity_block`]), so the first secondary-rail item lines up with
 //!   the Cube item on the primary rail.
-//! - Per-section submenu lists live in `home.rs`, `spark.rs`, `liquid.rs`, etc.
+//! - Per-section submenu lists live in `cube.rs`, `spark.rs`, `liquid.rs`, etc.
 //!
 //! See `plans/PLAN-two-rail-left-nav-redesign.md` for the full design rationale.
 
@@ -14,7 +14,7 @@ pub mod primary;
 pub mod secondary;
 
 pub mod connect;
-pub mod home;
+pub mod cube;
 pub mod liquid;
 pub mod marketplace;
 pub mod spark;
@@ -132,8 +132,8 @@ fn identity_block<'a>(ctx: &NavContext<'a>) -> Element<'a, Message> {
 
     let avatar_button: Element<'a, Message> = Button::new(avatar)
         .style(theme::button::transparent)
-        .on_press(Message::Menu(Menu::Home(
-            crate::app::menu::HomeSubMenu::Overview,
+        .on_press(Message::Menu(Menu::Cube(
+            crate::app::menu::CubeSubMenu::Overview,
         )))
         .into();
 

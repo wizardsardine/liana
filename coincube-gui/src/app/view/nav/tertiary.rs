@@ -12,7 +12,7 @@ use super::items::{render_item_row, RAIL_ITEM_HEIGHT};
 use super::{NavContext, SubItem};
 use crate::app::{
     menu::{
-        HomeSettingsOption, HomeSubMenu, MarketplaceSubMenu, Menu, P2PSubMenu, SettingsOption,
+        CubeSettingsOption, CubeSubMenu, MarketplaceSubMenu, Menu, P2PSubMenu, SettingsOption,
         VaultSubMenu,
     },
     view::Message,
@@ -33,7 +33,7 @@ pub const RAIL_WIDTH: f32 = 72.0;
 /// has no third level (and the rail should be hidden).
 pub fn items_for(menu: &Menu, _ctx: &NavContext) -> Option<Vec<SubItem>> {
     match menu {
-        Menu::Home(HomeSubMenu::Settings(_)) => Some(home_settings_items()),
+        Menu::Cube(CubeSubMenu::Settings(_)) => Some(cube_settings_items()),
         Menu::Marketplace(MarketplaceSubMenu::P2P(_)) => Some(p2p_items()),
         Menu::Vault(VaultSubMenu::Settings(_)) => Some(vault_settings_items()),
         _ => None,
@@ -62,38 +62,38 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Option<Element<'a, Message
     )
 }
 
-fn home_settings_items() -> Vec<SubItem> {
+fn cube_settings_items() -> Vec<SubItem> {
     vec![
         SubItem {
             label: "General",
             icon: wrench_icon,
-            route: Menu::Home(HomeSubMenu::Settings(HomeSettingsOption::General)),
+            route: Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::General)),
             matches: |m| {
                 matches!(
                     m,
-                    Menu::Home(HomeSubMenu::Settings(HomeSettingsOption::General))
+                    Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::General))
                 )
             },
         },
         SubItem {
             label: "About",
             icon: tooltip_icon,
-            route: Menu::Home(HomeSubMenu::Settings(HomeSettingsOption::About)),
+            route: Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::About)),
             matches: |m| {
                 matches!(
                     m,
-                    Menu::Home(HomeSubMenu::Settings(HomeSettingsOption::About))
+                    Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::About))
                 )
             },
         },
         SubItem {
             label: "Stats",
             icon: graph_icon,
-            route: Menu::Home(HomeSubMenu::Settings(HomeSettingsOption::Stats)),
+            route: Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Stats)),
             matches: |m| {
                 matches!(
                     m,
-                    Menu::Home(HomeSubMenu::Settings(HomeSettingsOption::Stats))
+                    Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Stats))
                 )
             },
         },

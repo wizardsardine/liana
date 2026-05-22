@@ -24,7 +24,7 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
     let current: TopLevel = menu.into();
 
     let items = match current {
-        TopLevel::Home => super::home::items(ctx),
+        TopLevel::Cube => super::cube::items(ctx),
         TopLevel::Spark => super::spark::items(ctx),
         TopLevel::Liquid => super::liquid::items(ctx),
         TopLevel::Vault => super::vault::items(ctx),

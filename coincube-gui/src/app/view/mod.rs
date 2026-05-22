@@ -80,9 +80,9 @@ pub fn backup_warning_banner<'a>() -> Element<'a, Message> {
             button::secondary(None, "Back Up Now")
                 .padding([6, 14])
                 .width(Length::Fixed(140.0))
-                .on_press(Message::Menu(Menu::Home(
-                    crate::app::menu::HomeSubMenu::Settings(
-                        crate::app::menu::HomeSettingsOption::General,
+                .on_press(Message::Menu(Menu::Cube(
+                    crate::app::menu::CubeSubMenu::Settings(
+                        crate::app::menu::CubeSettingsOption::General,
                     ),
                 ))),
             iced::widget::Button::new(
