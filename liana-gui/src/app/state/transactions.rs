@@ -240,8 +240,8 @@ impl State for TransactionsPanel {
 
                             // because gethistory cursor is inclusive and use blocktime
                             // multiple txs can occur in the same block.
-                            // If there is more tx in the same block that the
-                            // HISTORY_EVENT_PAGE_SIZE they can not be retrieved by changing
+                            // If there are more txs in the same block than the
+                            // HISTORY_EVENT_PAGE_SIZE they cannot be retrieved by changing
                             // the cursor value (blocktime) but by increasing the limit.
                             //
                             // 1. Check if the txs retrieved have all the same blocktime

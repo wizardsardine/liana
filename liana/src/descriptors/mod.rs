@@ -86,7 +86,7 @@ fn key_is_for_path(
     false
 }
 
-/// An [SinglePathLianaDesc] that contains multipath keys for (and only for) the receive keychain
+/// A [SinglePathLianaDesc] that contains multipath keys for (and only for) the receive keychain
 /// and the change keychain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LianaDescriptor {
