@@ -158,18 +158,16 @@ impl ConnectPanel {
         }
     }
 
-    /// Set the current cube UUID for per-cube auto-connect tracking.
-    /// Returns a Task to trigger session check if in CheckingSession state.
-    pub fn set_cube_uuid(&mut self, cube_uuid: Option<String>) -> iced::Task<Message> {
-        self.account.set_current_cube_uuid(cube_uuid.clone());
-
-        // If we're in CheckingSession and now have a cube UUID, trigger Init to check for session
-        if matches!(self.account.step, ConnectFlowStep::CheckingSession) && cube_uuid.is_some() {
+    /// Trigger a Connect session check if the account panel hasn't
+    /// already run one. Called by the App at Cube load so the in-tab
+    /// session is restored from the shared keyring entry before the
+    /// user navigates to a Connect-requiring page.
+    pub fn ensure_session_check(&mut self) -> iced::Task<Message> {
+        if matches!(self.account.step, ConnectFlowStep::CheckingSession) {
             return iced::Task::done(Message::View(view::Message::ConnectAccount(
                 ConnectAccountMessage::Init,
             )));
         }
-
         iced::Task::none()
     }
 

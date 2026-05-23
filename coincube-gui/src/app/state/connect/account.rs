@@ -242,8 +242,6 @@ pub struct ConnectAccountPanel {
     pub step: ConnectFlowStep,
     pub active_sub: ConnectSubMenu,
     pub client: CoincubeClient,
-    /// Current cube UUID for per-cube auto-connect tracking
-    current_cube_uuid: Option<String>,
     pub user: Option<User>,
     pub plan: Option<ConnectPlan>,
     pub verified_devices: Option<Vec<VerifiedDevice>>,
@@ -271,7 +269,6 @@ impl ConnectAccountPanel {
             step: ConnectFlowStep::CheckingSession,
             active_sub: ConnectSubMenu::Overview,
             client: CoincubeClient::new(),
-            current_cube_uuid: None,
             user: None,
             plan: None,
             verified_devices: None,
@@ -297,26 +294,13 @@ impl ConnectAccountPanel {
         }
     }
 
-    /// Returns the keyring key for the current cube, or None if no cube is set.
-    /// Format: "cube_{uuid}" for per-cube isolated sessions.
-    fn keyring_key_for_cube(&self) -> Option<String> {
-        self.current_cube_uuid
-            .as_ref()
-            .map(|uuid| format!("cube_{}", uuid))
-    }
-
     pub fn is_authenticated(&self) -> bool {
         matches!(self.step, ConnectFlowStep::Dashboard)
     }
 
-    /// Returns `true` if a session has been previously stored in the OS keyring
-    /// for the current cube, or in the legacy global key.
+    /// Returns `true` if a Connect session has been previously stored in
+    /// the OS keyring under the shared global key.
     pub fn has_stored_session(&self) -> bool {
-        if let Some(key) = self.keyring_key_for_cube() {
-            if read_connect_secret(&key).is_some() {
-                return true;
-            }
-        }
         read_connect_secret(CONNECT_KEYRING_USER).is_some()
     }
 
@@ -377,51 +361,12 @@ impl ConnectAccountPanel {
         load_contacts_data(&self.client, self.session_generation)
     }
 
-    fn load_session_from_keyring(&mut self) -> Option<StoredSession> {
-        // Read the global key first.
-        //
-        // `save_session_to_keyring` always mirrors writes to both the
-        // cube-specific key (when a cube UUID is set) and the legacy
-        // global key, so they hold identical bytes — there is no
-        // correctness reason to prefer the cube-specific key on read.
-        // On macOS each distinct keychain item triggers its own
-        // "Allow access" prompt the first time a binary touches it,
-        // so reading global first means the Home tab's cached read
-        // satisfies later Cube tab lookups without poking a second
-        // keychain item.
-        if let Some(bytes) = read_connect_secret(CONNECT_KEYRING_USER) {
-            if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
-                return Some(session);
-            }
-        }
-        // Global empty: fall back to the cube-specific key. Mostly a
-        // safety net for users upgrading from a build that didn't
-        // mirror to global; the next successful sign-in re-syncs both
-        // keys via `save_session_to_keyring`.
-        if let Some(key) = self.keyring_key_for_cube() {
-            if let Some(bytes) = read_connect_secret(&key) {
-                if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
-                    self.save_session_to_keyring(&session);
-                    return Some(session);
-                }
-            }
-        }
-        None
+    fn load_session_from_keyring(&self) -> Option<StoredSession> {
+        let bytes = read_connect_secret(CONNECT_KEYRING_USER)?;
+        serde_json::from_slice::<StoredSession>(&bytes).ok()
     }
 
     fn save_session_to_keyring(&self, session: &StoredSession) {
-        // Persist to the global key only. Earlier builds also mirrored
-        // every save into a `cube_<uuid>` per-cube key for "isolation",
-        // but `load_session_from_keyring` already reads the global
-        // key first and the two were always written together — the
-        // cube-specific key was effectively a redundant copy.
-        //
-        // Updating it on every Init/refresh meant each Cube open
-        // poked a distinct macOS keychain item and re-triggered an
-        // "Allow access" prompt for it (separate ACL from global).
-        // Keep reads tolerant of pre-existing cube_<uuid> items as a
-        // safety net (see `load_session_from_keyring`), but stop
-        // writing new copies.
         let bytes = match serde_json::to_vec(session) {
             Ok(b) => b,
             Err(e) => {
@@ -435,16 +380,7 @@ impl ConnectAccountPanel {
     }
 
     fn clear_keyring_session(&self) {
-        if let Some(key) = self.keyring_key_for_cube() {
-            delete_connect_secret(&key);
-        }
-        // Also clear legacy global session for migration cleanup
         delete_connect_secret(CONNECT_KEYRING_USER);
-    }
-
-    /// Set the current cube UUID for per-cube auto-connect tracking
-    pub fn set_current_cube_uuid(&mut self, cube_uuid: Option<String>) {
-        self.current_cube_uuid = cube_uuid;
     }
 
     fn post_login_tasks(&mut self, session: StoredSession) -> iced::Task<Message> {

@@ -1009,8 +1009,7 @@ impl App {
                 .global_home
                 .reload(Some(daemon.clone()), Some(wallet.clone())),
         );
-        let set_cube_task = panels.connect.set_cube_uuid(Some(cube_settings.id.clone()));
-        tasks.push(set_cube_task);
+        tasks.push(panels.connect.ensure_session_check());
         let (connect_auth_arc, connect_email) = match connect_auth {
             Some((a, e)) => (Some(a), Some(e)),
             None => (None, None),
@@ -1124,8 +1123,10 @@ impl App {
         let mut cache = cache;
         cache.has_p2p = panels.p2p.is_some();
 
-        let set_cube_task = panels.connect.set_cube_uuid(Some(cube_settings.id.clone()));
-        let cmd = iced::Task::batch([set_cube_task, panels.global_home.reload(None, None)]);
+        let cmd = iced::Task::batch([
+            panels.connect.ensure_session_check(),
+            panels.global_home.reload(None, None),
+        ]);
 
         (
             Self {
