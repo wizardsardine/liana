@@ -793,18 +793,26 @@ impl Tab {
                     }
                     app::Message::View(app::view::Message::OpenConnectSignIn) => {
                         // Re-check this tab's ConnectAccountPanel against
-                        // the keyring before bubbling up: if the user
-                        // signed in on another tab, that session is in
-                        // the keyring and Init will refresh this tab's
-                        // panel so the page can swap to the real feature
-                        // UI without needing the Home tab roundtrip.
+                        // the keyring before deciding whether to bubble
+                        // up. When the user already signed in on another
+                        // tab the session is in the shared keyring entry
+                        // and Init can refresh this tab's panel in place;
+                        // jumping to the Home tab in that case would be
+                        // an unnecessary context switch. We only bubble
+                        // when the panel has no path to authenticating
+                        // itself.
+                        let needs_home_handoff = !app.can_restore_connect_session();
                         let init_task = app
                             .update(app::Message::View(app::view::Message::ConnectAccount(
                                 app::view::ConnectAccountMessage::Init,
                             )))
                             .map(Message::Run);
-                        let bubble = Task::done(Message::OpenConnectSignIn);
-                        Task::batch([init_task, bubble])
+                        if needs_home_handoff {
+                            let bubble = Task::done(Message::OpenConnectSignIn);
+                            Task::batch([init_task, bubble])
+                        } else {
+                            init_task
+                        }
                     }
                     m => app.update(m).map(Message::Run),
                 }

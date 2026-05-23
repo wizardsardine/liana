@@ -1197,6 +1197,15 @@ impl App {
         self.panels.connect.account.authenticated_client()
     }
 
+    /// True when this tab's ConnectAccountPanel either already holds an
+    /// authenticated session or can pull one out of the shared keyring
+    /// entry. Lets the tab-level OpenConnectSignIn handler short-circuit
+    /// the Home-tab handoff when the in-tab inline refresh is enough.
+    pub fn can_restore_connect_session(&self) -> bool {
+        self.panels.connect.account.is_authenticated()
+            || self.panels.connect.account.has_stored_session()
+    }
+
     pub fn wallet(&self) -> Option<&Wallet> {
         self.wallet.as_ref().map(|w| w.as_ref())
     }
