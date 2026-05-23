@@ -204,7 +204,11 @@ pub(super) fn format_date(iso: &str) -> String {
 /// (e.g. `"Apr 20, 2026 14:31"`). Falls back to the raw input on parse failure.
 pub(super) fn format_datetime(iso: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(iso)
-        .map(|dt| dt.format("%b %d, %Y %H:%M").to_string())
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%b %d, %Y %H:%M")
+                .to_string()
+        })
         .unwrap_or_else(|_| iso.to_string())
 }
 
