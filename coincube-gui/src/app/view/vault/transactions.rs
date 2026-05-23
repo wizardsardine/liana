@@ -3,7 +3,6 @@ use std::convert::TryInto;
 
 use chrono::{DateTime, Local, Utc};
 use iced::{
-    alignment,
     widget::{tooltip, Space},
     Alignment, Length,
 };
@@ -12,6 +11,7 @@ use coincube_ui::{
     component::{
         amount::*,
         button, card, form,
+        pagination::pagination_controls,
         text::*,
         transaction::{TransactionBadge, TransactionDirection, TransactionListItem},
     },
@@ -25,7 +25,7 @@ use crate::{
         cache::Cache,
         menu::{Menu, VaultSubMenu},
         view::{
-            dashboard,
+            dashboard, loading_placeholder,
             message::{CreateRbfMessage, Message},
             placeholder,
             vault::label,
@@ -41,10 +41,61 @@ pub fn transactions_view<'a>(
     menu: &'a Menu,
     cache: &'a Cache,
     txs: &'a [HistoryTransaction],
+    current_page: u32,
     is_last_page: bool,
     processing: bool,
 ) -> Element<'a, Message> {
     let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+
+    // While the initial page-0 fetch is in flight, `txs` is empty but the
+    // wallet may well have history — show a loading state instead of the
+    // "No transactions" empty state, which would otherwise flash for a few
+    // seconds before the data lands.
+    let is_initial_empty = txs.is_empty() && current_page == 0;
+    let show_loading = is_initial_empty && processing;
+    let show_empty_state = is_initial_empty && !processing;
+
+    let list = txs
+        .iter()
+        .enumerate()
+        .fold(Column::new().spacing(10), |col, (i, tx)| {
+            col.push(tx_list_view(
+                i,
+                tx,
+                cache.bitcoin_unit,
+                fiat_converter,
+                cache.show_direction_badges,
+            ))
+        });
+
+    let body: Element<'a, Message> = if show_loading {
+        loading_placeholder(receipt_icon().size(80), "Loading transactions")
+    } else if show_empty_state {
+        placeholder(
+            receipt_icon().size(80),
+            "No transactions yet",
+            "Your transaction history will appear here once you send or receive coins.",
+        )
+    } else {
+        // The dashboard already wraps the whole panel in a page-level
+        // scrollable, so the list is pushed directly — nesting another
+        // scrollable here would make its `Fill` height resolve against an
+        // unbounded parent and break layout. Pagination keeps each page
+        // bounded (PAGE_SIZE rows), so the page scroll is enough.
+        Column::new()
+            .spacing(10)
+            .push(list)
+            .push(pagination_controls(
+                Message::VaultPrevPage,
+                Message::VaultNextPage,
+                current_page > 0,
+                !is_last_page,
+                processing,
+                current_page,
+            ))
+            .push(Space::new().height(Length::Fixed(30.0)))
+            .into()
+    };
 
     dashboard(
         menu,
@@ -59,57 +110,7 @@ pub fn transactions_view<'a>(
                             .on_press(ImportExportMessage::Open.into()),
                     ),
             )
-            .push(txs.is_empty().then(|| {
-                placeholder(
-                    receipt_icon().size(80),
-                    "No transactions yet",
-                    "Your transaction history will appear here once you send or receive coins.",
-                )
-            }))
-            .push(
-                Column::new()
-                    .spacing(10)
-                    .push(
-                        txs.iter()
-                            .enumerate()
-                            .fold(Column::new().spacing(10), |col, (i, tx)| {
-                                col.push(tx_list_view(
-                                    i,
-                                    tx,
-                                    cache.bitcoin_unit,
-                                    fiat_converter,
-                                    cache.show_direction_badges,
-                                ))
-                            }),
-                    )
-                    .push(if !is_last_page && !txs.is_empty() {
-                        Some(
-                            Container::new(
-                                Button::new(
-                                    text(if processing {
-                                        "Fetching ..."
-                                    } else {
-                                        "See more"
-                                    })
-                                    .width(Length::Fill)
-                                    .align_x(alignment::Horizontal::Center),
-                                )
-                                .width(Length::Fill)
-                                .padding(15)
-                                .style(theme::button::transparent_border)
-                                .on_press_maybe(if !processing {
-                                    Some(Message::Next)
-                                } else {
-                                    None
-                                }),
-                            )
-                            .width(Length::Fill)
-                            .style(theme::card::simple),
-                        )
-                    } else {
-                        None
-                    }),
-            )
+            .push(body)
             .align_x(Alignment::Center)
             .spacing(25),
     )

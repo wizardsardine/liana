@@ -11,6 +11,14 @@ pub const MIN_TRANSFER_SATS: u64 = 25_000;
 /// that an accidental no-edit signing on regtest / testnet still confirms.
 const DEFAULT_TRANSFER_FEERATE_SATS_VB: &str = "2";
 
+/// Cap on the fallback `get_info` poll cycles while waiting for the SDK
+/// to emit `Synced`. Paired with the 3-second poll interval that means
+/// the loading placeholder gives up after ~30s and shows whatever the
+/// last response returned — long enough for genuine cold-start sync,
+/// short enough that a truly broken event path doesn't leave the user
+/// stuck on `…` forever.
+const SPARK_LOAD_RETRY_CAP: u8 = 10;
+
 /// Sum of external unconfirmed vault coins — the daemon's view of "sats
 /// pending incoming" on the Vault. Used both to drive the Vault card's
 /// "+ pending" badge and to reconcile the session-level
@@ -180,6 +188,40 @@ pub struct GlobalHome {
     /// backend is wired up for this cube.
     spark_balance: Amount,
     spark_balance_loaded: bool,
+    /// Set once the bridge has forwarded `Event::Synced` from the
+    /// SDK. Until then a `get_info` response may be the SDK's
+    /// persisted-on-disk value from a previous session — payments
+    /// received between sessions won't be reflected yet. Required
+    /// before `spark_balance_loaded` can flip true.
+    spark_synced_seen: bool,
+    /// Bounds the fallback poll in `subscription()` that re-runs
+    /// `get_info` while loading is still pending — `tokio` broadcast
+    /// doesn't replay events, so a `Synced` firing before iced
+    /// subscribes would otherwise leave us stuck.
+    spark_load_retry_count: u8,
+    /// Set while a `load_spark_balance` task is in flight. Prevents
+    /// overlapping `get_info` RPCs — the 3-second poll and SparkEvent-
+    /// driven refreshes both call `load_spark_balance`, and a slow
+    /// initial sync can hold a get_info request open for the full
+    /// 30-second timeout, during which several more callers could
+    /// otherwise pile on. Cleared by `SparkBalanceUpdated` /
+    /// `SparkLoadFailed` when the response (or the soft-fail) lands.
+    spark_balance_loading: bool,
+    /// Set when `SparkSyncedObserved` arrives while a `load_spark_balance`
+    /// is in flight. The pending response was issued pre-Synced and
+    /// would otherwise trip `spark_balance_loaded` on the SDK's stale
+    /// persisted value; `SparkBalanceUpdated` checks this flag and
+    /// discards the response in favor of a fresh fetch instead.
+    spark_pending_resync: bool,
+    /// Set the first time a non-discarded `SparkBalanceUpdated` lands
+    /// (i.e. an actual `get_info` response was written into
+    /// `spark_balance`). Required for the `SparkLoadRetry` cap-
+    /// release path to flip `spark_balance_loaded`: without it, a
+    /// completely broken bridge could leave `spark_balance` at
+    /// `Amount::ZERO` and the cap-release would publish a false zero
+    /// as the authoritative balance, which `validate_entered_amount`
+    /// would then use as the Spark source cap for transfers.
+    spark_balance_received: bool,
     usdt_balance: u64,
     usdt_balance_error: bool,
     usdt_balance_loaded: bool,
@@ -282,6 +324,11 @@ impl GlobalHome {
             liquid_balance_loaded: false,
             spark_balance: Amount::ZERO,
             spark_balance_loaded: false,
+            spark_synced_seen: false,
+            spark_load_retry_count: 0,
+            spark_balance_loading: false,
+            spark_pending_resync: false,
+            spark_balance_received: false,
             usdt_balance: 0,
             usdt_balance_error: false,
             usdt_balance_loaded: false,
@@ -342,6 +389,11 @@ impl GlobalHome {
             liquid_balance_loaded: false,
             spark_balance: Amount::ZERO,
             spark_balance_loaded: false,
+            spark_synced_seen: false,
+            spark_load_retry_count: 0,
+            spark_balance_loading: false,
+            spark_pending_resync: false,
+            spark_balance_received: false,
             usdt_balance: 0,
             usdt_balance_error: false,
             usdt_balance_loaded: false,
@@ -459,6 +511,10 @@ impl State for GlobalHome {
                 fiat_converter,
                 balance_masked: self.balance_masked,
                 total_balance_loading,
+                spark_balance_loaded: self.spark_balance_loaded,
+                liquid_balance_loaded: self.liquid_balance_loaded,
+                usdt_balance_loaded: self.usdt_balance_loaded,
+                vault_loaded: !vault_pending,
                 display_mode: cache.display_mode,
                 has_vault: cache.has_vault,
                 has_spark,
@@ -524,6 +580,26 @@ impl State for GlobalHome {
             // To fetch hardware wallets
             use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
             subscriptions.push(sign_modal.subscription());
+        }
+
+        // Fallback poll for the Spark balance while the Home card is
+        // still in its loading state. `tokio::sync::broadcast` doesn't
+        // replay events fired before iced subscribed, so a `Synced`
+        // arriving during the bridge-init / iced-subscribe gap would
+        // be lost — the poll guarantees we still re-fetch every few
+        // seconds until either a `Synced` lands or the retry cap is
+        // reached. Self-cancels the moment `spark_balance_loaded`
+        // flips true (iced re-evaluates subscriptions on each render).
+        // Uses `SparkLoadRetry` (not `RefreshSparkBalance`) so SDK-
+        // event-driven refreshes don't count against the retry cap.
+        if self.spark_backend.is_some()
+            && !self.spark_balance_loaded
+            && self.spark_load_retry_count < SPARK_LOAD_RETRY_CAP
+        {
+            subscriptions.push(
+                iced::time::every(std::time::Duration::from_secs(3))
+                    .map(|_| Message::View(view::Message::Home(HomeMessage::SparkLoadRetry))),
+            );
         }
 
         Subscription::batch(subscriptions)
@@ -596,9 +672,39 @@ impl State for GlobalHome {
                                 )
                             })
                             .unwrap_or(0);
+                        self.spark_balance_loading = false;
+                        // The in-flight fetch was issued before
+                        // `Synced` arrived — its value reflects the
+                        // SDK's pre-sync state. Discard it and fire a
+                        // fresh post-sync fetch; the next response
+                        // will flip the gate.
+                        if self.spark_pending_resync {
+                            self.spark_pending_resync = false;
+                            return self.load_spark_balance().unwrap_or_else(Task::none);
+                        }
                         self.spark_balance =
                             Amount::from_sat(btc.to_sat().saturating_add(usdb_as_sats));
-                        self.spark_balance_loaded = true;
+                        self.spark_balance_received = true;
+                        // Trust the response once the bridge has
+                        // confirmed at least one `Synced` event — until
+                        // then this could be the SDK's pre-sync persisted
+                        // value (e.g. zero before this session's incoming
+                        // interest payments landed). Until corroborated,
+                        // the card renders a `…` placeholder.
+                        //
+                        // Also release the gate when the fallback poll
+                        // has already exhausted its budget: the
+                        // subscription stops firing once
+                        // `spark_load_retry_count` reaches the cap, so
+                        // any response that lands after that point has
+                        // no other path to release the loading UI.
+                        // Best-effort — better to show the last
+                        // received value than stay stuck on `…`.
+                        if self.spark_synced_seen
+                            || self.spark_load_retry_count >= SPARK_LOAD_RETRY_CAP
+                        {
+                            self.spark_balance_loaded = true;
+                        }
                         Task::none()
                     }
                     HomeMessage::ToggleBalanceMask => {
@@ -1937,6 +2043,85 @@ impl State for GlobalHome {
                     HomeMessage::RefreshSparkBalance => {
                         self.load_spark_balance().unwrap_or_else(Task::none)
                     }
+                    HomeMessage::SparkLoadRetry => {
+                        // Only the fallback poll bumps the retry
+                        // counter — SDK-event-driven refreshes
+                        // (`RefreshSparkBalance`) must not, or a burst
+                        // of payment / deposit events on cold start
+                        // could blow through the cap before `Synced`
+                        // lands and prematurely flip the gate.
+                        //
+                        // The counter advances on every tick (wall-
+                        // clock semantics) so a single slow get_info
+                        // can't postpone the cap indefinitely. The
+                        // single-flight guard lives inside
+                        // `load_spark_balance`, which returns `None`
+                        // when a previous RPC is still in flight — so
+                        // we don't start an overlapping fetch even
+                        // though the tick still counts.
+                        self.spark_load_retry_count = self.spark_load_retry_count.saturating_add(1);
+                        // Final-attempt graceful exit: if the fallback
+                        // poll has hit its cap without ever seeing a
+                        // `Synced`, release the loading UI rather than
+                        // leave the user staring at `…` indefinitely.
+                        // Shows whatever the last `get_info` returned —
+                        // best-effort fallback when the event path is
+                        // genuinely broken. Skipped when no response
+                        // ever landed (`spark_balance` is still the
+                        // `Amount::ZERO` default): publishing that zero
+                        // would mislead the user and become a false
+                        // source cap in `validate_entered_amount`. In
+                        // that scenario we deliberately stay in the
+                        // loading state — Transfer remains disabled
+                        // and the placeholder honestly reflects that
+                        // we don't know the balance.
+                        if self.spark_load_retry_count >= SPARK_LOAD_RETRY_CAP
+                            && !self.spark_balance_loaded
+                            && self.spark_balance_received
+                        {
+                            self.spark_balance_loaded = true;
+                        }
+                        self.load_spark_balance().unwrap_or_else(Task::none)
+                    }
+                    HomeMessage::SparkSyncedObserved => {
+                        // Flip the synced gate, but do NOT flip
+                        // `spark_balance_loaded` here — the value
+                        // currently in `spark_balance` may still be
+                        // the SDK's pre-sync persisted snapshot.
+                        // `mod.rs` dispatches `RefreshSparkBalance`
+                        // alongside this message on every `Synced`;
+                        // the fresh `SparkBalanceUpdated` it triggers
+                        // is what flips the gate (its handler checks
+                        // `spark_synced_seen`), so the placeholder
+                        // only goes away once the post-sync value
+                        // has actually landed.
+                        self.spark_synced_seen = true;
+                        // If a get_info is already in flight, the
+                        // companion `RefreshSparkBalance` will be
+                        // skipped by the in-flight guard. Mark the
+                        // pending response as stale-on-arrival so
+                        // `SparkBalanceUpdated` discards it instead
+                        // of flipping the gate on a pre-Synced value.
+                        if self.spark_balance_loading {
+                            self.spark_pending_resync = true;
+                        }
+                        Task::none()
+                    }
+                    HomeMessage::SparkLoadFailed => {
+                        // Soft-fail terminal: release the in-flight
+                        // guard so the next poll tick or SparkEvent
+                        // can fire a fresh `get_info`. If a `Synced`
+                        // arrived during the failed fetch, the
+                        // companion `RefreshSparkBalance` was skipped
+                        // by the in-flight guard — fire a fresh one
+                        // now so the placeholder can converge.
+                        self.spark_balance_loading = false;
+                        if self.spark_pending_resync {
+                            self.spark_pending_resync = false;
+                            return self.load_spark_balance().unwrap_or_else(Task::none);
+                        }
+                        Task::none()
+                    }
                     HomeMessage::TransferPsbtReady(result) => {
                         self.is_sending = false;
                         match result {
@@ -2367,9 +2552,17 @@ impl GlobalHome {
 
     /// Fetch the Spark wallet balance via `get_info` on the bridge.
     /// Returns `None` when no Spark backend is wired up for the cube
-    /// so the caller can skip scheduling the task entirely.
-    fn load_spark_balance(&self) -> Option<Task<Message>> {
+    /// (so the caller can skip scheduling the task entirely) or when
+    /// a previous `get_info` is still in flight (so we don't pile up
+    /// concurrent RPCs during slow initial sync or SparkEvent bursts).
+    /// Sets `spark_balance_loading` for the duration of the task; the
+    /// `SparkBalanceUpdated` / `SparkLoadFailed` handlers clear it.
+    fn load_spark_balance(&mut self) -> Option<Task<Message>> {
         let backend = self.spark_backend.clone()?;
+        if self.spark_balance_loading {
+            return None;
+        }
+        self.spark_balance_loading = true;
         Some(Task::perform(
             async move { backend.get_info().await },
             |result| match result {
@@ -2380,10 +2573,10 @@ impl GlobalHome {
                 Err(e) => {
                     tracing::warn!("Home: spark get_info failed: {}", e);
                     // Soft-fail: leave the card showing whatever the
-                    // last successful fetch returned by not emitting a
-                    // balance update at all. CacheUpdated is a no-op
-                    // ping that doesn't touch the Spark balance.
-                    Message::CacheUpdated
+                    // last successful fetch returned. The Home handler
+                    // just clears the in-flight guard so the next
+                    // refresh / retry can fire.
+                    Message::View(view::Message::Home(HomeMessage::SparkLoadFailed))
                 }
             },
         ))
@@ -2413,7 +2606,7 @@ impl GlobalHome {
         let network = self.network;
         Task::perform(
             async move {
-                match breez_client.list_payments(Some(20)).await {
+                match breez_client.list_payments(Some(20), None, None).await {
                     Ok(payments) => {
                         let mut liquid_send_sats: u64 = 0;
                         let mut usdt_send_sats: u64 = 0;
@@ -2601,7 +2794,7 @@ impl GlobalHome {
                     .and_then(|cube| cube.pending_liquid_to_vault_transfer.clone())?;
 
                 let mut stage = TransferStage::Initiated;
-                let payments = breez_client.list_payments(None).await.ok();
+                let payments = breez_client.list_payments(None, None, None).await.ok();
 
                 if let Some(payment) = payments.and_then(|ps| {
                     ps.into_iter().find(|payment| {

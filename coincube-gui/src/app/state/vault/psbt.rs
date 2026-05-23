@@ -195,6 +195,21 @@ impl PsbtState {
                     }
                 }
 
+                // The celebration page dismisses via this same Cancel
+                // message. Detect that case before we clear `self.modal`
+                // so we can chain a Reload onto the close — that
+                // returns the user to the PSBTs list with their newly
+                // broadcast tx already marked unconfirmed, instead of
+                // leaving them on the now-stale PSBT detail page
+                // wondering whether the broadcast made it through.
+                let just_broadcast = matches!(
+                    &self.modal,
+                    Some(PsbtModal::Broadcast(BroadcastModal {
+                        broadcast: true,
+                        ..
+                    }))
+                );
+
                 // Dismissing a Keychain-sign modal (blur or otherwise)
                 // must also terminate any in-flight signing sessions
                 // server-side, not just hide the UI — otherwise signers
@@ -220,6 +235,9 @@ impl PsbtState {
                     };
                 if !keep_modal {
                     self.modal = None;
+                }
+                if just_broadcast {
+                    return Task::batch([cancel, Task::done(Message::View(view::Message::Reload))]);
                 }
                 return cancel;
             }
@@ -260,15 +278,30 @@ impl PsbtState {
                         .to_string();
                     return Task::done(Message::View(view::Message::ShowError(msg)));
                 }
-                let (Some(grpc_url), Some(tokens), Some(cube_server_id)) = (
-                    cache.connect_grpc_url.clone(),
-                    cache.connect_tokens.clone(),
-                    cache.current_cube_server_id,
-                ) else {
-                    let msg =
-                        "Sign via Keychain is unavailable: Connect is not ready yet.".to_string();
+                let missing: Vec<&'static str> = [
+                    ("connect_grpc_url", cache.connect_grpc_url.is_none()),
+                    ("connect_tokens", cache.connect_tokens.is_none()),
+                    ("connect_device_id", cache.connect_device_id.is_none()),
+                    (
+                        "current_cube_server_id",
+                        cache.current_cube_server_id.is_none(),
+                    ),
+                ]
+                .iter()
+                .filter_map(|(name, is_missing)| is_missing.then_some(*name))
+                .collect();
+                if !missing.is_empty() {
+                    let msg = format!(
+                        "Sign via Keychain is unavailable: Connect is not ready yet \
+                         (missing {}).",
+                        missing.join(", ")
+                    );
                     return Task::done(Message::View(view::Message::ShowError(msg)));
-                };
+                }
+                let grpc_url = cache.connect_grpc_url.clone().expect("checked above");
+                let tokens = cache.connect_tokens.clone().expect("checked above");
+                let device_id = cache.connect_device_id.clone().expect("checked above");
+                let cube_server_id = cache.current_cube_server_id.expect("checked above");
                 // The REST client's bearer is set asynchronously inside
                 // `KeychainSignModal::launch()`, which reads the shared
                 // `Arc<RwLock>` in an async context. Reading it here on
@@ -282,6 +315,7 @@ impl PsbtState {
                     coincube_client,
                     tokens,
                     grpc_url,
+                    device_id,
                     cube_server_id,
                     cache.cube_id.clone(),
                     descriptor_id,
@@ -366,13 +400,34 @@ impl PsbtState {
             Message::BroadcastModal(res) => match res {
                 Ok(conflicting_txids) => {
                     use coincube_ui::component::amount::DisplayAmount;
-                    let amount_display = self
-                        .tx
-                        .spend_amount
-                        .to_formatted_string_with_unit(cache.bitcoin_unit);
+                    let is_self_transfer = self.tx.is_send_to_self();
+                    // For a self-transfer every output is change, so `spend_amount`
+                    // is 0 by construction. Showing "0 has been sent" is nonsense;
+                    // surface the total moved (sum of change outputs) instead.
+                    let display_amount = if is_self_transfer {
+                        self.tx
+                            .psbt
+                            .unsigned_tx
+                            .output
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, o)| {
+                                if self.tx.change_indexes.contains(&i) {
+                                    Some(o.value)
+                                } else {
+                                    None
+                                }
+                            })
+                            .sum()
+                    } else {
+                        self.tx.spend_amount
+                    };
+                    let amount_display =
+                        display_amount.to_formatted_string_with_unit(cache.bitcoin_unit);
                     self.modal = Some(PsbtModal::Broadcast(BroadcastModal {
                         conflicting_txids,
                         broadcast: false,
+                        broadcasting: false,
                         error: None,
                         sent_quote: coincube_ui::component::quote_display::random_quote(
                             "bitcoin-send",
@@ -382,6 +437,7 @@ impl PsbtState {
                                 "bitcoin-send",
                             ),
                         spend_amount_display: amount_display,
+                        is_self_transfer,
                     }));
                 }
                 Err(e) => {
@@ -482,7 +538,14 @@ impl Modal for SaveModal {
 }
 
 pub struct BroadcastModal {
+    /// Set once `broadcast_spend_tx` has returned successfully —
+    /// drives the celebration screen.
     broadcast: bool,
+    /// True while the daemon's `broadcast_spend_tx` RPC is in flight.
+    /// Used to give the user clear "Broadcasting…" feedback and to
+    /// suppress accidental duplicate clicks / blur-cancel during the
+    /// window between pressing Broadcast and the daemon's reply.
+    broadcasting: bool,
     error: Option<Error>,
     /// IDs of any directly conflicting transactions.
     conflicting_txids: HashSet<Txid>,
@@ -491,6 +554,9 @@ pub struct BroadcastModal {
     sent_image_handle: iced::widget::image::Handle,
     /// Formatted spend amount for the celebration display.
     spend_amount_display: String,
+    /// True when every output of the tx returns to the wallet's own change
+    /// addresses. Used by the celebration view to render the right phrasing.
+    is_self_transfer: bool,
 }
 
 impl Modal for BroadcastModal {
@@ -502,46 +568,81 @@ impl Modal for BroadcastModal {
     ) -> Task<Message> {
         match message {
             Message::View(view::Message::Spend(view::SpendTxMessage::Confirm)) => {
+                // Ignore re-clicks while a broadcast is already in
+                // flight or has succeeded — without this guard, the
+                // "Broadcast" button could fire `broadcast_spend_tx`
+                // twice on rapid double-taps, and the second call
+                // would error out with "unknown spend" after the first
+                // one drained the PSBT from the daemon's DB.
+                if self.broadcasting || self.broadcast {
+                    return Task::none();
+                }
+                self.broadcasting = true;
                 let daemon = daemon.clone();
                 let psbt = tx.psbt.clone();
                 self.error = None;
+                self.broadcasting = true;
+                let txid = psbt.unsigned_tx.compute_txid();
+                tracing::info!(
+                    target: "coincube_gui::broadcast",
+                    %txid,
+                    "Broadcast requested"
+                );
                 return Task::perform(
-                    async move {
-                        daemon
-                            .broadcast_spend_tx(&psbt.unsigned_tx.compute_txid())
-                            .await
-                            .map_err(|e| e.into())
-                    },
+                    async move { daemon.broadcast_spend_tx(&txid).await.map_err(|e| e.into()) },
                     Message::Updated,
                 );
             }
-            Message::Updated(res) => match res {
-                Ok(()) => {
-                    tx.status = SpendStatus::Broadcast;
-                    self.broadcast = true;
+            Message::Updated(res) => {
+                // Either outcome ends the in-flight state.
+                self.broadcasting = false;
+                match res {
+                    Ok(()) => {
+                        tx.status = SpendStatus::Broadcast;
+                        self.broadcast = true;
+                        tracing::info!(
+                            target: "coincube_gui::broadcast",
+                            txid = %tx.psbt.unsigned_tx.compute_txid(),
+                            "Broadcast completed"
+                        );
+                    }
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        self.error = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                    }
                 }
-                Err(e) => {
-                    let err_msg = e.to_string();
-                    self.error = Some(e);
-                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                }
-            },
+            }
             _ => {}
         }
         Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
+        // While the broadcast RPC is in flight, suppress blur-to-cancel.
+        // An accidental tap outside the modal at that moment would
+        // dismiss the user's only visual confirmation that something
+        // is happening and look like an aborted broadcast — even
+        // though the daemon call itself is unaffected by closing the
+        // modal.
+        let on_blur = if self.broadcasting {
+            None
+        } else {
+            Some(view::Message::Spend(view::SpendTxMessage::Cancel))
+        };
         modal::Modal::new(
             content,
             view::vault::psbt::broadcast_action(
                 &self.conflicting_txids,
                 self.broadcast,
+                self.broadcasting,
+                self.error.as_ref().map(|e| e.to_string()),
                 &self.spend_amount_display,
                 &self.sent_quote,
                 &self.sent_image_handle,
+                self.is_self_transfer,
             ),
         )
-        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+        .on_blur(on_blur)
         .into()
     }
 }

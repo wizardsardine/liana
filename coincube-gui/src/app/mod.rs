@@ -828,10 +828,17 @@ async fn check_bitcoind_sync_progress(
 
 /// Hashable wrapper around `ConnectStreamConfig` so it can be used as
 /// the identity key for `iced::Subscription::run_with`. We hash only the
-/// fields that should force a fresh subscription: `device_id`,
-/// `grpc_url`, and `last_seen_seq`. The shared `Arc<RwLock<tokens>>` is
-/// intentionally excluded — a token refresh must not tear down the
-/// stream.
+/// fields that should force a fresh subscription: `device_id` and
+/// `grpc_url`. The shared `Arc<RwLock<tokens>>` is intentionally excluded
+/// — a token refresh must not tear down the stream.
+///
+/// `last_seen_seq` is also deliberately excluded: it advances on every
+/// received event, and hashing it here would cause Iced to tear down and
+/// recreate the subscription after each event. The new stream would then
+/// be `Aborted: superseded` by the hub (because the old one is still in
+/// the connections map for ~1s) and we'd flap in a tight loop. The
+/// stream's own loop already tracks the latest seq locally and uses it
+/// for the next reconnect's ClientHello.
 struct ConnectStreamSubKey {
     cfg: crate::services::connect::grpc::stream::ConnectStreamConfig,
 }
@@ -841,7 +848,6 @@ impl std::hash::Hash for ConnectStreamSubKey {
         "connect-stream".hash(state);
         self.cfg.device_id.hash(state);
         self.cfg.grpc_url.hash(state);
-        self.cfg.last_seen_seq.hash(state);
     }
 }
 
@@ -1901,6 +1907,206 @@ impl App {
             Message::ConnectStream(event) => {
                 return self.handle_connect_stream(event);
             }
+            Message::InAppConnectLoginCompleted {
+                token,
+                refresh_token,
+                email,
+            } => {
+                // Bridge the in-app Connect login → realtime stream
+                // bootstrap that the launcher path gets at App init.
+                // Persists JWTs to `connect.json`, registers a signer
+                // device via gRPC, and re-fires
+                // `connect_stream_ready_task` to populate
+                // `cache.connect_grpc_url` / `connect_tokens` /
+                // `connect_device_id`. Without this hop "Sign via
+                // Keychain" stays unreachable until a full app
+                // restart. See `account.rs::post_login_tasks` and
+                // PLAN comment near `mod.rs:2374`.
+                self.connect_email = Some(email.clone());
+                self.cache.connect_email = Some(email.clone());
+
+                let network = self.cache.network;
+                let datadir = self.cache.datadir_path.clone();
+                // `cache.cube_id` is `String` (empty when no cube yet);
+                // the stream task takes `Option<String>` so the realtime
+                // subscription can scope events to that cube's vault.
+                let cube_uuid = if self.cache.cube_id.is_empty() {
+                    None
+                } else {
+                    Some(self.cache.cube_id.clone())
+                };
+                let email_for_task = email.clone();
+
+                return Task::perform(
+                    async move {
+                        use crate::services::connect::client::auth::AccessTokenResponse;
+                        use crate::services::connect::client::cache::ConnectCache;
+                        use crate::services::connect::grpc::bootstrap::ensure_device_registered_best_effort;
+                        use async_fd_lock::LockWrite;
+                        use std::io::SeekFrom;
+                        use tokio::fs::OpenOptions;
+                        use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+
+                        // Coincube backend issues 30-day JWTs (see
+                        // `CLAUDE.md`); we approximate expires_at as
+                        // now + 30d so the AccessTokenResponse shape
+                        // matches what the launcher path produces.
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(0);
+                        let tokens = AccessTokenResponse {
+                            access_token: token,
+                            refresh_token,
+                            expires_at: now + 30 * 24 * 60 * 60,
+                        };
+
+                        // Persist to `<network_dir>/connect.json` so
+                        // the next `connect_stream_ready_task` invocation
+                        // (this one, plus future app launches) can read
+                        // the device_id back. We write the file
+                        // directly instead of going through
+                        // `update_connect_cache` because the latter
+                        // requires an `AuthClient` we don't have here.
+                        let network_dir = datadir.network_directory(network);
+                        let mut path = network_dir.path().to_path_buf();
+                        path.push("connect.json");
+                        if let Some(parent) = path.parent() {
+                            let _ = tokio::fs::create_dir_all(parent).await;
+                        }
+
+                        let write_result: Result<(), String> = async {
+                            let file = OpenOptions::new()
+                                .read(true)
+                                .write(true)
+                                .create(true)
+                                .truncate(false)
+                                .open(&path)
+                                .await
+                                .map_err(|e| format!("open connect.json: {e}"))?;
+                            let mut guard = file
+                                .lock_write()
+                                .await
+                                .map_err(|e| format!("lock connect.json: {e:?}"))?;
+                            let mut buf = Vec::new();
+                            guard
+                                .read_to_end(&mut buf)
+                                .await
+                                .map_err(|e| format!("read connect.json: {e}"))?;
+                            let mut cache: ConnectCache = if buf.is_empty() {
+                                ConnectCache::default()
+                            } else {
+                                serde_json::from_slice(&buf)
+                                    .map_err(|e| format!("parse connect.json: {e}"))?
+                            };
+                            if let Some(acct) = cache
+                                .accounts
+                                .iter_mut()
+                                .find(|a| a.email == email_for_task)
+                            {
+                                acct.tokens = tokens.clone();
+                            } else {
+                                cache.accounts.push(
+                                    crate::services::connect::client::cache::Account {
+                                        email: email_for_task.clone(),
+                                        tokens: tokens.clone(),
+                                        device_id: None,
+                                        last_seen_event_seq: None,
+                                    },
+                                );
+                            }
+                            let serialized = serde_json::to_vec_pretty(&cache)
+                                .map_err(|e| format!("serialize: {e}"))?;
+                            guard
+                                .seek(SeekFrom::Start(0))
+                                .await
+                                .map_err(|e| format!("seek: {e}"))?;
+                            guard
+                                .write_all(&serialized)
+                                .await
+                                .map_err(|e| format!("write: {e}"))?;
+                            guard
+                                .inner_mut()
+                                .set_len(serialized.len() as u64)
+                                .await
+                                .map_err(|e| format!("truncate: {e}"))?;
+                            Ok(())
+                        }
+                        .await;
+
+                        if let Err(e) = write_result {
+                            tracing::warn!(
+                                "InAppConnectLoginCompleted: failed to persist tokens: {e}"
+                            );
+                            return (network, datadir, None, email_for_task, cube_uuid);
+                        }
+
+                        // Fetch grpc_url and register the device.
+                        let tokens_arc = std::sync::Arc::new(tokio::sync::RwLock::new(tokens));
+                        let service_config =
+                            match crate::services::connect::client::get_service_config(network)
+                                .await
+                            {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    tracing::warn!(
+                                    "InAppConnectLoginCompleted: get_service_config failed: {e}"
+                                );
+                                    return (network, datadir, None, email_for_task, cube_uuid);
+                                }
+                            };
+                        if let Some(grpc_url) = service_config.grpc_url.as_deref() {
+                            let device_name = std::env::var("HOSTNAME")
+                                .ok()
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or_else(|| {
+                                    format!("Coincube Desktop ({})", std::env::consts::OS)
+                                });
+                            ensure_device_registered_best_effort(
+                                grpc_url,
+                                tokens_arc.clone(),
+                                &network_dir,
+                                &email_for_task,
+                                device_name,
+                                env!("CARGO_PKG_VERSION").to_string(),
+                                std::env::consts::OS.to_string(),
+                            )
+                            .await;
+                        }
+
+                        (
+                            network,
+                            datadir,
+                            Some(tokens_arc),
+                            email_for_task,
+                            cube_uuid,
+                        )
+                    },
+                    |(network, datadir, tokens_opt, email, cube_uuid)| {
+                        // Chain the existing stream bootstrap so the
+                        // cache fields populate without an app restart.
+                        match tokens_opt {
+                            Some(tokens) => Message::TriggerConnectStreamReady {
+                                network,
+                                datadir,
+                                tokens,
+                                email,
+                                cube_uuid,
+                            },
+                            None => Message::ConnectStreamReady(None),
+                        }
+                    },
+                );
+            }
+            Message::TriggerConnectStreamReady {
+                network,
+                datadir,
+                tokens,
+                email,
+                cube_uuid,
+            } => {
+                return connect_stream_ready_task(network, datadir, tokens, email, cube_uuid);
+            }
             Message::InstallStats(_) => {
                 if let Some(panel) = self.panels.current_mut() {
                     return panel.update(self.daemon.clone(), &self.cache, message);
@@ -2408,6 +2614,29 @@ impl App {
             }
             Message::View(view::Message::DismissReceivedCelebration) => {
                 self.show_received_celebration = false;
+                // Panels that render their own celebration overlay
+                // (e.g. the Vault overview) keep a separate
+                // `show_received_celebration` flag and reuse this same
+                // global dismiss message. Clearing only the app-level
+                // flag here would leave the panel stuck on the
+                // celebration screen, so forward the dismiss to the
+                // active panel as well — mirrors the generic
+                // message-forwarding catch-all below.
+                if let (Some(daemon), Some(panel)) =
+                    (self.daemon.clone(), self.panels.current_mut())
+                {
+                    return panel.update(
+                        Some(daemon),
+                        &self.cache,
+                        Message::View(view::Message::DismissReceivedCelebration),
+                    );
+                } else if let Some(panel) = self.panels.current_mut() {
+                    return panel.update(
+                        None,
+                        &self.cache,
+                        Message::View(view::Message::DismissReceivedCelebration),
+                    );
+                }
             }
             Message::View(view::Message::DismissBackupWarning) => {
                 self.cache.backup_warning_dismissed = true;
@@ -2460,12 +2689,23 @@ impl App {
                 tasks.push(self.panels.spark_overview.reload(None, None));
 
                 // Also refresh the Home (Cube → Overview) Spark card.
-                // `global_home.reload` only runs on navigation, so a
-                // cold-start `get_info` that soft-fails (SDK not ready)
-                // leaves `spark_balance_loaded = false` until the user
-                // navigates away and back. Piping the SDK's `Synced` /
-                // payment events through `RefreshSparkBalance` lets
-                // the card recover without re-navigation.
+                // `global_home.reload` only runs on navigation, so on
+                // cold start the first `get_info` may return the SDK's
+                // persisted pre-sync value (e.g. zero before this
+                // session's incoming payments landed). The Home state
+                // gates `spark_balance_loaded` on observing at least
+                // one `Synced` from the bridge — `SparkSyncedObserved`
+                // (sent only for `SparkEvent::Synced`) flips that gate,
+                // and the `RefreshSparkBalance` dispatched alongside
+                // re-fetches whatever the SDK can now report.
+                // A periodic poll in `GlobalHome::subscription` is the
+                // safety net for the case where `Synced` fires before
+                // iced subscribes (tokio broadcast doesn't replay).
+                if matches!(event, SparkEvent::Synced) {
+                    tasks.push(Task::done(Message::View(view::Message::Home(
+                        view::HomeMessage::SparkSyncedObserved,
+                    ))));
+                }
                 tasks.push(Task::done(Message::View(view::Message::Home(
                     view::HomeMessage::RefreshSparkBalance,
                 ))));

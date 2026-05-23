@@ -10,12 +10,21 @@ use tonic::service::Interceptor;
 #[derive(Debug, Clone)]
 pub struct AuthInterceptor {
     bearer: String,
+    device_id: Option<String>,
 }
 
 impl AuthInterceptor {
     pub fn new(access_token: &str) -> Self {
         Self {
             bearer: format!("Bearer {}", access_token),
+            device_id: None,
+        }
+    }
+
+    pub fn with_device_id(access_token: &str, device_id: impl Into<String>) -> Self {
+        Self {
+            bearer: format!("Bearer {}", access_token),
+            device_id: Some(device_id.into()),
         }
     }
 }
@@ -28,6 +37,14 @@ impl Interceptor for AuthInterceptor {
                 .parse()
                 .map_err(|_| tonic::Status::internal("invalid authorization header value"))?,
         );
+        if let Some(device_id) = &self.device_id {
+            req.metadata_mut().insert(
+                "x-device-id",
+                device_id
+                    .parse()
+                    .map_err(|_| tonic::Status::internal("invalid x-device-id header value"))?,
+            );
+        }
         Ok(req)
     }
 }
@@ -46,6 +63,18 @@ mod tests {
             .get("authorization")
             .expect("authorization header should be present");
         assert_eq!(auth.to_str().unwrap(), "Bearer test-token-abc");
+    }
+
+    #[test]
+    fn attaches_device_id_when_present() {
+        let mut interceptor = AuthInterceptor::with_device_id("test-token-abc", "42");
+        let req = tonic::Request::new(());
+        let out = interceptor.call(req).expect("interceptor should succeed");
+        let device_id = out
+            .metadata()
+            .get("x-device-id")
+            .expect("x-device-id header should be present");
+        assert_eq!(device_id.to_str().unwrap(), "42");
     }
 
     #[test]

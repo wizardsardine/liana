@@ -1,7 +1,9 @@
 use breez_sdk_liquid::{bitcoin::Denomination, model::PreparePayOnchainResponse};
+use std::time::Duration;
+
 use coincube_ui::{
     color,
-    component::{amount::*, button, form, text::*},
+    component::{amount::*, button, form, spinner, text::*},
     icon::{
         arrow_down_up_icon, arrow_right, check_circle_icon, droplet_fill_icon, eye_outline_icon,
         eye_slash_icon, lightning_icon, usd_icon, vault_icon, warning_icon,
@@ -114,6 +116,11 @@ fn wallet_card<'a>(
     pending_send_sats: u64,
     pending_receive_sats: u64,
     display_mode: crate::app::settings::display::DisplayMode,
+    // True once the underlying wallet has reported its first balance.
+    // Drives the animated-dots loading placeholder and suppresses
+    // pending indicators that would otherwise read alongside a
+    // not-yet-authoritative value.
+    loaded: bool,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
 
@@ -298,10 +305,21 @@ fn wallet_card<'a>(
                 )
                 .push(if balance_masked {
                     Row::new().push(text("********").size(P1_SIZE))
+                } else if !loaded {
+                    Row::new().push(spinner::typing_text_carousel(
+                        "...",
+                        false,
+                        Duration::from_millis(400),
+                        |content| text(content).size(P1_SIZE).style(theme::text::secondary),
+                    ))
                 } else {
                     amount_with_size_and_unit(balance, P1_SIZE, bitcoin_unit)
                 })
-                .push_maybe((!balance_masked).then_some(btc_fiat_text).flatten())
+                .push_maybe(
+                    (!balance_masked && loaded)
+                        .then_some(btc_fiat_text)
+                        .flatten(),
+                )
                 .push(Space::new().width(Length::Fill))
                 .push(
                     button::primary(None, "Send")
@@ -314,6 +332,44 @@ fn wallet_card<'a>(
                         .width(Length::Fixed(90.0))
                         .on_press(receive_action),
                 );
+
+            // Headline — animated dots while the daemon hasn't
+            // reported a first balance. Pending send/receive counts
+            // are zeroed in the loading branch so the wallet_header's
+            // own pending indicators stay suppressed alongside the
+            // placeholder.
+            let header: Element<'a, Message> = if loaded {
+                wallet_header::<Message>(WalletHeaderProps {
+                    sats: *balance,
+                    fiat: fiat_balance,
+                    balance_masked,
+                    bitcoin_unit,
+                    variant: HeaderVariant::Card,
+                    sync: SyncState::Synced,
+                    unconfirmed: None,
+                    pending_send_sats,
+                    pending_receive_sats,
+                    display_mode,
+                    on_swap: Some(Message::FlipDisplayMode),
+                })
+                .into()
+            } else {
+                Column::new()
+                    .spacing(4)
+                    .push(spinner::typing_text_carousel(
+                        "...",
+                        false,
+                        Duration::from_millis(400),
+                        |content| text(content).size(H2_SIZE).bold(),
+                    ))
+                    .push(spinner::typing_text_carousel(
+                        "...",
+                        false,
+                        Duration::from_millis(400),
+                        |content| text(content).size(P1_SIZE).style(theme::text::secondary),
+                    ))
+                    .into()
+            };
 
             Column::new()
                 .spacing(12)
@@ -331,24 +387,12 @@ fn wallet_card<'a>(
                             }
                         }),
                 )
-                .push(wallet_header::<Message>(WalletHeaderProps {
-                    sats: *balance,
-                    fiat: fiat_balance,
-                    balance_masked,
-                    bitcoin_unit,
-                    variant: HeaderVariant::Card,
-                    sync: SyncState::Synced,
-                    unconfirmed: None,
-                    pending_send_sats,
-                    pending_receive_sats,
-                    display_mode,
-                    on_swap: Some(Message::FlipDisplayMode),
-                }))
+                .push(header)
                 .push(btc_row)
         }
     };
 
-    let content = if matches!(wallet_type, WalletType::Vault) {
+    let content = if matches!(wallet_type, WalletType::Vault) && loaded {
         if let Some(pending_transfer) = pending_vault_incoming {
             if pending_transfer.stage != TransferStage::Completed {
                 content.push(pending_deposit_card(pending_transfer, bitcoin_unit))
@@ -1329,6 +1373,23 @@ pub struct GlobalViewConfig<'a> {
     /// (or its first error). Drives the Total Balance loading placeholder
     /// so the aggregate doesn't briefly read as a misleadingly low partial.
     pub total_balance_loading: bool,
+    /// True once the bridge has corroborated the Spark balance via a
+    /// `Synced` event. While false the Spark card renders a `…`
+    /// placeholder — avoids flashing a stale pre-sync value (e.g. zero
+    /// before the session's incoming payments have landed).
+    pub spark_balance_loaded: bool,
+    /// True once the Liquid bridge has reported its first L-BTC
+    /// balance. Drives the L-BTC row's animated-dots placeholder.
+    pub liquid_balance_loaded: bool,
+    /// True once the Liquid bridge has reported USDt balance (or an
+    /// explicit error, captured in `usdt_balance_error`). Drives the
+    /// USDt row's animated-dots placeholder.
+    pub usdt_balance_loaded: bool,
+    /// True once the Vault daemon has produced its first cache poll
+    /// (`blockheight > 0`). Drives the Vault card's animated-dots
+    /// placeholder and suppresses pending indicators until the
+    /// underlying balance is authoritative.
+    pub vault_loaded: bool,
     /// Global fiat-native vs. bitcoin-native display preference. Mirrored
     /// from `cache.display_mode`.
     pub display_mode: crate::app::settings::display::DisplayMode,
@@ -1412,6 +1473,10 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         fiat_converter,
         balance_masked,
         total_balance_loading,
+        spark_balance_loaded,
+        liquid_balance_loaded,
+        usdt_balance_loaded,
+        vault_loaded,
         display_mode,
         has_vault,
         has_spark,
@@ -1561,11 +1626,18 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 )
                 .push(if balance_masked {
                     Row::new().push(text("********").size(P1_SIZE))
+                } else if !liquid_balance_loaded {
+                    Row::new().push(spinner::typing_text_carousel(
+                        "...",
+                        false,
+                        Duration::from_millis(400),
+                        |content| text(content).size(P1_SIZE).style(theme::text::secondary),
+                    ))
                 } else {
                     amount_with_size_and_unit(&liquid_balance, P1_SIZE, bitcoin_unit)
                 })
                 .push_maybe(
-                    (!balance_masked)
+                    (!balance_masked && liquid_balance_loaded)
                         .then(|| {
                             lbtc_fiat
                                 .map(|f| f.to_text().size(P2_SIZE).style(theme::text::secondary))
@@ -1587,33 +1659,37 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                     )),
                 )),
         )
-        .push_maybe((!balance_masked && pending_liquid_send_sats > 0).then(|| {
-            Row::new()
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .push(warning_icon().size(12).style(theme::text::secondary))
-                .push(text("-").size(P2_SIZE).style(theme::text::secondary))
-                .push(amount_with_size_and_unit(
-                    &Amount::from_sat(pending_liquid_send_sats),
-                    P2_SIZE,
-                    bitcoin_unit,
-                ))
-                .push(text("pending").size(P2_SIZE).style(theme::text::secondary))
-        }))
         .push_maybe(
-            (!balance_masked && pending_liquid_receive_sats > 0).then(|| {
+            (!balance_masked && liquid_balance_loaded && pending_liquid_send_sats > 0).then(|| {
                 Row::new()
                     .spacing(6)
                     .align_y(Alignment::Center)
                     .push(warning_icon().size(12).style(theme::text::secondary))
-                    .push(text("+").size(P2_SIZE).style(theme::text::secondary))
+                    .push(text("-").size(P2_SIZE).style(theme::text::secondary))
                     .push(amount_with_size_and_unit(
-                        &Amount::from_sat(pending_liquid_receive_sats),
+                        &Amount::from_sat(pending_liquid_send_sats),
                         P2_SIZE,
                         bitcoin_unit,
                     ))
                     .push(text("pending").size(P2_SIZE).style(theme::text::secondary))
             }),
+        )
+        .push_maybe(
+            (!balance_masked && liquid_balance_loaded && pending_liquid_receive_sats > 0).then(
+                || {
+                    Row::new()
+                        .spacing(6)
+                        .align_y(Alignment::Center)
+                        .push(warning_icon().size(12).style(theme::text::secondary))
+                        .push(text("+").size(P2_SIZE).style(theme::text::secondary))
+                        .push(amount_with_size_and_unit(
+                            &Amount::from_sat(pending_liquid_receive_sats),
+                            P2_SIZE,
+                            bitcoin_unit,
+                        ))
+                        .push(text("pending").size(P2_SIZE).style(theme::text::secondary))
+                },
+            ),
         );
 
     // USDt asset row
@@ -1636,6 +1712,13 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                     Row::new().push(text("********").size(P1_SIZE))
                 } else if usdt_balance_error {
                     Row::new().push(text("Balance unavailable").size(P1_SIZE).color(color::RED))
+                } else if !usdt_balance_loaded {
+                    Row::new().push(spinner::typing_text_carousel(
+                        "...",
+                        false,
+                        Duration::from_millis(400),
+                        |content| text(content).size(P1_SIZE).style(theme::text::secondary),
+                    ))
                 } else {
                     Row::new()
                         .spacing(6)
@@ -1659,37 +1742,77 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 )),
         )
         .push_maybe(
-            (!balance_masked && !usdt_balance_error && pending_usdt_send_sats > 0).then(|| {
-                Row::new()
-                    .spacing(6)
-                    .align_y(Alignment::Center)
-                    .push(warning_icon().size(12).style(theme::text::secondary))
-                    .push(
-                        text(format!(
-                            "-{} USDt pending",
-                            format_usdt_display(pending_usdt_send_sats)
-                        ))
-                        .size(P2_SIZE)
-                        .style(theme::text::secondary),
-                    )
-            }),
+            (!balance_masked
+                && usdt_balance_loaded
+                && !usdt_balance_error
+                && pending_usdt_send_sats > 0)
+                .then(|| {
+                    Row::new()
+                        .spacing(6)
+                        .align_y(Alignment::Center)
+                        .push(warning_icon().size(12).style(theme::text::secondary))
+                        .push(
+                            text(format!(
+                                "-{} USDt pending",
+                                format_usdt_display(pending_usdt_send_sats)
+                            ))
+                            .size(P2_SIZE)
+                            .style(theme::text::secondary),
+                        )
+                }),
         )
         .push_maybe(
-            (!balance_masked && !usdt_balance_error && pending_usdt_receive_sats > 0).then(|| {
-                Row::new()
-                    .spacing(6)
-                    .align_y(Alignment::Center)
-                    .push(warning_icon().size(12).style(theme::text::secondary))
-                    .push(
-                        text(format!(
-                            "+{} USDt pending",
-                            format_usdt_display(pending_usdt_receive_sats)
-                        ))
-                        .size(P2_SIZE)
-                        .style(theme::text::secondary),
-                    )
-            }),
+            (!balance_masked
+                && usdt_balance_loaded
+                && !usdt_balance_error
+                && pending_usdt_receive_sats > 0)
+                .then(|| {
+                    Row::new()
+                        .spacing(6)
+                        .align_y(Alignment::Center)
+                        .push(warning_icon().size(12).style(theme::text::secondary))
+                        .push(
+                            text(format!(
+                                "+{} USDt pending",
+                                format_usdt_display(pending_usdt_receive_sats)
+                            ))
+                            .size(P2_SIZE)
+                            .style(theme::text::secondary),
+                        )
+                }),
         );
+
+    // Combined Liquid headline (L-BTC + USDt-as-sats). Both component
+    // balances must be loaded — a partial sum would be misleading.
+    let liquid_card_header_loaded = liquid_balance_loaded && usdt_balance_loaded;
+    let liquid_card_header: Element<'a, Message> = if liquid_card_header_loaded {
+        wallet_header::<Message>(WalletHeaderProps::new(
+            total_amount,
+            total_fiat,
+            balance_masked,
+            bitcoin_unit,
+            HeaderVariant::Card,
+            display_mode,
+            Some(Message::FlipDisplayMode),
+        ))
+        .into()
+    } else {
+        Column::new()
+            .spacing(4)
+            .push(spinner::typing_text_carousel(
+                "...",
+                false,
+                Duration::from_millis(400),
+                |content| text(content).size(H2_SIZE).bold(),
+            ))
+            .push(spinner::typing_text_carousel(
+                "...",
+                false,
+                Duration::from_millis(400),
+                |content| text(content).size(P1_SIZE).style(theme::text::secondary),
+            ))
+            .into()
+    };
 
     let liquid_card_content = Column::new()
         .spacing(12)
@@ -1700,15 +1823,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 .push(droplet_fill_icon().size(16).style(theme::text::secondary))
                 .push(text("Liquid").size(14).style(theme::text::secondary)),
         )
-        .push(wallet_header::<Message>(WalletHeaderProps::new(
-            total_amount,
-            total_fiat,
-            balance_masked,
-            bitcoin_unit,
-            HeaderVariant::Card,
-            display_mode,
-            Some(Message::FlipDisplayMode),
-        )))
+        .push(liquid_card_header)
         .push(lbtc_row)
         .push(usdt_row);
 
@@ -1750,11 +1865,22 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
             )
             .push(if balance_masked {
                 Row::new().push(text("********").size(P1_SIZE))
+            } else if !spark_balance_loaded {
+                // Pre-Synced placeholder — see the comment on the
+                // Spark wallet_header below for why we don't render
+                // the raw value yet. Animated dots mirror the Total
+                // Balance loading treatment for visual consistency.
+                Row::new().push(spinner::typing_text_carousel(
+                    "...",
+                    false,
+                    Duration::from_millis(400),
+                    |content| text(content).size(P1_SIZE).style(theme::text::secondary),
+                ))
             } else {
                 amount_with_size_and_unit(&spark_balance, P1_SIZE, bitcoin_unit)
             })
             .push_maybe(
-                (!balance_masked)
+                (!balance_masked && spark_balance_loaded)
                     .then(|| {
                         spark_fiat
                             .as_ref()
@@ -1773,6 +1899,40 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 Message::Home(HomeMessage::ReceiveSparkBtc),
             ));
 
+        // Headline balance — placeholder while the bridge hasn't
+        // corroborated the Spark balance with a `Synced` event yet,
+        // since the SDK can return a stale persisted value before
+        // incremental sync completes. Animated dots match the Total
+        // Balance loading treatment for visual consistency.
+        let spark_header: Element<'a, Message> = if spark_balance_loaded {
+            wallet_header::<Message>(WalletHeaderProps::new(
+                spark_balance,
+                spark_fiat,
+                balance_masked,
+                bitcoin_unit,
+                HeaderVariant::Card,
+                display_mode,
+                Some(Message::FlipDisplayMode),
+            ))
+            .into()
+        } else {
+            Column::new()
+                .spacing(4)
+                .push(spinner::typing_text_carousel(
+                    "...",
+                    false,
+                    Duration::from_millis(400),
+                    |content| text(content).size(H2_SIZE).bold(),
+                ))
+                .push(spinner::typing_text_carousel(
+                    "...",
+                    false,
+                    Duration::from_millis(400),
+                    |content| text(content).size(P1_SIZE).style(theme::text::secondary),
+                ))
+                .into()
+        };
+
         let spark_card_content = Column::new()
             .spacing(12)
             .push(
@@ -1782,15 +1942,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                     .push(lightning_icon().size(16).style(theme::text::secondary))
                     .push(text("Spark").size(14).style(theme::text::secondary)),
             )
-            .push(wallet_header::<Message>(WalletHeaderProps::new(
-                spark_balance,
-                spark_fiat,
-                balance_masked,
-                bitcoin_unit,
-                HeaderVariant::Card,
-                display_mode,
-                Some(Message::FlipDisplayMode),
-            )))
+            .push(spark_header)
             .push(spark_btc_row)
             .push_maybe(pending_spark_incoming.and_then(|pt| {
                 (pt.stage != TransferStage::Completed)
@@ -1826,15 +1978,16 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         vault_pending_send_sats,
         vault_pending_receive_sats,
         display_mode,
+        vault_loaded,
     ))
     .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Overview)));
 
     // Total Balance block — the fiat-first headline number above the
     // Wallets section. While any wallet is still loading we render
-    // placeholder dashes so the aggregate doesn't briefly read as a
-    // misleadingly low partial. Once loaded, a degraded indicator
-    // surfaces beside the label when USDt failed to fetch (its
-    // contribution to the SATS line is then excluded).
+    // an animated-dots placeholder so the aggregate doesn't briefly
+    // read as a misleadingly low partial. Once loaded, a degraded
+    // indicator surfaces beside the label when USDt failed to fetch
+    // (its contribution to the SATS line is then excluded).
     let total_balance_label_row = Row::new()
         .spacing(0)
         .align_y(Alignment::Center)
@@ -1856,8 +2009,18 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
     let total_balance_value: Element<'a, Message> = if total_balance_loading {
         Column::new()
             .spacing(4)
-            .push(text("—").size(H1_SIZE).bold())
-            .push(text("—").size(P1_SIZE).style(theme::text::secondary))
+            .push(spinner::typing_text_carousel(
+                "...",
+                false,
+                Duration::from_millis(400),
+                |content| text(content).size(H1_SIZE).bold(),
+            ))
+            .push(spinner::typing_text_carousel(
+                "...",
+                false,
+                Duration::from_millis(400),
+                |content| text(content).size(P1_SIZE).style(theme::text::secondary),
+            ))
             .into()
     } else {
         wallet_header::<Message>(WalletHeaderProps::new(
@@ -1900,6 +2063,12 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         .push(liquid_card)
         .push(vault_card_element)
         .push_maybe(transfer_available(has_vault, has_spark).then(|| {
+            // Disable Transfer while any wallet's balance hasn't been
+            // corroborated yet. The amount-entry view and wallet picker
+            // both consume the raw balance values to render available-
+            // funds hints and to cap validation; opening Transfer
+            // pre-load would surface a misleading zero / stale cap for
+            // whichever wallet hasn't finished syncing.
             Container::new(
                 button::secondary(Some(arrow_down_up_icon()), "Transfer")
                     .style(|t, _s| iced::widget::button::Style {
@@ -1913,7 +2082,9 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                         ..Default::default()
                     })
                     .width(Length::Fixed(150.0))
-                    .on_press(Message::Home(HomeMessage::NextStep)),
+                    .on_press_maybe(
+                        (!total_balance_loading).then_some(Message::Home(HomeMessage::NextStep)),
+                    ),
             )
             .width(Length::Fill)
             .center_x(Length::Fill)

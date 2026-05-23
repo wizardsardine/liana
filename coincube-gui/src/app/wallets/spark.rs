@@ -52,8 +52,9 @@ impl SparkBackend {
     pub async fn list_payments(
         &self,
         limit: Option<u32>,
+        offset: Option<u32>,
     ) -> Result<ListPaymentsOk, SparkClientError> {
-        self.client.list_payments(limit).await
+        self.client.list_payments(limit, offset).await
     }
 
     /// Phase 4e: classify a destination string. The Send panel calls
@@ -112,6 +113,12 @@ impl SparkBackend {
         new_address: Option<bool>,
     ) -> Result<ReceivePaymentOk, SparkClientError> {
         self.client.receive_onchain(new_address).await
+    }
+
+    /// Generate a static, reusable Spark address (native
+    /// Spark-to-Spark receive). No amount/invoice; zero receive fee.
+    pub async fn receive_spark(&self) -> Result<ReceivePaymentOk, SparkClientError> {
+        self.client.receive_spark().await
     }
 
     /// Phase 4f: list pending on-chain deposits.

@@ -62,8 +62,20 @@ pub enum Message {
     Verified(Fingerprint, Result<(), Error>),
     StartRescan(Result<(), Error>),
     HardwareWallets(HardwareWalletMessage),
-    HistoryTransactionsExtension(Result<Vec<HistoryTransaction>, Error>),
-    HistoryTransactions(Result<Vec<HistoryTransaction>, Error>),
+    /// Vault transactions next-page fetch result.
+    /// Tuple: `(page_txs, server_exhausted)` where `server_exhausted` is
+    /// `true` when the daemon returned fewer rows than the requested limit
+    /// (i.e. end of history). It is measured on the raw response, before
+    /// the inclusive-cursor overlap is deduplicated.
+    HistoryTransactionsExtension(Result<(Vec<HistoryTransaction>, bool), Error>),
+    /// Initial Vault transactions page-0 fetch result. The `u64` is the
+    /// reload-generation token: the panel discards any response whose
+    /// token isn't the latest, so a superseded reload can't overwrite
+    /// fresher state. The inner tuple is `(pending_txs, page_0_confirmed_txs)`.
+    HistoryTransactions(
+        u64,
+        Result<(Vec<HistoryTransaction>, Vec<HistoryTransaction>), Error>,
+    ),
     Payments(Result<Vec<Payment>, Error>),
     /// Extension of payments for pagination.
     /// Tuple contains (Vec<Payment>, u64) where the u64 is the actual page limit used
@@ -75,7 +87,14 @@ pub enum Message {
     BroadcastModal(Result<HashSet<Txid>, Error>),
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
     Export(ImportExportMessage),
-    PaymentsLoaded(Result<Vec<crate::app::wallets::DomainPayment>, BreezError>),
+    /// Liquid transactions page fetch result. The `u64` is the
+    /// fetch-generation token: the panel discards any response whose token
+    /// is not the latest dispatched, so a stale pagination response can't
+    /// overwrite data fetched by a subsequent reload / filter change.
+    PaymentsLoaded(
+        u64,
+        Result<Vec<crate::app::wallets::DomainPayment>, BreezError>,
+    ),
     RefundablesLoaded(Result<Vec<crate::app::wallets::DomainRefundableSwap>, BreezError>),
     /// Result of a debounced background poll started by
     /// `App::refresh_refundables_task`. Distinct from `RefundablesLoaded`
@@ -125,6 +144,32 @@ pub enum Message {
     /// any. Wraps the modal's internal lifecycle messages so they can
     /// be dispatched through Iced's top-level update loop.
     KeychainSign(crate::app::state::vault::keychain_sign::KeychainSignMessage),
+    /// Fired by the in-app Connect panel right after a successful login
+    /// (REST OTP-verify or password). Carries the freshly-issued JWTs so
+    /// the App can persist them to `connect.json`, register a signer
+    /// device via gRPC `RegisterDevice`, and bootstrap the realtime
+    /// stream — work that the launcher path does via
+    /// `register_signer_device_best_effort` + `connect_stream_ready_task`
+    /// at app-init time, but which the runtime in-app login flow
+    /// previously skipped. See PLAN comment near `mod.rs:2374`.
+    InAppConnectLoginCompleted {
+        token: String,
+        refresh_token: String,
+        email: String,
+    },
+    /// Internal: chains from `InAppConnectLoginCompleted` once
+    /// tokens have been persisted and a device_id registered. The
+    /// payload carries everything `connect_stream_ready_task` needs
+    /// so we can fire it from a non-init context.
+    TriggerConnectStreamReady {
+        network: coincube_core::miniscript::bitcoin::Network,
+        datadir: crate::dir::CoincubeDirectory,
+        tokens: std::sync::Arc<
+            tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>,
+        >,
+        email: String,
+        cube_uuid: Option<String>,
+    },
 }
 
 #[derive(Debug)]

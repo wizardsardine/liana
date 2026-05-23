@@ -31,6 +31,11 @@ use crate::app::view::{self, FiatAmountConverter};
 use crate::app::wallets::SparkBackend;
 use crate::export::{ImportExportMessage, ImportExportState};
 
+/// Bump to a larger value (e.g. 50) once Prev/Next pagination is verified
+/// end-to-end on real wallets. Kept low during rollout so QA can exercise
+/// pagination without needing 50+ transactions in a single wallet.
+pub const PAGE_SIZE: u32 = 10;
+
 #[derive(Debug)]
 enum SparkTransactionsModal {
     None,
@@ -51,6 +56,19 @@ pub struct SparkTransactions {
     /// constructed so repeated reloads don't re-randomize the quote.
     empty_state_quote: Quote,
     empty_state_image_handle: image::Handle,
+    /// Page currently displayed (0-indexed).
+    current_page: u32,
+    /// Target page of an in-flight Prev/Next fetch. Committed to
+    /// `current_page` only on `DataLoaded`; dropped on `Error` so a failed
+    /// fetch doesn't desync the page counter from the shown data.
+    pending_page: Option<u32>,
+    /// Monotonic fetch-generation counter. Every `fetch_page` (reload or
+    /// Prev/Next) bumps it and tags its result; the handler discards any
+    /// response whose token isn't the latest, so a stale response can't
+    /// clobber `payments` with wrong-page data.
+    fetch_token: u64,
+    is_last_page: bool,
+    processing: bool,
 }
 
 impl SparkTransactions {
@@ -67,7 +85,49 @@ impl SparkTransactions {
             selected_payment: None,
             empty_state_quote,
             empty_state_image_handle,
+            current_page: 0,
+            pending_page: None,
+            fetch_token: 0,
+            is_last_page: false,
+            processing: false,
         }
+    }
+
+    /// Fetch `page` (0-indexed). `current_page` is *not* moved here — it is
+    /// only committed once `DataLoaded` lands, so a failed fetch leaves the
+    /// panel showing the page it was already on.
+    ///
+    /// Bumps `fetch_token` and tags the result with it; the handler drops
+    /// any response that isn't the latest, so a stale page response can't
+    /// overwrite data from a newer reload.
+    ///
+    /// Requests `PAGE_SIZE + 1` rows: the extra row is a probe for whether
+    /// a further page exists. The handler trims it off before display and
+    /// sets `is_last_page` from whether it was returned — without it, a
+    /// total that is an exact multiple of `PAGE_SIZE` would leave Next
+    /// enabled onto an empty page.
+    fn fetch_page(&mut self, page: u32) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        self.fetch_token = self.fetch_token.wrapping_add(1);
+        let token = self.fetch_token;
+        let offset = page.saturating_mul(PAGE_SIZE);
+        Task::perform(
+            async move {
+                backend
+                    .list_payments(Some(PAGE_SIZE + 1), Some(offset))
+                    .await
+            },
+            move |result| match result {
+                Ok(list) => Message::View(crate::app::view::Message::SparkTransactions(
+                    crate::app::view::SparkTransactionsMessage::DataLoaded(token, list.payments),
+                )),
+                Err(e) => Message::View(crate::app::view::Message::SparkTransactions(
+                    crate::app::view::SparkTransactionsMessage::Error(token, e.to_string()),
+                )),
+            },
+        )
     }
 
     fn rebuild_rows(&mut self, cache: &Cache) {
@@ -132,6 +192,9 @@ impl State for SparkTransactions {
                 show_direction_badges: cache.show_direction_badges,
                 empty_state_quote: &self.empty_state_quote,
                 empty_state_image_handle: &self.empty_state_image_handle,
+                current_page: self.current_page,
+                is_last_page: self.is_last_page,
+                processing: self.processing,
             }
             .render(),
         );
@@ -171,22 +234,16 @@ impl State for SparkTransactions {
         _daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
         _wallet: Option<Arc<crate::app::wallet::Wallet>>,
     ) -> Task<Message> {
-        let Some(backend) = self.backend.clone() else {
+        if self.backend.is_none() {
             return Task::none();
-        };
+        }
         self.loading = true;
         self.error = None;
-        Task::perform(
-            async move { backend.list_payments(Some(100)).await },
-            |result| match result {
-                Ok(list) => Message::View(crate::app::view::Message::SparkTransactions(
-                    crate::app::view::SparkTransactionsMessage::DataLoaded(list.payments),
-                )),
-                Err(e) => Message::View(crate::app::view::Message::SparkTransactions(
-                    crate::app::view::SparkTransactionsMessage::Error(e.to_string()),
-                )),
-            },
-        )
+        self.current_page = 0;
+        self.pending_page = None;
+        self.is_last_page = false;
+        self.processing = false;
+        self.fetch_page(0)
     }
 
     fn update(
@@ -197,15 +254,61 @@ impl State for SparkTransactions {
     ) -> Task<Message> {
         match message {
             Message::View(view::Message::SparkTransactions(msg)) => match msg {
-                view::SparkTransactionsMessage::DataLoaded(payments) => {
+                view::SparkTransactionsMessage::DataLoaded(token, mut payments) => {
+                    // Discard a stale response: a newer fetch (reload or
+                    // another Prev/Next) has since been dispatched, so
+                    // applying this page would show wrong-page data.
+                    if token != self.fetch_token {
+                        return Task::none();
+                    }
                     self.loading = false;
+                    self.processing = false;
+                    // Commit the page navigation now that the fetch
+                    // succeeded. `pending_page` is `None` for a reload, where
+                    // `current_page` was already set to 0 by `reload`.
+                    if let Some(page) = self.pending_page.take() {
+                        self.current_page = page;
+                    }
+                    // `fetch_page` over-fetches one probe row: receiving more
+                    // than `PAGE_SIZE` means a further page exists. Trim the
+                    // probe row off before display. Because Next is only
+                    // offered when the probe row was returned, a committed
+                    // non-zero page always has at least one real row.
+                    self.is_last_page = (payments.len() as u32) <= PAGE_SIZE;
+                    payments.truncate(PAGE_SIZE as usize);
                     self.payments = payments;
                     self.error = None;
                     self.rebuild_rows(cache);
                 }
-                view::SparkTransactionsMessage::Error(err) => {
+                view::SparkTransactionsMessage::Error(token, err) => {
+                    // Stale error from a superseded fetch — ignore it so it
+                    // can't clear `pending_page` for the newer in-flight
+                    // fetch or surface a spurious error.
+                    if token != self.fetch_token {
+                        return Task::none();
+                    }
                     self.loading = false;
+                    self.processing = false;
+                    // Discard the in-flight navigation: `current_page` stays
+                    // on the page whose data is still displayed.
+                    self.pending_page = None;
                     self.error = Some(err);
+                }
+                view::SparkTransactionsMessage::PrevPage => {
+                    if self.current_page > 0 && !self.processing {
+                        let target = self.current_page - 1;
+                        self.pending_page = Some(target);
+                        self.processing = true;
+                        return self.fetch_page(target);
+                    }
+                }
+                view::SparkTransactionsMessage::NextPage => {
+                    if !self.is_last_page && !self.processing {
+                        let target = self.current_page + 1;
+                        self.pending_page = Some(target);
+                        self.processing = true;
+                        return self.fetch_page(target);
+                    }
                 }
                 view::SparkTransactionsMessage::Select(idx) => {
                     self.selected_payment = self.recent_transactions.get(idx).cloned();

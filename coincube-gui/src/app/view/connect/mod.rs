@@ -78,7 +78,6 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
             ConnectSubMenu::Contacts => {
                 contacts::contacts_ux(acct).map(ViewMessage::ConnectAccount)
             }
-            ConnectSubMenu::Invites => invites_ux(acct).map(ViewMessage::ConnectAccount),
             ConnectSubMenu::CubeMembers => {
                 cube_members::cube_members_ux(cube).map(ViewMessage::ConnectCube)
             }
@@ -1979,53 +1978,4 @@ fn avatar_settings_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCub
     .style(card_style)
     .width(Length::Fill)
     .into()
-}
-
-fn invites_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
-    let is_legacy = state
-        .plan
-        .as_ref()
-        .map(|p| *p.tier() == PlanTier::Legacy)
-        .unwrap_or(false);
-
-    let card_content: Element<ConnectAccountMessage> = if !is_legacy {
-        container(
-            Column::new()
-                .push(text::p1_bold("Legacy Plan Required").style(theme::text::primary))
-                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                .push(
-                    text::p2_regular(
-                        "Invites are available on the Legacy plan. Upgrade to share \
-                         COINCUBE access with trusted contacts.",
-                    )
-                    .color(color::GREY_3),
-                )
-                .padding(16)
-                .spacing(2),
-        )
-        .style(card_style)
-        .width(Length::Fill)
-        .into()
-    } else {
-        container(
-            Column::new()
-                .push(
-                    text::p2_regular("Coming Soon — requires backend endpoint /connect/invites")
-                        .color(color::GREY_3),
-                )
-                .padding(16)
-                .spacing(2),
-        )
-        .style(card_style)
-        .width(Length::Fill)
-        .into()
-    };
-
-    Column::new()
-        .push(text::h4_bold("Invites").style(theme::text::primary))
-        .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
-        .push(card_content)
-        .spacing(0)
-        .width(Length::Fill)
-        .into()
 }

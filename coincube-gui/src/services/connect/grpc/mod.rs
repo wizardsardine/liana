@@ -53,9 +53,12 @@ impl From<tonic::transport::Error> for CreateChannelError {
 
 /// Create a TLS-enabled tonic channel to the gRPC endpoint.
 pub async fn create_channel(grpc_url: &str) -> Result<Channel, CreateChannelError> {
-    let tls = ClientTlsConfig::new().with_native_roots();
-    Ok(Channel::from_shared(grpc_url.to_string())?
-        .tls_config(tls)?
-        .connect()
-        .await?)
+    let endpoint = Channel::from_shared(grpc_url.to_string())?;
+    let endpoint = if grpc_url.starts_with("https://") {
+        let tls = ClientTlsConfig::new().with_native_roots();
+        endpoint.tls_config(tls)?
+    } else {
+        endpoint
+    };
+    Ok(endpoint.connect().await?)
 }

@@ -47,12 +47,18 @@ impl LiquidBackend {
 
     /// Fetch the payment history and map each record into a [`DomainPayment`].
     ///
-    /// `limit` mirrors the underlying [`BreezClient::list_payments`] parameter.
+    /// `limit` / `offset` / `asset_id` mirror the underlying
+    /// [`BreezClient::list_payments`] parameters. `asset_id == None` returns
+    /// payments of every type and asset; passing an asset id restricts the
+    /// result to Liquid-asset payments matching that id (server-side, so
+    /// pagination stays accurate).
     pub async fn list_payments(
         &self,
         limit: Option<u32>,
+        offset: Option<u32>,
+        asset_id: Option<String>,
     ) -> Result<Vec<DomainPayment>, BreezError> {
-        let payments = self.client.list_payments(limit).await?;
+        let payments = self.client.list_payments(limit, offset, asset_id).await?;
         Ok(payments.into_iter().map(DomainPayment::from).collect())
     }
 

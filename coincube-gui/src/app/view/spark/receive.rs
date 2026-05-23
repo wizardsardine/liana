@@ -90,6 +90,11 @@ impl<'a> SparkReceiveView<'a> {
                         "On-chain Bitcoin",
                         self.method == SparkReceiveMethod::OnchainBitcoin,
                         SparkReceiveMethod::OnchainBitcoin,
+                    ))
+                    .push(method_chip(
+                        "Spark",
+                        self.method == SparkReceiveMethod::Spark,
+                        SparkReceiveMethod::Spark,
                     )),
             ),
         )
@@ -129,7 +134,7 @@ impl<'a> SparkReceiveView<'a> {
             .padding(16)
             .style(theme::card::simple);
             content = content.push(form_card);
-        } else {
+        } else if self.method == SparkReceiveMethod::OnchainBitcoin {
             // On-chain: nothing to configure in Phase 4c. Explain the
             // deposit model so the user knows what to expect.
             let info_card = Container::new(
@@ -144,6 +149,25 @@ impl<'a> SparkReceiveView<'a> {
                          process in a future phase; today the user may need \
                          to restart the cube to surface the claim). Phase \
                          4d wires the explicit claim lifecycle into the UI.",
+                    )),
+            )
+            .padding(16)
+            .style(theme::card::simple);
+            content = content.push(info_card);
+        } else {
+            // Spark: static, reusable, identity-bound address. No
+            // amount/invoice form — mirrors the on-chain UX.
+            let info_card = Container::new(
+                Column::new()
+                    .spacing(8)
+                    .push(h4_bold("Spark address"))
+                    .push(p2_regular(
+                        "This is a static, reusable Spark address bound to \
+                         this wallet's identity. Share it freely — anyone on \
+                         Spark can pay it directly. Spark-to-Spark transfers \
+                         settle instantly with a lower fee than Lightning or \
+                         on-chain, and the address is token-agnostic (it can \
+                         receive bitcoin or any Spark token).",
                     )),
             )
             .padding(16)

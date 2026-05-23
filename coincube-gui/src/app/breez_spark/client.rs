@@ -215,12 +215,10 @@ impl SparkClient {
     pub async fn list_payments(
         &self,
         limit: Option<u32>,
+        offset: Option<u32>,
     ) -> Result<ListPaymentsOk, SparkClientError> {
         match self
-            .request(Method::ListPayments(ListPaymentsParams {
-                limit,
-                offset: Some(0),
-            }))
+            .request(Method::ListPayments(ListPaymentsParams { limit, offset }))
             .await?
         {
             OkPayload::ListPayments(list) => Ok(list),
@@ -381,6 +379,19 @@ impl SparkClient {
             OkPayload::ReceivePayment(resp) => Ok(resp),
             other => Err(SparkClientError::Protocol(format!(
                 "receive_onchain returned unexpected payload: {:?}",
+                other
+            ))),
+        }
+    }
+
+    /// Generate a static, reusable Spark address for native
+    /// Spark-to-Spark transfers. No amount/invoice — the address is
+    /// identity-bound and token-agnostic, with zero receive fee.
+    pub async fn receive_spark(&self) -> Result<ReceivePaymentOk, SparkClientError> {
+        match self.request(Method::ReceiveSpark).await? {
+            OkPayload::ReceivePayment(resp) => Ok(resp),
+            other => Err(SparkClientError::Protocol(format!(
+                "receive_spark returned unexpected payload: {:?}",
                 other
             ))),
         }
