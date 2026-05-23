@@ -378,45 +378,32 @@ impl ConnectAccountPanel {
     }
 
     fn load_session_from_keyring(&mut self) -> Option<StoredSession> {
-        // Try cube-specific key first
+        // Read the global key first.
+        //
+        // `save_session_to_keyring` always mirrors writes to both the
+        // cube-specific key (when a cube UUID is set) and the legacy
+        // global key, so they hold identical bytes — there is no
+        // correctness reason to prefer the cube-specific key on read.
+        // On macOS each distinct keychain item triggers its own
+        // "Allow access" prompt the first time a binary touches it,
+        // so reading global first means the Home tab's cached read
+        // satisfies later Cube tab lookups without poking a second
+        // keychain item.
+        if let Some(bytes) = read_connect_secret(CONNECT_KEYRING_USER) {
+            if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
+                return Some(session);
+            }
+        }
+        // Global empty: fall back to the cube-specific key. Mostly a
+        // safety net for users upgrading from a build that didn't
+        // mirror to global; the next successful sign-in re-syncs both
+        // keys via `save_session_to_keyring`.
         if let Some(key) = self.keyring_key_for_cube() {
             if let Some(bytes) = read_connect_secret(&key) {
                 if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
-                    return Some(session);
-                }
-            }
-            // Cube-specific not found - try legacy global as fallback
-            if let Some(bytes) = read_connect_secret(CONNECT_KEYRING_USER) {
-                if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
-                    // Migrate into the per-cube key. `save_session_to_keyring`
-                    // writes BOTH the per-cube key and the legacy global
-                    // key (kept in sync), so we intentionally do NOT delete
-                    // the legacy credential here.
-                    //
-                    // The Home's ConnectAccountPanel has no
-                    // `current_cube_uuid`, so it can only ever read the
-                    // legacy global key. Deleting it here meant that
-                    // once any Cube was opened (App migrates + this used
-                    // to delete the global key), every subsequent return
-                    // to the Home — notably the Recovery → Home
-                    // navigation flow — found no session and forced the
-                    // user to sign in again. Keeping the legacy key in
-                    // sync lets the Home restore the current session.
-                    // Explicit logout still clears both keys via
-                    // `clear_keyring_session`.
                     self.save_session_to_keyring(&session);
-                    log::info!(
-                        "[CONNECT] Migrated legacy session to cube-specific key for {} \
-                         (legacy key kept in sync for Home session restore)",
-                        key
-                    );
                     return Some(session);
                 }
-            }
-        } else if let Some(bytes) = read_connect_secret(CONNECT_KEYRING_USER) {
-            // No cube UUID set - try legacy global key only
-            if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
-                return Some(session);
             }
         }
         None
