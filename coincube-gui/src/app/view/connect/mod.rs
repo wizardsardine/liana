@@ -1027,8 +1027,8 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                 let ua = a.user_agent.as_deref();
                 let ip_and_ua = match (ip, ua) {
                     (Some(i), Some(u)) => {
-                        let short_u = if u.len() > 60 {
-                            format!("{}…", &u[..59])
+                        let short_u = if u.chars().count() > 60 {
+                            format!("{}…", u.chars().take(59).collect::<String>())
                         } else {
                             u.to_string()
                         };
@@ -1036,8 +1036,8 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                     }
                     (Some(i), None) => i.to_string(),
                     (None, Some(u)) => {
-                        if u.len() > 60 {
-                            format!("{}…", &u[..59])
+                        if u.chars().count() > 60 {
+                            format!("{}…", u.chars().take(59).collect::<String>())
                         } else {
                             u.to_string()
                         }
