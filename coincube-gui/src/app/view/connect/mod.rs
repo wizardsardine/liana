@@ -987,7 +987,7 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
             for d in devices {
                 let name = d.device_name.as_deref().unwrap_or("Unknown Device");
                 let suffix = if d.is_current { " (this device)" } else { "" };
-                
+
                 let label = format!("{name}{suffix}");
                 let time_label = if let Some(ref last_used) = d.last_used_at {
                     format!("Last active: {}", format_datetime(last_used))
@@ -1023,16 +1023,24 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                 let ua = a.user_agent.as_deref();
                 let ip_and_ua = match (ip, ua) {
                     (Some(i), Some(u)) => {
-                        let short_u = if u.len() > 60 { format!("{}…", &u[..59]) } else { u.to_string() };
+                        let short_u = if u.len() > 60 {
+                            format!("{}…", &u[..59])
+                        } else {
+                            u.to_string()
+                        };
                         format!("{} - {}", i, short_u)
                     }
                     (Some(i), None) => i.to_string(),
                     (None, Some(u)) => {
-                        if u.len() > 60 { format!("{}…", &u[..59]) } else { u.to_string() }
+                        if u.len() > 60 {
+                            format!("{}…", &u[..59])
+                        } else {
+                            u.to_string()
+                        }
                     }
                     (None, None) => "Unknown device".to_string(),
                 };
-                
+
                 let message_text = if ok {
                     format!("Successful login from {}", ip_and_ua)
                 } else {
@@ -1045,7 +1053,9 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                         .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
                         .push(text::p2_regular(message_text).style(theme::text::primary))
                         .push(iced::widget::Space::new().width(Length::Fill))
-                        .push(text::p2_regular(format_datetime(&a.created_at)).color(color::GREY_3)),
+                        .push(
+                            text::p2_regular(format_datetime(&a.created_at)).color(color::GREY_3),
+                        ),
                 );
             }
             col.into()
