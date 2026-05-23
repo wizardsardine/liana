@@ -206,7 +206,7 @@ pub(super) fn format_datetime(iso: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(iso)
         .map(|dt| {
             dt.with_timezone(&chrono::Local)
-                .format("%b %d, %Y %H:%M")
+                .format("%b %d, %Y %H:%M %Z")
                 .to_string()
         })
         .unwrap_or_else(|_| iso.to_string())
