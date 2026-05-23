@@ -14,7 +14,9 @@ use crate::{
     },
 };
 
-use super::{CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER};
+use super::{
+    delete_connect_secret, read_connect_secret, write_connect_secret, CONNECT_KEYRING_USER,
+};
 
 /// Stored session for per-cube auto-connect
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -310,21 +312,12 @@ impl ConnectAccountPanel {
     /// Returns `true` if a session has been previously stored in the OS keyring
     /// for the current cube, or in the legacy global key.
     pub fn has_stored_session(&self) -> bool {
-        // Check cube-specific key first
         if let Some(key) = self.keyring_key_for_cube() {
-            if keyring::Entry::new(CONNECT_KEYRING_SERVICE, &key)
-                .ok()
-                .and_then(|e| e.get_secret().ok())
-                .is_some()
-            {
+            if read_connect_secret(&key).is_some() {
                 return true;
             }
         }
-        // Fall back to legacy global key
-        keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER)
-            .ok()
-            .and_then(|e| e.get_secret().ok())
-            .is_some()
+        read_connect_secret(CONNECT_KEYRING_USER).is_some()
     }
 
     pub fn session_generation(&self) -> u64 {
@@ -387,51 +380,43 @@ impl ConnectAccountPanel {
     fn load_session_from_keyring(&mut self) -> Option<StoredSession> {
         // Try cube-specific key first
         if let Some(key) = self.keyring_key_for_cube() {
-            if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, &key) {
-                if let Ok(bytes) = entry.get_secret() {
-                    if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
-                        return Some(session);
-                    }
+            if let Some(bytes) = read_connect_secret(&key) {
+                if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
+                    return Some(session);
                 }
             }
             // Cube-specific not found - try legacy global as fallback
-            if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
-                if let Ok(bytes) = entry.get_secret() {
-                    if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
-                        // Migrate into the per-cube key. `save_session_to_keyring`
-                        // writes BOTH the per-cube key and the legacy global
-                        // key (kept in sync), so we intentionally do NOT delete
-                        // the legacy credential here.
-                        //
-                        // The Home's ConnectAccountPanel has no
-                        // `current_cube_uuid`, so it can only ever read the
-                        // legacy global key. Deleting it here meant that
-                        // once any Cube was opened (App migrates + this used
-                        // to delete the global key), every subsequent return
-                        // to the Home — notably the Recovery → Home
-                        // navigation flow — found no session and forced the
-                        // user to sign in again. Keeping the legacy key in
-                        // sync lets the Home restore the current session.
-                        // Explicit logout still clears both keys via
-                        // `clear_keyring_session`.
-                        self.save_session_to_keyring(&session);
-                        log::info!(
-                            "[CONNECT] Migrated legacy session to cube-specific key for {} \
-                             (legacy key kept in sync for Home session restore)",
-                            key
-                        );
-                        return Some(session);
-                    }
+            if let Some(bytes) = read_connect_secret(CONNECT_KEYRING_USER) {
+                if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
+                    // Migrate into the per-cube key. `save_session_to_keyring`
+                    // writes BOTH the per-cube key and the legacy global
+                    // key (kept in sync), so we intentionally do NOT delete
+                    // the legacy credential here.
+                    //
+                    // The Home's ConnectAccountPanel has no
+                    // `current_cube_uuid`, so it can only ever read the
+                    // legacy global key. Deleting it here meant that
+                    // once any Cube was opened (App migrates + this used
+                    // to delete the global key), every subsequent return
+                    // to the Home — notably the Recovery → Home
+                    // navigation flow — found no session and forced the
+                    // user to sign in again. Keeping the legacy key in
+                    // sync lets the Home restore the current session.
+                    // Explicit logout still clears both keys via
+                    // `clear_keyring_session`.
+                    self.save_session_to_keyring(&session);
+                    log::info!(
+                        "[CONNECT] Migrated legacy session to cube-specific key for {} \
+                         (legacy key kept in sync for Home session restore)",
+                        key
+                    );
+                    return Some(session);
                 }
             }
-        } else {
+        } else if let Some(bytes) = read_connect_secret(CONNECT_KEYRING_USER) {
             // No cube UUID set - try legacy global key only
-            if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
-                if let Ok(bytes) = entry.get_secret() {
-                    if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
-                        return Some(session);
-                    }
-                }
+            if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
+                return Some(session);
             }
         }
         None
@@ -445,18 +430,14 @@ impl ConnectAccountPanel {
                 return;
             }
         };
-        let write = |key: &str| match keyring::Entry::new(CONNECT_KEYRING_SERVICE, key) {
-            Ok(entry) => {
-                let _ = entry.delete_credential();
-                if let Err(e) = entry.set_secret(&bytes) {
-                    log::error!(
-                        "[CONNECT] Failed to save session to keyring '{}': {}",
-                        key,
-                        e
-                    );
-                }
+        let write = |key: &str| {
+            if let Err(e) = write_connect_secret(key, &bytes) {
+                log::error!(
+                    "[CONNECT] Failed to save session to keyring '{}': {}",
+                    key,
+                    e
+                );
             }
-            Err(e) => log::error!("[CONNECT] Keyring inaccessible for save '{}': {}", key, e),
         };
 
         match self.keyring_key_for_cube() {
@@ -483,16 +464,11 @@ impl ConnectAccountPanel {
     }
 
     fn clear_keyring_session(&self) {
-        // Clear cube-specific session if we have a cube UUID
         if let Some(key) = self.keyring_key_for_cube() {
-            if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, &key) {
-                let _ = entry.delete_credential();
-            }
+            delete_connect_secret(&key);
         }
         // Also clear legacy global session for migration cleanup
-        if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
-            let _ = entry.delete_credential();
-        }
+        delete_connect_secret(CONNECT_KEYRING_USER);
     }
 
     /// Set the current cube UUID for per-cube auto-connect tracking

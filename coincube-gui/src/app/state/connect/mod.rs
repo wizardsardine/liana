@@ -10,6 +10,60 @@ pub(crate) const CONNECT_KEYRING_SERVICE: &str = if cfg!(debug_assertions) {
 
 pub(crate) const CONNECT_KEYRING_USER: &str = "global_session";
 
+// ── Process-wide Connect-secret cache ───────────────────────────────────────
+//
+// Each tab owns its own `ConnectAccountPanel`, and each panel reads the OS
+// keyring at startup to restore the session. On macOS every Security
+// framework access can pop the "Allow access to ..." dialog — so a user
+// with one Home tab + one Cube tab saw the prompt twice for the same
+// credential. Cache successful reads (and mirror writes / deletes) so
+// subsequent panel inits short-circuit before touching the OS.
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+fn connect_secret_cache() -> &'static Mutex<HashMap<String, Vec<u8>>> {
+    static CACHE: std::sync::OnceLock<Mutex<HashMap<String, Vec<u8>>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Read a Connect keyring secret, consulting the process cache first.
+/// Caches successful reads so later callers don't trigger another OS
+/// prompt for the same credential.
+pub(crate) fn read_connect_secret(user_key: &str) -> Option<Vec<u8>> {
+    if let Some(bytes) = connect_secret_cache().lock().unwrap().get(user_key).cloned() {
+        return Some(bytes);
+    }
+    let entry = keyring::Entry::new(CONNECT_KEYRING_SERVICE, user_key).ok()?;
+    let bytes = entry.get_secret().ok()?;
+    connect_secret_cache()
+        .lock()
+        .unwrap()
+        .insert(user_key.to_string(), bytes.clone());
+    Some(bytes)
+}
+
+/// Write a Connect keyring secret and mirror into the process cache.
+pub(crate) fn write_connect_secret(user_key: &str, bytes: &[u8]) -> Result<(), keyring::Error> {
+    let entry = keyring::Entry::new(CONNECT_KEYRING_SERVICE, user_key)?;
+    let _ = entry.delete_credential();
+    entry.set_secret(bytes)?;
+    connect_secret_cache()
+        .lock()
+        .unwrap()
+        .insert(user_key.to_string(), bytes.to_vec());
+    Ok(())
+}
+
+/// Delete a Connect keyring secret and drop the cached copy.
+pub(crate) fn delete_connect_secret(user_key: &str) {
+    if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, user_key) {
+        let _ = entry.delete_credential();
+    }
+    connect_secret_cache().lock().unwrap().remove(user_key);
+}
+
 pub use account::{
     AddToCubeDialog, CheckoutPhase, CheckoutState, ConnectAccountPanel, ConnectFlowStep,
     ContactsState, ContactsStep, InviteCubeOption,
