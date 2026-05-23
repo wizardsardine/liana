@@ -22,10 +22,7 @@ use coincube_ui::{
     theme,
     widget::{modal::Modal, Column, ColumnExt, Element, Row, TextInput},
 };
-use iced::{
-    widget::container,
-    Alignment, Length,
-};
+use iced::{widget::container, Alignment, Length};
 
 use crate::app::{state::connect::ConnectCubePanel, view::ConnectCubeMessage};
 

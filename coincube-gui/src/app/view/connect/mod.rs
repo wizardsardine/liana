@@ -1033,7 +1033,6 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
         .into()
 }
 
-
 fn duress_ux<'a>() -> Element<'a, ConnectAccountMessage> {
     Column::new()
         .push(text::h4_bold("Duress Settings").style(theme::text::primary))

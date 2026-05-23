@@ -2392,4 +2392,3 @@ mod add_to_cube_tests {
         assert!(panel.contacts_state.contact_is_in_active_cube(7));
     }
 }
-

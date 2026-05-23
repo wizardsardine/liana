@@ -19,9 +19,9 @@ use crate::{
     },
     dir::{CoincubeDirectory, NetworkDirectory},
     export::import_backup_at_launch,
+    home::{self, Home},
     hw::HardwareWalletConfig,
     installer::{self, Installer, UserFlow},
-    home::{self, Home},
     loader::{self, Loader},
     services::connect::{
         client::backend::{api, BackendWalletClient},
@@ -579,15 +579,13 @@ impl Tab {
                                 "BackToApp called but no BreezClient stored - should not happen"
                             );
                             // Fallback: go to home
-                            let (home, command) =
-                                Home::new(i.destination_path(), Some(network));
+                            let (home, command) = Home::new(i.destination_path(), Some(network));
                             self.state = State::Home(home);
                             command.map(Message::Launch)
                         }
                     } else {
                         // No cube settings stored, go to home
-                        let (home, command) =
-                            Home::new(i.destination_path(), Some(network));
+                        let (home, command) = Home::new(i.destination_path(), Some(network));
                         self.state = State::Home(home);
                         command.map(Message::Launch)
                     }

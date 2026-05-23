@@ -1248,8 +1248,7 @@ impl App {
                     // App::view; no section message is dispatched to the
                     // SettingsState. Side-effect loads (avatar fetch,
                     // members fetch) are kicked below.
-                    menu::CubeSettingsOption::Avatar
-                    | menu::CubeSettingsOption::Members => None,
+                    menu::CubeSettingsOption::Avatar | menu::CubeSettingsOption::Members => None,
                 };
                 if let Some(section_msg) = section_msg {
                     // Fire even if daemon is None — the inner settings
@@ -3406,4 +3405,3 @@ fn new_recovery_panel(
         cache.bitcoin_unit,
     )
 }
-

@@ -1872,15 +1872,14 @@ impl Home {
         .map(Message::View);
 
         // If active section is Connect, show the account panel instead of cube list
-        let main_content: Element<Message> =
-            if let HomeSection::Connect(_) = &self.active_section {
-                // Render Connect account panel view
-                let connect_view: Element<ConnectAccountMessage> =
-                    crate::app::view::connect::connect_account_panel(&self.connect_account);
-                connect_view.map(|msg| Message::View(ViewMessage::ConnectAccount(msg)))
-            } else {
-                content
-            };
+        let main_content: Element<Message> = if let HomeSection::Connect(_) = &self.active_section {
+            // Render Connect account panel view
+            let connect_view: Element<ConnectAccountMessage> =
+                crate::app::view::connect::connect_account_panel(&self.connect_account);
+            connect_view.map(|msg| Message::View(ViewMessage::ConnectAccount(msg)))
+        } else {
+            content
+        };
 
         // Build the sidebar
         let sidebar = home_sidebar(self);

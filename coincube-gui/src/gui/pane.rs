@@ -190,10 +190,7 @@ impl Pane {
                         let init_msg = app::Message::View(app::view::Message::ConnectAccount(
                             app::view::ConnectAccountMessage::Init,
                         ));
-                        tasks.push(Task::done(Message::Tab(
-                            t.id,
-                            tab::Message::Run(init_msg),
-                        )));
+                        tasks.push(Task::done(Message::Tab(t.id, tab::Message::Run(init_msg))));
                     }
                 }
                 if !tasks.is_empty() {
@@ -358,4 +355,3 @@ impl Pane {
         .into()
     }
 }
-

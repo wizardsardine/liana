@@ -23,8 +23,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 fn connect_secret_cache() -> &'static Mutex<HashMap<String, Vec<u8>>> {
-    static CACHE: std::sync::OnceLock<Mutex<HashMap<String, Vec<u8>>>> =
-        std::sync::OnceLock::new();
+    static CACHE: std::sync::OnceLock<Mutex<HashMap<String, Vec<u8>>>> = std::sync::OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -32,7 +31,12 @@ fn connect_secret_cache() -> &'static Mutex<HashMap<String, Vec<u8>>> {
 /// Caches successful reads so later callers don't trigger another OS
 /// prompt for the same credential.
 pub(crate) fn read_connect_secret(user_key: &str) -> Option<Vec<u8>> {
-    if let Some(bytes) = connect_secret_cache().lock().unwrap().get(user_key).cloned() {
+    if let Some(bytes) = connect_secret_cache()
+        .lock()
+        .unwrap()
+        .get(user_key)
+        .cloned()
+    {
         return Some(bytes);
     }
     let entry = keyring::Entry::new(CONNECT_KEYRING_SERVICE, user_key).ok()?;
