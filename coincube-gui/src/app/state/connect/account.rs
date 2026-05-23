@@ -410,6 +410,18 @@ impl ConnectAccountPanel {
     }
 
     fn save_session_to_keyring(&self, session: &StoredSession) {
+        // Persist to the global key only. Earlier builds also mirrored
+        // every save into a `cube_<uuid>` per-cube key for "isolation",
+        // but `load_session_from_keyring` already reads the global
+        // key first and the two were always written together — the
+        // cube-specific key was effectively a redundant copy.
+        //
+        // Updating it on every Init/refresh meant each Cube open
+        // poked a distinct macOS keychain item and re-triggered an
+        // "Allow access" prompt for it (separate ACL from global).
+        // Keep reads tolerant of pre-existing cube_<uuid> items as a
+        // safety net (see `load_session_from_keyring`), but stop
+        // writing new copies.
         let bytes = match serde_json::to_vec(session) {
             Ok(b) => b,
             Err(e) => {
@@ -417,36 +429,8 @@ impl ConnectAccountPanel {
                 return;
             }
         };
-        let write = |key: &str| {
-            if let Err(e) = write_connect_secret(key, &bytes) {
-                log::error!(
-                    "[CONNECT] Failed to save session to keyring '{}': {}",
-                    key,
-                    e
-                );
-            }
-        };
-
-        match self.keyring_key_for_cube() {
-            Some(cube_key) => {
-                // A Cube is open. Write the isolated per-cube key AND
-                // mirror to the legacy global key. The Home's
-                // ConnectAccountPanel has no `current_cube_uuid` and can
-                // only read the global key, so the two MUST stay in sync —
-                // otherwise a token refresh while a Cube is open would
-                // leave the global key holding a stale session and the
-                // Recovery → Home restore would fail (or restore an
-                // expired token). Every save path (login, refresh,
-                // migration) funnels here, so mirroring here keeps them
-                // consistent. Explicit logout clears both keys via
-                // `clear_keyring_session`.
-                write(cube_key.as_str());
-                write(CONNECT_KEYRING_USER);
-            }
-            None => {
-                log::info!("[CONNECT] No cube UUID set, using legacy global session key");
-                write(CONNECT_KEYRING_USER);
-            }
+        if let Err(e) = write_connect_secret(CONNECT_KEYRING_USER, &bytes) {
+            log::error!("[CONNECT] Failed to save session to keyring: {}", e);
         }
     }
 
@@ -2468,3 +2452,4 @@ mod add_to_cube_tests {
         assert!(panel.contacts_state.contact_is_in_active_cube(7));
     }
 }
+

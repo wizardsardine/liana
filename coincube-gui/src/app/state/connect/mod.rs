@@ -45,9 +45,22 @@ pub(crate) fn read_connect_secret(user_key: &str) -> Option<Vec<u8>> {
 }
 
 /// Write a Connect keyring secret and mirror into the process cache.
+/// Skips the OS write entirely when the cached bytes already match;
+/// every Init refresh produces a SetSession that calls this path, so
+/// short-circuiting when nothing changed prevents an "Allow access"
+/// prompt on each Cube open even though the token didn't rotate.
 pub(crate) fn write_connect_secret(user_key: &str, bytes: &[u8]) -> Result<(), keyring::Error> {
+    {
+        let cache = connect_secret_cache().lock().unwrap();
+        if cache.get(user_key).map(|c| c.as_slice()) == Some(bytes) {
+            return Ok(());
+        }
+    }
     let entry = keyring::Entry::new(CONNECT_KEYRING_SERVICE, user_key)?;
-    let _ = entry.delete_credential();
+    // `set_secret` overwrites an existing item via the keyring crate's
+    // upsert path. The previous `delete_credential` pre-step requested
+    // delete ACL on an existing item, which macOS treats as a separate
+    // permission from read/update and would re-prompt the user.
     entry.set_secret(bytes)?;
     connect_secret_cache()
         .lock()
