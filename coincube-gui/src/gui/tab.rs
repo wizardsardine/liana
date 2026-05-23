@@ -790,7 +790,19 @@ impl Tab {
                         Task::done(Message::ToggleTheme)
                     }
                     app::Message::View(app::view::Message::OpenConnectSignIn) => {
-                        Task::done(Message::OpenConnectSignIn)
+                        // Re-check this tab's ConnectAccountPanel against
+                        // the keyring before bubbling up: if the user
+                        // signed in on another tab, that session is in
+                        // the keyring and Init will refresh this tab's
+                        // panel so the page can swap to the real feature
+                        // UI without needing the Home tab roundtrip.
+                        let init_task = app
+                            .update(app::Message::View(app::view::Message::ConnectAccount(
+                                app::view::ConnectAccountMessage::Init,
+                            )))
+                            .map(Message::Run);
+                        let bubble = Task::done(Message::OpenConnectSignIn);
+                        Task::batch([init_task, bubble])
                     }
                     m => app.update(m).map(Message::Run),
                 }

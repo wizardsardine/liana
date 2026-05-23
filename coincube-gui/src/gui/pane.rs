@@ -170,24 +170,34 @@ impl Pane {
             // handled at the GUI level
             Message::View(ViewMessage::ToggleTheme) => {}
             Message::View(ViewMessage::OpenConnectSignIn) => {
-                // Find an existing Home tab and focus it. Auto-create
-                // is deliberately deferred — first ship of the handoff;
-                // every running install has a Home tab open already.
+                // Find an existing Home tab and focus it; if none is
+                // open, create one. Either way, route it to the
+                // Connect overview so the user lands on the login form.
                 let home_tab = self
                     .tabs
                     .iter()
                     .enumerate()
                     .find(|(_, t)| matches!(&t.state, tab::State::Home(_)))
                     .map(|(i, t)| (i, t.id));
+                let nav = crate::home::Message::View(crate::home::ViewMessage::GoToSection(
+                    crate::home::HomeSection::Connect(crate::app::menu::ConnectSubMenu::Overview),
+                ));
                 if let Some((idx, tab_id)) = home_tab {
                     self.focused_tab = idx;
-                    let nav = crate::home::Message::View(
-                        crate::home::ViewMessage::GoToSection(crate::home::HomeSection::Connect(
-                            crate::app::menu::ConnectSubMenu::Overview,
-                        )),
-                    );
                     return Task::done(Message::Tab(tab_id, tab::Message::Launch(nav)));
                 }
+                // No Home tab open — spawn one and queue the
+                // navigation against its id so it lands on Connect →
+                // Overview rather than the default Cubes view.
+                let add_task = self.add_tab(cfg);
+                let new_tab_id = self.tabs.last().map(|t| t.id);
+                if let Some(tab_id) = new_tab_id {
+                    return Task::batch([
+                        add_task,
+                        Task::done(Message::Tab(tab_id, tab::Message::Launch(nav))),
+                    ]);
+                }
+                return add_task;
             }
         }
 
