@@ -201,6 +201,14 @@ pub(super) fn format_date(iso: &str) -> String {
         .unwrap_or_else(|_| iso.to_string())
 }
 
+/// Parse an RFC 3339 timestamp and render it as `"Mon DD, YYYY HH:MM"`
+/// (e.g. `"Apr 20, 2026 14:31"`). Falls back to the raw input on parse failure.
+pub(super) fn format_datetime(iso: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(iso)
+        .map(|dt| dt.format("%b %d, %Y %H:%M").to_string())
+        .unwrap_or_else(|_| iso.to_string())
+}
+
 fn card_style(t: &theme::Theme) -> container::Style {
     container::Style {
         background: Some(iced::Background::Color(t.colors.cards.simple.background)),
@@ -983,9 +991,9 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
                 
                 let label = format!("{name}{suffix}");
                 let time_label = if let Some(ref last_used) = d.last_used_at {
-                    format!("Last active: {}", last_used)
+                    format!("Last active: {}", format_datetime(last_used))
                 } else {
-                    format!("Added: {}", d.created_at)
+                    format!("Added: {}", format_datetime(&d.created_at))
                 };
                 col = col.push(
                     Row::new()
@@ -1007,20 +1015,38 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
             .into(),
         Some(activity) => {
             let mut col = Column::new().spacing(6);
-            for a in activity.iter().take(10) {
+            for a in activity.iter().take(50) {
                 let ok = a.success.unwrap_or(false);
                 let status = if ok { "✓" } else { "✗" };
                 let status_color = if ok { color::ORANGE } else { color::RED };
-                let ip = a.ip_address.as_deref().unwrap_or("unknown").to_string();
-                let ua = a.user_agent.as_deref().unwrap_or("Unknown device/browser");
-                let ip_and_ua = format!("{} - {}", ip, ua);
+
+                let ip = a.ip_address.as_deref();
+                let ua = a.user_agent.as_deref();
+                let ip_and_ua = match (ip, ua) {
+                    (Some(i), Some(u)) => {
+                        let short_u = if u.len() > 60 { format!("{}…", &u[..59]) } else { u.to_string() };
+                        format!("{} - {}", i, short_u)
+                    }
+                    (Some(i), None) => i.to_string(),
+                    (None, Some(u)) => {
+                        if u.len() > 60 { format!("{}…", &u[..59]) } else { u.to_string() }
+                    }
+                    (None, None) => "Unknown device".to_string(),
+                };
+                
+                let message_text = if ok {
+                    format!("Successful login from {}", ip_and_ua)
+                } else {
+                    format!("Failed login attempt from {}", ip_and_ua)
+                };
+
                 col = col.push(
                     Row::new()
                         .push(text::p2_regular(status).color(status_color))
                         .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
-                        .push(text::p2_regular(ip_and_ua).style(theme::text::primary))
+                        .push(text::p2_regular(message_text).style(theme::text::primary))
                         .push(iced::widget::Space::new().width(Length::Fill))
-                        .push(text::p2_regular(a.created_at.as_str()).color(color::GREY_3)),
+                        .push(text::p2_regular(format_datetime(&a.created_at)).color(color::GREY_3)),
                 );
             }
             col.into()
