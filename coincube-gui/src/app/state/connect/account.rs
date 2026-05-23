@@ -410,7 +410,11 @@ impl ConnectAccountPanel {
     pub fn update_message(&mut self, msg: ConnectAccountMessage) -> iced::Task<Message> {
         match msg {
             ConnectAccountMessage::Init => {
-                // Per-cube session storage: if a session exists for this cube, auto-connect
+                // Already authenticated (e.g. broadcast Init from a
+                // sibling tab that just signed in): nothing to do.
+                if matches!(self.step, ConnectFlowStep::Dashboard) {
+                    return iced::Task::none();
+                }
                 if let Some(session) = self.load_session_from_keyring() {
                     let refresh_token = session.login.refresh_token.clone();
                     // Transition out of CheckingSession so re-navigation
@@ -423,7 +427,7 @@ impl ConnectAccountPanel {
                         ConnectAccountMessage::RefreshSession { refresh_token },
                     )));
                 }
-                // No session for this cube - show Login form
+                // No session stored - show Login form.
                 self.step = ConnectFlowStep::Login {
                     email: String::new(),
                     loading: false,

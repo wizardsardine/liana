@@ -30,6 +30,12 @@ pub enum ViewMessage {
     /// handler focuses an existing Home tab and routes it to its
     /// Connect overview so the user can sign in.
     OpenConnectSignIn,
+    /// Bubbled from the Home tab on its auth-success edge. The
+    /// handler broadcasts a `ConnectAccountMessage::Init` to every
+    /// open Cube tab so those panels re-read the shared keyring
+    /// entry and swap out of their "Sign in" prompts without
+    /// waiting for the user to interact.
+    ConnectSignedIn,
 }
 
 pub struct Pane {
@@ -151,6 +157,9 @@ impl Pane {
                             tab::Message::OpenConnectSignIn => {
                                 Task::done(Message::View(ViewMessage::OpenConnectSignIn))
                             }
+                            tab::Message::ConnectSignedIn => {
+                                Task::done(Message::View(ViewMessage::ConnectSignedIn))
+                            }
                             other => Task::done(Message::Tab(id, other)),
                         })
                     })
@@ -169,6 +178,28 @@ impl Pane {
             Message::View(ViewMessage::SplitTab(_)) => {}
             // handled at the GUI level
             Message::View(ViewMessage::ToggleTheme) => {}
+            Message::View(ViewMessage::ConnectSignedIn) => {
+                // Re-init the ConnectAccountPanel on every open Cube
+                // tab so each one pulls the just-saved session out of
+                // the shared keyring. The Init handler short-circuits
+                // when already authenticated, so this is a no-op for
+                // tabs that won the race.
+                let mut tasks: Vec<Task<Message>> = Vec::new();
+                for t in &self.tabs {
+                    if matches!(&t.state, tab::State::App(_)) {
+                        let init_msg = app::Message::View(app::view::Message::ConnectAccount(
+                            app::view::ConnectAccountMessage::Init,
+                        ));
+                        tasks.push(Task::done(Message::Tab(
+                            t.id,
+                            tab::Message::Run(init_msg),
+                        )));
+                    }
+                }
+                if !tasks.is_empty() {
+                    return Task::batch(tasks);
+                }
+            }
             Message::View(ViewMessage::OpenConnectSignIn) => {
                 // Find an existing Home tab and focus it; if none is
                 // open, create one. Either way, route it to the
@@ -327,3 +358,4 @@ impl Pane {
         .into()
     }
 }
+

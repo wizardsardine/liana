@@ -1511,6 +1511,13 @@ impl Home {
                 if !was_authenticated && now_authenticated {
                     let mut tasks = vec![task];
 
+                    // Tell the pane so it can rebroadcast the session
+                    // check to every other open Cube tab — those panels
+                    // hold their own ConnectAccountPanel and would
+                    // otherwise stay on the "Sign in" prompt until the
+                    // user clicked it or restarted the tab.
+                    tasks.push(Task::done(Message::ConnectSignedInBubble));
+
                     // Fetch cube limits for the current network from the server
                     if let Some(limits_client) = self.connect_account.authenticated_client() {
                         let network_str = settings::network_to_api_string(self.network);
@@ -2641,6 +2648,10 @@ fn map_connect_task(task: Task<app::message::Message>) -> Task<Message> {
 #[derive(Debug, Clone)]
 pub enum Message {
     View(ViewMessage),
+    /// Bubbles up to the pane on the auth-success edge so it can
+    /// broadcast a session re-check to every open Cube tab. Carries
+    /// no payload — the Cube tabs read the keyring themselves.
+    ConnectSignedInBubble,
     /// Launch the installer. The trailing `Option<CoincubeClient>`
     /// forwards the home's already-authenticated Connect session
     /// into the installer so steps like `RecoveryKitRestoreStep` don't

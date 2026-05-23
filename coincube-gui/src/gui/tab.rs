@@ -95,6 +95,9 @@ pub enum Message {
     /// (Spark → Settings → Lightning Address, Cube → Settings →
     /// Avatar / Members).
     OpenConnectSignIn,
+    /// Bubbles up to the pane on a Home-tab login edge so it can
+    /// broadcast a session re-check to every open Cube tab.
+    ConnectSignedIn,
 }
 
 pub struct Tab {
@@ -279,6 +282,7 @@ impl Tab {
                 home::Message::View(home::ViewMessage::ToggleTheme) => {
                     Task::done(Message::ToggleTheme)
                 }
+                home::Message::ConnectSignedInBubble => Task::done(Message::ConnectSignedIn),
                 _ => l.update(msg).map(Message::Launch),
             },
             (State::Login(l), Message::Login(msg)) => match msg {
