@@ -1,4 +1,4 @@
-//! Spark Settings panel.
+//! Spark Settings — General sub-page.
 //!
 //! Two cards:
 //! - A "Stable Balance" toggle (Phase 6) — enables or disables the
@@ -8,14 +8,10 @@
 //!   `get_info` round-trip to the `coincube-spark-bridge` subprocess
 //!   succeeded.
 //!
-//! Everything else the old Phase 4b panel surfaced — balance,
-//! identity pubkey, network display, Default Lightning backend
-//! picker — moved elsewhere:
-//! - Balance is already rendered in Spark → Overview / Send.
-//! - Network lives in **Settings → General**.
-//! - Default Lightning backend lives in **Settings → Lightning**.
-//! - Identity pubkey was dropped entirely (not actionable for
-//!   end users).
+//! The Lightning Address sub-page is rendered at the App level
+//! ([`crate::app::view::spark::settings::lightning_address`]) because
+//! it needs a borrow of `ConnectCubePanel` that this panel can't
+//! receive through the `State::view` trait signature.
 
 use std::sync::Arc;
 
@@ -24,7 +20,7 @@ use coincube_ui::widget::Element;
 use iced::Task;
 
 use crate::app::cache::Cache;
-use crate::app::menu::{Menu, SparkSettingsOption};
+use crate::app::menu::Menu;
 use crate::app::message::Message;
 use crate::app::state::State;
 use crate::app::view::spark::{SparkSettingsStatus, SparkSettingsView};
@@ -45,9 +41,6 @@ pub struct SparkSettings {
     /// Phase 6: `true` while a `set_stable_balance` RPC is in
     /// flight — the toggle is disabled in that window.
     stable_balance_saving: bool,
-    /// Which tertiary-rail sub-page is currently shown. Kept on the
-    /// panel so it survives a `reload` (bridge-status refresh).
-    active_sub: SparkSettingsOption,
 }
 
 impl SparkSettings {
@@ -62,7 +55,6 @@ impl SparkSettings {
             status,
             stable_balance_active: None,
             stable_balance_saving: false,
-            active_sub: SparkSettingsOption::General,
         }
     }
 }
@@ -80,7 +72,6 @@ impl State for SparkSettings {
                 status: self.status.clone(),
                 stable_balance_active: self.stable_balance_active,
                 stable_balance_saving: self.stable_balance_saving,
-                active_sub: self.active_sub,
             }
             .render(),
         )
@@ -144,12 +135,6 @@ impl State for SparkSettings {
     ) -> Task<Message> {
         if let Message::View(crate::app::view::Message::SparkSettings(msg)) = message {
             match msg {
-                crate::app::view::SparkSettingsMessage::GeneralSection => {
-                    self.active_sub = SparkSettingsOption::General;
-                }
-                crate::app::view::SparkSettingsMessage::LightningAddressSection => {
-                    self.active_sub = SparkSettingsOption::LightningAddress;
-                }
                 crate::app::view::SparkSettingsMessage::BridgeReachable => {
                     self.status = SparkSettingsStatus::Connected;
                 }
