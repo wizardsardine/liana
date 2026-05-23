@@ -25,6 +25,11 @@ pub enum ViewMessage {
     SplitTab(usize),
     AddTab,
     ToggleTheme,
+    /// Bubbled from a Cube tab whose Connect-requiring feature page
+    /// emitted [`crate::app::view::Message::OpenConnectSignIn`]. The
+    /// handler focuses an existing Home tab and routes it to its
+    /// Connect overview so the user can sign in.
+    OpenConnectSignIn,
 }
 
 pub struct Pane {
@@ -143,6 +148,9 @@ impl Pane {
                             tab::Message::ToggleTheme => {
                                 Task::done(Message::View(ViewMessage::ToggleTheme))
                             }
+                            tab::Message::OpenConnectSignIn => {
+                                Task::done(Message::View(ViewMessage::OpenConnectSignIn))
+                            }
                             other => Task::done(Message::Tab(id, other)),
                         })
                     })
@@ -161,6 +169,26 @@ impl Pane {
             Message::View(ViewMessage::SplitTab(_)) => {}
             // handled at the GUI level
             Message::View(ViewMessage::ToggleTheme) => {}
+            Message::View(ViewMessage::OpenConnectSignIn) => {
+                // Find an existing Home tab and focus it. Auto-create
+                // is deliberately deferred — first ship of the handoff;
+                // every running install has a Home tab open already.
+                let home_tab = self
+                    .tabs
+                    .iter()
+                    .enumerate()
+                    .find(|(_, t)| matches!(&t.state, tab::State::Home(_)))
+                    .map(|(i, t)| (i, t.id));
+                if let Some((idx, tab_id)) = home_tab {
+                    self.focused_tab = idx;
+                    let nav = crate::home::Message::View(
+                        crate::home::ViewMessage::GoToSection(crate::home::HomeSection::Connect(
+                            crate::app::menu::ConnectSubMenu::Overview,
+                        )),
+                    );
+                    return Task::done(Message::Tab(tab_id, tab::Message::Launch(nav)));
+                }
+            }
         }
 
         Task::none()

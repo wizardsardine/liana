@@ -1,5 +1,6 @@
 mod contacts;
-mod cube_members;
+pub mod cube_members;
+pub mod sign_in_prompt;
 
 use coincube_ui::{
     color,
@@ -1080,7 +1081,7 @@ fn duress_ux<'a>() -> Element<'a, ConnectAccountMessage> {
         .into()
 }
 
-fn avatar_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage> {
+pub fn avatar_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage> {
     let title = Row::new()
         .push(text::h4_bold("Avatar").style(theme::text::primary))
         .push(iced::widget::Space::new().width(Length::Fill))

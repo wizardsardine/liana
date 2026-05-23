@@ -1236,21 +1236,53 @@ impl App {
             // right child panel. The third rail visible alongside drives this
             // and highlights the active option.
             menu::Menu::Cube(menu::CubeSubMenu::Settings(option)) => {
-                let section_msg = match option {
-                    menu::CubeSettingsOption::General => view::SettingsMessage::GeneralSection,
-                    menu::CubeSettingsOption::About => view::SettingsMessage::AboutSection,
-                    menu::CubeSettingsOption::Stats => view::SettingsMessage::InstallStatsSection,
-                };
                 self.panels.current = menu.clone();
-                // Fire even if daemon is None — the inner settings
-                // panels don't require daemon for construction; they
-                // just pass it through to their own reload().
-                if let Some(panel) = self.panels.current_mut() {
-                    return panel.update(
-                        self.daemon.clone(),
-                        &self.cache,
-                        Message::View(view::Message::Settings(section_msg)),
-                    );
+                let section_msg = match option {
+                    menu::CubeSettingsOption::General => {
+                        Some(view::SettingsMessage::GeneralSection)
+                    }
+                    menu::CubeSettingsOption::About => Some(view::SettingsMessage::AboutSection),
+                    menu::CubeSettingsOption::Stats => {
+                        Some(view::SettingsMessage::InstallStatsSection)
+                    }
+                    // Avatar / Members render from `ConnectCubePanel` via
+                    // App::view; no section message is dispatched to the
+                    // SettingsState. Side-effect loads (avatar fetch,
+                    // members fetch) are kicked below.
+                    menu::CubeSettingsOption::Avatar
+                    | menu::CubeSettingsOption::Members => None,
+                };
+                if let Some(section_msg) = section_msg {
+                    // Fire even if daemon is None — the inner settings
+                    // panels don't require daemon for construction; they
+                    // just pass it through to their own reload().
+                    if let Some(panel) = self.panels.current_mut() {
+                        return panel.update(
+                            self.daemon.clone(),
+                            &self.cache,
+                            Message::View(view::Message::Settings(section_msg)),
+                        );
+                    }
+                    return Task::none();
+                }
+                // Avatar and Members: trigger the underlying load via
+                // ConnectCubePanel, mirroring the per-Cube Connect arm.
+                match option {
+                    menu::CubeSettingsOption::Avatar => {
+                        return iced::Task::done(Message::View(view::Message::ConnectCube(
+                            view::ConnectCubeMessage::Avatar(view::AvatarMessage::Enter),
+                        )));
+                    }
+                    menu::CubeSettingsOption::Members
+                        if self.panels.connect.account.is_authenticated() =>
+                    {
+                        return iced::Task::done(Message::View(view::Message::ConnectCube(
+                            view::ConnectCubeMessage::Members(
+                                view::ConnectCubeMembersMessage::Enter,
+                            ),
+                        )));
+                    }
+                    _ => {}
                 }
                 return Task::none();
             }
@@ -3306,6 +3338,58 @@ impl App {
             })
     }
 
+    /// Render content for a settings sub-page that needs both its
+    /// owning panel and the ConnectCubePanel (Spark → Settings →
+    /// Lightning Address, Cube → Settings → Avatar / Members). Returns
+    /// `None` for routes the generic panel dispatch can handle.
+    ///
+    /// Auth and LN-address preconditions render an inline prompt in
+    /// place of the feature UI; the user signs in or claims an
+    /// address, then the page re-renders with the real form.
+    fn connect_settings_content(&self) -> Option<Element<'_, view::Message>> {
+        use crate::app::view::connect::sign_in_prompt;
+        let authenticated = self.panels.connect.account.is_authenticated();
+        let has_ln_address = self
+            .panels
+            .connect
+            .cube
+            .lightning_address
+            .as_ref()
+            .and_then(|la| la.lightning_address.as_ref())
+            .is_some();
+        match &self.panels.current {
+            Menu::Spark(menu::SparkSubMenu::Settings(Some(
+                menu::SparkSettingsOption::LightningAddress,
+            ))) => Some(if authenticated {
+                view::spark::settings::lightning_address::lightning_address_ux(
+                    &self.panels.connect.cube,
+                )
+                .map(view::Message::ConnectCube)
+            } else {
+                sign_in_prompt::sign_in_prompt("claim a Lightning Address")
+            }),
+            Menu::Cube(menu::CubeSubMenu::Settings(menu::CubeSettingsOption::Avatar)) => {
+                Some(if !authenticated {
+                    sign_in_prompt::sign_in_prompt("set up an Avatar")
+                } else if !has_ln_address {
+                    sign_in_prompt::claim_ln_address_prompt()
+                } else {
+                    view::connect::avatar_ux(&self.panels.connect.cube)
+                        .map(view::Message::ConnectCube)
+                })
+            }
+            Menu::Cube(menu::CubeSubMenu::Settings(menu::CubeSettingsOption::Members)) => {
+                Some(if authenticated {
+                    view::connect::cube_members::cube_members_ux(&self.panels.connect.cube)
+                        .map(view::Message::ConnectCube)
+                } else {
+                    sign_in_prompt::sign_in_prompt("manage Cube Members")
+                })
+            }
+            _ => None,
+        }
+    }
+
     pub fn view(&self) -> Element<'_, Message> {
         let view = if self.show_received_celebration {
             // Global celebration overlay takes precedence over the normal panel view
@@ -3317,20 +3401,13 @@ impl App {
                 view::Message::DismissReceivedCelebration,
             );
             view::dashboard(&self.panels.current, &self.cache, celebration)
-        } else if matches!(
-            &self.panels.current,
-            Menu::Spark(menu::SparkSubMenu::Settings(Some(
-                menu::SparkSettingsOption::LightningAddress
-            )))
-        ) {
-            // Spark → Settings → Lightning Address needs both the
-            // SparkSettings state and the ConnectCubePanel. The State
-            // trait's `view` only sees the active panel + Cache, so the
-            // dispatch lives here — App owns both panels.
-            let content = view::spark::settings::lightning_address::lightning_address_ux(
-                &self.panels.connect.cube,
-            )
-            .map(view::Message::ConnectCube);
+        } else if let Some(content) = self.connect_settings_content() {
+            // Connect-dependent settings sub-pages (Spark → Settings →
+            // Lightning Address, Cube → Settings → Avatar / Members)
+            // need both the relevant panel state and the
+            // ConnectCubePanel. The State trait's `view` only sees the
+            // active panel + Cache, so the dispatch lives here — App
+            // owns every panel.
             view::dashboard(&self.panels.current, &self.cache, content)
         } else {
             self.panels

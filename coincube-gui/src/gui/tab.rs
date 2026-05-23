@@ -89,6 +89,12 @@ pub enum Message {
     },
     /// Bubbles up to GUI level to toggle the theme
     ToggleTheme,
+    /// Bubbles up to the pane so it can focus the Home tab on its
+    /// Connect section — fired when the user clicks "Sign In" on the
+    /// inline prompt rendered by a Connect-requiring feature page
+    /// (Spark → Settings → Lightning Address, Cube → Settings →
+    /// Avatar / Members).
+    OpenConnectSignIn,
 }
 
 pub struct Tab {
@@ -782,6 +788,9 @@ impl Tab {
                     }
                     app::Message::View(app::view::Message::ToggleTheme) => {
                         Task::done(Message::ToggleTheme)
+                    }
+                    app::Message::View(app::view::Message::OpenConnectSignIn) => {
+                        Task::done(Message::OpenConnectSignIn)
                     }
                     m => app.update(m).map(Message::Run),
                 }

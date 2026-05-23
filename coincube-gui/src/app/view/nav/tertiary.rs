@@ -19,8 +19,8 @@ use crate::app::{
 };
 use coincube_ui::{
     icon::{
-        bitcoin_icon, chat_icon, graph_icon, home_icon, lightning_icon, plus_icon, receipt_icon,
-        settings_icon, tooltip_icon, wallet_icon, wrench_icon,
+        bitcoin_icon, chat_icon, coins_icon, graph_icon, home_icon, lightning_icon, person_icon,
+        plus_icon, receipt_icon, settings_icon, tooltip_icon, wallet_icon, wrench_icon,
     },
     theme,
     widget::{Column, Element},
@@ -64,7 +64,7 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Option<Element<'a, Message
 }
 
 fn cube_settings_items() -> Vec<SubItem> {
-    vec![
+    let mut items = vec![
         SubItem {
             label: "General",
             icon: wrench_icon,
@@ -98,7 +98,36 @@ fn cube_settings_items() -> Vec<SubItem> {
                 )
             },
         },
-    ]
+        SubItem {
+            label: "Avatar",
+            // Placeholder icon — coins_icon is what the per-Cube Connect
+            // rail used; swap to a face icon when one exists.
+            icon: coins_icon,
+            route: Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Avatar)),
+            matches: |m| {
+                matches!(
+                    m,
+                    Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Avatar))
+                )
+            },
+        },
+    ];
+
+    if crate::feature_flags::CUBE_MEMBERS_UI_ENABLED {
+        items.push(SubItem {
+            label: "Members",
+            icon: person_icon,
+            route: Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Members)),
+            matches: |m| {
+                matches!(
+                    m,
+                    Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Members))
+                )
+            },
+        });
+    }
+
+    items
 }
 
 fn spark_settings_items() -> Vec<SubItem> {
