@@ -2506,15 +2506,13 @@ impl App {
                 // orphan route like Marketplace(BuySell) with no vault).
                 // Otherwise rail clicks get silently dropped and the
                 // user is trapped on whichever screen is rendering.
-                if self.pending_switch_to_connect_after_login {
-                    // User abandoned the auto-return trip by navigating
-                    // somewhere in this Cube tab; don't surprise them
-                    // with a backend swap on a future, unrelated Connect
-                    // login. (The previous in-tab Connect surface is
-                    // gone — auth always happens on the Home tab, so
-                    // any in-tab navigation counts as abandonment.)
-                    self.pending_switch_to_connect_after_login = false;
-                }
+                //
+                // We deliberately do not touch
+                // `pending_switch_to_connect_after_login` here. Sign-in
+                // happens on the Home tab now, so the user is expected
+                // to switch tabs (and possibly poke around this one)
+                // while it's in flight — the flag is consumed on the
+                // auth-success edge a few branches below, or on logout.
                 let close_task = self
                     .panels
                     .current_mut()
@@ -2575,6 +2573,10 @@ impl App {
                     self.cache.connect_device_id = None;
                     self.cache.connect_email = None;
                     self.cache.connect_stream_status = ConnectionStatus::Inactive;
+                    // Logout breaks the "Switch to Connect" trip the
+                    // user started; firing the auto-return on a fresh
+                    // unrelated login later would be surprising.
+                    self.pending_switch_to_connect_after_login = false;
                 }
                 // Auto-return for the "Switch to Connect" flow. When the user
                 // clicked it without an active session, we routed them to the
@@ -3404,3 +3406,4 @@ fn new_recovery_panel(
         cache.bitcoin_unit,
     )
 }
+
