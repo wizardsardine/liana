@@ -415,6 +415,15 @@ impl ConnectAccountPanel {
                 if matches!(self.step, ConnectFlowStep::Dashboard) {
                     return iced::Task::none();
                 }
+                // A RefreshSession spawned by a previous Init is still
+                // in flight. Firing another now would race two token
+                // refreshes against each other and double the downstream
+                // post-login bootstrap. Wait for the in-flight one to
+                // resolve (success → Dashboard; failure → Login with
+                // loading=false, which Init can pick up again).
+                if matches!(self.step, ConnectFlowStep::Login { loading: true, .. }) {
+                    return iced::Task::none();
+                }
                 if let Some(session) = self.load_session_from_keyring() {
                     let refresh_token = session.login.refresh_token.clone();
                     // Transition out of CheckingSession so re-navigation
