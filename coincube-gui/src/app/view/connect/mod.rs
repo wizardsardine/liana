@@ -30,12 +30,10 @@ use crate::{
     },
 };
 
-use crate::app::view::spark::settings::lightning_address::lightning_address_ux;
 use crate::app::view::Message as ViewMessage;
 
 pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
     let acct = &state.account;
-    let cube = &state.cube;
 
     let header = Row::new()
         .push(coincube_wordmark::<ViewMessage>(20.0))
@@ -66,18 +64,11 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
 
         ConnectFlowStep::Dashboard => match &acct.active_sub {
             ConnectSubMenu::Overview => overview_ux(acct).map(ViewMessage::ConnectAccount),
-            ConnectSubMenu::LightningAddress => {
-                lightning_address_ux(cube).map(ViewMessage::ConnectCube)
-            }
-            ConnectSubMenu::Avatar => avatar_ux(cube).map(ViewMessage::ConnectCube),
             ConnectSubMenu::PlanBilling => plan_billing_ux(acct).map(ViewMessage::ConnectAccount),
             ConnectSubMenu::Security => security_ux(acct).map(ViewMessage::ConnectAccount),
             ConnectSubMenu::Duress => duress_ux().map(ViewMessage::ConnectAccount),
             ConnectSubMenu::Contacts => {
                 contacts::contacts_ux(acct).map(ViewMessage::ConnectAccount)
-            }
-            ConnectSubMenu::CubeMembers => {
-                cube_members::cube_members_ux(cube).map(ViewMessage::ConnectCube)
             }
         },
     };
@@ -145,13 +136,6 @@ pub fn connect_account_panel<'a>(
             ConnectSubMenu::Security => security_ux(acct),
             ConnectSubMenu::Duress => duress_ux(),
             ConnectSubMenu::Contacts => contacts::contacts_ux(acct),
-            // Cube-specific submenus shouldn't appear in the home
-            _ => Column::new()
-                .push(
-                    text::p1_regular("This feature is available inside a Cube.")
-                        .color(color::GREY_3),
-                )
-                .into(),
         },
     };
 

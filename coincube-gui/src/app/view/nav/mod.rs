@@ -13,7 +13,6 @@ pub mod items;
 pub mod primary;
 pub mod secondary;
 
-pub mod connect;
 pub mod cube;
 pub mod liquid;
 pub mod marketplace;

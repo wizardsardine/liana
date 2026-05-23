@@ -13,8 +13,7 @@ use crate::app::{
 use coincube_ui::{
     color,
     icon::{
-        connect_icon, cube_icon, droplet_fill_icon, lightning_icon, shield_plus_icon, shop_icon,
-        vault_icon,
+        cube_icon, droplet_fill_icon, lightning_icon, shield_plus_icon, shop_icon, vault_icon,
     },
     theme,
     widget::{Button, Column, Element, Row, Text},
@@ -60,7 +59,6 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
             landing,
         ));
     }
-    top = top.push(item(TopLevel::Connect, current == TopLevel::Connect));
 
     container(top)
         .width(Length::Fixed(RAIL_WIDTH))
@@ -142,7 +140,6 @@ fn icon_for<'a>(t: TopLevel) -> Text<'a> {
         TopLevel::Liquid => droplet_fill_icon(),
         TopLevel::Vault => vault_icon(),
         TopLevel::Marketplace => shop_icon(),
-        TopLevel::Connect => connect_icon(),
     }
 }
 

@@ -542,7 +542,6 @@ impl Panels {
             Menu::Marketplace(MarketplaceSubMenu::P2P(_)) => {
                 self.p2p.as_ref().map(|v| v as &dyn State)
             }
-            Menu::Connect(_) => Some(&self.connect as &dyn State),
         }
     }
 
@@ -610,7 +609,6 @@ impl Panels {
             Menu::Marketplace(MarketplaceSubMenu::P2P(_)) => {
                 self.p2p.as_mut().map(|v| v as &mut dyn State)
             }
-            Menu::Connect(_) => Some(&mut self.connect as &mut dyn State),
         }
     }
 
@@ -1448,52 +1446,6 @@ impl App {
                         }
                         _ => {}
                     }
-                }
-            }
-            menu::Menu::Connect(submenu) => {
-                self.panels.connect.account.active_sub = submenu.clone();
-                // Load Security data on demand
-                if matches!(submenu, menu::ConnectSubMenu::Security) {
-                    let security_task = crate::app::state::connect::account::load_security_data(
-                        &self.panels.connect.account.client,
-                        self.panels.connect.account.session_generation(),
-                    );
-                    self.panels.current = menu;
-                    return security_task;
-                }
-                // Trigger avatar load on demand
-                if matches!(submenu, menu::ConnectSubMenu::Avatar) {
-                    self.panels.current = menu;
-                    return iced::Task::done(Message::View(
-                        crate::app::view::Message::ConnectCube(
-                            crate::app::view::ConnectCubeMessage::Avatar(
-                                crate::app::view::AvatarMessage::Enter,
-                            ),
-                        ),
-                    ));
-                }
-                // Load Contacts data on demand
-                if matches!(submenu, menu::ConnectSubMenu::Contacts)
-                    && self.panels.connect.account.is_authenticated()
-                {
-                    let contacts_task = self.panels.connect.account.reload_contacts();
-                    self.panels.current = menu;
-                    return contacts_task;
-                }
-                // Load Cube Members on demand (W8 — gated by
-                // CUBE_MEMBERS_UI_ENABLED at the sidebar, but defensive here
-                // in case a deep-link message sneaks through).
-                if matches!(submenu, menu::ConnectSubMenu::CubeMembers)
-                    && self.panels.connect.account.is_authenticated()
-                {
-                    self.panels.current = menu;
-                    return iced::Task::done(Message::View(
-                        crate::app::view::Message::ConnectCube(
-                            crate::app::view::ConnectCubeMessage::Members(
-                                crate::app::view::ConnectCubeMembersMessage::Enter,
-                            ),
-                        ),
-                    ));
                 }
             }
             menu::Menu::Liquid(_submenu) => {
@@ -2578,12 +2530,13 @@ impl App {
                 // orphan route like Marketplace(BuySell) with no vault).
                 // Otherwise rail clicks get silently dropped and the
                 // user is trapped on whichever screen is rendering.
-                if self.pending_switch_to_connect_after_login
-                    && !matches!(menu, menu::Menu::Connect(_))
-                {
-                    // User abandoned the auto-return trip by going somewhere
-                    // else; don't surprise them with a backend swap on a
-                    // future, unrelated Connect login.
+                if self.pending_switch_to_connect_after_login {
+                    // User abandoned the auto-return trip by navigating
+                    // somewhere in this Cube tab; don't surprise them
+                    // with a backend swap on a future, unrelated Connect
+                    // login. (The previous in-tab Connect surface is
+                    // gone — auth always happens on the Home tab, so
+                    // any in-tab navigation counts as abandonment.)
                     self.pending_switch_to_connect_after_login = false;
                 }
                 let close_task = self
@@ -3177,8 +3130,10 @@ impl App {
                     }
                 } else {
                     self.pending_switch_to_connect_after_login = true;
-                    return self
-                        .set_current_panel(menu::Menu::Connect(menu::ConnectSubMenu::Overview));
+                    // No active Connect session on this Cube; bubble up
+                    // through the tab/pane so the Home tab takes focus
+                    // and the user can sign in there.
+                    return iced::Task::done(Message::View(view::Message::OpenConnectSignIn));
                 }
             }
 

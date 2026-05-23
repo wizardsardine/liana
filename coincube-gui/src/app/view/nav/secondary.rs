@@ -29,7 +29,6 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
         TopLevel::Liquid => super::liquid::items(ctx),
         TopLevel::Vault => super::vault::items(ctx),
         TopLevel::Marketplace => super::marketplace::items(ctx),
-        TopLevel::Connect => super::connect::items(ctx),
     };
 
     let mut list: Column<Message> = Column::new().spacing(0).width(Length::Fill);

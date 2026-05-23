@@ -10,7 +10,6 @@ pub enum Menu {
     Liquid(LiquidSubMenu),
     Vault(VaultSubMenu),
     Marketplace(MarketplaceSubMenu),
-    Connect(ConnectSubMenu),
 }
 
 /// Sub-pages of the Cube section.
@@ -19,7 +18,7 @@ pub enum CubeSubMenu {
     /// Cube landing / dashboard.
     Overview,
     /// Cube-level settings. The inner enum drives the third rail —
-    /// General / About / Stats.
+    /// General / About / Stats / Avatar / Members.
     Settings(CubeSettingsOption),
 }
 
@@ -47,19 +46,20 @@ pub enum MarketplaceSubMenu {
     P2P(P2PSubMenu),
 }
 
+/// Sub-pages of the account-level Connect surface rendered by the Home
+/// tab. The per-Cube Connect section that used to share this enum has
+/// been removed — its features were relocated:
+/// - `LightningAddress` → Spark → Settings → Lightning Address
+/// - `Avatar` and `CubeMembers` → Cube → Settings → Avatar / Members
+///
+/// Only the variants the Home tab still routes through stay here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectSubMenu {
     Overview,
-    LightningAddress,
-    Avatar,
     PlanBilling,
     Security,
     Duress,
     Contacts,
-    /// Cube-scoped members + pending-invites management. Feature-flagged by
-    /// `feature_flags::CUBE_MEMBERS_UI_ENABLED`; sidebar entry is hidden
-    /// otherwise.
-    CubeMembers,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,7 +136,6 @@ pub enum TopLevel {
     Liquid,
     Vault,
     Marketplace,
-    Connect,
 }
 
 impl TopLevel {
@@ -146,7 +145,6 @@ impl TopLevel {
         TopLevel::Liquid,
         TopLevel::Vault,
         TopLevel::Marketplace,
-        TopLevel::Connect,
     ];
 
     pub fn label(self) -> &'static str {
@@ -156,7 +154,6 @@ impl TopLevel {
             TopLevel::Liquid => "Liquid",
             TopLevel::Vault => "Vault",
             TopLevel::Marketplace => "Marketplace",
-            TopLevel::Connect => "Connect",
         }
     }
 
@@ -170,7 +167,6 @@ impl TopLevel {
             TopLevel::Marketplace => {
                 Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Overview))
             }
-            TopLevel::Connect => Menu::Connect(ConnectSubMenu::Overview),
         }
     }
 }
@@ -183,7 +179,6 @@ impl From<&Menu> for TopLevel {
             Menu::Liquid(_) => TopLevel::Liquid,
             Menu::Vault(_) => TopLevel::Vault,
             Menu::Marketplace(_) => TopLevel::Marketplace,
-            Menu::Connect(_) => TopLevel::Connect,
         }
     }
 }
