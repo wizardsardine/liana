@@ -210,7 +210,16 @@ impl Home {
                 welcome_image_handle:
                     coincube_ui::component::quote_display::image_handle_for_context("first-launch"),
             },
-            Task::perform(check_network_datadir(network_dir), Message::Checked),
+            // Kick a Connect session check alongside the datadir probe
+            // so the sidebar reflects authenticated state immediately
+            // when a session is already in the keyring — without
+            // waiting for the user to navigate to the Connect section.
+            Task::batch([
+                Task::perform(check_network_datadir(network_dir), Message::Checked),
+                Task::done(Message::View(ViewMessage::ConnectAccount(
+                    ConnectAccountMessage::Init,
+                ))),
+            ]),
         )
     }
 
