@@ -67,6 +67,8 @@ pub enum Message {
     BroadcastModal(Result<HashSet<Txid>, Error>),
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
     Export(ImportExportMessage),
+    /// Batch of PSBTs for individual sweep mode.
+    BatchPsbt(Result<Vec<(Psbt, Vec<String>)>, Error>),
 }
 
 impl From<ImportExportMessage> for Message {
