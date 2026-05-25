@@ -298,10 +298,15 @@ impl ConnectAccountPanel {
         matches!(self.step, ConnectFlowStep::Dashboard)
     }
 
-    /// Returns `true` if a Connect session has been previously stored in
-    /// the OS keyring under the shared global key.
+    /// Returns `true` if a Connect session is stored in the OS keyring
+    /// under the shared global key AND parses as a valid `StoredSession`.
+    /// Mirrors `Init`'s restoration check so callers (e.g.
+    /// `can_restore_connect_session`) don't treat unparseable bytes as a
+    /// restorable session — that would skip the Home-tab handoff while
+    /// `Init` silently falls back to the Login step, leaving the user
+    /// stuck on an inline prompt with no login form.
     pub fn has_stored_session(&self) -> bool {
-        read_connect_secret(CONNECT_KEYRING_USER).is_some()
+        self.load_session_from_keyring().is_some()
     }
 
     pub fn session_generation(&self) -> u64 {
