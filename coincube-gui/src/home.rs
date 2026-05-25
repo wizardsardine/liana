@@ -1492,7 +1492,7 @@ impl Home {
                         .map_or(AccountTier::default(), |plan| match plan.tier() {
                             crate::services::coincube::PlanTier::Free => AccountTier::Free,
                             crate::services::coincube::PlanTier::Pro => AccountTier::Pro,
-                            crate::services::coincube::PlanTier::Legacy => AccountTier::Legacy,
+                            crate::services::coincube::PlanTier::Estate => AccountTier::Estate,
                         });
                 // When the plan tier changes (e.g. upgrade), invalidate the
                 // cached server limit so `cube_limit()` uses the new tier

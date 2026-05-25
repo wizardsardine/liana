@@ -18,6 +18,7 @@ use iced::{
 use crate::{
     app::{
         menu::ConnectSubMenu,
+        settings::global::AccountTier,
         state::connect::{
             AvatarFlowStep, CheckoutPhase, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep,
             ConnectPanel,
@@ -446,7 +447,15 @@ fn plan_tier_color(tier: &PlanTier) -> iced::Color {
     match tier {
         PlanTier::Free => color::GREY_3,
         PlanTier::Pro => color::ORANGE,
-        PlanTier::Legacy => color::LIGHT_BLUE,
+        PlanTier::Estate => color::LIGHT_BLUE,
+    }
+}
+
+fn cube_limit_for(tier: &PlanTier) -> usize {
+    match tier {
+        PlanTier::Free => AccountTier::Free.cube_limit(),
+        PlanTier::Pro => AccountTier::Pro.cube_limit(),
+        PlanTier::Estate => AccountTier::Estate.cube_limit(),
     }
 }
 
@@ -499,12 +508,12 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         .push(annual_btn)
         .width(Length::Fill);
 
-    // Determine upgrade order: Free < Pro < Legacy
+    // Determine upgrade order: Free < Pro < Estate
     let tier_rank = |t: &PlanTier| -> u8 {
         match t {
             PlanTier::Free => 0,
             PlanTier::Pro => 1,
-            PlanTier::Legacy => 2,
+            PlanTier::Estate => 2,
         }
     };
 
@@ -524,7 +533,7 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                 let tier = match info.name.as_str() {
                     "free" => PlanTier::Free,
                     "pro" => PlanTier::Pro,
-                    "legacy" => PlanTier::Legacy,
+                    "estate" | "legacy" => PlanTier::Estate,
                     _ => return None,
                 };
                 let price_label = match &info.price {
@@ -534,53 +543,32 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                     },
                     None => "Free".to_string(),
                 };
+                let mut features =
+                    vec![format!("{} cubes per network", cube_limit_for(&tier))];
+                features.extend(info.features.iter().cloned());
                 Some(PlanCardData {
                     name: tier.to_string(),
                     tier,
-                    features: info.features.clone(),
+                    features,
                     price_label,
                 })
             })
             .collect()
     } else {
-        vec![
-            PlanCardData {
-                name: "Free".to_string(),
-                tier: PlanTier::Free,
-                features: vec![
-                    "Esplora access".into(),
-                    "Cube Recovery Wallet".into(),
-                    "1 signing key (no policies)".into(),
-                ],
-                price_label: "Free".to_string(),
-            },
-            PlanCardData {
-                name: "Pro".to_string(),
-                tier: PlanTier::Pro,
-                features: vec![
-                    "Signing policies".into(),
-                    "Unlimited self keys".into(),
-                    "Keychain backup/migration".into(),
-                ],
-                price_label: match cycle {
-                    BillingCycle::Monthly => "$12/mo".to_string(),
-                    BillingCycle::Annual => "$120/yr".to_string(),
-                },
-            },
-            PlanCardData {
-                name: "Legacy".to_string(),
-                tier: PlanTier::Legacy,
-                features: vec![
-                    "Invites".into(),
-                    "Linked keychains".into(),
-                    "Inheritance coordination".into(),
-                ],
-                price_label: match cycle {
-                    BillingCycle::Monthly => "$35/mo".to_string(),
-                    BillingCycle::Annual => "$350/yr".to_string(),
-                },
-            },
-        ]
+        return container(
+            Column::new()
+                .push(text::h4_bold("Plan & Billing").style(theme::text::primary))
+                .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
+                .push(
+                    text::p1_regular(
+                        "Pricing temporarily unavailable.\n\
+                         Reconnect to the internet to view current plans and features.",
+                    )
+                    .color(color::GREY_3),
+                ),
+        )
+        .padding(16)
+        .into();
     };
 
     let mut col = Column::new()
@@ -637,7 +625,7 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
             } else if is_upgrade {
                 let label = match &card.tier {
                     PlanTier::Pro => "Upgrade to Pro",
-                    PlanTier::Legacy => "Upgrade to Legacy",
+                    PlanTier::Estate => "Upgrade to Estate",
                     _ => "Upgrade",
                 };
                 button::primary(None, label)
