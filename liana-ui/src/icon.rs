@@ -47,7 +47,7 @@ pub fn plug_icon() -> Text<'static> {
     bootstrap_icon('\u{F4F6}')
 }
 
-pub fn reload_icon() -> Text<'static> {
+pub fn reload_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F130}')
 }
 
@@ -79,8 +79,12 @@ pub fn tooltip_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F431}')
 }
 
-pub fn plus_icon() -> Text<'static> {
+pub fn plus_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F4FE}')
+}
+
+pub fn minus_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F63B}')
 }
 
 pub fn warning_icon() -> Text<'static> {

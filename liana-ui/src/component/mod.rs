@@ -7,6 +7,7 @@ pub mod event;
 pub mod form;
 pub mod modal;
 pub mod notification;
+pub mod payment;
 pub mod pick_list;
 pub mod pill;
 pub mod scrollable;

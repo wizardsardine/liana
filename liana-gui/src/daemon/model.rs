@@ -10,6 +10,7 @@ pub use liana::{
         secp256k1, Address, Amount, Network, OutPoint, Transaction, Txid,
     },
 };
+use liana_ui::component::payment::PaymentKind;
 pub use lianad::commands::{
     CreateSpendResult, GetAddressResult, GetInfoResult, GetLabelsResult, LabelItem, ListCoinsEntry,
     ListCoinsResult, ListRevealedAddressesEntry, ListRevealedAddressesResult, ListSpendEntry,
@@ -432,15 +433,6 @@ pub struct Payment {
     pub outpoint: OutPoint,
     pub time: Option<chrono::DateTime<chrono::Utc>>,
     pub kind: PaymentKind,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum PaymentKind {
-    Outgoing,
-    Incoming,
-    /// A payment to self, which could be either from a self-transfer
-    /// or a change output from an outgoing transaction.
-    SendToSelf,
 }
 
 impl Payment {

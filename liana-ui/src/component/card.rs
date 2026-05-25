@@ -1,5 +1,5 @@
 use crate::{color, component::text::text, icon, theme, widget::*};
-use iced::{widget::button, Alignment};
+use iced::{widget::button, Alignment, Padding};
 const CARD_PADDING: [u16; 2] = [15, 30];
 
 pub fn modal<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T> {
@@ -55,7 +55,18 @@ pub fn clickable_card<'a, M>(content: Row<'a, M>, msg: Option<M>) -> Element<'a,
 where
     M: Clone + 'a,
 {
-    button(content.align_y(Alignment::Center).padding(CARD_PADDING))
+    clickable_card_with_padding(content, msg, CARD_PADDING)
+}
+
+pub fn clickable_card_with_padding<'a, M>(
+    content: Row<'a, M>,
+    msg: Option<M>,
+    padding: impl Into<Padding>,
+) -> Element<'a, M>
+where
+    M: Clone + 'a,
+{
+    button(content.align_y(Alignment::Center).padding(padding.into()))
         .on_press_maybe(msg)
         .style(theme::button::clickable_card)
         .into()

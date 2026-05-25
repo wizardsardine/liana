@@ -15,7 +15,9 @@ use liana_ui::{
         amount::*,
         button,
         card::{self, home_hint, home_warning},
-        event, form, spinner,
+        event, form,
+        payment::PaymentKind,
+        spinner,
         text::*,
     },
     font::MANROPE_MEDIUM,
@@ -32,7 +34,7 @@ use crate::{
         view::{coins, dashboard, label, message::Message, FiatAmountConverter},
         wallet::SyncStatus,
     },
-    daemon::model::{HistoryTransaction, Payment, PaymentKind, TransactionKind},
+    daemon::model::{HistoryTransaction, Payment, TransactionKind},
 };
 
 const RESCAN_WARNING: &str = "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions.";

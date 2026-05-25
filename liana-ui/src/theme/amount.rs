@@ -18,3 +18,27 @@ pub fn zeroes(theme: &Theme, blink: bool) -> Style {
     };
     Style { color: Some(col) }
 }
+
+pub fn fiat_price(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.price.zeroes),
+    }
+}
+
+pub fn spend(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.price.send),
+    }
+}
+
+pub fn receive(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.price.receive),
+    }
+}
+
+pub fn refresh(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.price.refresh),
+    }
+}
