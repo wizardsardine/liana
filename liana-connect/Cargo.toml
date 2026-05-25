@@ -24,4 +24,10 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tungstenite = { workspace = true }
+utoipa = { version = "5.4.0", features = ["uuid"], optional = true }
 uuid = { workspace = true , features = ["serde", "v4"]}
+
+[features]
+# Derive utoipa::ToSchema on the shared API DTOs. Enabled by liana-backend for
+# OpenAPI generation; GUI/business consumers build without it.
+schema = ["dep:utoipa"]

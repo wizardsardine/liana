@@ -224,13 +224,16 @@ impl BackendClient {
         &self,
         name: &str,
         descriptor: &LianaDescriptor,
-        provider_keys: &Vec<api::payload::ProviderKey>,
+        provider_keys: &[api::payload::ProviderKey],
     ) -> Result<api::Wallet, DaemonError> {
         self.request(Method::POST, "/v1/wallets", |r| {
             r.json(&api::payload::CreateWallet {
-                name,
-                descriptor,
-                provider_keys,
+                name: name.to_string(),
+                template: api::payload::CreateWalletTemplate::Descriptor {
+                    descriptor: descriptor.clone(),
+                },
+                provider_keys: provider_keys.to_vec(),
+                org_id: None,
             })
         })
         .await
@@ -264,11 +267,14 @@ impl BackendClient {
                 self.exec_request(Method::PATCH, &format!("/v1/wallets/{wallet_uuid}"), |r| {
                     r.json(&api::payload::UpdateWallet {
                         alias: None,
+                        name: None,
+                        registration: None,
                         ledger_hmac: Some(api::payload::UpdateLedgerHmac {
                             fingerprint: cfg.fingerprint.to_string(),
                             hmac: cfg.token.clone(),
                         }),
                         fingerprint_aliases: None,
+                        status: None,
                     })
                 })
                 .await?;
@@ -303,8 +309,11 @@ impl BackendClient {
             self.exec_request(Method::PATCH, &format!("/v1/wallets/{wallet_uuid}"), |r| {
                 r.json(&api::payload::UpdateWallet {
                     alias: wallet_alias,
+                    name: None,
+                    registration: None,
                     ledger_hmac: None,
                     fingerprint_aliases,
+                    status: None,
                 })
             })
             .await?;
@@ -794,8 +803,8 @@ impl Daemon for BackendWalletClient {
                 |r| {
                     r.json(&api::payload::GeneratePsbt {
                         save: false,
-                        feerate: feerate_vb,
-                        inputs: coins_outpoints,
+                        feerate: api::payload::FeeratePayload::SatVb(feerate_vb as i32),
+                        inputs: coins_outpoints.to_vec(),
                         recipients,
                     })
                 },
@@ -838,8 +847,11 @@ impl Daemon for BackendWalletClient {
                 |r| {
                     r.json(&api::payload::GenerateRbfPsbt {
                         txid: *txid,
-                        is_cancel,
-                        feerate: feerate_vb,
+                        rbf_kind: if is_cancel {
+                            api::payload::RbfKind::Cancel
+                        } else {
+                            api::payload::RbfKind::BumpFee(feerate_vb.unwrap_or(0) as i32)
+                        },
                         save: false,
                     })
                 },
@@ -873,11 +885,7 @@ impl Daemon for BackendWalletClient {
             .exec_request(
                 Method::POST,
                 &format!("/v1/wallets/{}/psbts", self.wallet_uuid),
-                |r| {
-                    r.json(&api::payload::ImportPsbt {
-                        psbt: psbt.to_string(),
-                    })
-                },
+                |r| r.json(&api::payload::ImportPsbt { psbt: psbt.clone() }),
             )
             .await
     }
@@ -937,10 +945,10 @@ impl Daemon for BackendWalletClient {
                 |r| {
                     r.json(&api::payload::GenerateRecoveryPsbt {
                         save: false,
-                        feerate: feerate_vb,
+                        feerate: api::payload::FeeratePayload::SatVb(feerate_vb as i32),
                         timelock,
                         address,
-                        inputs: coins_outpoints,
+                        inputs: coins_outpoints.to_vec(),
                     })
                 },
             )
@@ -1099,7 +1107,11 @@ impl Daemon for BackendWalletClient {
             .exec_request(
                 Method::POST,
                 &format!("/v1/wallets/{}/invitations", self.wallet_uuid),
-                |r| r.json(&api::payload::CreateWalletInvitation { email }),
+                |r| {
+                    r.json(&api::payload::CreateWalletInvitation {
+                        email: email.to_string(),
+                    })
+                },
             )
             .await
     }

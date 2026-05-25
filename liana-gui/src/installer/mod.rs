@@ -735,14 +735,16 @@ pub async fn create_remote_wallet(
         .keys
         .values()
         .filter_map(|key| {
-            key.provider_key.as_ref().map(|pk| ProviderKey {
-                fingerprint: key.master_fingerprint.to_string(),
-                uuid: pk.uuid.clone(),
-                token: pk.token.clone(),
-                provider: Provider {
-                    uuid: pk.provider.uuid.clone(),
-                    name: pk.provider.name.clone(),
-                },
+            key.provider_key.as_ref().and_then(|pk| {
+                Some(ProviderKey {
+                    fingerprint: key.master_fingerprint,
+                    uuid: pk.uuid.parse().ok()?,
+                    token: pk.token.clone(),
+                    provider: Provider {
+                        uuid: pk.provider.uuid.parse().ok()?,
+                        name: pk.provider.name.clone(),
+                    },
+                })
             })
         })
         .collect();
