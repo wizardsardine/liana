@@ -88,7 +88,7 @@ pub fn home_view<'a>(
             if sync_status.is_synced() {
                 Row::new()
                     .align_y(Alignment::Center)
-                    .push(amount_with_size(balance, H1_SIZE))
+                    .push(amount_with_font(balance, H1_SPEC))
                     .push_maybe(fiat_balance.map(|fiat| {
                         Row::new()
                             .align_y(Alignment::Center)
@@ -104,13 +104,8 @@ pub fn home_view<'a>(
                 Row::new().push(spinner::Carousel::new(
                     Duration::from_millis(1000),
                     vec![
-                        amount_with_size(balance, H1_SIZE),
-                        amount_with_size_and_colors(
-                            balance,
-                            H1_SIZE,
-                            color::GREY_4,
-                            Some(color::GREY_2),
-                        ),
+                        amount_with_font(balance, H1_SPEC),
+                        amount_with_font_blink(balance, H1_SPEC),
                     ],
                 ))
             }
@@ -341,9 +336,9 @@ pub fn payment_view<'a>(
             } else {
                 label::label_editable(vec![outpoint.clone()], tx.labels.get(&outpoint), H3_SIZE)
             })
-            .push(Container::new(amount_with_size(
+            .push(Container::new(amount_with_font(
                 &tx.tx.output[output_index].value,
-                H3_SIZE,
+                H3_SPEC,
             )))
             .push(Space::with_height(H3_SIZE))
             .push(Container::new(h3("Transaction")).width(Length::Fill))
@@ -364,7 +359,7 @@ pub fn payment_view<'a>(
                 Row::new()
                     .align_y(Alignment::Center)
                     .push(h3("Miner fee: ").style(theme::text::secondary))
-                    .push(amount_with_size(&fee_amount, H3_SIZE))
+                    .push(amount_with_font(&fee_amount, H3_SPEC))
                     .push(text(" ").size(H3_SIZE))
                     .push(
                         text(format!(

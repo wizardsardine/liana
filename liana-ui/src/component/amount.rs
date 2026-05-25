@@ -1,7 +1,7 @@
 pub use bitcoin::Amount;
-use iced::Color;
+use iced::widget::{row, Space};
 
-use crate::{color, component::text::*, font::MANROPE_BOLD, widget::*};
+use crate::{color, component::text::*, theme::amount, widget::*};
 
 pub trait DisplayAmount {
     fn to_formatted_string(&self) -> String;
@@ -15,12 +15,12 @@ impl DisplayAmount for Amount {
 
 /// Amount with default size and colors.
 pub fn amount<'a, T: 'a>(a: &Amount) -> Row<'a, T> {
-    amount_with_size(a, P1_SIZE)
+    amount_with_font(a, crate::component::text::legacy::P1_REGULAR_SPEC)
 }
 
 /// Amount with default colors.
-pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u32) -> Row<'a, T> {
-    amount_with_size_and_colors(a, size, color::GREY_3, None)
+pub fn amount_with_font<'a, T: 'a>(a: &Amount, font: TextSpec) -> Row<'a, T> {
+    render_amount(a.to_formatted_string(), font, false)
 }
 
 /// Amount with the given size and colors.
@@ -31,13 +31,8 @@ pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u32) -> Row<'a, T> {
 /// `color_after` is the color to use from the first non-zero
 /// value in `a` onwards. If `None`, the default theme value
 /// will be used.
-pub fn amount_with_size_and_colors<'a, T: 'a>(
-    a: &Amount,
-    size: u32,
-    color_before: Color,
-    color_after: Option<Color>,
-) -> Row<'a, T> {
-    render_amount(a.to_formatted_string(), size, color_before, color_after)
+pub fn amount_with_font_blink<'a, T: 'a>(a: &Amount, font: TextSpec) -> Row<'a, T> {
+    render_amount(a.to_formatted_string(), font, true)
 }
 
 pub fn unconfirmed_amount_with_size<'a, T: 'a>(a: &Amount, size: u32) -> Row<'a, T> {
@@ -114,42 +109,19 @@ fn split_at_first_non_zero(s: String) -> Option<(String, String)> {
 
 // Build the rendering elements for displaying a Bitcoin amount.
 // The text should be bolded beginning where the BTC amount is non-zero.
-fn render_amount<'a, T: 'a>(
-    amount: String,
-    size: u32,
-    color_before: Color,
-    color_after: Option<Color>,
-) -> Row<'a, T> {
+fn render_amount<'a, T: 'a>(amount: String, font: TextSpec, blink: bool) -> Row<'a, T> {
+    let size = font.size.unwrap_or(P1_SIZE);
     let spacing = if size > P1_SIZE { 10 } else { 5 };
 
-    let (before, after) = match split_at_first_non_zero(amount) {
+    let (zeroes, after) = match split_at_first_non_zero(amount) {
         Some((b, a)) => (b, a),
         None => (String::from("0.00 000 000"), String::from("")),
     };
 
-    let mut child_after = text(after).size(size).font(MANROPE_BOLD);
-    if let Some(color_after) = color_after {
-        child_after = child_after.color(color_after);
-    }
-    let row = Row::new()
-        .push(
-            text(before)
-                .font(MANROPE_BOLD)
-                .size(size)
-                .color(color_before),
-        )
-        .push(child_after);
-
-    Row::with_children(vec![
-        row.into(),
-        text("BTC")
-            .font(MANROPE_BOLD)
-            .size(size)
-            .color(color_before)
-            .into(),
-    ])
-    .spacing(spacing)
-    .align_y(iced::Alignment::Center)
+    let sats = apply(after, font).style(move |theme| amount::sats(theme, blink));
+    let zeroes = apply(zeroes, font).style(move |theme| amount::zeroes(theme, blink));
+    let btc = apply("BTC", font).style(move |theme| amount::zeroes(theme, blink));
+    row![zeroes, sats, Space::with_width(spacing), btc].align_y(iced::Alignment::Center)
 }
 
 // Build the rendering elements for displaying a Bitcoin amount.

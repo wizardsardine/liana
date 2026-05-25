@@ -313,7 +313,7 @@ pub fn spend_header<'a>(
                 .push(if tx.is_send_to_self() {
                     Container::new(h1("Self-transfer"))
                 } else {
-                    Container::new(amount_with_size(&tx.spend_amount, H1_SIZE))
+                    Container::new(amount_with_font(&tx.spend_amount, H1_SPEC))
                 })
                 .push(
                     Row::new()
@@ -324,7 +324,7 @@ pub fn spend_header<'a>(
                         } else {
                             None
                         })
-                        .push_maybe(tx.fee_amount.map(|fee| amount_with_size(&fee, H3_SIZE)))
+                        .push_maybe(tx.fee_amount.map(|fee| amount_with_font(&fee, H3_SPEC)))
                         .push(text(" ").size(H3_SIZE))
                         .push_maybe(tx.min_feerate_vb().map(|rate| {
                             text(format!("(~{} sats/vbyte)", &rate))

@@ -207,7 +207,7 @@ pub fn create_spend_tx<'a>(
             .spacing(10)
             .align_y(Alignment::Center)
             .push(p1_regular("Fee:").style(theme::text::secondary))
-            .push(amount_with_size(fee, P1_SIZE))
+            .push(amount_with_font(fee, P1_REGULAR_SPEC))
             .push_maybe(fiat_converter.map(|conv| {
                 Row::new().spacing(10).align_y(Alignment::Center).push(
                     conv.convert(*fee)
@@ -229,7 +229,7 @@ pub fn create_spend_tx<'a>(
     let selected_amount = (is_self_send || recovery_timelock.is_some()).then_some(
         Row::new()
             .spacing(5)
-            .push(amount_with_size(
+            .push(amount_with_font(
                 &Amount::from_sat(
                     coins
                         .iter()
@@ -242,7 +242,7 @@ pub fn create_spend_tx<'a>(
                         })
                         .sum(),
                 ),
-                P2_SIZE,
+                P2_REGULAR_SPEC,
             ))
             .push(p2_regular("selected").style(theme::text::secondary)),
     );
@@ -265,7 +265,7 @@ pub fn create_spend_tx<'a>(
             } else {
                 Row::new()
                     .spacing(5)
-                    .push(amount_with_size(amount_left, P2_SIZE))
+                    .push(amount_with_font(amount_left, P2_REGULAR_SPEC))
                     .push(p2_regular("left to select").style(theme::text::secondary))
             }
         } else {

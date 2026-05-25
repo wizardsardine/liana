@@ -1,3 +1,4 @@
+pub mod amount;
 pub mod badge;
 pub mod banner;
 pub mod button;

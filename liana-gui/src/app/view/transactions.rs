@@ -344,15 +344,15 @@ pub fn tx_view<'a>(
                         .push(if tx.is_send_to_self() {
                             Container::new(h1("Self-transfer"))
                         } else if tx.is_external() {
-                            Container::new(amount_with_size(&tx.incoming_amount, H1_SIZE))
+                            Container::new(amount_with_font(&tx.incoming_amount, H1_SPEC))
                         } else {
-                            Container::new(amount_with_size(&tx.outgoing_amount, H1_SIZE))
+                            Container::new(amount_with_font(&tx.outgoing_amount, H1_SPEC))
                         })
                         .push_maybe(tx.fee_amount.map(|fee_amount| {
                             Row::new()
                                 .align_y(Alignment::Center)
                                 .push(h3("Miner fee: ").style(theme::text::secondary))
-                                .push(amount_with_size(&fee_amount, H3_SIZE))
+                                .push(amount_with_font(&fee_amount, H3_SPEC))
                                 .push(text(" ").size(H3_SIZE))
                                 .push(
                                     text(format!(

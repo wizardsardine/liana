@@ -67,6 +67,16 @@ impl Palette {
                 success: color::DARK_GREEN,
                 error: color::RED,
                 accent: color::BUSINESS_BLUE_DARK,
+                card_secondary: color::CARD_TEXT_SECONDARY,
+            },
+            price: Price {
+                zeroes: color::BUSINESS_PRICE_ZEROES,
+                sats: color::BUSINESS_PRICE_SATS,
+                blink_zeroes: color::BUSINESS_PRICE_ZEROES_BLINK,
+                blink_sats: color::BUSINESS_PRICE_SATS_BLINK,
+                receive: color::SUCCESS_GREEN,
+                send: color::MINUS_RED,
+                refresh: color::BUSINESS_BLUE,
             },
             buttons: Buttons {
                 border_width: 3.0,
