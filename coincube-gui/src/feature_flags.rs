@@ -14,7 +14,7 @@
 /// Defaults to `false`. When `false`:
 ///
 /// - The "Use Passkey" toggle is hidden from the Create Cube form.
-/// - `Launcher::passkey_mode` is forced to `false` on init and after dismiss.
+/// - `Home::passkey_mode` is forced to `false` on init and after dismiss.
 /// - The `CreateCube` handler's passkey branch becomes dead code.
 /// - All passkey service code still compiles but is unreachable.
 ///

@@ -146,7 +146,7 @@ pub enum Message {
 pub enum ViewMessage {
     RequestOTP,
     OTPEdited(String),
-    BackToLauncher(Network),
+    BackToHome(Network),
 }
 
 #[derive(Debug, Clone)]
@@ -504,7 +504,7 @@ impl CoincubeLiteLogin {
                 Container::new(
                     button::secondary(Some(icon::previous_icon()), "Go back")
                         .width(Length::Fixed(200.0))
-                        .on_press(Message::View(ViewMessage::BackToLauncher(self.network))),
+                        .on_press(Message::View(ViewMessage::BackToHome(self.network))),
                 )
                 .padding(20),
             )

@@ -12,10 +12,7 @@ use crate::app::{
 };
 use coincube_ui::{
     color,
-    icon::{
-        connect_icon, cube_icon, droplet_fill_icon, lightning_icon, shield_plus_icon, shop_icon,
-        vault_icon,
-    },
+    icon::{cube_icon, droplet_fill_icon, lightning_icon, shield_plus_icon, shop_icon, vault_icon},
     theme,
     widget::{Button, Column, Element, Row, Text},
 };
@@ -34,7 +31,7 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
     let current: TopLevel = menu.into();
 
     let mut top: Column<Message> = Column::new().width(Length::Fixed(RAIL_WIDTH)).spacing(0);
-    for &t in &[TopLevel::Home, TopLevel::Spark, TopLevel::Liquid] {
+    for &t in &[TopLevel::Cube, TopLevel::Spark, TopLevel::Liquid] {
         top = top.push(item(t, current == t));
     }
 
@@ -60,7 +57,6 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
             landing,
         ));
     }
-    top = top.push(item(TopLevel::Connect, current == TopLevel::Connect));
 
     container(top)
         .width(Length::Fixed(RAIL_WIDTH))
@@ -137,12 +133,11 @@ fn marketplace_landing_menu(ctx: &NavContext<'_>) -> Menu {
 
 fn icon_for<'a>(t: TopLevel) -> Text<'a> {
     match t {
-        TopLevel::Home => cube_icon(),
+        TopLevel::Cube => cube_icon(),
         TopLevel::Spark => lightning_icon(),
         TopLevel::Liquid => droplet_fill_icon(),
         TopLevel::Vault => vault_icon(),
         TopLevel::Marketplace => shop_icon(),
-        TopLevel::Connect => connect_icon(),
     }
 }
 

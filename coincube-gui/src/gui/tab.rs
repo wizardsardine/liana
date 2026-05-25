@@ -19,9 +19,9 @@ use crate::{
     },
     dir::{CoincubeDirectory, NetworkDirectory},
     export::import_backup_at_launch,
+    home::{self, Home},
     hw::HardwareWalletConfig,
     installer::{self, Installer, UserFlow},
-    launcher::{self, Launcher},
     loader::{self, Loader},
     services::connect::{
         client::backend::{api, BackendWalletClient},
@@ -30,7 +30,7 @@ use crate::{
 };
 
 pub enum State {
-    Launcher(Launcher),
+    Home(Home),
     Installer(Installer),
     Loader(Loader),
     Login(login::CoincubeLiteLogin),
@@ -43,14 +43,14 @@ impl State {
         directory: CoincubeDirectory,
         network: Option<bitcoin::Network>,
     ) -> (Self, Task<Message>) {
-        let (launcher, command) = Launcher::new(directory, network);
-        (State::Launcher(launcher), command.map(Message::Launch))
+        let (home, command) = Home::new(directory, network);
+        (State::Home(home), command.map(Message::Launch))
     }
 }
 
 #[derive(Debug)]
 pub enum Message {
-    Launch(launcher::Message),
+    Launch(home::Message),
     Install(installer::Message),
     Load(loader::Message),
     Run(app::Message),
@@ -89,6 +89,15 @@ pub enum Message {
     },
     /// Bubbles up to GUI level to toggle the theme
     ToggleTheme,
+    /// Bubbles up to the pane so it can focus the Home tab on its
+    /// Connect section — fired when the user clicks "Sign In" on the
+    /// inline prompt rendered by a Connect-requiring feature page
+    /// (Spark → Settings → Lightning Address, Cube → Settings →
+    /// Avatar / Members).
+    OpenConnectSignIn,
+    /// Bubbles up to the pane on a Home-tab login edge so it can
+    /// broadcast a session re-check to every open Cube tab.
+    ConnectSignedIn,
 }
 
 pub struct Tab {
@@ -120,18 +129,18 @@ impl Tab {
         self.theme_mode = mode;
         match &mut self.state {
             State::App(app) => app.cache_mut().theme_mode = mode,
-            State::Launcher(launcher) => launcher.theme_mode = mode,
+            State::Home(home) => home.theme_mode = mode,
             _ => {}
         }
     }
 
     /// Apply the tab's stored theme_mode to the current state.
-    /// Call after any state transition to State::App or State::Launcher.
+    /// Call after any state transition to State::App or State::Home.
     fn sync_theme_mode(&mut self) {
         let mode = self.theme_mode;
         match &mut self.state {
             State::App(app) => app.cache_mut().theme_mode = mode,
-            State::Launcher(launcher) => launcher.theme_mode = mode,
+            State::Home(home) => home.theme_mode = mode,
             _ => {}
         }
     }
@@ -156,7 +165,7 @@ impl Tab {
         match &self.state {
             State::Installer(_) => "Installer",
             State::Loader(_) => "Loading...",
-            State::Launcher(_) => "Launcher",
+            State::Home(_) => "Home",
             State::Login(_) => "Login",
             State::PinEntry(_) => "Enter PIN",
             State::App(a) => a.title(),
@@ -175,8 +184,8 @@ impl Tab {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         use crate::app::settings::global::GlobalSettings;
         let result = match (&mut self.state, message) {
-            (State::Launcher(l), Message::Launch(msg)) => match msg {
-                launcher::Message::Install(datadir, network, init, coincube_client) => {
+            (State::Home(l), Message::Launch(msg)) => match msg {
+                home::Message::Install(datadir, network, init, coincube_client) => {
                     if !datadir.exists() {
                         // datadir is created right before launching the installer
                         // so logs can go in <datadir_path>/installer.log
@@ -189,11 +198,11 @@ impl Tab {
                             );
                         }
                     }
-                    // `coincube_client` is populated when the launcher
+                    // `coincube_client` is populated when the home
                     // already holds an authenticated Connect session (today
                     // the Recovery-Kit restore path forwards it so the
                     // installer step can skip a redundant email+OTP). Other
-                    // launcher entry points pass `None` and the relevant
+                    // home entry points pass `None` and the relevant
                     // installer step runs its own auth form as before.
                     let (install, command) = Installer::new(
                         datadir,
@@ -210,7 +219,7 @@ impl Tab {
                     self.state = State::Installer(install);
                     command.map(Message::Install)
                 }
-                launcher::Message::Run(datadir_path, cfg, network, cube) => {
+                home::Message::Run(datadir_path, cfg, network, cube) => {
                     if cube.is_passkey_cube() {
                         // Passkey Cubes don't have an encrypted mnemonic on
                         // disk — their master seed is re-derived from the
@@ -221,7 +230,7 @@ impl Tab {
                         // the mnemonic recovery flow.
                         //
                         // Refuse to open, surface a clear error to the user,
-                        // and stay on the launcher. This prevents falling
+                        // and stay on the home. This prevents falling
                         // through to the PinEntry state and crashing on the
                         // (missing) mnemonic load.
                         tracing::warn!(
@@ -270,15 +279,16 @@ impl Tab {
                     self.state = State::PinEntry(crate::pin_entry::PinEntry::new(cube, on_success));
                     Task::none()
                 }
-                launcher::Message::View(launcher::ViewMessage::ToggleTheme) => {
+                home::Message::View(home::ViewMessage::ToggleTheme) => {
                     Task::done(Message::ToggleTheme)
                 }
+                home::Message::ConnectSignedInBubble => Task::done(Message::ConnectSignedIn),
                 _ => l.update(msg).map(Message::Launch),
             },
             (State::Login(l), Message::Login(msg)) => match msg {
-                login::Message::View(login::ViewMessage::BackToLauncher(network)) => {
-                    let (launcher, command) = Launcher::new(l.datadir.clone(), Some(network));
-                    self.state = State::Launcher(launcher);
+                login::Message::View(login::ViewMessage::BackToHome(network)) => {
+                    let (home, command) = Home::new(l.datadir.clone(), Some(network));
+                    self.state = State::Home(home);
                     command.map(Message::Launch)
                 }
                 login::Message::Install(remote_backend) => {
@@ -568,17 +578,15 @@ impl Tab {
                             error!(
                                 "BackToApp called but no BreezClient stored - should not happen"
                             );
-                            // Fallback: go to launcher
-                            let (launcher, command) =
-                                Launcher::new(i.destination_path(), Some(network));
-                            self.state = State::Launcher(launcher);
+                            // Fallback: go to home
+                            let (home, command) = Home::new(i.destination_path(), Some(network));
+                            self.state = State::Home(home);
                             command.map(Message::Launch)
                         }
                     } else {
-                        // No cube settings stored, go to launcher
-                        let (launcher, command) =
-                            Launcher::new(i.destination_path(), Some(network));
-                        self.state = State::Launcher(launcher);
+                        // No cube settings stored, go to home
+                        let (home, command) = Home::new(i.destination_path(), Some(network));
+                        self.state = State::Home(home);
                         command.map(Message::Launch)
                     }
                 } else {
@@ -587,9 +595,9 @@ impl Tab {
             }
             (State::Loader(loader), Message::Load(msg)) => match msg {
                 loader::Message::View(loader::ViewMessage::SwitchNetwork) => {
-                    let (launcher, command) =
-                        Launcher::new(loader.datadir_path.clone(), Some(loader.network));
-                    self.state = State::Launcher(launcher);
+                    let (home, command) =
+                        Home::new(loader.datadir_path.clone(), Some(loader.network));
+                    self.state = State::Home(home);
                     command.map(Message::Launch)
                 }
                 loader::Message::View(loader::ViewMessage::SetupVault) => {
@@ -783,6 +791,29 @@ impl Tab {
                     app::Message::View(app::view::Message::ToggleTheme) => {
                         Task::done(Message::ToggleTheme)
                     }
+                    app::Message::View(app::view::Message::OpenConnectSignIn) => {
+                        // Re-check this tab's ConnectAccountPanel against
+                        // the keyring before deciding whether to bubble
+                        // up. When the user already signed in on another
+                        // tab the session is in the shared keyring entry
+                        // and Init can refresh this tab's panel in place;
+                        // jumping to the Home tab in that case would be
+                        // an unnecessary context switch. We only bubble
+                        // when the panel has no path to authenticating
+                        // itself.
+                        let needs_home_handoff = !app.can_restore_connect_session();
+                        let init_task = app
+                            .update(app::Message::View(app::view::Message::ConnectAccount(
+                                app::view::ConnectAccountMessage::Init,
+                            )))
+                            .map(Message::Run);
+                        if needs_home_handoff {
+                            let bubble = Task::done(Message::OpenConnectSignIn);
+                            Task::batch([init_task, bubble])
+                        } else {
+                            init_task
+                        }
+                    }
                     m => app.update(m).map(Message::Run),
                 }
             }
@@ -956,9 +987,9 @@ impl Tab {
                     }
                 }
                 crate::pin_entry::Message::Back => {
-                    // Go back to launcher
+                    // Go back to home
                     let network = pin_entry.cube().network;
-                    let (launcher, command) = Launcher::new(
+                    let (home, command) = Home::new(
                         match &pin_entry.on_success {
                             crate::pin_entry::PinEntrySuccess::LoadApp { datadir, .. } => {
                                 datadir.clone()
@@ -966,7 +997,7 @@ impl Tab {
                         },
                         Some(network),
                     );
-                    self.state = State::Launcher(launcher);
+                    self.state = State::Home(home);
                     command.map(Message::Launch)
                 }
                 m => pin_entry.update(m).map(Message::PinEntry),
@@ -1016,8 +1047,8 @@ impl Tab {
                     }
                     Err(e) => {
                         tracing::error!("Failed to create app with remote backend: {}", e);
-                        let (launcher, command) = Launcher::new(datadir, Some(network));
-                        self.state = State::Launcher(launcher);
+                        let (home, command) = Home::new(datadir, Some(network));
+                        self.state = State::Home(home);
                         command.map(Message::Launch)
                     }
                 }
@@ -1104,7 +1135,7 @@ impl Tab {
             State::Installer(v) => v.subscription().map(Message::Install),
             State::Loader(v) => v.subscription().map(Message::Load),
             State::App(v) => v.subscription().map(Message::Run),
-            State::Launcher(v) => v.subscription().map(Message::Launch),
+            State::Home(v) => v.subscription().map(Message::Launch),
             State::Login(_) => Subscription::none(),
             State::PinEntry(_) => Subscription::none(),
         }
@@ -1114,7 +1145,7 @@ impl Tab {
         match &self.state {
             State::Installer(v) => v.view().map(Message::Install),
             State::App(v) => v.view().map(Message::Run),
-            State::Launcher(v) => v.view().map(Message::Launch),
+            State::Home(v) => v.view().map(Message::Launch),
             State::Loader(v) => v.view().map(Message::Load),
             State::Login(v) => v.view().map(Message::Login),
             State::PinEntry(v) => v.view().map(Message::PinEntry),
@@ -1124,7 +1155,7 @@ impl Tab {
     pub fn stop(&mut self) {
         match &mut self.state {
             State::Loader(s) => s.stop(),
-            State::Launcher(s) => s.stop(),
+            State::Home(s) => s.stop(),
             State::Installer(s) => s.stop(),
             State::App(s) => s.stop(),
             State::Login(_) => {}

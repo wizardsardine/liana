@@ -14,7 +14,9 @@ use crate::{
     },
 };
 
-use super::{CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER};
+use super::{
+    delete_connect_secret, read_connect_secret, write_connect_secret, CONNECT_KEYRING_USER,
+};
 
 /// Stored session for per-cube auto-connect
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -240,8 +242,6 @@ pub struct ConnectAccountPanel {
     pub step: ConnectFlowStep,
     pub active_sub: ConnectSubMenu,
     pub client: CoincubeClient,
-    /// Current cube UUID for per-cube auto-connect tracking
-    current_cube_uuid: Option<String>,
     pub user: Option<User>,
     pub plan: Option<ConnectPlan>,
     pub verified_devices: Option<Vec<VerifiedDevice>>,
@@ -267,9 +267,8 @@ impl ConnectAccountPanel {
     pub fn new() -> Self {
         ConnectAccountPanel {
             step: ConnectFlowStep::CheckingSession,
-            active_sub: ConnectSubMenu::LightningAddress,
+            active_sub: ConnectSubMenu::Overview,
             client: CoincubeClient::new(),
-            current_cube_uuid: None,
             user: None,
             plan: None,
             verified_devices: None,
@@ -295,36 +294,19 @@ impl ConnectAccountPanel {
         }
     }
 
-    /// Returns the keyring key for the current cube, or None if no cube is set.
-    /// Format: "cube_{uuid}" for per-cube isolated sessions.
-    fn keyring_key_for_cube(&self) -> Option<String> {
-        self.current_cube_uuid
-            .as_ref()
-            .map(|uuid| format!("cube_{}", uuid))
-    }
-
     pub fn is_authenticated(&self) -> bool {
         matches!(self.step, ConnectFlowStep::Dashboard)
     }
 
-    /// Returns `true` if a session has been previously stored in the OS keyring
-    /// for the current cube, or in the legacy global key.
+    /// Returns `true` if a Connect session is stored in the OS keyring
+    /// under the shared global key AND parses as a valid `StoredSession`.
+    /// Mirrors `Init`'s restoration check so callers (e.g.
+    /// `can_restore_connect_session`) don't treat unparseable bytes as a
+    /// restorable session — that would skip the Home-tab handoff while
+    /// `Init` silently falls back to the Login step, leaving the user
+    /// stuck on an inline prompt with no login form.
     pub fn has_stored_session(&self) -> bool {
-        // Check cube-specific key first
-        if let Some(key) = self.keyring_key_for_cube() {
-            if keyring::Entry::new(CONNECT_KEYRING_SERVICE, &key)
-                .ok()
-                .and_then(|e| e.get_secret().ok())
-                .is_some()
-            {
-                return true;
-            }
-        }
-        // Fall back to legacy global key
-        keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER)
-            .ok()
-            .and_then(|e| e.get_secret().ok())
-            .is_some()
+        self.load_session_from_keyring().is_some()
     }
 
     pub fn session_generation(&self) -> u64 {
@@ -384,57 +366,9 @@ impl ConnectAccountPanel {
         load_contacts_data(&self.client, self.session_generation)
     }
 
-    fn load_session_from_keyring(&mut self) -> Option<StoredSession> {
-        // Try cube-specific key first
-        if let Some(key) = self.keyring_key_for_cube() {
-            if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, &key) {
-                if let Ok(bytes) = entry.get_secret() {
-                    if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
-                        return Some(session);
-                    }
-                }
-            }
-            // Cube-specific not found - try legacy global as fallback
-            if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
-                if let Ok(bytes) = entry.get_secret() {
-                    if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
-                        // Migrate into the per-cube key. `save_session_to_keyring`
-                        // writes BOTH the per-cube key and the legacy global
-                        // key (kept in sync), so we intentionally do NOT delete
-                        // the legacy credential here.
-                        //
-                        // The Launcher's ConnectAccountPanel has no
-                        // `current_cube_uuid`, so it can only ever read the
-                        // legacy global key. Deleting it here meant that
-                        // once any Cube was opened (App migrates + this used
-                        // to delete the global key), every subsequent return
-                        // to the Launcher — notably the Recovery → Launcher
-                        // navigation flow — found no session and forced the
-                        // user to sign in again. Keeping the legacy key in
-                        // sync lets the Launcher restore the current session.
-                        // Explicit logout still clears both keys via
-                        // `clear_keyring_session`.
-                        self.save_session_to_keyring(&session);
-                        log::info!(
-                            "[CONNECT] Migrated legacy session to cube-specific key for {} \
-                             (legacy key kept in sync for Launcher session restore)",
-                            key
-                        );
-                        return Some(session);
-                    }
-                }
-            }
-        } else {
-            // No cube UUID set - try legacy global key only
-            if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
-                if let Ok(bytes) = entry.get_secret() {
-                    if let Ok(session) = serde_json::from_slice::<StoredSession>(&bytes) {
-                        return Some(session);
-                    }
-                }
-            }
-        }
-        None
+    fn load_session_from_keyring(&self) -> Option<StoredSession> {
+        let bytes = read_connect_secret(CONNECT_KEYRING_USER)?;
+        serde_json::from_slice::<StoredSession>(&bytes).ok()
     }
 
     fn save_session_to_keyring(&self, session: &StoredSession) {
@@ -445,59 +379,13 @@ impl ConnectAccountPanel {
                 return;
             }
         };
-        let write = |key: &str| match keyring::Entry::new(CONNECT_KEYRING_SERVICE, key) {
-            Ok(entry) => {
-                let _ = entry.delete_credential();
-                if let Err(e) = entry.set_secret(&bytes) {
-                    log::error!(
-                        "[CONNECT] Failed to save session to keyring '{}': {}",
-                        key,
-                        e
-                    );
-                }
-            }
-            Err(e) => log::error!("[CONNECT] Keyring inaccessible for save '{}': {}", key, e),
-        };
-
-        match self.keyring_key_for_cube() {
-            Some(cube_key) => {
-                // A Cube is open. Write the isolated per-cube key AND
-                // mirror to the legacy global key. The Launcher's
-                // ConnectAccountPanel has no `current_cube_uuid` and can
-                // only read the global key, so the two MUST stay in sync —
-                // otherwise a token refresh while a Cube is open would
-                // leave the global key holding a stale session and the
-                // Recovery → Launcher restore would fail (or restore an
-                // expired token). Every save path (login, refresh,
-                // migration) funnels here, so mirroring here keeps them
-                // consistent. Explicit logout clears both keys via
-                // `clear_keyring_session`.
-                write(cube_key.as_str());
-                write(CONNECT_KEYRING_USER);
-            }
-            None => {
-                log::info!("[CONNECT] No cube UUID set, using legacy global session key");
-                write(CONNECT_KEYRING_USER);
-            }
+        if let Err(e) = write_connect_secret(CONNECT_KEYRING_USER, &bytes) {
+            log::error!("[CONNECT] Failed to save session to keyring: {}", e);
         }
     }
 
     fn clear_keyring_session(&self) {
-        // Clear cube-specific session if we have a cube UUID
-        if let Some(key) = self.keyring_key_for_cube() {
-            if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, &key) {
-                let _ = entry.delete_credential();
-            }
-        }
-        // Also clear legacy global session for migration cleanup
-        if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
-            let _ = entry.delete_credential();
-        }
-    }
-
-    /// Set the current cube UUID for per-cube auto-connect tracking
-    pub fn set_current_cube_uuid(&mut self, cube_uuid: Option<String>) {
-        self.current_cube_uuid = cube_uuid;
+        delete_connect_secret(CONNECT_KEYRING_USER);
     }
 
     fn post_login_tasks(&mut self, session: StoredSession) -> iced::Task<Message> {
@@ -508,7 +396,7 @@ impl ConnectAccountPanel {
         // Fire two messages: the in-panel state transition + the
         // app-level bootstrap that persists JWTs to `connect.json`,
         // registers the signer device via gRPC, and starts the
-        // realtime stream. The launcher login path does this at
+        // realtime stream. The home login path does this at
         // app-init via `register_signer_device_best_effort`; the
         // in-app login path previously skipped it, which left
         // "Sign via Keychain" unreachable until a full app restart.
@@ -527,7 +415,20 @@ impl ConnectAccountPanel {
     pub fn update_message(&mut self, msg: ConnectAccountMessage) -> iced::Task<Message> {
         match msg {
             ConnectAccountMessage::Init => {
-                // Per-cube session storage: if a session exists for this cube, auto-connect
+                // Already authenticated (e.g. broadcast Init from a
+                // sibling tab that just signed in): nothing to do.
+                if matches!(self.step, ConnectFlowStep::Dashboard) {
+                    return iced::Task::none();
+                }
+                // A RefreshSession spawned by a previous Init is still
+                // in flight. Firing another now would race two token
+                // refreshes against each other and double the downstream
+                // post-login bootstrap. Wait for the in-flight one to
+                // resolve (success → Dashboard; failure → Login with
+                // loading=false, which Init can pick up again).
+                if matches!(self.step, ConnectFlowStep::Login { loading: true, .. }) {
+                    return iced::Task::none();
+                }
                 if let Some(session) = self.load_session_from_keyring() {
                     let refresh_token = session.login.refresh_token.clone();
                     // Transition out of CheckingSession so re-navigation
@@ -540,7 +441,7 @@ impl ConnectAccountPanel {
                         ConnectAccountMessage::RefreshSession { refresh_token },
                     )));
                 }
-                // No session for this cube - show Login form
+                // No session stored - show Login form.
                 self.step = ConnectFlowStep::Login {
                     email: String::new(),
                     loading: false,

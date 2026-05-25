@@ -172,6 +172,12 @@ pub enum Message {
     ConnectAccount(ConnectAccountMessage),
     ConnectCube(ConnectCubeMessage),
     P2P(P2PMessage),
+    /// Bubbles up from a Connect-requiring feature page (Spark
+    /// Settings → Lightning Address, Cube Settings → Avatar / Members)
+    /// when an unauthenticated user clicks "Sign In" on the inline
+    /// prompt. The Pane intercepts it and focuses the Home tab on its
+    /// Connect section.
+    OpenConnectSignIn,
     ToggleTheme,
     DismissReceivedCelebration,
     DismissBackupWarning,

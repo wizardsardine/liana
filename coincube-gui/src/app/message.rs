@@ -148,7 +148,7 @@ pub enum Message {
     /// (REST OTP-verify or password). Carries the freshly-issued JWTs so
     /// the App can persist them to `connect.json`, register a signer
     /// device via gRPC `RegisterDevice`, and bootstrap the realtime
-    /// stream — work that the launcher path does via
+    /// stream — work that the home path does via
     /// `register_signer_device_best_effort` + `connect_stream_ready_task`
     /// at app-init time, but which the runtime in-app login flow
     /// previously skipped. See PLAN comment near `mod.rs:2374`.
