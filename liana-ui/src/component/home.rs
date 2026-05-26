@@ -7,21 +7,18 @@ use iced::{
 
 use crate::{
     component::{
-        amount::{amount_with_font, amount_with_font_blink},
-        button::{self, btn_dismiss, btn_go_to_rescan},
+        amount::{amount_with_font, amount_with_font_blink, DisplayAmount},
+        button::{btn_dismiss, btn_go_to_rescan, btn_reset_timelock},
         card::{self, info, warning},
         spinner,
         text::{
-            legacy,
             new::{self, D2_SPEC},
             text, TextSpec,
         },
     },
     icon, theme,
-    widget::{Element, Row, RowExt, SpaceExt},
+    widget::{Element, RowExt, SpaceExt},
 };
-
-use super::amount::DisplayAmount;
 
 const RESCAN_WARNING: &str = "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions.";
 
@@ -153,16 +150,16 @@ pub fn recovery_hint<'a, M: Clone + 'a>(units_left: String) -> Element<'a, M> {
 /// Warning that a recovery path is or will soon be available, with a button
 /// to reset the timelock for the affected coins.
 pub fn recovery_warning<'a, M: Clone + 'static>(coin_count: usize, reset: M) -> Element<'a, M> {
-    let content = Row::new()
-        .push(icon::warning_fill_icon().size(icon::ICON_SIZE_M as u32))
-        .push(
-            legacy::h4_regular(format!(
-                "Recovery path is or will soon be available for {coin_count} coin(s)."
-            ))
-            .width(Length::Fill),
-        )
-        .push(button::primary(Some(icon::arrow_repeat()), "Reset timelock").on_press(reset))
-        .spacing(15)
-        .align_y(Alignment::Center);
+    let content = row![
+        Space::with_width(10),
+        icon::warning_fill_icon().size(icon::ICON_SIZE_M as u32),
+        Space::with_width(15),
+        new::h3(format!(
+            "Recovery path is or will soon be available for {coin_count} coin(s)."
+        ))
+        .width(Length::Fill),
+        btn_reset_timelock(Some(reset.clone())),
+    ]
+    .align_y(Alignment::Center);
     warning(content)
 }

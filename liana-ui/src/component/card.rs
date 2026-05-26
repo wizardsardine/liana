@@ -77,8 +77,16 @@ where
     T: Into<Element<'a, M>>,
     M: Clone + 'a,
 {
+    warning_with_padding(content, 20)
+}
+
+fn warning_with_padding<'a, T, M>(content: T, padding: impl Into<Padding>) -> Element<'a, M>
+where
+    T: Into<Element<'a, M>>,
+    M: Clone + 'a,
+{
     Container::new(content)
-        .padding(CARD_PADDING)
+        .padding(padding)
         .style(theme::card::warning)
         .into()
 }
