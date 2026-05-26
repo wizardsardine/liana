@@ -543,8 +543,7 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                     },
                     None => "Free".to_string(),
                 };
-                let mut features =
-                    vec![format!("{} cubes per network", cube_limit_for(&tier))];
+                let mut features = vec![format!("{} cubes per network", cube_limit_for(&tier))];
                 features.extend(info.features.iter().cloned());
                 Some(PlanCardData {
                     name: tier.to_string(),
