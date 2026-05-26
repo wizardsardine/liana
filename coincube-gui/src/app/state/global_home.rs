@@ -2355,12 +2355,28 @@ impl State for GlobalHome {
         wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.wallet = wallet;
-        let mut tasks = vec![
-            self.load_liquid_balance(),
-            self.load_usdt_balance(),
-            self.load_pending_sends(),
-            self.restore_pending_liquid_to_vault_transfer(),
-        ];
+        let mut tasks = Vec::new();
+        if matches!(
+            self.network,
+            coincube_core::miniscript::bitcoin::Network::Bitcoin
+                | coincube_core::miniscript::bitcoin::Network::Regtest
+        ) {
+            tasks.extend([
+                self.load_liquid_balance(),
+                self.load_usdt_balance(),
+                self.load_pending_sends(),
+                self.restore_pending_liquid_to_vault_transfer(),
+            ]);
+        } else {
+            self.liquid_balance = Amount::ZERO;
+            self.usdt_balance = 0;
+            self.liquid_balance_loaded = true;
+            self.usdt_balance_loaded = true;
+            self.pending_liquid_send_sats = 0;
+            self.pending_liquid_receive_sats = 0;
+            self.pending_usdt_send_sats = 0;
+            self.pending_usdt_receive_sats = 0;
+        }
         if let Some(spark) = self.load_spark_balance() {
             tasks.push(spark);
         }

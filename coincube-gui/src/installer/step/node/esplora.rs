@@ -47,9 +47,9 @@ impl DefineEsplora {
     }
 
     pub fn apply(&mut self, ctx: &mut Context) -> bool {
-        if self.can_try_ping() {
+        if let Some(addr) = crate::node::esplora::normalize_esplora_address(&self.address.value) {
             ctx.bitcoin_backend = Some(coincubed::config::BitcoinBackend::Esplora(EsploraConfig {
-                addr: self.address.value.clone(),
+                addr,
                 token: None,
             }));
             return true;
@@ -62,7 +62,9 @@ impl DefineEsplora {
     }
 
     pub fn ping(&self) -> Result<(), Error> {
-        let client = esplora_client::Builder::new(&self.address.value)
+        let addr = crate::node::esplora::normalize_esplora_address(&self.address.value)
+            .ok_or_else(|| Error::Esplora("Invalid Esplora URL".to_string()))?;
+        let client = esplora_client::Builder::new(&addr)
             .timeout(3)
             .build_blocking();
         client

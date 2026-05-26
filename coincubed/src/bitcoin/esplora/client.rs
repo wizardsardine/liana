@@ -27,7 +27,8 @@ pub struct Client(esplora_client::blocking::BlockingClient);
 impl Client {
     /// Create a new client and verify connectivity by fetching the current tip height.
     pub fn new(config: &crate::config::EsploraConfig) -> Result<Self, Error> {
-        let mut builder = esplora_client::Builder::new(&config.addr).timeout(REQUEST_TIMEOUT_SECS);
+        let addr = normalize_esplora_base_url(&config.addr);
+        let mut builder = esplora_client::Builder::new(&addr).timeout(REQUEST_TIMEOUT_SECS);
         // The blocking esplora client uses `minreq` underneath, which has no
         // content-encoding support. If the server returns gzip/brotli-compressed
         // bodies (common for /address/:addr/txs and other large responses),
@@ -126,4 +127,23 @@ impl Client {
             .full_scan(request, stop_gap, parallel_requests)
             .map_err(Error::Client)
     }
+}
+
+fn normalize_esplora_base_url(addr: &str) -> String {
+    let mut addr = addr.trim().trim_end_matches('/').to_string();
+    for marker in [
+        "/blocks/",
+        "/block/",
+        "/tx/",
+        "/address/",
+        "/scripthash/",
+        "/mempool",
+        "/fee-estimates",
+    ] {
+        if let Some(pos) = addr.find(marker) {
+            addr.truncate(pos);
+            return addr.trim_end_matches('/').to_string();
+        }
+    }
+    addr
 }
