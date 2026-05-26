@@ -15,8 +15,8 @@ use liana_ui::{
         amount::*,
         button,
         card::{self, home_hint, home_warning},
-        event, form,
-        payment::PaymentKind,
+        form,
+        payment::{payment_card, PaymentKind, UIPayment},
         spinner,
         text::*,
     },
@@ -254,42 +254,16 @@ pub fn home_view<'a>(
 }
 
 fn event_list_view(event: &Payment) -> Element<'_, Message> {
-    let label = if let Some(label) = &event.label {
-        Some(p1_regular(label))
-    } else {
-        event.address_label.as_ref().map(|label| {
-            p1_regular(format!("address label: {label}")).style(theme::text::secondary)
-        })
-    };
-    if event.kind == PaymentKind::Incoming {
-        if let Some(t) = event.time {
-            event::confirmed_incoming_event(
-                label,
-                t,
-                &event.amount,
-                Message::SelectPayment(event.outpoint),
-            )
-        } else {
-            event::unconfirmed_incoming_event(
-                label,
-                &event.amount,
-                Message::SelectPayment(event.outpoint),
-            )
-        }
-    } else if let Some(t) = event.time {
-        event::confirmed_outgoing_event(
-            label,
-            t,
-            &event.amount,
-            Message::SelectPayment(event.outpoint),
-        )
-    } else {
-        event::unconfirmed_outgoing_event(
-            label,
-            &event.amount,
-            Message::SelectPayment(event.outpoint),
-        )
-    }
+    payment_card(
+        UIPayment {
+            label: event.label.as_deref().or(event.address_label.as_deref()),
+            kind: event.kind,
+            time: event.time,
+            amount: event.amount,
+            fiat_price: None,
+        },
+        Some(Message::SelectPayment(event.outpoint)),
+    )
 }
 
 pub fn payment_view<'a>(
