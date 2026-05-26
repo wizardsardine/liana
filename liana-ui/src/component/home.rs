@@ -115,24 +115,23 @@ pub fn balance<'a, M: Clone + 'a>(
 
 /// Sync-progress line shown below the balance while the wallet catches up.
 pub fn syncing<'a, M: Clone + 'a>(progress: SyncProgress) -> Element<'a, M> {
-    Row::new()
-        .push(
-            text(match progress {
-                SyncProgress::Blockchain(progress) => {
-                    format!("Syncing blockchain ({:.2}%)", 100.0 * progress)
-                }
-                SyncProgress::FullScan => "Syncing".to_string(),
-                SyncProgress::Transactions => "Checking for new transactions".to_string(),
-            })
-            .style(theme::text::secondary),
+    let label = match progress {
+        SyncProgress::Blockchain(progress) => {
+            format!("Syncing blockchain ({:.2}%)", 100.0 * progress)
+        }
+        SyncProgress::FullScan => "Syncing".to_string(),
+        SyncProgress::Transactions => "Checking for new transactions".to_string(),
+    };
+
+    row![
+        new::h3(label).style(|t| theme::amount::sats(t, false)),
+        spinner::typing_text_carousel("...", true, Duration::from_millis(2000), |content| text(
+            content
         )
-        .push(spinner::typing_text_carousel(
-            "...",
-            true,
-            Duration::from_millis(2000),
-            |content| text(content).style(theme::text::secondary),
-        ))
-        .into()
+        .style(|t| theme::amount::sats(t, false)),),
+    ]
+    .align_y(Alignment::End)
+    .into()
 }
 
 /// Hint showing the time left before the first recovery path becomes available.
