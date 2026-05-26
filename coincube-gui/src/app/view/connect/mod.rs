@@ -517,7 +517,6 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         }
     };
 
-    // Build plan cards from features response, or static fallback
     struct PlanCardData {
         name: String,
         tier: PlanTier,
@@ -525,35 +524,41 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         price_label: String,
     }
 
-    let cards: Vec<PlanCardData> = if let Some(ref features) = state.features {
-        features
-            .plans
-            .iter()
-            .filter_map(|info| {
-                let tier = match info.name.as_str() {
-                    "free" => PlanTier::Free,
-                    "pro" => PlanTier::Pro,
-                    "estate" | "legacy" => PlanTier::Estate,
-                    _ => return None,
-                };
-                let price_label = match &info.price {
-                    Some(p) => match cycle {
-                        BillingCycle::Monthly => format!("${}/mo", p.monthly),
-                        BillingCycle::Annual => format!("${}/yr", p.annual),
-                    },
-                    None => "Free".to_string(),
-                };
-                let mut features = vec![format!("{} cubes per network", cube_limit_for(&tier))];
-                features.extend(info.features.iter().cloned());
-                Some(PlanCardData {
-                    name: tier.to_string(),
-                    tier,
-                    features,
-                    price_label,
+    let cards: Vec<PlanCardData> = state
+        .features
+        .as_ref()
+        .map(|features| {
+            features
+                .plans
+                .iter()
+                .filter_map(|info| {
+                    let tier = match info.name.as_str() {
+                        "free" => PlanTier::Free,
+                        "pro" => PlanTier::Pro,
+                        "estate" | "legacy" => PlanTier::Estate,
+                        _ => return None,
+                    };
+                    let price_label = match &info.price {
+                        Some(p) => match cycle {
+                            BillingCycle::Monthly => format!("${}/mo", p.monthly),
+                            BillingCycle::Annual => format!("${}/yr", p.annual),
+                        },
+                        None => "Free".to_string(),
+                    };
+                    let mut features = vec![format!("{} cubes per network", cube_limit_for(&tier))];
+                    features.extend(info.features.iter().cloned());
+                    Some(PlanCardData {
+                        name: tier.to_string(),
+                        tier,
+                        features,
+                        price_label,
+                    })
                 })
-            })
-            .collect()
-    } else {
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if cards.is_empty() {
         return container(
             Column::new()
                 .push(text::h4_bold("Plan & Billing").style(theme::text::primary))
@@ -568,7 +573,7 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         )
         .padding(16)
         .into();
-    };
+    }
 
     let mut col = Column::new()
         .push(text::h4_bold("Plan & Billing").style(theme::text::primary))
