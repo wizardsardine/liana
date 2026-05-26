@@ -6,7 +6,9 @@ use crate::{
     color,
     component::{
         amount::{amount_with_font, amount_with_font_blink, unconfirmed_amount_with_size},
-        button, spinner,
+        button,
+        card::home_hint,
+        spinner,
         text::{legacy, text},
     },
     font::MANROPE_MEDIUM,
@@ -136,4 +138,25 @@ pub fn syncing<'a, M: Clone + 'a>(progress: SyncProgress) -> Element<'a, M> {
             |content| text(content).style(theme::text::secondary),
         ))
         .into()
+}
+
+/// Hint showing the time left before the first recovery path becomes available.
+pub fn recovery_hint<'a, M: Clone + 'a>(units_left: String) -> Element<'a, M> {
+    let content = Row::new()
+        .spacing(15)
+        .align_y(Alignment::Center)
+        .push(
+            legacy::h4_regular(format!(
+                "≈ {units_left} left before first recovery path becomes available.",
+            ))
+            .width(Length::Fill),
+        )
+        .push(
+            icon::tooltip_icon()
+                .size(20)
+                .style(theme::text::secondary)
+                .width(Length::Fixed(20.0)),
+        )
+        .width(Length::Fill);
+    home_hint(content)
 }

@@ -12,7 +12,7 @@ use liana_ui::{
     component::{
         amount::*,
         button,
-        card::{self, home_hint, home_warning},
+        card::{self, home_warning},
         form,
         home::{self, rescan_warning, SyncProgress},
         payment::{payment_card, PaymentKind, UIPayment},
@@ -35,24 +35,7 @@ use crate::{
 };
 
 fn recovery_hint<'a>(sequence: u32) -> Element<'a, Message> {
-    let content = Row::new()
-        .spacing(15)
-        .align_y(Alignment::Center)
-        .push(
-            legacy::h4_regular(format!(
-                "≈ {} left before first recovery path becomes available.",
-                coins::expire_message_units(sequence).join(", ")
-            ))
-            .width(Length::Fill),
-        )
-        .push(
-            icon::tooltip_icon()
-                .size(20)
-                .style(theme::text::secondary)
-                .width(Length::Fixed(20.0)),
-        )
-        .width(Length::Fill);
-    home_hint(content)
+    home::recovery_hint(coins::expire_message_units(sequence).join(", "))
 }
 
 fn recovery_warning<'a>(expiring_coins: &[bitcoin::OutPoint]) -> Element<'a, Message> {
