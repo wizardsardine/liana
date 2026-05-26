@@ -9,121 +9,25 @@ use iced::{
 use liana::miniscript::bitcoin;
 use liana_ui::{
     component::{
-        amount::*,
+        amount::amount_with_font,
         button, card, form,
-        home::{self, rescan_warning, SyncProgress},
-        payment::{self, payment_card, PaymentKind, UIPayment},
-        text::{legacy, new, Text},
+        text::{legacy, Text},
     },
     icon, theme,
-    widget::*,
+    widget::{Button, Column, ColumnExt, Element, SpaceExt},
 };
 
 use crate::{
     app::{
         cache::Cache,
         error::Error,
-        menu::{self, Menu},
-        view::{coins, dashboard, label, message::Message, FiatAmountConverter},
-        wallet::SyncStatus,
+        menu::Menu,
+        view::{dashboard, label, message::Message},
     },
-    daemon::model::{HistoryTransaction, Payment, TransactionKind},
+    daemon::model::{HistoryTransaction, TransactionKind},
 };
 
-fn recovery_hint<'a>(sequence: u32) -> Element<'a, Message> {
-    home::recovery_hint(coins::expire_message_units(sequence).join(", "))
-}
-
-fn recovery_warning<'a>(expiring_coins: &[bitcoin::OutPoint]) -> Element<'a, Message> {
-    home::recovery_warning(
-        expiring_coins.len(),
-        Message::Menu(Menu::RefreshCoins(expiring_coins.to_owned())),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn home_view<'a>(
-    balance: &'a bitcoin::Amount,
-    unconfirmed_balance: &'a bitcoin::Amount,
-    remaining_sequence: &Option<u32>,
-    fiat_converter: Option<FiatAmountConverter>,
-    expiring_coins: &[bitcoin::OutPoint],
-    events: &'a [Payment],
-    is_last_page: bool,
-    processing: bool,
-    sync_status: &SyncStatus,
-    show_rescan_warning: bool,
-) -> Element<'a, Message> {
-    let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
-    let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
-    let sync = (!sync_status.is_synced()).then_some(match sync_status {
-        SyncStatus::BlockchainSync(progress) => SyncProgress::Blockchain(*progress),
-        SyncStatus::WalletFullScan => SyncProgress::FullScan,
-        _ => SyncProgress::Transactions,
-    });
-    let balance = Column::new()
-        .push(home::balance(
-            balance,
-            fiat_balance.map(|fiat| fiat.to_display_string()),
-            sync.is_some(),
-        ))
-        .push_maybe(sync.map(home::syncing))
-        .push_maybe(
-            (unconfirmed_balance.to_sat() != 0 && sync_status.is_synced()).then(|| {
-                home::unconfirmed_balance(
-                    unconfirmed_balance,
-                    fiat_unconfirmed.map(|fiat| fiat.to_display_string()),
-                )
-            }),
-        );
-
-    let expire_warning = if expiring_coins.is_empty() {
-        remaining_sequence.map(recovery_hint)
-    } else {
-        Some(recovery_warning(expiring_coins))
-    };
-
-    let history = events.iter().fold(Column::new().spacing(10), |col, event| {
-        if event.kind != PaymentKind::SendToSelf {
-            col.push(payment_card(
-                UIPayment {
-                    label: event.label.as_deref().or(event.address_label.as_deref()),
-                    kind: event.kind,
-                    time: event.time,
-                    amount: event.amount,
-                    fiat_price: None,
-                },
-                Some(Message::SelectPayment(event.outpoint)),
-            ))
-        } else {
-            col
-        }
-    });
-
-    let see_more =
-        (!is_last_page && !events.is_empty()).then(|| payment::see_more(processing, Message::Next));
-    Column::new()
-        .push(new::d2("Balance"))
-        .push(balance)
-        .push_maybe(show_rescan_warning.then(|| {
-            rescan_warning(
-                Message::Menu(Menu::SettingsPreSelected(menu::SettingsOption::Node)),
-                Message::HideRescanWarning,
-            )
-        }))
-        .push_maybe(expire_warning)
-        .push(
-            Column::new()
-                .spacing(10)
-                .push(legacy::panel_title("Payments History"))
-                .push(history)
-                .push_maybe(see_more),
-        )
-        .spacing(20)
-        .into()
-}
-
-pub fn payment_view<'a>(
+pub fn payment_details_view<'a>(
     cache: &'a Cache,
     tx: &'a HistoryTransaction,
     output_index: usize,
