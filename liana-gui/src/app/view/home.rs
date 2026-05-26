@@ -13,7 +13,7 @@ use liana_ui::{
         button, card, form,
         home::{self, rescan_warning, SyncProgress},
         payment::{self, payment_card, PaymentKind, UIPayment},
-        text::{legacy, Text},
+        text::{legacy, new, Text},
     },
     icon, theme,
     widget::*,
@@ -103,7 +103,7 @@ pub fn home_view<'a>(
     let see_more =
         (!is_last_page && !events.is_empty()).then(|| payment::see_more(processing, Message::Next));
     Column::new()
-        .push(legacy::panel_title("Balance"))
+        .push(new::d2("Balance"))
         .push(balance)
         .push_maybe(show_rescan_warning.then(|| {
             rescan_warning(

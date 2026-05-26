@@ -6,15 +6,17 @@ use iced::{
 };
 
 use crate::{
-    color,
     component::{
         amount::{amount_with_font, amount_with_font_blink},
         button::{self, btn_dismiss, btn_go_to_rescan},
         card::{self, info, warning},
         spinner,
-        text::{legacy, new, text},
+        text::{
+            legacy,
+            new::{self, D2_SPEC},
+            text, TextSpec,
+        },
     },
-    font::MANROPE_MEDIUM,
     icon, theme,
     widget::{Element, Row, RowExt, SpaceExt},
 };
@@ -84,32 +86,28 @@ pub fn balance<'a, M: Clone + 'a>(
     fiat: Option<String>,
     syncing: bool,
 ) -> Element<'a, M> {
+    const BALANCE_FONT: TextSpec = D2_SPEC;
     if syncing {
-        Row::new()
-            .push(spinner::Carousel::new(
-                Duration::from_millis(1000),
-                vec![
-                    amount_with_font(amount, legacy::H1_SPEC),
-                    amount_with_font_blink(amount, legacy::H1_SPEC),
-                ],
-            ))
-            .wrap()
-            .into()
+        let blinking = spinner::Carousel::new(
+            Duration::from_millis(1000),
+            vec![
+                amount_with_font(amount, BALANCE_FONT),
+                amount_with_font_blink(amount, BALANCE_FONT),
+            ],
+        );
+        row![blinking].wrap().into()
     } else {
-        Row::new()
+        let fiat = fiat.map(|fiat| {
+            row![
+                Space::with_width(20),
+                new::h1(fiat).style(|t| theme::amount::zeroes(t, false))
+            ]
             .align_y(Alignment::Center)
-            .push(amount_with_font(amount, legacy::H1_SPEC))
-            .push_maybe(fiat.map(|fiat| {
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .push(Space::with_width(20))
-                    .push(
-                        text(fiat)
-                            .font(MANROPE_MEDIUM)
-                            .size(legacy::H2_SIZE)
-                            .color(color::GREY_2),
-                    )
-            }))
+        });
+
+        row![amount_with_font(amount, BALANCE_FONT)]
+            .align_y(Alignment::Center)
+            .push_maybe(fiat)
             .wrap()
             .into()
     }
