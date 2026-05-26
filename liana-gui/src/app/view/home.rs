@@ -1,5 +1,5 @@
 use chrono::{DateTime, Local, Utc};
-use std::{collections::HashMap, time::Duration, vec};
+use std::{collections::HashMap, vec};
 
 use iced::{
     alignment,
@@ -15,12 +15,10 @@ use liana_ui::{
         button,
         card::{self, home_hint, home_warning},
         form,
-        home::rescan_warning,
+        home::{self, rescan_warning, SyncProgress},
         payment::{payment_card, PaymentKind, UIPayment},
-        spinner,
         text::{legacy, Text},
     },
-    font::MANROPE_MEDIUM,
     icon::{self, ICON_SIZE_M},
     theme,
     widget::*,
@@ -36,63 +34,6 @@ use crate::{
     },
     daemon::model::{HistoryTransaction, Payment, TransactionKind},
 };
-
-fn balance_amount<'a>(
-    balance: &'a bitcoin::Amount,
-    fiat: Option<FiatAmount>,
-    syncing: bool,
-) -> Element<'a, Message> {
-    if syncing {
-        Row::new()
-            .push(spinner::Carousel::new(
-                Duration::from_millis(1000),
-                vec![
-                    amount_with_font(balance, legacy::H1_SPEC),
-                    amount_with_font_blink(balance, legacy::H1_SPEC),
-                ],
-            ))
-            .wrap()
-            .into()
-    } else {
-        Row::new()
-            .align_y(Alignment::Center)
-            .push(amount_with_font(balance, legacy::H1_SPEC))
-            .push_maybe(fiat.map(|fiat| {
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .push(Space::with_width(20))
-                    .push(
-                        fiat.to_text()
-                            .font(MANROPE_MEDIUM)
-                            .size(legacy::H2_SIZE)
-                            .color(color::GREY_2),
-                    )
-            }))
-            .wrap()
-            .into()
-    }
-}
-
-fn syncing<'a>(sync_status: &SyncStatus) -> Element<'a, Message> {
-    Row::new()
-        .push(
-            match sync_status {
-                SyncStatus::BlockchainSync(progress) => {
-                    legacy::text(format!("Syncing blockchain ({:.2}%)", 100.0 * *progress))
-                }
-                SyncStatus::WalletFullScan => legacy::text("Syncing"),
-                _ => legacy::text("Checking for new transactions"),
-            }
-            .style(theme::text::secondary),
-        )
-        .push(spinner::typing_text_carousel(
-            "...",
-            true,
-            Duration::from_millis(2000),
-            |content| legacy::text(content).style(theme::text::secondary),
-        ))
-        .into()
-}
 
 fn unconfirmed<'a>(
     unconfirmed_balance: &'a bitcoin::Amount,
@@ -205,13 +146,18 @@ pub fn home_view<'a>(
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
     let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
+    let sync = (!sync_status.is_synced()).then_some(match sync_status {
+        SyncStatus::BlockchainSync(progress) => SyncProgress::Blockchain(*progress),
+        SyncStatus::WalletFullScan => SyncProgress::FullScan,
+        _ => SyncProgress::Transactions,
+    });
     let balance = Column::new()
-        .push(balance_amount(
+        .push(home::balance(
             balance,
-            fiat_balance,
-            !sync_status.is_synced(),
+            fiat_balance.map(|fiat| fiat.to_display_string()),
+            sync.is_some(),
         ))
-        .push_maybe((!sync_status.is_synced()).then(|| syncing(sync_status)))
+        .push_maybe(sync.map(home::syncing))
         .push_maybe(
             (unconfirmed_balance.to_sat() != 0 && sync_status.is_synced())
                 .then(|| unconfirmed(unconfirmed_balance, fiat_unconfirmed)),
