@@ -5,7 +5,7 @@ use iced::{widget::Space, Alignment, Length};
 use crate::{
     color,
     component::{
-        amount::{amount_with_font, amount_with_font_blink},
+        amount::{amount_with_font, amount_with_font_blink, unconfirmed_amount_with_size},
         button, spinner,
         text::{legacy, text},
     },
@@ -39,6 +39,35 @@ pub fn rescan_warning<'a, M: Clone + 'static>(go_to_rescan: M, dismiss: M) -> El
     .padding(25)
     .style(theme::card::border)
     .into()
+}
+
+/// Unconfirmed balance line: `+ <amount> unconfirmed`, with optional fiat value.
+pub fn unconfirmed_balance<'a, M: 'a>(
+    amount: &'a bitcoin::Amount,
+    fiat: Option<String>,
+) -> Element<'a, M> {
+    Row::new()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .push(
+            text("+")
+                .size(legacy::H3_SIZE)
+                .style(theme::text::secondary),
+        )
+        .push(unconfirmed_amount_with_size(amount, legacy::H3_SIZE))
+        .push(
+            text("unconfirmed")
+                .size(legacy::H3_SIZE)
+                .style(theme::text::secondary),
+        )
+        .push_maybe(fiat.map(|fiat| {
+            Row::new()
+                .align_y(Alignment::Center)
+                .push(Space::with_width(10)) // total spacing = 20 including row spacing
+                .push(text(fiat).size(legacy::H4_SIZE).color(color::GREY_3))
+        }))
+        .wrap()
+        .into()
 }
 
 /// Progress shown while the wallet is not yet synced.

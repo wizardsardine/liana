@@ -9,7 +9,6 @@ use iced::{
 
 use liana::miniscript::bitcoin;
 use liana_ui::{
-    color,
     component::{
         amount::*,
         button,
@@ -29,42 +28,11 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::{self, Menu},
-        view::{coins, dashboard, fiat::FiatAmount, label, message::Message, FiatAmountConverter},
+        view::{coins, dashboard, label, message::Message, FiatAmountConverter},
         wallet::SyncStatus,
     },
     daemon::model::{HistoryTransaction, Payment, TransactionKind},
 };
-
-fn unconfirmed<'a>(
-    unconfirmed_balance: &'a bitcoin::Amount,
-    fiat: Option<FiatAmount>,
-) -> Element<'a, Message> {
-    Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(
-            legacy::text("+")
-                .size(legacy::H3_SIZE)
-                .style(theme::text::secondary),
-        )
-        .push(unconfirmed_amount_with_size(
-            unconfirmed_balance,
-            legacy::H3_SIZE,
-        ))
-        .push(
-            legacy::text("unconfirmed")
-                .size(legacy::H3_SIZE)
-                .style(theme::text::secondary),
-        )
-        .push_maybe(fiat.map(|fiat| {
-            Row::new()
-                .align_y(Alignment::Center)
-                .push(Space::with_width(10)) // total spacing = 20 including row spacing
-                .push(fiat.to_text().size(legacy::H4_SIZE).color(color::GREY_3))
-        }))
-        .wrap()
-        .into()
-}
 
 fn recovery_hint<'a>(sequence: u32) -> Element<'a, Message> {
     let content = Row::new()
@@ -159,8 +127,12 @@ pub fn home_view<'a>(
         ))
         .push_maybe(sync.map(home::syncing))
         .push_maybe(
-            (unconfirmed_balance.to_sat() != 0 && sync_status.is_synced())
-                .then(|| unconfirmed(unconfirmed_balance, fiat_unconfirmed)),
+            (unconfirmed_balance.to_sat() != 0 && sync_status.is_synced()).then(|| {
+                home::unconfirmed_balance(
+                    unconfirmed_balance,
+                    fiat_unconfirmed.map(|fiat| fiat.to_display_string()),
+                )
+            }),
         );
 
     let expire_warning = if expiring_coins.is_empty() {
