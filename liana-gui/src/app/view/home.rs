@@ -11,15 +11,12 @@ use liana::miniscript::bitcoin;
 use liana_ui::{
     component::{
         amount::*,
-        button,
-        card::{self, home_warning},
-        form,
+        button, card, form,
         home::{self, rescan_warning, SyncProgress},
         payment::{payment_card, PaymentKind, UIPayment},
         text::{legacy, Text},
     },
-    icon::{self, ICON_SIZE_M},
-    theme,
+    icon, theme,
     widget::*,
 };
 
@@ -39,22 +36,10 @@ fn recovery_hint<'a>(sequence: u32) -> Element<'a, Message> {
 }
 
 fn recovery_warning<'a>(expiring_coins: &[bitcoin::OutPoint]) -> Element<'a, Message> {
-    let content = Row::new()
-        .push(icon::warning_fill_icon().size(ICON_SIZE_M as u32))
-        .push(
-            legacy::h4_regular(format!(
-                "Recovery path is or will soon be available for {} coin(s).",
-                expiring_coins.len(),
-            ))
-            .width(Length::Fill),
-        )
-        .push(
-            button::primary(Some(icon::arrow_repeat()), "Reset timelock")
-                .on_press(Message::Menu(Menu::RefreshCoins(expiring_coins.to_owned()))),
-        )
-        .spacing(15)
-        .align_y(Alignment::Center);
-    home_warning(content)
+    home::recovery_warning(
+        expiring_coins.len(),
+        Message::Menu(Menu::RefreshCoins(expiring_coins.to_owned())),
+    )
 }
 
 fn see_more_button<'a>(processing: bool) -> Element<'a, Message> {

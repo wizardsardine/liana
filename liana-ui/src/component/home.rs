@@ -7,7 +7,7 @@ use crate::{
     component::{
         amount::{amount_with_font, amount_with_font_blink, unconfirmed_amount_with_size},
         button,
-        card::home_hint,
+        card::{home_hint, home_warning},
         spinner,
         text::{legacy, text},
     },
@@ -159,4 +159,21 @@ pub fn recovery_hint<'a, M: Clone + 'a>(units_left: String) -> Element<'a, M> {
         )
         .width(Length::Fill);
     home_hint(content)
+}
+
+/// Warning that a recovery path is or will soon be available, with a button
+/// to reset the timelock for the affected coins.
+pub fn recovery_warning<'a, M: Clone + 'static>(coin_count: usize, reset: M) -> Element<'a, M> {
+    let content = Row::new()
+        .push(icon::warning_fill_icon().size(icon::ICON_SIZE_M as u32))
+        .push(
+            legacy::h4_regular(format!(
+                "Recovery path is or will soon be available for {coin_count} coin(s)."
+            ))
+            .width(Length::Fill),
+        )
+        .push(button::primary(Some(icon::arrow_repeat()), "Reset timelock").on_press(reset))
+        .spacing(15)
+        .align_y(Alignment::Center);
+    home_warning(content)
 }
