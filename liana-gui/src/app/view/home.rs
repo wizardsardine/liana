@@ -18,7 +18,7 @@ use liana_ui::{
         form,
         payment::{payment_card, PaymentKind, UIPayment},
         spinner,
-        text::*,
+        text::{legacy, Text},
     },
     font::MANROPE_MEDIUM,
     icon::{self, cross_icon, ICON_SIZE_M},
@@ -47,7 +47,7 @@ fn rescan_warning<'a>() -> Element<'a, Message> {
                 Row::new()
                     .spacing(5)
                     .push(icon::warning_icon().style(theme::text::warning))
-                    .push(text(RESCAN_WARNING).style(theme::text::warning))
+                    .push(legacy::text(RESCAN_WARNING).style(theme::text::warning))
                     .align_y(Center),
             )
             .push(
@@ -90,7 +90,7 @@ pub fn home_view<'a>(
             if sync_status.is_synced() {
                 Row::new()
                     .align_y(Alignment::Center)
-                    .push(amount_with_font(balance, H1_SPEC))
+                    .push(amount_with_font(balance, legacy::H1_SPEC))
                     .push_maybe(fiat_balance.map(|fiat| {
                         Row::new()
                             .align_y(Alignment::Center)
@@ -98,7 +98,7 @@ pub fn home_view<'a>(
                             .push(
                                 fiat.to_text()
                                     .font(MANROPE_MEDIUM)
-                                    .size(H2_SIZE)
+                                    .size(legacy::H2_SIZE)
                                     .color(color::GREY_2),
                             )
                     }))
@@ -106,8 +106,8 @@ pub fn home_view<'a>(
                 Row::new().push(spinner::Carousel::new(
                     Duration::from_millis(1000),
                     vec![
-                        amount_with_font(balance, H1_SPEC),
-                        amount_with_font_blink(balance, H1_SPEC),
+                        amount_with_font(balance, legacy::H1_SPEC),
+                        amount_with_font_blink(balance, legacy::H1_SPEC),
                     ],
                 ))
             }
@@ -118,11 +118,12 @@ pub fn home_view<'a>(
                 Row::new()
                     .push(
                         match sync_status {
-                            SyncStatus::BlockchainSync(progress) => {
-                                text(format!("Syncing blockchain ({:.2}%)", 100.0 * *progress))
-                            }
-                            SyncStatus::WalletFullScan => text("Syncing"),
-                            _ => text("Checking for new transactions"),
+                            SyncStatus::BlockchainSync(progress) => legacy::text(format!(
+                                "Syncing blockchain ({:.2}%)",
+                                100.0 * *progress
+                            )),
+                            SyncStatus::WalletFullScan => legacy::text("Syncing"),
+                            _ => legacy::text("Checking for new transactions"),
                         }
                         .style(theme::text::secondary),
                     )
@@ -130,7 +131,7 @@ pub fn home_view<'a>(
                         "...",
                         true,
                         Duration::from_millis(2000),
-                        |content| text(content).style(theme::text::secondary),
+                        |content| legacy::text(content).style(theme::text::secondary),
                     )),
             )
         } else {
@@ -142,18 +143,34 @@ pub fn home_view<'a>(
                     Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
-                        .push(text("+").size(H3_SIZE).style(theme::text::secondary))
-                        .push(unconfirmed_amount_with_size(unconfirmed_balance, H3_SIZE))
                         .push(
-                            text("unconfirmed")
-                                .size(H3_SIZE)
+                            legacy::text("+")
+                                .size(legacy::H3_SIZE)
+                                .style(theme::text::secondary),
+                        )
+                        .push(unconfirmed_amount_with_size(
+                            unconfirmed_balance,
+                            legacy::H3_SIZE,
+                        ))
+                        .push(
+                            legacy::text("+")
+                                .size(legacy::H3_SIZE)
+                                .style(theme::text::secondary),
+                        )
+                        .push(unconfirmed_amount_with_size(
+                            unconfirmed_balance,
+                            legacy::H3_SIZE,
+                        ))
+                        .push(
+                            legacy::text("unconfirmed")
+                                .size(legacy::H3_SIZE)
                                 .style(theme::text::secondary),
                         )
                         .push_maybe(fiat_unconfirmed.map(|fiat| {
                             Row::new()
                                 .align_y(Alignment::Center)
                                 .push(Space::with_width(10)) // total spacing = 20 including row spacing
-                                .push(fiat.to_text().size(H4_SIZE).color(color::GREY_3))
+                                .push(fiat.to_text().size(legacy::H4_SIZE).color(color::GREY_3))
                         }))
                         .wrap(),
                 )
@@ -168,7 +185,7 @@ pub fn home_view<'a>(
                 .spacing(15)
                 .align_y(Alignment::Center)
                 .push(
-                    h4_regular(format!(
+                    legacy::h4_regular(format!(
                         "≈ {} left before first recovery path becomes available.",
                         coins::expire_message_units(sequence).join(", ")
                     ))
@@ -187,7 +204,7 @@ pub fn home_view<'a>(
         let content = Row::new()
             .push(icon::warning_fill_icon().size(ICON_SIZE_M as u32))
             .push(
-                h4_regular(format!(
+                legacy::h4_regular(format!(
                     "Recovery path is or will soon be available for {} coin(s).",
                     expiring_coins.len(),
                 ))
@@ -214,7 +231,7 @@ pub fn home_view<'a>(
         Some(
             Container::new(
                 Button::new(
-                    text(if processing {
+                    legacy::text(if processing {
                         "Fetching ..."
                     } else {
                         "See more"
@@ -238,14 +255,14 @@ pub fn home_view<'a>(
         None
     };
     Column::new()
-        .push(panel_title("Balance"))
+        .push(legacy::panel_title("Balance"))
         .push(balance)
         .push_maybe(show_rescan_warning.then_some(rescan_warning()))
         .push_maybe(expire_warning)
         .push(
             Column::new()
                 .spacing(10)
-                .push(panel_title("Payments History"))
+                .push(legacy::panel_title("Payments History"))
                 .push(history)
                 .push_maybe(see_more),
         )
@@ -287,45 +304,57 @@ pub fn payment_view<'a>(
             .push(match tx.kind {
                 TransactionKind::OutgoingSinglePayment(_)
                 | TransactionKind::OutgoingPaymentBatch(_) => {
-                    Container::new(h3("Outgoing payment")).width(Length::Fill)
+                    Container::new(legacy::h3("Outgoing payment")).width(Length::Fill)
                 }
                 TransactionKind::IncomingSinglePayment(_)
                 | TransactionKind::IncomingPaymentBatch(_) => {
-                    Container::new(h3("Incoming payment")).width(Length::Fill)
+                    Container::new(legacy::h3("Incoming payment")).width(Length::Fill)
                 }
-                _ => Container::new(h3("Payment")).width(Length::Fill),
+                _ => Container::new(legacy::h3("Payment")).width(Length::Fill),
             })
             .push(if tx.is_single_payment().is_some() {
                 // if the payment is a payment of a single payment transaction then
                 // the label of the transaction is attached to the label of the payment outpoint
                 if let Some(label) = labels_editing.get(&outpoint) {
-                    label::label_editing(vec![outpoint.clone(), txid.clone()], label, H3_SIZE)
+                    label::label_editing(
+                        vec![outpoint.clone(), txid.clone()],
+                        label,
+                        legacy::H3_SIZE,
+                    )
                 } else {
                     label::label_editable(
                         vec![outpoint.clone(), txid.clone()],
                         tx.labels.get(&outpoint),
-                        H3_SIZE,
+                        legacy::H3_SIZE,
                     )
                 }
             } else if let Some(label) = labels_editing.get(&outpoint) {
-                label::label_editing(vec![outpoint.clone()], label, H3_SIZE)
+                label::label_editing(vec![outpoint.clone()], label, legacy::H3_SIZE)
             } else {
-                label::label_editable(vec![outpoint.clone()], tx.labels.get(&outpoint), H3_SIZE)
+                label::label_editable(
+                    vec![outpoint.clone()],
+                    tx.labels.get(&outpoint),
+                    legacy::H3_SIZE,
+                )
             })
             .push(Container::new(amount_with_font(
                 &tx.tx.output[output_index].value,
-                H3_SPEC,
+                legacy::H3_SPEC,
             )))
-            .push(Space::with_height(H3_SIZE))
-            .push(Container::new(h3("Transaction")).width(Length::Fill))
+            .push(Space::with_height(legacy::H3_SIZE))
+            .push(Container::new(legacy::h3("Transaction")).width(Length::Fill))
             .push_maybe(if tx.is_batch() {
                 if let Some(label) = labels_editing.get(&txid) {
-                    Some(label::label_editing(vec![txid.clone()], label, H3_SIZE))
+                    Some(label::label_editing(
+                        vec![txid.clone()],
+                        label,
+                        legacy::H3_SIZE,
+                    ))
                 } else {
                     Some(label::label_editable(
                         vec![txid.clone()],
                         tx.labels.get(&txid),
-                        H3_SIZE,
+                        legacy::H3_SIZE,
                     ))
                 }
             } else {
@@ -334,15 +363,15 @@ pub fn payment_view<'a>(
             .push_maybe(tx.fee_amount.map(|fee_amount| {
                 Row::new()
                     .align_y(Alignment::Center)
-                    .push(h3("Miner fee: ").style(theme::text::secondary))
-                    .push(amount_with_font(&fee_amount, H3_SPEC))
-                    .push(text(" ").size(H3_SIZE))
+                    .push(legacy::h3("Miner fee: ").style(theme::text::secondary))
+                    .push(amount_with_font(&fee_amount, legacy::H3_SPEC))
+                    .push(legacy::text(" ").size(legacy::H3_SIZE))
                     .push(
-                        text(format!(
+                        legacy::text(format!(
                             "({} sats/vbyte)",
                             fee_amount.to_sat() / tx.tx.vsize() as u64
                         ))
-                        .size(H4_SIZE)
+                        .size(legacy::H4_SIZE)
                         .style(theme::text::secondary),
                     )
             }))
@@ -355,19 +384,22 @@ pub fn payment_view<'a>(
                             .format("%b. %d, %Y - %T");
                         Row::new()
                             .width(Length::Fill)
-                            .push(Container::new(text("Date:").bold()).width(Length::Fill))
-                            .push(Container::new(text(format!("{date}"))).width(Length::Shrink))
+                            .push(Container::new(legacy::text("Date:").bold()).width(Length::Fill))
+                            .push(
+                                Container::new(legacy::text(format!("{date}")))
+                                    .width(Length::Shrink),
+                            )
                     }))
                     .push(
                         Row::new()
                             .width(Length::Fill)
                             .align_y(Alignment::Center)
-                            .push(Container::new(text("Txid:").bold()).width(Length::Fill))
+                            .push(Container::new(legacy::text("Txid:").bold()).width(Length::Fill))
                             .push(
                                 Row::new()
                                     .align_y(Alignment::Center)
                                     .push(Container::new(
-                                        text(format!("{}", tx.tx.compute_txid())).small(),
+                                        legacy::text(format!("{}", tx.tx.compute_txid())).small(),
                                     ))
                                     .push(
                                         Button::new(icon::clipboard_icon())
