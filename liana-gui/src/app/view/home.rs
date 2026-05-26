@@ -2,7 +2,6 @@ use chrono::{DateTime, Local, Utc};
 use std::{collections::HashMap, vec};
 
 use iced::{
-    alignment,
     widget::{Container, Row, Space},
     Alignment, Length,
 };
@@ -13,7 +12,7 @@ use liana_ui::{
         amount::*,
         button, card, form,
         home::{self, rescan_warning, SyncProgress},
-        payment::{payment_card, PaymentKind, UIPayment},
+        payment::{self, payment_card, PaymentKind, UIPayment},
         text::{legacy, Text},
     },
     icon, theme,
@@ -40,31 +39,6 @@ fn recovery_warning<'a>(expiring_coins: &[bitcoin::OutPoint]) -> Element<'a, Mes
         expiring_coins.len(),
         Message::Menu(Menu::RefreshCoins(expiring_coins.to_owned())),
     )
-}
-
-fn see_more_button<'a>(processing: bool) -> Element<'a, Message> {
-    Container::new(
-        Button::new(
-            legacy::text(if processing {
-                "Fetching ..."
-            } else {
-                "See more"
-            })
-            .width(Length::Fill)
-            .align_x(alignment::Horizontal::Center),
-        )
-        .width(Length::Fill)
-        .padding(15)
-        .style(theme::button::transparent_border)
-        .on_press_maybe(if !processing {
-            Some(Message::Next)
-        } else {
-            None
-        }),
-    )
-    .width(Length::Fill)
-    .style(theme::card::simple)
-    .into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -111,13 +85,23 @@ pub fn home_view<'a>(
 
     let history = events.iter().fold(Column::new().spacing(10), |col, event| {
         if event.kind != PaymentKind::SendToSelf {
-            col.push(event_list_view(event))
+            col.push(payment_card(
+                UIPayment {
+                    label: event.label.as_deref().or(event.address_label.as_deref()),
+                    kind: event.kind,
+                    time: event.time,
+                    amount: event.amount,
+                    fiat_price: None,
+                },
+                Some(Message::SelectPayment(event.outpoint)),
+            ))
         } else {
             col
         }
     });
 
-    let see_more = (!is_last_page && !events.is_empty()).then(|| see_more_button(processing));
+    let see_more =
+        (!is_last_page && !events.is_empty()).then(|| payment::see_more(processing, Message::Next));
     Column::new()
         .push(legacy::panel_title("Balance"))
         .push(balance)
@@ -137,19 +121,6 @@ pub fn home_view<'a>(
         )
         .spacing(20)
         .into()
-}
-
-fn event_list_view(event: &Payment) -> Element<'_, Message> {
-    payment_card(
-        UIPayment {
-            label: event.label.as_deref().or(event.address_label.as_deref()),
-            kind: event.kind,
-            time: event.time,
-            amount: event.amount,
-            fiat_price: None,
-        },
-        Some(Message::SelectPayment(event.outpoint)),
-    )
 }
 
 pub fn payment_view<'a>(
