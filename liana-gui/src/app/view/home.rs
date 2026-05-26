@@ -4,8 +4,7 @@ use std::{collections::HashMap, time::Duration, vec};
 use iced::{
     alignment,
     widget::{Container, Row, Space},
-    Alignment::{self, Center},
-    Length,
+    Alignment, Length,
 };
 
 use liana::miniscript::bitcoin;
@@ -16,12 +15,13 @@ use liana_ui::{
         button,
         card::{self, home_hint, home_warning},
         form,
+        home::rescan_warning,
         payment::{payment_card, PaymentKind, UIPayment},
         spinner,
         text::{legacy, Text},
     },
     font::MANROPE_MEDIUM,
-    icon::{self, cross_icon, ICON_SIZE_M},
+    icon::{self, ICON_SIZE_M},
     theme,
     widget::*,
 };
@@ -36,39 +36,6 @@ use crate::{
     },
     daemon::model::{HistoryTransaction, Payment, TransactionKind},
 };
-
-const RESCAN_WARNING: &str = "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions.";
-
-fn rescan_warning<'a>() -> Element<'a, Message> {
-    Container::new(
-        Column::new()
-            .spacing(10)
-            .push(
-                Row::new()
-                    .spacing(5)
-                    .push(icon::warning_icon().style(theme::text::warning))
-                    .push(legacy::text(RESCAN_WARNING).style(theme::text::warning))
-                    .align_y(Center),
-            )
-            .push(
-                Row::new()
-                    .spacing(5)
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        button::secondary(None, "Go to rescan").on_press(Message::Menu(
-                            Menu::SettingsPreSelected(menu::SettingsOption::Node),
-                        )),
-                    )
-                    .push(
-                        button::secondary(Some(cross_icon()), "Dismiss")
-                            .on_press(Message::HideRescanWarning),
-                    ),
-            ),
-    )
-    .padding(25)
-    .style(theme::card::border)
-    .into()
-}
 
 fn balance_amount<'a>(
     balance: &'a bitcoin::Amount,
@@ -268,7 +235,12 @@ pub fn home_view<'a>(
     Column::new()
         .push(legacy::panel_title("Balance"))
         .push(balance)
-        .push_maybe(show_rescan_warning.then_some(rescan_warning()))
+        .push_maybe(show_rescan_warning.then(|| {
+            rescan_warning(
+                Message::Menu(Menu::SettingsPreSelected(menu::SettingsOption::Node)),
+                Message::HideRescanWarning,
+            )
+        }))
         .push_maybe(expire_warning)
         .push(
             Column::new()
