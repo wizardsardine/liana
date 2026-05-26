@@ -2599,6 +2599,11 @@ impl GlobalHome {
     }
 
     fn load_liquid_balance(&self) -> Task<Message> {
+        // Networks without a Breez backend (Signet/Testnet) only ever return
+        // `NetworkNotSupported` here — skip the RPC entirely to keep logs clean.
+        if !self.breez_client.is_supported() {
+            return Task::none();
+        }
         let breez_client = self.breez_client.clone();
         Task::perform(async move { breez_client.info().await }, |info| {
             if let Ok(info) = info {
@@ -2618,6 +2623,9 @@ impl GlobalHome {
 
     fn load_pending_sends(&self) -> Task<Message> {
         use crate::app::breez_liquid::assets::{asset_kind_for_id, AssetKind};
+        if !self.breez_client.is_supported() {
+            return Task::none();
+        }
         let breez_client = self.breez_client.clone();
         let network = self.network;
         Task::perform(
@@ -2693,6 +2701,9 @@ impl GlobalHome {
 
     fn load_usdt_balance(&self) -> Task<Message> {
         use crate::app::breez_liquid::assets::{asset_kind_for_id, AssetKind};
+        if !self.breez_client.is_supported() {
+            return Task::none();
+        }
         let breez_client = self.breez_client.clone();
         let network = self.network;
         Task::perform(

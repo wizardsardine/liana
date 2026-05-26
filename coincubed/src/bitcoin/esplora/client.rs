@@ -1,23 +1,37 @@
 use bdk_electrum::bdk_chain::{
-    bitcoin,
+    bitcoin::{self, BlockHash},
     spk_client::{FullScanRequest, FullScanResult, SyncRequest, SyncResult},
 };
 use bdk_esplora::{esplora_client, EsploraExt};
 
 use crate::bitcoin::BlockChainTip;
 
-const REQUEST_TIMEOUT_SECS: u64 = 30;
+const REQUEST_TIMEOUT_SECS: u64 = 90;
 
 /// An error from the Esplora client.
 #[derive(Debug)]
 pub enum Error {
     Client(Box<esplora_client::Error>),
+    /// The server's genesis block hash does not match the expected hash for the
+    /// configured Bitcoin network. Catches misconfigurations like pointing a
+    /// Signet wallet at Mutinynet at the earliest possible moment, before any
+    /// wallet state is built or synced.
+    GenesisHashMismatch {
+        expected: BlockHash,
+        server: BlockHash,
+    },
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Error::Client(e) => write!(f, "Esplora client error: '{}'.", e),
+            Error::GenesisHashMismatch { expected, server } => write!(
+                f,
+                "Esplora server returned genesis hash '{}', but the configured network expects '{}'. \
+                 The Esplora URL does not match the wallet's network.",
+                server, expected,
+            ),
         }
     }
 }
@@ -26,7 +40,14 @@ pub struct Client(esplora_client::blocking::BlockingClient);
 
 impl Client {
     /// Create a new client and verify connectivity by fetching the current tip height.
-    pub fn new(config: &crate::config::EsploraConfig) -> Result<Self, Error> {
+    ///
+    /// If `expected_genesis` is provided, also verify the server's genesis block hash
+    /// matches it — this rejects mismatched-network URLs (e.g. Mutinynet for a Signet
+    /// wallet) before any wallet state is built.
+    pub fn new(
+        config: &crate::config::EsploraConfig,
+        expected_genesis: Option<BlockHash>,
+    ) -> Result<Self, Error> {
         let addr = normalize_esplora_base_url(&config.addr);
         let mut builder = esplora_client::Builder::new(&addr).timeout(REQUEST_TIMEOUT_SECS);
         // The blocking esplora client uses `minreq` underneath, which has no
@@ -42,6 +63,14 @@ impl Client {
         let inner = builder.build_blocking();
         // Verify we can reach the server.
         inner.get_height().map_err(|e| Error::Client(Box::new(e)))?;
+        if let Some(expected) = expected_genesis {
+            let server = inner
+                .get_block_hash(0)
+                .map_err(|e| Error::Client(Box::new(e)))?;
+            if server != expected {
+                return Err(Error::GenesisHashMismatch { expected, server });
+            }
+        }
         Ok(Client(inner))
     }
 

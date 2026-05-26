@@ -289,7 +289,12 @@ fn updates(
         }
         Err(e) => {
             log::error!("Error syncing wallet: '{}'.", e);
-            thread::sleep(time::Duration::from_secs(2));
+            let retry_delay = if e.to_string().contains("status: 429") {
+                time::Duration::from_secs(60)
+            } else {
+                time::Duration::from_secs(2)
+            };
+            thread::sleep(retry_delay);
             return updates(db_conn, bit, descs, secp);
         }
     };

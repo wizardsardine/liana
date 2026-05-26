@@ -1,3 +1,4 @@
+use coincube_core::miniscript::bitcoin::{self, constants::ChainHash, hashes::Hash, BlockHash};
 use coincube_ui::{component::form, widget::*};
 use coincubed::{config::EsploraConfig, esplora_client};
 use iced::Task;
@@ -15,6 +16,7 @@ use crate::{
 pub struct DefineEsplora {
     address: form::Value<String>,
     placeholder: String,
+    network: Option<bitcoin::Network>,
 }
 
 impl DefineEsplora {
@@ -24,6 +26,7 @@ impl DefineEsplora {
 
     pub fn load_context(&mut self, ctx: &Context) {
         self.placeholder = super::super::super::connect_url(ctx.network);
+        self.network = Some(ctx.network);
     }
 
     pub fn can_try_ping(&self) -> bool {
@@ -64,12 +67,26 @@ impl DefineEsplora {
     pub fn ping(&self) -> Result<(), Error> {
         let addr = crate::node::esplora::normalize_esplora_address(&self.address.value)
             .ok_or_else(|| Error::Esplora("Invalid Esplora URL".to_string()))?;
+        let network = self
+            .network
+            .ok_or_else(|| Error::Esplora("Bitcoin network is not selected".to_string()))?;
         let client = esplora_client::Builder::new(&addr)
             .timeout(3)
             .build_blocking();
-        client
+        let height = client
             .get_height()
-            .map(|_| ())
-            .map_err(|e| Error::Esplora(e.to_string()))
+            .map_err(|e| Error::Esplora(e.to_string()))?;
+        let server_genesis = client
+            .get_block_hash(0)
+            .map_err(|e| Error::Esplora(e.to_string()))?;
+        let expected_genesis =
+            BlockHash::from_byte_array(*ChainHash::using_genesis_block(network).as_bytes());
+        if server_genesis != expected_genesis {
+            return Err(Error::Esplora(format!(
+                "Esplora URL is not for {} (height {}, genesis {})",
+                network, height, server_genesis
+            )));
+        }
+        Ok(())
     }
 }
