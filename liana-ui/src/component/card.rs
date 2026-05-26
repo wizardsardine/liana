@@ -21,7 +21,7 @@ pub fn invalid<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, 
 }
 
 /// display an error card with the message and the error in a tooltip.
-pub fn warning<'a, T: 'a>(message: String) -> Container<'a, T> {
+pub fn legacy_warning<'a, T: 'a>(message: String) -> Container<'a, T> {
     Container::new(
         Row::new()
             .spacing(20)
@@ -30,7 +30,7 @@ pub fn warning<'a, T: 'a>(message: String) -> Container<'a, T> {
             .push(text(message)),
     )
     .padding(15)
-    .style(theme::card::warning)
+    .style(theme::card::legacy_warning)
 }
 
 /// display an error card with the message and the error in a tooltip.
@@ -72,24 +72,35 @@ where
         .into()
 }
 
-pub fn home_warning<'a, T, M>(content: T) -> Element<'a, M>
+pub fn warning<'a, T, M>(content: T) -> Element<'a, M>
 where
     T: Into<Element<'a, M>>,
     M: Clone + 'a,
 {
     Container::new(content)
         .padding(CARD_PADDING)
-        .style(theme::card::home_warning)
+        .style(theme::card::warning)
         .into()
 }
 
-pub fn home_hint<'a, T, M>(content: T) -> Element<'a, M>
+pub fn soft_warning<'a, T, M>(content: T) -> Element<'a, M>
 where
     T: Into<Element<'a, M>>,
     M: Clone + 'a,
 {
     Container::new(content)
         .padding(CARD_PADDING)
-        .style(theme::card::border)
+        .style(theme::card::soft_warning)
+        .into()
+}
+
+pub fn info<'a, T, M>(content: T) -> Element<'a, M>
+where
+    T: Into<Element<'a, M>>,
+    M: Clone + 'a,
+{
+    Container::new(content)
+        .padding(CARD_PADDING)
+        .style(theme::card::info)
         .into()
 }

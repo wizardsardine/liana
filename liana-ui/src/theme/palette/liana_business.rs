@@ -443,19 +443,24 @@ impl Palette {
                     text: color::RED.into(),
                     border: color::RED.into(),
                 },
-                warning: ContainerPalette {
+                legacy_warning: ContainerPalette {
                     background: color::LIGHT_BG,
                     text: color::ORANGE.into(),
                     border: color::ORANGE.into(),
                 },
-                home_warning: ContainerPalette {
+                warning: ContainerPalette {
                     background: color::ORANGE,
-                    text: color::WHITE.into(),
-                    border: color::ORANGE.into(),
+                    text: color::DARK_TEXT_SECONDARY.into(),
+                    border: color::TRANSPARENT.into(),
                 },
-                home_hint: ContainerPalette {
+                soft_warning: ContainerPalette {
                     background: color::TRANSPARENT,
-                    text: None,
+                    text: color::ORANGE.into(),
+                    border: color::LIGHT_BORDER.into(),
+                },
+                info: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: color::DARK_TEXT_SECONDARY.into(),
                     border: color::LIGHT_BORDER.into(),
                 },
                 error: ContainerPalette {

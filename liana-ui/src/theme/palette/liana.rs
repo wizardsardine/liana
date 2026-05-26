@@ -470,19 +470,24 @@ impl Palette {
                     text: color::RED.into(),
                     border: color::RED.into(),
                 },
+                legacy_warning: ContainerPalette {
+                    background: color::LIGHT_BLACK,
+                    text: color::ORANGE.into(),
+                    border: color::ORANGE.into(),
+                },
                 warning: ContainerPalette {
                     background: color::LIGHT_BLACK,
                     text: color::ORANGE.into(),
                     border: color::ORANGE.into(),
                 },
-                home_warning: ContainerPalette {
-                    background: color::LIGHT_BLACK,
-                    text: color::ORANGE.into(),
-                    border: color::ORANGE.into(),
-                },
-                home_hint: ContainerPalette {
+                soft_warning: ContainerPalette {
                     background: color::TRANSPARENT,
-                    text: None,
+                    text: color::ORANGE.into(),
+                    border: color::GREY_7.into(),
+                },
+                info: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: color::WHITE.into(),
                     border: color::GREY_7.into(),
                 },
                 error: ContainerPalette {

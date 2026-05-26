@@ -114,9 +114,10 @@ pub struct Cards {
     pub modal: ContainerPalette,
     pub border: ContainerPalette,
     pub invalid: ContainerPalette,
+    pub legacy_warning: ContainerPalette,
     pub warning: ContainerPalette,
-    pub home_warning: ContainerPalette,
-    pub home_hint: ContainerPalette,
+    pub soft_warning: ContainerPalette,
+    pub info: ContainerPalette,
     pub error: ContainerPalette,
 }
 
