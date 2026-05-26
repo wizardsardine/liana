@@ -4,7 +4,7 @@ use iced::{Background, Border, Color};
 use super::palette::Button;
 use super::Theme;
 
-pub const BUTTON_RADIUS: f32 = 16.0;
+pub const BUTTON_RADIUS: f32 = 12.0;
 
 impl Catalog for Theme {
     type Class<'a> = StyleFn<'a, Self>;
