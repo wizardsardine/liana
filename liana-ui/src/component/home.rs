@@ -136,22 +136,17 @@ pub fn syncing<'a, M: Clone + 'a>(progress: SyncProgress) -> Element<'a, M> {
 
 /// Hint showing the time left before the first recovery path becomes available.
 pub fn recovery_hint<'a, M: Clone + 'a>(units_left: String) -> Element<'a, M> {
-    let content = Row::new()
-        .spacing(15)
-        .align_y(Alignment::Center)
-        .push(
-            legacy::h4_regular(format!(
-                "≈ {units_left} left before first recovery path becomes available.",
-            ))
-            .width(Length::Fill),
-        )
-        .push(
-            icon::tooltip_icon()
-                .size(20)
-                .style(theme::text::secondary)
-                .width(Length::Fixed(20.0)),
-        )
-        .width(Length::Fill);
+    let icon = icon::tooltip_icon().size(icon::ICON_SIZE_M as u32);
+    let content = row![
+        new::h3(format!(
+            "≈ {units_left} left before first recovery path becomes available.",
+        ))
+        .width(Length::Fill),
+        icon,
+    ]
+    .spacing(15)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
     info(content)
 }
 
