@@ -1,46 +1,45 @@
 use std::time::Duration;
 
-use iced::{widget::Space, Alignment, Length};
+use iced::{
+    widget::{column, row, Space},
+    Alignment, Length,
+};
 
 use crate::{
     color,
     component::{
         amount::{amount_with_font, amount_with_font_blink, unconfirmed_amount_with_size},
-        button,
-        card::{info, warning},
+        button::{self, btn_dismiss, btn_go_to_rescan},
+        card::{self, info, warning},
         spinner,
-        text::{legacy, text},
+        text::{legacy, new, text},
     },
     font::MANROPE_MEDIUM,
     icon, theme,
-    widget::{Column, Container, Element, Row, RowExt, SpaceExt},
+    widget::{Element, Row, RowExt, SpaceExt},
 };
 
 const RESCAN_WARNING: &str = "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions.";
 
 /// Card prompting a rescan after restoring a wallet from backup.
 pub fn rescan_warning<'a, M: Clone + 'static>(go_to_rescan: M, dismiss: M) -> Element<'a, M> {
-    Container::new(
-        Column::new()
-            .spacing(10)
-            .push(
-                Row::new()
-                    .spacing(5)
-                    .push(icon::warning_icon().style(theme::text::warning))
-                    .push(text(RESCAN_WARNING).style(theme::text::warning))
-                    .align_y(Alignment::Center),
-            )
-            .push(
-                Row::new()
-                    .spacing(5)
-                    .push(Space::with_width(Length::Fill))
-                    .push(button::secondary(None, "Go to rescan").on_press(go_to_rescan))
-                    .push(button::secondary(Some(icon::cross_icon()), "Dismiss").on_press(dismiss)),
-            ),
-    )
-    .padding(25)
-    .style(theme::card::border)
-    .into()
+    let icon = icon::warning_fill_icon().size(icon::ICON_SIZE_M as u32);
+    let msg = row![
+        Space::with_width(10),
+        icon,
+        Space::with_width(15),
+        new::h3(RESCAN_WARNING),
+    ]
+    .align_y(Alignment::Center);
+
+    let buttons = row![
+        Space::fill_width(),
+        btn_go_to_rescan(Some(go_to_rescan)),
+        btn_dismiss(Some(dismiss)),
+    ]
+    .spacing(5);
+
+    card::soft_warning(column![msg, buttons].spacing(10))
 }
 
 /// Unconfirmed balance line: `+ <amount> unconfirmed`, with optional fiat value.

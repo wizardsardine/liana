@@ -393,6 +393,14 @@ pub fn btn_reset_timelock<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     )
 }
 
+pub fn btn_go_to_rescan<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Go to rescan", BtnWidth::XL, msg)
+}
+
+pub fn btn_dismiss<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_destructive(Some(icon::big_cross_icon()), "Dismiss", BtnWidth::L, msg)
+}
+
 pub fn icon_btn<'a, T: 'a + Clone>(icon: Text<'a>, message: Option<T>) -> Button<'a, T> {
     let inner = ICON_BTN_SIZE - 2.0 * ICON_BTN_PADDING;
     Button::new(

@@ -15,8 +15,12 @@ fn bootstrap_icon<'a>(unicode: char) -> Text<'a> {
         .size(P1_SIZE)
 }
 
-pub fn cross_icon() -> Text<'static> {
+pub fn cross_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F62A}')
+}
+
+pub fn big_cross_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F00D}')
 }
 
 pub fn arrow_down() -> Text<'static> {
