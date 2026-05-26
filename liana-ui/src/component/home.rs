@@ -8,7 +8,7 @@ use iced::{
 use crate::{
     color,
     component::{
-        amount::{amount_with_font, amount_with_font_blink, unconfirmed_amount_with_size},
+        amount::{amount_with_font, amount_with_font_blink},
         button::{self, btn_dismiss, btn_go_to_rescan},
         card::{self, info, warning},
         spinner,
@@ -18,6 +18,8 @@ use crate::{
     icon, theme,
     widget::{Element, Row, RowExt, SpaceExt},
 };
+
+use super::amount::DisplayAmount;
 
 const RESCAN_WARNING: &str = "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions.";
 
@@ -47,28 +49,24 @@ pub fn unconfirmed_balance<'a, M: 'a>(
     amount: &'a bitcoin::Amount,
     fiat: Option<String>,
 ) -> Element<'a, M> {
-    Row::new()
-        .spacing(10)
+    let fiat = fiat.map(|fiat| {
+        row![
+            Space::with_width(10), // total spacing = 20 including row spacing
+            new::h3(fiat).style(|t| theme::amount::zeroes(t, false))
+        ]
         .align_y(Alignment::Center)
-        .push(
-            text("+")
-                .size(legacy::H3_SIZE)
-                .style(theme::text::secondary),
-        )
-        .push(unconfirmed_amount_with_size(amount, legacy::H3_SIZE))
-        .push(
-            text("unconfirmed")
-                .size(legacy::H3_SIZE)
-                .style(theme::text::secondary),
-        )
-        .push_maybe(fiat.map(|fiat| {
-            Row::new()
-                .align_y(Alignment::Center)
-                .push(Space::with_width(10)) // total spacing = 20 including row spacing
-                .push(text(fiat).size(legacy::H4_SIZE).color(color::GREY_3))
-        }))
-        .wrap()
-        .into()
+    });
+
+    row![
+        new::h3("+").style(|t| theme::amount::sats(t, false)),
+        new::h3(amount.to_formatted_string()).style(|t| theme::amount::zeroes(t, false)),
+        new::h3("unconfirmed").style(|t| theme::amount::sats(t, false)),
+        fiat
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center)
+    .wrap()
+    .into()
 }
 
 /// Progress shown while the wallet is not yet synced.

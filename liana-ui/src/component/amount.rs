@@ -1,7 +1,7 @@
 pub use bitcoin::Amount;
 use iced::widget::{row, Space};
 
-use crate::{color, component::text::*, theme::amount, widget::*};
+use crate::{component::text::*, theme::amount, widget::*};
 
 pub trait DisplayAmount {
     fn to_formatted_string(&self) -> String;
@@ -33,10 +33,6 @@ pub fn amount_with_font<'a, T: 'a>(a: &Amount, font: TextSpec) -> Row<'a, T> {
 /// will be used.
 pub fn amount_with_font_blink<'a, T: 'a>(a: &Amount, font: TextSpec) -> Row<'a, T> {
     render_amount(a.to_formatted_string(), font, true)
-}
-
-pub fn unconfirmed_amount_with_size<'a, T: 'a>(a: &Amount, size: u32) -> Row<'a, T> {
-    render_unconfirmed_amount(a.to_formatted_string(), size)
 }
 
 //
@@ -122,18 +118,6 @@ fn render_amount<'a, T: 'a>(amount: String, font: TextSpec, blink: bool) -> Row<
     let zeroes = apply(zeroes, font).style(move |theme| amount::zeroes(theme, blink));
     let btc = apply("BTC", font).style(move |theme| amount::zeroes(theme, blink));
     row![zeroes, sats, Space::with_width(spacing), btc].align_y(iced::Alignment::Center)
-}
-
-// Build the rendering elements for displaying a Bitcoin amount.
-fn render_unconfirmed_amount<'a, T: 'a>(amount: String, size: u32) -> Row<'a, T> {
-    let spacing = if size > P1_SIZE { 10 } else { 5 };
-
-    Row::with_children(vec![
-        text(amount).size(size).color(color::GREY_3).into(),
-        text("BTC").size(size).color(color::GREY_3).into(),
-    ])
-    .spacing(spacing)
-    .align_y(iced::Alignment::Center)
 }
 
 #[cfg(test)]
