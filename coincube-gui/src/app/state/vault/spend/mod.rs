@@ -255,6 +255,14 @@ impl State for CreateSpendPanel {
             vec![CoinStatus::Unconfirmed, CoinStatus::Confirmed]
         };
         let coin_statuses_2 = coin_statuses_1.clone();
+        // The daemon already excludes coins with daemon-known
+        // `spend_info` via the `CoinStatus` filter, but its mempool
+        // poller can lag a freshly-broadcast tx. The Wallet override
+        // fills in synthetic `spend_info` for those inputs; we then
+        // drop any coin with `spend_info` set so the Send form's
+        // spendable balance reflects the optimistic spend immediately.
+        let wallet_for_coins_1 = wallet.clone();
+        let wallet_for_coins_2 = wallet.clone();
         Task::batch(vec![
             Task::perform(
                 async move {
@@ -263,7 +271,12 @@ impl State for CreateSpendPanel {
                             .clone()
                             .list_coins(&coin_statuses_1, &[])
                             .await
-                            .map(|res| res.coins)
+                            .map(|res| {
+                                let mut coins = res.coins;
+                                wallet_for_coins_1.apply_coin_overrides(&mut coins);
+                                coins.retain(|c| c.spend_info.is_none());
+                                coins
+                            })
                             .map_err(|e| e.into()),
                         daemon1
                             .get_info()
@@ -279,7 +292,12 @@ impl State for CreateSpendPanel {
                     let coins = daemon
                         .list_coins(&coin_statuses_2, &[])
                         .await
-                        .map(|res| res.coins)
+                        .map(|res| {
+                            let mut coins = res.coins;
+                            wallet_for_coins_2.apply_coin_overrides(&mut coins);
+                            coins.retain(|c| c.spend_info.is_none());
+                            coins
+                        })
                         .map_err(Error::from)?;
                     let mut targets = HashSet::<LabelItem>::new();
                     for coin in coins {

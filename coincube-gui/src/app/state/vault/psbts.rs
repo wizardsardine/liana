@@ -77,8 +77,13 @@ impl State for PsbtsPanel {
                     self.warning = Some(e);
                     return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
-                Ok(txs) => {
+                Ok(mut txs) => {
                     self.warning = None;
+                    // Optimistic Pending->Broadcast override for txs
+                    // the user just broadcast locally, until the
+                    // daemon's mempool poller reflects the spend in
+                    // its derived `SpendStatus`.
+                    self.wallet.apply_spend_tx_overrides(&mut txs);
                     self.spend_txs = txs;
                     if let Some(tx) = &self.selected_tx {
                         if let Some(tx) = self.spend_txs.iter().find(|spend_tx| {

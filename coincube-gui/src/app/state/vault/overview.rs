@@ -417,6 +417,12 @@ impl State for VaultOverview {
         let daemon2 = daemon.clone();
         let now: u32 = now().as_secs().try_into().unwrap();
         self.last_reload = Instant::now();
+        // Apply the optimistic-broadcast override so the Vault balance
+        // summary on this panel reduces immediately after the user
+        // broadcasts, instead of waiting for the daemon's mempool
+        // poller to flag the spend. Mirrors the override applied to
+        // the central `Cache.coins()`.
+        let wallet_for_coins = self.wallet.clone();
         Task::batch(vec![
             Task::perform(
                 async move {
@@ -436,7 +442,11 @@ impl State for VaultOverview {
                     daemon2
                         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
                         .await
-                        .map(|res| res.coins)
+                        .map(|res| {
+                            let mut coins = res.coins;
+                            wallet_for_coins.apply_coin_overrides(&mut coins);
+                            coins
+                        })
                         .map_err(|e| e.into())
                 },
                 Message::Coins,

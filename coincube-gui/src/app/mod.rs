@@ -2279,7 +2279,18 @@ impl App {
                 }
             }
             Message::UpdateDaemonCache(res) => match res {
-                Ok(daemon_cache) => {
+                Ok(mut daemon_cache) => {
+                    // Apply optimistic-broadcast overrides before the
+                    // cache is published: reconcile drops entries the
+                    // daemon now reflects on its own, then any still-
+                    // pending broadcasts get synthetic `spend_info` so
+                    // `coins_summary` (Vault balance) and every other
+                    // `cache.coins()` consumer treats the inputs as
+                    // already spent.
+                    if let Some(wallet) = &self.wallet {
+                        wallet.reconcile_with_coins(&daemon_cache.coins);
+                        wallet.apply_coin_overrides(&mut daemon_cache.coins);
+                    }
                     self.cache.daemon_cache = daemon_cache;
                     return Task::done(Message::CacheUpdated);
                 }

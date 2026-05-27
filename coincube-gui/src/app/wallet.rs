@@ -1,15 +1,18 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use crate::daemon::model::{Coin, HistoryTransaction, SpendStatus, SpendTx};
 use crate::dir::CoincubeDirectory;
 use crate::{
     app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig, node::NodeType, signer::Signer,
 };
+use coincubed::commands::LCSpendInfo;
 
 use coincube_core::{miniscript::bitcoin, signer::MasterSigner};
 
 use coincube_core::descriptors::CoincubeDescriptor;
 use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
+use coincube_core::miniscript::bitcoin::{Network, OutPoint, Transaction, Txid};
 
 use super::settings::{WalletId, WalletSettings};
 
@@ -29,6 +32,27 @@ pub fn wallet_name(main_descriptor: &CoincubeDescriptor) -> String {
     )
 }
 
+/// In-memory record of a transaction the user has just broadcast from
+/// this wallet. The daemon derives `SpendStatus::Broadcast` and
+/// `coin.spend_info` from its mempool poller; until that poller observes
+/// the tx, the GUI would otherwise show the spend as if it had never
+/// happened — stale Pending PSBTs, an un-debited balance, no entry in
+/// the Transactions list. Holding the broadcast data here lets the
+/// panels apply optimistic overrides until the daemon catches up.
+///
+/// Captures only what the panels need to synthesize their views:
+/// the broadcast `Transaction`, the input `Coin`s being spent, the
+/// PSBT's change indices, and the wallet's network. Entries are
+/// cleared by `reconcile_with_coins` once daemon-side state reflects
+/// the spend.
+#[derive(Debug, Clone)]
+pub struct RecentBroadcast {
+    pub tx: Transaction,
+    pub input_coins: Vec<Coin>,
+    pub change_indexes: Vec<usize>,
+    pub network: Network,
+}
+
 #[derive(Debug, Clone)]
 pub struct Wallet {
     pub name: String,
@@ -42,6 +66,12 @@ pub struct Wallet {
     pub border_wallet_fingerprints: HashSet<Fingerprint>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
     pub signer: Option<Arc<Signer>>,
+    /// Txids the user has just broadcast locally, mapped to the data
+    /// needed to synthesize coin/tx/PSBT overrides until the daemon
+    /// catches up. `Arc<Mutex<...>>` so the map is shared across every
+    /// `Arc<Wallet>` clone held by the panels and the BroadcastModal —
+    /// recording happens in one place, every reader sees it.
+    pub recently_broadcast: Arc<Mutex<HashMap<Txid, RecentBroadcast>>>,
 }
 
 impl Wallet {
@@ -62,6 +92,152 @@ impl Wallet {
             border_wallet_fingerprints: HashSet::new(),
             hardware_wallets: Vec::new(),
             signer: None,
+            recently_broadcast: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Records a freshly-broadcast transaction so the panels can apply
+    /// optimistic overrides until the daemon's mempool poller catches
+    /// up. Only call after `broadcast_spend_tx` has returned `Ok`.
+    pub fn record_broadcast(
+        &self,
+        tx: Transaction,
+        input_coins: Vec<Coin>,
+        change_indexes: Vec<usize>,
+        network: Network,
+    ) {
+        let txid = tx.compute_txid();
+        if let Ok(mut map) = self.recently_broadcast.lock() {
+            map.insert(
+                txid,
+                RecentBroadcast {
+                    tx,
+                    input_coins,
+                    change_indexes,
+                    network,
+                },
+            );
+        }
+    }
+
+    /// Adds synthetic `spend_info` to coins whose outpoints match the
+    /// inputs of a recently-broadcast tx. Daemon-provided `spend_info`
+    /// is preserved if already present (daemon view is the source of
+    /// truth once available).
+    pub fn apply_coin_overrides(&self, coins: &mut [Coin]) {
+        let Ok(map) = self.recently_broadcast.lock() else {
+            return;
+        };
+        if map.is_empty() {
+            return;
+        }
+        let mut outpoint_to_txid: HashMap<OutPoint, Txid> = HashMap::new();
+        for (txid, rb) in map.iter() {
+            for coin in &rb.input_coins {
+                outpoint_to_txid.insert(coin.outpoint, *txid);
+            }
+        }
+        for coin in coins.iter_mut() {
+            if coin.spend_info.is_none() {
+                if let Some(txid) = outpoint_to_txid.get(&coin.outpoint) {
+                    coin.spend_info = Some(LCSpendInfo {
+                        txid: *txid,
+                        height: None,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Promotes `Pending` PSBTs to `Broadcast` when the user has
+    /// already broadcast them locally but the daemon hasn't yet
+    /// reflected the spend in its coin state. Doubles as a
+    /// reconciliation point: any tx the daemon now reports as
+    /// `Broadcast`/`Spent`/`Deprecated` is a signal it has caught up,
+    /// so we drop our optimistic entry — the daemon view becomes the
+    /// source of truth and stays that way.
+    pub fn apply_spend_tx_overrides(&self, txs: &mut [SpendTx]) {
+        let Ok(mut map) = self.recently_broadcast.lock() else {
+            return;
+        };
+        if map.is_empty() {
+            return;
+        }
+        for tx in txs.iter_mut() {
+            let txid = tx.psbt.unsigned_tx.compute_txid();
+            match tx.status {
+                SpendStatus::Pending => {
+                    if map.contains_key(&txid) {
+                        tx.status = SpendStatus::Broadcast;
+                    }
+                }
+                SpendStatus::Broadcast
+                | SpendStatus::Spent
+                | SpendStatus::Deprecated => {
+                    map.remove(&txid);
+                }
+            }
+        }
+    }
+
+    /// Returns synthesized pending `HistoryTransaction`s for any
+    /// recently-broadcast tx not already present in `existing_txids`.
+    /// The Transactions panel merges these with daemon-supplied
+    /// pending txs so the broadcast shows up immediately. Also drops
+    /// entries the daemon now lists itself — that's the most reliable
+    /// signal for txs without change (which can't be reconciled via
+    /// `reconcile_with_coins`'s output-coin check).
+    pub fn synthesized_pending_history_txs(
+        &self,
+        existing_txids: &HashSet<Txid>,
+    ) -> Vec<HistoryTransaction> {
+        let Ok(mut map) = self.recently_broadcast.lock() else {
+            return Vec::new();
+        };
+        if map.is_empty() {
+            return Vec::new();
+        }
+        map.retain(|txid, _| !existing_txids.contains(txid));
+        map.values()
+            .map(|rb| {
+                HistoryTransaction::new(
+                    rb.tx.clone(),
+                    None,
+                    None,
+                    rb.input_coins.clone(),
+                    rb.change_indexes.clone(),
+                    rb.network,
+                )
+            })
+            .collect()
+    }
+
+    /// Drops entries the daemon has caught up on. Two signals: an
+    /// input coin now carries `spend_info` pointing to our txid, or
+    /// the broadcast tx's outputs have appeared as coins (only happens
+    /// once the daemon has seen the tx). Cleaning up here keeps the
+    /// override from masking real changes — e.g. if the user later
+    /// RBFs the tx, we want the daemon's view to win.
+    pub fn reconcile_with_coins(&self, coins: &[Coin]) {
+        let Ok(mut map) = self.recently_broadcast.lock() else {
+            return;
+        };
+        if map.is_empty() {
+            return;
+        }
+        let mut observed: HashSet<Txid> = HashSet::new();
+        for coin in coins {
+            if map.contains_key(&coin.outpoint.txid) {
+                observed.insert(coin.outpoint.txid);
+            }
+            if let Some(info) = coin.spend_info {
+                if map.contains_key(&info.txid) {
+                    observed.insert(info.txid);
+                }
+            }
+        }
+        for txid in observed {
+            map.remove(&txid);
         }
     }
 
