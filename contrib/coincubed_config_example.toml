@@ -24,7 +24,7 @@ main_descriptor = "wsh(or_d(pk([0dd8c6f0/48'/1'/0'/2']tpubDFMbZ7U5k5hEfsttnZTKMm
 # How often should it poll the Bitcoin backend for updates?
 [bitcoin_config]
 network = "testnet"
-poll_interval_secs = 30
+poll_interval_secs = 10
 
 # This section depends on the Bitcoin backend being used.
 #

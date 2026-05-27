@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     convert::TryInto,
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use coincube_core::{
@@ -20,6 +21,11 @@ use iced::Task;
 /// pagination without needing 50+ transactions in a single wallet. Matches
 /// the PAGE_SIZE used by the Spark and Liquid Transactions panels.
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 10;
+
+/// Minimum gap between background `Message::Tick` reloads. Matches
+/// `HOME_RELOAD_MAX_TTL` on the Vault overview so the two panels surface
+/// new mempool/incoming activity on the same cadence.
+const TRANSACTIONS_RELOAD_MAX_TTL: Duration = Duration::from_secs(10);
 
 use crate::{
     app::{
@@ -89,6 +95,11 @@ pub struct VaultTransactionsPanel {
     /// overwrite fresher state. (Pagination fetches are guarded separately
     /// by `pending_page`.)
     reload_token: u64,
+    /// Timestamp of the last `reload` dispatch — used by the `Message::Tick`
+    /// handler to refresh `pending_txs` on a `TRANSACTIONS_RELOAD_MAX_TTL`
+    /// cadence so incoming mempool deposits surface without the user
+    /// manually leaving and re-entering the panel.
+    last_reload: Instant,
 }
 
 impl VaultTransactionsPanel {
@@ -110,6 +121,7 @@ impl VaultTransactionsPanel {
             current_page: 0,
             pending_page: None,
             reload_token: 0,
+            last_reload: Instant::now(),
         }
     }
 
@@ -287,6 +299,21 @@ impl State for VaultTransactionsPanel {
                     return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
+            Message::Tick => {
+                // Background refresh so a new mempool deposit shows up without
+                // the user navigating away and back. Gated to avoid disturbing
+                // an active drill-down: only reload when sitting on page 0, no
+                // tx selected, no fetch in flight, and the previous reload was
+                // long enough ago to be worth re-asking the daemon.
+                if self.current_page == 0
+                    && self.selected_tx.is_none()
+                    && self.pending_page.is_none()
+                    && !self.processing
+                    && Instant::now() > self.last_reload + TRANSACTIONS_RELOAD_MAX_TTL
+                {
+                    return self.reload(Some(daemon), Some(self.wallet.clone()));
+                }
+            }
             Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
                 return self.reload(Some(daemon), Some(self.wallet.clone()));
             }
@@ -512,6 +539,7 @@ impl State for VaultTransactionsPanel {
         self.page_cache.clear();
         self.pending_txs.clear();
         self.displayed_txs.clear();
+        self.last_reload = Instant::now();
         let now: u32 = now().as_secs().try_into().unwrap();
         Task::batch(vec![Task::perform(
             async move {
