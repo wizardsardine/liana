@@ -772,8 +772,9 @@ pub mod global {
         Free,
         /// Pro Connect account — 4 Cubes per network (with Lightning address & avatar).
         Pro,
-        /// Legacy Connect account — 7 Cubes per network (with Lightning address & avatar).
-        Legacy,
+        /// Estate Connect account — 7 Cubes per network (with Lightning address & avatar).
+        #[serde(alias = "legacy")]
+        Estate,
     }
 
     impl AccountTier {
@@ -782,7 +783,7 @@ pub mod global {
             match self {
                 Self::Free => 2,
                 Self::Pro => 4,
-                Self::Legacy => 7,
+                Self::Estate => 7,
             }
         }
 
@@ -790,7 +791,7 @@ pub mod global {
             match self {
                 Self::Free => "Free",
                 Self::Pro => "Pro",
-                Self::Legacy => "Legacy",
+                Self::Estate => "Estate",
             }
         }
     }
