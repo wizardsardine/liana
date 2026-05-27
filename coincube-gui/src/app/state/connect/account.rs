@@ -553,8 +553,11 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::EmailChanged(email) => match &mut self.step {
-                ConnectFlowStep::Login { email: e, loading, }
-                | ConnectFlowStep::Register { email: e, loading, } => { *e = email; *loading = false; }
+                ConnectFlowStep::Login { email: e, loading }
+                | ConnectFlowStep::Register { email: e, loading } => {
+                    *e = email;
+                    *loading = false;
+                }
                 _ => {}
             },
 
@@ -629,7 +632,7 @@ impl ConnectAccountPanel {
 
             ConnectAccountMessage::OtpRequested { email, is_signup } => {
                 self.error = None;
-                
+
                 self.step = ConnectFlowStep::OtpVerification {
                     email,
                     otp: String::new(),
@@ -1017,7 +1020,7 @@ impl ConnectAccountPanel {
                     ConnectFlowStep::OtpVerification { sending, .. } => {
                         *sending = false;
                     }
-     
+
                     _ => {}
                 }
             }
