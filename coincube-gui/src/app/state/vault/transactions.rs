@@ -302,16 +302,78 @@ impl State for VaultTransactionsPanel {
             Message::Tick => {
                 // Background refresh so a new mempool deposit shows up without
                 // the user navigating away and back. Gated to avoid disturbing
-                // an active drill-down: only reload when sitting on page 0, no
+                // an active drill-down: only fire when sitting on page 0, no
                 // tx selected, no fetch in flight, and the previous reload was
                 // long enough ago to be worth re-asking the daemon.
+                //
+                // Critically, this path does NOT clear `page_cache`,
+                // `pending_txs`, `displayed_txs`, or set `processing = true` —
+                // the existing rows stay rendered until the response replaces
+                // them atomically via `BackgroundHistoryTransactions`. That
+                // avoids the periodic "list disappears, loading flashes"
+                // glitch that would happen if we routed Tick through the
+                // user-initiated `reload()` every 10 s.
                 if self.current_page == 0
                     && self.selected_tx.is_none()
                     && self.pending_page.is_none()
                     && !self.processing
                     && Instant::now() > self.last_reload + TRANSACTIONS_RELOAD_MAX_TTL
                 {
-                    return self.reload(Some(daemon), Some(self.wallet.clone()));
+                    self.reload_token = self.reload_token.wrapping_add(1);
+                    let token = self.reload_token;
+                    self.last_reload = Instant::now();
+                    let daemon = daemon.clone();
+                    let now: u32 = now().as_secs().try_into().unwrap();
+                    return Task::perform(
+                        async move {
+                            let mut txs = daemon
+                                .list_history_txs(0, now, HISTORY_EVENT_PAGE_SIZE)
+                                .await?;
+                            txs.sort_by(|a, b| a.compare(b));
+                            let pending_txs = daemon.list_pending_txs().await?;
+                            Ok((pending_txs, txs))
+                        },
+                        move |result| Message::BackgroundHistoryTransactions(token, result),
+                    );
+                }
+            }
+            Message::BackgroundHistoryTransactions(token, res) => {
+                // Drop responses superseded by a newer reload (user-driven or
+                // background) — same staleness guard as `HistoryTransactions`.
+                if token != self.reload_token {
+                    return Task::none();
+                }
+                match res {
+                    Err(e) => {
+                        // Silently log: a periodic background refresh that
+                        // fails shouldn't pop an error modal over a working
+                        // view. The next Tick will retry.
+                        tracing::warn!(
+                            target: "coincube_gui::vault::transactions",
+                            "background tx refresh failed: {}",
+                            e
+                        );
+                    }
+                    Ok((pending_txs, page_txs)) => {
+                        self.warning = None;
+                        self.pending_txs = pending_txs;
+                        // Only replace the page-0 cache when the user is
+                        // actually still viewing page 0 and isn't mid-NextPage.
+                        // If they've paginated forward (current_page > 0) or a
+                        // NextPage fetch is in flight (`pending_page.is_some()`),
+                        // overwriting page_cache or last_page_index here would
+                        // yank them back to page 0 or contradict the NextPage
+                        // response that's about to arrive.
+                        if self.current_page == 0 && self.pending_page.is_none() {
+                            if (page_txs.len() as u64) < HISTORY_EVENT_PAGE_SIZE {
+                                self.last_page_index = Some(0);
+                            } else {
+                                self.last_page_index = None;
+                            }
+                            self.page_cache = vec![page_txs];
+                        }
+                        self.refresh_displayed();
+                    }
                 }
             }
             Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
