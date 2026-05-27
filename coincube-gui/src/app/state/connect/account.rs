@@ -553,12 +553,17 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::EmailChanged(email) => match &mut self.step {
-                ConnectFlowStep::Login { email: e, .. }
-                | ConnectFlowStep::Register { email: e, .. } => *e = email,
+                ConnectFlowStep::Login { email: e, loading }
+                | ConnectFlowStep::Register { email: e, loading } => {
+                    *e = email;
+                    *loading = false;
+                }
                 _ => {}
             },
 
             ConnectAccountMessage::SubmitLogin => {
+                self.error = None;
+
                 let ConnectFlowStep::Login { email, loading } = &mut self.step else {
                     return iced::Task::none();
                 };
@@ -626,6 +631,8 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::OtpRequested { email, is_signup } => {
+                self.error = None;
+
                 self.step = ConnectFlowStep::OtpVerification {
                     email,
                     otp: String::new(),
@@ -1003,6 +1010,19 @@ impl ConnectAccountPanel {
             }
             ConnectAccountMessage::Error(error_msg) => {
                 self.error = Some(error_msg);
+
+                match &mut self.step {
+                    ConnectFlowStep::Login { loading, .. }
+                    | ConnectFlowStep::Register { loading, .. } => {
+                        *loading = false;
+                    }
+
+                    ConnectFlowStep::OtpVerification { sending, .. } => {
+                        *sending = false;
+                    }
+
+                    _ => {}
+                }
             }
             ConnectAccountMessage::BillingHistoryLoaded(result, gen) => {
                 if gen == self.session_generation {
