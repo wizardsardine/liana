@@ -227,9 +227,12 @@ impl PsbtState {
                 // `coin.spend_info` (filled in by its mempool poller),
                 // so an immediate reload would overwrite our optimistic
                 // `Broadcast` status with stale `Pending` and re-expose
-                // the Broadcast button. The parent `PsbtsPanel` picks
-                // the txid up via `just_broadcast_txid()` so the list
-                // view also reflects the broadcast on its next refresh.
+                // the Broadcast button. The list view stays consistent
+                // because `BroadcastModal` calls `Wallet::record_broadcast`
+                // on RPC success, and `PsbtsPanel`'s `SpendTxs` handler
+                // runs `Wallet::apply_spend_tx_overrides` on every
+                // refresh to promote matching Pending entries to
+                // Broadcast.
                 return cancel;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Delete)) => {
