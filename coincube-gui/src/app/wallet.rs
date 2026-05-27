@@ -1,15 +1,18 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use crate::daemon::model::{Coin, HistoryTransaction, SpendStatus, SpendTx};
 use crate::dir::CoincubeDirectory;
 use crate::{
     app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig, node::NodeType, signer::Signer,
 };
+use coincubed::commands::LCSpendInfo;
 
 use coincube_core::{miniscript::bitcoin, signer::MasterSigner};
 
 use coincube_core::descriptors::CoincubeDescriptor;
 use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
+use coincube_core::miniscript::bitcoin::{Network, OutPoint, Transaction, Txid};
 
 use super::settings::{WalletId, WalletSettings};
 
@@ -29,6 +32,27 @@ pub fn wallet_name(main_descriptor: &CoincubeDescriptor) -> String {
     )
 }
 
+/// In-memory record of a transaction the user has just broadcast from
+/// this wallet. The daemon derives `SpendStatus::Broadcast` and
+/// `coin.spend_info` from its mempool poller; until that poller observes
+/// the tx, the GUI would otherwise show the spend as if it had never
+/// happened — stale Pending PSBTs, an un-debited balance, no entry in
+/// the Transactions list. Holding the broadcast data here lets the
+/// panels apply optimistic overrides until the daemon catches up.
+///
+/// Captures only what the panels need to synthesize their views:
+/// the broadcast `Transaction`, the input `Coin`s being spent, the
+/// PSBT's change indices, and the wallet's network. Entries are
+/// cleared by `reconcile_with_coins` once daemon-side state reflects
+/// the spend.
+#[derive(Debug, Clone)]
+pub struct RecentBroadcast {
+    pub tx: Transaction,
+    pub input_coins: Vec<Coin>,
+    pub change_indexes: Vec<usize>,
+    pub network: Network,
+}
+
 #[derive(Debug, Clone)]
 pub struct Wallet {
     pub name: String,
@@ -42,6 +66,12 @@ pub struct Wallet {
     pub border_wallet_fingerprints: HashSet<Fingerprint>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
     pub signer: Option<Arc<Signer>>,
+    /// Txids the user has just broadcast locally, mapped to the data
+    /// needed to synthesize coin/tx/PSBT overrides until the daemon
+    /// catches up. `Arc<Mutex<...>>` so the map is shared across every
+    /// `Arc<Wallet>` clone held by the panels and the BroadcastModal —
+    /// recording happens in one place, every reader sees it.
+    pub recently_broadcast: Arc<Mutex<HashMap<Txid, RecentBroadcast>>>,
 }
 
 impl Wallet {
@@ -62,7 +92,187 @@ impl Wallet {
             border_wallet_fingerprints: HashSet::new(),
             hardware_wallets: Vec::new(),
             signer: None,
+            recently_broadcast: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Acquires the `recently_broadcast` lock, recovering from
+    /// poisoning rather than dropping the operation silently.
+    ///
+    /// A poisoned mutex means some earlier thread panicked while
+    /// holding the lock. The data inside is a `HashMap` whose
+    /// mutations (insert/remove/retain) are atomic — none of our
+    /// access patterns leaves the map in a half-modified state — so
+    /// recovery via `into_inner()` is safe. We log a warning so
+    /// poisoning shows up in diagnostics; silently returning `Err`
+    /// here would make the optimistic-broadcast UI fail with no
+    /// explanation.
+    fn lock_recently_broadcast(&self) -> std::sync::MutexGuard<'_, HashMap<Txid, RecentBroadcast>> {
+        self.recently_broadcast.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!(
+                target: "coincube_gui::wallet",
+                "recently_broadcast mutex was poisoned; recovering. \
+                 Map state is consistent (HashMap mutations are atomic)."
+            );
+            poisoned.into_inner()
+        })
+    }
+
+    /// Records a freshly-broadcast transaction so the panels can apply
+    /// optimistic overrides until the daemon's mempool poller catches
+    /// up. Only call after `broadcast_spend_tx` has returned `Ok`.
+    pub fn record_broadcast(
+        &self,
+        tx: Transaction,
+        input_coins: Vec<Coin>,
+        change_indexes: Vec<usize>,
+        network: Network,
+    ) {
+        let txid = tx.compute_txid();
+        let mut map = self.lock_recently_broadcast();
+        map.insert(
+            txid,
+            RecentBroadcast {
+                tx,
+                input_coins,
+                change_indexes,
+                network,
+            },
+        );
+    }
+
+    /// Adds synthetic `spend_info` to coins whose outpoints match the
+    /// inputs of a recently-broadcast tx. Daemon-provided `spend_info`
+    /// is preserved if already present (daemon view is the source of
+    /// truth once available).
+    pub fn apply_coin_overrides(&self, coins: &mut [Coin]) {
+        let map = self.lock_recently_broadcast();
+        if map.is_empty() {
+            return;
+        }
+        let mut outpoint_to_txid: HashMap<OutPoint, Txid> = HashMap::new();
+        for (txid, rb) in map.iter() {
+            for coin in &rb.input_coins {
+                outpoint_to_txid.insert(coin.outpoint, *txid);
+            }
+        }
+        for coin in coins.iter_mut() {
+            if coin.spend_info.is_none() {
+                if let Some(txid) = outpoint_to_txid.get(&coin.outpoint) {
+                    coin.spend_info = Some(LCSpendInfo {
+                        txid: *txid,
+                        height: None,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Promotes `Pending` PSBTs to `Broadcast` when the user has
+    /// already broadcast them locally but the daemon hasn't yet
+    /// reflected the spend in its coin state.
+    ///
+    /// Pure: never mutates `recently_broadcast`. Entries are dropped
+    /// only by `reconcile_with_coins`, which runs on the cache update
+    /// path. Doing reconciliation here would race with an in-flight
+    /// cache update task — if this method ran first and removed an
+    /// entry, the cache update could then fetch stale (pre-catchup)
+    /// coins, find an empty map, and store coins without the synthetic
+    /// `spend_info` — yielding a temporarily-wrong balance.
+    pub fn apply_spend_tx_overrides(&self, txs: &mut [SpendTx]) {
+        let map = self.lock_recently_broadcast();
+        if map.is_empty() {
+            return;
+        }
+        for tx in txs.iter_mut() {
+            if matches!(tx.status, SpendStatus::Pending) {
+                let txid = tx.psbt.unsigned_tx.compute_txid();
+                if map.contains_key(&txid) {
+                    tx.status = SpendStatus::Broadcast;
+                }
+            }
+        }
+    }
+
+    /// Returns synthesized pending `HistoryTransaction`s for any
+    /// recently-broadcast tx not already present in `existing_txids`.
+    /// The Transactions panel merges these with daemon-supplied
+    /// pending txs so the broadcast shows up immediately.
+    ///
+    /// Pure: never mutates `recently_broadcast` (see
+    /// `apply_spend_tx_overrides` for the race this avoids).
+    /// Read-time filtering against `existing_txids` is enough to
+    /// prevent a duplicate row once the daemon lists the tx itself —
+    /// the orphan entry stays in the map until `reconcile_with_coins`
+    /// observes a matching output coin, but that doesn't affect this
+    /// panel's display.
+    pub fn synthesized_pending_history_txs(
+        &self,
+        existing_txids: &HashSet<Txid>,
+    ) -> Vec<HistoryTransaction> {
+        let map = self.lock_recently_broadcast();
+        if map.is_empty() {
+            return Vec::new();
+        }
+        map.iter()
+            .filter(|(txid, _)| !existing_txids.contains(*txid))
+            .map(|(_, rb)| {
+                HistoryTransaction::new(
+                    rb.tx.clone(),
+                    None,
+                    None,
+                    rb.input_coins.clone(),
+                    rb.change_indexes.clone(),
+                    rb.network,
+                )
+            })
+            .collect()
+    }
+
+    /// Drops entries the daemon has caught up on. The cache path
+    /// calls this with the result of
+    /// `list_coins(&[Unconfirmed, Confirmed], &[])`, so `coins` never
+    /// contains spend_info-bearing coins — the daemon's filter
+    /// already excluded them. Two complementary signals catch the
+    /// catch-up:
+    ///
+    /// 1. **Any broadcast input is no longer in the returned coin
+    ///    set.** The inputs were Unconfirmed/Confirmed at
+    ///    `record_broadcast` time, so their absence means the daemon
+    ///    moved them to `Spending`/`Spent` — that catches our own
+    ///    broadcast, an RBF replacement, or a conflicting tx
+    ///    consuming the input. All three are reasons our optimistic
+    ///    override is no longer authoritative.
+    /// 2. **A wallet-tracked output of the broadcast tx has
+    ///    appeared.** Faster signal when the tx has change; the
+    ///    daemon may surface the new output coin before its poller
+    ///    finishes flagging the inputs.
+    ///
+    /// An empty `coins` result is treated as legitimate: it can
+    /// genuinely happen after the user spends every UTXO with no
+    /// change output, and skipping reconciliation in that case left a
+    /// stale entry that produced a duplicate pending row in the
+    /// Transactions panel once the tx confirmed. The input-
+    /// disappearance check already handles the empty case correctly
+    /// (all inputs absent ⇒ entry cleared). Mid-sync transients
+    /// briefly clearing entries is acceptable: they self-correct
+    /// once the daemon catches up, since by then the daemon shows
+    /// authoritative state on its own.
+    pub fn reconcile_with_coins(&self, coins: &[Coin]) {
+        let mut map = self.lock_recently_broadcast();
+        if map.is_empty() {
+            return;
+        }
+        let present_outpoints: HashSet<OutPoint> = coins.iter().map(|c| c.outpoint).collect();
+        let output_txids: HashSet<Txid> = coins.iter().map(|c| c.outpoint.txid).collect();
+        map.retain(|txid, rb| {
+            let all_inputs_still_present = rb
+                .input_coins
+                .iter()
+                .all(|c| present_outpoints.contains(&c.outpoint));
+            let no_output_observed = !output_txids.contains(txid);
+            all_inputs_still_present && no_output_observed
+        });
     }
 
     pub fn with_name(mut self, name: String) -> Self {

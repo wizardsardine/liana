@@ -195,21 +195,6 @@ impl PsbtState {
                     }
                 }
 
-                // The celebration page dismisses via this same Cancel
-                // message. Detect that case before we clear `self.modal`
-                // so we can chain a Reload onto the close — that
-                // returns the user to the PSBTs list with their newly
-                // broadcast tx already marked unconfirmed, instead of
-                // leaving them on the now-stale PSBT detail page
-                // wondering whether the broadcast made it through.
-                let just_broadcast = matches!(
-                    &self.modal,
-                    Some(PsbtModal::Broadcast(BroadcastModal {
-                        broadcast: true,
-                        ..
-                    }))
-                );
-
                 // Dismissing a Keychain-sign modal (blur or otherwise)
                 // must also terminate any in-flight signing sessions
                 // server-side, not just hide the UI — otherwise signers
@@ -236,9 +221,18 @@ impl PsbtState {
                 if !keep_modal {
                     self.modal = None;
                 }
-                if just_broadcast {
-                    return Task::batch([cancel, Task::done(Message::View(view::Message::Reload))]);
-                }
+                // After a successful broadcast we keep the user on the
+                // PSBT detail page rather than reloading back to the
+                // list: the daemon derives `SpendStatus::Broadcast` from
+                // `coin.spend_info` (filled in by its mempool poller),
+                // so an immediate reload would overwrite our optimistic
+                // `Broadcast` status with stale `Pending` and re-expose
+                // the Broadcast button. The list view stays consistent
+                // because `BroadcastModal` calls `Wallet::record_broadcast`
+                // on RPC success, and `PsbtsPanel`'s `SpendTxs` handler
+                // runs `Wallet::apply_spend_tx_overrides` on every
+                // refresh to promote matching Pending entries to
+                // Broadcast.
                 return cancel;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Delete)) => {
@@ -438,6 +432,7 @@ impl PsbtState {
                             ),
                         spend_amount_display: amount_display,
                         is_self_transfer,
+                        wallet: self.wallet.clone(),
                     }));
                 }
                 Err(e) => {
@@ -557,6 +552,11 @@ pub struct BroadcastModal {
     /// True when every output of the tx returns to the wallet's own change
     /// addresses. Used by the celebration view to render the right phrasing.
     is_self_transfer: bool,
+    /// Wallet handle used to register a successful broadcast in
+    /// `Wallet::recently_broadcast` so the other panels (Transactions,
+    /// Overview balance, Send) can optimistically reflect the spend
+    /// before the daemon's mempool poller catches up.
+    wallet: Arc<Wallet>,
 }
 
 impl Modal for BroadcastModal {
@@ -600,6 +600,19 @@ impl Modal for BroadcastModal {
                     Ok(()) => {
                         tx.status = SpendStatus::Broadcast;
                         self.broadcast = true;
+                        // Record on the wallet so the rest of the GUI
+                        // (Transactions list, Overview balance, Send
+                        // coin filter) can apply the same optimistic
+                        // override until the daemon's poller observes
+                        // the spend. Only runs on RPC success — a
+                        // failed broadcast never enters the override
+                        // set.
+                        self.wallet.record_broadcast(
+                            tx.psbt.unsigned_tx.clone(),
+                            tx.coins.values().cloned().collect(),
+                            tx.change_indexes.clone(),
+                            tx.network,
+                        );
                         tracing::info!(
                             target: "coincube_gui::broadcast",
                             txid = %tx.psbt.unsigned_tx.compute_txid(),

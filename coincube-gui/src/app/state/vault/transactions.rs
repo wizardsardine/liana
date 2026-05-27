@@ -603,6 +603,7 @@ impl State for VaultTransactionsPanel {
         self.displayed_txs.clear();
         self.last_reload = Instant::now();
         let now: u32 = now().as_secs().try_into().unwrap();
+        let wallet = self.wallet.clone();
         Task::batch(vec![Task::perform(
             async move {
                 let mut txs = daemon
@@ -610,7 +611,14 @@ impl State for VaultTransactionsPanel {
                     .await?;
                 txs.sort_by(|a, b| a.compare(b));
 
-                let pending_txs = daemon.list_pending_txs().await?;
+                let mut pending_txs = daemon.list_pending_txs().await?;
+                // Merge any locally-broadcast txs the daemon's poller
+                // hasn't yet observed in the mempool. Without this, a
+                // user who just broadcast from the Vault would see no
+                // entry on this screen until the daemon catches up.
+                let existing: HashSet<Txid> =
+                    pending_txs.iter().map(|t| t.tx.compute_txid()).collect();
+                pending_txs.extend(wallet.synthesized_pending_history_txs(&existing));
                 Ok((pending_txs, txs))
             },
             move |result| Message::HistoryTransactions(token, result),
