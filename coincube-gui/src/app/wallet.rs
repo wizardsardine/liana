@@ -248,12 +248,19 @@ impl Wallet {
     ///    daemon may surface the new output coin before its poller
     ///    finishes flagging the inputs.
     ///
-    /// Guarded against an empty `coins` result — that's almost
-    /// always a transient (daemon restart, mid-rescan) rather than a
-    /// genuine wallet-wide spend, so we leave entries intact.
+    /// An empty `coins` result is treated as legitimate: it can
+    /// genuinely happen after the user spends every UTXO with no
+    /// change output, and skipping reconciliation in that case left a
+    /// stale entry that produced a duplicate pending row in the
+    /// Transactions panel once the tx confirmed. The input-
+    /// disappearance check already handles the empty case correctly
+    /// (all inputs absent ⇒ entry cleared). Mid-sync transients
+    /// briefly clearing entries is acceptable: they self-correct
+    /// once the daemon catches up, since by then the daemon shows
+    /// authoritative state on its own.
     pub fn reconcile_with_coins(&self, coins: &[Coin]) {
         let mut map = self.lock_recently_broadcast();
-        if map.is_empty() || coins.is_empty() {
+        if map.is_empty() {
             return;
         }
         let present_outpoints: HashSet<OutPoint> = coins.iter().map(|c| c.outpoint).collect();

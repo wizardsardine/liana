@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Loading screen quotes for COINCUBE desktop and mobile apps. Displayed below Kage animations during loading, syncing, transaction, and other app states.",
-    "usage": "Serve randomly within the matching context. Short quotes for brief states; medium quotes for longer screens. Every context has at least 3 quotes.",
+    "usage": "Serve randomly within the matching context. Short quotes for brief states; medium quotes for longer screens. Every context has at least 2 quotes.",
     "total": 52,
     "categories": {
       "ammous": "Saifedean Ammous — Author of The Bitcoin Standard",
