@@ -168,7 +168,7 @@ impl Context {
             descriptor_template: DescriptorTemplate::default(),
             bitcoin_config: BitcoinConfig {
                 network,
-                poll_interval_secs: Duration::from_secs(30),
+                poll_interval_secs: Duration::from_secs(10),
             },
             hws: Vec::new(),
             keys: HashMap::new(),
