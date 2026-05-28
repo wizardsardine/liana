@@ -10,7 +10,7 @@ pub use liana::{
         secp256k1, Address, Amount, Network, OutPoint, Transaction, Txid,
     },
 };
-use liana_ui::component::payment::PaymentKind;
+use liana_ui::component::panels::home::payment::PaymentKind;
 pub use lianad::commands::{
     CreateSpendResult, GetAddressResult, GetInfoResult, GetLabelsResult, LabelItem, ListCoinsEntry,
     ListCoinsResult, ListRevealedAddressesEntry, ListRevealedAddressesResult, ListSpendEntry,
