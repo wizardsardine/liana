@@ -3,7 +3,7 @@ use iced::{widget::Space, Length};
 use liana_ui::{
     component::{
         button::btn_ok,
-        modal::{modal_view, none_fn, ModalWidth},
+        modal::{modal_view, ModalWidth},
         text,
     },
     theme,
@@ -22,8 +22,8 @@ pub fn warning_modal_view(modal_state: &WarningModalState) -> Element<'_, Msg> {
 
     modal_view(
         Some(modal_state.title.clone()),
-        none_fn(),
-        Some(|| Msg::WarningCloseModal),
+        None,
+        Some(Msg::WarningCloseModal),
         ModalWidth::M,
         body,
     )
