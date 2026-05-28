@@ -6,7 +6,7 @@ use iced::{
 use crate::{
     component::{
         button, card, scrollable,
-        text::{p2_regular, Text},
+        text::{p1_bold, p2_regular, Text},
     },
     icon, theme,
     widget::{Container, Element, SpaceExt},
@@ -40,4 +40,28 @@ pub fn address_card<'a, M: Clone + 'static>(
     ];
 
     card::simple(column![label.into(), address_row, buttons].spacing(10)).into()
+}
+
+/// Collapsible header toggling the list of previously generated addresses.
+pub fn previous_addresses_header<'a, M: Clone + 'static>(show: bool, toggle: M) -> Element<'a, M> {
+    let chevron = if show {
+        icon::collapsed_icon()
+    } else {
+        icon::collapse_icon()
+    };
+    let header = Button::new(
+        row![
+            p1_bold("Previously generated addresses still awaiting deposit").width(Length::Fill),
+            chevron,
+        ]
+        .align_y(Alignment::Center),
+    )
+    .on_press(toggle)
+    .padding(20)
+    .width(Length::Fill)
+    .style(theme::button::transparent_border);
+
+    Container::new(header)
+        .style(theme::card::button_simple)
+        .into()
 }
