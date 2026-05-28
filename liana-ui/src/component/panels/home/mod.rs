@@ -1,3 +1,5 @@
+pub mod payment;
+
 use std::time::Duration;
 
 use iced::{

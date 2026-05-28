@@ -5,8 +5,11 @@ pub use payment_details::payment_details_view;
 use liana::miniscript::bitcoin;
 use liana_ui::{
     component::{
-        home::{self, rescan_warning, SyncProgress},
-        payment::{self, payment_card, PaymentKind, UIPayment},
+        panels::home::{
+            self,
+            payment::{self, payment_card, PaymentKind, UIPayment},
+            rescan_warning, SyncProgress,
+        },
         text::new,
     },
     widget::{Column, ColumnExt, Element},

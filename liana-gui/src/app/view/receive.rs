@@ -47,7 +47,7 @@ fn address_card<'a>(
     } else {
         label::label_editable(vec![addr.clone()], labels.get(&addr), text::P1_SIZE)
     };
-    liana_ui::component::receive::address_card(
+    liana_ui::component::panels::receive::address_card(
         label,
         address,
         Message::Clipboard(addr),

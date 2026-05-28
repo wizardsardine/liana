@@ -19,8 +19,11 @@ use liana_ui::{
     component::{
         self, badge,
         button::{self, btn_secondary_with_tooltip, BtnWidth},
-        card, form, scrollable, separation,
-        setting::{export_section, header, settings_section, ImportExportKind, SectionKind},
+        card, form,
+        panels::setting::{
+            export_section, header, settings_section, ImportExportKind, SectionKind,
+        },
+        scrollable, separation,
         text::*,
     },
     icon,
@@ -86,7 +89,7 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<'_, Message> {
         about
     ];
 
-    let content = component::setting::section_list(entries);
+    let content = component::panels::setting::section_list(entries);
     dashboard(&Menu::Settings, cache, None, content)
 }
 
