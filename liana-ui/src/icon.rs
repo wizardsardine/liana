@@ -207,6 +207,10 @@ pub fn clock_fill_icon() -> Text<'static> {
     bootstrap_icon('\u{F291}')
 }
 
+pub fn edit_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F4CA}')
+}
+
 const ICONEX_ICONS: Font = Font::with_name("Untitled1");
 
 fn iconex_icon<'a>(unicode: char) -> Text<'a> {

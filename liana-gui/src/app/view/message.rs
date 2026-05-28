@@ -48,6 +48,7 @@ impl Close for Message {
 
 #[derive(Debug, Clone)]
 pub enum LabelMessage {
+    Edit,
     Edited(String),
     Cancel,
     Confirm,

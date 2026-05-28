@@ -75,6 +75,9 @@ impl LabelsEdited {
                         Message::LabelsUpdated,
                     ));
                 }
+                view::LabelMessage::Edit => {
+                    // TODO: open label edit modal
+                }
             },
             Message::LabelsUpdated(res) => match res {
                 Ok(new_labels) => {
