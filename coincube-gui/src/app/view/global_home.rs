@@ -635,16 +635,18 @@ fn enter_amount_card<'a>(
                             Container::new(
                                 text(match (effective_min, effective_max) {
                                     (Some(min), Some(max)) => format!(
-                                        "Enter an amount between {} and {}",
+                                        "Enter an amount between {} and {} {}",
                                         Amount::from_sat(min)
                                             .to_formatted_string_with_unit(bitcoin_unit),
                                         Amount::from_sat(max)
                                             .to_formatted_string_with_unit(bitcoin_unit),
+                                        bitcoin_unit,
                                     ),
                                     (Some(min), None) => format!(
-                                        "Minimum transfer: {}",
+                                        "Minimum transfer: {} {}",
                                         Amount::from_sat(min)
                                             .to_formatted_string_with_unit(bitcoin_unit),
+                                        bitcoin_unit,
                                     ),
                                     _ => "Loading limits…".to_string(),
                                 })
