@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use iced::{
     widget::{
         column,
@@ -9,41 +11,39 @@ use iced::{
 
 use crate::{
     component::{
-        button, card, scrollable,
-        text::{p1_bold, p2_regular, text, Text},
+        self,
+        button::{btn_show_qr_compact, btn_verify_compact},
+        card, label,
+        text::{new, p1_bold, text, Text},
     },
     icon, theme,
     widget::{Container, Element, SpaceExt},
 };
 
-/// A single receive address: its label, the address with a copy button, and
-/// the verify / show-QR actions.
 pub fn address_card<'a, M: Clone + 'static>(
-    label: impl Into<Element<'a, M>>,
+    label: impl Display,
     address: &'a bitcoin::Address,
+    edit_label: M,
     clipboard: M,
     verify: M,
     show_qr: M,
 ) -> Element<'a, M> {
-    let address_row = row![
-        Container::new(scrollable::horizontal_thin(column![
-            Space::with_height(Length::Fixed(10.0)),
-            p2_regular(address).small().style(theme::text::secondary),
-        ]))
-        .width(Length::Fill),
-        Button::new(icon::clipboard_icon().style(theme::text::secondary))
-            .on_press(clipboard)
-            .style(theme::button::transparent_border),
-    ]
-    .align_y(Alignment::Center);
+    let label = label::editable_label(label, edit_label);
+    let address = new::caption(address).style(theme::text::card_secondary);
+    let addr_row = row![address, component::button::btn_copy(Some(clipboard))]
+        .spacing(12)
+        .align_y(Alignment::Center);
+    let top = column![label, addr_row].spacing(12);
 
-    let buttons = row![
-        button::secondary(None, "Verify on hardware device").on_press(verify),
+    let bottom = row![
+        btn_verify_compact(verify),
         Space::fill_width(),
-        button::secondary(None, "Show QR Code").on_press(show_qr),
+        btn_show_qr_compact(show_qr)
     ];
 
-    card::simple(column![label.into(), address_row, buttons].spacing(10)).into()
+    let content = column![top, bottom].spacing(16);
+
+    card::simple(content).into()
 }
 
 /// Collapsible header toggling the list of previously generated addresses.
