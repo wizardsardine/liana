@@ -64,13 +64,14 @@ impl FiatAmount {
         format_f64_as_string(self.amount, "", self.currency().decimals(), false)
     }
 
+    /// Format a fiat amount as a string with a tilde (~) prefix to indicate approximation.
+    pub fn to_display_string(&self) -> String {
+        format!("~{} {}", self.to_formatted_string(), self.currency())
+    }
+
     /// Format a fiat amount as a `Text` widget with a tilde (~) prefix to indicate approximation.
     pub fn to_text(&self) -> Text<'static> {
-        text(format!(
-            "~{} {}",
-            self.to_formatted_string(),
-            self.currency(),
-        ))
+        text(self.to_display_string())
     }
 }
 

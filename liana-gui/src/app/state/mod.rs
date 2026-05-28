@@ -196,7 +196,7 @@ impl State for Home {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         let converter = fiat_converter_for_wallet(&self.wallet, cache);
         if let Some((tx, output_index)) = &self.selected_event {
-            view::home::payment_view(
+            view::home::payment_details_view(
                 cache,
                 tx,
                 *output_index,

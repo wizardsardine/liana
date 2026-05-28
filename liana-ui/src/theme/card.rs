@@ -3,6 +3,7 @@ use iced::{Background, Border, Shadow, Vector};
 
 use super::button::BUTTON_RADIUS;
 use super::palette::ContainerPalette;
+use super::styles;
 use super::Theme;
 
 pub const CARD_RADIUS: f32 = 16.0;
@@ -62,35 +63,29 @@ pub fn button_simple(theme: &Theme) -> Style {
     card_with_shadow(&theme.colors.cards.simple, true)
 }
 
-pub fn transparent(theme: &Theme) -> Style {
-    let palette = &theme.colors.cards.transparent;
-    card(palette)
+pub fn soft_warning(theme: &Theme) -> Style {
+    let mut c = card(&theme.colors.cards.soft_warning);
+    c.border.width = theme.button_border_width;
+    c
 }
 
-pub fn modal(theme: &Theme) -> Style {
-    card(&theme.colors.cards.modal)
+pub fn info(theme: &Theme) -> Style {
+    let mut c = card(&theme.colors.cards.info);
+    c.border.width = theme.button_border_width;
+    c
 }
 
-pub fn border(theme: &Theme) -> Style {
-    card(&theme.colors.cards.border)
-}
-
-pub fn invalid(theme: &Theme) -> Style {
-    card(&theme.colors.cards.invalid)
-}
-
-pub fn warning(theme: &Theme) -> Style {
-    card(&theme.colors.cards.warning)
-}
-
-pub fn home_warning(theme: &Theme) -> Style {
-    card(&theme.colors.cards.home_warning)
-}
-
-pub fn home_hint(theme: &Theme) -> Style {
-    card(&theme.colors.cards.home_hint)
-}
-
-pub fn error(theme: &Theme) -> Style {
-    card(&theme.colors.cards.error)
-}
+#[rustfmt::skip]
+styles!(
+    card,
+    cards,
+    [
+        transparent,
+        modal,
+        border,
+        invalid,
+        legacy_warning,
+        warning,
+        error,
+    ]
+);

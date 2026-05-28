@@ -1,7 +1,7 @@
 use iced::Color;
 
 use crate::{
-    color::{self, TRANSPARENT},
+    color::{self, BUSINESS_BLUE, BUSINESS_BLUE_50, TRANSPARENT},
     theme::card::CARD_SHADOW,
 };
 
@@ -67,6 +67,16 @@ impl Palette {
                 success: color::DARK_GREEN,
                 error: color::RED,
                 accent: color::BUSINESS_BLUE_DARK,
+                card_secondary: color::CARD_TEXT_SECONDARY,
+            },
+            price: Price {
+                zeroes: color::BUSINESS_PRICE_ZEROES,
+                sats: color::BUSINESS_PRICE_SATS,
+                blink_zeroes: color::BUSINESS_PRICE_ZEROES_BLINK,
+                blink_sats: color::BUSINESS_PRICE_SATS_BLINK,
+                receive: color::SUCCESS_GREEN,
+                send: color::MINUS_RED,
+                refresh: color::BUSINESS_BLUE,
             },
             buttons: Buttons {
                 border_width: 3.0,
@@ -136,7 +146,7 @@ impl Palette {
                 destructive: Button {
                     active: ButtonPalette {
                         background: color::LIGHT_BG_SECONDARY,
-                        text: color::DARK_TEXT_SECONDARY,
+                        text: color::RED,
                         border: color::RED.into(),
                         shadow: Default::default(),
                     },
@@ -298,22 +308,22 @@ impl Palette {
                 },
                 tab_menu: Button {
                     active: ButtonPalette {
-                        background: BTN_TERTIARY_BG,
+                        background: color::WHITE,
                         text: BTN_PRIMARY_BG,
-                        border: BTN_PRIMARY_BG.into(),
+                        border: TRANSPARENT.into(),
                         shadow: Default::default(),
                     },
                     hovered: ButtonPalette {
-                        background: BTN_TERTIARY_BG,
-                        text: BTN_PRIMARY_BG,
-                        border: BTN_PRIMARY_BG.into(),
-                        shadow: BTN_SHADOW,
+                        background: color::WHITE,
+                        text: BUSINESS_BLUE,
+                        border: BUSINESS_BLUE.into(),
+                        shadow: Default::default(),
                     },
                     pressed: Some(ButtonPalette {
-                        background: BTN_TERTIARY_BG,
-                        text: BTN_PRIMARY_PRESSED,
-                        border: BTN_PRIMARY_PRESSED.into(),
-                        shadow: BTN_SHADOW,
+                        background: color::WHITE,
+                        text: BUSINESS_BLUE_50,
+                        border: BUSINESS_BLUE_50.into(),
+                        shadow: Default::default(),
                     }),
                     disabled: btn_disabled(),
                 },
@@ -433,19 +443,24 @@ impl Palette {
                     text: color::RED.into(),
                     border: color::RED.into(),
                 },
-                warning: ContainerPalette {
+                legacy_warning: ContainerPalette {
                     background: color::LIGHT_BG,
                     text: color::ORANGE.into(),
                     border: color::ORANGE.into(),
                 },
-                home_warning: ContainerPalette {
+                warning: ContainerPalette {
                     background: color::ORANGE,
-                    text: color::WHITE.into(),
-                    border: color::ORANGE.into(),
+                    text: color::DARK_TEXT_SECONDARY.into(),
+                    border: color::TRANSPARENT.into(),
                 },
-                home_hint: ContainerPalette {
+                soft_warning: ContainerPalette {
                     background: color::TRANSPARENT,
-                    text: None,
+                    text: color::ORANGE.into(),
+                    border: color::LIGHT_BORDER.into(),
+                },
+                info: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: color::DARK_TEXT_SECONDARY.into(),
                     border: color::LIGHT_BORDER.into(),
                 },
                 error: ContainerPalette {

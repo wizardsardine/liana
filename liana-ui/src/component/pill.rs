@@ -176,6 +176,26 @@ pills! {
     xpub_not_set,   "Not Set",      "",                                                               M, warning;
 }
 
+pub fn compact_pill<'a, T: 'a>(
+    text: &'a str,
+    width: PillWidth,
+    style: fn(&Theme) -> Style,
+) -> Container<'a, T> {
+    pill_body_with_text_size_and_font(text, width, style, PILL_FONT, PILL_FONT_SIZE_COMPACT)
+        .padding(PILL_PADDING_COMPACT)
+}
+
+pub fn unconfirmed_compact<'a, T: 'a>() -> Container<'a, T> {
+    pill_body_with_text_size_and_font(
+        "Unconfirmed",
+        PillWidth::M,
+        theme::pill::simple_fill,
+        PILL_FONT,
+        PILL_FONT_SIZE_COMPACT,
+    )
+    .padding(PILL_PADDING_COMPACT)
+}
+
 pub fn rescan<'a, T: 'a>(progress: f64, compact: bool) -> Container<'a, T> {
     let size = if compact {
         PILL_FONT_SIZE_COMPACT

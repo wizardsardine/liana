@@ -491,7 +491,7 @@ pub fn hardware_wallet_xpubs<'a>(
     };
     Container::new(
         Column::new()
-            .push_maybe(error.map(|e| card::warning(e.to_string()).width(Length::Fill)))
+            .push_maybe(error.map(|e| card::legacy_warning(e.to_string()).width(Length::Fill)))
             .push(bttn)
             .push_maybe(if xpubs.is_none() {
                 None

@@ -1,5 +1,5 @@
 use crate::{color, component::text::text, icon, theme, widget::*};
-use iced::{widget::button, Alignment};
+use iced::{widget::button, Alignment, Padding};
 const CARD_PADDING: [u16; 2] = [15, 30];
 
 pub fn modal<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T> {
@@ -21,7 +21,7 @@ pub fn invalid<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, 
 }
 
 /// display an error card with the message and the error in a tooltip.
-pub fn warning<'a, T: 'a>(message: String) -> Container<'a, T> {
+pub fn legacy_warning<'a, T: 'a>(message: String) -> Container<'a, T> {
     Container::new(
         Row::new()
             .spacing(20)
@@ -30,7 +30,7 @@ pub fn warning<'a, T: 'a>(message: String) -> Container<'a, T> {
             .push(text(message)),
     )
     .padding(15)
-    .style(theme::card::warning)
+    .style(theme::card::legacy_warning)
 }
 
 /// display an error card with the message and the error in a tooltip.
@@ -55,30 +55,60 @@ pub fn clickable_card<'a, M>(content: Row<'a, M>, msg: Option<M>) -> Element<'a,
 where
     M: Clone + 'a,
 {
-    button(content.align_y(Alignment::Center).padding(CARD_PADDING))
+    clickable_card_with_padding(content, msg, CARD_PADDING)
+}
+
+pub fn clickable_card_with_padding<'a, M>(
+    content: Row<'a, M>,
+    msg: Option<M>,
+    padding: impl Into<Padding>,
+) -> Element<'a, M>
+where
+    M: Clone + 'a,
+{
+    button(content.align_y(Alignment::Center).padding(padding.into()))
         .on_press_maybe(msg)
         .style(theme::button::clickable_card)
         .into()
 }
 
-pub fn home_warning<'a, T, M>(content: T) -> Element<'a, M>
+pub fn warning<'a, T, M>(content: T) -> Element<'a, M>
+where
+    T: Into<Element<'a, M>>,
+    M: Clone + 'a,
+{
+    warning_with_padding(content, 20)
+}
+
+fn warning_with_padding<'a, T, M>(content: T, padding: impl Into<Padding>) -> Element<'a, M>
 where
     T: Into<Element<'a, M>>,
     M: Clone + 'a,
 {
     Container::new(content)
-        .padding(CARD_PADDING)
-        .style(theme::card::home_warning)
+        .padding(padding)
+        .style(theme::card::warning)
         .into()
 }
 
-pub fn home_hint<'a, T, M>(content: T) -> Element<'a, M>
+pub fn soft_warning<'a, T, M>(content: T) -> Element<'a, M>
 where
     T: Into<Element<'a, M>>,
     M: Clone + 'a,
 {
     Container::new(content)
         .padding(CARD_PADDING)
-        .style(theme::card::border)
+        .style(theme::card::soft_warning)
+        .into()
+}
+
+pub fn info<'a, T, M>(content: T) -> Element<'a, M>
+where
+    T: Into<Element<'a, M>>,
+    M: Clone + 'a,
+{
+    Container::new(content)
+        .padding(CARD_PADDING)
+        .style(theme::card::info)
         .into()
 }

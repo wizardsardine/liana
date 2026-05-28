@@ -1,4 +1,4 @@
-use super::Theme;
+use super::{card::CARD_SHADOW, Theme};
 use iced::{
     border::Radius,
     widget::container::{transparent, Catalog, Style, StyleFn},
@@ -59,6 +59,25 @@ pub fn sidebar(theme: &Theme) -> Style {
 pub fn border(theme: &Theme) -> Style {
     Style {
         background: Some(Background::Color(theme.colors.general.background)),
+        ..Default::default()
+    }
+}
+
+pub fn tab_menu_panel(theme: &Theme) -> Style {
+    let p = theme.colors.buttons.tab_menu.active;
+    Style {
+        background: Some(Background::Color(p.background)),
+        border: Border {
+            color: p.border.unwrap_or(p.background),
+            width: 1.0,
+            radius: Radius {
+                top_left: 0.0,
+                top_right: 0.0,
+                bottom_right: 6.0,
+                bottom_left: 6.0,
+            },
+        },
+        shadow: CARD_SHADOW,
         ..Default::default()
     }
 }

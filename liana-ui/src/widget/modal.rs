@@ -194,10 +194,15 @@ where
     ) {
         let content_bounds = layout.children().next().unwrap().bounds();
 
+        // The modal must swallow every mouse press over its bounds so clicks never
+        // fall through to the base view behind it. This mirrors iced's `opaque` widget.
+        let is_mouse_press = matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_)));
+
         if let Some(message) = self.on_blur.as_ref() {
             if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
                 if !cursor.is_over(content_bounds) {
                     shell.publish(message.clone());
+                    shell.capture_event();
                     return;
                 }
             }
@@ -213,6 +218,10 @@ where
             shell,
             &layout.bounds(),
         );
+
+        if is_mouse_press && cursor.is_over(layout.bounds()) {
+            shell.capture_event();
+        }
     }
 
     fn draw(
@@ -262,13 +271,24 @@ where
         cursor: mouse::Cursor,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        self.content.as_widget().mouse_interaction(
+        let interaction = self.content.as_widget().mouse_interaction(
             self.tree,
             layout.children().next().unwrap(),
             cursor,
             &layout.bounds(),
             renderer,
-        )
+        );
+
+        // When the cursor is over the modal (including the dimmed backdrop) but
+        // not over an interactive child, report `Idle` rather than `None`. This
+        // makes the runtime mark the base view's cursor as unavailable, so
+        // buttons behind the modal no longer light up on hover. Mirrors iced's
+        // `opaque` widget.
+        if interaction == mouse::Interaction::None && cursor.is_over(layout.bounds()) {
+            mouse::Interaction::Idle
+        } else {
+            interaction
+        }
     }
 
     fn overlay<'c>(

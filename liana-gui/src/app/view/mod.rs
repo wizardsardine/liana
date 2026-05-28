@@ -120,7 +120,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                         Container::new(
                             scrollable::vertical(row!(
                                 Space::with_width(Length::FillPortion(1)),
-                                column!(Space::with_height(Length::Fixed(150.0)), content.into())
+                                column!(Space::with_height(Length::Fixed(100.0)), content.into())
                                     .width(Length::FillPortion(8))
                                     .max_width(1500),
                                 Space::with_width(Length::FillPortion(1)),

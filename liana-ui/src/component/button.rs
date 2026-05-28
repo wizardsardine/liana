@@ -1,17 +1,25 @@
+use std::fmt::Display;
+
 use super::{
     modal::BTN_W,
-    text::{button_text, panel_title, text},
+    text::{
+        new::{button_text, button_text_compact, BUTTON_TEXT_COMPACT_SPEC},
+        panel_title, text,
+    },
     tooltip,
 };
 use crate::{
     font::{BOLD, MEDIUM},
-    icon::ICON_SIZE_L,
-    theme::{self, button::round_icon_btn},
+    icon::{self, ICON_SIZE_L},
+    theme::{self, button::round_icon_btn, Theme},
     widget::*,
 };
 use iced::{
     alignment::{Horizontal, Vertical},
-    widget::{container, row},
+    widget::{
+        button::{Status, Style},
+        container, row,
+    },
     Length,
 };
 
@@ -87,13 +95,41 @@ fn content_menu<'a, T: 'a>(
     }
 }
 
+pub fn button_with_theme<'a, T: 'a>(
+    icon: Option<Text<'a>>,
+    text: impl Display,
+    style: impl Fn(&Theme, Status) -> Style + 'a,
+    compact: bool,
+) -> Button<'a, T> {
+    let (text, icon) = if compact {
+        (
+            button_text_compact(text),
+            icon.map(|i| i.size(BUTTON_TEXT_COMPACT_SPEC.size.expect("size"))),
+        )
+    } else {
+        (
+            button_text(text),
+            icon.map(|i| i.size(BUTTON_TEXT_COMPACT_SPEC.size.expect("size"))),
+        )
+    };
+    Button::new(content(icon, text, compact)).style(style)
+}
+
+pub fn button_compact<'a, T: 'a>(
+    text: impl Display,
+    style: impl Fn(&Theme, Status) -> Style + 'a,
+    msg: Option<T>,
+) -> Button<'a, T> {
+    button_with_theme(None, text, style, true).on_press_maybe(msg)
+}
+
 macro_rules! button_helpers {
     ($($entry:tt),* $(,)?) => {
         $( button_helpers!(@one $entry); )*
     };
     (@one ($name:ident, $style:ident)) => {
-        pub fn $name<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-            Button::new(content(icon, button_text(t))).style(theme::button::$style)
+        pub fn $name<'a, T: 'a>(icon: Option<Text<'a>>, t: impl Display) -> Button<'a, T> {
+        button_with_theme(icon, t,theme::button::$style, false)
         }
     };
     (@one $name:ident) => {
@@ -116,7 +152,7 @@ button_helpers!(
 );
 
 pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, panel_title(t))).style(theme::button::breadcrumb)
+    Button::new(content(icon, panel_title(t), false)).style(theme::button::breadcrumb)
 }
 pub fn clickable_card<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
     content: T,
@@ -137,14 +173,15 @@ pub fn clickable_section<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
         .width(Length::Fill)
 }
 
-fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>) -> Container<'a, T> {
-    content_with_tooltip(icon, text, None)
+fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>, compact: bool) -> Container<'a, T> {
+    content_with_tooltip(icon, text, None, compact)
 }
 
 fn content_with_tooltip<'a, T: 'a>(
     icon: Option<Text<'a>>,
     text: Text<'a>,
     tooltip: Option<&'a str>,
+    compact: bool,
 ) -> Container<'a, T> {
     let mut row: Row<'a, T> = Row::new().spacing(10).align_y(Vertical::Center);
     if let Some(icon) = icon {
@@ -154,7 +191,8 @@ fn content_with_tooltip<'a, T: 'a>(
     if let Some(tt) = tooltip {
         row = row.push(tooltip::tooltip(tt));
     }
-    container(row).align_x(Horizontal::Center).padding(5)
+    let padding = if compact { 2 } else { 4 };
+    container(row).align_x(Horizontal::Center).padding(padding)
 }
 
 pub fn device<'a, T: 'a + std::clone::Clone, C: Into<Element<'a, T>>>(
@@ -229,7 +267,7 @@ pub fn btn_primary<'a, T: Clone + 'a>(
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
-    let mut btn = primary(icon, label).width(Length::Fixed(width as u16 as f32));
+    let mut btn = primary(icon, label).width(width);
     if let Some(m) = msg {
         btn = btn.on_press(m);
     }
@@ -243,7 +281,7 @@ pub fn btn_secondary<'a, T: Clone + 'a>(
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
-    let mut btn = secondary(icon, label).width(Length::Fixed(width as u16 as f32));
+    let mut btn = secondary(icon, label).width(width);
     if let Some(m) = msg {
         btn = btn.on_press(m);
     }
@@ -258,10 +296,15 @@ pub fn btn_secondary_with_tooltip<'a, T: Clone + 'a>(
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
-    Button::new(content_with_tooltip(icon, button_text(label), tooltip))
-        .width(width)
-        .style(theme::button::secondary)
-        .on_press_maybe(msg)
+    Button::new(content_with_tooltip(
+        icon,
+        button_text(label),
+        tooltip,
+        false,
+    ))
+    .width(width)
+    .style(theme::button::secondary)
+    .on_press_maybe(msg)
 }
 
 /// Tertiary button with preset width.
@@ -271,7 +314,7 @@ pub fn btn_tertiary<'a, T: Clone + 'a>(
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
-    let mut btn = tertiary(icon, label).width(Length::Fixed(width as u16 as f32));
+    let mut btn = tertiary(icon, label).width(width);
     if let Some(m) = msg {
         btn = btn.on_press(m);
     }
@@ -285,7 +328,7 @@ pub fn btn_destructive<'a, T: Clone + 'a>(
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
-    let mut btn = destructive(icon, label).width(Length::Fixed(width as u16 as f32));
+    let mut btn = destructive(icon, label).width(width);
     if let Some(m) = msg {
         btn = btn.on_press(m);
     }
@@ -299,7 +342,7 @@ pub fn btn_flat<'a, T: Clone + 'a>(
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
-    let mut btn = flat(icon, label).width(Length::Fixed(width as u16 as f32));
+    let mut btn = flat(icon, label).width(width);
     if let Some(m) = msg {
         btn = btn.on_press(m);
     }
@@ -339,6 +382,23 @@ pub fn btn_yes<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 /// No button: secondary. Width S.
 pub fn btn_no<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_secondary(None, "No", BtnWidth::S, msg)
+}
+
+pub fn btn_reset_timelock<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(
+        Some(icon::reload_icon()),
+        "Reset timelock",
+        BtnWidth::Auto,
+        msg,
+    )
+}
+
+pub fn btn_go_to_rescan<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Go to rescan", BtnWidth::XL, msg)
+}
+
+pub fn btn_dismiss<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_destructive(Some(icon::big_cross_icon()), "Dismiss", BtnWidth::L, msg)
 }
 
 pub fn icon_btn<'a, T: 'a + Clone>(icon: Text<'a>, message: Option<T>) -> Button<'a, T> {

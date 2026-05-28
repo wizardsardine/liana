@@ -60,6 +60,12 @@ pub fn accent(theme: &Theme) -> Style {
     }
 }
 
+pub fn card_secondary(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.text.card_secondary),
+    }
+}
+
 pub fn custom(color: iced::Color) -> Style {
     Style { color: Some(color) }
 }

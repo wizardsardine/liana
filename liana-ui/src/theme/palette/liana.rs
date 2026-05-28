@@ -54,6 +54,16 @@ impl Palette {
                 success: color::GREEN,
                 error: color::RED,
                 accent: color::BLUE,
+                card_secondary: color::CARD_TEXT_SECONDARY,
+            },
+            price: Price {
+                zeroes: color::GREY_3,
+                sats: color::WHITE,
+                blink_zeroes: color::GREY_4,
+                blink_sats: color::GREY_2,
+                receive: color::SUCCESS_GREEN,
+                send: color::MINUS_RED,
+                refresh: color::BUSINESS_BLUE,
             },
             buttons: Buttons {
                 border_width: 1.0,
@@ -460,19 +470,24 @@ impl Palette {
                     text: color::RED.into(),
                     border: color::RED.into(),
                 },
+                legacy_warning: ContainerPalette {
+                    background: color::LIGHT_BLACK,
+                    text: color::ORANGE.into(),
+                    border: color::ORANGE.into(),
+                },
                 warning: ContainerPalette {
                     background: color::LIGHT_BLACK,
                     text: color::ORANGE.into(),
                     border: color::ORANGE.into(),
                 },
-                home_warning: ContainerPalette {
-                    background: color::LIGHT_BLACK,
-                    text: color::ORANGE.into(),
-                    border: color::ORANGE.into(),
-                },
-                home_hint: ContainerPalette {
+                soft_warning: ContainerPalette {
                     background: color::TRANSPARENT,
-                    text: None,
+                    text: color::ORANGE.into(),
+                    border: color::GREY_7.into(),
+                },
+                info: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: color::WHITE.into(),
                     border: color::GREY_7.into(),
                 },
                 error: ContainerPalette {

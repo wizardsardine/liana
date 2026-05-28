@@ -1,6 +1,8 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+    time::Duration,
+};
 
 use crate::{
     app::settings::KeySetting,
@@ -11,8 +13,18 @@ use crate::{
     signer::Signer,
 };
 use async_hwi::DeviceKind;
-use liana::{descriptors::LianaDescriptor, miniscript::bitcoin};
+use liana::{
+    descriptors::{LianaDescriptor, PathInfo},
+    miniscript::bitcoin,
+};
 use lianad::config::{BitcoinBackend, BitcoinConfig};
+
+#[derive(Debug, Clone)]
+pub struct CompileInputs {
+    pub primary: PathInfo,
+    pub recovery: BTreeMap<u16, PathInfo>,
+    pub use_taproot: bool,
+}
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
@@ -73,6 +85,7 @@ pub struct Context {
     pub remote_backend: RemoteBackend,
     pub backup: Option<Backup>,
     pub wallet_alias: String,
+    pub pending_compile: Option<CompileInputs>,
 }
 
 impl Context {
@@ -101,6 +114,7 @@ impl Context {
             remote_backend,
             wallet_alias: String::new(),
             backup: None,
+            pending_compile: None,
         }
     }
 }

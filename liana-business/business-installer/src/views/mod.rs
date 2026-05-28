@@ -10,7 +10,8 @@ pub mod wallet_select;
 pub mod xpub;
 
 pub use keys::keys_view;
-use liana_connect::ws_business;
+use liana_connect::ws_business::{self, UserRole};
+use liana_ui::component::text::capitalize_first;
 pub use loading::loading_view;
 pub use login::login_view;
 pub use org_select::org_select_view;
@@ -42,28 +43,39 @@ pub const ACCOUNT_ENTRY_WIDTH: u32 = MENU_ENTRY_WIDTH - 80;
 pub const MENU_ENTRY_HEIGHT: u32 = 100;
 const EMAIL_ROW_HEIGHT: u32 = 56;
 
-/// Format last edit information as "Edited by [You|email] [relative_time]".
-/// Returns None if `last_edited` is None.
 pub fn format_last_edit_info(
     last_edited: Option<u64>,
     last_editor: Option<Uuid>,
     state: &State,
     current_user_email_lower: &str,
 ) -> Option<String> {
-    last_edited.map(|ts| {
-        let relative_time = state.app.format_relative_time(ts);
-        let editor_name = last_editor
-            .and_then(|editor_id| state.backend.get_user(editor_id))
-            .map(|user| {
+    let timestamp = last_edited?;
+    let editor_str = last_editor
+        .and_then(|editor_id| {
+            state.backend.get_user(editor_id).map(|user| {
                 if user.email.to_lowercase() == current_user_email_lower {
                     "You".to_string()
+                } else if user.role == UserRole::WizardSardineAdmin {
+                    let name = admin_name_from_email(&user.email).unwrap_or_default();
+                    format!("Admin{name}")
                 } else {
                     user.email.clone()
                 }
             })
-            .unwrap_or_else(|| "Unknown".to_string());
-        format!("Edited by {editor_name} {relative_time}")
-    })
+        })
+        .map(|name| format!(" by {name}"))
+        .unwrap_or_default();
+    let relative_time = state.app.format_relative_time(timestamp);
+    Some(format!("Edited{editor_str} {relative_time}"))
+}
+
+fn admin_name_from_email(mail: &str) -> Option<String> {
+    let mail = mail.split_once('@').map(|(a, _)| a)?;
+    let split_plus = mail.split_once('+').map(|(a, _)| a);
+    let n = split_plus
+        .map(|p| if p.len() < mail.len() { p } else { mail })
+        .unwrap_or(mail);
+    Some(format!("({})", capitalize_first(n)))
 }
 
 const EMAIL_HEADER_SPACER: u32 = 30;
@@ -392,4 +404,19 @@ pub fn select_list_view(cfg: SelectListView<'_>) -> Element<'_, Msg> {
         true,
         cfg.previous_message,
     )
+}
+
+#[cfg(test)]
+mod test {
+    use crate::views::admin_name_from_email;
+
+    #[test]
+    fn email_admin() {
+        let mut mail = "manu+admin@wizardsardine.com";
+        assert_eq!(admin_name_from_email(mail).unwrap(), "(Manu)");
+        mail = "bob@wiz+sardine.com";
+        assert_eq!(admin_name_from_email(mail).unwrap(), "(Bob)");
+        mail = "kevin@WizardSardine.com";
+        assert_eq!(admin_name_from_email(mail).unwrap(), "(Kevin)");
+    }
 }

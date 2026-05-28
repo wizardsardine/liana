@@ -8,6 +8,7 @@ pub mod liana_business;
 pub struct Palette {
     pub general: General,
     pub text: Text,
+    pub price: Price,
     pub buttons: Buttons,
     pub cards: Cards,
     pub banners: Banners,
@@ -33,6 +34,18 @@ pub struct Text {
     pub success: iced::Color,
     pub error: iced::Color,
     pub accent: iced::Color,
+    pub card_secondary: iced::Color,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Price {
+    pub zeroes: iced::Color,
+    pub sats: iced::Color,
+    pub blink_zeroes: iced::Color,
+    pub blink_sats: iced::Color,
+    pub receive: iced::Color,
+    pub send: iced::Color,
+    pub refresh: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -101,9 +114,10 @@ pub struct Cards {
     pub modal: ContainerPalette,
     pub border: ContainerPalette,
     pub invalid: ContainerPalette,
+    pub legacy_warning: ContainerPalette,
     pub warning: ContainerPalette,
-    pub home_warning: ContainerPalette,
-    pub home_hint: ContainerPalette,
+    pub soft_warning: ContainerPalette,
+    pub info: ContainerPalette,
     pub error: ContainerPalette,
 }
 
