@@ -4,6 +4,7 @@ pub mod button;
 pub mod card;
 pub mod collapse;
 pub mod form;
+pub mod label;
 pub mod list;
 pub mod modal;
 pub mod notification;

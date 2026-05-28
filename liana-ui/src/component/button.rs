@@ -255,6 +255,28 @@ impl From<BtnWidth> for Length {
     }
 }
 
+pub fn icon_btn<'a, T: 'a + Clone>(icon: Text<'a>, message: Option<T>) -> Button<'a, T> {
+    let inner = ICON_BTN_SIZE - 2.0 * ICON_BTN_PADDING;
+    Button::new(
+        Container::new(icon)
+            .center_x(Length::Fixed(inner))
+            .center_y(Length::Fixed(inner)),
+    )
+    .padding(ICON_BTN_PADDING)
+    .on_press_maybe(message)
+    .style(|t, s| round_icon_btn(t, s, ICON_BTN_SIZE / 2.0))
+}
+
+pub fn clickable_icon_with_size<'a, T: 'a + Clone>(
+    icon: Text<'a>,
+    message: Option<T>,
+    size: u32,
+) -> Button<'a, T> {
+    Button::new(Container::new(icon).center_x(size).center_y(size))
+        .on_press_maybe(message)
+        .style(theme::button::transparent)
+}
+
 /// Primary button with preset width.
 pub fn btn_primary<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
@@ -464,14 +486,18 @@ pub fn btn_connect_another_email<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a
     btn_tertiary(None, "Connect with another email", BtnWidth::XXL, msg)
 }
 
-pub fn icon_btn<'a, T: 'a + Clone>(icon: Text<'a>, message: Option<T>) -> Button<'a, T> {
-    let inner = ICON_BTN_SIZE - 2.0 * ICON_BTN_PADDING;
-    Button::new(
-        Container::new(icon)
-            .center_x(Length::Fixed(inner))
-            .center_y(Length::Fixed(inner)),
+pub fn btn_verify_compact<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
+    button_compact(
+        "Verify on hardware device",
+        theme::button::secondary,
+        Some(msg),
     )
-    .padding(ICON_BTN_PADDING)
-    .on_press_maybe(message)
-    .style(|t, s| round_icon_btn(t, s, ICON_BTN_SIZE / 2.0))
+}
+
+pub fn btn_show_qr_compact<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
+    button_compact("Show QR Code", theme::button::secondary, Some(msg))
+}
+
+pub fn btn_copy<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    clickable_icon_with_size(icon::edit_icon(), msg, 26)
 }

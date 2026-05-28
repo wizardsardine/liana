@@ -25,7 +25,7 @@ use crate::{
     app::{
         error::Error,
         menu::Menu,
-        view::{hw, label, warning::warn},
+        view::{hw, warning::warn},
     },
     hw::HardwareWallet,
 };
@@ -39,14 +39,15 @@ fn address_card<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
     let addr = address.to_string();
-    let label = if let Some(label) = labels_editing.get(&addr) {
-        label::label_editing(vec![addr.clone()], label, legacy::P1_SIZE)
-    } else {
-        label::label_editable(vec![addr.clone()], labels.get(&addr), legacy::P1_SIZE)
-    };
+    let label = labels_editing
+        .get(&addr)
+        .map(|l| l.value.clone())
+        .or_else(|| labels.get(&addr).cloned())
+        .unwrap_or_default();
     liana_ui::component::panels::receive::address_card(
         label,
         address,
+        Message::Label(vec![addr.clone()], super::LabelMessage::Edit),
         Message::Clipboard(addr),
         Message::Select(row_index),
         Message::ShowQrCode(row_index),
