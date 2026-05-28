@@ -15,7 +15,7 @@ use liana::miniscript::bitcoin::{
 use liana_ui::{
     component::{
         button, card, form, scrollable,
-        text::{self, *},
+        text::{legacy, Text},
     },
     icon, theme,
     widget::*,
@@ -40,9 +40,9 @@ fn address_card<'a>(
 ) -> Element<'a, Message> {
     let addr = address.to_string();
     let label = if let Some(label) = labels_editing.get(&addr) {
-        label::label_editing(vec![addr.clone()], label, text::P1_SIZE)
+        label::label_editing(vec![addr.clone()], label, legacy::P1_SIZE)
     } else {
-        label::label_editable(vec![addr.clone()], labels.get(&addr), text::P1_SIZE)
+        label::label_editable(vec![addr.clone()], labels.get(&addr), legacy::P1_SIZE)
     };
     liana_ui::component::panels::receive::address_card(
         label,
@@ -72,7 +72,9 @@ pub fn receive<'a>(
         .push(
             Row::new()
                 .align_y(Alignment::Center)
-                .push(Container::new(panel_title(Menu::Receive.title())).width(Length::Fill))
+                .push(
+                    Container::new(legacy::panel_title(Menu::Receive.title())).width(Length::Fill),
+                )
                 .push({
                     let (icon, label) = (Some(icon::plus_icon()), "Generate address");
                     if addresses.is_empty() {
@@ -83,7 +85,9 @@ pub fn receive<'a>(
                     .on_press(Message::NextReceiveAddress)
                 }),
         )
-        .push(text("Always generate a new address for each deposit."))
+        .push(legacy::text(
+            "Always generate a new address for each deposit.",
+        ))
         .push(
             Row::new()
                 .spacing(10)
@@ -103,8 +107,10 @@ pub fn receive<'a>(
                         Row::new()
                             .align_y(Alignment::Center)
                             .push(
-                                p1_bold("Previously generated addresses still awaiting deposit")
-                                    .width(Length::Fill),
+                                legacy::p1_bold(
+                                    "Previously generated addresses still awaiting deposit",
+                                )
+                                .width(Length::Fill),
                             )
                             .push(if show_prev_addresses {
                                 icon::collapsed_icon()
@@ -134,7 +140,7 @@ pub fn receive<'a>(
                                         let addr = address.to_string();
                                         let addr_len = addr.chars().count();
                                         Container::new(
-                                            p2_regular(if addr_len > 2 * NUM_ADDR_CHARS {
+                                            legacy::p2_regular(if addr_len > 2 * NUM_ADDR_CHARS {
                                                 format!(
                                                     "{}...{}",
                                                     addr.chars()
@@ -159,7 +165,7 @@ pub fn receive<'a>(
                                         Column::new()
                                             .push(Space::with_height(Length::Fixed(10.0)))
                                             .push(
-                                                text(
+                                                legacy::text(
                                                     prev_labels
                                                         .get(&address.to_string())
                                                         .cloned()
@@ -203,7 +209,7 @@ pub fn receive<'a>(
             (!is_last_page && show_prev_addresses).then_some(
                 Container::new(
                     Button::new(
-                        text(if processing {
+                        legacy::text(if processing {
                             "Fetching ..."
                         } else {
                             "See more"
@@ -242,7 +248,9 @@ pub fn verify_address_modal<'a>(
                             derivation_index,
                             Message::Clipboard(address.to_string()),
                         ))
-                        .push(text("Select device to verify address on:").width(Length::Fill))
+                        .push(
+                            legacy::text("Select device to verify address on:").width(Length::Fill),
+                        )
                         .spacing(10)
                         .push(hws.iter().enumerate().fold(
                             Column::new().spacing(10),
