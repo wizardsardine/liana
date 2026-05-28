@@ -20,7 +20,7 @@ use liana_ui::{
         button, card,
         collapse::Collapse,
         form,
-        modal::{legacy, modal_view, none_fn, ModalWidth},
+        modal::{legacy, modal_view, ModalWidth},
         pill, scrollable, separation,
         text::{self, *},
     },
@@ -1000,7 +1000,7 @@ pub fn sign_action<'a>(
         .width(Length::Fill);
 
     let width = ModalWidth::M;
-    let content = modal_view(Some(title), none_fn(), none_fn(), width, modal_content);
+    let content = modal_view(Some(title), None, None, width, modal_content);
 
     let width = width as u32 + 50;
     Column::new()
