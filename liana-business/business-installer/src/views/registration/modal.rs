@@ -7,7 +7,7 @@ use iced::Alignment;
 use liana_ui::{
     component::{
         button::{btn_cancel, btn_no, btn_retry, btn_yes},
-        modal::{modal_view, none_fn, ModalWidth},
+        modal::{modal_view, ModalWidth},
         text,
     },
     theme,
@@ -45,8 +45,8 @@ fn registering_view(_modal_state: &RegistrationModalState) -> Element<'_, Msg> {
 
     modal_view(
         Some("Registering Wallet".to_string()),
-        none_fn(),
-        none_fn(),
+        None,
+        None,
         ModalWidth::S,
         body,
     )
@@ -75,8 +75,8 @@ fn error_view(modal_state: &RegistrationModalState) -> Element<'_, Msg> {
 
     modal_view(
         Some("Registration Failed".to_string()),
-        none_fn(),
-        none_fn(),
+        None,
+        None,
         ModalWidth::S,
         body,
     )
@@ -106,8 +106,8 @@ fn confirm_coldcard_view(_modal_state: &RegistrationModalState) -> Element<'_, M
 
     modal_view(
         Some("Confirm Registration".to_string()),
-        none_fn(),
-        none_fn(),
+        None,
+        None,
         ModalWidth::S,
         body,
     )

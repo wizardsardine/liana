@@ -13,7 +13,7 @@ use liana_ui::{
     component::{
         button::{btn_cancel, btn_save},
         form,
-        modal::{modal_view, none_fn, ModalWidth},
+        modal::{modal_view, ModalWidth},
         pick_list,
         text::{self, short_email, truncate},
     },
@@ -291,8 +291,8 @@ pub fn edit_path_modal_view<'a>(
 
     modal_view(
         Some(title.to_string()),
-        none_fn(),
-        Some(|| Msg::TemplateCancelPathModal),
+        None,
+        Some(Msg::TemplateCancelPathModal),
         ModalWidth::M,
         body,
     )

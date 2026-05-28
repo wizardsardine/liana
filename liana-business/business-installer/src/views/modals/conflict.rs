@@ -3,7 +3,7 @@ use iced::{widget::Space, Length};
 use liana_ui::{
     component::{
         button::{btn_keep_changes, btn_ok, btn_reload},
-        modal::{modal_view, none_fn, ModalWidth},
+        modal::{modal_view, ModalWidth},
         text,
     },
     theme,
@@ -33,8 +33,8 @@ pub fn conflict_modal_view(modal_state: &ConflictModalState) -> Element<'_, Msg>
 
     modal_view(
         Some(modal_state.title.clone()),
-        none_fn(),
-        Some(|| Msg::ConflictDismiss),
+        None,
+        Some(Msg::ConflictDismiss),
         ModalWidth::M,
         body,
     )

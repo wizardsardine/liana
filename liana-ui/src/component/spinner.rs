@@ -18,7 +18,7 @@ use iced::{
 
 use crate::{
     component::{
-        modal::{modal_view, none_fn, ModalWidth},
+        modal::{modal_view, ModalWidth},
         text::new,
     },
     theme::{self, Theme},
@@ -299,11 +299,5 @@ pub fn spinner_modal<'a, Message: Clone + 'static>(
         .push(spinner())
         .push(text);
 
-    modal_view(
-        Some(title.to_string()),
-        none_fn::<Message>(),
-        none_fn::<Message>(),
-        ModalWidth::S,
-        content,
-    )
+    modal_view(Some(title.to_string()), None, None, ModalWidth::S, content)
 }

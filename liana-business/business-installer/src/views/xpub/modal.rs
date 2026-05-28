@@ -13,7 +13,7 @@ use liana_ui::{
     component::{
         button::{btn_cancel, btn_clear, btn_retry, btn_save},
         form,
-        modal::{self, modal_view, none_fn, ModalWidth},
+        modal::{self, modal_view, ModalWidth},
         pick_list, scrollable,
         text::{self, capitalize_first, p1_bold, truncate},
         tooltip,
@@ -123,8 +123,8 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
     let alias = truncate(&modal_state.key_alias, 25);
     modal_view(
         Some(format!("Select key source - {alias}")),
-        none_fn(),
-        Some(|| Msg::XpubCancelModal),
+        None,
+        Some(Msg::XpubCancelModal),
         ModalWidth::L,
         body,
     )
@@ -230,8 +230,8 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
     let alias = truncate(&modal_state.key_alias, 25);
     modal_view(
         Some(alias),
-        Some(|| Msg::XpubDeviceBack),
-        Some(|| Msg::XpubCancelModal),
+        Some(Msg::XpubDeviceBack),
+        Some(Msg::XpubCancelModal),
         ModalWidth::M,
         body,
     )
@@ -315,7 +315,7 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
                 None,
                 None,
                 None,
-                Some(move || Msg::XpubSelectDevice(fp)),
+                Some(Msg::XpubSelectDevice(fp)),
             )
         }
         DeviceState::Locked { pairing_code } => {
@@ -335,7 +335,7 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
                 None,
                 None,
                 Some(message),
-                none_fn(),
+                None,
             )
         }
         DeviceState::Unsupported { reason } => {
@@ -364,7 +364,7 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
                 None,
                 None,
                 Some(message),
-                none_fn(),
+                None,
             )
         }
     }
