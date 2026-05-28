@@ -91,6 +91,14 @@ pub struct LiquidReceive {
     /// `Message::Tick` background refresh below
     /// `LIQUID_RECEIVE_RELOAD_MAX_TTL`.
     last_reload: Instant,
+    /// In-flight guard for `load_recent_transactions`. `self.loading`
+    /// can't fill this role because it's owned by the address /
+    /// invoice generation flows; recent-transactions refreshes need a
+    /// separate flag so two of them can't overlap and deliver
+    /// out-of-order `DataLoaded` updates (a slow earlier fetch
+    /// stomping a newer one's result). Set before each fetch issues,
+    /// cleared by both the `DataLoaded` and `Error` handlers.
+    reloading_transactions: bool,
 }
 
 impl LiquidReceive {
@@ -152,6 +160,7 @@ impl LiquidReceive {
                 "liquid-receive",
             ),
             last_reload: Instant::now(),
+            reloading_transactions: false,
         }
     }
 
@@ -314,6 +323,7 @@ impl State for LiquidReceive {
             && !self.sender_picker_open
             && !self.show_qr_modal
             && !self.loading
+            && !self.reloading_transactions
             && Instant::now() > self.last_reload + LIQUID_RECEIVE_RELOAD_MAX_TTL
         {
             self.last_reload = Instant::now();
@@ -527,6 +537,14 @@ impl State for LiquidReceive {
                 }
 
                 LiquidReceiveMessage::Error(err) => {
+                    // Clear the recent-transactions guard regardless of
+                    // whether this error came from `load_recent_transactions`
+                    // or from an invoice/address generation path —
+                    // clearing a guard that was never set is a no-op,
+                    // and the alternative (only clearing on fetch-
+                    // sourced errors) would require a separate Error
+                    // variant or message tagging.
+                    self.reloading_transactions = false;
                     self.error = Some(err.to_string());
                     return Task::perform(
                         async {
@@ -651,6 +669,7 @@ impl State for LiquidReceive {
                     usdt_balance,
                     recent_payment,
                 } => {
+                    self.reloading_transactions = false;
                     self.btc_balance = btc_balance;
                     self.usdt_balance = usdt_balance;
 
@@ -1030,7 +1049,13 @@ impl LiquidReceive {
         Amount::from_str_in(&self.amount_input.value, denomination).ok()
     }
 
-    fn load_recent_transactions(&self) -> Task<Message> {
+    fn load_recent_transactions(&mut self) -> Task<Message> {
+        // Marking the in-flight guard here (rather than at each call
+        // site) means every entrypoint — `Message::Tick`,
+        // `RefreshRequested`, `SetReceiveAsset`, `reload` — picks it
+        // up automatically. Cleared by the `DataLoaded` / `Error`
+        // handlers which are the only completion paths for this fetch.
+        self.reloading_transactions = true;
         let breez_client = self.breez_client.clone();
         Task::perform(
             async move {
