@@ -10,6 +10,7 @@ pub mod notification;
 pub mod payment;
 pub mod pick_list;
 pub mod pill;
+pub mod receive;
 pub mod scrollable;
 pub mod setting;
 pub mod spinner;
