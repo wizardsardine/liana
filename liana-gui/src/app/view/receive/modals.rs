@@ -35,7 +35,7 @@ pub fn verify_address_modal<'a>(
             Column::new()
                 .push(
                     Column::new()
-                        .push(receive::verify_address_modal(
+                        .push(receive::modal::verify_address_modal(
                             address,
                             derivation_index,
                             Message::Clipboard(address.to_string()),
@@ -68,5 +68,5 @@ pub fn verify_address_modal<'a>(
 }
 
 pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a str) -> Element<'a, Message> {
-    receive::qr_display(qr, address)
+    receive::modal::qr_display(qr, address)
 }
