@@ -2,12 +2,16 @@
   "_meta": {
     "description": "Loading screen quotes for COINCUBE desktop and mobile apps. Displayed below Kage animations during loading, syncing, transaction, and other app states.",
     "usage": "Serve randomly within the matching context. Short quotes for brief states; medium quotes for longer screens. Every context has at least 2 quotes.",
-    "total": 52,
+    "total": 65,
     "categories": {
+      "booth": "Jeff Booth — Author of The Price of Tomorrow, Bitcoin advocate",
       "ammous": "Saifedean Ammous — Author of The Bitcoin Standard",
+      "svetski": "Aleks Svetski — Author of The Bushido of Bitcoin",
       "szabo": "Nick Szabo — Computer scientist, smart contracts pioneer",
       "finney": "Hal Finney — Cryptographer, first Bitcoin transaction recipient",
       "satoshi": "Satoshi Nakamoto — Bitcoin whitepaper, forum posts, emails (2008–2010)",
+      "sovereign": "James Dale Davidson & Lord William Rees-Mogg — The Sovereign Individual, 1997",
+      "fuller": "R. Buckminster Fuller — Inventor, futurist, systems thinker",
       "hayek": "Friedrich A. Hayek — Nobel laureate, Austrian School economist",
       "mises": "Ludwig von Mises — Austrian School economist, monetary theorist",
       "rothbard": "Murray N. Rothbard — Austrian School economist, libertarian theorist",
@@ -30,6 +34,43 @@
   },
   "quotes": [
     {
+      "id": "booth-01",
+      "text": "Exponentially advancing technological gains bring efficiency. That efficiency is deflationary.",
+      "author": "Jeff Booth",
+      "source": "The Greatest Game, The Bitcoin Times Ed. 3, 2020",
+      "category": "booth",
+      "length": "short",
+      "contexts": ["loading", "syncing", "first-launch", "idle"]
+    },
+    {
+      "id": "booth-02",
+      "text": "Inflation is a tax on those most unable to pay.",
+      "author": "Jeff Booth",
+      "source": "The Greatest Game, The Bitcoin Times Ed. 3, 2020",
+      "category": "booth",
+      "length": "short",
+      "contexts": ["loading", "balance-update", "transaction-sent", "idle"]
+    },
+    {
+      "id": "booth-03",
+      "text": "For the first time in history… the unique characteristics of Bitcoin give everyone a choice on how they play the game.",
+      "author": "Jeff Booth",
+      "source": "The Greatest Game, The Bitcoin Times Ed. 3, 2020",
+      "category": "booth",
+      "length": "medium",
+      "contexts": ["first-launch", "transaction-confirm", "transaction-sent"]
+    },
+    {
+      "id": "booth-04",
+      "text": "Learn about Bitcoin. Learn why its importance is so much greater than the wealth it might create for you and your family.",
+      "author": "Jeff Booth",
+      "source": "The Greatest Game, The Bitcoin Times Ed. 3, 2020",
+      "category": "booth",
+      "length": "medium",
+      "contexts": ["first-launch", "backup-reminder", "empty-wallet"]
+    },
+
+    {
       "id": "ammous-01",
       "text": "Bitcoin is the hardest money ever invented: growth in its value cannot possibly increase its supply.",
       "author": "Saifedean Ammous",
@@ -46,6 +87,43 @@
       "category": "ammous",
       "length": "medium",
       "contexts": ["loading", "syncing"]
+    },
+
+    {
+      "id": "svetski-01",
+      "text": "The Samurai believed in doing, not saying. Action and behavior demonstrated their faith, knowledge and values, more than words ever could.",
+      "author": "Aleks Svetski",
+      "source": "The Bushido of Bitcoin, 2024 (p. 56)",
+      "category": "svetski",
+      "length": "medium",
+      "contexts": ["backup-reminder", "transaction-confirm", "first-launch", "transaction-sent"]
+    },
+    {
+      "id": "svetski-02",
+      "text": "There is a biological and memetic recognition that a return to paternal leadership and traditional \"revolutionary\" stability are what's needed to correct our bent-out-of-shape society and inverted culture. For this, patriarchs of a new caliber must rise - mature and responsible men who both respect tradition and have the courage to venture forth and establish something new.",
+      "author": "Aleks Svetski",
+      "source": "The Bushido of Bitcoin, 2024 (p. 297)",
+      "category": "svetski",
+      "length": "medium",
+      "contexts": ["first-launch", "idle"]
+    },
+    {
+      "id": "svetski-03",
+      "text": "This period of human history will not only herald the largest wealth transfer in human history, but I'd go so far as to call it a speciation event.",
+      "author": "Aleks Svetski",
+      "source": "The Bushido of Bitcoin, 2024 (p. 465)",
+      "category": "svetski",
+      "length": "medium",
+      "contexts": ["first-launch", "idle", "balance-update"]
+    },
+    {
+      "id": "svetski-04",
+      "text": "Beauty and life always win in the end, and this is why I believe that we had to go through this. We are the marble, and we are sculpting something new.",
+      "author": "Aleks Svetski",
+      "source": "The Bushido of Bitcoin, 2024 (p. 466)",
+      "category": "svetski",
+      "length": "medium",
+      "contexts": ["first-launch", "idle", "error"]
     },
 
     {
@@ -202,6 +280,53 @@
       "category": "satoshi",
       "length": "medium",
       "contexts": ["transaction-confirm", "transaction-sent", "first-launch"]
+    },
+
+    {
+      "id": "sovereign-01",
+      "text": "Faster than all but a few now imagine, microprocessing will subvert and destroy the nationstate, creating new forms of social organization in the process.",
+      "author": "James Dale Davidson & Lord William Rees-Mogg",
+      "source": "The Sovereign Individual, 1997",
+      "category": "sovereign",
+      "length": "medium",
+      "contexts": ["loading", "first-launch", "syncing", "idle"]
+    },
+    {
+      "id": "sovereign-02",
+      "text": "In the new millennium, cybermoney controlled by private markets will supersede fiat money issued by governments. Only the poor will be victims of inflation.",
+      "author": "James Dale Davidson & Lord William Rees-Mogg",
+      "source": "The Sovereign Individual, 1997",
+      "category": "sovereign",
+      "length": "medium",
+      "contexts": ["loading", "balance-update", "idle", "transaction-sent"]
+    },
+    {
+      "id": "sovereign-03",
+      "text": "New technologies will allow the holders of wealth to bypass the national monopolies that have issued and regulated money in the modern period.",
+      "author": "James Dale Davidson & Lord William Rees-Mogg",
+      "source": "The Sovereign Individual, 1997",
+      "category": "sovereign",
+      "length": "medium",
+      "contexts": ["first-launch", "transaction-sent", "transaction-confirm", "backup-reminder"]
+    },
+    {
+      "id": "sovereign-04",
+      "text": "An entirely new realm of economic activity that is not hostage to physical violence will emerge in cyberspace.",
+      "author": "James Dale Davidson & Lord William Rees-Mogg",
+      "source": "The Sovereign Individual, 1997",
+      "category": "sovereign",
+      "length": "short",
+      "contexts": ["loading", "syncing", "first-launch", "idle"]
+    },
+
+    {
+      "id": "fuller-01",
+      "text": "You never change things by fighting the existing reality. To change something, build a new model that makes the existing model obsolete.",
+      "author": "R. Buckminster Fuller",
+      "source": "Widely attributed; cited by Jeff Booth in The Greatest Game, 2020",
+      "category": "fuller",
+      "length": "medium",
+      "contexts": ["loading", "first-launch", "idle", "empty-wallet"]
     },
 
     {
