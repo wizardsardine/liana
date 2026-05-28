@@ -237,7 +237,7 @@ pub fn history_icon() -> Text<'static> {
     iconex_icon('\u{BEBA}')
 }
 
-pub fn clipboard_icon() -> Text<'static> {
+pub fn clipboard_icon<'a>() -> Text<'a> {
     iconex_icon('\u{F8D3}')
 }
 
