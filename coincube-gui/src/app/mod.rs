@@ -631,6 +631,14 @@ impl Panels {
                 crate::app::menu::LiquidSubMenu::Receive => Some(Message::View(
                     view::Message::LiquidReceive(view::LiquidReceiveMessage::RefreshRequested),
                 )),
+                // The Transactions panel handles `Reload` by re-running
+                // its SDK fetches (see `LiquidTransactions::update`).
+                // Without this arm, SDK events never reached the panel
+                // when the user was sitting on it, so a confirmed send
+                // wouldn't surface until they navigated away and back.
+                crate::app::menu::LiquidSubMenu::Transactions(_) => {
+                    Some(Message::View(view::Message::Reload))
+                }
                 _ => None,
             },
             _ => None,

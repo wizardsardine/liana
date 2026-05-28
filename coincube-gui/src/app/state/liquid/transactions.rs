@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use breez_sdk_liquid::model::RefundRequest;
 use coincube_core::miniscript::bitcoin::Amount;
@@ -44,6 +44,13 @@ const IN_FLIGHT_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
 /// end-to-end on real wallets. Kept low during rollout so QA can exercise
 /// pagination without needing 50+ transactions per asset filter.
 pub const PAGE_SIZE: u32 = 10;
+
+/// Minimum gap between background `Message::Tick` refreshes. Mirrors the
+/// Vault Transactions cadence so the two panels surface fresh activity
+/// at the same rate. The primary refresh path is still the SDK event
+/// router (`active_liquid_refresh`); this Tick is a backstop in case an
+/// event ever fails to fire or arrives slowly.
+const LIQUID_TRANSACTIONS_RELOAD_MAX_TTL: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 enum LiquidTransactionsModal {
@@ -95,6 +102,11 @@ pub struct LiquidTransactions {
     fetch_token: u64,
     is_last_page: bool,
     processing: bool,
+    /// Timestamp of the last reload — gates the `Message::Tick` background
+    /// refresh so we don't hammer the SDK on every tick. Bumped on full
+    /// `reload`, on SDK-event-driven `Reload`, and on each Tick-initiated
+    /// background fetch.
+    last_reload: Instant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,6 +145,7 @@ impl LiquidTransactions {
             fetch_token: 0,
             is_last_page: false,
             processing: false,
+            last_reload: Instant::now(),
         }
     }
 
@@ -436,6 +449,40 @@ impl State for LiquidTransactions {
                 Task::none()
             }
             Message::View(view::Message::Reload) => self.reload(None, None),
+            Message::Tick => {
+                // Background refresh so a freshly-broadcast or freshly-
+                // confirmed Liquid tx surfaces without the user having
+                // to navigate away and back. The primary refresh path
+                // is still `active_liquid_refresh` (SDK events); this
+                // Tick is a defensive backstop for when events miss or
+                // arrive late.
+                //
+                // Gated to avoid disturbing an active drill-down:
+                // fires only on page 0, no selection, no modal open,
+                // no in-flight fetch, and only after
+                // `LIQUID_TRANSACTIONS_RELOAD_MAX_TTL` has elapsed
+                // since the last reload.
+                //
+                // Calls `fetch_page(0)` directly (not `reload`) so we
+                // don't clear `payments` or flip `loading` — the row
+                // list stays rendered until `PaymentsLoaded` replaces
+                // it atomically. Avoids the periodic "list disappears,
+                // loading flashes" glitch a Tick → reload loop would
+                // cause.
+                if self.current_page == 0
+                    && self.selected_payment.is_none()
+                    && self.selected_refundable.is_none()
+                    && matches!(self.modal, LiquidTransactionsModal::None)
+                    && !self.loading
+                    && !self.processing
+                    && self.pending_page.is_none()
+                    && Instant::now() > self.last_reload + LIQUID_TRANSACTIONS_RELOAD_MAX_TTL
+                {
+                    self.last_reload = Instant::now();
+                    return self.fetch_page(0);
+                }
+                Task::none()
+            }
             Message::View(view::Message::Close) => {
                 self.selected_payment = None;
                 self.selected_refundable = None;
@@ -813,6 +860,7 @@ impl State for LiquidTransactions {
         self.is_last_page = false;
         self.processing = false;
         self.payments.clear();
+        self.last_reload = Instant::now();
         let client2 = self.breez_client.clone();
 
         Task::batch(vec![
