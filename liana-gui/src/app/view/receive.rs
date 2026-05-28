@@ -40,45 +40,19 @@ fn address_card<'a>(
     address: &'a bitcoin::Address,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-) -> Container<'a, Message> {
+) -> Element<'a, Message> {
     let addr = address.to_string();
-    card::simple(
-        Column::new()
-            .push(if let Some(label) = labels_editing.get(&addr) {
-                label::label_editing(vec![addr.clone()], label, text::P1_SIZE)
-            } else {
-                label::label_editable(vec![addr.clone()], labels.get(&addr), text::P1_SIZE)
-            })
-            .push(
-                Row::new()
-                    .push(
-                        Container::new(scrollable::horizontal_thin(
-                            Column::new()
-                                .push(Space::with_height(Length::Fixed(10.0)))
-                                .push(p2_regular(address).small().style(theme::text::secondary)),
-                        ))
-                        .width(Length::Fill),
-                    )
-                    .push(
-                        Button::new(icon::clipboard_icon().style(theme::text::secondary))
-                            .on_press(Message::Clipboard(addr))
-                            .style(theme::button::transparent_border),
-                    )
-                    .align_y(Alignment::Center),
-            )
-            .push(
-                Row::new()
-                    .push(
-                        button::secondary(None, "Verify on hardware device")
-                            .on_press(Message::Select(row_index)),
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        button::secondary(None, "Show QR Code")
-                            .on_press(Message::ShowQrCode(row_index)),
-                    ),
-            )
-            .spacing(10),
+    let label = if let Some(label) = labels_editing.get(&addr) {
+        label::label_editing(vec![addr.clone()], label, text::P1_SIZE)
+    } else {
+        label::label_editable(vec![addr.clone()], labels.get(&addr), text::P1_SIZE)
+    };
+    liana_ui::component::receive::address_card(
+        label,
+        address,
+        Message::Clipboard(addr),
+        Message::Select(row_index),
+        Message::ShowQrCode(row_index),
     )
 }
 
