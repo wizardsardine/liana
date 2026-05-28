@@ -2,10 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use iced::{
     alignment::Horizontal,
-    widget::{
-        qr_code::{self, QRCode},
-        Button, Space,
-    },
+    widget::{qr_code, Button, Space},
     Alignment, Length,
 };
 
@@ -240,49 +237,11 @@ pub fn verify_address_modal<'a>(
             Column::new()
                 .push(
                     Column::new()
-                        .push(
-                            Column::new()
-                                .push(
-                                    Row::new()
-                                        .width(Length::Fill)
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            Container::new(text("Address:").bold())
-                                                .width(Length::Fill),
-                                        )
-                                        .push(
-                                            Row::new()
-                                                .align_y(Alignment::Center)
-                                                .push(Container::new(
-                                                    text(address.to_string()).small(),
-                                                ))
-                                                .push(
-                                                    Button::new(icon::clipboard_icon())
-                                                        .on_press(Message::Clipboard(
-                                                            address.to_string(),
-                                                        ))
-                                                        .style(theme::button::transparent_border),
-                                                )
-                                                .width(Length::Shrink),
-                                        ),
-                                )
-                                .push(
-                                    Row::new()
-                                        .width(Length::Fill)
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            Container::new(text("Derivation index:").bold())
-                                                .width(Length::Fill),
-                                        )
-                                        .push(
-                                            Container::new(
-                                                text(derivation_index.to_string()).small(),
-                                            )
-                                            .width(Length::Shrink),
-                                        ),
-                                )
-                                .spacing(5),
-                        )
+                        .push(liana_ui::component::panels::receive::verify_address_modal(
+                            address,
+                            derivation_index,
+                            Message::Clipboard(address.to_string()),
+                        ))
                         .push(text("Select device to verify address on:").width(Length::Fill))
                         .spacing(10)
                         .push(hws.iter().enumerate().fold(
@@ -310,20 +269,6 @@ pub fn verify_address_modal<'a>(
         .into()
 }
 
-pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a String) -> Element<'a, Message> {
-    Column::new()
-        .push(
-            Row::new()
-                .push(Space::with_width(Length::Fill))
-                .push(
-                    Container::new(QRCode::<liana_ui::theme::Theme>::new(qr).cell_size(8))
-                        .padding(10),
-                )
-                .push(Space::with_width(Length::Fill)),
-        )
-        .push(Space::with_height(Length::Fixed(15.0)))
-        .push(Container::new(text(address).size(15)).center_x(Length::Fill))
-        .width(Length::Fill)
-        .max_width(400)
-        .into()
+pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a str) -> Element<'a, Message> {
+    liana_ui::component::panels::receive::qr_display(qr, address)
 }
