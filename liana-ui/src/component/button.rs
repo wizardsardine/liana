@@ -272,7 +272,7 @@ pub fn clickable_icon_with_size<'a, T: 'a + Clone>(
     message: Option<T>,
     size: u32,
 ) -> Button<'a, T> {
-    Button::new(Container::new(icon).center_x(size).center_y(size))
+    Button::new(icon.size(size))
         .on_press_maybe(message)
         .style(theme::button::transparent)
 }
@@ -294,7 +294,7 @@ pub fn btn_primary<'a, T: Clone + 'a>(
 /// Secondary button with preset width.
 pub fn btn_secondary<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
-    label: &'static str,
+    label: &'a str,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
@@ -498,6 +498,30 @@ pub fn btn_show_qr_compact<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     button_compact("Show QR Code", theme::button::secondary, Some(msg))
 }
 
+pub fn btn_show_qr<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
+    btn_secondary(
+        Some(icon::qr_icon()),
+        "Show QR Code",
+        BtnWidth::M,
+        Some(msg),
+    )
+}
+
+pub fn btn_verify<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
+    btn_secondary(
+        Some(icon::usb_icon()),
+        "Verify on hardware device",
+        BtnWidth::L,
+        Some(msg),
+    )
+}
+
+const CLICKABLE_ICON_SIZE: u32 = 26;
+
 pub fn btn_copy<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    clickable_icon_with_size(icon::edit_icon(), msg, 26)
+    clickable_icon_with_size(icon::copy_icon(), msg, CLICKABLE_ICON_SIZE)
+}
+
+pub fn btn_edit<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    clickable_icon_with_size(icon::edit_icon(), msg, CLICKABLE_ICON_SIZE)
 }

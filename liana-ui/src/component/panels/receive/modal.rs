@@ -8,7 +8,12 @@ use iced::{
 };
 
 use crate::{
-    component::text::{text, Text},
+    component::{
+        self,
+        address::copyable_address,
+        button::{btn_show_qr, btn_verify},
+        text::{text, Text},
+    },
     icon, theme,
     widget::*,
 };
@@ -58,4 +63,27 @@ pub fn qr_display<'a, M: 'a>(qr: &'a qr_code::Data, address: &'a str) -> Element
     .width(Length::Fill)
     .max_width(400)
     .into()
+}
+
+pub fn show_address_modal<'a, M: 'a + Clone>(
+    address: &bitcoin::Address,
+    close: M,
+    verify: M,
+    show_qr: M,
+    clipboard: M,
+) -> Element<'a, M> {
+    let addr_row = copyable_address(address, clipboard);
+    let btn_row = row![
+        btn_verify(verify),
+        Space::fill_width(),
+        btn_show_qr(show_qr)
+    ];
+    let content = column![addr_row, btn_row].spacing(28);
+    component::modal::modal_view(
+        Some("Address"),
+        None,
+        Some(close),
+        component::modal::ModalWidth::M,
+        content,
+    )
 }

@@ -9,7 +9,7 @@ use iced::{
 
 use crate::{
     component::{
-        self,
+        address::copyable_address,
         button::{btn_show_qr_compact, btn_verify_compact},
         card, label,
         text::new,
@@ -27,11 +27,8 @@ pub fn address_card<'a, M: Clone + 'static>(
     show_qr: M,
 ) -> Element<'a, M> {
     let label = label::editable_label(label, edit_label);
-    let address = new::caption(address).style(theme::text::card_secondary);
-    let addr_row = row![address, component::button::btn_copy(Some(clipboard))]
-        .spacing(12)
-        .align_y(Alignment::Center);
-    let top = column![label, addr_row].spacing(12);
+    let addr_row = copyable_address(address, clipboard);
+    let top = column![label, addr_row];
 
     let bottom = row![
         btn_verify_compact(verify),
