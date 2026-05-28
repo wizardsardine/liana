@@ -144,6 +144,7 @@ pub enum Message {
     OpenUrl(String),
     Home(HomeMessage),
     LiquidOverview(LiquidOverviewMessage),
+    LiquidTransactions(LiquidTransactionsMessage),
     SparkOverview(crate::app::view::spark::SparkOverviewMessage),
     SparkTransactions(crate::app::view::spark::SparkTransactionsMessage),
     SparkSettings(crate::app::view::spark::SparkSettingsMessage),
@@ -504,6 +505,22 @@ pub enum SideshiftSendMessage {
     Reset,
     Error(String),
     Copy,
+}
+
+/// View-level messages for the Liquid Transactions panel. Currently
+/// only carries the SDK-event-driven background refresh signal; the
+/// rest of the panel's interactions still go through the generic
+/// `view::Message::{Reload, Close, Select, ...}` because most of the
+/// state changes were wired before this enum was introduced.
+#[derive(Debug, Clone)]
+pub enum LiquidTransactionsMessage {
+    /// Refresh payments in place without disturbing the user's current
+    /// view (selection, refund modal, pagination). The handler gates
+    /// the fetch to fire only when the panel is idle on page 0, and
+    /// uses `fetch_page(0)` directly rather than the heavy `reload()`
+    /// — so a freshly-confirmed Liquid tx surfaces from SDK events
+    /// without kicking the user out of any drill-down.
+    BackgroundRefresh,
 }
 
 #[derive(Debug, Clone)]

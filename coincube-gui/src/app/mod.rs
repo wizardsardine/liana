@@ -631,13 +631,20 @@ impl Panels {
                 crate::app::menu::LiquidSubMenu::Receive => Some(Message::View(
                     view::Message::LiquidReceive(view::LiquidReceiveMessage::RefreshRequested),
                 )),
-                // The Transactions panel handles `Reload` by re-running
-                // its SDK fetches (see `LiquidTransactions::update`).
-                // Without this arm, SDK events never reached the panel
-                // when the user was sitting on it, so a confirmed send
-                // wouldn't surface until they navigated away and back.
+                // Route to a dedicated `BackgroundRefresh` rather than
+                // the generic `Reload` — `Reload` would call the
+                // panel's `reload()` which clears `selected_payment`,
+                // `selected_refundable`, the refund modal and form
+                // state. SDK events fire frequently (Synced,
+                // PaymentSucceeded, etc.), so a Reload arm would kick
+                // the user out of any drill-down they're in.
+                // `BackgroundRefresh` is gated to only fire when the
+                // panel is idle and uses `fetch_page(0)` to replace
+                // payments atomically without disturbing state.
                 crate::app::menu::LiquidSubMenu::Transactions(_) => {
-                    Some(Message::View(view::Message::Reload))
+                    Some(Message::View(view::Message::LiquidTransactions(
+                        view::LiquidTransactionsMessage::BackgroundRefresh,
+                    )))
                 }
                 _ => None,
             },

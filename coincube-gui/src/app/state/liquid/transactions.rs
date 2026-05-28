@@ -449,26 +449,38 @@ impl State for LiquidTransactions {
                 Task::none()
             }
             Message::View(view::Message::Reload) => self.reload(None, None),
-            Message::Tick => {
+            Message::View(view::Message::LiquidTransactions(
+                view::LiquidTransactionsMessage::BackgroundRefresh,
+            ))
+            | Message::Tick => {
                 // Background refresh so a freshly-broadcast or freshly-
                 // confirmed Liquid tx surfaces without the user having
-                // to navigate away and back. The primary refresh path
-                // is still `active_liquid_refresh` (SDK events); this
-                // Tick is a defensive backstop for when events miss or
-                // arrive late.
+                // to navigate away and back. Two callers funnel through
+                // the same gated path:
+                //
+                // - `Message::Tick`: defensive backstop on a
+                //   `LIQUID_TRANSACTIONS_RELOAD_MAX_TTL` cadence, in
+                //   case an SDK event ever misses or arrives late
+                //   (also covers Liquid-only cubes where `on_tick`
+                //   normally skips when no Vault daemon is configured).
+                // - `BackgroundRefresh`: dispatched from
+                //   `active_liquid_refresh` when the SDK fires Synced,
+                //   PaymentSucceeded, etc.
                 //
                 // Gated to avoid disturbing an active drill-down:
                 // fires only on page 0, no selection, no modal open,
                 // no in-flight fetch, and only after
                 // `LIQUID_TRANSACTIONS_RELOAD_MAX_TTL` has elapsed
-                // since the last reload.
+                // since the last reload — the TTL doubles as a
+                // debounce when SDK events burst.
                 //
                 // Calls `fetch_page(0)` directly (not `reload`) so we
                 // don't clear `payments` or flip `loading` — the row
                 // list stays rendered until `PaymentsLoaded` replaces
                 // it atomically. Avoids the periodic "list disappears,
-                // loading flashes" glitch a Tick → reload loop would
-                // cause.
+                // loading flashes" glitch a reload-on-every-event
+                // approach would cause, and preserves any drill-down
+                // / refund modal state the user is currently in.
                 if self.current_page == 0
                     && self.selected_payment.is_none()
                     && self.selected_refundable.is_none()
