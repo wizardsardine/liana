@@ -1,7 +1,6 @@
 use iced::{
-    alignment::Horizontal,
     widget::{column, row, tooltip::Position, Space},
-    Alignment, Length,
+    Alignment,
 };
 
 use crate::{
@@ -9,14 +8,14 @@ use crate::{
         self, pill,
         text::{
             new::{caption, h2, h3, H2_SEMI_SPEC},
-            text, truncate,
+            truncate,
         },
         tooltip::tooltip_with_style,
         tooltip_custom,
     },
     icon,
     theme::{self, amount},
-    widget::{Button, Container, Element, SpaceExt},
+    widget::{Container, Element, SpaceExt},
 };
 
 const ICON_SIZE: u32 = 16;
@@ -102,27 +101,6 @@ pub struct UIPayment<'a> {
 /// Format a date as "Mar 12, 2026".
 pub fn format_date(time: chrono::DateTime<chrono::Utc>) -> String {
     time.format("%b %-d, %Y").to_string()
-}
-
-/// "See more" button paginating the payment history. Shows "Fetching ..." and
-/// is disabled while `processing`.
-pub fn see_more<'a, M: Clone + 'a>(processing: bool, next: M) -> Element<'a, M> {
-    let label = if processing {
-        "Fetching ..."
-    } else {
-        "See more"
-    };
-
-    let button = Button::new(text(label).width(Length::Fill).align_x(Horizontal::Center))
-        .width(Length::Fill)
-        .padding(15)
-        .style(theme::button::transparent_border)
-        .on_press_maybe((!processing).then_some(next));
-
-    Container::new(button)
-        .width(Length::Fill)
-        .style(theme::card::simple)
-        .into()
 }
 
 pub fn payment_card<'a, M: 'a + Clone>(payment: UIPayment<'a>, msg: Option<M>) -> Element<'a, M> {
