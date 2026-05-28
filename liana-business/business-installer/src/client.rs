@@ -161,7 +161,7 @@ impl Client {
             refresh_thread_handle: None,
             refresh_stop: Arc::new(AtomicBool::new(false)),
             user_id: Arc::new(Mutex::new(None)),
-            user_agent: BackendType::LianaBusiness.user_agent(),
+            user_agent: BackendType::LianaBusiness(crate::VERSION).user_agent(),
         }
     }
 

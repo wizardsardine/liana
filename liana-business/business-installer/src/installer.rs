@@ -123,7 +123,7 @@ impl Installer<'_, Message> for BusinessInstaller {
     }
 
     fn backend_type() -> BackendType {
-        BackendType::LianaBusiness
+        BackendType::LianaBusiness(crate::VERSION)
     }
 
     fn exit_maybe(&mut self, _msg: &Message) -> Option<NextState> {
