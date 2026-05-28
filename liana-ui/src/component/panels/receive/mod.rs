@@ -14,7 +14,7 @@ use crate::{
         self,
         button::{btn_show_qr_compact, btn_verify_compact},
         card, label,
-        text::{new, p1_bold, text, Text},
+        text::{new, text, Text},
     },
     icon, theme,
     widget::{Container, Element, SpaceExt},
@@ -53,20 +53,15 @@ pub fn previous_addresses_header<'a, M: Clone + 'static>(show: bool, toggle: M) 
     } else {
         icon::collapse_icon()
     };
-    let header = Button::new(
-        row![
-            p1_bold("Previously generated addresses still awaiting deposit").width(Length::Fill),
-            chevron,
-        ]
-        .align_y(Alignment::Center),
-    )
-    .on_press(toggle)
-    .padding(20)
-    .width(Length::Fill)
-    .style(theme::button::transparent_border);
+    let text = new::d3("Previously generated addresses still awaiting deposit");
+    let header = row![text, chevron]
+        .spacing(14)
+        .align_y(Alignment::Center)
+        .wrap();
 
-    Container::new(header)
-        .style(theme::card::button_simple)
+    Button::new(header)
+        .style(theme::button::transparent)
+        .on_press(toggle)
         .into()
 }
 
