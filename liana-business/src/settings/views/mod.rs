@@ -6,8 +6,9 @@ use iced::{
 };
 use liana_ui::{
     component::{
-        self, badge, button, card, pick_list, scrollable, separation,
-        setting::{header, settings_section, SectionKind},
+        self, badge, button, card,
+        panels::setting::{header, settings_section, SectionKind},
+        pick_list, scrollable, separation,
         text::*,
     },
     icon, theme,
@@ -30,7 +31,7 @@ pub fn list_view() -> Element<'static, Msg> {
     let general = settings_section(SectionKind::General, Msg::SelectSection(Section::General));
     let about = settings_section(SectionKind::About, Msg::SelectSection(Section::About));
 
-    component::setting::section_list(vec![general, wallet, about])
+    component::panels::setting::section_list(vec![general, wallet, about])
 }
 
 /// Wallet settings section view.
