@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use super::{
     cursor::{self, Cursor},
     editor::Editor,
@@ -63,11 +65,11 @@ where
 {
     /// Creates a new [`TextInput`] with the given placeholder and
     /// its current value.
-    pub fn new(placeholder: &str, value: &str) -> Self {
+    pub fn new(placeholder: impl Display, value: impl Display) -> Self {
         TextInput {
             id: None,
-            placeholder: String::from(placeholder),
-            value: Value::new(value),
+            placeholder: placeholder.to_string(),
+            value: Value::new(&value.to_string()),
             is_secure: false,
             font: None,
             width: Length::Fill,
