@@ -695,6 +695,98 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
             }
         }
 
+        // LAN-paired phones via the local-signer protocol. We browse
+        // mDNS for `_coincube-signer._tcp.local.`, match the TXT
+        // `fp=` against persisted `pairing_store` entries, and dial
+        // each match over TLS. On a successful pinned-cert handshake
+        // we surface a `PhoneSigner` as `Supported`; phones that are
+        // paired but currently unreachable (mDNS silent or dial
+        // failed) surface as `Unsupported(AppIsNotOpen)` so the user
+        // sees "phone offline" rather than silence.
+        match crate::phone_signer::pairing_store::load(&state.datadir_path) {
+            Ok(store) if !store.phones.is_empty() => {
+                let discovered = crate::phone_signer::mdns::browse();
+                let identity = match crate::phone_signer::identity::load_or_create(
+                    &state.datadir_path,
+                ) {
+                    Ok(id) => Some(id),
+                    Err(e) => {
+                        warn!("local-signer identity unavailable: {}", e);
+                        None
+                    }
+                };
+                if let Some(identity) = identity {
+                    for paired in &store.phones {
+                        let fp8 = crate::phone_signer::identity::fingerprint_hex8(
+                            &paired.identity_pubkey,
+                        );
+                        let id = format!("phone-{}", fp8);
+                        if state.connected_supported_hws.contains(&id) {
+                            still.push(id);
+                            continue;
+                        }
+                        // Resolve a target address: prefer the
+                        // mDNS-discovered one; fall back to the
+                        // user-entered `fallback_addr` when mDNS is
+                        // blocked or the phone isn't broadcasting.
+                        let target = resolve_phone_target(&fp8, paired, &discovered);
+                        let Some(target) = target else {
+                            // Paired but not visible. Surface offline.
+                            hws.push(HardwareWallet::Unsupported {
+                                id,
+                                kind: DeviceKind::Specter,
+                                version: None,
+                                reason: UnsupportedReason::AppIsNotOpen,
+                            });
+                            continue;
+                        };
+                        let phone_pin = paired.identity_pubkey;
+                        let paired = paired.clone();
+                        match crate::phone_signer::transport::PairedTransport::connect(
+                            target, &identity, phone_pin,
+                        )
+                        .await
+                        {
+                            Ok(t) => {
+                                let fingerprint = paired
+                                    .wallet_fingerprints
+                                    .first()
+                                    .copied()
+                                    .unwrap_or_default();
+                                let signer = crate::phone_signer::PhoneSigner::new(
+                                    t,
+                                    fingerprint,
+                                    None,
+                                    paired.clone(),
+                                );
+                                let device: Arc<dyn HWI + Send + Sync> = Arc::new(signer);
+                                hws.push(HardwareWallet::Supported {
+                                    id,
+                                    device,
+                                    kind: DeviceKind::Specter,
+                                    fingerprint,
+                                    version: None,
+                                    registered: Some(true),
+                                    alias: Some(paired.name.clone()),
+                                });
+                            }
+                            Err(e) => {
+                                debug!("phone {} dial failed: {}", paired.name, e);
+                                hws.push(HardwareWallet::Unsupported {
+                                    id,
+                                    kind: DeviceKind::Specter,
+                                    version: None,
+                                    reason: UnsupportedReason::AppIsNotOpen,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(e) => debug!("local-signer pairing store: {}", e),
+        }
+
         if let Some(wallet) = &state.wallet {
             let wallet_keys = wallet.descriptor_keys();
             for hw in &mut hws {
@@ -949,4 +1041,99 @@ pub fn is_compatible_with_tapminiscript(
                     (None, None) => true,
                 }
         })
+}
+
+/// Resolve a paired phone's reachable address. Prefers the
+/// mDNS-discovered endpoint (TXT `fp` matches the phone's cert pin
+/// fingerprint); falls back to the user-entered `host:port` for
+/// networks that block mDNS.
+///
+/// `None` means "paired but unreachable" — the caller surfaces that
+/// as `HardwareWallet::Unsupported(AppIsNotOpen)`.
+///
+/// Pulled out of the discovery loop so the resolution decision is
+/// pure and unit-testable.
+pub(crate) fn resolve_phone_target(
+    fp8: &str,
+    paired: &crate::phone_signer::pairing_store::PairedPhone,
+    discovered: &[crate::phone_signer::mdns::DiscoveredPhone],
+) -> Option<std::net::SocketAddr> {
+    let mdns_addr = discovered
+        .iter()
+        .find(|d| d.fingerprint_hex8 == fp8)
+        .map(|d| d.addr);
+    let fallback_addr = paired
+        .fallback_addr
+        .as_deref()
+        .and_then(|s| s.parse::<std::net::SocketAddr>().ok());
+    mdns_addr.or(fallback_addr)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::phone_signer::mdns::DiscoveredPhone;
+    use crate::phone_signer::pairing_store::PairedPhone;
+    use std::net::SocketAddr;
+
+    fn phone_with_fallback(pin: [u8; 32], fallback: Option<&str>) -> PairedPhone {
+        PairedPhone {
+            identity_pubkey: pin,
+            name: "Test".into(),
+            paired_at_unix: 0,
+            wallet_fingerprints: Vec::new(),
+            fallback_addr: fallback.map(|s| s.to_string()),
+        }
+    }
+
+    fn discovered(fp8: &str, addr: &str) -> DiscoveredPhone {
+        DiscoveredPhone {
+            fingerprint_hex8: fp8.into(),
+            addr: addr.parse::<SocketAddr>().expect("parse addr"),
+            instance_name: "test".into(),
+        }
+    }
+
+    #[test]
+    fn resolve_prefers_mdns_when_both_available() {
+        let phone = phone_with_fallback([1u8; 32], Some("10.0.0.5:8443"));
+        let discoveries = vec![discovered("01010101", "192.168.1.20:7777")];
+        let target = resolve_phone_target("01010101", &phone, &discoveries);
+        assert_eq!(target.unwrap().to_string(), "192.168.1.20:7777");
+    }
+
+    #[test]
+    fn resolve_falls_back_when_no_mdns_match() {
+        let phone = phone_with_fallback([1u8; 32], Some("10.0.0.5:8443"));
+        // The discovery is for a different phone.
+        let discoveries = vec![discovered("ffffffff", "192.168.1.20:7777")];
+        let target = resolve_phone_target("01010101", &phone, &discoveries);
+        assert_eq!(target.unwrap().to_string(), "10.0.0.5:8443");
+    }
+
+    #[test]
+    fn resolve_returns_none_when_neither_mdns_nor_fallback() {
+        let phone = phone_with_fallback([1u8; 32], None);
+        let target = resolve_phone_target("01010101", &phone, &[]);
+        assert!(target.is_none(), "expected None, got {:?}", target);
+    }
+
+    #[test]
+    fn resolve_returns_none_when_fallback_is_malformed() {
+        let phone = phone_with_fallback([1u8; 32], Some("not-an-addr"));
+        let target = resolve_phone_target("01010101", &phone, &[]);
+        assert!(
+            target.is_none(),
+            "malformed fallback should not crash; got {:?}",
+            target
+        );
+    }
+
+    #[test]
+    fn resolve_uses_only_mdns_when_no_fallback() {
+        let phone = phone_with_fallback([1u8; 32], None);
+        let discoveries = vec![discovered("01010101", "192.168.1.20:7777")];
+        let target = resolve_phone_target("01010101", &phone, &discoveries);
+        assert_eq!(target.unwrap().to_string(), "192.168.1.20:7777");
+    }
 }

@@ -1,6 +1,7 @@
 pub mod about;
 pub mod general;
 mod install_stats;
+pub mod local_signing;
 pub mod recovery_kit;
 
 use std::sync::Arc;
@@ -12,6 +13,7 @@ use coincube_ui::widget::Element;
 use about::AboutSettingsState;
 use general::GeneralSettingsState;
 use install_stats::InstallStatsState;
+use local_signing::LocalSigningState;
 
 use crate::{
     app::{
@@ -96,6 +98,13 @@ impl State for SettingsState {
             }
             Message::View(view::Message::Settings(view::SettingsMessage::InstallStatsSection)) => {
                 self.setting = Some(InstallStatsState::default().into());
+                self.setting
+                    .as_mut()
+                    .map(|s| s.reload(daemon, None))
+                    .unwrap_or_else(Task::none)
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::LocalSigningSection)) => {
+                self.setting = Some(LocalSigningState::default().into());
                 self.setting
                     .as_mut()
                     .map(|s| s.reload(daemon, None))

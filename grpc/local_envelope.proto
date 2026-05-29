@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package coincube.local.v1;
+
+// Wire format for the LAN signer transport between the desktop
+// (coincube-gui) and the Keychain phone app. Mirrors the gRPC types
+// from connect.proto so the same Phone <-> Vault flow can run over a
+// local TLS/Noise socket without the Connect API.
+//
+// See plans/PLAN-local-signer-lan-desktop.md and
+// keychain-app/plans/PLAN-local-signer-lan.md.
+
+import "connect.proto";
+
+message LocalEnvelope {
+  oneof payload {
+    PairingComplete     pairing_complete = 1;
+    connect.v1.Ping     ping             = 2;
+    connect.v1.Pong     pong             = 3;
+    PresentSession      present_session  = 4;
+    CancelSession       cancel_session   = 5;
+    SessionStatusUpdate status_update    = 6;
+    PartialSignature    partial          = 7;
+    ErrorEnvelope       error            = 8;
+  }
+}
+
+// Sent by the phone once the Noise/PSK handshake succeeds, so the
+// desktop can persist the phone's stable identity pubkey.
+message PairingComplete {
+  bytes  phone_identity_pubkey = 1;   // Ed25519
+  string device_name           = 2;
+  string app_version           = 3;
+  repeated string capabilities = 4;
+}
+
+// Desktop -> phone: a PSBT to sign, wrapped in the same SigningSession
+// type the Connect-mediated path uses.
+message PresentSession {
+  connect.v1.SigningSession session = 1;
+}
+
+// Desktop -> phone: abort an in-flight session.
+message CancelSession {
+  string session_id = 1;
+  string reason     = 2;
+}
+
+// Phone -> desktop: status transitions for the in-flight session.
+message SessionStatusUpdate {
+  string session_id = 1;
+  connect.v1.SessionStatus status = 2;
+}
+
+// Phone -> desktop: signed PSBT and which key_ids were signed for.
+message PartialSignature {
+  string session_id = 1;
+  bytes  signed_psbt = 2;
+  repeated string signed_key_ids = 3;
+}
+
+// Either side -> peer: out-of-band error. Code is machine-readable;
+// message is human-readable.
+message ErrorEnvelope {
+  string code    = 1;
+  string message = 2;
+}

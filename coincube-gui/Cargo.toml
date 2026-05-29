@@ -119,6 +119,16 @@ aes-gcm = { version = "0.10", features = ["aes"] }
 sha2 = "0.11.0"
 zxcvbn = "3"
 
+# Local LAN signer (phone_signer module). TLS with cert pinning,
+# self-signed cert generation, Ed25519 identity, and mDNS discovery
+# for the Keychain phone app. See plans/PLAN-local-signer-lan-desktop.md.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls-pki-types = "1"
+rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+mdns-sd = "0.13"
+
 dotenvy = "0.15.7"
 
 [target.'cfg(windows)'.dependencies]
@@ -170,7 +180,9 @@ flate2 = { version = "1.0", default-features = false }
 iced = { version = "0.14.0", features = ["x11", "wayland"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt", "macros"] }
+# `test-util` gives us `#[tokio::test(start_paused = true)]` for the
+# local-signer timeout test in tests/local_signer_loopback.rs.
+tokio = { version = "1", features = ["rt", "macros", "test-util"] }
 httpmock = "0.7"
 
 [features]

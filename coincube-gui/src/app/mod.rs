@@ -1268,6 +1268,9 @@ impl App {
                     menu::CubeSettingsOption::Stats => {
                         Some(view::SettingsMessage::InstallStatsSection)
                     }
+                    menu::CubeSettingsOption::LocalSigning => {
+                        Some(view::SettingsMessage::LocalSigningSection)
+                    }
                     // Avatar / Members render from `ConnectCubePanel` via
                     // App::view; no section message is dispatched to the
                     // SettingsState. Side-effect loads (avatar fetch,

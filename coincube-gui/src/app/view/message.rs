@@ -336,6 +336,47 @@ pub enum SettingsMessage {
     /// Coexists with `BackupMasterSeed` above (the local paper-phrase
     /// backup), it does not replace it.
     RecoveryKit(RecoveryKitMessage),
+    /// Local LAN signer ("Paired phones") section — pairs a Keychain
+    /// phone over the local network so it shows up in the signer
+    /// list. See `PLAN-local-signer-lan-desktop.md`.
+    LocalSigningSection,
+    LocalSigning(LocalSigningMessage),
+}
+
+#[derive(Debug, Clone)]
+pub enum LocalSigningMessage {
+    /// "Pair phone" button → settings state generates a fresh offer
+    /// and starts the pairing TLS listener.
+    StartPairing,
+    /// Settings state's pairing-window timer fired one tick. Used to
+    /// update the on-screen countdown.
+    Tick,
+    /// User cancelled the pairing wizard before the phone connected.
+    CancelPairing,
+    /// Result of the pairing listener task. `Ok` payload is the
+    /// persisted [`PairedPhone`]; `Err` payload is a typed
+    /// [`PairingError`] the wizard renders category-specific copy
+    /// for. The listener itself does the `pairing_store::upsert`,
+    /// so the settings panel just needs to refresh its in-memory
+    /// list and update the wizard UI.
+    PairingCompleted(
+        Result<
+            crate::phone_signer::pairing_store::PairedPhone,
+            crate::phone_signer::errors::PairingError,
+        >,
+    ),
+    /// User asked to remove a paired phone (8-hex fingerprint of the
+    /// phone's cert pin).
+    RemovePhone(String),
+    /// Inline rename draft on a paired-phone row. `(fp8, new_text)`.
+    /// Doesn't persist; commit happens on `SaveRow`.
+    DraftName(String, String),
+    /// Inline fallback-addr (`host:port`) draft on a paired-phone
+    /// row. Persists on `SaveRow`. Lets the user dial a phone when
+    /// mDNS is blocked.
+    DraftFallback(String, String),
+    /// Persist the in-memory draft for the given fp8 row.
+    SaveRow(String),
 }
 
 #[derive(Debug, Clone)]

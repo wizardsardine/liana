@@ -127,6 +127,18 @@ fn cube_settings_items() -> Vec<SubItem> {
         });
     }
 
+    items.push(SubItem {
+        label: "Local signing",
+        icon: tooltip_icon,
+        route: Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::LocalSigning)),
+        matches: |m| {
+            matches!(
+                m,
+                Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::LocalSigning))
+            )
+        },
+    });
+
     items
 }
 

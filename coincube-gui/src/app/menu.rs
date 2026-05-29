@@ -38,6 +38,9 @@ pub enum CubeSettingsOption {
     /// `feature_flags::CUBE_MEMBERS_UI_ENABLED`; sidebar entry is hidden
     /// otherwise. Same App-level dispatch as Avatar.
     Members,
+    /// Local LAN signer ("Paired phones") — pair a Keychain phone over
+    /// Wi-Fi so it shows up in the signer list without Connect.
+    LocalSigning,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
