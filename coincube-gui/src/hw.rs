@@ -395,6 +395,11 @@ struct State {
     connected_supported_hws: Vec<String>,
     api: Option<ledger::HidApi>,
     datadir_path: CoincubeDirectory,
+    /// Per-phone retry cooldowns keyed by `fp8`. Set on a failed
+    /// dial so the next refresh tick skips the phone (and pays no
+    /// `CONNECT_TIMEOUT`) until the window has elapsed. Cleared on
+    /// a subsequent successful dial.
+    phone_cooldowns: HashMap<String, PhoneCooldown>,
 }
 
 /// Function pointer for Subscription::run_with - creates the refresh stream from RefreshState
@@ -406,6 +411,7 @@ fn make_refresh_stream(rs: &RefreshState) -> impl Stream<Item = HardwareWalletMe
         connected_supported_hws: Vec::new(),
         api: None,
         datadir_path: rs.datadir_path.clone(),
+        phone_cooldowns: HashMap::new(),
     };
     refresh(state)
 }
@@ -715,10 +721,15 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                         }
                     };
                 if let Some(identity) = identity {
+                    // Sharing the identity across N concurrent dials —
+                    // `PairedTransport::connect` only borrows for the
+                    // duration of the rustls config build, so an Arc
+                    // clone per future is cheap.
+                    let identity = Arc::new(identity);
+                    let now = std::time::Instant::now();
+                    let mut dials = Vec::new();
                     for paired in &store.phones {
-                        let fp8 = crate::phone_signer::identity::pin_hex8(
-                            &paired.identity_pubkey,
-                        );
+                        let fp8 = crate::phone_signer::identity::pin_hex8(&paired.identity_pubkey);
                         let id = format!("phone-{}", fp8);
                         if state.connected_supported_hws.contains(&id) {
                             still.push(id);
@@ -730,7 +741,9 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                         // blocked or the phone isn't broadcasting.
                         let target = resolve_phone_target(&fp8, paired, &discovered);
                         let Some(target) = target else {
-                            // Paired but not visible. Surface offline.
+                            // Paired but not visible. Surface offline
+                            // without touching the cooldown — no dial
+                            // attempt happened.
                             hws.push(HardwareWallet::Unsupported {
                                 id,
                                 kind: DeviceKind::Specter,
@@ -739,14 +752,41 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                             });
                             continue;
                         };
+                        // Cooldown gate: a phone that just failed
+                        // shouldn't pay another full `CONNECT_TIMEOUT`
+                        // this tick. Surface as offline; the window
+                        // expires on a later tick.
+                        if state
+                            .phone_cooldowns
+                            .get(&fp8)
+                            .is_some_and(|cd| cd.is_cooling(now))
+                        {
+                            hws.push(HardwareWallet::Unsupported {
+                                id,
+                                kind: DeviceKind::Specter,
+                                version: None,
+                                reason: UnsupportedReason::AppIsNotOpen,
+                            });
+                            continue;
+                        }
+                        let identity = identity.clone();
                         let phone_pin = paired.identity_pubkey;
                         let paired = paired.clone();
-                        match crate::phone_signer::transport::PairedTransport::connect(
-                            target, &identity, phone_pin,
-                        )
-                        .await
-                        {
+                        dials.push(async move {
+                            let res = crate::phone_signer::transport::PairedTransport::connect(
+                                target, &identity, phone_pin,
+                            )
+                            .await;
+                            (fp8, id, paired, res)
+                        });
+                    }
+                    // Run the dials concurrently so one slow / offline
+                    // phone can't stall the whole refresh tick.
+                    let results = iced::futures::future::join_all(dials).await;
+                    for (fp8, id, paired, res) in results {
+                        match res {
                             Ok(t) => {
+                                state.phone_cooldowns.remove(&fp8);
                                 let fingerprint = paired
                                     .wallet_fingerprints
                                     .first()
@@ -771,6 +811,11 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                             }
                             Err(e) => {
                                 debug!("phone {} dial failed: {}", paired.name, e);
+                                state
+                                    .phone_cooldowns
+                                    .entry(fp8)
+                                    .or_default()
+                                    .record_failure(std::time::Instant::now());
                                 hws.push(HardwareWallet::Unsupported {
                                     id,
                                     kind: DeviceKind::Specter,
@@ -1037,9 +1082,81 @@ pub fn is_compatible_with_tapminiscript(
                     (Some(v1), Some(v2)) => v1 >= v2,
                     (None, Some(_)) => false,
                     (Some(_), None) => true,
-                    (None, None) => true,
+                    // Conservative: even when the table entry has
+                    // no minimum-version requirement (Specter /
+                    // SpecterSimulator), require the device to
+                    // actually report a version. The PhoneSigner is
+                    // surfaced with `kind: Specter, version: None`
+                    // because async_hwi 0.0.29 has no `Phone`
+                    // variant — claiming it's tap-script-capable
+                    // because the table says "Specter, any
+                    // version" would let the descriptor editor
+                    // include a phone-signed key in a taproot
+                    // multisig, where the phone may not actually
+                    // support BIP-371 tap-script signing.
+                    //
+                    // Real Specter devices populate `version` via
+                    // `device.get_version().await` in
+                    // `HardwareWallet::new`, so they still match.
+                    // The only regression is "real Specter whose
+                    // `get_version` happened to fail" — which is a
+                    // degraded state where being conservative is
+                    // the right default.
+                    (None, None) => false,
                 }
         })
+}
+
+/// Initial delay between consecutive failed dials of the same phone.
+/// The window doubles on each subsequent failure, up to
+/// [`PHONE_RETRY_MAX`]. Cleared on successful connect.
+pub(crate) const PHONE_RETRY_INITIAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Upper bound on the per-phone retry window so a long-offline
+/// phone doesn't stay invisible for hours after coming back.
+pub(crate) const PHONE_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Per-phone retry/backoff state. Held in `State::phone_cooldowns`
+/// keyed by `fp8` so the refresh loop can skip phones whose last
+/// dial attempt failed recently without paying the full
+/// `CONNECT_TIMEOUT` (750ms) every tick. Cleared on the next
+/// successful connect.
+#[derive(Debug, Clone)]
+pub(crate) struct PhoneCooldown {
+    /// Instant before which we won't attempt another dial.
+    pub next_retry_at: std::time::Instant,
+    /// Most recently applied backoff window. The next failure
+    /// doubles it (capped at [`PHONE_RETRY_MAX`]); empty on a fresh
+    /// `Default` so the first call to `record_failure` settles on
+    /// [`PHONE_RETRY_INITIAL`].
+    pub current_window: std::time::Duration,
+}
+
+impl Default for PhoneCooldown {
+    fn default() -> Self {
+        Self {
+            next_retry_at: std::time::Instant::now(),
+            current_window: std::time::Duration::ZERO,
+        }
+    }
+}
+
+impl PhoneCooldown {
+    /// Caller skips the dial when this is `true`.
+    pub fn is_cooling(&self, now: std::time::Instant) -> bool {
+        now < self.next_retry_at
+    }
+
+    /// Push `next_retry_at` out by a doubled (capped) window. First
+    /// call settles on [`PHONE_RETRY_INITIAL`].
+    pub fn record_failure(&mut self, now: std::time::Instant) {
+        self.current_window = if self.current_window.is_zero() {
+            PHONE_RETRY_INITIAL
+        } else {
+            std::cmp::min(self.current_window.saturating_mul(2), PHONE_RETRY_MAX)
+        };
+        self.next_retry_at = now + self.current_window;
+    }
 }
 
 /// Resolve a paired phone's reachable address. Prefers the
@@ -1134,5 +1251,118 @@ mod tests {
         let discoveries = vec![discovered("01010101", "192.168.1.20:7777")];
         let target = resolve_phone_target("01010101", &phone, &discoveries);
         assert_eq!(target.unwrap().to_string(), "192.168.1.20:7777");
+    }
+
+    #[test]
+    fn cooldown_default_is_not_cooling() {
+        // A fresh default cooldown has `next_retry_at == created_at`,
+        // so a clock that's advanced at all is past the deadline.
+        let cd = PhoneCooldown::default();
+        let later = cd.next_retry_at + std::time::Duration::from_millis(1);
+        assert!(!cd.is_cooling(later));
+    }
+
+    #[test]
+    fn cooldown_first_failure_uses_initial_window() {
+        let mut cd = PhoneCooldown::default();
+        let t0 = std::time::Instant::now();
+        cd.record_failure(t0);
+        assert_eq!(cd.current_window, PHONE_RETRY_INITIAL);
+        assert_eq!(cd.next_retry_at, t0 + PHONE_RETRY_INITIAL);
+        assert!(cd.is_cooling(t0));
+        assert!(cd.is_cooling(t0 + PHONE_RETRY_INITIAL - std::time::Duration::from_millis(1)));
+        assert!(!cd.is_cooling(t0 + PHONE_RETRY_INITIAL));
+    }
+
+    #[test]
+    fn tapminiscript_compat_rejects_specter_without_version() {
+        // The bug this guards against: PhoneSigner is surfaced as
+        // (DeviceKind::Specter, version: None) because async_hwi has
+        // no Phone variant. Without the (None, None) => false arm,
+        // the compat check would falsely report taproot capability
+        // for paired phones.
+        assert!(!is_compatible_with_tapminiscript(
+            &DeviceKind::Specter,
+            None
+        ));
+        assert!(!is_compatible_with_tapminiscript(
+            &DeviceKind::SpecterSimulator,
+            None,
+        ));
+    }
+
+    #[test]
+    fn tapminiscript_compat_accepts_specter_with_any_reported_version() {
+        // Real Specter devices populate `version` via
+        // `device.get_version().await`. Any reported version
+        // satisfies the "no minimum required" table entry.
+        let v = async_hwi::Version {
+            major: 1,
+            minor: 0,
+            patch: 0,
+            prerelease: None,
+        };
+        assert!(is_compatible_with_tapminiscript(
+            &DeviceKind::Specter,
+            Some(&v),
+        ));
+        assert!(is_compatible_with_tapminiscript(
+            &DeviceKind::SpecterSimulator,
+            Some(&v),
+        ));
+    }
+
+    #[test]
+    fn tapminiscript_compat_still_enforces_minimum_versions() {
+        // Sanity: per-device minimums weren't disturbed by the
+        // (None, None) tightening.
+        let too_old = async_hwi::Version {
+            major: 2,
+            minor: 0,
+            patch: 0,
+            prerelease: None,
+        };
+        let new_enough = async_hwi::Version {
+            major: 2,
+            minor: 2,
+            patch: 0,
+            prerelease: None,
+        };
+        assert!(!is_compatible_with_tapminiscript(
+            &DeviceKind::Ledger,
+            Some(&too_old),
+        ));
+        assert!(is_compatible_with_tapminiscript(
+            &DeviceKind::Ledger,
+            Some(&new_enough),
+        ));
+        // Devices outside the table are never compatible regardless
+        // of version reporting.
+        assert!(!is_compatible_with_tapminiscript(&DeviceKind::Jade, None));
+        assert!(!is_compatible_with_tapminiscript(
+            &DeviceKind::Jade,
+            Some(&new_enough),
+        ));
+    }
+
+    #[test]
+    fn cooldown_subsequent_failures_double_until_cap() {
+        let mut cd = PhoneCooldown::default();
+        let t0 = std::time::Instant::now();
+        cd.record_failure(t0);
+        let mut prev = cd.current_window;
+        for step in 0..6 {
+            cd.record_failure(t0 + std::time::Duration::from_secs(step * 1000));
+            let expected_double = prev.saturating_mul(2);
+            let expected = std::cmp::min(expected_double, PHONE_RETRY_MAX);
+            assert_eq!(
+                cd.current_window, expected,
+                "step {} expected {:?} got {:?}",
+                step, expected, cd.current_window
+            );
+            prev = cd.current_window;
+        }
+        // After enough doublings we sit at the cap.
+        assert_eq!(cd.current_window, PHONE_RETRY_MAX);
     }
 }

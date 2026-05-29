@@ -219,10 +219,7 @@ mod tests {
             .decode(&g.offer.cert_der_b64)
             .expect("decode cert b64");
         let computed = sha2::Sha256::digest(&raw);
-        let computed_hex: String = computed
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect();
+        let computed_hex: String = computed.iter().map(|b| format!("{:02x}", b)).collect();
         assert_eq!(computed_hex, g.offer.cert_fp);
     }
 

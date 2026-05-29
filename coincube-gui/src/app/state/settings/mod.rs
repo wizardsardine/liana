@@ -39,6 +39,15 @@ pub struct SettingsState {
     /// Recovery-Kit card is rendered inside the General section's
     /// view, which reads this field through a parameter.
     pub recovery_kit: recovery_kit::RecoveryKit,
+    /// Cached wallet handed in via [`State::reload`]. Threaded into
+    /// the section sub-states' own `reload(daemon, wallet)` so they
+    /// can wire up wallet-dependent state on construction —
+    /// specifically, the local-signer panel needs the wallet's
+    /// fingerprint to enable the Pair button. App-level
+    /// `set_current_panel` calls our `reload` before dispatching the
+    /// section message so this is populated by the time the section
+    /// is constructed.
+    wallet: Option<Arc<Wallet>>,
 }
 
 impl SettingsState {
@@ -53,6 +62,7 @@ impl SettingsState {
             current_price_setting: price_setting,
             current_unit_setting: unit_setting,
             recovery_kit: recovery_kit::RecoveryKit::new(),
+            wallet: None,
         }
     }
 }
@@ -105,9 +115,16 @@ impl State for SettingsState {
             }
             Message::View(view::Message::Settings(view::SettingsMessage::LocalSigningSection)) => {
                 self.setting = Some(LocalSigningState::default().into());
+                // Hand the cached wallet down so LocalSigningState
+                // can populate `wallet_fingerprint` and enable the
+                // Pair button. App-level `set_current_panel` calls
+                // SettingsState::reload before dispatching this
+                // message, so `self.wallet` reflects the currently
+                // loaded wallet by the time we get here.
+                let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, None))
+                    .map(|s| s.reload(daemon, wallet))
                     .unwrap_or_else(Task::none)
             }
             Message::SettingsSaved => {
@@ -184,8 +201,12 @@ impl State for SettingsState {
     fn reload(
         &mut self,
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-        _wallet: Option<Arc<Wallet>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        // Cache the wallet so the next section dispatch (see the
+        // `LocalSigningSection` arm in `update`) can thread it into
+        // the section's `reload(daemon, wallet)`.
+        self.wallet = wallet;
         self.setting = None;
         Task::none()
     }

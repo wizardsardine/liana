@@ -323,14 +323,9 @@ async fn handshake_fails_when_phone_pins_a_different_cert() {
     let g = generate_offer(wallet_fp, &identity, "keychain-test".into());
     let dir = fresh_dir();
 
-    let result = pairing_listener::run_pairing(
-        identity,
-        g.offer,
-        phone_discovered,
-        vec![wallet_fp],
-        dir,
-    )
-    .await;
+    let result =
+        pairing_listener::run_pairing(identity, g.offer, phone_discovered, vec![wallet_fp], dir)
+            .await;
 
     assert!(
         result.is_err(),

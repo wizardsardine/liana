@@ -225,8 +225,7 @@ mod tests {
     fn capturing_verifier_records_cert_fp_after_handshake() {
         let cert = mint_cert();
         let (v, seen) = CapturingServerVerifier::new();
-        let res =
-            ServerCertVerifier::verify_server_cert(&*v, &cert, &[], &sni(), &[], unix_now());
+        let res = ServerCertVerifier::verify_server_cert(&*v, &cert, &[], &sni(), &[], unix_now());
         assert!(res.is_ok(), "should accept any cert");
         let recorded = seen.lock().expect("poisoned").expect("seen");
         assert_eq!(recorded, fingerprint_of(&cert));
@@ -270,7 +269,13 @@ pub fn client_config(
 pub fn client_config_unpinned(
     desktop_cert: CertificateDer<'static>,
     desktop_key: PrivateKeyDer<'static>,
-) -> Result<(ClientConfig, std::sync::Arc<std::sync::Mutex<Option<CertFingerprint>>>), TlsError> {
+) -> Result<
+    (
+        ClientConfig,
+        std::sync::Arc<std::sync::Mutex<Option<CertFingerprint>>>,
+    ),
+    TlsError,
+> {
     let (verifier, seen) = CapturingServerVerifier::new();
     let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
     let cfg = ClientConfig::builder_with_provider(provider)
@@ -297,7 +302,10 @@ pub struct CapturingServerVerifier {
 }
 
 impl CapturingServerVerifier {
-    pub fn new() -> (Arc<Self>, std::sync::Arc<std::sync::Mutex<Option<CertFingerprint>>>) {
+    pub fn new() -> (
+        Arc<Self>,
+        std::sync::Arc<std::sync::Mutex<Option<CertFingerprint>>>,
+    ) {
         let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
         let v = Arc::new(Self {
             crypto: Arc::new(rustls::crypto::ring::default_provider()),

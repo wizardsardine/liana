@@ -165,17 +165,12 @@ fn picker_body<'a>(
             .push(
                 Column::new()
                     .push(text(format!("Phone {}", d.cert_fp8)).bold())
-                    .push(
-                        text(format!("{}", d.addr))
-                            .style(theme::text::secondary),
-                    )
+                    .push(text(format!("{}", d.addr)).style(theme::text::secondary))
                     .width(Length::FillPortion(3)),
             )
-            .push(
-                button::secondary(None, "Pair").on_press(Message::Settings(
-                    SettingsMessage::LocalSigning(LocalSigningMessage::PickPhone(fp8)),
-                )),
-            );
+            .push(button::secondary(None, "Pair").on_press(Message::Settings(
+                SettingsMessage::LocalSigning(LocalSigningMessage::PickPhone(fp8)),
+            )));
         col = col.push(row);
     }
     col = col.push(separation().width(Length::Fill));

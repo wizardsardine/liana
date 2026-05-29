@@ -36,8 +36,7 @@ use coincube_gui::phone_signer::{
     identity::DesktopIdentity,
     mdns::DiscoveredPhone,
     pairing::{PairingOffer, PAIRING_PROTOCOL_VERSION},
-    pairing_listener,
-    pairing_store,
+    pairing_listener, pairing_store,
     protocol::{local_v1, LocalEnvelope},
     tls,
 };
@@ -177,9 +176,10 @@ async fn run_pairing_happy_path_persists_paired_phone() {
         instance_name: "keychain-test".into(),
     };
 
-    let paired = pairing_listener::run_pairing(identity, offer, phone, vec![wallet_fp], dir.clone())
-        .await
-        .expect("run_pairing ok");
+    let paired =
+        pairing_listener::run_pairing(identity, offer, phone, vec![wallet_fp], dir.clone())
+            .await
+            .expect("run_pairing ok");
 
     assert_eq!(paired.name, "Test Pixel");
     assert_eq!(paired.wallet_fingerprints, vec![wallet_fp]);
@@ -205,14 +205,9 @@ async fn run_pairing_returns_offer_expired_when_ttl_in_past() {
         instance_name: "keychain-test".into(),
     };
 
-    let result = pairing_listener::run_pairing(
-        identity,
-        offer,
-        phone,
-        vec![Fingerprint::default()],
-        dir,
-    )
-    .await;
+    let result =
+        pairing_listener::run_pairing(identity, offer, phone, vec![Fingerprint::default()], dir)
+            .await;
     assert!(
         matches!(result, Err(PairingError::OfferExpired)),
         "expected OfferExpired, got {:?}",
@@ -255,8 +250,7 @@ async fn run_pairing_returns_wallet_fingerprint_mismatch() {
         instance_name: "keychain-test".into(),
     };
 
-    let result =
-        pairing_listener::run_pairing(identity, offer, phone, vec![actual], dir).await;
+    let result = pairing_listener::run_pairing(identity, offer, phone, vec![actual], dir).await;
     match result {
         Err(PairingError::WalletFingerprintMismatch { expected, claimed }) => {
             assert_eq!(expected, vec![actual]);

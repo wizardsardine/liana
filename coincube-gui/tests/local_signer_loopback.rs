@@ -320,15 +320,18 @@ async fn sign_tx_surfaces_phone_disconnect_as_device_disconnected() {
     let _ = handle.await;
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn sign_tx_returns_timeout_error_when_phone_hangs() {
-    // With paused time, the runtime auto-advances the virtual
-    // clock whenever every task is blocked on a timer. The fake
-    // phone sleeps for a virtual day; the desktop's `sign_tx`
-    // times out at `SIGN_RESPONSE_TIMEOUT` (5 min today). The
-    // 5 min deadline is earlier, so auto-advance fires it first
-    // and we get back an HwiError::Device("sign_tx timeout").
+    // The fake phone sleeps for a virtual day; the desktop's
+    // `sign_tx` times out at `SIGN_RESPONSE_TIMEOUT` (5 min today).
+    // We pause time **after** the dial completes so the TLS
+    // handshake's real I/O doesn't race the (now bounded) handshake
+    // timeout under auto-advance — only the sign_tx round-trip is
+    // virtualised. With paused time, auto-advance fires the 5 min
+    // deadline first and we get back HwiError::Device("sign_tx
+    // timeout").
     let (signer, _handle) = signer_against_response(FakeResponse::HangForever).await;
+    tokio::time::pause();
     let mut psbt = empty_psbt();
     let err = async_hwi::HWI::sign_tx(&signer, &mut psbt)
         .await

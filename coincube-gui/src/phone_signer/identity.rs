@@ -246,7 +246,9 @@ mod tests {
         let id = load_or_create(&dir).expect("mint");
         let fp = id.cert_fp();
         assert_eq!(fp.len(), 64);
-        assert!(fp.chars().all(|c| c.is_ascii_hexdigit() && (!c.is_alphabetic() || c.is_lowercase())));
+        assert!(fp
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && (!c.is_alphabetic() || c.is_lowercase())));
     }
 
     #[test]

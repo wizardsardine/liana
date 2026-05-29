@@ -75,6 +75,13 @@ pub struct LocalSigningState {
     /// after pairing completes; mutations are kept in memory until
     /// the user clicks Save.
     pub row_drafts: HashMap<String, RowDraft>,
+    /// Monotonic id stamped onto every spawned pairing run. The
+    /// `Task::perform` for the listener captures the id at spawn
+    /// time and includes it in the `PairingCompleted` message;
+    /// completions whose id doesn't match the current value are
+    /// ignored. Bumped on `PickPhone` (start a new run) and
+    /// `CancelPairing` (invalidate any in-flight run).
+    pub pairing_id: u64,
     /// `reload` doesn't get a `Cache` (it only sees daemon + wallet),
     /// so we defer the first store load to the first `update` tick
     /// where `cache` is available.
@@ -88,6 +95,7 @@ impl Default for LocalSigningState {
             flow: PairingFlow::Idle,
             wallet_fingerprint: None,
             row_drafts: HashMap::new(),
+            pairing_id: 0,
             initialised: false,
         }
     }
@@ -117,6 +125,40 @@ impl LocalSigningState {
         }
     }
 
+    /// Bump `pairing_id` and return the new value. The caller stamps
+    /// the returned id onto the spawned listener task so its
+    /// completion can be distinguished from any prior in-flight run.
+    pub(crate) fn start_pairing_run(&mut self) -> u64 {
+        self.pairing_id = self.pairing_id.wrapping_add(1);
+        self.pairing_id
+    }
+
+    /// Apply the result of a pairing run **only if** `id` matches
+    /// the current `pairing_id` and the wizard is still in
+    /// `Waiting`. Returns `true` when the result was applied;
+    /// `false` when ignored (cancelled, superseded, or already past
+    /// the wizard). Datadir-typed so tests don't need a [`Cache`].
+    pub(crate) fn apply_pairing_completed(
+        &mut self,
+        id: u64,
+        res: Result<PairedPhone, PairingError>,
+        dir: &crate::dir::CoincubeDirectory,
+    ) -> bool {
+        if id != self.pairing_id || !matches!(self.flow, PairingFlow::Waiting { .. }) {
+            return false;
+        }
+        match res {
+            Ok(p) => {
+                self.flow = PairingFlow::Done(p);
+                self.refresh_phones_from(dir);
+            }
+            Err(e) => {
+                self.flow = PairingFlow::Error(e);
+            }
+        }
+        true
+    }
+
     /// Apply a `DraftName` mutation. Doesn't touch disk.
     pub(crate) fn apply_draft_name(&mut self, fp8: String, text: String) {
         self.row_drafts.entry(fp8).or_default().name = text;
@@ -134,10 +176,11 @@ impl LocalSigningState {
         let Some(draft) = self.row_drafts.get(fp8).cloned() else {
             return;
         };
-        if let Some(p) =
-            self.phones.phones.iter_mut().find(|p| {
-                crate::phone_signer::identity::pin_hex8(&p.identity_pubkey) == fp8
-            })
+        if let Some(p) = self
+            .phones
+            .phones
+            .iter_mut()
+            .find(|p| crate::phone_signer::identity::pin_hex8(&p.identity_pubkey) == fp8)
         {
             if !draft.name.trim().is_empty() {
                 p.name = draft.name.trim().to_string();
@@ -228,10 +271,9 @@ impl State for LocalSigningState {
                 // discovered. If the user picked from a stale list
                 // and the phone has since dropped, error out cleanly.
                 let Some(phone) = (match &self.flow {
-                    PairingFlow::PhonePicker { discovered } => discovered
-                        .iter()
-                        .find(|d| d.cert_fp8 == fp8)
-                        .cloned(),
+                    PairingFlow::PhonePicker { discovered } => {
+                        discovered.iter().find(|d| d.cert_fp8 == fp8).cloned()
+                    }
                     _ => None,
                 }) else {
                     self.flow = PairingFlow::Error(PairingError::InternalError(format!(
@@ -266,6 +308,7 @@ impl State for LocalSigningState {
                 };
                 let dir = cache.datadir_path.clone();
                 let fps = vec![fingerprint];
+                let run_id = self.start_pairing_run();
                 Task::perform(
                     async move {
                         crate::phone_signer::pairing_listener::run_pairing(
@@ -273,10 +316,10 @@ impl State for LocalSigningState {
                         )
                         .await
                     },
-                    |res| {
+                    move |res| {
                         Message::View(view::Message::Settings(
                             view::SettingsMessage::LocalSigning(
-                                LocalSigningMessage::PairingCompleted(res),
+                                LocalSigningMessage::PairingCompleted(run_id, res),
                             ),
                         ))
                     },
@@ -292,19 +335,16 @@ impl State for LocalSigningState {
                 Task::none()
             }
             LocalSigningMessage::CancelPairing => {
+                // Bump the run id so any in-flight listener task's
+                // completion is ignored when it eventually arrives.
+                // (`Task::perform` futures aren't cancellable from
+                // here; this is the next-best thing.)
+                self.start_pairing_run();
                 self.flow = PairingFlow::Idle;
                 Task::none()
             }
-            LocalSigningMessage::PairingCompleted(res) => {
-                match res {
-                    Ok(p) => {
-                        self.flow = PairingFlow::Done(p);
-                        self.refresh_phones(cache);
-                    }
-                    Err(e) => {
-                        self.flow = PairingFlow::Error(e);
-                    }
-                }
+            LocalSigningMessage::PairingCompleted(id, res) => {
+                self.apply_pairing_completed(id, res, &cache.datadir_path);
                 Task::none()
             }
             LocalSigningMessage::RemovePhone(fp8) => {
@@ -333,9 +373,9 @@ impl State for LocalSigningState {
         match self.flow {
             PairingFlow::Waiting { .. } | PairingFlow::PhonePicker { .. } => {
                 iced::time::every(Duration::from_secs(1)).map(|_| {
-                    Message::View(view::Message::Settings(view::SettingsMessage::LocalSigning(
-                        LocalSigningMessage::Tick,
-                    )))
+                    Message::View(view::Message::Settings(
+                        view::SettingsMessage::LocalSigning(LocalSigningMessage::Tick),
+                    ))
                 })
             }
             _ => iced::Subscription::none(),
@@ -557,5 +597,116 @@ mod tests {
 
         let on_disk = pairing_store::load(&dir).unwrap();
         assert_eq!(on_disk.phones.len(), 1);
+    }
+
+    /// Helper: build a `PairedPhone` for the run-id tests. The
+    /// exact fields don't matter — these tests only assert on the
+    /// state's gating, not on what gets persisted.
+    fn dummy_paired() -> PairedPhone {
+        paired(42, "Test", None)
+    }
+
+    #[test]
+    fn pairing_completed_with_stale_id_is_ignored() {
+        let dir = fresh_dir();
+        let mut state = LocalSigningState::default();
+        let id = state.start_pairing_run();
+        // Simulate the dispatcher's PickPhone branch: transition to
+        // Waiting so the completion guard's state check would pass
+        // if the id matched.
+        state.flow = PairingFlow::Waiting {
+            phone: crate::phone_signer::mdns::DiscoveredPhone {
+                cert_fp8: "01010101".into(),
+                addr: "127.0.0.1:0".parse().unwrap(),
+                instance_name: "x".into(),
+            },
+            offer: crate::phone_signer::pairing::PairingOffer {
+                version: 1,
+                cert_der_b64: String::new(),
+                cert_fp: String::new(),
+                service_name: String::new(),
+                wallet_fingerprint: Fingerprint::default(),
+                expires_at_unix: 0,
+            },
+            qr: None,
+        };
+        // User cancels: bumps the id, drops to Idle.
+        state.start_pairing_run();
+        state.flow = PairingFlow::Idle;
+        // Stale Ok arrives carrying the *original* run id.
+        let applied = state.apply_pairing_completed(id, Ok(dummy_paired()), &dir);
+        assert!(!applied, "stale completion must not be applied");
+        assert!(matches!(state.flow, PairingFlow::Idle));
+    }
+
+    #[test]
+    fn pairing_completed_with_matching_id_transitions_to_done() {
+        let dir = fresh_dir();
+        let mut state = LocalSigningState::default();
+        let id = state.start_pairing_run();
+        state.flow = PairingFlow::Waiting {
+            phone: crate::phone_signer::mdns::DiscoveredPhone {
+                cert_fp8: "01010101".into(),
+                addr: "127.0.0.1:0".parse().unwrap(),
+                instance_name: "x".into(),
+            },
+            offer: crate::phone_signer::pairing::PairingOffer {
+                version: 1,
+                cert_der_b64: String::new(),
+                cert_fp: String::new(),
+                service_name: String::new(),
+                wallet_fingerprint: Fingerprint::default(),
+                expires_at_unix: 0,
+            },
+            qr: None,
+        };
+        let applied = state.apply_pairing_completed(id, Ok(dummy_paired()), &dir);
+        assert!(applied, "matching id while Waiting must be applied");
+        assert!(matches!(state.flow, PairingFlow::Done(_)));
+    }
+
+    #[test]
+    fn pairing_completed_when_not_waiting_is_ignored_even_with_matching_id() {
+        let dir = fresh_dir();
+        let mut state = LocalSigningState::default();
+        let id = state.start_pairing_run();
+        // No transition to Waiting — state is still Idle.
+        let applied = state.apply_pairing_completed(id, Ok(dummy_paired()), &dir);
+        assert!(
+            !applied,
+            "completion while non-Waiting must be ignored (defence in depth)",
+        );
+        assert!(matches!(state.flow, PairingFlow::Idle));
+    }
+
+    #[test]
+    fn second_pick_phone_invalidates_first_runs_completion() {
+        let dir = fresh_dir();
+        let mut state = LocalSigningState::default();
+        let first_id = state.start_pairing_run();
+        state.flow = PairingFlow::Waiting {
+            phone: crate::phone_signer::mdns::DiscoveredPhone {
+                cert_fp8: "01010101".into(),
+                addr: "127.0.0.1:0".parse().unwrap(),
+                instance_name: "x".into(),
+            },
+            offer: crate::phone_signer::pairing::PairingOffer {
+                version: 1,
+                cert_der_b64: String::new(),
+                cert_fp: String::new(),
+                service_name: String::new(),
+                wallet_fingerprint: Fingerprint::default(),
+                expires_at_unix: 0,
+            },
+            qr: None,
+        };
+        // User picks a second phone before the first run returns.
+        let _second_id = state.start_pairing_run();
+        // First run's completion arrives carrying the old id.
+        let applied = state.apply_pairing_completed(first_id, Ok(dummy_paired()), &dir);
+        assert!(
+            !applied,
+            "first run's completion must not stomp the second run"
+        );
     }
 }

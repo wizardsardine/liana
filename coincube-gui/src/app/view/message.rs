@@ -359,13 +359,15 @@ pub enum LocalSigningMessage {
     Tick,
     /// User cancelled the pairing wizard before the phone connected.
     CancelPairing,
-    /// Result of the pairing listener task. `Ok` payload is the
-    /// persisted [`PairedPhone`]; `Err` payload is a typed
-    /// [`PairingError`] the wizard renders category-specific copy
-    /// for. The listener itself does the `pairing_store::upsert`,
-    /// so the settings panel just needs to refresh its in-memory
-    /// list and update the wizard UI.
+    /// Result of the pairing listener task. The `u64` is the
+    /// `pairing_id` that was active when the listener was spawned;
+    /// the settings state ignores completions whose id doesn't match
+    /// the current run, so a still-in-flight task whose user has
+    /// since cancelled or started a new pairing can't stomp on the
+    /// UI. `Ok` payload is the persisted [`PairedPhone`]; `Err`
+    /// payload is a typed [`PairingError`].
     PairingCompleted(
+        u64,
         Result<
             crate::phone_signer::pairing_store::PairedPhone,
             crate::phone_signer::errors::PairingError,

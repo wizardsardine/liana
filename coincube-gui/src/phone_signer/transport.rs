@@ -70,11 +70,9 @@ impl PairedTransport {
         peer: SocketAddr,
         identity: &DesktopIdentity,
     ) -> Result<Self, HwiError> {
-        let (cfg, _seen) = tls::client_config_unpinned(
-            identity.cert_der.clone(),
-            identity.clone_key(),
-        )
-        .map_err(|e| HwiError::Device(format!("rustls config: {}", e)))?;
+        let (cfg, _seen) =
+            tls::client_config_unpinned(identity.cert_der.clone(), identity.clone_key())
+                .map_err(|e| HwiError::Device(format!("rustls config: {}", e)))?;
         // We rely on `peer_cert_fingerprint()` post-connect instead
         // of the `seen` side channel — rustls populates
         // `peer_certificates()` on the connection itself.
@@ -130,10 +128,16 @@ async fn dial_tls(
     // string itself purely cosmetic.
     let sni: ServerName<'static> = ServerName::try_from("coincube-phone.local".to_string())
         .map_err(|e| HwiError::Device(format!("sni: {}", e)))?;
-    connector
-        .connect(sni, tcp)
-        .await
-        .map_err(|e| HwiError::Device(format!("tls handshake: {}", e)))
+    // Bound the TLS handshake on the same budget as the TCP connect.
+    // A phone (or attacker) that accepts the TCP socket but stalls
+    // the handshake would otherwise hang this future indefinitely —
+    // blocking the discovery-loop dial's per-phone future forever
+    // and preventing the cooldown from being recorded.
+    match tokio::time::timeout(CONNECT_TIMEOUT, connector.connect(sni, tcp)).await {
+        Ok(Ok(stream)) => Ok(stream),
+        Ok(Err(e)) => Err(HwiError::Device(format!("tls handshake: {}", e))),
+        Err(_) => Err(HwiError::Device("tls handshake timeout".into())),
+    }
 }
 
 /// Owned read half. The reader task owns one of these directly, so
