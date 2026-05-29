@@ -8,6 +8,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_connect::ws_business::{self, UserRole};
+use liana_i18n::t;
 use liana_ui::{
     component::{
         pill,
@@ -54,14 +55,14 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         .selected_org
         .and_then(|org_id| state.backend.get_org(org_id))
         .map(|org| org.name.clone())
-        .unwrap_or_else(|| "Organization".to_string());
+        .unwrap_or_else(|| t!("business-organization"));
     let wallet_name = state
         .app
         .selected_wallet
         .and_then(|id| state.backend.get_wallet(id))
         .map(|w| w.alias.clone())
-        .unwrap_or_else(|| "Wallet".to_string());
-    let breadcrumb = vec![org_name, wallet_name.clone(), "Set Keys".to_string()];
+        .unwrap_or_else(|| t!("business-wallet"));
+    let breadcrumb = vec![org_name, wallet_name.clone(), t!("business-set-keys")];
 
     // Filter keys based on role (needed before header to determine waiting state)
     let current_user_email_lower = current_user_email.to_lowercase();
@@ -82,9 +83,9 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
     // Fixed header content - show waiting message if all keys are set
     let instruction: Element<'_, Msg> = if all_keys_set {
         let keys_set_msg = if owned_keys.len() == 1 {
-            "Your key is set."
+            t!("business-your-key-set")
         } else {
-            "Your keys are set."
+            t!("business-your-keys-set")
         };
         Container::new(
             Row::new()
@@ -95,27 +96,29 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
                     Column::new()
                         .spacing(5)
                         .push(text::p1_bold(keys_set_msg))
-                        .push(text::p1_medium(
-                            "Once the other participants complete their key setup, you'll be able to access the wallet.",
-                        ).style(theme::text::primary)),
+                        .push(
+                            text::p1_medium(t!("business-wait-other-key-setup"))
+                                .style(theme::text::primary),
+                        ),
                 ),
         )
         .align_x(Alignment::Center)
         .width(Length::Fill)
         .into()
     } else {
-        text::p1_medium(
-            "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf. You can connect a hardware device (recommended) or manually add an extended public key (xpub).",
-        )
-        .style(theme::text::primary)
-        .into()
+        text::p1_medium(t!("business-xpub-instruction"))
+            .style(theme::text::primary)
+            .into()
     };
 
     let header_content = Column::new()
         .spacing(10)
         .align_x(Alignment::Center)
         .padding(20)
-        .push(text::h2(format!("{wallet_name} - Set Keys")))
+        .push(text::h2(t!(
+            "business-wallet-set-keys",
+            wallet = wallet_name
+        )))
         .push(Space::with_height(10))
         .push(instruction);
 
@@ -129,8 +132,8 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
     if owned_keys.is_empty() {
         // Empty state: no keys match filter
         let empty_message = match user_role.as_ref() {
-            Some(UserRole::Participant) => "No keys assigned to you",
-            _ => "No keys found",
+            Some(UserRole::Participant) => t!("business-no-keys-assigned"),
+            _ => t!("business-no-keys-found"),
         };
         list_content =
             list_content.push(text::p1_medium(empty_message).style(theme::text::primary));
@@ -138,7 +141,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         list_content = list_content.push(
             row![
                 Space::with_width(10),
-                text::h3("Your keys:").style(theme::text::primary),
+                text::h3(t!("business-your-keys")).style(theme::text::primary),
                 Space::with_width(Length::Fill)
             ]
             .width(MENU_ENTRY_WIDTH),
@@ -160,7 +163,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         list_content = list_content.push(Space::with_height(20)).push(
             row![
                 Space::with_width(10),
-                text::h3("Other participants' keys:").style(theme::text::primary),
+                text::h3(t!("business-other-participants-keys")).style(theme::text::primary),
                 Space::with_width(Length::Fill)
             ]
             .width(MENU_ENTRY_WIDTH),

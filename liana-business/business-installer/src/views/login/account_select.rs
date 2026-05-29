@@ -6,6 +6,7 @@ use iced::{
     widget::{row, Space},
     Alignment, Length,
 };
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{btn_tertiary, BtnWidth},
@@ -28,7 +29,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
 
     let select_account_text = row![
         Space::with_width(Length::Fill),
-        text::h3("Select an account to continue"),
+        text::h3(t!("business-select-account")),
         Space::with_width(Length::Fill),
     ];
 
@@ -52,7 +53,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
             // Show loading state for selected account
             Row::new()
                 .push(Space::with_width(Length::Fill))
-                .push(text::p2_medium("Connecting..."))
+                .push(text::p2_medium(t!("loader-connecting-daemon")))
                 .push(Space::with_width(Length::Fill))
         } else {
             let email = liana_ui::component::text::short_email(&account.email, 55);
@@ -95,7 +96,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     // "Connect with another email" button
     let new_email = btn_tertiary(
         None,
-        "Connect with another email",
+        t!("business-connect-another-email"),
         BtnWidth::XXL,
         (!processing).then_some(Msg::AccountSelectNewEmail),
     );
@@ -113,7 +114,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
         (1, INSTALLER_STEPS),
         None,
         false,
-        &["Login".to_string()],
+        &[t!("common-login")],
         header_content,
         list_content,
         None, // no footer

@@ -8,7 +8,7 @@ use crate::app::cache::Cache;
 use crate::app::error::Error;
 use crate::app::message::{FiatMessage, Message};
 use crate::app::settings::fiat::PriceSetting;
-use crate::app::settings::{update_settings_file, LianaSettings};
+use crate::app::settings::{global::GlobalSettings, update_settings_file, LianaSettings};
 use crate::app::state::State;
 use crate::app::view;
 use crate::app::wallet::Wallet;
@@ -216,6 +216,18 @@ impl State for GeneralSettingsState {
                             FiatMessage::ValidateCurrencySetting.into()
                         });
                     }
+                }
+                Task::none()
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::LanguageEdited(
+                locale,
+            ))) => {
+                liana_i18n::set_locale(locale);
+                let path = GlobalSettings::path(&cache.datadir_path);
+                if let Err(e) = GlobalSettings::update_locale(&path, locale) {
+                    self.error = Some(Error::Unexpected(format!("Failed to save language: {e}")));
+                } else {
+                    self.error = None;
                 }
                 Task::none()
             }

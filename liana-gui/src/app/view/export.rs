@@ -13,7 +13,10 @@ use liana_ui::{
 };
 
 use crate::export::ImportExportState;
-use crate::export::{Error, ImportExportMessage, ImportExportType};
+use crate::{
+    export::{Error, ImportExportMessage, ImportExportType},
+    t,
+};
 
 /// Return the modal view for an export task
 pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
@@ -23,9 +26,10 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
     import_export_type: &ImportExportType,
 ) -> Element<'a, Message> {
     let cancel = match state {
-        ImportExportState::Started | ImportExportState::Progress(_) => {
-            Some(button::secondary(None, "Cancel").on_press(ImportExportMessage::UserStop.into()))
-        }
+        ImportExportState::Started | ImportExportState::Progress(_) => Some(
+            button::secondary(None, t!("common-cancel"))
+                .on_press(ImportExportMessage::UserStop.into()),
+        ),
         _ => None,
     }
     .map(Container::new);
@@ -46,42 +50,44 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
         match state {
             ImportExportState::Init => "".to_string(),
             ImportExportState::ChoosePath => {
-                "Select the path you want to export in the popup window...".into()
+                t!("export-select-path")
             }
             ImportExportState::Path(_) => "".into(),
-            ImportExportState::Started => "Starting export...".into(),
-            ImportExportState::Progress(p) => format!("Progress: {}%", p.round()),
-            ImportExportState::TimedOut => "Export failed: timeout".into(),
-            ImportExportState::Aborted => "Export canceled".into(),
+            ImportExportState::Started => t!("export-starting"),
+            ImportExportState::Progress(p) => t!("export-progress", progress = p.round()),
+            ImportExportState::TimedOut => t!("export-timeout"),
+            ImportExportState::Aborted => t!("export-canceled"),
             ImportExportState::Ended => import_export_type.end_message().into(),
             ImportExportState::Closed => "".into(),
         }
     };
     let labels_btn = (
-        "Labels conflict, what do you want to do?".to_string(),
+        t!("export-labels-conflict"),
         Some(Container::new(
             Row::new()
                 .push(
-                    button::secondary(None, "Overwrite")
+                    button::secondary(None, t!("common-overwrite"))
                         .on_press(ImportExportMessage::Overwrite.into()),
                 )
                 .push(Space::with_width(30))
                 .push(
-                    button::secondary(None, "Ignore").on_press(ImportExportMessage::Ignore.into()),
+                    button::secondary(None, t!("common-ignore"))
+                        .on_press(ImportExportMessage::Ignore.into()),
                 ),
         )),
     );
     let aliases_btn = (
-        "Aliases conflict, what do you want to do?".to_string(),
+        t!("export-aliases-conflict"),
         Some(Container::new(
             Row::new()
                 .push(
-                    button::secondary(None, "Overwrite")
+                    button::secondary(None, t!("common-overwrite"))
                         .on_press(ImportExportMessage::Overwrite.into()),
                 )
                 .push(Space::with_width(30))
                 .push(
-                    button::secondary(None, "Ignore").on_press(ImportExportMessage::Ignore.into()),
+                    button::secondary(None, t!("common-ignore"))
+                        .on_press(ImportExportMessage::Ignore.into()),
                 ),
         )),
     );

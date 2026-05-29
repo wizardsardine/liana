@@ -22,30 +22,43 @@ use crate::installer::{
         layout,
     },
 };
-
-const SAFETY_NET_DESCRIPTION: &str = "This adds a final recovery option containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens.";
+use crate::t;
 
 pub fn custom_template_description(progress: (usize, usize)) -> Element<'static, Message> {
     layout(
         progress,
         None,
-        "Introduction",
+        t!("installer-introduction"),
         Column::new()
             .align_x(Alignment::Start)
-            .push(h3("Build your own"))
+            .push(h3(t!("installer-build-your-own")))
             .max_width(800.0)
-            .push(Container::new(
-                p1_regular("For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them.")
-                .style(theme::text::secondary)
+            .push(
+                Container::new(
+                    p1_regular(t!("installer-custom-template-description-1"))
+                        .style(theme::text::secondary)
+                        .align_x(alignment::Horizontal::Left),
+                )
                 .align_x(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
-            .push(Container::new(
-                p1_regular("The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.")
-                .style(theme::text::secondary)
+                .width(Length::Fill),
+            )
+            .push(
+                Container::new(
+                    p1_regular(t!("installer-custom-template-description-2"))
+                        .style(theme::text::secondary)
+                        .align_x(alignment::Horizontal::Left),
+                )
                 .align_x(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
+                .width(Length::Fill),
+            )
             .push(image::custom_template_description().width(Length::Fill))
-            .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Next").width(Length::Fixed(200.0)).on_press(Message::Next)))
+            .push(
+                Row::new().push(Space::with_width(Length::Fill)).push(
+                    button::primary(None, t!("common-next"))
+                        .width(Length::Fixed(200.0))
+                        .on_press(Message::Next),
+                ),
+            )
             .push(Space::with_height(50.0))
             .spacing(20),
         true,
@@ -70,7 +83,7 @@ pub fn custom_template<'a>(
 
     let primary = path(
         color::GREEN,
-        Some("Primary spending option:".to_string()),
+        Some(t!("installer-primary-spending-option")),
         primary_path.sequence,
         primary_path.warning,
         primary_path.threshold,
@@ -83,9 +96,9 @@ pub fn custom_template<'a>(
                     defined_key(
                         &key.name,
                         color::GREEN,
-                        "Primary key",
+                        t!("installer-primary-key"),
                         if use_taproot && !key.source.is_compatible_taproot() {
-                            Some("This device does not support Taproot")
+                            Some(t!("installer-device-no-taproot"))
                         } else {
                             None
                         },
@@ -94,7 +107,7 @@ pub fn custom_template<'a>(
                 } else {
                     undefined_key(
                         color::GREEN,
-                        "Primary key",
+                        t!("installer-primary-key"),
                         !primary_path.keys[0..i].iter().any(|k| k.is_none()),
                         prim_keys_fixed,
                     )
@@ -112,7 +125,7 @@ pub fn custom_template<'a>(
             col.push(
                 path(
                     color::ORANGE,
-                    Some(format!("Recovery option #{}:", i + 1)),
+                    Some(t!("installer-recovery-option", number = i + 1)),
                     p.sequence,
                     p.warning,
                     p.threshold,
@@ -128,9 +141,9 @@ pub fn custom_template<'a>(
                                 defined_key(
                                     &key.name,
                                     color::ORANGE,
-                                    "Recovery key",
+                                    t!("installer-recovery-key"),
                                     if use_taproot && !key.source.is_compatible_taproot() {
-                                        Some("This device does not support Taproot")
+                                        Some(t!("installer-device-no-taproot"))
                                     } else {
                                         None
                                     },
@@ -139,7 +152,7 @@ pub fn custom_template<'a>(
                             } else {
                                 undefined_key(
                                     color::ORANGE,
-                                    "Recovery key",
+                                    t!("installer-recovery-key"),
                                     !p.keys[0..j].iter().any(|k| k.is_none()),
                                     fixed,
                                 )
@@ -161,7 +174,7 @@ pub fn custom_template<'a>(
 
     let btn_row = Row::new()
         .push(
-            button::secondary(Some(icon::plus_icon()), "Add recovery option")
+            button::secondary(Some(icon::plus_icon()), t!("installer-add-recovery-option"))
                 .width(210)
                 .on_press(Message::DefineDescriptor(
                     message::DefineDescriptor::AddRecoveryPath,
@@ -169,12 +182,12 @@ pub fn custom_template<'a>(
         )
         .push_maybe(
             safety_net_path.is_none().then_some(tooltip::Tooltip::new(
-                button::secondary(Some(icon::plus_icon()), "Add Safety Net")
+                button::secondary(Some(icon::plus_icon()), t!("installer-add-safety-net"))
                     .width(210)
                     .on_press(Message::DefineDescriptor(
                         message::DefineDescriptor::AddSafetyNetPath,
                     )),
-                Container::new(text(SAFETY_NET_DESCRIPTION))
+                Container::new(text(t!("installer-safety-net-description")))
                     .style(theme::card::simple)
                     .padding(10),
                 tooltip::Position::Bottom,
@@ -185,7 +198,7 @@ pub fn custom_template<'a>(
     let safety_net = safety_net_path.map(|(sn_index, sn_path)| {
         path(
             color::WHITE,
-            Some("Safety Net:".to_string()),
+            Some(t!("installer-safety-net")),
             sn_path.sequence,
             sn_path.warning,
             sn_path.threshold,
@@ -201,9 +214,9 @@ pub fn custom_template<'a>(
                         defined_key(
                             &key.name,
                             color::WHITE,
-                            "Safety Net key",
+                            t!("installer-safety-net-key"),
                             if use_taproot && !key.source.is_compatible_taproot() {
-                                Some("This key source does not support Taproot")
+                                Some(t!("installer-key-source-no-taproot"))
                             } else {
                                 None
                             },
@@ -212,7 +225,7 @@ pub fn custom_template<'a>(
                     } else {
                         undefined_key(
                             color::WHITE,
-                            "Safety Net key",
+                            t!("installer-safety-net-key"),
                             !sn_path.keys[0..i].iter().any(|k| k.is_none()),
                             fixed,
                         )
@@ -233,7 +246,7 @@ pub fn custom_template<'a>(
     layout(
         progress,
         None,
-        "Set keys",
+        t!("installer-set-keys"),
         Column::new()
             .align_x(Alignment::Start)
             .max_width(super::MAX_WIDTH)

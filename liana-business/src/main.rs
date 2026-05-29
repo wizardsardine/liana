@@ -16,11 +16,13 @@ use liana_ui::{image, theme};
 use business_installer::{BusinessInstaller, Message};
 use liana_business::BusinessSettings;
 use liana_gui::{
+    app::settings::global::GlobalSettings,
     args::{args_to_config, parse_args},
     gui::GUI,
     logger::parse_log_level,
     window::{create_app_settings, create_window_settings, load_initial_size},
 };
+use liana_i18n as i18n;
 
 use liana_business::VERSION;
 
@@ -56,6 +58,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let config = args_to_config(&args, Some(default_network), "Liana Business".into())?;
     let log_level = parse_log_level()?;
+    i18n::init(GlobalSettings::load_locale(&GlobalSettings::path(
+        &config.liana_directory,
+    )));
 
     let settings = create_app_settings("LianaBusiness");
     let initial_size = load_initial_size(&config.liana_directory, Some(Size::new(1200.0, 800.0)));

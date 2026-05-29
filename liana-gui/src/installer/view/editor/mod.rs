@@ -24,6 +24,7 @@ use crate::installer::{
     message::{self, Message},
     view::defined_sequence,
 };
+use crate::t;
 
 use super::defined_threshold;
 
@@ -48,7 +49,7 @@ impl std::fmt::Display for DescriptorKind {
 pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a, Message> {
     let col_wallet = Column::new()
         .spacing(10)
-        .push(text("Descriptor type").bold())
+        .push(text(t!("installer-descriptor-type")).bold())
         .push(container(
             pick_list::pick_list(
                 &DESCRIPTOR_KINDS[..],
@@ -70,7 +71,7 @@ pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a,
             .push(Row::new().push(col_wallet))
             .push_maybe(if use_taproot {
                 Some(
-                    p1_regular("Taproot is only supported by Liana version 5.0 and above")
+                    p1_regular(t!("installer-taproot-supported-version"))
                         .style(theme::text::secondary),
                 )
             } else {
@@ -116,9 +117,9 @@ pub fn path(
                             button::secondary(
                                 Some(icon::plus_icon()),
                                 if sequence.path_kind() == PathKind::SafetyNet {
-                                    "Add Safety Net key"
+                                    t!("installer-add-safety-net-key")
                                 } else {
-                                    "Add key"
+                                    t!("installer-add-key")
                                 },
                             )
                             .on_press(message::DefinePath::AddKey),
@@ -135,8 +136,9 @@ pub fn uneditable_defined_key<'a>(
     alias: &'a str,
     color: iced::Color,
     title: impl Into<Cow<'a, str>> + std::fmt::Display,
-    warning: Option<&'static str>,
+    warning: Option<String>,
 ) -> Element<'a, message::DefineKey> {
+    let valid = warning.is_none();
     card::simple(
         Row::new()
             .spacing(10)
@@ -155,7 +157,7 @@ pub fn uneditable_defined_key<'a>(
                     )
                     .push_maybe(warning.map(|w| p2_regular(w).style(theme::text::error))),
             )
-            .push_maybe(if warning.is_none() {
+            .push_maybe(if valid {
                 Some(icon::check_icon().style(theme::text::success))
             } else {
                 None
@@ -168,9 +170,10 @@ pub fn defined_key<'a>(
     alias: &'a str,
     color: iced::Color,
     title: impl Display,
-    warning: Option<&'static str>,
+    warning: Option<String>,
     fixed: bool,
 ) -> Element<'a, message::DefineKey> {
+    let valid = warning.is_none();
     card::simple(
         Row::new()
             .spacing(10)
@@ -189,13 +192,13 @@ pub fn defined_key<'a>(
                     )
                     .push_maybe(warning.map(|w| p2_regular(w).style(theme::text::error))),
             )
-            .push_maybe(if warning.is_none() {
+            .push_maybe(if valid {
                 Some(icon::check_icon().style(theme::text::success))
             } else {
                 None
             })
             .push(
-                button::secondary(Some(icon::pencil_icon()), "Edit")
+                button::secondary(Some(icon::pencil_icon()), t!("common-edit"))
                     .on_press(message::DefineKey::EditAlias),
             )
             .push_maybe(if fixed {
@@ -232,7 +235,7 @@ pub fn undefined_key<'a>(
             )
             .push_maybe(if active {
                 Some(
-                    button::primary(Some(icon::pencil_icon()), "Set")
+                    button::primary(Some(icon::pencil_icon()), t!("common-set"))
                         .on_press(message::DefineKey::Edit),
                 )
             } else {
@@ -310,7 +313,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
         .width(Length::Fill)
         .spacing(20)
         .align_x(Alignment::Center)
-        .push(text("Keys can move the funds after inactivity of:"))
+        .push(text(t!("installer-keys-inactivity")))
         .push(
             Row::new()
                 .push(
@@ -322,12 +325,12 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                                 ),
                             )
                         })
-                        .warning("Value must be superior to 0 and inferior to 65535"),
+                        .warning(t!("installer-sequence-value-warning")),
                     )
                     .width(Length::Fixed(200.0)),
                 )
                 .spacing(10)
-                .push(text("blocks").bold())
+                .push(text(t!("common-blocks")).bold())
                 .align_y(alignment::Vertical::Center),
         );
 
@@ -335,7 +338,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
         if let Ok(sequence) = u16::from_str(&sequence.value) {
             col = col
                 .push(format_sequence_duration(sequence, false).iter().fold(
-                    Row::new().spacing(5).push(text("~ ").bold()),
+                    Row::new().spacing(5).push(text("~").bold()),
                     |row, (n, unit)| {
                         row.push_maybe(if *n > 0 {
                             Some(
@@ -369,7 +372,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
     }
 
     card::modal(col.push(if sequence.valid {
-        button::primary(None, "Apply")
+        button::primary(None, t!("common-apply"))
             .on_press(Message::DefineDescriptor(
                 message::DefineDescriptor::ThresholdSequenceModal(
                     message::ThresholdSequenceModal::Confirm,
@@ -377,7 +380,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
             ))
             .width(Length::Fixed(200.0))
     } else {
-        button::primary(None, "Apply").width(Length::Fixed(200.0))
+        button::primary(None, t!("common-apply")).width(Length::Fixed(200.0))
     }))
     .width(Length::Fixed(800.0))
     .into()
@@ -399,7 +402,7 @@ pub fn edit_threshold_modal<'a>(threshold: (usize, usize)) -> Element<'a, Messag
                 },
             ))
             .push(
-                button::primary(None, "Apply")
+                button::primary(None, t!("common-apply"))
                     .on_press(Message::DefineDescriptor(
                         message::DefineDescriptor::ThresholdSequenceModal(
                             message::ThresholdSequenceModal::Confirm,
@@ -486,7 +489,7 @@ mod threshsold_input {
             Column::new()
                 .width(Length::Fixed(150.0))
                 .push(button(icon::up_icon().size(30), Event::IncrementPressed))
-                .push(text("Threshold:").small().bold())
+                .push(text(crate::t!("installer-threshold")).small().bold())
                 .push(
                     Container::new(text(format!("{}/{}", self.value, self.max)).size(30))
                         .align_y(alignment::Vertical::Center),

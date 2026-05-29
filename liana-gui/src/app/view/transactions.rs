@@ -26,6 +26,7 @@ use crate::{
     },
     daemon::model::{HistoryTransaction, Txid},
     export::ImportExportMessage,
+    t,
 };
 
 pub fn transactions_view<'a>(
@@ -45,7 +46,7 @@ pub fn transactions_view<'a>(
                     .push(Container::new(panel_title(Menu::Transactions.title())))
                     .push(Space::with_width(Length::Fill))
                     .push(
-                        button::secondary(Some(icon::backup_icon()), "Export")
+                        button::secondary(Some(icon::backup_icon()), t!("common-export"))
                             .on_press(ImportExportMessage::Open.into()),
                     ),
             )
@@ -64,9 +65,9 @@ pub fn transactions_view<'a>(
                             Container::new(
                                 Button::new(
                                     text(if processing {
-                                        "Fetching ..."
+                                        t!("common-fetching")
                                     } else {
-                                        "See more"
+                                        t!("common-see-more")
                                     })
                                     .width(Length::Fill)
                                     .align_x(alignment::Horizontal::Center),
@@ -155,7 +156,7 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                         .push(amount(&tx.outgoing_amount))
                         .align_y(Alignment::Center)
                 } else {
-                    Row::new().push(text("Self-transfer"))
+                    Row::new().push(text(t!("common-self-transfer")))
                 })
                 .align_y(Alignment::Center)
                 .spacing(20),
@@ -179,25 +180,21 @@ pub fn create_rbf_modal<'a>(
     replacement_txid: Option<Txid>,
     warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
-    let mut confirm_button = button::secondary(None, "Confirm").width(Length::Fixed(200.0));
+    let mut confirm_button =
+        button::secondary(None, t!("common-confirm")).width(Length::Fixed(200.0));
     if feerate.valid || is_cancel {
         confirm_button =
             confirm_button.on_press(Message::CreateRbf(super::CreateRbfMessage::Confirm));
     }
     let help_text = if is_cancel {
-        "Replace the transaction with one paying a higher feerate \
-        that sends the coins back to your wallet. There is no guarantee \
-        the original transaction won't get mined first. New inputs may \
-        be used for the replacement transaction."
+        t!("transactions-rbf-cancel-help")
     } else {
-        "Replace the transaction with one paying a higher feerate \
-        to incentivize faster confirmation. New inputs may be used \
-        for the replacement transaction."
+        t!("transactions-rbf-bump-help")
     };
     card::simple(
         Column::new()
             .spacing(10)
-            .push(Container::new(h4_bold("Transaction replacement")).width(Length::Fill))
+            .push(Container::new(h4_bold(t!("transactions-replacement"))).width(Length::Fill))
             .push(Row::new().push(text(help_text)))
             .push_maybe(if descendant_txids.is_empty() {
                 None
@@ -208,28 +205,16 @@ pub fn create_rbf_modal<'a>(
                             .spacing(5)
                             .push(Row::new().spacing(10).push(icon::warning_icon()).push(text(
                                 if descendant_txids.len() > 1 {
-                                    "WARNING: Replacing this transaction \
-                                    will invalidate some later payments."
+                                    t!("transactions-rbf-invalidates-some")
                                 } else {
-                                    "WARNING: Replacing this transaction \
-                                    will invalidate a later payment."
+                                    t!("transactions-rbf-invalidates-one")
                                 },
                             )))
                             .push(Row::new().padding([0, 30]).push(text(
                                 if descendant_txids.len() > 1 {
-                                    "The following transactions are \
-                                    spending one or more outputs \
-                                    from the transaction to be replaced \
-                                    and will be dropped when the replacement \
-                                    is broadcast, along with any other \
-                                    transactions that depend on them:"
+                                    t!("transactions-rbf-descendants-some")
                                 } else {
-                                    "The following transaction is \
-                                    spending one or more outputs \
-                                    from the transaction to be replaced \
-                                    and will be dropped when the replacement \
-                                    is broadcast, along with any other \
-                                    transactions that depend on it:"
+                                    t!("transactions-rbf-descendants-one")
                                 },
                             ))),
                         |col, txid| {
@@ -254,17 +239,14 @@ pub fn create_rbf_modal<'a>(
             .push_maybe(if !is_cancel {
                 Some(
                     Row::new()
-                        .push(Container::new(p1_bold("Feerate")).padding(10))
+                        .push(Container::new(p1_bold(t!("common-feerate"))).padding(10))
                         .spacing(10)
                         .push(
                             if replacement_txid.is_none() {
                                 form::Form::new_trimmed("", feerate, move |msg| {
                                     Message::CreateRbf(CreateRbfMessage::FeerateEdited(msg))
                                 })
-                                .warning(
-                                    "Feerate must be greater than previous value and \
-                                    less than or equal to 1000 sats/vbyte",
-                                )
+                                .warning(t!("transactions-rbf-feerate-warning"))
                             } else {
                                 form::Form::new_disabled("", feerate)
                             }
@@ -284,14 +266,11 @@ pub fn create_rbf_modal<'a>(
                     .spacing(10)
                     .align_y(Alignment::Center)
                     .push(icon::circle_check_icon().style(theme::text::secondary))
-                    .push(
-                        text("Replacement PSBT created successfully and ready to be signed")
-                            .style(theme::text::success),
-                    )
+                    .push(text(t!("transactions-rbf-created")).style(theme::text::success))
             }))
             .push_maybe(replacement_txid.map(|id| {
                 Row::new().push(
-                    button::primary(None, "Go to replacement")
+                    button::primary(None, t!("transactions-go-to-replacement"))
                         .width(Length::Fixed(200.0))
                         .on_press(Message::Menu(Menu::PsbtPreSelected(id))),
                 )
@@ -314,11 +293,11 @@ pub fn tx_view<'a>(
         warning,
         Column::new()
             .push(if tx.is_send_to_self() {
-                Container::new(h3("Transaction")).width(Length::Fill)
+                Container::new(h3(t!("transactions-transaction"))).width(Length::Fill)
             } else if tx.is_external() {
-                Container::new(h3("Incoming transaction")).width(Length::Fill)
+                Container::new(h3(t!("transactions-incoming"))).width(Length::Fill)
             } else {
-                Container::new(h3("Outgoing transaction")).width(Length::Fill)
+                Container::new(h3(t!("transactions-outgoing"))).width(Length::Fill)
             })
             .push(if let Some(outpoint) = tx.is_single_payment() {
                 // if the payment is a payment of a single payment transaction then
@@ -342,7 +321,7 @@ pub fn tx_view<'a>(
                 Column::new().spacing(20).push(
                     Column::new()
                         .push(if tx.is_send_to_self() {
-                            Container::new(h1("Self-transfer"))
+                            Container::new(h1(t!("common-self-transfer")))
                         } else if tx.is_external() {
                             Container::new(amount_with_font(&tx.incoming_amount, H1_SPEC))
                         } else {
@@ -351,7 +330,9 @@ pub fn tx_view<'a>(
                         .push_maybe(tx.fee_amount.map(|fee_amount| {
                             Row::new()
                                 .align_y(Alignment::Center)
-                                .push(h3("Miner fee: ").style(theme::text::secondary))
+                                .push(
+                                    h3(t!("transactions-miner-fee")).style(theme::text::secondary),
+                                )
                                 .push(amount_with_font(&fee_amount, H3_SPEC))
                                 .push(text(" ").size(H3_SIZE))
                                 .push(
@@ -371,19 +352,17 @@ pub fn tx_view<'a>(
                 Some(
                     Row::new()
                         .push(
-                            button::secondary(None, "Bump fee")
+                            button::secondary(None, t!("transactions-bump-fee"))
                                 .width(Length::Fixed(200.0))
                                 .on_press(Message::CreateRbf(super::CreateRbfMessage::New(false))),
                         )
-                        .push(
-                            tooltip::Tooltip::new(
-                                button::secondary(None, "Cancel transaction")
+                        .push(tooltip::Tooltip::new(
+                            button::secondary(None, t!("transactions-cancel"))
                                 .width(Length::Fixed(200.0))
                                 .on_press(Message::CreateRbf(super::CreateRbfMessage::New(true))),
-                                "Best effort attempt at double spending an unconfirmed outgoing transaction",
-                                tooltip::Position::Top,
-                            )
-                        )
+                            text(t!("transactions-cancel-tooltip")),
+                            tooltip::Position::Top,
+                        ))
                         .spacing(10),
                 )
             } else {
@@ -393,19 +372,25 @@ pub fn tx_view<'a>(
                 Column::new()
                     .push_maybe(tx.time.map(|t| {
                         let date = DateTime::<Utc>::from_timestamp(t as i64, 0)
-                                        .expect("Correct unix timestamp")
-                                        .with_timezone(&Local)
-                                        .format("%b. %d, %Y - %T");
+                            .expect("Correct unix timestamp")
+                            .with_timezone(&Local)
+                            .format("%b. %d, %Y - %T");
                         Row::new()
                             .width(Length::Fill)
-                            .push(Container::new(text("Date:").bold()).width(Length::Fill))
+                            .push(
+                                Container::new(text(t!("transactions-date")).bold())
+                                    .width(Length::Fill),
+                            )
                             .push(Container::new(text(format!("{date}"))).width(Length::Shrink))
                     }))
                     .push(
                         Row::new()
                             .width(Length::Fill)
                             .align_y(Alignment::Center)
-                            .push(Container::new(text("Txid:").bold()).width(Length::Fill))
+                            .push(
+                                Container::new(text(t!("transactions-txid")).bold())
+                                    .width(Length::Fill),
+                            )
                             .push(
                                 Row::new()
                                     .align_y(Alignment::Center)

@@ -39,6 +39,7 @@ use crate::{
         bitcoind::{RpcAuthType, RpcAuthValues},
         electrum::{self, validate_domain_checkbox},
     },
+    t,
     view::hw::{device_list_entry, HwRowMode},
 };
 
@@ -90,7 +91,7 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<'_, Message> {
     dashboard(&Menu::Settings, cache, None, content)
 }
 
-pub fn link<'a>(url: &str, link_text: &'static str) -> Element<'a, Message> {
+pub fn link<'a>(url: &str, link_text: impl std::fmt::Display) -> Element<'a, Message> {
     iced_tooltip::Tooltip::new(
         button::link(Some(icon::link_icon()), link_text)
             .on_press(Message::OpenUrl(url.to_string())),
@@ -133,9 +134,7 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Elemen
 
     let description = Row::new()
         .push(Space::with_width(15))
-        .push(text(
-            "A collection of the export and import functions present in Liana.",
-        ))
+        .push(text(t!("settings-import-export-description")))
         .push(Space::with_width(Length::Fill));
 
     let export_encrypted_descriptor = export_section(
@@ -170,7 +169,7 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Elemen
 
     let separator = Row::new()
         .push(Space::with_width(30))
-        .push(text("Other formats"))
+        .push(text(t!("settings-other-formats")))
         .push(Space::with_width(15))
         .push(rule::horizontal(2))
         .push(Space::with_width(30))
@@ -211,7 +210,7 @@ pub fn about_section<'a>(
             .push(
                 Row::new()
                     .push(badge::tooltip())
-                    .push(text("Version").bold())
+                    .push(text(t!("settings-version")).bold())
                     .padding(10)
                     .spacing(20)
                     .align_y(Alignment::Center)
@@ -258,34 +257,36 @@ pub fn remote_backend_section<'a>(
     let content = card::simple(
         Column::new()
             .spacing(20)
-            .push(text("Grant access to wallet to another user"))
+            .push(text(t!("settings-grant-wallet-access")))
             .push(
-                form::Form::new_trimmed("User email", email_form, |email| {
+                form::Form::new_trimmed(&t!("settings-user-email"), email_form, |email| {
                     Message::Settings(SettingsMessage::RemoteBackendSettings(
                         RemoteBackendSettingsMessage::EditInvitationEmail(email),
                     ))
                 })
-                .warning("Email is invalid")
+                .warning(t!("settings-email-invalid"))
                 .size(P1_SIZE)
                 .padding(10),
             )
             .push(
                 Row::new()
                     .push_maybe(if success {
-                        Some(text("Invitation was sent").style(theme::text::success))
+                        Some(text(t!("settings-invitation-sent")).style(theme::text::success))
                     } else {
                         None
                     })
                     .push(Space::with_width(Length::Fill))
-                    .push(button::secondary(None, "Send invitation").on_press_maybe(
-                        if !processing && email_form.valid {
-                            Some(Message::Settings(SettingsMessage::RemoteBackendSettings(
-                                RemoteBackendSettingsMessage::SendInvitation,
-                            )))
-                        } else {
-                            None
-                        },
-                    )),
+                    .push(
+                        button::secondary(None, t!("settings-send-invitation")).on_press_maybe(
+                            if !processing && email_form.valid {
+                                Some(Message::Settings(SettingsMessage::RemoteBackendSettings(
+                                    RemoteBackendSettingsMessage::SendInvitation,
+                                )))
+                            } else {
+                                None
+                            },
+                        ),
+                    ),
             ),
     )
     .width(Length::Fill);
@@ -300,7 +301,7 @@ pub fn remote_backend_section<'a>(
             .push(content)
             .push(link(
                 help::CHANGE_BACKEND_OR_NODE_URL,
-                "I want to connect to my own node",
+                t!("settings-connect-own-node"),
             )),
     )
 }
@@ -324,7 +325,7 @@ pub fn bitcoind_edit<'a>(
                             .push(badge::network())
                             .push(
                                 Column::new()
-                                    .push(text("Network:"))
+                                    .push(text(t!("settings-network")))
                                     .push(text(network.to_string()).bold()),
                             )
                             .spacing(10)
@@ -335,7 +336,7 @@ pub fn bitcoind_edit<'a>(
                             .push(badge::block())
                             .push(
                                 Column::new()
-                                    .push(text("Block Height:"))
+                                    .push(text(t!("settings-block-height")))
                                     .push(text(blockheight.to_string()).bold()),
                             )
                             .spacing(10)
@@ -351,7 +352,7 @@ pub fn bitcoind_edit<'a>(
                 .iter()
                 .fold(
                     Row::new()
-                        .push(text("RPC authentication:").small().bold())
+                        .push(text(t!("installer-rpc-auth")).small().bold())
                         .spacing(10),
                     |row, auth_type| {
                         row.push(radio(
@@ -369,11 +370,11 @@ pub fn bitcoind_edit<'a>(
             RpcAuthType::CookieFile => Column::new()
                 .push(
                     form::Form::new_trimmed(
-                        "Cookie file path",
+                        &t!("settings-cookie-file-path"),
                         &rpc_auth_vals.cookie_path,
                         |value| SettingsEditMessage::FieldEdited("cookie_file_path", value),
                     )
-                    .warning("Please enter a valid filesystem path")
+                    .warning(t!("settings-valid-filesystem-path"))
                     .size(P1_SIZE)
                     .padding(5),
                 )
@@ -382,18 +383,22 @@ pub fn bitcoind_edit<'a>(
                 .push(
                     Row::new()
                         .push(
-                            form::Form::new_trimmed("User", &rpc_auth_vals.user, |value| {
-                                SettingsEditMessage::FieldEdited("user", value)
-                            })
-                            .warning("Please enter a valid user")
+                            form::Form::new_trimmed(
+                                &t!("installer-user"),
+                                &rpc_auth_vals.user,
+                                |value| SettingsEditMessage::FieldEdited("user", value),
+                            )
+                            .warning(t!("settings-valid-user"))
                             .size(P1_SIZE)
                             .padding(5),
                         )
                         .push(
-                            form::Form::new_trimmed("Password", &rpc_auth_vals.password, |value| {
-                                SettingsEditMessage::FieldEdited("password", value)
-                            })
-                            .warning("Please enter a valid password")
+                            form::Form::new_trimmed(
+                                &t!("installer-password"),
+                                &rpc_auth_vals.password,
+                                |value| SettingsEditMessage::FieldEdited("password", value),
+                            )
+                            .warning(t!("settings-valid-password"))
                             .size(P1_SIZE)
                             .padding(5),
                         )
@@ -403,20 +408,20 @@ pub fn bitcoind_edit<'a>(
         })
         .push(
             Column::new()
-                .push(text("Socket address:").bold().small())
+                .push(text(t!("settings-socket-address")).bold().small())
                 .push(
-                    form::Form::new_trimmed("Socket address:", addr, |value| {
+                    form::Form::new_trimmed(&t!("settings-socket-address"), addr, |value| {
                         SettingsEditMessage::FieldEdited("socket_address", value)
                     })
-                    .warning("Please enter a valid address")
+                    .warning(t!("settings-valid-address"))
                     .size(P1_SIZE)
                     .padding(5),
                 )
                 .spacing(5),
         );
 
-    let mut cancel_button = button::transparent(None, " Cancel ").padding(5);
-    let mut confirm_button = button::secondary(None, " Save ").padding(5);
+    let mut cancel_button = button::transparent(None, t!("common-cancel")).padding(5);
+    let mut confirm_button = button::secondary(None, t!("common-save")).padding(5);
     if !processing {
         cancel_button = cancel_button.on_press(SettingsEditMessage::Cancel);
         confirm_button = confirm_button.on_press(SettingsEditMessage::Confirm);
@@ -470,7 +475,7 @@ pub fn bitcoind<'a>(
                             .push(badge::network())
                             .push(
                                 Column::new()
-                                    .push(text("Network:"))
+                                    .push(text(t!("settings-network")))
                                     .push(text(network.to_string()).bold()),
                             )
                             .spacing(10)
@@ -481,7 +486,7 @@ pub fn bitcoind<'a>(
                             .push(badge::block())
                             .push(
                                 Column::new()
-                                    .push(text("Block Height:"))
+                                    .push(text(t!("settings-block-height")))
                                     .push(text(blockheight.to_string()).bold()),
                             )
                             .spacing(10)
@@ -495,20 +500,23 @@ pub fn bitcoind<'a>(
     if is_configured_node_type {
         match &config.rpc_auth {
             BitcoindRpcAuth::CookieFile(path) => {
-                rows.push(("Cookie file path:", path.to_str().unwrap().to_string()));
+                rows.push((
+                    t!("settings-cookie-file-path"),
+                    path.to_str().unwrap().to_string(),
+                ));
             }
             BitcoindRpcAuth::UserPass(user, password) => {
-                rows.push(("User:", user.clone()));
-                rows.push(("Password:", password.clone()));
+                rows.push((t!("installer-user"), user.clone()));
+                rows.push((t!("installer-password"), password.clone()));
             }
         }
-        rows.push(("Socket address:", config.addr.to_string()));
+        rows.push((t!("settings-socket-address"), config.addr.to_string()));
     }
 
     let mut col_fields = Column::new();
     for (k, v) in rows {
         col_fields = col_fields.push({
-            let t = if k == "Password:" {
+            let t = if k == t!("installer-password") {
                 "*".to_string().repeat(v.len())
             } else {
                 v.clone()
@@ -587,7 +595,7 @@ pub fn electrum_edit<'a>(
                             .push(badge::network())
                             .push(
                                 Column::new()
-                                    .push(text("Network:"))
+                                    .push(text(t!("settings-network")))
                                     .push(text(network.to_string()).bold()),
                             )
                             .spacing(10)
@@ -598,7 +606,7 @@ pub fn electrum_edit<'a>(
                             .push(badge::block())
                             .push(
                                 Column::new()
-                                    .push(text("Block Height:"))
+                                    .push(text(t!("settings-block-height")))
                                     .push(text(blockheight.to_string()).bold()),
                             )
                             .spacing(10)
@@ -613,12 +621,12 @@ pub fn electrum_edit<'a>(
     });
     col = col.push(
         Column::new()
-            .push(text("Address:").bold().small())
+            .push(text(t!("common-address-label")).bold().small())
             .push(
                 form::Form::new_trimmed("127:0.0.1:50001", addr, |value| {
                     SettingsEditMessage::FieldEdited("address", value)
                 })
-                .warning("Please enter a valid address")
+                .warning(t!("settings-valid-address"))
                 .size(P1_SIZE)
                 .padding(5),
             )
@@ -627,8 +635,8 @@ pub fn electrum_edit<'a>(
             .spacing(5),
     );
 
-    let mut cancel_button = button::transparent(None, " Cancel ").padding(5);
-    let mut confirm_button = button::secondary(None, " Save ").padding(5);
+    let mut cancel_button = button::transparent(None, t!("common-cancel")).padding(5);
+    let mut confirm_button = button::secondary(None, t!("common-save")).padding(5);
     if !processing {
         cancel_button = cancel_button.on_press(SettingsEditMessage::Cancel);
         confirm_button = confirm_button.on_press(SettingsEditMessage::Confirm);
@@ -682,7 +690,7 @@ pub fn electrum<'a>(
                             .push(badge::network())
                             .push(
                                 Column::new()
-                                    .push(text("Network:"))
+                                    .push(text(t!("settings-network")))
                                     .push(text(network.to_string()).bold()),
                             )
                             .spacing(10)
@@ -693,7 +701,7 @@ pub fn electrum<'a>(
                             .push(badge::block())
                             .push(
                                 Column::new()
-                                    .push(text("Block Height:"))
+                                    .push(text(t!("settings-block-height")))
                                     .push(text(blockheight.to_string()).bold()),
                             )
                             .spacing(10)
@@ -704,7 +712,7 @@ pub fn electrum<'a>(
     }
 
     let rows = if is_configured_node_type {
-        vec![("Address:", config.addr.to_string())]
+        vec![(t!("common-address-label"), config.addr.to_string())]
     } else {
         vec![]
     };
@@ -765,14 +773,22 @@ pub fn is_running_label<'a, T: 'a>(is_running: Option<bool>) -> Container<'a, T>
             Container::new(
                 Row::new()
                     .push(icon::dot_icon().size(5).style(theme::text::success))
-                    .push(text("Running").small().style(theme::text::success))
+                    .push(
+                        text(t!("settings-running"))
+                            .small()
+                            .style(theme::text::success),
+                    )
                     .align_y(Alignment::Center),
             )
         } else {
             Container::new(
                 Row::new()
                     .push(icon::dot_icon().size(5).style(theme::text::error))
-                    .push(text("Not running").small().style(theme::text::error))
+                    .push(
+                        text(t!("settings-not-running"))
+                            .small()
+                            .style(theme::text::error),
+                    )
                     .align_y(Alignment::Center),
             )
         }
@@ -799,12 +815,13 @@ pub fn rescan<'a>(
             .push(
                 Row::new()
                     .push(badge::block())
-                    .push(text("Blockchain rescan").bold().width(Length::Fill))
+                    .push(
+                        text(t!("settings-blockchain-rescan"))
+                            .bold()
+                            .width(Length::Fill),
+                    )
                     .push_maybe(if success {
-                        Some(
-                            text("Successfully rescanned the blockchain")
-                                .style(theme::text::success),
-                        )
+                        Some(text(t!("settings-rescan-success")).style(theme::text::success))
                     } else {
                         None
                     })
@@ -818,7 +835,10 @@ pub fn rescan<'a>(
                     Column::new()
                         .width(Length::Fill)
                         .push(ProgressBar::new(0.0..=1.0, p as f32).length(Length::Fill))
-                        .push(text(format!("Rescanning...{:.2}%", p * 100.0))),
+                        .push(text(t!(
+                            "settings-rescanning",
+                            progress = format!("{:.2}", p * 100.0)
+                        ))),
                 )
             } else {
                 Container::new(
@@ -826,7 +846,7 @@ pub fn rescan<'a>(
                         .spacing(10)
                         .push(
                             Row::new()
-                                .push(text("Year:").bold().small())
+                                .push(text(t!("settings-year")).bold().small())
                                 .push(
                                     form::Form::new_trimmed("2022", year, |value| {
                                         SettingsEditMessage::FieldEdited("rescan_year", value)
@@ -834,7 +854,7 @@ pub fn rescan<'a>(
                                     .size(P1_SIZE)
                                     .padding(5),
                                 )
-                                .push(text("Month:").bold().small())
+                                .push(text(t!("settings-month")).bold().small())
                                 .push(
                                     form::Form::new_trimmed("12", month, |value| {
                                         SettingsEditMessage::FieldEdited("rescan_month", value)
@@ -842,7 +862,7 @@ pub fn rescan<'a>(
                                     .size(P1_SIZE)
                                     .padding(5),
                                 )
-                                .push(text("Day:").bold().small())
+                                .push(text(t!("settings-day")).bold().small())
                                 .push(
                                     form::Form::new_trimmed("31", day, |value| {
                                         SettingsEditMessage::FieldEdited("rescan_day", value)
@@ -854,23 +874,20 @@ pub fn rescan<'a>(
                                 .spacing(10),
                         )
                         .push_maybe(if invalid_date {
-                            Some(p1_regular("Provided date is invalid").style(theme::text::error))
+                            Some(p1_regular(t!("settings-date-invalid")).style(theme::text::error))
                         } else {
                             None
                         })
                         .push_maybe(if past_possible_height {
                             Some(
-                                p1_regular("Provided date earlier than the node prune height")
+                                p1_regular(t!("settings-date-before-prune"))
                                     .style(theme::text::error),
                             )
                         } else {
                             None
                         })
                         .push_maybe(if future_date {
-                            Some(
-                                p1_regular("Provided date is in the future")
-                                    .style(theme::text::error),
-                            )
+                            Some(p1_regular(t!("settings-date-future")).style(theme::text::error))
                         } else {
                             None
                         })
@@ -885,18 +902,19 @@ pub fn rescan<'a>(
                                     && is_ok_and(&u32::from_str(&day.value), |&v| v > 0 && v <= 31))
                             {
                                 Row::new().push(Column::new().width(Length::Fill)).push(
-                                    button::primary(None, "Start rescan")
+                                    button::primary(None, t!("settings-start-rescan"))
                                         .on_press(SettingsEditMessage::Confirm)
                                         .width(Length::Shrink),
                                 )
                             } else if processing {
                                 Row::new().push(Column::new().width(Length::Fill)).push(
-                                    button::secondary(None, "Starting rescan...")
+                                    button::secondary(None, t!("settings-starting-rescan"))
                                         .width(Length::Shrink),
                                 )
                             } else {
                                 Row::new().push(Column::new().width(Length::Fill)).push(
-                                    button::secondary(None, "Start rescan").width(Length::Shrink),
+                                    button::secondary(None, t!("settings-start-rescan"))
+                                        .width(Length::Shrink),
                                 )
                             },
                         ),
@@ -933,12 +951,12 @@ pub fn wallet_settings<'a>(
         Some(SettingsMessage::EditWalletSettings.into()),
     );
 
-    let backup_label = "Back up encrypted descriptor";
-    let backup_tooltip = "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.";
+    let backup_label = t!("settings-backup-encrypted-descriptor");
+    let backup_tooltip = t!("settings-backup-encrypted-descriptor-tooltip");
     let backup_msg = Message::Settings(SettingsMessage::ExportEncryptedDescriptor);
 
     // ------------------------- Descriptor card -------------------------
-    let title = text("Wallet descriptor:").bold();
+    let title = text(t!("settings-wallet-descriptor")).bold();
     let descriptor_s =
         scrollable::horizontal_thin(Column::new().push(text(descriptor.to_string()).small()));
 
@@ -949,10 +967,11 @@ pub fn wallet_settings<'a>(
         BtnWidth::Auto,
         Some(backup_msg),
     );
-    let btn_copy = button::secondary(Some(icon::clipboard_icon()), "Copy")
+    let btn_copy = button::secondary(Some(icon::clipboard_icon()), t!("common-copy"))
         .on_press(Message::Clipboard(descriptor.to_string()));
-    let btn_register = button::secondary(Some(icon::chip_icon()), "Register on hardware device")
-        .on_press(Message::Settings(SettingsMessage::RegisterWallet));
+    let btn_register =
+        button::secondary(Some(icon::chip_icon()), t!("settings-register-on-device"))
+            .on_press(Message::Settings(SettingsMessage::RegisterWallet));
 
     let btn_row = row![Space::fill_width(), btn_backup, btn_copy, btn_register]
         .spacing(10)
@@ -973,16 +992,16 @@ pub fn wallet_settings<'a>(
     .width(Length::Fill);
 
     // -------------------------- Aliases card ---------------------------
-    let w_alias_title = text("Wallet alias:").bold().into();
-    let w_alias_input = form::Form::new("Alias", wallet_alias, move |msg| {
+    let w_alias_title = text(t!("settings-wallet-alias")).bold().into();
+    let w_alias_input = form::Form::new(&t!("settings-alias"), wallet_alias, move |msg| {
         Message::Settings(SettingsMessage::WalletAliasEdited(msg))
     })
-    .warning("Please enter alias that is not too long")
+    .warning(t!("settings-alias-too-long"))
     .size(P1_SIZE)
     .padding(10)
     .into();
 
-    let k_alias_title = text("Fingerprint aliases:").bold().into();
+    let k_alias_title = text(t!("settings-fingerprint-aliases")).bold().into();
 
     fn key_alias_entry<'a>(
         fg: &'a Fingerprint,
@@ -994,10 +1013,10 @@ pub fn wallet_settings<'a>(
             .align_y(Alignment::Center)
             .push(text(fg.to_string()).bold().width(Length::Fixed(100.0)))
             .push(
-                form::Form::new("Alias", name, move |msg| {
+                form::Form::new(&t!("settings-alias"), name, move |msg| {
                     Message::Settings(SettingsMessage::FingerprintAliasEdited(fg, msg))
                 })
-                .warning("Please enter correct alias")
+                .warning(t!("settings-correct-alias"))
                 .size(P1_SIZE)
                 .padding(10),
             )
@@ -1020,15 +1039,16 @@ pub fn wallet_settings<'a>(
                 Row::new()
                     .align_y(Alignment::Center)
                     .push(icon::circle_check_icon().style(theme::text::success))
-                    .push(text("Updated").style(theme::text::success)),
+                    .push(text(t!("settings-updated")).style(theme::text::success)),
             )
         } else {
             None
         })
         .push(if !processing && wallet_alias.valid {
-            button::secondary(None, "Update").on_press(Message::Settings(SettingsMessage::Save))
+            button::secondary(None, t!("settings-update"))
+                .on_press(Message::Settings(SettingsMessage::Save))
         } else {
-            button::secondary(None, "Updating")
+            button::secondary(None, t!("settings-updating"))
         });
 
     col_content.push(last_row.into());
@@ -1068,18 +1088,11 @@ fn display_policy<'a>(
     let mut col = Column::new().push(
         Row::new()
             .spacing(5)
-            .push(
-                text(format!(
-                    "{} signature{}",
-                    primary_threshold,
-                    if primary_threshold > 1 { "s" } else { "" }
-                ))
-                .bold(),
-            )
+            .push(text(t!("policy-signatures", count = primary_threshold)).bold())
             .push(if primary_keys.len() > 1 {
-                text(format!("out of {} by", primary_keys.len()))
+                text(t!("policy-out-of-by", count = primary_keys.len()))
             } else {
-                text("by")
+                text(t!("policy-by"))
             })
             .push(
                 primary_keys
@@ -1105,13 +1118,13 @@ fn display_policy<'a>(
                         if primary_keys.len() == 1 || i == primary_keys.len() - 1 {
                             row.push(content)
                         } else if i <= primary_keys.len() - 2 {
-                            row.push(content).push(text("and"))
+                            row.push(content).push(text(t!("common-and")))
                         } else {
                             row.push(content).push(text(","))
                         }
                     }),
             )
-            .push(text("can always spend this wallet's funds (Primary path)")),
+            .push(text(t!("policy-primary-path"))),
     );
     for (i, (sequence, recovery_path)) in recovery_paths.iter().enumerate() {
         let (threshold, recovery_keys) = recovery_path.thresh_origins();
@@ -1123,18 +1136,11 @@ fn display_policy<'a>(
         col = col.push(
             Row::new()
                 .spacing(5)
-                .push(
-                    text(format!(
-                        "{} signature{}",
-                        threshold,
-                        if threshold > 1 { "s" } else { "" }
-                    ))
-                    .bold(),
-                )
+                .push(text(t!("policy-signatures", count = threshold)).bold())
                 .push(if recovery_keys.len() > 1 {
-                    text(format!("out of {} by", recovery_keys.len()))
+                    text(t!("policy-out-of-by", count = recovery_keys.len()))
                 } else {
-                    text("by")
+                    text(t!("policy-by"))
                 })
                 .push(recovery_keys.iter().enumerate().fold(
                     Row::new().spacing(5),
@@ -1158,17 +1164,18 @@ fn display_policy<'a>(
                         if recovery_keys.len() == 1 || i == recovery_keys.len() - 1 {
                             row.push(content)
                         } else if i <= recovery_keys.len() - 2 {
-                            row.push(content).push(text("and"))
+                            row.push(content).push(text(t!("common-and")))
                         } else {
                             row.push(content).push(text(","))
                         }
                     },
                 ))
-                .push(text("can spend coins inactive for"))
+                .push(text(t!("policy-inactive-for")))
                 .push(
                     text(format!(
-                        "{} blocks (~{})",
+                        "{} {} (~{})",
                         sequence,
+                        t!("common-blocks"),
                         expire_message_units(*sequence as u32).join(",")
                     ))
                     .bold(),
@@ -1180,16 +1187,16 @@ fn display_policy<'a>(
                             .iter()
                             .all(|fg| provider_keys.contains_key(fg))
                     {
-                        "(Safety Net path)".to_string()
+                        t!("policy-safety-net-path")
                     } else {
-                        format!("(Recovery path #{})", i + 1)
+                        t!("policy-recovery-path", number = i + 1)
                     },
                 )),
         );
     }
     Column::new()
         .spacing(10)
-        .push(text("The wallet policy:").bold())
+        .push(text(t!("policy-wallet-policy")).bold())
         .push(scrollable::horizontal_thin(col))
         .into()
 }
@@ -1267,7 +1274,11 @@ pub fn register_wallet_modal<'a>(
     let card_content = Column::new()
         .push(
             Column::new()
-                .push(text("Select device:").bold().width(Length::Fill))
+                .push(
+                    text(t!("settings-select-device"))
+                        .bold()
+                        .width(Length::Fill),
+                )
                 .spacing(10)
                 .push(signers)
                 .width(Length::Fill),

@@ -23,7 +23,7 @@ impl std::default::Default for Value<String> {
 
 pub struct Form<'a, Message> {
     input: TextInput<'a, Message>,
-    warning: Option<&'a str>,
+    warning: Option<String>,
     valid: bool,
 }
 
@@ -43,7 +43,7 @@ where
     {
         Self {
             input: text_input::TextInput::new(placeholder, &value.value).on_input(on_change),
-            warning: value.warning,
+            warning: value.warning.map(String::from),
             valid: value.valid,
         }
     }
@@ -74,7 +74,7 @@ where
         Self {
             input: text_input::TextInput::new(placeholder, &value.value)
                 .on_input(move |s| on_change(s.trim().to_string())),
-            warning: value.warning,
+            warning: value.warning.map(String::from),
             valid: value.valid,
         }
     }
@@ -111,20 +111,20 @@ where
                     // in the on_change message handler.
                     on_change_clone(pasted)
                 }),
-            warning: value.warning,
+            warning: value.warning.map(String::from),
             valid: value.valid,
         }
     }
 
     /// Sets the [`Form`] with a warning message
-    pub fn warning(mut self, warning: &'a str) -> Self {
-        self.warning = Some(warning);
+    pub fn warning(mut self, warning: impl Into<String>) -> Self {
+        self.warning = Some(warning.into());
         self
     }
 
     /// Sets the [`Form`] with a warning message
     pub fn maybe_warning(mut self, warning: Option<&'a str>) -> Self {
-        self.warning = warning;
+        self.warning = warning.map(String::from);
         self
     }
 

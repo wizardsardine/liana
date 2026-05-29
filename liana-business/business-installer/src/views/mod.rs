@@ -25,11 +25,13 @@ use iced::{
     widget::{column, container, row, Space},
     Alignment, Length,
 };
+use liana_i18n::t;
+use liana_i18n::SupportedLocale;
 use liana_ui::{
     component::{
         button::{btn_flat, icon_btn, BtnWidth},
         card::clickable_card,
-        form, scrollable,
+        form, pick_list, scrollable,
         text::{self, short_email, truncate},
     },
     icon, theme,
@@ -54,19 +56,23 @@ pub fn format_last_edit_info(
         .and_then(|editor_id| {
             state.backend.get_user(editor_id).map(|user| {
                 if user.email.to_lowercase() == current_user_email_lower {
-                    "You".to_string()
+                    t!("business-common-you")
                 } else if user.role == UserRole::WizardSardineAdmin {
                     let name = admin_name_from_email(&user.email).unwrap_or_default();
-                    format!("Admin{name}")
+                    t!("business-admin-name", name = name)
                 } else {
                     user.email.clone()
                 }
             })
         })
-        .map(|name| format!(" by {name}"))
+        .map(|name| t!("business-edited-by", name = name))
         .unwrap_or_default();
     let relative_time = state.app.format_relative_time(timestamp);
-    Some(format!("Edited{editor_str} {relative_time}"))
+    Some(t!(
+        "business-edited-relative",
+        editor = editor_str,
+        time = relative_time
+    ))
 }
 
 fn admin_name_from_email(mail: &str) -> Option<String> {
@@ -118,11 +124,11 @@ fn layout_inner<'a>(
     let icn = Some(icon::previous_icon());
     let has_left_button = previous_message.is_some() || email.is_some();
     let (txt, msg) = if let Some(msg) = previous_message {
-        ("Previous", Some(msg))
+        (t!("common-previous"), Some(msg))
     } else if email.is_some() {
-        ("Previous", Some(Msg::Disconnect))
+        (t!("common-previous"), Some(Msg::Disconnect))
     } else {
-        ("Previous", None)
+        (t!("common-previous"), None)
     };
 
     let left_button = btn_flat(icn, txt, BtnWidth::L, msg);
@@ -132,6 +138,21 @@ fn layout_inner<'a>(
         .push(Space::with_width(Length::Fill))
         .spacing(10)
         .align_y(Alignment::Center);
+
+    email_row = email_row.push(
+        Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(text::p1_regular(liana_i18n::t!("settings-language")))
+            .push(
+                pick_list::pick_list(
+                    &SupportedLocale::ALL[..],
+                    Some(liana_i18n::current_locale()),
+                    Msg::LanguageEdited,
+                )
+                .padding(10),
+            ),
+    );
 
     if is_ws_admin {
         email_row = email_row.push(liana_ui::component::pill::ws_admin());
@@ -346,7 +367,7 @@ pub fn menu_key_entry(
 
 /// Optional centered search bar inside a select list view.
 pub struct SelectSearch<'a> {
-    pub placeholder: &'static str,
+    pub placeholder: String,
     pub value: &'a str,
     pub on_change: fn(String) -> Msg,
 }
@@ -382,7 +403,7 @@ pub fn select_list_view(cfg: SelectListView<'_>) -> Element<'_, Msg> {
             warning: None,
             valid: true,
         };
-        let search_form = form::Form::new_trimmed(search.placeholder, &value, search.on_change)
+        let search_form = form::Form::new_trimmed(&search.placeholder, &value, search.on_change)
             .size(16)
             .padding(10);
         let search_container = Container::new(search_form)

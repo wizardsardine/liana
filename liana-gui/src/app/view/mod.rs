@@ -37,6 +37,7 @@ use crate::app::{
     error::Error,
     menu::{Menu, MenuWidth},
 };
+use crate::t;
 
 pub fn sidebar<'a>(
     active: &Menu,
@@ -163,7 +164,10 @@ pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
                         Column::new().width(Length::Fill)
                     })
                     .align_y(iced::Alignment::Center)
-                    .push(button::secondary(Some(cross_icon()), "Close").on_press(Message::Close)),
+                    .push(
+                        button::secondary(Some(cross_icon()), t!("tab-close"))
+                            .on_press(Message::Close),
+                    ),
             )
             .padding(10)
             .style(theme::container::background),

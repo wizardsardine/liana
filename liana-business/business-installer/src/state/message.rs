@@ -1,4 +1,5 @@
 use liana_connect::ws_business;
+use liana_i18n::SupportedLocale;
 use uuid::Uuid;
 
 /// All application messages
@@ -12,6 +13,7 @@ pub enum Msg {
     LoginResendToken,          // Resend login token
     LoginSendAuthCode,         // Submit auth code for verification
     Disconnect,                    // Log out current user
+    LanguageEdited(SupportedLocale), // Change installer language
 
     // Account selection (cached token login)
     AccountSelectConnect(String), // Connect with cached account by email

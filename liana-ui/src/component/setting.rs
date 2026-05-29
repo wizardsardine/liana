@@ -2,6 +2,8 @@ use iced::{
     widget::{column, row},
     Alignment, Length,
 };
+use liana_i18n::t;
+use std::fmt::Display;
 
 use crate::{
     component::{
@@ -15,16 +17,16 @@ use crate::{
 const PADDING: u16 = 10;
 const SPACING: u32 = 20;
 
-fn breadcrumb_btn<M: Clone + 'static>(label: &'static str, msg: Option<M>) -> Button<'static, M> {
+fn breadcrumb_btn<M: Clone + 'static>(label: impl Display, msg: Option<M>) -> Button<'static, M> {
     button::breadcrumb(None, label).on_press_maybe(msg)
 }
 
 pub fn header<M: Clone + 'static>(
     setting_msg: Option<M>,
-    section_title: Option<&'static str>,
+    section_title: Option<String>,
     msg: Option<M>,
 ) -> Element<'static, M> {
-    let setting_btn = breadcrumb_btn("Settings", setting_msg);
+    let setting_btn = breadcrumb_btn(t!("menu-settings"), setting_msg);
     let section_btn = section_title.map(|t| breadcrumb_btn(t, msg));
 
     if let Some(s_btn) = section_btn {
@@ -46,14 +48,14 @@ pub enum SectionKind {
 }
 
 impl SectionKind {
-    pub fn title(&self) -> &'static str {
+    pub fn title(&self) -> String {
         match self {
-            SectionKind::General => "General",
-            SectionKind::Node => "Node",
-            SectionKind::Backend => "Backend",
-            SectionKind::Wallet => "Wallet",
-            SectionKind::ImportExport => "ImportExport",
-            SectionKind::About => "About",
+            SectionKind::General => t!("settings-section-general"),
+            SectionKind::Node => t!("settings-section-node"),
+            SectionKind::Backend => t!("settings-section-backend"),
+            SectionKind::Wallet => t!("settings-section-wallet"),
+            SectionKind::ImportExport => t!("settings-section-import-export"),
+            SectionKind::About => t!("settings-section-about"),
         }
     }
 
@@ -77,32 +79,32 @@ pub enum ImportExportKind {
 }
 
 impl ImportExportKind {
-    pub fn title_descr(&self) -> (&'static str, &'static str) {
+    pub fn title_descr(&self) -> (String, String) {
         match self {
             ImportExportKind::ImportWallet => (
-                "Import wallet",
-                "Upload a backup file to update wallet info.",
+                t!("settings-import-wallet"),
+                t!("settings-import-wallet-description"),
             ),
             ImportExportKind::ExportWallet => (
-                "Export wallet",
-                "File (not encrypted) with wallet info useful to sync labels and data on other devices."
+                t!("settings-export-wallet"),
+                t!("settings-export-wallet-description"),
             ),
             ImportExportKind::ExportLabels => (
-                "BIP 329 labels",
-                "Bip 329 label export, compatible with other wallets."
+                t!("settings-export-labels"),
+                t!("settings-export-labels-description"),
             ),
 
             ImportExportKind::ExportTransactions => (
-                "Transactions table",
-                ".CSV file of past transactions, for accounting purposes."
+                t!("settings-export-transactions"),
+                t!("settings-export-transactions-description"),
             ),
             ImportExportKind::ExportDescriptor => (
-                "Descriptor only - plain-text",
-                "Plain-text (not encrypted) descriptor file only, to use with other wallets."
+                t!("settings-export-descriptor"),
+                t!("settings-export-descriptor-description"),
             ),
             ImportExportKind::ExportEncryptedDescriptor => (
-                "Encrypted descriptor",
-                ".bed file, can be decrypted with one of your signing devices or xpubs."
+                t!("settings-export-encrypted-descriptor"),
+                t!("settings-export-encrypted-descriptor-description"),
             ),
         }
     }

@@ -31,6 +31,7 @@ use crate::{
         view::{hw, label, warning::warn},
     },
     hw::HardwareWallet,
+    t,
 };
 
 use super::message::Message;
@@ -69,12 +70,12 @@ fn address_card<'a>(
             .push(
                 Row::new()
                     .push(
-                        button::secondary(None, "Verify on hardware device")
+                        button::secondary(None, t!("receive-verify-on-device"))
                             .on_press(Message::Select(row_index)),
                     )
                     .push(Space::with_width(Length::Fill))
                     .push(
-                        button::secondary(None, "Show QR Code")
+                        button::secondary(None, t!("receive-show-qr"))
                             .on_press(Message::ShowQrCode(row_index)),
                     ),
             )
@@ -103,7 +104,7 @@ pub fn receive<'a>(
                 .align_y(Alignment::Center)
                 .push(Container::new(panel_title(Menu::Receive.title())).width(Length::Fill))
                 .push({
-                    let (icon, label) = (Some(icon::plus_icon()), "Generate address");
+                    let (icon, label) = (Some(icon::plus_icon()), t!("receive-generate-address"));
                     if addresses.is_empty() {
                         button::primary(icon, label)
                     } else {
@@ -112,7 +113,7 @@ pub fn receive<'a>(
                     .on_press(Message::NextReceiveAddress)
                 }),
         )
-        .push(text("Always generate a new address for each deposit."))
+        .push(text(t!("receive-generate-new-address-help")))
         .push(
             Row::new()
                 .spacing(10)
@@ -131,10 +132,7 @@ pub fn receive<'a>(
                     Button::new(
                         Row::new()
                             .align_y(Alignment::Center)
-                            .push(
-                                p1_bold("Previously generated addresses still awaiting deposit")
-                                    .width(Length::Fill),
-                            )
+                            .push(p1_bold(t!("receive-previous-addresses")).width(Length::Fill))
                             .push(if show_prev_addresses {
                                 icon::collapsed_icon()
                             } else {
@@ -233,9 +231,9 @@ pub fn receive<'a>(
                 Container::new(
                     Button::new(
                         text(if processing {
-                            "Fetching ..."
+                            t!("common-fetching")
                         } else {
-                            "See more"
+                            t!("common-see-more")
                         })
                         .width(Length::Fill)
                         .align_x(Horizontal::Center),
@@ -273,7 +271,7 @@ pub fn verify_address_modal<'a>(
                                         .width(Length::Fill)
                                         .align_y(Alignment::Center)
                                         .push(
-                                            Container::new(text("Address:").bold())
+                                            Container::new(text(t!("common-address-label")).bold())
                                                 .width(Length::Fill),
                                         )
                                         .push(
@@ -297,8 +295,10 @@ pub fn verify_address_modal<'a>(
                                         .width(Length::Fill)
                                         .align_y(Alignment::Center)
                                         .push(
-                                            Container::new(text("Derivation index:").bold())
-                                                .width(Length::Fill),
+                                            Container::new(
+                                                text(t!("receive-derivation-index")).bold(),
+                                            )
+                                            .width(Length::Fill),
                                         )
                                         .push(
                                             Container::new(
@@ -309,7 +309,7 @@ pub fn verify_address_modal<'a>(
                                 )
                                 .spacing(5),
                         )
-                        .push(text("Select device to verify address on:").width(Length::Fill))
+                        .push(text(t!("receive-select-device")).width(Length::Fill))
                         .spacing(10)
                         .push(hws.iter().enumerate().fold(
                             Column::new().spacing(10),

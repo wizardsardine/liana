@@ -4,6 +4,7 @@ use iced::{
     widget::{Column, Row, Space, Toggler},
     Alignment, Length,
 };
+use liana_i18n::{self as i18n, t, SupportedLocale};
 use liana_ui::{
     component::{
         self, badge, button, card, pick_list, scrollable, separation,
@@ -40,7 +41,7 @@ pub fn wallet_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
     let descriptor = state.wallet.main_descriptor.to_string();
     let descriptor_card = card::simple(
         Column::new()
-            .push(text("Wallet descriptor:").bold())
+            .push(text(t!("settings-wallet-descriptor")).bold())
             .push(scrollable::horizontal_thin(
                 Column::new().push(text(&descriptor).small()),
             ))
@@ -49,8 +50,11 @@ pub fn wallet_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
                     .spacing(10)
                     .push(Space::with_width(Length::Fill))
                     .push(
-                        button::secondary(Some(icon::chip_icon()), "Register on device")
-                            .on_press(Msg::RegisterWallet),
+                        button::secondary(
+                            Some(icon::chip_icon()),
+                            t!("settings-register-on-device"),
+                        )
+                        .on_press(Msg::RegisterWallet),
                     ),
             )
             .spacing(10),
@@ -79,7 +83,7 @@ pub fn general_view(
                 Row::new()
                     .spacing(10)
                     .align_y(Alignment::Center)
-                    .push(text("Fiat price:").bold())
+                    .push(text(t!("settings-fiat-price")).bold())
                     .push(Space::with_width(Length::Fill))
                     .push(
                         Toggler::new(fiat_enabled)
@@ -92,7 +96,7 @@ pub fn general_view(
                     Row::new()
                         .spacing(20)
                         .align_y(Alignment::Center)
-                        .push(text("Currency:").bold())
+                        .push(text(t!("settings-currency")).bold())
                         .push(Space::with_width(Length::Fill))
                         .push(
                             pick_list::pick_list(
@@ -107,9 +111,32 @@ pub fn general_view(
     )
     .width(Length::Fill);
 
+    let language_card = card::simple(
+        Column::new()
+            .spacing(10)
+            .push(
+                Row::new()
+                    .spacing(20)
+                    .align_y(Alignment::Center)
+                    .push(text(t!("settings-language")).bold())
+                    .push(Space::with_width(Length::Fill))
+                    .push(
+                        pick_list::pick_list(
+                            &SupportedLocale::ALL[..],
+                            Some(i18n::current_locale()),
+                            Msg::LanguageEdited,
+                        )
+                        .padding(10),
+                    ),
+            )
+            .push(text(t!("settings-language-description")).style(theme::text::secondary)),
+    )
+    .width(Length::Fill);
+
     Column::new()
         .spacing(20)
         .push(header)
+        .push(language_card)
         .push(fiat_card)
         .width(Length::Fill)
         .into()
@@ -124,7 +151,7 @@ pub fn about_view() -> Element<'static, Msg> {
             .push(
                 Row::new()
                     .push(badge::tooltip())
-                    .push(text("Version").bold())
+                    .push(text(t!("settings-version")).bold())
                     .padding(10)
                     .spacing(20)
                     .align_y(Alignment::Center)

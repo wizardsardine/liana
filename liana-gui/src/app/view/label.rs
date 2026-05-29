@@ -7,7 +7,7 @@ use liana_ui::{
     widget::*,
 };
 
-use crate::app::view;
+use crate::{app::view, t};
 
 pub fn label_editable(
     labelled: Vec<String>,
@@ -21,7 +21,7 @@ pub fn label_editable(
                     iced::widget::Text::new(label)
                         .size(size)
                         .shaping(Shaping::Advanced),
-                    button::secondary(Some(icon::pencil_icon()), "Edit").on_press(
+                    button::secondary(Some(icon::pencil_icon()), t!("common-edit")).on_press(
                         view::Message::Label(
                             labelled,
                             view::message::LabelMessage::Edited(label.to_string())
@@ -35,10 +35,12 @@ pub fn label_editable(
         }
     }
     Container::new(
-        button::secondary(Some(icon::pencil_icon()), "Add label").on_press(view::Message::Label(
-            labelled,
-            view::message::LabelMessage::Edited(String::default()),
-        )),
+        button::secondary(Some(icon::pencil_icon()), t!("label-add")).on_press(
+            view::Message::Label(
+                labelled,
+                view::message::LabelMessage::Edited(String::default()),
+            ),
+        ),
     )
     .into()
 }
@@ -50,16 +52,18 @@ pub fn label_editing(
 ) -> Element<'_, view::Message> {
     let e: Element<view::LabelMessage> = Container::new(
         row!(
-            form::Form::new("Label", label, view::LabelMessage::Edited)
-                .warning("Invalid label length, cannot be superior to 100")
+            form::Form::new(&t!("label-label"), label, view::LabelMessage::Edited)
+                .warning(t!("label-invalid-length"))
                 .size(size)
                 .padding(10),
             if label.valid {
-                button::secondary(None, "Save").on_press(view::message::LabelMessage::Confirm)
+                button::secondary(None, t!("common-save"))
+                    .on_press(view::message::LabelMessage::Confirm)
             } else {
-                button::secondary(None, "Save")
+                button::secondary(None, t!("common-save"))
             },
-            button::secondary(None, "Cancel").on_press(view::message::LabelMessage::Cancel)
+            button::secondary(None, t!("common-cancel"))
+                .on_press(view::message::LabelMessage::Cancel)
         )
         .spacing(5)
         .align_y(Alignment::Center),

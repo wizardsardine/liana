@@ -106,10 +106,10 @@ fn success_marker<T: 'static>(label: Option<&'static str>) -> Row<'static, T> {
 }
 
 /// Trailing warning icon with a bottom tooltip styled by `theme::card::simple`.
-fn warning_tooltip<'a, M: 'static + Clone>(message: &'a str) -> Element<'a, M> {
+fn warning_tooltip<'a, M: 'static + Clone>(message: impl Into<String>) -> Element<'a, M> {
     tooltip::Tooltip::new(
         icon::warning_icon(),
-        iced::widget::text!("{}", message),
+        iced::widget::text(message.into()),
         tooltip::Position::Bottom,
     )
     .style(theme::card::simple)
@@ -208,7 +208,7 @@ pub fn warning_device<'a, T: 'static + Clone, K: Display, V: Display, F: Display
     version: Option<V>,
     fingerprint: F,
     alias: Option<impl Into<Cow<'a, str>> + Display>,
-    warning: &'a str,
+    warning: impl Into<String>,
     msg: Option<T>,
 ) -> Element<'a, T> {
     let content = Row::new()
@@ -227,12 +227,12 @@ pub fn unimplemented_method_device<'a, T: 'a + Clone, K: Display, V: Display, F:
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    message: &'static str,
+    message: impl Into<String>,
     msg: Option<T>,
 ) -> Element<'a, T> {
     let content = tooltip::Tooltip::new(
         device_identity::<T, _, _, _>(None, fingerprint, kind, version),
-        message,
+        iced::widget::text(message.into()),
         tooltip::Position::Bottom,
     )
     .style(theme::card::simple);
@@ -243,7 +243,7 @@ pub fn disabled_device<'a, T: 'a + Clone, K: Display, V: Display, F: Display>(
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    label: &'static str,
+    label: impl Display,
     msg: Option<T>,
 ) -> Element<'a, T> {
     let key = device_identity::<T, _, _, _>(None, fingerprint, kind, version);
@@ -300,7 +300,7 @@ pub fn selected_device<'a, T: 'static + Clone, K: Display, V: Display, F: Displa
     version: Option<V>,
     fingerprint: F,
     alias: Option<impl Into<Cow<'a, str>> + Display>,
-    warning: Option<&'static str>,
+    warning: Option<impl Into<String>>,
     account: Option<ChildNumber>,
     display_account: bool,
     msg: Option<T>,

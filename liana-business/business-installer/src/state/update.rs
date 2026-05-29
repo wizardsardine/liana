@@ -10,6 +10,7 @@ use liana_connect::ws_business::{
     self, Key, KeyIdentity, PolicyTemplate, SecondaryPath, SpendingPath, Timelock, UserRole,
     Wallet, WalletStatus, BLOCKS_PER_DAY,
 };
+use liana_i18n::t;
 use liana_ui::widget::text_input;
 use miniscript::bitcoin::bip32::Fingerprint;
 use tracing::{debug, error, trace};
@@ -136,6 +137,9 @@ impl State {
 
             // Logout
             Msg::Disconnect => return self.on_logout(),
+
+            // Handled by BusinessInstaller before routing into State.
+            Msg::LanguageEdited(_) => {}
 
             // No-op: just triggers a view refresh
             Msg::Update => {}
@@ -284,8 +288,8 @@ impl State {
                     "BUG: State::on_org_wallet_selected() selected but user_id unknown."
                 );
                 self.on_warning_show_modal(
-                    "Error",
-                    "User session not found. Please log in again or contact WizardSardine",
+                    t!("common-error"),
+                    t!("business-user-session-not-found"),
                 );
                 return Task::none();
             }
@@ -308,8 +312,8 @@ impl State {
                 wallet_id
             );
             self.on_warning_show_modal(
-                "Access Error",
-                "You do not have access to this wallet. Contact WizardSardine.",
+                t!("business-access-error"),
+                t!("business-wallet-access-denied"),
             );
             return Task::none();
         }
@@ -947,14 +951,13 @@ impl State {
 
     fn on_backend_invalid_email(&mut self) {
         self.views.login.email.form.valid = false;
-        self.views.login.email.form.warning = Some("Email is invalid!");
+        self.views.login.email.form.warning = Some("settings-email-invalid");
         self.views.login.email.processing = false;
     }
 
     fn on_backend_auth_code_fail(&mut self) {
         self.views.login.email.form.valid = false;
-        self.views.login.email.form.warning =
-            Some("Fail to request authentication code from server!");
+        self.views.login.email.form.warning = Some("business-auth-code-request-failed");
         self.views.login.email.processing = false;
     }
 
@@ -981,7 +984,7 @@ impl State {
 
     fn on_backend_login_fail(&mut self) {
         self.views.login.code.form.valid = false;
-        self.views.login.code.form.warning = Some("Login fail!");
+        self.views.login.code.form.warning = Some("business-login-failed");
         self.views.login.code.processing = false;
     }
 
@@ -1004,7 +1007,7 @@ impl State {
         }
 
         if error.show_warning() {
-            self.on_warning_show_modal("Backend error", error.to_string());
+            self.on_warning_show_modal(t!("business-backend-error"), error.to_string());
         }
     }
 
@@ -1023,8 +1026,8 @@ impl State {
 
         // Show error modal - don't retry connection
         self.on_warning_show_modal(
-            "Connection Error",
-            "Lost connection to the server. Please restart the application.",
+            t!("business-connection-error"),
+            t!("business-lost-connection-restart"),
         );
     }
 
@@ -1056,8 +1059,8 @@ impl State {
 
         // Show warning modal
         self.on_warning_show_modal(
-            "Connection Failed",
-            format!("Failed to connect with account {failed_email}. The session may have expired."),
+            t!("business-connection-failed"),
+            t!("business-account-connection-failed", email = failed_email),
         );
 
         // Decide next state based on remaining accounts
@@ -1347,9 +1350,8 @@ impl State {
                     self.views.keys.edit_key_modal = None;
                     self.views.modals.conflict = Some(ConflictModalState {
                         conflict_type: ConflictType::KeyDeleted,
-                        title: "Key Deleted".to_string(),
-                        message: "The key you were editing was deleted by another user."
-                            .to_string(),
+                        title: t!("business-key-deleted"),
+                        message: t!("business-key-deleted-message"),
                     });
                     return;
                 }
@@ -1362,8 +1364,8 @@ impl State {
                                 // Key was modified
                                 self.views.modals.conflict = Some(ConflictModalState {
                                     conflict_type: ConflictType::KeyModified { key_id, wallet_id },
-                                    title: "Key Modified".to_string(),
-                                    message: "This key was modified by another user. Would you like to reload the server version or keep your changes?".to_string(),
+                                    title: t!("business-key-modified"),
+                                    message: t!("business-key-modified-message"),
                                 });
                                 return;
                             }
@@ -1385,7 +1387,7 @@ impl State {
                             .keys
                             .get(&key_id)
                             .map(|k| k.alias.clone())
-                            .unwrap_or_else(|| format!("Key {key_id}"));
+                            .unwrap_or_else(|| t!("business-key-number", id = key_id));
                         deleted_keys.push((key_id, key_alias));
                     }
                 }
@@ -1407,9 +1409,10 @@ impl State {
                     let (_first_key_id, first_key_alias) = deleted_keys[0].clone();
                     self.views.modals.conflict = Some(ConflictModalState {
                         conflict_type: ConflictType::KeyInPathDeleted,
-                        title: "Key Removed".to_string(),
+                        title: t!("business-key-removed"),
                         message: format!(
-                            "\"{first_key_alias}\" was deleted by another user and has been removed from your path selection."
+                            "{}",
+                            t!("business-key-removed-from-path", alias = first_key_alias)
                         ),
                     });
                     return;
@@ -1441,8 +1444,8 @@ impl State {
                                 path_index: None,
                                 wallet_id,
                             },
-                            title: "Path Modified".to_string(),
-                            message: "The primary path was modified by another user. Would you like to reload the server version or keep your changes?".to_string(),
+                            title: t!("business-path-modified"),
+                            message: t!("business-primary-path-modified-message"),
                         });
                     }
                 } else if let Some(path_index) = modal.path_index {
@@ -1451,9 +1454,8 @@ impl State {
                         self.views.paths.edit_path_modal = None;
                         self.views.modals.conflict = Some(ConflictModalState {
                             conflict_type: ConflictType::PathDeleted,
-                            title: "Path Deleted".to_string(),
-                            message: "The path you were editing was deleted by another user."
-                                .to_string(),
+                            title: t!("business-path-deleted"),
+                            message: t!("business-path-deleted-message"),
                         });
                         return;
                     }
@@ -1483,8 +1485,8 @@ impl State {
                                 path_index: Some(path_index),
                                 wallet_id,
                             },
-                            title: "Path Modified".to_string(),
-                            message: "This recovery path was modified by another user. Would you like to reload the server version or keep your changes?".to_string(),
+                            title: t!("business-path-modified"),
+                            message: t!("business-recovery-path-modified-message"),
                         });
                     }
                 }
@@ -1775,20 +1777,20 @@ impl State {
             Some(SigningDevice::Locked { .. }) => {
                 if let Some(modal) = self.views.xpub.modal_mut() {
                     modal.set_processing(false);
-                    modal.set_fetch_error("Device is locked. Please unlock it first.".to_string());
+                    modal.set_fetch_error(t!("business-device-locked-unlock"));
                 }
             }
             Some(SigningDevice::Unsupported { .. }) => {
                 if let Some(modal) = self.views.xpub.modal_mut() {
                     modal.set_processing(false);
-                    modal.set_fetch_error("Device is not supported".to_string());
+                    modal.set_fetch_error(t!("business-device-not-supported"));
                 }
             }
             None => {
                 // Device not found
                 if let Some(modal) = self.views.xpub.modal_mut() {
                     modal.set_processing(false);
-                    modal.set_fetch_error("Hardware wallet not found".to_string());
+                    modal.set_fetch_error(t!("business-hardware-wallet-not-found"));
                 }
             }
         }
@@ -1800,13 +1802,17 @@ impl State {
         // Use async file dialog by spawning a thread with Tokio runtime
         // This avoids "no reactor running" panic with Iced's ThreadPool executor
         let (tx, rx) = std::sync::mpsc::channel();
+        let select_xpub_file = t!("business-select-xpub-file");
+        let text_files = t!("business-text-files");
+        let all_files = t!("business-all-files");
+        let failed_file_dialog = t!("business-file-dialog-result-failed");
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             let result = rt.block_on(async {
                 let file_handle = rfd::AsyncFileDialog::new()
-                    .set_title("Select xpub file")
-                    .add_filter("Text files", &["txt"])
-                    .add_filter("All files", &["*"])
+                    .set_title(&select_xpub_file)
+                    .add_filter(&text_files, &["txt"])
+                    .add_filter(&all_files, &["*"])
                     .pick_file()
                     .await;
 
@@ -1824,7 +1830,7 @@ impl State {
                                 .to_string();
                             Ok((xpub, filename))
                         }
-                        Err(e) => Err(format!("Failed to read file: {e}")),
+                        Err(e) => Err(t!("business-file-read-failed", error = e.to_string())),
                     }
                 } else {
                     // User cancelled - return empty error to do nothing
@@ -1838,9 +1844,7 @@ impl State {
         Task::perform(
             async move {
                 // Block until result is available
-                rx.recv().unwrap_or_else(|_| {
-                    Err("Failed to receive result from file dialog thread".to_string())
-                })
+                rx.recv().unwrap_or_else(|_| Err(failed_file_dialog))
             },
             |result| {
                 // Only send message if there was an actual error (non-empty)
@@ -1892,7 +1896,7 @@ impl State {
                     .to_string();
                 Msg::XpubPasted(xpub)
             } else {
-                Msg::XpubFileLoaded(Err("Clipboard is empty".to_string()))
+                Msg::XpubFileLoaded(Err(t!("business-clipboard-empty")))
             }
         })
     }
@@ -2089,7 +2093,7 @@ impl State {
             error!("on_registration_select_device: no descriptor available");
             self.views
                 .registration
-                .set_modal_error("No descriptor available".to_string());
+                .set_modal_error(t!("business-no-descriptor-available"));
             return Task::none();
         };
 
@@ -2220,7 +2224,7 @@ impl State {
             error!("send_device_registered: no wallet selected");
             self.views
                 .registration
-                .set_modal_error("No wallet selected".to_string());
+                .set_modal_error(t!("business-no-wallet-selected"));
             return;
         };
 
@@ -2229,7 +2233,7 @@ impl State {
             error!("send_device_registered: no user ID available");
             self.views
                 .registration
-                .set_modal_error("No user ID available".to_string());
+                .set_modal_error(t!("business-no-user-id-available"));
             return;
         };
 

@@ -9,6 +9,7 @@ use liana_ui::{
 use crate::{
     app::{error::Error, menu::Menu},
     daemon::model::{SpendStatus, SpendTx},
+    t,
 };
 
 use super::{message::*, warning::warn};
@@ -23,23 +24,23 @@ pub fn import_psbt_view<'a>(
         .push(card::simple(
             Column::new()
                 .spacing(10)
-                .push(text("Insert PSBT:").bold())
+                .push(text(t!("psbts-insert-psbt")).bold())
                 .push(
                     form::Form::new_trimmed("PSBT", imported, move |msg| {
                         Message::ImportSpend(ImportSpendMessage::PsbtEdited(msg))
                     })
-                    .warning("Please enter a base64 encoded PSBT")
+                    .warning(t!("psbts-base64-warning"))
                     .size(P1_SIZE)
                     .padding(10),
                 )
                 .push(Row::new().push(Space::with_width(Length::Fill)).push(
                     if imported.valid && !imported.value.is_empty() && !processing {
-                        button::secondary(None, "Import")
+                        button::secondary(None, t!("common-import"))
                             .on_press(Message::ImportSpend(ImportSpendMessage::Confirm))
                     } else if processing {
-                        button::secondary(None, "Processing...")
+                        button::secondary(None, t!("common-processing"))
                     } else {
-                        button::secondary(None, "Import")
+                        button::secondary(None, t!("common-import"))
                     },
                 )),
         ))
@@ -51,7 +52,7 @@ pub fn import_psbt_success_view<'a>() -> Element<'a, Message> {
     Column::new()
         .push(
             card::simple(Container::new(
-                text("PSBT is imported").style(theme::text::success),
+                text(t!("psbts-imported")).style(theme::text::success),
             ))
             .padding(50),
         )
@@ -68,11 +69,11 @@ pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
                 .spacing(10)
                 .push(Container::new(panel_title(Menu::PSBTs.title())).width(Length::Fill))
                 .push(
-                    button::secondary(Some(icon::restore_icon()), "Import")
+                    button::secondary(Some(icon::restore_icon()), t!("common-import"))
                         .on_press(Message::ImportPsbt),
                 )
                 .push(
-                    button::secondary(Some(icon::plus_icon()), "New")
+                    button::secondary(Some(icon::plus_icon()), t!("common-new"))
                         .on_press(Message::Menu(Menu::CreateSpendTx)),
                 ),
         )
@@ -151,7 +152,7 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                         .push(if !tx.is_send_to_self() {
                             Container::new(amount(&tx.spend_amount))
                         } else {
-                            Container::new(p1_regular("Self-transfer"))
+                            Container::new(p1_regular(t!("common-self-transfer")))
                         })
                         .push_maybe(
                             tx.fee_amount

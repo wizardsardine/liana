@@ -9,6 +9,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_gui::hw::{is_compatible_with_tapminiscript, min_taproot_version, UnsupportedReason};
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{btn_cancel, btn_clear, btn_retry, btn_save},
@@ -60,12 +61,9 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
                 .spacing(10)
                 .push(icon::tooltip_icon().size(16))
                 .push(
-                text::p2_medium(
-                    "This key already has an xpub. You can replace it by fetching from a device, \
-                    importing from file, or pasting. Use the Clear button to remove it completely.",
-                )
-                .style(theme::text::primary),
-            ),
+                    text::p2_medium(t!("business-xpub-already-set-help"))
+                        .style(theme::text::primary),
+                ),
         )
         .padding(10)
         .style(theme::card::simple)
@@ -88,7 +86,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
         let input_header = Row::new()
             .spacing(10)
             .align_y(Alignment::Center)
-            .push(text::p2_medium("Current xpub:").style(theme::text::primary))
+            .push(text::p2_medium(t!("business-current-xpub")).style(theme::text::primary))
             .push(Space::with_width(Length::Fill));
 
         let input_value = Container::new(scrollable::horizontal_thin(
@@ -122,7 +120,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
 
     let alias = truncate(&modal_state.key_alias, 25);
     modal_view(
-        Some(format!("Select key source - {alias}")),
+        Some(t!("business-select-key-source", alias = alias)),
         none_fn(),
         Some(|| Msg::XpubCancelModal),
         ModalWidth::L,
@@ -139,8 +137,9 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
 
     let pick_enabled = !modal_state.processing;
 
-    let info = "Switch account if you already uses the same hardware in other configurations";
-    let account_label = row![p1_bold("Key path account:"), tooltip(info)].align_y(Vertical::Center);
+    let info = t!("installer-switch-account-help");
+    let account_label =
+        row![p1_bold(t!("installer-key-path-account")), tooltip(info)].align_y(Vertical::Center);
 
     let account = if pick_enabled {
         container(
@@ -164,7 +163,7 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         Row::new()
             .spacing(10)
             .push(Space::with_width(Length::Fill))
-            .push(text::p1_medium("Fetching from device...").style(theme::text::primary))
+            .push(text::p1_medium(t!("business-fetching-device")).style(theme::text::primary))
             .push(Space::with_width(Length::Fill)),
     );
 
@@ -240,7 +239,7 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
 /// Format account for display (e.g., "Account #0")
 fn format_account(account: ChildNumber) -> String {
     let index = account.to_string().replace("'", "");
-    format!("Account #{index}")
+    t!("business-account-number", index = index)
 }
 
 /// Render the Hardware Wallet section (Select step only)
@@ -254,10 +253,7 @@ fn hw_section(state: &State) -> Element<'_, Msg> {
             .align_x(Alignment::Center)
             .push(Space::with_height(20))
             .push(icon::usb_icon().size(60))
-            .push(
-                text::p1_medium("No hardware wallets detected. Connect a device and unlock it.")
-                    .style(theme::text::primary),
-            )
+            .push(text::p1_medium(t!("business-no-hardware-wallets")).style(theme::text::primary))
             .push(Space::with_height(20))
             .width(Length::Fill)
             .into()
@@ -266,7 +262,7 @@ fn hw_section(state: &State) -> Element<'_, Msg> {
         let device_data: Vec<_> = devices.values().map(extract_device_data).collect();
         let mut list = Column::new()
             .spacing(10)
-            .push(text::p1_bold("Detected Devices:"));
+            .push(text::p1_bold(t!("business-detected-devices")));
         for data in device_data {
             list = list.push(device_card(data));
         }
@@ -321,11 +317,11 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
         DeviceState::Locked { pairing_code } => {
             let message = match kind {
                 async_hwi::DeviceKind::Jade => {
-                    "This device doesn't support taproot miniscript".to_string()
+                    t!("hw-no-taproot-miniscript")
                 }
                 _ => match pairing_code {
-                    Some(code) => format!("Pairing code: {code}"),
-                    None => "Please unlock the device".to_string(),
+                    Some(code) => t!("decrypt-pairing-code", code = code),
+                    None => t!("business-unlock-device"),
                 },
             };
             modal::key_entry(
@@ -341,21 +337,22 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
         DeviceState::Unsupported { reason } => {
             let message = match &reason {
                 UnsupportedReason::NotPartOfWallet(fg) => {
-                    format!("Not part of this wallet (#{fg})")
+                    t!("business-not-part-wallet", fingerprint = fg)
                 }
-                UnsupportedReason::WrongNetwork => "Wrong network in device settings".to_string(),
+                UnsupportedReason::WrongNetwork => t!("business-wrong-network-device"),
                 UnsupportedReason::Version {
                     minimal_supported_version,
                 } => match kind {
                     async_hwi::DeviceKind::Jade => {
-                        "This device doesn't support taproot miniscript".to_string()
+                        t!("hw-no-taproot-miniscript")
                     }
-                    _ => format!(
-                        "Device version not supported, upgrade to version > {minimal_supported_version}"
+                    _ => t!(
+                        "business-device-version-unsupported",
+                        version = minimal_supported_version
                     ),
                 },
-                UnsupportedReason::Method(m) => format!("Unsupported method: {m}"),
-                UnsupportedReason::AppIsNotOpen => "Please open the app on device".to_string(),
+                UnsupportedReason::Method(m) => t!("business-unsupported-method", method = m),
+                UnsupportedReason::AppIsNotOpen => t!("business-open-app-device"),
             };
             modal::key_entry(
                 Some(icon::usb_drive_icon()),
@@ -440,7 +437,7 @@ fn other_options(modal_state: &XpubEntryModalState, is_wallet_manager: bool) -> 
 
     let section_header = modal::optional_section(
         collapsed,
-        "Other options".to_string(),
+        t!("decrypt-other-options"),
         || Msg::XpubToggleOptions,
         || Msg::XpubToggleOptions,
     );
@@ -448,7 +445,7 @@ fn other_options(modal_state: &XpubEntryModalState, is_wallet_manager: bool) -> 
     let expanded_content = (!collapsed).then(|| {
         let file_button: Element<'_, Msg> = modal::button_entry(
             Some(icon::import_icon()),
-            "Import extended public key file",
+            t!("business-import-xpub-file"),
             None,
             None,
             Some(|| Msg::XpubLoadFromFile),
@@ -463,7 +460,7 @@ fn other_options(modal_state: &XpubEntryModalState, is_wallet_manager: bool) -> 
             let input: Element<'_, Msg> = modal::collapsible_input_button(
                 modal_state.paste_expanded,
                 Some(icon::paste_icon()),
-                "Paste an extended public key".to_string(),
+                t!("decrypt-paste-xpub"),
                 "xpub...".to_string(),
                 &form_xpub,
                 Some(Msg::XpubUpdateInput),

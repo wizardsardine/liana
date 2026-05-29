@@ -3,6 +3,7 @@ use liana_ui::{component::modal::legacy, widget::*};
 use crate::{
     app::view::message::*,
     hw::{HardwareWallet, UnsupportedReason},
+    t,
 };
 use async_hwi::DeviceKind;
 
@@ -28,7 +29,7 @@ pub fn hw_list_view_verify_address(
                             kind.to_string(),
                             version.as_ref(),
                             fingerprint,
-                            "Liana cannot request the device to display the address. \n The verification must be done manually with the device control.",
+                            t!("hw-display-address-unavailable"),
                             None,
                         )
                     }

@@ -6,6 +6,7 @@ use crossbeam::channel::{self};
 use iced::Task;
 use liana::miniscript::bitcoin::{self};
 use liana_gui::{
+    app::settings::global::GlobalSettings,
     dir::LianaDirectory,
     installer::{Installer, NextState, UserFlow},
     services::connect::client::{backend::BackendClient, BackendType},
@@ -93,6 +94,15 @@ impl Installer<'_, Message> for BusinessInstaller {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        if let Message::LanguageEdited(locale) = message {
+            liana_i18n::set_locale(locale);
+            self.state.locale = locale;
+            let path = GlobalSettings::path(&self.datadir);
+            if let Err(e) = GlobalSettings::update_locale(&path, locale) {
+                tracing::error!("Failed to save language: {e}");
+            }
+            return Task::none();
+        }
         if !matches!(message, Message::Update) {
             tracing::debug!("BusinessInstaller::update received {:?}", message);
         } else {

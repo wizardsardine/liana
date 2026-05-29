@@ -1,5 +1,6 @@
 use crate::state::{views::login::LoginState, Msg, State};
 use iced::Length;
+use liana_i18n::t;
 use liana_ui::{component::text, widget::*};
 
 pub mod account_select;
@@ -13,7 +14,7 @@ pub fn login_view(state: &State) -> Element<'_, Msg> {
         LoginState::CodeEntry => code::login_code_view(state),
         LoginState::Authenticated => {
             // Should not reach here
-            Container::new(text::h2("Authenticated"))
+            Container::new(text::h2(t!("business-authenticated")))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .center_x(Length::Fill)

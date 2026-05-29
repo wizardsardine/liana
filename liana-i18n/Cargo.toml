@@ -1,0 +1,12 @@
+[package]
+name = "liana-i18n"
+version = "0.1.0"
+edition = "2021"
+description = "Shared internationalization runtime and locale resources for Liana"
+license = "BSD-3-Clause"
+
+[dependencies]
+fluent-bundle = { workspace = true }
+once_cell = { workspace = true }
+sys-locale = { workspace = true }
+unic-langid = { workspace = true }

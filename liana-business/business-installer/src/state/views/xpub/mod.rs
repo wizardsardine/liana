@@ -1,3 +1,4 @@
+use liana_i18n::t;
 use miniscript::{
     bitcoin::{bip32::ChildNumber, Network},
     DescriptorPublicKey,
@@ -208,12 +209,12 @@ pub fn validate_xpub_format(xpub_str: &str) -> Result<DescriptorPublicKey, Strin
     let trimmed = xpub_str.trim();
 
     if trimmed.is_empty() {
-        return Err("Extended public key cannot be empty".to_string());
+        return Err(t!("business-xpub-empty"));
     }
 
     // Try to parse as DescriptorPublicKey
     DescriptorPublicKey::from_str(trimmed)
-        .map_err(|e| format!("Invalid extended public key format: {e}"))
+        .map_err(|e| t!("business-xpub-invalid-format", error = e.to_string()))
 }
 
 /// Check if a descriptor public key matches the expected network
@@ -249,7 +250,7 @@ pub fn validate_xpub(xpub_str: &str, network: Network) -> Result<DescriptorPubli
 
     if !check_key_network(&key, network) {
         let expected = network.to_string();
-        return Err(format!("Extended public key is not valid for {expected}"));
+        return Err(t!("business-xpub-invalid-network", network = expected));
     }
 
     Ok(key)

@@ -310,6 +310,14 @@ impl LianaInstaller {
                 task
             }
             Message::Previous => self.previous(),
+            Message::LanguageEdited(locale) => {
+                liana_i18n::set_locale(locale);
+                let path = settings::global::GlobalSettings::path(&self.datadir);
+                if let Err(e) = settings::global::GlobalSettings::update_locale(&path, locale) {
+                    tracing::error!("Failed to save language: {e}");
+                }
+                Task::none()
+            }
             Message::Install => {
                 let _cmd = self
                     .steps

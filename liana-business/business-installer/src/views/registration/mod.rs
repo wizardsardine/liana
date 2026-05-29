@@ -11,6 +11,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_connect::ws_business::Wallet;
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{btn_secondary, BtnWidth},
@@ -33,14 +34,14 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
         .selected_org
         .and_then(|org_id| state.backend.get_org(org_id))
         .map(|org| org.name.clone())
-        .unwrap_or_else(|| "Organization".to_string());
+        .unwrap_or_else(|| t!("business-organization"));
     let wallet_name = state
         .app
         .selected_wallet
         .and_then(|wallet_id| state.backend.get_wallet(wallet_id))
         .map(|wallet| wallet.alias.clone())
-        .unwrap_or_else(|| "Wallet".to_string());
-    let breadcrumb = vec![org_name, wallet_name, "Register Devices".to_string()];
+        .unwrap_or_else(|| t!("business-wallet"));
+    let breadcrumb = vec![org_name, wallet_name, t!("business-register-devices")];
 
     // Get current user email
     let current_user_email = &state.views.login.email.form.value;
@@ -50,12 +51,10 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
         .spacing(10)
         .align_x(Alignment::Center)
         .padding(20)
-        .push(text::h2("Register Wallet on Devices"))
+        .push(text::h2(t!("business-register-wallet-devices")))
         .push(
-            text::p1_medium(
-                "Register the wallet descriptor on each device, or skip if unavailable.",
-            )
-            .style(theme::text::secondary),
+            text::p1_medium(t!("business-register-wallet-devices-help"))
+                .style(theme::text::secondary),
         );
     let header_content = row![
         Space::with_width(Length::Fill),
@@ -75,7 +74,12 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
         None
     } else {
         let spacer = MENU_ENTRY_WIDTH - BtnWidth::XL as u32;
-        let skip_btn = btn_secondary(None, "Skip", BtnWidth::XL, Some(Msg::RegistrationSkipAll));
+        let skip_btn = btn_secondary(
+            None,
+            t!("common-skip"),
+            BtnWidth::XL,
+            Some(Msg::RegistrationSkipAll),
+        );
         let footer = row![
             Space::with_width(Length::Fill),
             Space::with_width(spacer),
@@ -111,11 +115,8 @@ fn no_devices_view<'a>() -> Element<'a, Msg> {
         .spacing(20)
         .align_x(Alignment::Center)
         .push(icon::tooltip_icon().size(60))
-        .push(text::h3("No devices to register"))
-        .push(
-            text::p1_medium("You don't have any devices assigned in this wallet.")
-                .style(theme::text::secondary),
-        )
+        .push(text::h3(t!("business-no-devices-register")))
+        .push(text::p1_medium(t!("business-no-devices-assigned")).style(theme::text::secondary))
         .width(Length::Fill)
         .padding([40, 20])
         .into()
@@ -193,11 +194,11 @@ pub fn registration_key_entry(
     let kind_name = kind.map(device_kind);
     let alias = (!alias.is_empty()).then_some(alias);
     let status = if kind.is_some() {
-        "Register"
+        t!("business-register")
     } else if device_connected {
-        "Device not supported or locked"
+        t!("business-device-unsupported-locked")
     } else {
-        "Connect the associated device to register"
+        t!("business-connect-device-register")
     };
     let on_press = kind
         .is_some()

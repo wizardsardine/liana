@@ -33,6 +33,7 @@ use crate::{
         },
         login,
     },
+    t,
 };
 
 #[allow(clippy::large_enum_variant)]
@@ -155,13 +156,13 @@ where
         }
     }
 
-    pub fn title(&self) -> &str {
+    pub fn title(&self) -> String {
         match &self.state {
-            State::Installer(_) => "Installer",
-            State::Loader(_) => "Loading...",
-            State::Launcher(_) => "Launcher",
-            State::Login(_) => "Login",
-            State::App(a) => a.title(),
+            State::Installer(_) => t!("tab-installer"),
+            State::Loader(_) => t!("tab-loading"),
+            State::Launcher(_) => t!("tab-launcher"),
+            State::Login(_) => t!("tab-login"),
+            State::App(a) => a.title().to_string(),
             State::_Phantom(_) => unreachable!(),
         }
     }

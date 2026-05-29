@@ -24,7 +24,7 @@ use liana_ui::{
     component::{
         button, card, collapse, form,
         modal::legacy,
-        scrollable, separation,
+        pick_list, scrollable, separation,
         text::{h2, h3, h4_bold, p1_bold, p1_regular, text, Text},
     },
     icon, theme,
@@ -48,7 +48,9 @@ use crate::{
         bitcoind::{ConfigField, RpcAuthType, RpcAuthValues, StartInternalBitcoindError},
         electrum, NodeType,
     },
+    t,
 };
+use liana_i18n::SupportedLocale;
 
 pub fn import_wallet_or_descriptor<'a>(
     progress: (usize, usize),
@@ -61,7 +63,7 @@ pub fn import_wallet_or_descriptor<'a>(
 ) -> Element<'a, Message> {
     let mut col_wallets = Column::new()
         .spacing(20)
-        .push(h4_bold("Load a previously used wallet"));
+        .push(h4_bold(t!("installer-load-previous-wallet")));
     let no_wallets = wallets.is_empty();
     for (i, (name, alias)) in wallets.into_iter().enumerate() {
         col_wallets = col_wallets.push(
@@ -77,129 +79,134 @@ pub fn import_wallet_or_descriptor<'a>(
         );
     }
     let card_wallets: Element<'a, Message> = if no_wallets {
-        h4_bold("You have no current wallets").into()
+        h4_bold(t!("installer-no-current-wallets")).into()
     } else {
         card::simple(col_wallets).into()
     };
 
-    let col_invitation_token = collapse::Collapse::new(
-        Column::new()
-            .spacing(5)
-            .push(h4_bold("Load a shared wallet").style(theme::text::primary))
-            .push(
-                text("If you received an invitation to join a shared wallet")
-                    .style(theme::text::secondary),
-            ),
-        Column::new()
-            .spacing(5)
-            .push(h4_bold("Load a shared wallet").style(theme::text::primary))
-            .push(
-                text("Type the invitation token you received by email")
-                    .style(theme::text::secondary),
-            ),
-        if let Some(wallet) = invitation_wallet {
-            Element::<'a, Message>::from(
-                Column::new()
-                    .push(Space::with_height(0))
-                    .push(
-                        Row::new()
-                            .spacing(5)
-                            .push(Space::with_width(15))
-                            .push(text("Accept invitation for wallet:"))
-                            .push(text(wallet).bold()),
-                    )
-                    .push(
-                        Row::new()
-                            .push(Space::with_width(Length::Fill))
-                            .push(
-                                button::secondary(None, "Accept")
-                                    .width(Length::Fixed(200.0))
-                                    .on_press(Message::ImportRemoteWallet(
-                                        message::ImportRemoteWallet::AcceptInvitation,
-                                    )),
-                            )
-                            .push(Space::with_width(Length::Fill)),
-                    )
-                    .push(Space::with_width(5))
-                    .spacing(20),
-            )
-        } else {
-            Element::<'a, Message>::from(
-                Container::new(
+    let col_invitation_token =
+        collapse::Collapse::new(
+            Column::new()
+                .spacing(5)
+                .push(h4_bold(t!("installer-load-shared-wallet")).style(theme::text::primary))
+                .push(text(t!("installer-shared-wallet-help")).style(theme::text::secondary)),
+            Column::new()
+                .spacing(5)
+                .push(h4_bold(t!("installer-load-shared-wallet")).style(theme::text::primary))
+                .push(text(t!("installer-invitation-token-help")).style(theme::text::secondary)),
+            if let Some(wallet) = invitation_wallet {
+                Element::<'a, Message>::from(
                     Column::new()
                         .push(Space::with_height(0))
                         .push(
-                            Column::new()
-                                .push(text("Paste invitation:").bold())
-                                .push(
-                                    form::Form::new_trimmed("Invitation", invitation, |msg| {
-                                        Message::ImportRemoteWallet(
-                                            message::ImportRemoteWallet::ImportInvitationToken(msg),
-                                        )
-                                    })
-                                    .warning("Invitation token is invalid or expired")
-                                    .size(text::P1_SIZE)
-                                    .padding(10),
-                                )
-                                .spacing(10),
+                            Row::new()
+                                .spacing(5)
+                                .push(Space::with_width(15))
+                                .push(text(t!("installer-accept-invitation-for")))
+                                .push(text(wallet).bold()),
                         )
                         .push(
-                            Row::new().push(Space::with_width(Length::Fill)).push(
-                                button::secondary(None, "Next")
-                                    .width(Length::Fixed(200.0))
-                                    .on_press_maybe(if !invitation.value.is_empty() {
-                                        Some(Message::ImportRemoteWallet(
-                                            message::ImportRemoteWallet::FetchInvitation,
-                                        ))
-                                    } else {
-                                        None
-                                    }),
-                            ),
+                            Row::new()
+                                .push(Space::with_width(Length::Fill))
+                                .push(
+                                    button::secondary(None, t!("common-accept"))
+                                        .width(Length::Fixed(200.0))
+                                        .on_press(Message::ImportRemoteWallet(
+                                            message::ImportRemoteWallet::AcceptInvitation,
+                                        )),
+                                )
+                                .push(Space::with_width(Length::Fill)),
                         )
+                        .push(Space::with_width(5))
                         .spacing(20),
                 )
-                .padding(15),
-            )
-        },
-    )
-    .padding(15);
+            } else {
+                Element::<'a, Message>::from(
+                    Container::new(
+                        Column::new()
+                            .push(Space::with_height(0))
+                            .push(
+                                Column::new()
+                                    .push(text(t!("installer-paste-invitation")).bold())
+                                    .push(
+                                        form::Form::new_trimmed(
+                                            &t!("installer-invitation"),
+                                            invitation,
+                                            |msg| {
+                                                Message::ImportRemoteWallet(
+                                            message::ImportRemoteWallet::ImportInvitationToken(msg),
+                                        )
+                                            },
+                                        )
+                                        .warning(t!("installer-invitation-invalid"))
+                                        .size(text::P1_SIZE)
+                                        .padding(10),
+                                    )
+                                    .spacing(10),
+                            )
+                            .push(
+                                Row::new().push(Space::with_width(Length::Fill)).push(
+                                    button::secondary(None, t!("common-next"))
+                                        .width(Length::Fixed(200.0))
+                                        .on_press_maybe(if !invitation.value.is_empty() {
+                                            Some(Message::ImportRemoteWallet(
+                                                message::ImportRemoteWallet::FetchInvitation,
+                                            ))
+                                        } else {
+                                            None
+                                        }),
+                                ),
+                            )
+                            .spacing(20),
+                    )
+                    .padding(15),
+                )
+            },
+        )
+        .padding(15);
 
     let col_descriptor = collapse::Collapse::new(
         Column::new()
             .spacing(5)
-            .push(h4_bold("Load a wallet from descriptor").style(theme::text::primary))
-            .push(text("Creates a new wallet from the descriptor").style(theme::text::secondary)),
+            .push(h4_bold(t!("installer-load-from-descriptor")).style(theme::text::primary))
+            .push(text(t!("installer-load-from-descriptor-help")).style(theme::text::secondary)),
         Column::new()
             .spacing(5)
-            .push(h4_bold("Load a wallet from descriptor").style(theme::text::primary))
-            .push(text("Creates a new wallet from the descriptor").style(theme::text::secondary)),
+            .push(h4_bold(t!("installer-load-from-descriptor")).style(theme::text::primary))
+            .push(text(t!("installer-load-from-descriptor-help")).style(theme::text::secondary)),
         Container::new(
             Column::new()
                 .push(Space::with_height(0))
                 .push(
                     Column::new()
-                        .push(text("Descriptor:").bold())
+                        .push(text(t!("common-descriptor-label")).bold())
                         .push(
-                            form::Form::new_trimmed("Descriptor", imported_descriptor, |msg| {
-                                Message::ImportRemoteWallet(
-                                    message::ImportRemoteWallet::ImportDescriptor(msg),
-                                )
-                            })
-                            .warning("Either descriptor is invalid or incompatible with network")
+                            form::Form::new_trimmed(
+                                &t!("common-descriptor"),
+                                imported_descriptor,
+                                |msg| {
+                                    Message::ImportRemoteWallet(
+                                        message::ImportRemoteWallet::ImportDescriptor(msg),
+                                    )
+                                },
+                            )
+                            .warning(t!("installer-descriptor-invalid"))
                             .size(text::P1_SIZE)
                             .padding(10),
                         )
-                        .push(text("or").bold())
-                        .push(button::primary(None, "Import descriptor").on_press(
-                            Message::ImportRemoteWallet(
-                                message::ImportRemoteWallet::ImportDescriptorFromFile,
+                        .push(text(t!("common-or")).bold())
+                        .push(
+                            button::primary(None, t!("installer-import-descriptor")).on_press(
+                                Message::ImportRemoteWallet(
+                                    message::ImportRemoteWallet::ImportDescriptorFromFile,
+                                ),
                             ),
-                        ))
+                        )
                         .spacing(10),
                 )
                 .push(
                     Row::new().push(Space::with_width(Length::Fill)).push(
-                        button::secondary(None, "Next")
+                        button::secondary(None, t!("common-next"))
                             .width(Length::Fixed(200.0))
                             .on_press_maybe(
                                 if imported_descriptor.value.is_empty()
@@ -223,10 +230,14 @@ pub fn import_wallet_or_descriptor<'a>(
     layout(
         progress,
         email,
-        "Add wallet",
+        t!("launcher-add-wallet"),
         Column::new()
             .spacing(50)
-            .push_maybe(error.map(|e| card::error("Something wrong happened", e.to_string())))
+            .push_maybe(
+                error.map(|e| {
+                    card::invalid(text(format!("{}: {}", t!("common-something-wrong"), e)))
+                }),
+            )
             .push(card_wallets)
             .push(card::simple(col_invitation_token).padding(0))
             .push(card::simple(col_descriptor).padding(0))
@@ -247,16 +258,16 @@ pub fn import_descriptor<'a>(
     let valid = !imported_descriptor.value.is_empty() && imported_descriptor.valid;
 
     let col_descriptor = Column::new()
-        .push(text("Descriptor:").bold())
+        .push(text(t!("common-descriptor-label")).bold())
         .push(Space::with_height(10))
         .push(
-            form::Form::new_trimmed("Descriptor", imported_descriptor, |msg| {
+            form::Form::new_trimmed(&t!("common-descriptor"), imported_descriptor, |msg| {
                 Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(msg))
             })
             .warning(if wrong_network {
-                "The descriptor is for another network"
+                t!("installer-descriptor-wrong-network")
             } else {
-                "Failed to read the descriptor"
+                t!("installer-descriptor-read-failed")
             })
             .size(text::P1_SIZE)
             .padding(10),
@@ -271,7 +282,7 @@ pub fn import_descriptor<'a>(
     let or = if !valid && !imported_backup {
         Some(
             Row::new()
-                .push(text("or").bold())
+                .push(text(t!("common-or")).bold())
                 .push(Space::with_width(Length::Fill)),
         )
     } else {
@@ -281,7 +292,10 @@ pub fn import_descriptor<'a>(
     let import_backup = if !valid && !imported_backup {
         Some(
             Row::new()
-                .push(button::primary(None, "Import backup").on_press(Message::ImportBackup))
+                .push(
+                    button::primary(None, t!("installer-import-backup"))
+                        .on_press(Message::ImportBackup),
+                )
                 .push(Space::with_width(Length::Fill)),
         )
     } else {
@@ -291,7 +305,7 @@ pub fn import_descriptor<'a>(
     let backup_imported = if imported_backup {
         Some(
             Row::new()
-                .push(text("Backup successfully imported!").bold())
+                .push(text(t!("installer-backup-imported")).bold())
                 .push(Space::with_width(Length::Fill)),
         )
     } else {
@@ -301,7 +315,7 @@ pub fn import_descriptor<'a>(
     layout(
         progress,
         email,
-        "Import the wallet",
+        t!("installer-import-wallet-title"),
         Column::new()
             .push(
                 Column::new()
@@ -310,33 +324,29 @@ pub fn import_descriptor<'a>(
                     .push_maybe(backup_imported)
                     .push_maybe(or)
                     .push_maybe(descriptor)
-                    .push(text(
-                        "If you are using a Bitcoin Core node, \
-                you will need to perform a rescan of \
-                the blockchain after creating the wallet \
-                in order to see your coins and past \
-                transactions. This can be done in \
-                Settings > Node.",
-                    )),
+                    .push(text(t!("installer-import-wallet-rescan-help"))),
             )
             .push(
                 if imported_descriptor.value.is_empty() || !imported_descriptor.valid {
-                    button::secondary(None, "Next").width(Length::Fixed(200.0))
+                    button::secondary(None, t!("common-next")).width(Length::Fixed(200.0))
                 } else {
-                    button::secondary(None, "Next")
+                    button::secondary(None, t!("common-next"))
                         .width(Length::Fixed(200.0))
                         .on_press(Message::Next)
                 },
             )
-            .push_maybe(error.map(|e| card::error("Invalid descriptor", e.to_string())))
+            .push_maybe(error.map(|e| {
+                card::invalid(text(format!(
+                    "{}: {}",
+                    t!("installer-invalid-descriptor"),
+                    e
+                )))
+            }))
             .spacing(50),
         true,
         Some(Message::Previous),
     )
 }
-
-const BACKUP_WARNING: &str =
-    "Beware to back up the mnemonic as it will NOT be stored on the computer.";
 
 pub fn signer_xpubs<'a>(
     xpubs: &'a [String],
@@ -349,8 +359,12 @@ pub fn signer_xpubs<'a>(
                 Button::new(
                     Row::new().align_y(Alignment::Center).push(
                         Column::new()
-                            .push(text("Generate a new mnemonic").bold())
-                            .push(text(BACKUP_WARNING).small().style(theme::text::warning))
+                            .push(text(t!("installer-generate-mnemonic")).bold())
+                            .push(
+                                text(t!("installer-backup-mnemonic-warning"))
+                                    .small()
+                                    .style(theme::text::warning),
+                            )
                             .spacing(5)
                             .width(Length::Fill),
                     ),
@@ -390,7 +404,7 @@ pub fn signer_xpubs<'a>(
                 Some(
                     Container::new(
                         checkbox(did_backup)
-                            .label("I have backed up the mnemonic, show the extended public key")
+                            .label(t!("installer-backed-up-mnemonic-show-xpub"))
                             .on_toggle(Message::UserActionDone),
                     )
                     .padding(10),
@@ -412,7 +426,7 @@ pub fn signer_xpubs<'a>(
                             )
                             .push(
                                 Container::new(
-                                    button::primary(Some(icon::backup_icon()), "Export")
+                                    button::primary(Some(icon::backup_icon()), t!("common-export"))
                                         .on_press(Message::ExportXpub(xpub.clone()))
                                         .width(Length::Shrink),
                                 )
@@ -512,7 +526,7 @@ pub fn hardware_wallet_xpubs<'a>(
                             )
                             .push(
                                 Container::new(
-                                    button::primary(Some(icon::backup_icon()), "Export")
+                                    button::primary(Some(icon::backup_icon()), t!("common-export"))
                                         .on_press(Message::ExportXpub(xpub.clone()))
                                         .width(Length::Shrink),
                                 )
@@ -535,28 +549,30 @@ pub fn share_xpubs<'a>(
         .push(Space::with_height(5))
         .push(tooltip::Tooltip::new(
             icon::tooltip_icon(),
-            "Switch account if you already use the same hardware in other configurations",
+            text(t!("installer-switch-account-help")),
             tooltip::Position::Bottom,
         ));
     let title = Row::new()
-        .push(text("Import an extended public key by selecting a signing device:").bold())
+        .push(text(t!("installer-import-xpub-device")).bold())
         .push(Space::with_width(10))
         .push(info)
         .push(Space::with_width(Length::Fill));
     layout(
         (0, 0),
         email,
-        "Share your public keys (Xpubs)",
+        t!("installer-share-xpubs-title"),
         Column::new()
             .push(title)
             .push_maybe(if hws.is_empty() {
-                Some(p1_regular("No signing device connected").style(theme::text::secondary))
+                Some(p1_regular(t!("installer-no-device-connected")).style(theme::text::secondary))
             } else {
                 None
             })
             .spacing(10)
             .push(Column::with_children(hws).spacing(10))
-            .push(Container::new(text("Or create a new random key:").bold()).width(Length::Fill))
+            .push(
+                Container::new(text(t!("installer-create-random-key")).bold()).width(Length::Fill),
+            )
             .push(signer)
             .push(Space::with_height(10))
             .width(Length::Fill),
@@ -572,18 +588,18 @@ pub fn policy_entry_card(title: String, content: String) -> Container<'static, M
 }
 
 pub fn policy_view(template: String, keys: Vec<String>) -> Element<'static, Message> {
-    let template = policy_entry_card("Descriptor template".into(), template);
+    let template = policy_entry_card(t!("installer-descriptor-template"), template);
     let mut col = column![template].spacing(5);
 
     for (index, key) in keys.into_iter().enumerate() {
-        let title = format!("Key @{index}:");
+        let title = t!("installer-key-index", index = index);
         col = col.push(policy_entry_card(title, key));
     }
     col.into()
 }
 
 pub fn descriptor_view(descriptor_str: String) -> Element<'static, Message> {
-    policy_entry_card("The descriptor".into(), descriptor_str).into()
+    policy_entry_card(t!("installer-the-descriptor"), descriptor_str).into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -607,14 +623,20 @@ pub fn register_descriptor<'a>(
             descriptor_view(descriptor_str)
         };
 
-    let warning = (!created_desc)
-        .then_some(text("This step is only necessary if you are using a signing device.").bold());
-    let error_card = error.map(|e| card::error("Failed to register descriptor", e.to_string()));
+    let warning =
+        (!created_desc).then_some(text(t!("installer-register-descriptor-optional")).bold());
+    let error_card = error.map(|e| {
+        card::invalid(text(format!(
+            "{}: {}",
+            t!("installer-register-descriptor-failed"),
+            e
+        )))
+    });
 
     let devices_title = Container::new(if created_desc {
-        text("Select hardware wallet to register descriptor on:").bold()
+        text(t!("installer-select-device-register")).bold()
     } else {
-        text("If necessary, please select the signing device to register descriptor on:").bold()
+        text(t!("installer-select-device-register-if-needed")).bold()
     })
     .width(Length::Fill);
     let devices = hws
@@ -642,16 +664,16 @@ pub fn register_descriptor<'a>(
 
     let registered_checkbox = created_desc.then_some(
         checkbox(done)
-            .label("I have registered the descriptor on my device(s)")
+            .label(t!("installer-registered-descriptor-checkbox"))
             .on_toggle(Message::UserActionDone),
     );
 
     let next_button = if !created_desc || (done && !processing) {
-        button::secondary(None, "Next")
+        button::secondary(None, t!("common-next"))
             .on_press(Message::Next)
             .width(200)
     } else {
-        button::secondary(None, "Next").width(200)
+        button::secondary(None, t!("common-next")).width(200)
     };
 
     let content = Column::new()
@@ -670,7 +692,7 @@ pub fn register_descriptor<'a>(
     layout(
         progress,
         email,
-        "Register descriptor",
+        t!("installer-register-descriptor-title"),
         content,
         true,
         previous,
@@ -686,17 +708,23 @@ pub fn backup_descriptor<'a>(
     done: bool,
 ) -> Element<'a, Message> {
     let backup_button = if done {
-        button::secondary(Some(icon::backup_icon()), "Back Up Descriptor")
-            .on_press(Message::BackupDescriptor)
+        button::secondary(
+            Some(icon::backup_icon()),
+            t!("installer-back-up-descriptor"),
+        )
+        .on_press(Message::BackupDescriptor)
     } else {
-        button::primary(Some(icon::backup_icon()), "Back Up Descriptor")
-            .on_press(Message::BackupDescriptor)
+        button::primary(
+            Some(icon::backup_icon()),
+            t!("installer-back-up-descriptor"),
+        )
+        .on_press(Message::BackupDescriptor)
     };
 
     layout(
         progress,
         email,
-        "Back Up your wallet configuration (Descriptor)",
+        t!("installer-backup-descriptor-title"),
         Column::new()
             .push(
                 Column::new()
@@ -706,12 +734,12 @@ pub fn backup_descriptor<'a>(
                             Row::new()
                                 .align_y(Alignment::Center)
                                 .spacing(10)
-                                .push(text("Learn more").small().bold())
+                                .push(text(t!("common-learn-more")).small().bold())
                                 .push(icon::collapse_icon()),
                             Row::new()
                                 .align_y(Alignment::Center)
                                 .spacing(10)
-                                .push(text("Learn more").small().bold())
+                                .push(text(t!("common-learn-more")).small().bold())
                                 .push(icon::collapsed_icon()),
                             help_backup(),
                         )
@@ -719,11 +747,17 @@ pub fn backup_descriptor<'a>(
                     )
                     .max_width(1000),
             )
-            .push_maybe(error.map(|e| card::error("Failed to export backup", e.to_string())))
+            .push_maybe(error.map(|e| {
+                card::invalid(text(format!(
+                    "{}: {}",
+                    t!("installer-export-backup-failed"),
+                    e
+                )))
+            }))
             .push(
                 card::simple(
                     Column::new()
-                        .push(text("The descriptor:").small().bold())
+                        .push(text(t!("installer-the-descriptor-label")).small().bold())
                         .push(scrollable::horizontal_thin(
                             Column::new().push(text(descriptor.to_string()).small()),
                         ))
@@ -733,8 +767,11 @@ pub fn backup_descriptor<'a>(
                                 .push(backup_button)
                                 .push(Space::with_width(10))
                                 .push(
-                                    button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                        .on_press(Message::Clipboard(descriptor.to_string())),
+                                    button::secondary(
+                                        Some(icon::clipboard_icon()),
+                                        t!("common-copy"),
+                                    )
+                                    .on_press(Message::Clipboard(descriptor.to_string())),
                                 ),
                         )
                         .spacing(10),
@@ -748,15 +785,15 @@ pub fn backup_descriptor<'a>(
             )
             .push(
                 checkbox(done)
-                    .label("I have backed up my descriptor")
+                    .label(t!("installer-backed-up-descriptor-checkbox"))
                     .on_toggle(Message::UserActionDone),
             )
             .push(if done {
-                button::primary(None, "Next")
+                button::primary(None, t!("common-next"))
                     .on_press(Message::Next)
                     .width(Length::Fixed(200.0))
             } else {
-                button::secondary(None, "Next").width(Length::Fixed(200.0))
+                button::secondary(None, t!("common-next")).width(Length::Fixed(200.0))
             })
             .push(Space::with_height(20.0))
             .spacing(50),
@@ -777,18 +814,11 @@ fn display_policy(
     let mut col = Column::new().push(
         Row::new()
             .spacing(5)
-            .push(
-                text(format!(
-                    "{} signature{}",
-                    primary_threshold,
-                    if primary_threshold > 1 { "s" } else { "" }
-                ))
-                .bold(),
-            )
+            .push(text(t!("policy-signatures", count = primary_threshold)).bold())
             .push(if primary_keys.len() > 1 {
-                text(format!("out of {} by", primary_keys.len()))
+                text(t!("policy-out-of-by", count = primary_keys.len()))
             } else {
-                text("by")
+                text(t!("policy-by"))
             })
             .push(
                 primary_keys
@@ -810,13 +840,13 @@ fn display_policy(
                         if primary_keys.len() == 1 || i == primary_keys.len() - 1 {
                             row.push(content)
                         } else if i <= primary_keys.len() - 2 {
-                            row.push(content).push(text("and"))
+                            row.push(content).push(text(t!("common-and")))
                         } else {
                             row.push(content).push(text(","))
                         }
                     }),
             )
-            .push(text("can always spend this wallet's funds (Primary path)")),
+            .push(text(t!("policy-primary-path"))),
     );
     for (i, (sequence, recovery_path)) in recovery_paths.iter().enumerate() {
         let (threshold, recovery_keys) = recovery_path.thresh_origins();
@@ -826,18 +856,11 @@ fn display_policy(
         col = col.push(
             Row::new()
                 .spacing(5)
-                .push(
-                    text(format!(
-                        "{} signature{}",
-                        threshold,
-                        if threshold > 1 { "s" } else { "" }
-                    ))
-                    .bold(),
-                )
+                .push(text(t!("policy-signatures", count = threshold)).bold())
                 .push(if recovery_keys.len() > 1 {
-                    text(format!("out of {} by", recovery_keys.len()))
+                    text(t!("policy-out-of-by", count = recovery_keys.len()))
                 } else {
-                    text("by")
+                    text(t!("policy-by"))
                 })
                 .push(recovery_keys.iter().enumerate().fold(
                     Row::new().spacing(5),
@@ -857,17 +880,18 @@ fn display_policy(
                         if recovery_keys.len() == 1 || i == recovery_keys.len() - 1 {
                             row.push(content)
                         } else if i <= recovery_keys.len() - 2 {
-                            row.push(content).push(text("and"))
+                            row.push(content).push(text(t!("common-and")))
                         } else {
                             row.push(content).push(text(","))
                         }
                     },
                 ))
-                .push(text("can spend coins inactive for"))
+                .push(text(t!("policy-inactive-for")))
                 .push(
                     text(format!(
-                        "{} blocks (~{})",
+                        "{} {} (~{})",
                         sequence,
+                        t!("common-blocks"),
                         expire_message_units(*sequence as u32).join(",")
                     ))
                     .bold(),
@@ -879,16 +903,16 @@ fn display_policy(
                             .iter()
                             .all(|fg| keys.get(fg).is_some_and(|k| k.provider_key.is_some()))
                     {
-                        "(Safety Net path)".to_string()
+                        t!("policy-safety-net-path")
                     } else {
-                        format!("(Recovery path #{})", i + 1)
+                        t!("policy-recovery-path", number = i + 1)
                     },
                 )),
         );
     }
     Column::new()
         .spacing(10)
-        .push(text("The wallet policy:").bold())
+        .push(text(t!("policy-wallet-policy")).bold())
         .push(scrollable::horizontal_thin(col))
         .into()
 }
@@ -948,7 +972,7 @@ pub fn define_bitcoin_node<'a>(
         .push(
             available_node_types.fold(
                 Row::new()
-                    .push(text("Node type:").small().bold())
+                    .push(text(t!("installer-node-type")).small().bold())
                     .spacing(10),
                 |row, node_type| {
                     row.push(radio(
@@ -975,7 +999,7 @@ pub fn define_bitcoin_node<'a>(
                 Row::new()
                     .spacing(10)
                     .align_y(Alignment::Center)
-                    .push(text("Checking connection...")),
+                    .push(text(t!("installer-checking-connection"))),
             ))
         } else if is_running.is_some() {
             is_running.map(|res| {
@@ -985,7 +1009,10 @@ pub fn define_bitcoin_node<'a>(
                             .spacing(10)
                             .align_y(Alignment::Center)
                             .push(icon::circle_check_icon().style(theme::text::success))
-                            .push(text("Connection checked").style(theme::text::success)),
+                            .push(
+                                text(t!("installer-connection-checked"))
+                                    .style(theme::text::success),
+                            ),
                     )
                 } else {
                     Container::new(
@@ -993,7 +1020,7 @@ pub fn define_bitcoin_node<'a>(
                             .spacing(10)
                             .align_y(Alignment::Center)
                             .push(icon::circle_cross_icon().style(theme::text::error))
-                            .push(text("Connection failed").style(theme::text::error)),
+                            .push(text(t!("common-connection-failed")).style(theme::text::error)),
                     )
                 }
             })
@@ -1004,7 +1031,7 @@ pub fn define_bitcoin_node<'a>(
             Row::new()
                 .spacing(10)
                 .push(Container::new(
-                    button::secondary(None, "Check connection")
+                    button::secondary(None, t!("installer-check-connection"))
                         .on_press_maybe(if can_try_ping && !waiting_for_ping_result {
                             Some(Message::DefineNode(DefineNode::Ping))
                         } else {
@@ -1013,11 +1040,11 @@ pub fn define_bitcoin_node<'a>(
                         .width(Length::Fixed(200.0)),
                 ))
                 .push(if is_running.map(|res| res.is_ok()).unwrap_or(false) {
-                    button::secondary(None, "Next")
+                    button::secondary(None, t!("common-next"))
                         .on_press(Message::Next)
                         .width(Length::Fixed(200.0))
                 } else {
-                    button::secondary(None, "Next").width(Length::Fixed(200.0))
+                    button::secondary(None, t!("common-next")).width(Length::Fixed(200.0))
                 }),
         )
         .spacing(50);
@@ -1025,7 +1052,7 @@ pub fn define_bitcoin_node<'a>(
     layout(
         progress,
         None,
-        "Set up connection to the Bitcoin node",
+        t!("installer-node-setup-title"),
         col,
         true,
         Some(Message::Previous),
@@ -1049,26 +1076,22 @@ pub fn define_bitcoind<'a>(
     };
 
     let col_address = Column::new()
-        .push(text("Address:").bold())
+        .push(text(t!("common-address-label")).bold())
         .push(
-            form::Form::new_trimmed("Address", address, |msg| {
+            form::Form::new_trimmed(&t!("common-address"), address, |msg| {
                 Message::DefineNode(DefineNode::DefineBitcoind(
                     DefineBitcoind::ConfigFieldEdited(ConfigField::Address, msg),
                 ))
             })
-            .warning("Please enter correct address")
+            .warning(t!("installer-enter-correct-address"))
             .size(text::P1_SIZE)
             .padding(10),
         )
         .push_maybe(if !is_loopback && address.valid {
             Some(
-                iced::widget::Text::new(
-                    "Connection to a remote Bitcoin node \
-                    is not supported. Insert an IP address bound to the same machine \
-                    running Liana (ignore this warning if that's already the case)",
-                )
-                .style(theme::text::warning)
-                .size(text::CAPTION_SIZE),
+                iced::widget::Text::new(t!("installer-remote-bitcoin-node-warning"))
+                    .style(theme::text::warning)
+                    .size(text::CAPTION_SIZE),
             )
         } else {
             None
@@ -1081,7 +1104,7 @@ pub fn define_bitcoind<'a>(
                 .iter()
                 .fold(
                     Row::new()
-                        .push(text("RPC authentication:").small().bold())
+                        .push(text(t!("installer-rpc-auth")).small().bold())
                         .spacing(10),
                     |row, auth_type| {
                         row.push(radio(
@@ -1101,33 +1124,41 @@ pub fn define_bitcoind<'a>(
         )
         .push(match selected_auth_type {
             RpcAuthType::CookieFile => Row::new().push(
-                form::Form::new_trimmed("Cookie path", &rpc_auth_vals.cookie_path, |msg| {
-                    Message::DefineNode(DefineNode::DefineBitcoind(
-                        DefineBitcoind::ConfigFieldEdited(ConfigField::CookieFilePath, msg),
-                    ))
-                })
-                .warning("Please enter correct path")
+                form::Form::new_trimmed(
+                    &t!("installer-cookie-path"),
+                    &rpc_auth_vals.cookie_path,
+                    |msg| {
+                        Message::DefineNode(DefineNode::DefineBitcoind(
+                            DefineBitcoind::ConfigFieldEdited(ConfigField::CookieFilePath, msg),
+                        ))
+                    },
+                )
+                .warning(t!("installer-enter-correct-path"))
                 .size(text::P1_SIZE)
                 .padding(10),
             ),
             RpcAuthType::UserPass => Row::new()
                 .push(
-                    form::Form::new_trimmed("User", &rpc_auth_vals.user, |msg| {
+                    form::Form::new_trimmed(&t!("installer-user"), &rpc_auth_vals.user, |msg| {
                         Message::DefineNode(DefineNode::DefineBitcoind(
                             DefineBitcoind::ConfigFieldEdited(ConfigField::User, msg),
                         ))
                     })
-                    .warning("Please enter correct user")
+                    .warning(t!("installer-enter-correct-user"))
                     .size(text::P1_SIZE)
                     .padding(10),
                 )
                 .push(
-                    form::Form::new_trimmed("Password", &rpc_auth_vals.password, |msg| {
-                        Message::DefineNode(DefineNode::DefineBitcoind(
-                            DefineBitcoind::ConfigFieldEdited(ConfigField::Password, msg),
-                        ))
-                    })
-                    .warning("Please enter correct password")
+                    form::Form::new_trimmed(
+                        &t!("installer-password"),
+                        &rpc_auth_vals.password,
+                        |msg| {
+                            Message::DefineNode(DefineNode::DefineBitcoind(
+                                DefineBitcoind::ConfigFieldEdited(ConfigField::Password, msg),
+                            ))
+                        },
+                    )
+                    .warning(t!("installer-enter-correct-password"))
                     .size(text::P1_SIZE)
                     .padding(10),
                 )
@@ -1152,17 +1183,14 @@ pub fn define_electrum<'a>(
         ))
     });
     let col_address = Column::new()
-        .push(text("Address:").bold())
+        .push(text(t!("common-address-label")).bold())
         .push(
             form::Form::new_trimmed("127.0.0.1:50001", address, |msg| {
                 Message::DefineNode(DefineNode::DefineElectrum(
                     message::DefineElectrum::ConfigFieldEdited(electrum::ConfigField::Address, msg),
                 ))
             })
-            .warning(
-                "Please enter correct address (including port), \
-                optionally prefixed with tcp:// or ssl://",
-            )
+            .warning(t!("installer-enter-correct-electrum-address"))
             .size(text::P1_SIZE)
             .padding(10),
         )
@@ -1177,7 +1205,7 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
     layout(
         progress,
         None,
-        "Bitcoin node management",
+        t!("installer-bitcoin-node-management"),
         Column::new()
             .push(
                 Row::new()
@@ -1188,19 +1216,16 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                             Column::new()
                                 .spacing(20)
                                 .width(Length::Fixed(300.0))
-                                .push(text("I already have a node").bold()),
+                                .push(text(t!("installer-already-have-node")).bold()),
                         )
                         .padding(20),
                     )
                     .push(
                         Container::new(
-                            Column::new().spacing(20).width(Length::Fixed(300.0)).push(
-                                text(
-                                    "I want Liana to automatically install \
-                                    a Bitcoin node on my device",
-                                )
-                                .bold(),
-                            ),
+                            Column::new()
+                                .spacing(20)
+                                .width(Length::Fixed(300.0))
+                                .push(text(t!("installer-auto-install-node")).bold()),
                         )
                         .padding(20),
                     ),
@@ -1215,11 +1240,7 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                                 .spacing(20)
                                 .width(Length::Fixed(300.0))
                                 .align_x(Alignment::Start)
-                                .push(text(
-                                    "Select this option if you already have \
-                                    a Bitcoin node running locally or remotely. \
-                                    Liana will connect to it.",
-                                )),
+                                .push(text(t!("installer-existing-node-description"))),
                         )
                         .padding(20),
                     )
@@ -1229,15 +1250,7 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                                 .spacing(20)
                                 .width(Length::Fixed(300.0))
                                 .align_x(Alignment::Start)
-                                .push(text(
-                                    "Liana will install a pruned node \
-                                    on your computer. You won't need to do anything \
-                                    except have some disk space available \
-                                    (~30GB required on mainnet) and \
-                                    wait for the initial synchronization with the \
-                                    network (it can take some days depending on \
-                                    your internet connection speed).",
-                                )),
+                                .push(text(t!("installer-managed-node-description"))),
                         )
                         .padding(20),
                     ),
@@ -1253,7 +1266,7 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                                 .width(Length::Fixed(300.0))
                                 .align_x(Alignment::Center)
                                 .push(
-                                    button::secondary(None, "Select")
+                                    button::secondary(None, t!("common-select"))
                                         .width(Length::Fixed(300.0))
                                         .on_press(Message::SelectBitcoindType(
                                             message::SelectBitcoindTypeMsg::UseExternal(true),
@@ -1269,7 +1282,7 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                                 .width(Length::Fixed(300.0))
                                 .align_x(Alignment::Center)
                                 .push(
-                                    button::secondary(None, "Select")
+                                    button::secondary(None, t!("common-select"))
                                         .width(Length::Fixed(300.0))
                                         .on_press(Message::SelectBitcoindType(
                                             message::SelectBitcoindTypeMsg::UseExternal(false),
@@ -1296,7 +1309,7 @@ pub fn start_internal_bitcoind<'a>(
     layout(
         progress,
         None,
-        "Start Bitcoin full node",
+        t!("installer-start-bitcoin-node"),
         Column::new()
             .push_maybe(download_state.map(|s| {
                 match s {
@@ -1304,18 +1317,22 @@ pub fn start_internal_bitcoind<'a>(
                         .spacing(10)
                         .align_y(Alignment::Center)
                         .push(icon::circle_check_icon().style(theme::text::success))
-                        .push(text("Download complete").style(theme::text::success)),
+                        .push(text(t!("installer-download-complete")).style(theme::text::success)),
                     DownloadState::Downloading { progress } => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
                         .push(text(format!(
-                            "Downloading Bitcoin Core {version}... {progress:.2}%"
+                            "{}... {progress:.2}%",
+                            t!("installer-downloading-bitcoin-core", version = version)
                         ))),
                     DownloadState::Errored(e) => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
                         .push(icon::circle_cross_icon().style(theme::text::error))
-                        .push(text(format!("Download failed: '{e}'.")).style(theme::text::error)),
+                        .push(
+                            text(t!("installer-download-failed", error = e))
+                                .style(theme::text::error),
+                        ),
                     _ => Row::new().spacing(10).align_y(Alignment::Center),
                 }
             }))
@@ -1324,18 +1341,21 @@ pub fn start_internal_bitcoind<'a>(
                     InstallState::InProgress => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
-                        .push("Installing bitcoind..."),
+                        .push(text(t!("installer-installing-bitcoind"))),
                     InstallState::Finished => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
                         .push(icon::circle_check_icon().style(theme::text::success))
-                        .push(text("Installation complete").style(theme::text::success)),
+                        .push(
+                            text(t!("installer-installation-complete")).style(theme::text::success),
+                        ),
                     InstallState::Errored(e) => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
                         .push(icon::circle_cross_icon().style(theme::text::error))
                         .push(
-                            text(format!("Installation failed: '{e}'.")).style(theme::text::error),
+                            text(t!("installer-installation-failed", error = e))
+                                .style(theme::text::error),
                         ),
                 }
             } else if exe_path.is_some() {
@@ -1344,7 +1364,7 @@ pub fn start_internal_bitcoind<'a>(
                     .align_y(Alignment::Center)
                     .push(icon::circle_check_icon().style(theme::text::success))
                     .push(
-                        text("Liana-managed bitcoind already installed")
+                        text(t!("installer-bitcoind-already-installed"))
                             .style(theme::text::success),
                     )
             } else if let Some(DownloadState::Downloading { progress }) = download_state {
@@ -1363,7 +1383,7 @@ pub fn start_internal_bitcoind<'a>(
                                 .spacing(10)
                                 .align_y(Alignment::Center)
                                 .push(icon::circle_check_icon().style(theme::text::success))
-                                .push(text("Started").style(theme::text::success)),
+                                .push(text(t!("installer-started")).style(theme::text::success)),
                         )
                     } else {
                         Container::new(
@@ -1385,7 +1405,7 @@ pub fn start_internal_bitcoind<'a>(
                         Row::new()
                             .spacing(10)
                             .align_y(Alignment::Center)
-                            .push(text("Starting...")),
+                            .push(text(t!("installer-starting"))),
                     )),
                     _ => Some(Container::new(Space::with_height(Length::Fixed(25.0)))),
                 }
@@ -1393,7 +1413,7 @@ pub fn start_internal_bitcoind<'a>(
             .spacing(50)
             .push(
                 Row::new().push(
-                    button::secondary(None, "Next")
+                    button::secondary(None, t!("common-next"))
                         .width(Length::Fixed(200.0))
                         .on_press_maybe(if let Some(Ok(_)) = started {
                             Some(Message::Next)
@@ -1425,18 +1445,18 @@ pub fn install<'a>(
     layout(
         progress,
         email,
-        "Finalize installation",
+        t!("installer-finalize-installation"),
         Column::new()
             .push_maybe(warning.map(|e| card::invalid(text(e))))
             .push(if generating {
-                Container::new(text("Installing..."))
+                Container::new(text(t!("installer-installing")))
             } else if installed {
                 Container::new(
                     Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
                         .push(icon::circle_check_icon().style(theme::text::success))
-                        .push(text("Installed").style(theme::text::success)),
+                        .push(text(t!("installer-installed")).style(theme::text::success)),
                 )
             } else {
                 Container::new(Space::with_height(Length::Fixed(25.0)))
@@ -1465,10 +1485,12 @@ pub fn defined_threshold<'a>(
                     }
                 }))
                 .push(text(format!(
-                    "{} out of {} key{}",
-                    threshold.0,
-                    threshold.1,
-                    if threshold.1 > 1 { "s" } else { "" },
+                    "{}",
+                    t!(
+                        "installer-threshold-keys",
+                        threshold = threshold.0,
+                        total = threshold.1
+                    ),
                 )))
                 .push(icon::pencil_icon()),
         )
@@ -1488,10 +1510,12 @@ pub fn defined_threshold<'a>(
                     }
                 }))
                 .push(text(format!(
-                    "{} out of {} key{}",
-                    threshold.0,
-                    threshold.1,
-                    if threshold.1 > 1 { "s" } else { "" },
+                    "{}",
+                    t!(
+                        "installer-threshold-keys",
+                        threshold = threshold.0,
+                        total = threshold.1
+                    ),
                 ))),
         )
         .padding(10)
@@ -1530,7 +1554,7 @@ pub fn defined_sequence<'a>(
                             .align_y(Alignment::Center)
                             .spacing(5)
                             .push(
-                                text::p1_regular("Available after inactivity of ~")
+                                text::p1_regular(t!("installer-available-after-inactivity"))
                                     .style(theme::text::secondary),
                             )
                             .push(
@@ -1545,7 +1569,7 @@ pub fn defined_sequence<'a>(
                 ),
                 PathSequence::Primary => Row::new()
                     .push(
-                        p1_regular("Able to move the funds at any time.")
+                        p1_regular(t!("installer-able-to-move-any-time"))
                             .style(theme::text::secondary),
                     )
                     .padding(5),
@@ -1555,7 +1579,7 @@ pub fn defined_sequence<'a>(
                             .align_y(Alignment::Center)
                             .spacing(5)
                             .push(
-                                text::p1_regular("Available after inactivity of ~")
+                                text::p1_regular(t!("installer-available-after-inactivity"))
                                     .style(theme::text::secondary),
                             )
                             .push(duration_row),
@@ -1581,7 +1605,7 @@ pub fn backup_mnemonic<'a>(
     layout(
         progress,
         email,
-        "Back Up your mnemonic",
+        t!("installer-backup-mnemonic-title"),
         Column::new()
             .push(text(prompt::MNEMONIC_HELP))
             .push(
@@ -1602,15 +1626,15 @@ pub fn backup_mnemonic<'a>(
             )
             .push(
                 checkbox(done)
-                    .label("I have backed up my mnemonic")
+                    .label(t!("installer-backed-up-mnemonic-checkbox"))
                     .on_toggle(Message::UserActionDone),
             )
             .push(if done {
-                button::secondary(None, "Next")
+                button::secondary(None, t!("common-next"))
                     .on_press(Message::Next)
                     .width(Length::Fixed(200.0))
             } else {
-                button::secondary(None, "Next").width(Length::Fixed(200.0))
+                button::secondary(None, t!("common-next")).width(Length::Fixed(200.0))
             })
             .push(Space::with_height(20.0))
             .spacing(50),
@@ -1631,7 +1655,7 @@ pub fn recover_mnemonic<'a>(
     layout(
         progress,
         email,
-        "Import Mnemonic",
+        t!("installer-import-mnemonic-title"),
         Column::new()
             .push(text(prompt::RECOVER_MNEMONIC_HELP))
             .push_maybe(if recover {
@@ -1696,12 +1720,12 @@ pub fn recover_mnemonic<'a>(
                 Row::new()
                     .spacing(10)
                     .push(
-                        button::secondary(None, "Import mnemonic")
+                        button::secondary(None, t!("installer-import-mnemonic"))
                             .on_press(Message::ImportMnemonic(true))
                             .width(Length::Fixed(200.0)),
                     )
                     .push(
-                        button::secondary(None, "Skip")
+                        button::secondary(None, t!("common-skip"))
                             .on_press(Message::Skip)
                             .width(Length::Fixed(200.0)),
                     )
@@ -1709,15 +1733,15 @@ pub fn recover_mnemonic<'a>(
                 Row::new()
                     .spacing(10)
                     .push(
-                        button::secondary(None, "Cancel")
+                        button::secondary(None, t!("common-cancel"))
                             .on_press(Message::ImportMnemonic(false))
                             .width(Length::Fixed(200.0)),
                     )
                     .push(
                         if words.iter().any(|(_, valid)| !valid) || error.is_some() {
-                            button::secondary(None, "Next").width(Length::Fixed(200.0))
+                            button::secondary(None, t!("common-next")).width(Length::Fixed(200.0))
                         } else {
-                            button::secondary(None, "Next")
+                            button::secondary(None, t!("common-next"))
                                 .on_press(Message::Next)
                                 .width(Length::Fixed(200.0))
                         },
@@ -1733,7 +1757,7 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
     layout(
         progress,
         None,
-        "Choose backend",
+        t!("installer-choose-backend"),
         Column::new()
             .push(
                 Row::new()
@@ -1742,16 +1766,20 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
                         Column::new()
                             .spacing(20)
                             .width(Length::FillPortion(1))
-                            .push(h3("Use your own node"))
-                            .push(text::p2_medium(LOCAL_WALLET_DESC).style(theme::text::secondary)),
+                            .push(h3(t!("installer-use-own-node")))
+                            .push(
+                                text::p2_medium(t!("installer-local-wallet-description"))
+                                    .style(theme::text::secondary),
+                            ),
                     )
                     .push(
                         Column::new()
                             .spacing(20)
                             .width(Length::FillPortion(1))
-                            .push(h3("Use Liana Connect"))
+                            .push(h3(t!("installer-use-liana-connect")))
                             .push(
-                                text::p2_medium(REMOTE_BACKEND_DESC).style(theme::text::secondary),
+                                text::p2_medium(t!("installer-remote-backend-description"))
+                                    .style(theme::text::secondary),
                             ),
                     ),
             )
@@ -1760,7 +1788,7 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
                     .spacing(20)
                     .push(
                         Container::new(
-                            button::secondary(None, "Select")
+                            button::secondary(None, t!("common-select"))
                                 .on_press(Message::SelectBackend(
                                     message::SelectBackend::ContinueWithLocalWallet(true),
                                 ))
@@ -1770,7 +1798,7 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
                     )
                     .push(
                         Container::new(
-                            button::secondary(None, "Select")
+                            button::secondary(None, t!("common-select"))
                                 .on_press(Message::SelectBackend(
                                     message::SelectBackend::ContinueWithLocalWallet(false),
                                 ))
@@ -1783,7 +1811,7 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
             .push(tooltip::Tooltip::new(
                 button::link(
                     Some(icon::link_icon()),
-                    "More information about backend and node options",
+                    t!("installer-more-backend-node-info"),
                 )
                 .on_press(Message::OpenUrl(
                     help::CHANGE_BACKEND_OR_NODE_URL.to_string(),
@@ -1803,7 +1831,7 @@ pub fn login(progress: (usize, usize), connection_step: Element<Message>) -> Ele
     layout(
         progress,
         None,
-        "Login",
+        t!("common-login"),
         Container::new(
             Column::new()
                 .spacing(50)
@@ -1829,7 +1857,7 @@ pub fn connection_step_enter_email<'a>(
     Column::new()
         .spacing(20)
         .push_maybe(if !accounts.is_empty() {
-            Some(text("Choose an account you are already using:"))
+            Some(text(t!("installer-choose-existing-account")))
         } else {
             None
         })
@@ -1850,21 +1878,21 @@ pub fn connection_step_enter_email<'a>(
         .push_maybe(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
         .push_maybe(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
         .push(if accounts.is_empty() {
-            text("Enter an email you want to associate with the wallet:")
+            text(t!("installer-enter-wallet-email"))
         } else {
-            text("Or enter a new email you want to associate with the wallet:")
+            text(t!("installer-enter-new-wallet-email"))
         })
         .push(
-            form::Form::new_trimmed("email", email, |msg| {
+            form::Form::new_trimmed(&t!("common-email"), email, |msg| {
                 Message::SelectBackend(message::SelectBackend::EmailEdited(msg))
             })
             .size(text::P1_SIZE)
             .padding(10)
-            .warning("Email is not valid"),
+            .warning(t!("settings-email-invalid")),
         )
         .push(
             Row::new().push(Space::with_width(Length::Fill)).push(
-                button::secondary(None, "Send token")
+                button::secondary(None, t!("installer-send-token"))
                     .on_press_maybe(if processing || !email.valid {
                         None
                     } else {
@@ -1886,30 +1914,32 @@ pub fn connection_step_enter_otp<'a>(
     Column::new()
         .spacing(20)
         .push(text(email).style(theme::text::success))
-        .push(text("An authentication token has been emailed to you"))
+        .push(text(t!("installer-auth-token-emailed")))
         .push_maybe(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
         .push_maybe(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
         .push(
-            form::Form::new_trimmed("Token", otp, |msg| {
+            form::Form::new_trimmed(&t!("common-token"), otp, |msg| {
                 Message::SelectBackend(message::SelectBackend::OTPEdited(msg))
             })
             .size(text::P1_SIZE)
             .padding(10)
-            .warning("Token is not valid"),
+            .warning(t!("lianalite-token-invalid")),
         )
         .push(
             Row::new()
                 .spacing(10)
                 .push(
-                    button::secondary(Some(icon::previous_icon()), "Change Email")
+                    button::secondary(Some(icon::previous_icon()), t!("installer-change-email"))
                         .on_press(Message::SelectBackend(message::SelectBackend::EditEmail)),
                 )
                 .push(
-                    button::secondary(None, "Resend token").on_press_maybe(if processing {
-                        None
-                    } else {
-                        Some(Message::SelectBackend(message::SelectBackend::RequestOTP))
-                    }),
+                    button::secondary(None, t!("lianalite-resend-token")).on_press_maybe(
+                        if processing {
+                            None
+                        } else {
+                            Some(Message::SelectBackend(message::SelectBackend::RequestOTP))
+                        },
+                    ),
                 ),
         )
         .into()
@@ -1930,11 +1960,11 @@ pub fn connection_step_connected<'a>(
             Row::new()
                 .spacing(10)
                 .push(
-                    button::secondary(Some(icon::previous_icon()), "Change Email")
+                    button::secondary(Some(icon::previous_icon()), t!("installer-change-email"))
                         .on_press(Message::SelectBackend(message::SelectBackend::EditEmail)),
                 )
                 .push(
-                    button::secondary(None, "Continue").on_press_maybe(if processing {
+                    button::secondary(None, t!("common-continue")).on_press_maybe(if processing {
                         None
                     } else {
                         Some(Message::Next)
@@ -1944,10 +1974,6 @@ pub fn connection_step_connected<'a>(
         .into()
 }
 
-pub const REMOTE_BACKEND_DESC: &str = "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead.";
-
-pub const LOCAL_WALLET_DESC: &str = "Use your already existing Bitcoin node or automatically install one. The Liana wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet.";
-
 pub fn wallet_alias<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
@@ -1956,24 +1982,26 @@ pub fn wallet_alias<'a>(
     layout(
         progress,
         email,
-        "Give your wallet an alias",
+        t!("installer-give-wallet-alias"),
         Column::new()
             .push(
                 Column::new()
                     .spacing(20)
-                    .push(p1_bold("Wallet alias:"))
+                    .push(p1_bold(t!("settings-wallet-alias")))
                     .push(
-                        form::Form::new("Wallet alias", wallet_alias, Message::WalletAliasEdited)
-                            .warning("Wallet alias is too long.")
-                            .size(text::P1_SIZE)
-                            .padding(10),
+                        form::Form::new(
+                            &t!("installer-wallet-alias"),
+                            wallet_alias,
+                            Message::WalletAliasEdited,
+                        )
+                        .warning(t!("settings-alias-too-long"))
+                        .size(text::P1_SIZE)
+                        .padding(10),
                     )
-                    .push(p2_regular(
-                        "You will be able to change it later in Settings > Wallet",
-                    )),
+                    .push(p2_regular(t!("installer-change-alias-later"))),
             )
             .push(
-                button::secondary(None, "Next")
+                button::secondary(None, t!("common-next"))
                     .width(Length::Fixed(200.0))
                     .on_press_maybe(if wallet_alias.valid {
                         Some(Message::Next)
@@ -1990,21 +2018,28 @@ pub fn wallet_alias<'a>(
 fn layout<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
-    title: &'static str,
+    title: impl std::fmt::Display,
     content: impl Into<Element<'a, Message>>,
     padding_left: bool,
     previous_message: Option<Message>,
 ) -> Element<'a, Message> {
-    let mut prev_button = button::transparent(Some(icon::previous_icon()), "Previous");
+    let mut prev_button = button::transparent(Some(icon::previous_icon()), t!("common-previous"));
     if let Some(msg) = previous_message {
         prev_button = prev_button.on_press(msg);
     }
+    let language_selector = pick_list::pick_list(
+        &SupportedLocale::ALL[..],
+        Some(liana_i18n::current_locale()),
+        Message::LanguageEdited,
+    )
+    .padding(10);
     Container::new(scrollable::vertical(
         Column::new()
             .width(Length::Fill)
             .push(
                 Row::new()
                     .push(Space::with_width(Length::Fill))
+                    .push(language_selector)
                     .push_maybe(email.map(|e| {
                         Container::new(p1_regular(e).style(theme::text::success)).padding(20)
                     })),

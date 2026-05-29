@@ -71,7 +71,7 @@ impl Login {
             email_address::Options::default().with_required_tld(),
         )
         .is_ok();
-        self.email.form.warning = (!self.email.form.valid).then_some("Invalid email!");
+        self.email.form.warning = (!self.email.form.valid).then_some("settings-email-invalid");
         self.email.form.value = email;
     }
     pub fn on_update_code(&mut self, code: String) {
@@ -80,7 +80,7 @@ impl Login {
 
         let is_invalid = code_len > 6 || !all_numerical;
 
-        let warning = is_invalid.then_some("Code must contains only 6 numbers");
+        let warning = is_invalid.then_some("business-code-six-digits");
 
         self.code.form = liana_ui::component::form::Value {
             value: code,

@@ -5,6 +5,7 @@ use iced::{
     Alignment, Font, Length,
 };
 use iced_core::text::Shaping;
+use liana_i18n::t;
 
 use crate::{
     font,
@@ -48,11 +49,12 @@ impl From<PillWidth> for Length {
 }
 
 pub fn pill<'a, T: 'a>(
-    label: &'static str,
-    tooltip: &'static str,
+    label: impl Display,
+    tooltip: impl Display,
     width: PillWidth,
     style: fn(&Theme) -> Style,
 ) -> Container<'a, T> {
+    let tooltip = tooltip.to_string();
     let pill = pill_body_with_font(label, width, style, PILL_FONT);
     if !tooltip.is_empty() {
         pill_with_tooltip(pill, Some(tooltip))
@@ -145,35 +147,43 @@ macro_rules! pills {
     ($($name:ident, $label:literal, $tooltip:literal, $width:ident, $style:ident);* $(;)?) => {
         $(
             pub fn $name<'a, T: 'a>() -> Container<'a, T> {
-                pill($label, $tooltip, PillWidth::$width, theme::pill::$style)
+                pill(t!($label), pill_tooltip($tooltip), PillWidth::$width, theme::pill::$style)
             }
         )*
     };
 }
 
+fn pill_tooltip(key: &str) -> String {
+    if key == "empty" {
+        String::new()
+    } else {
+        liana_i18n::translate(key, &[])
+    }
+}
+
 #[rustfmt::skip]
 pills! {
-    recovery,       "Recovery",     "This transaction is using a recovery path",                      M, simple;
-    batch,          "Batch",        "This transaction contains multiple payments",                    M, simple;
-    deprecated,     "Deprecated",   "This transaction cannot be included in the blockchain anymore.", M, simple;
-    spent,          "Spent",        "The transaction was included in the blockchain.",                M, simple;
-    unsigned,       "Unsigned",     "This transaction is missing signature(s)",                       M, soft_warning;
-    signed,         "To broadcast", "This transaction is signed & ready to broadcast",                M, soft_warning;
-    unconfirmed,    "Unconfirmed",  "Do not treat this as a payment until it is confirmed",           M, simple_fill;
-    confirmed,      "Confirmed",    "This transaction has been included in a block",                  M, success;
-    key_internal,   "Internal",     "Key held by your organization",                                  M, internal;
+    recovery,       "pill-recovery",     "pill-recovery-tooltip",     M, simple;
+    batch,          "pill-batch",        "pill-batch-tooltip",        M, simple;
+    deprecated,     "pill-deprecated",   "pill-deprecated-tooltip",   M, simple;
+    spent,          "pill-spent",        "pill-spent-tooltip",        M, simple;
+    unsigned,       "pill-unsigned",     "pill-unsigned-tooltip",     M, soft_warning;
+    signed,         "pill-signed",       "pill-signed-tooltip",       M, soft_warning;
+    unconfirmed,    "pill-unconfirmed",  "pill-unconfirmed-tooltip",  M, simple_fill;
+    confirmed,      "pill-confirmed",    "pill-confirmed-tooltip",    M, success;
+    key_internal,   "pill-key-internal", "pill-key-internal-tooltip", M, internal;
     // Business installer only
-    key_external,   "External",     "key held by third parties",                                      M, external;
-    key_cosigner,   "Cosigner",     "Professional third party co-signing key",                        M, safety_net;
-    key_safety_net, "Safety Net",   "Professional third party recovery key",                          M, safety_net;
-    to_approve,     "To approve",   "",                                                               M, warning;
-    draft,          "Draft",        "",                                                               M, simple;
-    set_keys,       "Set keys",     "",                                                               M, warning;
-    active,         "Active",       "",                                                               M, success;
-    ws_admin,       "WS Admin",     "",                                                               M, simple;
-    register,       "Register",     "",                                                               M, warning;
-    xpub_set,       "✓ Set",        "",                                                               M, success;
-    xpub_not_set,   "Not Set",      "",                                                               M, warning;
+    key_external,   "pill-key-external",   "pill-key-external-tooltip",   M, external;
+    key_cosigner,   "pill-key-cosigner",   "pill-key-cosigner-tooltip",   M, safety_net;
+    key_safety_net, "pill-key-safety-net", "pill-key-safety-net-tooltip", M, safety_net;
+    to_approve,     "pill-to-approve",     "empty",                       M, warning;
+    draft,          "pill-draft",          "empty",                       M, simple;
+    set_keys,       "pill-set-keys",       "empty",                       M, warning;
+    active,         "pill-active",         "empty",                       M, success;
+    ws_admin,       "pill-ws-admin",       "empty",                       M, simple;
+    register,       "pill-register",       "empty",                       M, warning;
+    xpub_set,       "pill-xpub-set",       "empty",                       M, success;
+    xpub_not_set,   "pill-xpub-not-set",   "empty",                       M, warning;
 }
 
 pub fn compact_pill<'a, T: 'a>(
@@ -187,7 +197,7 @@ pub fn compact_pill<'a, T: 'a>(
 
 pub fn unconfirmed_compact<'a, T: 'a>() -> Container<'a, T> {
     pill_body_with_text_size_and_font(
-        "Unconfirmed",
+        t!("pill-unconfirmed"),
         PillWidth::M,
         theme::pill::simple_fill,
         PILL_FONT,
@@ -204,7 +214,10 @@ pub fn rescan<'a, T: 'a>(progress: f64, compact: bool) -> Container<'a, T> {
     };
     let width = if compact { PillWidth::M } else { PillWidth::L };
     let mut pill = pill_body_with_text_size_and_font(
-        format!("Rescan… {:.2}%", progress * 100.0),
+        t!(
+            "pill-rescan-progress",
+            progress = format!("{:.2}", progress * 100.0)
+        ),
         width,
         theme::pill::simple,
         PILL_FONT,
@@ -251,7 +264,6 @@ pub fn fingerprint<'a, T: 'a>(fg: impl Into<String>, alias: Option<&str>) -> Con
 }
 
 pub fn coin_sequence<'a, T: 'a>(sequence: u32) -> Container<'a, T> {
-    let caption = "First recovery option available ";
     fn clock() -> widget::Text<'static> {
         crate::icon::clock_icon()
     }
@@ -267,25 +279,25 @@ pub fn coin_sequence<'a, T: 'a>(sequence: u32) -> Container<'a, T> {
         widget::Text<'static>,
     ) = if sequence == 0 {
         (
-            "Available".to_string(),
-            "Recovery option(s) already available".to_string(),
+            t!("pill-available"),
+            t!("pill-recovery-available-tooltip"),
             PillWidth::M,
             theme::pill::warning,
             clock_fill(),
         )
     } else if sequence <= 144 {
         (
-            "Today".to_string(),
-            format!("{caption} today"),
+            t!("pill-today"),
+            t!("pill-first-recovery-today"),
             PillWidth::M,
             theme::pill::soft_warning,
             clock(),
         )
     } else if sequence <= 2 * 144 {
-        let units = "~2 days";
+        let units = t!("duration-days-approx", count = 2);
         (
             units.to_string(),
-            format!("{caption}in {units}"),
+            t!("pill-first-recovery-in", units = units),
             PillWidth::M,
             theme::pill::soft_warning,
             clock(),
@@ -303,7 +315,7 @@ pub fn coin_sequence<'a, T: 'a>(sequence: u32) -> Container<'a, T> {
         let units = format!("~{}", units.join(", "));
         (
             units.to_string(),
-            format!("{caption}in {units}"),
+            t!("pill-first-recovery-in", units = units),
             width,
             theme::pill::simple,
             clock(),
@@ -331,7 +343,7 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
             .iter()
             .filter_map(|(n, u)| {
                 if *n != 0 {
-                    Some(format!("{} {}{}", n, u, if *n > 1 { "s" } else { "" }))
+                    Some(duration_unit(*n, u))
                 } else {
                     None
                 }
@@ -345,12 +357,23 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
             .iter()
             .filter_map(|(n, u)| {
                 if *n != 0 {
-                    Some(format!("{} {}{}", n, u, if *n > 1 { "s" } else { "" }))
+                    Some(duration_unit(*n, u))
                 } else {
                     None
                 }
             })
             .collect()
+    }
+}
+
+fn duration_unit(count: u32, unit: &str) -> String {
+    match unit {
+        "year" => t!("duration-years", count = count),
+        "month" => t!("duration-months", count = count),
+        "day" => t!("duration-days", count = count),
+        "hour" => t!("duration-hours", count = count),
+        "minute" => t!("duration-minutes", count = count),
+        _ => String::new(),
     }
 }
 

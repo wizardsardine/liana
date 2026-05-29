@@ -22,6 +22,7 @@ use iced::{
     },
     Length,
 };
+use liana_i18n::t;
 
 const MENU_BTN_PADDING: [u16; 2] = [4 /* Top/Bottom */, 12 /* Left/Right */];
 const MENU_TEXT_SIZE: u32 = 22;
@@ -32,7 +33,7 @@ const ICON_BTN_SIZE: f32 = 40.0;
 const ICON_BTN_PADDING: f32 = 10.0;
 pub const DEVICE_BTN_H: u32 = 40;
 
-pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str, compact: bool) -> Button<'a, T> {
+pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: impl Display, compact: bool) -> Button<'a, T> {
     Button::new(
         content_menu(
             icon.map(|i| i.style(theme::text::secondary)),
@@ -47,7 +48,7 @@ pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str, compact: bool) -
 
 pub fn menu_active<'a, T: 'a>(
     icon: Option<Text<'a>>,
-    t: &'static str,
+    t: impl Display,
     compact: bool,
 ) -> Button<'a, T> {
     Button::new(content_menu(icon, t, true, compact).padding(MENU_BTN_PADDING))
@@ -74,7 +75,7 @@ pub fn menu_active_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
 
 fn content_menu<'a, T: 'a>(
     icon: Option<Text<'a>>,
-    t: &'static str,
+    t: impl Display,
     active: bool,
     compact: bool,
 ) -> Container<'a, T> {
@@ -151,7 +152,7 @@ button_helpers!(
     link,
 );
 
-pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: impl Display) -> Button<'a, T> {
     Button::new(content(icon, panel_title(t), false)).style(theme::button::breadcrumb)
 }
 pub fn clickable_card<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
@@ -180,7 +181,7 @@ fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>, compact: bool) -> 
 fn content_with_tooltip<'a, T: 'a>(
     icon: Option<Text<'a>>,
     text: Text<'a>,
-    tooltip: Option<&'a str>,
+    tooltip: Option<String>,
     compact: bool,
 ) -> Container<'a, T> {
     let mut row: Row<'a, T> = Row::new().spacing(10).align_y(Vertical::Center);
@@ -263,7 +264,7 @@ impl From<BtnWidth> for Length {
 /// Primary button with preset width.
 pub fn btn_primary<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
-    label: &'static str,
+    label: impl Display,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
@@ -277,7 +278,7 @@ pub fn btn_primary<'a, T: Clone + 'a>(
 /// Secondary button with preset width.
 pub fn btn_secondary<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
-    label: &'static str,
+    label: impl Display,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
@@ -291,15 +292,15 @@ pub fn btn_secondary<'a, T: Clone + 'a>(
 /// Secondary button with preset width.
 pub fn btn_secondary_with_tooltip<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
-    label: &'a str,
-    tooltip: Option<&'a str>,
+    label: impl Display,
+    tooltip: Option<impl Into<String>>,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
     Button::new(content_with_tooltip(
         icon,
         button_text(label),
-        tooltip,
+        tooltip.map(Into::into),
         false,
     ))
     .width(width)
@@ -310,7 +311,7 @@ pub fn btn_secondary_with_tooltip<'a, T: Clone + 'a>(
 /// Tertiary button with preset width.
 pub fn btn_tertiary<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
-    label: &'static str,
+    label: impl Display,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
@@ -324,7 +325,7 @@ pub fn btn_tertiary<'a, T: Clone + 'a>(
 /// Destructive button with preset width.
 pub fn btn_destructive<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
-    label: &'static str,
+    label: impl Display,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
@@ -338,7 +339,7 @@ pub fn btn_destructive<'a, T: Clone + 'a>(
 /// Flat button with preset width.
 pub fn btn_flat<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
-    label: &'static str,
+    label: impl Display,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
@@ -351,54 +352,59 @@ pub fn btn_flat<'a, T: Clone + 'a>(
 
 /// Save button: primary. Width M.
 pub fn btn_save<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "Save", BtnWidth::M, msg)
+    btn_primary(None, t!("common-save"), BtnWidth::M, msg)
 }
 
 /// Cancel button: destructive. Width M.
 pub fn btn_cancel<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_destructive(None, "Cancel", BtnWidth::M, msg)
+    btn_destructive(None, t!("common-cancel"), BtnWidth::M, msg)
 }
 
 /// OK button: primary. Width M.
 pub fn btn_ok<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "OK", BtnWidth::M, msg)
+    btn_primary(None, t!("common-ok"), BtnWidth::M, msg)
 }
 
 /// Clear button: secondary. Width M.
 pub fn btn_clear<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Clear", BtnWidth::M, msg)
+    btn_secondary(None, t!("common-clear"), BtnWidth::M, msg)
 }
 
 /// Retry button: secondary. Width M.
 pub fn btn_retry<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Retry", BtnWidth::M, msg)
+    btn_secondary(None, t!("common-retry"), BtnWidth::M, msg)
 }
 
 /// Yes button: primary. Width S.
 pub fn btn_yes<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, "Yes", BtnWidth::S, msg)
+    btn_primary(None, t!("common-yes"), BtnWidth::S, msg)
 }
 
 /// No button: secondary. Width S.
 pub fn btn_no<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "No", BtnWidth::S, msg)
+    btn_secondary(None, t!("common-no"), BtnWidth::S, msg)
 }
 
 pub fn btn_reset_timelock<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(
         Some(icon::reload_icon()),
-        "Reset timelock",
+        t!("common-reset-timelock"),
         BtnWidth::Auto,
         msg,
     )
 }
 
 pub fn btn_go_to_rescan<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Go to rescan", BtnWidth::XL, msg)
+    btn_secondary(None, t!("common-go-to-rescan"), BtnWidth::XL, msg)
 }
 
 pub fn btn_dismiss<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_destructive(Some(icon::big_cross_icon()), "Dismiss", BtnWidth::L, msg)
+    btn_destructive(
+        Some(icon::big_cross_icon()),
+        t!("common-dismiss"),
+        BtnWidth::L,
+        msg,
+    )
 }
 
 pub fn icon_btn<'a, T: 'a + Clone>(icon: Text<'a>, message: Option<T>) -> Button<'a, T> {

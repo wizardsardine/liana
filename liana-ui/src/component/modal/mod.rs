@@ -260,9 +260,9 @@ pub fn acked_input_button<'a, Message, Ack, Input, Paste, Collapse, I>(
     collapsed: bool,
     ack: bool,
     icon: I,
-    label: &'a str,
-    disclaimer: &'a str,
-    input_placeholder: &'a str,
+    label: impl Into<String>,
+    disclaimer: impl Into<String>,
+    input_placeholder: impl Into<String>,
     input_value: &Value<String>,
     ack_message: Ack,
     input_message: Input,
@@ -277,10 +277,13 @@ where
     Collapse: 'static + Fn() -> Message,
     Message: Clone + 'static,
 {
+    let label = label.into();
+    let disclaimer = disclaimer.into();
+    let input_placeholder = input_placeholder.into();
     let form = if ack {
-        form::Form::new(input_placeholder, input_value, input_message)
+        form::Form::new(&input_placeholder, input_value, input_message)
     } else {
-        form::Form::new_disabled(input_placeholder, input_value)
+        form::Form::new_disabled(&input_placeholder, input_value)
     }
     .padding(10);
     let paste = Button::new(icon::paste_icon().color(color::BLACK)).on_press(paste_message());
@@ -289,7 +292,7 @@ where
         let line = row![form, paste].spacing(V_SPACING);
         let check_box = CheckBox::new(ack).label(disclaimer).on_toggle(ack_message);
         let label = row![
-            text::p1_regular(label).color(color::WHITE),
+            text::p1_regular(label.clone()).color(color::WHITE),
             Space::fill_width()
         ];
         let content = if ack {
@@ -395,7 +398,7 @@ where
 
 pub fn button_entry<'a, Message, M>(
     icon: Option<Text<'static>>,
-    label: &'a str,
+    label: impl Into<String>,
     tooltip_str: Option<&'static str>,
     error: Option<String>,
     on_press: Option<M>,
@@ -404,6 +407,7 @@ where
     M: 'static + Fn() -> Message,
     Message: Clone + 'static,
 {
+    let label = label.into();
     let error = error.map(|e| {
         row![
             text::p1_regular(e).color(color::ORANGE),

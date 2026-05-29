@@ -1,3 +1,4 @@
+use liana_i18n::t;
 use miniscript::bitcoin::bip32::Fingerprint;
 
 /// Modal step for registration process
@@ -58,7 +59,7 @@ impl RegistrationViewState {
     pub fn set_modal_error(&mut self, error: String) {
         if let Some(modal) = &mut self.modal {
             let error = if error.contains("status: Unknown,") {
-                "Device disconnected".into()
+                t!("business-device-disconnected")
             } else {
                 error
             };

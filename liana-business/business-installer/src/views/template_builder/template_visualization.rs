@@ -10,6 +10,7 @@ use iced::{
 use liana_connect::ws_business::{
     self, UserRole, WalletStatus, BLOCKS_PER_DAY, BLOCKS_PER_HOUR, BLOCKS_PER_MONTH,
 };
+use liana_i18n::t;
 use liana_ui::{
     component::{self, text},
     theme,
@@ -114,30 +115,30 @@ fn format_timelock_human(timelock: &ws_business::Timelock) -> String {
     let blocks = timelock.blocks;
 
     if blocks == 0 {
-        return "No timelock".to_string();
+        return t!("business-no-timelock");
     }
 
     // Determine the most appropriate unit
     if blocks >= BLOCKS_PER_MONTH {
         let months = blocks / BLOCKS_PER_MONTH;
         if months == 1 {
-            "After 1 month".to_string()
+            t!("business-after-months", count = 1)
         } else {
-            format!("After {months} months")
+            t!("business-after-months", count = months)
         }
     } else if blocks >= BLOCKS_PER_DAY {
         let days = blocks / BLOCKS_PER_DAY;
         if days == 1 {
-            "After 1 day".to_string()
+            t!("business-after-days", count = 1)
         } else {
-            format!("After {days} days")
+            t!("business-after-days", count = days)
         }
     } else {
         let hours = blocks / BLOCKS_PER_HOUR;
         if hours <= 1 {
-            "After 1 hour".to_string()
+            t!("business-after-hours", count = 1)
         } else {
-            format!("After {hours} hours")
+            t!("business-after-hours", count = hours)
         }
     }
 }
@@ -167,22 +168,26 @@ fn path_card(
     let threshold = path.threshold_n as usize;
 
     let keys_text = if key_aliases.is_empty() {
-        "No keys".to_string()
+        t!("business-no-keys")
     } else if key_count == 1 {
         // Single key: just show the name
         key_aliases[0].clone()
     } else {
         let names = key_aliases.join(", ");
         if threshold >= key_count {
-            format!("All of {names}")
+            t!("business-all-of", names = names)
         } else {
-            format!("{threshold} of {names}")
+            t!(
+                "business-threshold-of",
+                threshold = threshold,
+                names = names
+            )
         }
     };
 
     // Determine timelock text
     let timelock_text = match timelock {
-        None => "Spendable anytime".to_string(),
+        None => t!("business-spendable-anytime"),
         Some(tl) => format_timelock_human(tl),
     };
 
@@ -296,10 +301,10 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
 
     // "Add a recovery path" card - only show if editable (WS Admin)
     if is_editable {
-        let add_path_content =
-            row![text::p1_medium("+ Add a recovery path").style(liana_ui::theme::text::secondary)]
-                .width(Length::Fill)
-                .height(Length::Fill);
+        let add_path_content = row![text::p1_medium(t!("business-add-recovery-path"))
+            .style(liana_ui::theme::text::secondary)]
+        .width(Length::Fill)
+        .height(Length::Fill);
 
         let add_path_card = menu_entry(add_path_content, Some(Msg::TemplateNewPathModal));
 

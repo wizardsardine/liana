@@ -566,6 +566,7 @@ pub mod global {
     use crate::dir::LianaDirectory;
     use async_hwi::bitbox::{ConfigError, NoiseConfig, NoiseConfigData};
     use fs2::FileExt;
+    use liana_i18n::SupportedLocale;
     use serde::{Deserialize, Serialize};
     use std::fs::OpenOptions;
     use std::io::{Read, Seek, SeekFrom, Write};
@@ -583,6 +584,7 @@ pub mod global {
     pub struct GlobalSettings {
         pub bitbox: Option<BitboxSettings>,
         pub window_config: Option<WindowConfig>,
+        pub locale: Option<String>,
     }
 
     impl GlobalSettings {
@@ -607,6 +609,20 @@ pub mod global {
                 |s| s.window_config = Some(window_config.clone()),
                 true,
             )
+        }
+
+        pub fn load_locale(path: &PathBuf) -> SupportedLocale {
+            let mut ret = None;
+            if let Err(e) = Self::update(path, |s| ret = s.locale.clone(), false) {
+                tracing::error!("Failed to load locale: {e}");
+            }
+            ret.as_deref()
+                .and_then(|locale| locale.parse().ok())
+                .unwrap_or_else(SupportedLocale::from_system)
+        }
+
+        pub fn update_locale(path: &PathBuf, locale: SupportedLocale) -> Result<(), String> {
+            Self::update(path, |s| s.locale = Some(locale.code().to_string()), true)
         }
 
         pub fn load_bitbox_settings(path: &PathBuf) -> Result<Option<BitboxSettings>, String> {
@@ -661,6 +677,7 @@ pub mod global {
             if !exists
                 && global_settings.bitbox.is_none()
                 && global_settings.window_config.is_none()
+                && global_settings.locale.is_none()
             {
                 write = false;
             }

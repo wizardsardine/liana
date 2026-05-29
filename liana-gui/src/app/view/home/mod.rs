@@ -100,13 +100,13 @@ pub fn home_view<'a>(
 
     #[rustfmt::skip]
     let payment_list = column![
-        new::d3("Payment History"),
+        new::d3(crate::t!("home-payment-history")),
         history,
         see_more
     ].spacing(14);
 
     column![
-        column![new::d2("Balance"), balance].spacing(20),
+        column![new::d2(crate::t!("home-balance")), balance].spacing(20),
         rescan_warn,
         expire_warning,
         payment_list

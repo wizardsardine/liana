@@ -16,42 +16,57 @@ impl From<&Error> for WarningMessage {
     fn from(error: &Error) -> WarningMessage {
         match error {
             Error::Config(e) => WarningMessage(e.to_owned()),
-            Error::Wallet(_) => WarningMessage("Wallet error".to_string()),
+            Error::Wallet(_) => WarningMessage(crate::t!("warning-wallet-error")),
             Error::Daemon(e) => match e {
                 DaemonError::Rpc(code, _) => {
                     if *code == RpcErrorCode::JSONRPC2_INVALID_PARAMS as i32 {
-                        WarningMessage("Some fields are invalid".to_string())
+                        WarningMessage(crate::t!("warning-fields-invalid"))
                     } else {
-                        WarningMessage("Internal error".to_string())
+                        WarningMessage(crate::t!("warning-internal-error"))
                     }
                 }
-                DaemonError::Http(Some(code), error) => {
-                    WarningMessage(format!("HTTP error {code}: {error}"))
+                DaemonError::Http(Some(code), error) => WarningMessage(crate::t!(
+                    "warning-http-code-error",
+                    code = code,
+                    error = error
+                )),
+                DaemonError::Http(None, error) => {
+                    WarningMessage(crate::t!("warning-http-error", error = error))
                 }
-                DaemonError::Http(None, error) => WarningMessage(format!("HTTP error: {error}")),
-                DaemonError::Unexpected(_) => WarningMessage("Unknown error".to_string()),
-                DaemonError::Start(_) => WarningMessage("Daemon failed to start".to_string()),
+                DaemonError::Unexpected(_) => WarningMessage(crate::t!("error-unknown")),
+                DaemonError::Start(_) => WarningMessage(crate::t!("warning-daemon-start-failed")),
                 DaemonError::ClientNotSupported => {
-                    WarningMessage("Daemon client is not supported".to_string())
+                    WarningMessage(crate::t!("warning-daemon-client-unsupported"))
                 }
                 DaemonError::NoAnswer | DaemonError::RpcSocket(..) => {
-                    WarningMessage("Communication with Daemon failed".to_string())
+                    WarningMessage(crate::t!("warning-daemon-communication-failed"))
                 }
-                DaemonError::DaemonStopped => WarningMessage("Daemon stopped".to_string()),
+                DaemonError::DaemonStopped => WarningMessage(crate::t!("warning-daemon-stopped")),
                 DaemonError::CoinSelectionError => {
-                    WarningMessage("Error when selecting coins for spend".to_string())
+                    WarningMessage(crate::t!("warning-coin-selection-error"))
                 }
                 DaemonError::NotImplemented => {
-                    WarningMessage("Feature not implemented for this backend".to_string())
+                    WarningMessage(crate::t!("warning-backend-feature-unimplemented"))
                 }
             },
-            Error::Unexpected(_) => WarningMessage("Unknown error".to_string()),
-            Error::HardwareWallet(_) => WarningMessage("Hardware wallet error".to_string()),
-            Error::Desc(e) => WarningMessage(format!("Descriptor analysis error: '{e}'.")),
-            Error::Spend(e) => WarningMessage(format!("Spend creation error: '{e}'.")),
+            Error::Unexpected(_) => WarningMessage(crate::t!("error-unknown")),
+            Error::HardwareWallet(_) => WarningMessage(crate::t!("warning-hardware-wallet-error")),
+            Error::Desc(e) => WarningMessage(crate::t!(
+                "warning-descriptor-analysis-error",
+                error = e.to_string()
+            )),
+            Error::Spend(e) => WarningMessage(crate::t!(
+                "warning-spend-creation-error",
+                error = e.to_string()
+            )),
             Error::ImportExport(e) => WarningMessage(format!("{e}")),
-            Error::RestoreBackup(e) => WarningMessage(format!("Failed to restore backup: {e}")),
-            Error::FiatPrice(e) => WarningMessage(format!("Fiat price error: {e}")),
+            Error::RestoreBackup(e) => WarningMessage(crate::t!(
+                "warning-restore-backup-failed",
+                error = e.to_string()
+            )),
+            Error::FiatPrice(e) => {
+                WarningMessage(crate::t!("warning-fiat-price-error", error = e.to_string()))
+            }
         }
     }
 }

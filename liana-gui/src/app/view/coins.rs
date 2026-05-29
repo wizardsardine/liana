@@ -15,6 +15,7 @@ use crate::{
         view::{label, message::Message},
     },
     daemon::model::{remaining_sequence, Coin},
+    t,
 };
 
 pub fn coins_view<'a>(
@@ -84,7 +85,7 @@ fn coin_list_view<'a>(
                                                         // It is not possible to know if a coin is a
                                                         // change coin or not so for now, From is
                                                         // enough
-                                                        p1_regular("From")
+                                                        p1_regular(t!("common-from"))
                                                             .style(theme::text::secondary),
                                                     )
                                                     .push(p1_regular(label)),
@@ -102,7 +103,7 @@ fn coin_list_view<'a>(
                                                     // It is not possible to know if a coin is a
                                                     // change coin or not so for now, From is
                                                     // enough
-                                                    p1_regular("From")
+                                                    p1_regular(t!("common-from"))
                                                         .style(theme::text::secondary),
                                                 )
                                                 .push(p1_regular(label)),
@@ -156,13 +157,13 @@ fn coin_list_view<'a>(
                             if let Some(b) = coin.block_height {
                                 if blockheight > b as u32 + timelock as u32 {
                                     Some(Container::new(
-                                        p1_bold("One or more recovery paths are available")
+                                        p1_bold(t!("coins-recovery-available"))
                                             .style(theme::text::error),
                                     ))
                                 } else {
-                                    Some(Container::new(p1_bold(format!(
-                                        "First recovery path will be available in {} blocks",
-                                        b as u32 + timelock as u32 - blockheight
+                                    Some(Container::new(p1_bold(t!(
+                                        "coins-first-recovery-in-blocks",
+                                        blocks = b as u32 + timelock as u32 - blockheight
                                     ))))
                                 }
                             } else {
@@ -177,14 +178,15 @@ fn coin_list_view<'a>(
                                     Row::new()
                                         .align_y(Alignment::Center)
                                         .push(
-                                            p2_regular("Address label:")
+                                            p2_regular(t!("coins-address-label"))
                                                 .bold()
                                                 .style(theme::text::secondary),
                                         )
                                         .push(if let Some(label) = labels.get(&address) {
                                             p2_regular(label).style(theme::text::secondary)
                                         } else {
-                                            p2_regular("No label").style(theme::text::secondary)
+                                            p2_regular(t!("common-no-label"))
+                                                .style(theme::text::secondary)
                                         })
                                         .spacing(5),
                                 )
@@ -192,7 +194,7 @@ fn coin_list_view<'a>(
                                     Row::new()
                                         .align_y(Alignment::Center)
                                         .push(
-                                            p2_regular("Address:")
+                                            p2_regular(t!("common-address-label"))
                                                 .bold()
                                                 .style(theme::text::secondary),
                                         )
@@ -217,14 +219,15 @@ fn coin_list_view<'a>(
                                     Row::new()
                                         .align_y(Alignment::Center)
                                         .push(
-                                            p2_regular("Deposit transaction label:")
+                                            p2_regular(t!("coins-deposit-transaction-label"))
                                                 .bold()
                                                 .style(theme::text::secondary),
                                         )
                                         .push(if let Some(label) = labels.get(&txid) {
                                             p2_regular(label).style(theme::text::secondary)
                                         } else {
-                                            p2_regular("No label").style(theme::text::secondary)
+                                            p2_regular(t!("common-no-label"))
+                                                .style(theme::text::secondary)
                                         })
                                         .spacing(5),
                                 )
@@ -232,7 +235,7 @@ fn coin_list_view<'a>(
                                     Row::new()
                                         .align_y(Alignment::Center)
                                         .push(
-                                            p2_regular("Outpoint:")
+                                            p2_regular(t!("coins-outpoint"))
                                                 .bold()
                                                 .style(theme::text::secondary),
                                         )
@@ -256,7 +259,7 @@ fn coin_list_view<'a>(
                                 .push_maybe(coin.block_height.map(|b| {
                                     Row::new()
                                         .push(
-                                            p2_regular("Block height:")
+                                            p2_regular(t!("coins-block-height"))
                                                 .bold()
                                                 .style(theme::text::secondary),
                                         )
@@ -272,7 +275,7 @@ fn coin_list_view<'a>(
                                 .push(
                                     Row::new()
                                         .push(
-                                            p2_regular("Spend txid:")
+                                            p2_regular(t!("coins-spend-txid"))
                                                 .bold()
                                                 .style(theme::text::secondary),
                                         )
@@ -282,7 +285,7 @@ fn coin_list_view<'a>(
                                 .push(if let Some(height) = info.height {
                                     Row::new()
                                         .push(
-                                            p2_regular("Spend block height:")
+                                            p2_regular(t!("coins-spend-block-height"))
                                                 .bold()
                                                 .style(theme::text::secondary),
                                         )
@@ -290,7 +293,7 @@ fn coin_list_view<'a>(
                                         .spacing(5)
                                 } else {
                                     Row::new().push(
-                                        p2_regular("Not in a block")
+                                        p2_regular(t!("coins-not-in-block"))
                                             .bold()
                                             .style(theme::text::secondary),
                                     )
@@ -300,7 +303,7 @@ fn coin_list_view<'a>(
                             Column::new().push(
                                 Row::new().push(Space::with_width(Length::Fill)).push({
                                     let (icon, label) =
-                                        (Some(icon::arrow_repeat()), "Refresh coin");
+                                        (Some(icon::arrow_repeat()), t!("coins-refresh-coin"));
                                     let refresh_btn = if seq == 0 {
                                         button::primary(icon, label)
                                     } else {

@@ -4,6 +4,7 @@ use crate::{
 };
 use iced::{widget::Space, Alignment, Length};
 use liana_connect::ws_business;
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{btn_cancel, btn_save},
@@ -28,9 +29,9 @@ pub fn edit_key_modal_view<'a>(
 ) -> Element<'a, Message> {
     // Header
     let title = if modal_state.is_new {
-        "New Key"
+        t!("business-new-key")
     } else {
-        "Edit Key"
+        t!("business-edit-key")
     };
 
     // Get last edit info for the key being edited (only for existing keys)
@@ -62,9 +63,9 @@ pub fn edit_key_modal_view<'a>(
     };
     let alias_input = Column::new()
         .spacing(5)
-        .push(text::p1_medium("Key Alias").style(theme::text::primary))
+        .push(text::p1_medium(t!("business-key-alias")).style(theme::text::primary))
         .push(form::Form::new(
-            "Enter key alias",
+            &t!("business-enter-key-alias"),
             &alias_value,
             Message::KeyUpdateAlias,
         ));
@@ -79,13 +80,8 @@ pub fn edit_key_modal_view<'a>(
     let key_type_label = Row::new()
         .spacing(5)
         .align_y(Alignment::Center)
-        .push(text::p1_medium("Key Type").style(theme::text::primary))
-        .push(tooltip::tooltip(
-            "Internal: keys held by your organization.\n \
-                External: keys held by third parties.\n \
-                Cosigner: Professional third party co-signing key.\n \
-                SafetyNet: Professional third party recovery key.",
-        ));
+        .push(text::p1_medium(t!("business-key-type")).style(theme::text::primary))
+        .push(tooltip::tooltip(t!("business-key-type-tooltip")));
     let key_type_picker = Column::new().spacing(5).push(key_type_label).push(
         pick_list::pick_list(
             key_types,
@@ -106,26 +102,24 @@ pub fn edit_key_modal_view<'a>(
         let email_valid = state.views.keys.is_email_valid();
         let email_value = form::Value {
             value: modal_state.email.clone(),
-            warning: if is_empty {
-                None
-            } else if !email_valid {
-                Some("Invalid email!")
-            } else {
-                None
-            },
+            warning: None,
             valid: email_valid || is_empty,
+        };
+        let email_form = form::Form::new(
+            &t!("business-enter-email-address"),
+            &email_value,
+            Message::KeyUpdateEmail,
+        );
+        let email_form = if !is_empty && !email_valid {
+            email_form.warning(t!("settings-email-invalid"))
+        } else {
+            email_form
         };
         Some(
             Column::new()
                 .spacing(5)
-                .push(
-                    text::p1_medium("Email Address of the Key Manager").style(theme::text::primary),
-                )
-                .push(form::Form::new(
-                    "Enter email address",
-                    &email_value,
-                    Message::KeyUpdateEmail,
-                ))
+                .push(text::p1_medium(t!("business-key-manager-email")).style(theme::text::primary))
+                .push(email_form)
                 .into(),
         )
     } else {
@@ -137,22 +131,25 @@ pub fn edit_key_modal_view<'a>(
         let token_valid = state.views.keys.is_token_format_valid();
         let token_value = form::Value {
             value: modal_state.token.clone(),
-            warning: if is_empty {
-                None
-            } else {
-                modal_state.token_warning
-            },
+            warning: if is_empty { None } else { None },
             valid: (token_valid && modal_state.token_warning.is_none()) || is_empty,
+        };
+        let token_warning = modal_state.token_warning.map(token_warning);
+        let token_form = form::Form::new(
+            &t!("business-enter-token-placeholder"),
+            &token_value,
+            Message::KeyUpdateToken,
+        );
+        let token_form = if let Some(warning) = token_warning {
+            token_form.warning(warning)
+        } else {
+            token_form
         };
         Some(
             Column::new()
                 .spacing(5)
-                .push(text::p1_medium("Token").style(theme::text::primary))
-                .push(form::Form::new(
-                    "Enter token (e.g., 42-absent-cake-eagle)",
-                    &token_value,
-                    Message::KeyUpdateToken,
-                ))
+                .push(text::p1_medium(t!("common-token")).style(theme::text::primary))
+                .push(token_form)
                 .into(),
         )
     } else {
@@ -178,10 +175,18 @@ pub fn edit_key_modal_view<'a>(
         .spacing(15);
 
     modal_view(
-        Some(title.to_string()),
+        Some(title),
         none_fn(),
         Some(|| Message::KeyCancelModal),
         ModalWidth::M,
         body,
     )
+}
+
+fn token_warning(key: &str) -> String {
+    match key {
+        "business-token-invalid" => t!("business-token-invalid"),
+        "business-token-duplicate" => t!("business-token-duplicate"),
+        _ => key.to_string(),
+    }
 }

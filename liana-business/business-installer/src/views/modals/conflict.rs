@@ -1,5 +1,6 @@
 use crate::state::{views::modals::ConflictModalState, Msg};
 use iced::{widget::Space, Length};
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{btn_ok, btn_primary, btn_secondary, BtnWidth},
@@ -21,13 +22,13 @@ pub fn conflict_modal_view(modal_state: &ConflictModalState) -> Element<'_, Msg>
             .push(Space::with_width(Length::Fill))
             .push(btn_secondary(
                 None,
-                "Keep my changes",
+                t!("business-keep-my-changes"),
                 BtnWidth::L,
                 Some(Msg::ConflictKeepLocal),
             ))
             .push(btn_primary(
                 None,
-                "Reload",
+                t!("common-reload"),
                 BtnWidth::M,
                 Some(Msg::ConflictReload),
             ))

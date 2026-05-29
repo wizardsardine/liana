@@ -42,7 +42,7 @@ impl KeysViewState {
 
             // Local format validation
             if liana_connect::keys::token::Token::from_str(&value).is_err() {
-                modal.token_warning = Some("Invalid token!");
+                modal.token_warning = Some("business-token-invalid");
                 return;
             }
 
@@ -53,7 +53,7 @@ impl KeysViewState {
                     && matches!(&k.identity, KeyIdentity::TokenWithProvider{ token: t, .. } if t == &value)
             });
             if is_duplicate {
-                modal.token_warning = Some("Duplicate token");
+                modal.token_warning = Some("business-token-duplicate");
                 return;
             }
 

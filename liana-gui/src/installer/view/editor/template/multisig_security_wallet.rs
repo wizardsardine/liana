@@ -18,6 +18,7 @@ use crate::installer::{
         layout,
     },
 };
+use crate::t;
 
 pub fn multisig_security_template_description(
     progress: (usize, usize),
@@ -25,44 +26,78 @@ pub fn multisig_security_template_description(
     layout(
         progress,
         None,
-        "Introduction",
+        t!("installer-introduction"),
         Column::new()
             .align_x(Alignment::Start)
-            .push(h3("Expanding multisig wallet"))
+            .push(h3(t!("installer-expanding-multisig-wallet")))
             .max_width(800.0)
-            .push(Container::new(
-                p1_regular("For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key.")
-                .style(theme::text::secondary)
+            .push(
+                Container::new(
+                    p1_regular(t!("installer-multisig-description-1"))
+                        .style(theme::text::secondary)
+                        .align_x(alignment::Horizontal::Left),
+                )
                 .align_x(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
-            .push(Row::new()
-                .spacing(30)
-                .push(
-                    Row::new()
-                    .align_y(Alignment::Center)
-                    .spacing(10)
-                    .push(icon::round_key_icon().size(H3_SIZE).style(theme::text::success))
-                    .push(p1_regular("Primary key #1").bold())
-                ).push(
-                    Row::new()
-                    .align_y(Alignment::Center)
-                    .spacing(10)
-                    .push(icon::round_key_icon().size(H3_SIZE).style(theme::text::success))
-                    .push(p1_regular("Primary key #2").bold())
-                ).push(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .spacing(10)
-                        .push(icon::round_key_icon().size(H3_SIZE).style(theme::text::success))
-                        .push(p1_regular("Recovery key").bold())
-            ))
-            .push(Container::new(
-                p1_regular("The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):")
-                .style(theme::text::secondary)
+                .width(Length::Fill),
+            )
+            .push(
+                Row::new()
+                    .spacing(30)
+                    .push(
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .spacing(10)
+                            .push(
+                                icon::round_key_icon()
+                                    .size(H3_SIZE)
+                                    .style(theme::text::success),
+                            )
+                            .push(
+                                p1_regular(t!("installer-primary-key-number", number = 1)).bold(),
+                            ),
+                    )
+                    .push(
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .spacing(10)
+                            .push(
+                                icon::round_key_icon()
+                                    .size(H3_SIZE)
+                                    .style(theme::text::success),
+                            )
+                            .push(
+                                p1_regular(t!("installer-primary-key-number", number = 2)).bold(),
+                            ),
+                    )
+                    .push(
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .spacing(10)
+                            .push(
+                                icon::round_key_icon()
+                                    .size(H3_SIZE)
+                                    .style(theme::text::success),
+                            )
+                            .push(p1_regular(t!("installer-recovery-key")).bold()),
+                    ),
+            )
+            .push(
+                Container::new(
+                    p1_regular(t!("installer-multisig-description-2"))
+                        .style(theme::text::secondary)
+                        .align_x(alignment::Horizontal::Left),
+                )
                 .align_x(alignment::Horizontal::Left)
-            ).align_x(alignment::Horizontal::Left).width(Length::Fill))
+                .width(Length::Fill),
+            )
             .push(image::multisig_security_template_description().width(Length::Fill))
-            .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Next").width(Length::Fixed(200.0)).on_press(Message::Next)))
+            .push(
+                Row::new().push(Space::with_width(Length::Fill)).push(
+                    button::primary(None, t!("common-next"))
+                        .width(Length::Fixed(200.0))
+                        .on_press(Message::Next),
+                ),
+            )
             .push(Space::with_height(50.0))
             .spacing(20),
         true,
@@ -95,9 +130,9 @@ pub fn multisig_security_template<'a>(
                     defined_key(
                         &key.name,
                         color::GREEN,
-                        format!("Primary key #{}", i + 1),
+                        t!("installer-primary-key-number", number = i + 1),
                         if use_taproot && !key.source.is_compatible_taproot() {
-                            Some("This device does not support Taproot")
+                            Some(t!("installer-device-no-taproot"))
                         } else {
                             None
                         },
@@ -106,7 +141,7 @@ pub fn multisig_security_template<'a>(
                 } else {
                     undefined_key(
                         color::GREEN,
-                        format!("Primary key #{}", i + 1),
+                        t!("installer-primary-key-number", number = i + 1),
                         !primary_path.keys[0..i].iter().any(|k| k.is_none()),
                         true,
                     )
@@ -143,9 +178,9 @@ pub fn multisig_security_template<'a>(
                         uneditable_defined_key(
                             &key.name,
                             color::GREEN,
-                            format!("Primary key #{}", j + 1),
+                            t!("installer-primary-key-number", number = j + 1),
                             if use_taproot && !key.source.is_compatible_taproot() {
-                                Some("This device does not support Taproot")
+                                Some(t!("installer-device-no-taproot"))
                             } else {
                                 None
                             },
@@ -154,9 +189,9 @@ pub fn multisig_security_template<'a>(
                         defined_key(
                             &key.name,
                             color::ORANGE,
-                            "Recovery key".to_string(),
+                            t!("installer-recovery-key"),
                             if use_taproot && !key.source.is_compatible_taproot() {
-                                Some("This device does not support Taproot")
+                                Some(t!("installer-device-no-taproot"))
                             } else {
                                 None
                             },
@@ -167,9 +202,9 @@ pub fn multisig_security_template<'a>(
                     undefined_key(
                         if j < 2 { color::GREEN } else { color::ORANGE },
                         if j < 2 {
-                            format!("Primary key #{}", j + 1)
+                            t!("installer-primary-key-number", number = j + 1)
                         } else {
-                            "Recovery key".to_string()
+                            t!("installer-recovery-key")
                         },
                         !(primary_path.keys.iter().any(|k| k.is_none())
                             || recovery_path.keys[0..j].iter().any(|k| k.is_none())),
@@ -200,7 +235,7 @@ pub fn multisig_security_template<'a>(
     layout(
         progress,
         None,
-        "Set keys",
+        t!("installer-set-keys"),
         Column::new()
             .align_x(Alignment::Start)
             .max_width(super::MAX_WIDTH)

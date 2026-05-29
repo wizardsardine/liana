@@ -6,6 +6,7 @@ use iced::{
     widget::{row, Space},
     Length,
 };
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{btn_primary, BtnWidth},
@@ -17,24 +18,26 @@ use liana_ui::{
 
 pub fn login_email_view(state: &State) -> Element<'_, Msg> {
     let can_submit = state.views.login.email.can_send();
+    let warning = state.views.login.email.form.warning.map(login_warning);
+    let mut form_value = state.views.login.email.form.clone();
+    form_value.warning = None;
     let form = if !state.views.login.email.processing {
-        form::Form::new_trimmed(
-            "Email",
-            &state.views.login.email.form,
-            Msg::LoginUpdateEmail,
-        )
-        .on_submit_maybe(can_submit.then_some(Msg::LoginSendToken))
+        form::Form::new_trimmed(&t!("common-email"), &form_value, Msg::LoginUpdateEmail)
+            .on_submit_maybe(can_submit.then_some(Msg::LoginSendToken))
     } else {
-        form::Form::new_disabled("Email", &state.views.login.email.form)
-    }
-    .id("login_email")
-    .size(16)
-    .padding(10);
+        form::Form::new_disabled(&t!("common-email"), &form_value)
+    };
+    let form = if let Some(warning) = warning {
+        form.warning(warning)
+    } else {
+        form
+    };
+    let form = form.id("login_email").size(16).padding(10);
     let form = Container::new(form).width(Length::Fill);
 
     let btn = btn_primary(
         None,
-        "Send token",
+        t!("installer-send-token"),
         BtnWidth::L,
         can_submit.then_some(Msg::LoginSendToken),
     );
@@ -48,10 +51,7 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
     let content = Column::new()
         .push(liana_business)
         .push(Space::with_height(20))
-        .push(
-            text::p1_medium("Enter the email associated with your account")
-                .style(theme::text::primary),
-        )
+        .push(text::p1_medium(t!("business-login-email-help")).style(theme::text::primary))
         .push(form)
         .push(btn)
         .spacing(20)
@@ -60,9 +60,17 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
     layout(
         (1, INSTALLER_STEPS),
         None,
-        &["Login".to_string()],
+        &[t!("common-login")],
         content,
         true,
         None,
     )
+}
+
+fn login_warning(key: &str) -> String {
+    match key {
+        "settings-email-invalid" => t!("settings-email-invalid"),
+        "business-auth-code-request-failed" => t!("business-auth-code-request-failed"),
+        _ => key.to_string(),
+    }
 }

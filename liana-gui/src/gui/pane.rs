@@ -7,6 +7,7 @@ use crate::{
     app::{self, settings::SettingsTrait},
     gui::Config,
     installer::{self},
+    t,
 };
 
 use super::tab;
@@ -179,16 +180,16 @@ where
         let tabs_len = self.tabs.len();
         for (i, tab) in self.tabs.iter().enumerate() {
             let title = tab.title();
+            let title_chars = title.chars().count();
             menu = menu.push(ContextMenu::new(
                 Into::<Element<ViewMessage>>::into(
-                    Button::new(if title.len() < 20 {
-                        Row::new().push(p1_medium(title)).push(p1_medium(
-                            &"                     ".to_string()[..21 - title.len()],
-                        ))
-                    } else {
+                    Button::new(if title_chars < 20 {
                         Row::new()
-                            .push(p1_medium(&title[..17]))
-                            .push(p1_medium("..."))
+                            .push(p1_medium(title))
+                            .push(p1_medium(" ".repeat(21 - title_chars)))
+                    } else {
+                        let title: String = title.chars().take(17).collect();
+                        Row::new().push(p1_medium(title)).push(p1_medium("..."))
                     })
                     .style(if i == self.focused_tab {
                         theme::button::tab_active
@@ -206,14 +207,14 @@ where
                     };
                     let items = Column::new()
                         .push(
-                            MenuButton::new(p1_regular("Close"))
+                            MenuButton::new(p1_regular(t!("tab-close")))
                                 .style(close_style)
                                 .on_press(ViewMessage::CloseTab(i))
                                 .width(120),
                         )
                         .push_maybe(if has_split {
                             Some(
-                                MenuButton::new(p1_regular("Split"))
+                                MenuButton::new(p1_regular(t!("tab-split")))
                                     .style(theme::button::tab_menu_bottom)
                                     .on_press(ViewMessage::SplitTab(i))
                                     .width(120),

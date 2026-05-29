@@ -1,4 +1,5 @@
 use liana_connect::ws_business::{Key, PolicyTemplate, SecondaryPath, SpendingPath, UserRole};
+use liana_i18n::t;
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -46,7 +47,7 @@ impl AppState {
     pub fn format_relative_time(&self, server_timestamp: u64) -> String {
         let now = self.now_adjusted();
         if server_timestamp > now {
-            return "just now".to_string();
+            return t!("time-just-now");
         }
         let diff = now - server_timestamp;
 
@@ -57,42 +58,22 @@ impl AppState {
         const MONTH: u64 = 30 * DAY;
 
         if diff < MINUTE {
-            "just now".to_string()
+            t!("time-just-now")
         } else if diff < HOUR {
             let mins = diff / MINUTE;
-            if mins == 1 {
-                "1 minute ago".to_string()
-            } else {
-                format!("{mins} minutes ago")
-            }
+            t!("time-minutes-ago", count = mins)
         } else if diff < DAY {
             let hours = diff / HOUR;
-            if hours == 1 {
-                "1 hour ago".to_string()
-            } else {
-                format!("{hours} hours ago")
-            }
+            t!("time-hours-ago", count = hours)
         } else if diff < WEEK {
             let days = diff / DAY;
-            if days == 1 {
-                "1 day ago".to_string()
-            } else {
-                format!("{days} days ago")
-            }
+            t!("time-days-ago", count = days)
         } else if diff < MONTH {
             let weeks = diff / WEEK;
-            if weeks == 1 {
-                "1 week ago".to_string()
-            } else {
-                format!("{weeks} weeks ago")
-            }
+            t!("time-weeks-ago", count = weeks)
         } else {
             let months = diff / MONTH;
-            if months == 1 {
-                "1 month ago".to_string()
-            } else {
-                format!("{months} months ago")
-            }
+            t!("time-months-ago", count = months)
         }
     }
 

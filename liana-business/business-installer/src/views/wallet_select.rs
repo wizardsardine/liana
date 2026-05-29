@@ -7,6 +7,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
+use liana_i18n::t;
 use liana_ui::{
     component::{
         pill,
@@ -68,11 +69,11 @@ fn status_badge(wallet: &Wallet, user_email: &str) -> Element<'static, Msg> {
 }
 
 /// Get a display label for the user role
-fn role_label(role: &UserRole) -> &'static str {
+fn role_label(role: &UserRole) -> String {
     match role {
-        UserRole::WizardSardineAdmin => "Admin",
-        UserRole::WalletManager => "Manager",
-        UserRole::Participant => "Participant",
+        UserRole::WizardSardineAdmin => t!("business-role-admin"),
+        UserRole::WalletManager => t!("business-role-manager"),
+        UserRole::Participant => t!("business-role-participant"),
     }
 }
 
@@ -97,8 +98,8 @@ pub fn wallet_card<'a>(
     let key_count = wallet.template.as_ref().map(|t| t.keys.len()).unwrap_or(0);
     let keys = match key_count {
         0 => "".to_string(),
-        1 => "(1 key)".to_string(),
-        c => format!("({c} keys)"),
+        1 => t!("business-key-count", count = 1),
+        c => t!("business-key-count", count = c),
     };
 
     let alias = truncate(&wallet.alias, 25);
@@ -157,9 +158,9 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
 
     // Set title based on whether wallets exist
     let title_text = if has_wallets {
-        "Select wallet"
+        t!("business-select-wallet")
     } else {
-        "Create a wallet"
+        t!("business-create-wallet")
     };
 
     // Get current user email for role derivation
@@ -241,7 +242,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                 // Show message when search filter returns no results
                 if wallets_to_display.is_empty() && !search_filter.is_empty() {
                     list_content = list_content.push(
-                        text::p1_medium("No wallets found matching your search.")
+                        text::p1_medium(t!("business-no-wallets-search"))
                             .style(theme::text::primary),
                     );
                 } else {
@@ -271,17 +272,17 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         .selected_org
         .and_then(|org_id| state.backend.get_org(org_id))
         .map(|org| org.name.clone())
-        .unwrap_or_else(|| "Organization".to_string());
-    let breadcrumb = vec![org_name, "Wallets".to_string()];
+        .unwrap_or_else(|| t!("business-organization"));
+    let breadcrumb = vec![org_name, t!("business-wallets")];
 
     select_list_view(SelectListView {
         progress: (4, INSTALLER_STEPS),
         email: current_user_email,
         is_ws_admin,
         breadcrumb,
-        title: title_text.to_string(),
+        title: title_text,
         search: has_wallets.then_some(SelectSearch {
-            placeholder: "Filter wallets...",
+            placeholder: t!("business-filter-wallets"),
             value: &state.views.wallet_select.search_filter,
             on_change: Msg::WalletSelectUpdateSearchFilter,
         }),

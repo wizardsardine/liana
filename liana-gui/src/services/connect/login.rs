@@ -17,6 +17,7 @@ use crate::{
     },
     daemon::DaemonError,
     dir::{LianaDirectory, NetworkDirectory},
+    t,
 };
 
 use super::client::{
@@ -359,7 +360,7 @@ impl LianaLiteLogin {
                             tracing::warn!("{}", e);
                             if let Error::Auth(AuthError { http_status, .. }) = e {
                                 if http_status == Some(403) {
-                                    self.auth_error = Some("Token is expired or is invalid")
+                                    self.auth_error = Some("lianalite-token-expired")
                                 } else {
                                     self.connection_error = Some(e);
                                 }
@@ -396,19 +397,20 @@ impl LianaLiteLogin {
                                 .max_width(500)
                                 .spacing(20)
                                 .push(match &self.step {
-                                    ConnectionStep::WalletDoesNotExist => Column::new()
-                                        .push(text("This wallet was deleted by its creator for all participants and cannot be opened. To access it again, restore it using a backup file or the wallet descriptor.")),
+                                    ConnectionStep::WalletDoesNotExist => {
+                                        Column::new().push(text(t!("lianalite-wallet-deleted")))
+                                    }
                                     ConnectionStep::CheckingAuthFile => Column::new(),
                                     ConnectionStep::CheckEmail => Column::new()
                                         .spacing(20)
                                         .align_x(Alignment::Center)
-                                        .push_maybe(
-                                            self.auth_error
-                                                .map(|e| text(e).style(theme::text::warning)),
-                                        )
+                                        .push_maybe(self.auth_error.map(|e| {
+                                            text(liana_i18n::translate(e, &[]))
+                                                .style(theme::text::warning)
+                                        }))
                                         .push(text(&self.email))
                                         .push(
-                                            button::secondary(None, "Login")
+                                            button::secondary(None, t!("common-login"))
                                                 .width(Length::Fixed(200.0))
                                                 .on_press_maybe(if self.processing {
                                                     None
@@ -419,29 +421,34 @@ impl LianaLiteLogin {
                                     ConnectionStep::EnterOtp { otp, .. } => Column::new()
                                         .spacing(20)
                                         .align_x(Alignment::Center)
-                                        .push(text("An authentication was sent to your email:"))
+                                        .push(text(t!("lianalite-auth-sent")))
                                         .push(text(&self.email))
-                                        .push_maybe(
-                                            self.auth_error
-                                                .map(|e| text(e).style(theme::text::warning)),
-                                        )
+                                        .push_maybe(self.auth_error.map(|e| {
+                                            text(liana_i18n::translate(e, &[]))
+                                                .style(theme::text::warning)
+                                        }))
                                         .push(
-                                            form::Form::new_trimmed("Token", otp, |msg| {
-                                                ViewMessage::OTPEdited(msg)
-                                            })
+                                            form::Form::new_trimmed(
+                                                &t!("common-token"),
+                                                otp,
+                                                |msg| ViewMessage::OTPEdited(msg),
+                                            )
                                             .size(P1_SIZE)
                                             .padding(10)
-                                            .warning("Token is not valid"),
+                                            .warning(t!("lianalite-token-invalid")),
                                         )
                                         .push(
                                             Row::new().spacing(10).push(
-                                                button::secondary(None, "Resend token")
-                                                    .width(Length::Fixed(200.0))
-                                                    .on_press_maybe(if self.processing {
-                                                        None
-                                                    } else {
-                                                        Some(ViewMessage::RequestOTP)
-                                                    }),
+                                                button::secondary(
+                                                    None,
+                                                    t!("lianalite-resend-token"),
+                                                )
+                                                .width(Length::Fixed(200.0))
+                                                .on_press_maybe(if self.processing {
+                                                    None
+                                                } else {
+                                                    Some(ViewMessage::RequestOTP)
+                                                }),
                                             ),
                                         ),
                                 }),
@@ -460,7 +467,7 @@ impl LianaLiteLogin {
         }
         if let Some(error) = &self.connection_error {
             col = col.push(
-                notification::warning("Connection failed".to_string(), error.to_string())
+                notification::warning(t!("common-connection-failed"), error.to_string())
                     .width(Length::Fill),
             );
         }
@@ -468,7 +475,7 @@ impl LianaLiteLogin {
         col.push_maybe(if !matches!(self.step, ConnectionStep::CheckingAuthFile) {
             Some(
                 Container::new(
-                    button::secondary(Some(icon::previous_icon()), "Go back")
+                    button::secondary(Some(icon::previous_icon()), t!("common-go-back"))
                         .width(Length::Fixed(200.0))
                         .on_press(Message::View(ViewMessage::BackToLauncher(self.network))),
                 )

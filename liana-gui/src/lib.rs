@@ -11,6 +11,7 @@ pub mod export;
 pub mod gui;
 pub mod help;
 pub mod hw;
+pub use liana_i18n as i18n;
 pub mod installer;
 pub mod launcher;
 pub mod loader;
@@ -21,6 +22,17 @@ pub mod signer;
 pub mod utils;
 pub mod view;
 pub mod window;
+
+#[macro_export]
+macro_rules! t {
+    ($key:literal) => {
+        liana_i18n::translate($key, &[])
+    };
+    ($key:literal, $($name:ident = $value:expr),+ $(,)?) => {{
+        let args = &[$((stringify!($name), ($value).to_string())),+];
+        liana_i18n::translate($key, args)
+    }};
+}
 
 pub const VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION_MAJOR"),

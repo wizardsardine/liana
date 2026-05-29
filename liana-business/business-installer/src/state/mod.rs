@@ -11,6 +11,7 @@ use async_hwi::{bitbox::NoiseConfig, service::HwiService};
 use crossbeam::channel;
 use liana_connect::ws_business::{PolicyTemplate, Wallet};
 use liana_gui::{app::settings::global::PersistedBitboxNoiseConfig, dir::LianaDirectory};
+use liana_i18n::SupportedLocale;
 use liana_ui::widget::{modal::Modal, Element};
 pub use message::{Message, Msg};
 use miniscript::bitcoin::Network;
@@ -66,6 +67,8 @@ pub struct State {
     bitbox_config: Arc<dyn NoiseConfig>,
     /// Error from RunLianaBusiness connection failure
     pub connection_error: Option<String>,
+    /// Current UI locale, kept in state so language changes force a visible refresh.
+    pub locale: SupportedLocale,
 }
 
 impl State {
@@ -118,6 +121,7 @@ impl State {
             _hw_bridge_handle: Some(hw_bridge_handle),
             bitbox_config,
             connection_error: None,
+            locale: liana_i18n::current_locale(),
         }
     }
 
@@ -173,11 +177,12 @@ impl State {
         let content: Element<'_, Message> = if let Some(error) = &self.connection_error {
             use iced::widget::Column;
             use iced::Length;
+            use liana_i18n::t;
             use liana_ui::component::notification;
 
             Column::new()
                 .push(
-                    notification::warning("Connection failed".to_string(), error.clone())
+                    notification::warning(t!("business-connection-failed"), error.clone())
                         .width(Length::Fill),
                 )
                 .push(view_content)

@@ -25,6 +25,7 @@ use crate::{
         client::{auth::AuthClient, backend::UserRole, get_service_config, BackendType},
         login::{connect_with_credentials, BackendState},
     },
+    t,
 };
 
 const NETWORKS: [Network; 5] = [
@@ -226,7 +227,7 @@ impl Launcher {
                                 Some(
                                     button::secondary(
                                         Some(icon::previous_icon()),
-                                        "Back to wallet list",
+                                        t!("launcher-back-to-wallet-list"),
                                     )
                                     .on_press(ViewMessage::AddWalletToList(false)),
                                 )
@@ -237,7 +238,7 @@ impl Launcher {
                             None
                         })
                         .push(
-                            button::secondary(None, "Share Xpubs")
+                            button::secondary(None, t!("launcher-share-xpubs"))
                                 .on_press(ViewMessage::ShareXpubs),
                         )
                         .push(
@@ -257,9 +258,9 @@ impl Launcher {
                             .align_x(Alignment::Center)
                             .spacing(30)
                             .push(if matches!(self.state, State::Wallets { .. }) {
-                                text("Welcome back").size(50).bold()
+                                text(t!("launcher-welcome-back")).size(50).bold()
                             } else {
-                                text("Welcome").size(50).bold()
+                                text(t!("launcher-welcome")).size(50).bold()
                             })
                             .push_maybe(self.error.as_ref().map(|e| card::simple(text(e))))
                             .push(match &self.state {
@@ -285,7 +286,7 @@ impl Launcher {
                                             Column::new().push(
                                                 button::secondary(
                                                     Some(icon::plus_icon()),
-                                                    "Add wallet",
+                                                    t!("launcher-add-wallet"),
                                                 )
                                                 .on_press(ViewMessage::AddWalletToList(true))
                                                 .padding(10)
@@ -330,9 +331,11 @@ fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
                     .spacing(20)
                     .align_x(Alignment::Center)
                     .push(image::create_new_wallet_icon().width(Length::Fixed(100.0)))
-                    .push(p1_regular("Create a new Liana wallet").style(theme::text::secondary))
                     .push(
-                        button::secondary(None, "Select")
+                        p1_regular(t!("launcher-create-new-wallet")).style(theme::text::secondary),
+                    )
+                    .push(
+                        button::secondary(None, t!("common-select"))
                             .width(Length::Fixed(200.0))
                             .on_press(ViewMessage::CreateWallet),
                     )
@@ -346,9 +349,12 @@ fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
                     .spacing(20)
                     .align_x(Alignment::Center)
                     .push(image::restore_wallet_icon().width(Length::Fixed(100.0)))
-                    .push(p1_regular("Add an existing Liana wallet").style(theme::text::secondary))
                     .push(
-                        button::secondary(None, "Select")
+                        p1_regular(t!("launcher-add-existing-wallet"))
+                            .style(theme::text::secondary),
+                    )
+                    .push(
+                        button::secondary(None, t!("common-select"))
                             .width(Length::Fixed(200.0))
                             .on_press(ViewMessage::ImportWallet),
                     )
@@ -375,9 +381,9 @@ fn wallets_list_item(
                             .push(if let Some(alias) = &settings.alias {
                                 p1_bold(alias)
                             } else {
-                                p1_bold(format!(
-                                    "My Liana {} wallet",
-                                    match network {
+                                p1_bold(t!(
+                                    "launcher-default-wallet-name",
+                                    network = match network {
                                         Network::Bitcoin => "Bitcoin",
                                         Network::Signet => "Signet",
                                         Network::Testnet => "Testnet",
@@ -550,7 +556,7 @@ impl DeleteWalletModal {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let mut confirm_button = button::secondary(None, "Delete wallet")
+        let mut confirm_button = button::secondary(None, t!("launcher-delete-wallet"))
             .width(Length::Fixed(200.0))
             .style(theme::button::destructive);
         if self.warning.is_none() {
@@ -560,11 +566,11 @@ impl DeleteWalletModal {
         }
         // Use separate `Row`s for help text in order to have better spacing.
         let help_text_1 = format!(
-            "Are you sure you want to {} for the wallet {}",
+            "{} {}",
             if self.wallet_settings.remote_backend_auth.is_some() {
-                "delete locally the configuration"
+                t!("launcher-delete-local-config-question")
             } else {
-                "delete the configuration and all associated data"
+                t!("launcher-delete-all-data-question")
             },
             if let Some(alias) = &self.wallet_settings.alias {
                 format!(
@@ -576,11 +582,11 @@ impl DeleteWalletModal {
             }
         );
         let help_text_2 = match self.internal_bitcoind {
-            Some(true) => Some("(The Liana-managed Bitcoin node for this network will not be affected by this action.)"),
+            Some(true) => Some(t!("launcher-delete-node-not-affected-this-network")),
             Some(false) => None,
-            None => Some("(If you are using a Liana-managed Bitcoin node, it will not be affected by this action.)"),
+            None => Some(t!("launcher-delete-node-not-affected")),
         };
-        let help_text_3 = "WARNING: This cannot be undone.";
+        let help_text_3 = t!("launcher-delete-warning-irreversible");
 
         Into::<Element<ViewMessage>>::into(
             card::simple(
@@ -588,14 +594,15 @@ impl DeleteWalletModal {
                     .spacing(10)
                     .push(Container::new(
                         h4_bold(if let Some(alias) = &self.wallet_settings.alias {
-                            format!(
-                                "Delete configuration for {} (Liana-{})",
-                                alias, &self.wallet_settings.descriptor_checksum
+                            t!(
+                                "launcher-delete-title-alias",
+                                alias = alias,
+                                checksum = &self.wallet_settings.descriptor_checksum
                             )
                         } else {
-                            format!(
-                                "Delete configuration for Liana-{}",
-                                &self.wallet_settings.descriptor_checksum
+                            t!(
+                                "launcher-delete-title",
+                                checksum = &self.wallet_settings.descriptor_checksum
                             )
                         })
                         .style(theme::text::destructive)
@@ -609,13 +616,19 @@ impl DeleteWalletModal {
                     .push(Row::new())
                     .push_maybe(self.wallet_settings.remote_backend_auth.as_ref().map(|a| {
                         checkbox(self.delete_liana_connect)
-                        .label(match self.user_role {
-                                Some(UserRole::Owner) | None => "Also permanently delete this wallet from Liana Connect (for all members).".to_string(),
-                                Some(UserRole::Member) => format!("Also disassociate {} from this Liana Connect wallet.", a.email),
+                            .label(match self.user_role {
+                                Some(UserRole::Owner) | None => {
+                                    t!("launcher-delete-connect-all-members")
+                                }
+                                Some(UserRole::Member) => {
+                                    t!("launcher-delete-connect-disassociate", email = a.email)
+                                }
                             })
-                        .on_toggle_maybe(if !self.deleted {
+                            .on_toggle_maybe(if !self.deleted {
                                 Some(|v| {
-                                    ViewMessage::DeleteWallet(DeleteWalletMessage::DeleteLianaConnect(v))
+                                    ViewMessage::DeleteWallet(
+                                        DeleteWalletMessage::DeleteLianaConnect(v),
+                                    )
                                 })
                             } else {
                                 None
@@ -633,7 +646,7 @@ impl DeleteWalletModal {
                                 .spacing(10)
                                 .push(icon::circle_check_icon().style(theme::text::success))
                                 .push(
-                                    text("Wallet successfully deleted").style(theme::text::success),
+                                    text(t!("launcher-wallet-deleted")).style(theme::text::success),
                                 )
                         })
                         .align_x(Horizontal::Center)

@@ -9,6 +9,7 @@ use iced::{
     widget::{checkbox, Space},
     Alignment, Length,
 };
+use liana_i18n::t;
 use liana_ui::{
     component::{
         button::{btn_cancel, btn_save},
@@ -38,11 +39,11 @@ pub fn edit_path_modal_view<'a>(
 
     // Header
     let title = if modal_state.is_primary {
-        "Edit Primary Path"
+        t!("business-edit-primary-path")
     } else if modal_state.path_index.is_some() {
-        "Edit Recovery Path"
+        t!("business-edit-recovery-path")
     } else {
-        "Create New Path"
+        t!("business-create-new-path")
     };
 
     // Get last edit info for the path being edited
@@ -74,18 +75,18 @@ pub fn edit_path_modal_view<'a>(
     };
 
     // Key selection section
-    let keys_label = text::p1_medium("Keys in Path:").style(theme::text::primary);
+    let keys_label = text::p1_medium(t!("business-keys-in-path")).style(theme::text::primary);
 
     let keys_column = if state.app.keys.is_empty() {
         Column::new()
             .spacing(8)
-            .push(text::p2_medium("No keys available. Add keys first.").style(theme::text::primary))
+            .push(text::p2_medium(t!("business-no-keys-available")).style(theme::text::primary))
     } else {
         let mut col = Column::new().spacing(8);
         for (key_id, key) in state.app.keys.iter() {
             let is_selected = modal_state.selected_key_ids.contains(key_id);
             let mut name = if key.alias.is_empty() {
-                format!("Key {key_id}")
+                t!("business-key-number", id = key_id)
             } else {
                 key.alias.clone()
             };
@@ -125,17 +126,17 @@ pub fn edit_path_modal_view<'a>(
         (false, None)
     } else if let Ok(n) = modal_state.threshold.parse::<usize>() {
         if n == 0 || n > selected_count {
-            (false, Some("Invalid threshold value"))
+            (false, Some(t!("business-invalid-threshold")))
         } else {
             (true, None)
         }
     } else {
-        (false, Some("Invalid threshold value"))
+        (false, Some(t!("business-invalid-threshold")))
     };
 
     // Threshold row (only shown when 2+ keys are selected)
     let threshold_row: Option<Element<'_, Msg>> = threshold_enabled.then_some({
-        let threshold_label_text = format!("Threshold (1-{selected_count}):");
+        let threshold_label_text = t!("business-threshold-range", count = selected_count);
         let threshold_label: Element<'_, Msg> = text::p1_medium(threshold_label_text)
             .style(theme::text::primary)
             .into();
@@ -181,14 +182,14 @@ pub fn edit_path_modal_view<'a>(
         let (valid, warning) = if is_empty {
             (false, None)
         } else if current_blocks == 0 {
-            (false, Some("Timelock cannot be zero".to_string()))
+            (false, Some(t!("business-timelock-zero")))
         } else if parsed_value.is_some_and(|v| v > modal_state.timelock_unit.max_value()) {
             (
                 false,
-                Some(format!(
-                    "Max {} {}",
-                    modal_state.timelock_unit.max_value(),
-                    modal_state.timelock_unit
+                Some(t!(
+                    "business-max-unit",
+                    max = modal_state.timelock_unit.max_value(),
+                    unit = modal_state.timelock_unit
                 )),
             )
         } else {
@@ -203,7 +204,7 @@ pub fn edit_path_modal_view<'a>(
                         && secondary.timelock.blocks == current_blocks
                 });
             if duplicate {
-                (false, Some("Duplicate timelock".to_string()))
+                (false, Some(t!("business-duplicate-timelock")))
             } else {
                 (true, None)
             }
@@ -219,8 +220,10 @@ pub fn edit_path_modal_view<'a>(
             .spacing(10)
             .align_y(Alignment::Center)
             .push(
-                Container::new(text::p1_medium("Timelock:").style(theme::text::primary))
-                    .width(Length::Fixed(LABEL_WIDTH)),
+                Container::new(
+                    text::p1_medium(t!("business-timelock")).style(theme::text::primary),
+                )
+                .width(Length::Fixed(LABEL_WIDTH)),
             )
             .push(
                 Container::new(form::Form::new(
@@ -245,10 +248,10 @@ pub fn edit_path_modal_view<'a>(
                 .push(text::p2_medium(w).style(theme::text::warning))
         });
 
-        let max_hint = text::caption(format!(
-            "Max: {} {}",
-            modal_state.timelock_unit.max_value(),
-            modal_state.timelock_unit
+        let max_hint = text::caption(t!(
+            "business-max-unit-label",
+            max = modal_state.timelock_unit.max_value(),
+            unit = modal_state.timelock_unit
         ))
         .style(theme::text::secondary);
 

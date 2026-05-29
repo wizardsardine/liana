@@ -4,6 +4,7 @@ use crate::{
 };
 use iced::{Alignment, Length};
 use liana_connect::ws_business::{UserRole, WalletStatus};
+use liana_i18n::t;
 use liana_ui::{
     component::button::{btn_primary, btn_secondary, BtnWidth},
     icon,
@@ -52,14 +53,14 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
         if is_ws_admin {
             buttons_row = buttons_row.push(btn_secondary(
                 icon,
-                "Manage Keys",
+                t!("business-manage-keys"),
                 BtnWidth::XL,
                 Some(Msg::NavigateToKeys),
             ));
         } else if is_owner {
             buttons_row = buttons_row.push(btn_primary(
                 icon,
-                "Manage Keys",
+                t!("business-manage-keys"),
                 BtnWidth::XL,
                 Some(Msg::NavigateToKeys),
             ));
@@ -71,7 +72,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
         let is_valid = state.is_template_valid();
         let lock_button = btn_primary(
             None,
-            "Send for approval",
+            t!("business-send-for-approval"),
             BtnWidth::XL,
             is_valid.then_some(Msg::TemplateLock),
         );
@@ -82,7 +83,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     if is_ws_admin && is_locked {
         buttons_row = buttons_row.push(btn_secondary(
             None,
-            "Unlock",
+            t!("business-unlock"),
             BtnWidth::M,
             Some(Msg::TemplateUnlock),
         ));
@@ -92,7 +93,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     if is_owner && is_locked {
         buttons_row = buttons_row.push(btn_primary(
             None,
-            "Approve Template",
+            t!("business-approve-template"),
             BtnWidth::XL,
             Some(Msg::TemplateValidate),
         ));
@@ -110,14 +111,14 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
         .selected_org
         .and_then(|org_id| state.backend.get_org(org_id))
         .map(|org| org.name.clone())
-        .unwrap_or_else(|| "Organization".to_string());
+        .unwrap_or_else(|| t!("business-organization"));
     let wallet_name = state
         .app
         .selected_wallet
         .and_then(|wallet_id| state.backend.get_wallet(wallet_id))
         .map(|wallet| wallet.alias.clone())
-        .unwrap_or_else(|| "Wallet".to_string());
-    let breadcrumb = vec![org_name, wallet_name, "Template".to_string()];
+        .unwrap_or_else(|| t!("business-wallet"));
+    let breadcrumb = vec![org_name, wallet_name, t!("business-template")];
 
     // Empty header content - the visualization goes directly in the scrollable area
     let header_content: Element<'_, Msg> = Column::new().into();

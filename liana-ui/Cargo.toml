@@ -13,3 +13,4 @@ iced_runtime = { workspace = true }
 unicode-segmentation = { workspace = true }
 bitcoin = { workspace = true }
 chrono = { workspace = true }
+liana-i18n = { workspace = true }

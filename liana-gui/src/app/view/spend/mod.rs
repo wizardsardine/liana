@@ -26,6 +26,7 @@ use crate::{
         view::{dashboard, message::*, psbt, FiatAmountConverter},
     },
     daemon::model::{remaining_sequence, Coin, SpendTx},
+    t,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -91,23 +92,31 @@ pub fn spend_view<'a>(
     let bottom_row = if saved {
         Column::new().push(
             Row::new()
-                .push(button::secondary(None, "Delete").width(200).on_press_maybe(
-                    (!currently_signing).then_some(Message::Spend(SpendTxMessage::Delete)),
-                ))
+                .push(
+                    button::secondary(None, t!("common-delete"))
+                        .width(200)
+                        .on_press_maybe(
+                            (!currently_signing).then_some(Message::Spend(SpendTxMessage::Delete)),
+                        ),
+                )
                 .width(Length::Fill),
         )
     } else {
         Column::new().spacing(20).push(
             Row::new()
                 .push(
-                    button::secondary(None, "< Previous")
+                    button::secondary(None, t!("common-previous"))
                         .width(150)
                         .on_press_maybe((!currently_signing).then_some(Message::Previous)),
                 )
                 .push(Space::with_width(Length::Fill))
-                .push(button::secondary(None, "Save").width(150).on_press_maybe(
-                    (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save)),
-                ))
+                .push(
+                    button::secondary(None, t!("common-save"))
+                        .width(150)
+                        .on_press_maybe(
+                            (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save)),
+                        ),
+                )
                 .width(Length::Fill),
         )
     };
@@ -158,17 +167,17 @@ pub fn create_spend_tx<'a>(
     let title = panel_title(if recovery_timelock.is_some() {
         Menu::Recovery.title()
     } else if is_self_send {
-        "Self-transfer"
+        t!("common-self-transfer")
     } else {
         Menu::CreateSpendTx.title()
     });
 
     // Optional batch label
     let batch_label = (recipients.len() > 1).then_some(
-        form::Form::new("Batch label", batch_label, |s| {
+        form::Form::new(&t!("spend-batch-label"), batch_label, |s| {
             Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(s))
         })
-        .warning("Invalid label length, cannot be superior to 100")
+        .warning(t!("spend-label-too-long"))
         .size(30)
         .padding(10),
     );
@@ -180,11 +189,11 @@ pub fn create_spend_tx<'a>(
 
     // Add payment row
     let duplicates_warning = duplicate.then_some(
-        Container::new(text("Two payment addresses are the same").style(theme::text::warning))
+        Container::new(text(t!("spend-duplicate-addresses")).style(theme::text::warning))
             .padding(10),
     );
     let add_payment_btn = (!(is_self_send || recovery_timelock.is_some())).then_some(
-        button::secondary(Some(icon::plus_icon()), "Add payment")
+        button::secondary(Some(icon::plus_icon()), t!("spend-add-payment"))
             .on_press(Message::CreateSpend(CreateSpendMessage::AddRecipient)),
     );
     let add_payment_row = Row::new()
@@ -194,10 +203,10 @@ pub fn create_spend_tx<'a>(
 
     // Fee-rate row
     let fee_input = Container::new(
-        form::Form::new_trimmed("42 (in sats/vbyte)", feerate, move |msg| {
+        form::Form::new_trimmed(&t!("spend-feerate-placeholder"), feerate, move |msg| {
             Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
         })
-        .warning("Feerate must be an integer less than or equal to 1000 sats/vbyte")
+        .warning(t!("spend-feerate-warning"))
         .size(P1_SIZE)
         .padding(10),
     )
@@ -206,7 +215,7 @@ pub fn create_spend_tx<'a>(
         Row::new()
             .spacing(10)
             .align_y(Alignment::Center)
-            .push(p1_regular("Fee:").style(theme::text::secondary))
+            .push(p1_regular(t!("spend-fee")).style(theme::text::secondary))
             .push(amount_with_font(fee, P1_REGULAR_SPEC))
             .push_maybe(fiat_converter.map(|conv| {
                 Row::new().spacing(10).align_y(Alignment::Center).push(
@@ -220,7 +229,7 @@ pub fn create_spend_tx<'a>(
     let fee_rate_row = Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
-        .push(Container::new(p1_bold("Feerate:")).padding(10))
+        .push(Container::new(p1_bold(t!("spend-feerate"))).padding(10))
         .push(fee_input)
         .push_maybe(fee_amount)
         .wrap();
@@ -244,7 +253,7 @@ pub fn create_spend_tx<'a>(
                 ),
                 P2_REGULAR_SPEC,
             ))
-            .push(p2_regular("selected").style(theme::text::secondary)),
+            .push(p2_regular(t!("spend-selected")).style(theme::text::secondary)),
     );
     let hint = selected_amount
         .is_none()
@@ -256,33 +265,33 @@ pub fn create_spend_tx<'a>(
                 if coins.iter().all(|(_, selected)| !selected) {
                     // This can happen if we have a single recipient
                     // and it has the max selected.
-                    Row::new().push(text("Select at least one coin.").style(theme::text::secondary))
+                    Row::new().push(text(t!("spend-select-one-coin")).style(theme::text::secondary))
                 } else {
                     // There must be a recipient with max selected and value 0.
                     Row::new()
-                        .push(text("Check max amount for recipient.").style(theme::text::secondary))
+                        .push(text(t!("spend-check-max-recipient")).style(theme::text::secondary))
                 }
             } else {
                 Row::new()
                     .spacing(5)
                     .push(amount_with_font(amount_left, P2_REGULAR_SPEC))
-                    .push(p2_regular("left to select").style(theme::text::secondary))
+                    .push(p2_regular(t!("spend-left-to-select")).style(theme::text::secondary))
             }
         } else {
             Row::new().push(
                 text(if feerate.value.is_empty() || !feerate.valid {
-                    "Feerate needs to be set."
+                    t!("spend-feerate-needed")
                 } else if !max_under_dust {
-                    "Add recipient details."
+                    t!("spend-add-recipient-details")
                 } else {
-                    "Select or add more funds."
+                    t!("spend-select-or-add-funds")
                 })
                 .style(theme::text::secondary),
             )
         });
     let coin_selection_header = Row::new()
         .align_y(Alignment::Center)
-        .push(p1_bold("Coins selection").width(Length::Fill))
+        .push(p1_bold(t!("spend-coins-selection")).width(Length::Fill))
         .push_maybe(selected_amount)
         .push_maybe(hint)
         .width(Length::Fill);
@@ -314,11 +323,11 @@ pub fn create_spend_tx<'a>(
 
     // Bottom row
     let previous = (!is_first_step).then_some(
-        button::secondary(None, "< Previous")
+        button::secondary(None, t!("common-previous"))
             .width(Length::Fixed(150.0))
             .on_press(Message::Previous),
     );
-    let clear = button::secondary(None, "Clear")
+    let clear = button::secondary(None, t!("common-clear"))
         .on_press(Message::CreateSpend(CreateSpendMessage::Clear))
         .width(Length::Fixed(100.0));
     let next = if is_valid
@@ -328,11 +337,11 @@ pub fn create_spend_tx<'a>(
             || recovery_timelock.is_some()
             || Some(&Amount::from_sat(0)) == amount_left)
     {
-        button::primary(None, "Next")
+        button::primary(None, t!("common-next"))
             .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
             .width(Length::Fixed(100.0))
     } else {
-        button::secondary(None, "Next").width(Length::Fixed(100.0))
+        button::secondary(None, t!("common-next")).width(Length::Fixed(100.0))
     };
     let bottom_row = Row::new()
         .spacing(20)
@@ -397,16 +406,16 @@ pub fn recipient_view<'a>(
         .align_y(Alignment::Start)
         .spacing(10)
         .push(
-            Container::new(p1_bold("Address"))
+            Container::new(p1_bold(t!("common-address")))
                 .align_x(alignment::Horizontal::Right)
                 .padding(10)
                 .width(130),
         )
         .push(
-            form::Form::new_trimmed("Address", address, move |msg| {
+            form::Form::new_trimmed(&t!("common-address"), address, move |msg| {
                 CreateSpendMessage::RecipientEdited(index, "address", msg)
             })
-            .warning("Invalid address (maybe it is for another network?)")
+            .warning(t!("spend-invalid-address"))
             .size(P1_SIZE)
             .padding(10),
         );
@@ -415,22 +424,22 @@ pub fn recipient_view<'a>(
         .align_y(Alignment::Start)
         .spacing(10)
         .push(
-            Container::new(p1_bold("Description"))
+            Container::new(p1_bold(t!("spend-description")))
                 .align_x(alignment::Horizontal::Right)
                 .padding(10)
                 .width(130),
         )
         .push(
-            form::Form::new("Payment label", label, move |msg| {
+            form::Form::new(&t!("spend-payment-label"), label, move |msg| {
                 CreateSpendMessage::RecipientEdited(index, "label", msg)
             })
-            .warning("Label length is too long (> 100 char)")
+            .warning(t!("spend-label-too-long"))
             .size(P1_SIZE)
             .padding(10),
         );
 
     // Amount row
-    let btc_label = Container::new(p1_bold("Amount (BTC)"))
+    let btc_label = Container::new(p1_bold(t!("spend-amount-btc")))
         .padding(10)
         .align_x(alignment::Horizontal::Right)
         .width(130);
@@ -441,10 +450,10 @@ pub fn recipient_view<'a>(
         Container::new(text(amount_txt).size(P1_SIZE).style(theme::text::secondary))
             .width(Length::Fill)
     } else {
-        form::Form::new_amount_btc("0.001 (in BTC)", amount, move |msg| {
+        form::Form::new_amount_btc(&t!("spend-btc-placeholder"), amount, move |msg| {
             CreateSpendMessage::RecipientEdited(index, "amount", msg)
         })
-        .warning("Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)")
+        .warning(t!("spend-invalid-amount"))
         .size(P1_SIZE)
         .padding(10)
         .into_container()
@@ -485,7 +494,7 @@ pub fn recipient_view<'a>(
                 };
                 (!is_max_selected || btc_amt.is_some()).then_some(
                     form::Form::new_trimmed(
-                        &format!("Enter amount in {}", conv.currency()),
+                        &t!("spend-fiat-placeholder", currency = conv.currency()),
                         fiat_form,
                         move |msg| CreateSpendMessage::RecipientFiatAmountEdited(index, msg, conv),
                     )
@@ -510,7 +519,7 @@ pub fn recipient_view<'a>(
             .label("MAX")
             .on_toggle(move |_| CreateSpendMessage::SendMaxToRecipient(index)),
         // Add spaces at end so that text is padded at screen edge.
-        "Total amount remaining after paying fee and any other recipients     ",
+        text(t!("spend-max-tooltip")),
         tooltip::Position::Bottom,
     ));
 
@@ -576,7 +585,7 @@ fn coin_list_view<'a>(
                                     // It is not possible to know if a coin is a
                                     // change coin or not so for now, From is
                                     // enough
-                                    p1_regular("From").style(theme::text::secondary),
+                                    p1_regular(t!("common-from")).style(theme::text::secondary),
                                 )
                                 .push(p1_regular(label)),
                         )

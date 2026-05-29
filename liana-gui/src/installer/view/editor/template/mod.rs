@@ -22,6 +22,7 @@ use crate::installer::{
     message::{self, Message},
     view::{editor::define_descriptor_advanced_settings, layout},
 };
+use crate::t;
 
 /// Max width of the editor templates' main content column.
 pub const MAX_WIDTH: f32 = 1000.0;
@@ -36,7 +37,7 @@ pub fn advanced_settings_collapse<'a>(use_taproot: bool) -> Element<'a, Message>
         } else {
             icon::collapse_icon()
         };
-        row![p1_bold("Advanced settings"), icn]
+        row![p1_bold(t!("installer-advanced-settings")), icn]
             .align_y(Alignment::Center)
             .spacing(10)
             .into()
@@ -51,12 +52,12 @@ pub fn advanced_settings_collapse<'a>(use_taproot: bool) -> Element<'a, Message>
 }
 
 pub fn template_footer<'a>(valid: bool, processing: bool, customize: bool) -> Row<'a, Message> {
-    let clear_all = button::secondary(None, "Clear All")
+    let clear_all = button::secondary(None, t!("common-clear-all"))
         .width(BtnWidth::M)
         .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset));
 
     let customize = customize.then_some(
-        button::secondary(None, "Customize")
+        button::secondary(None, t!("installer-customize"))
             .width(BtnWidth::M)
             .on_press(Message::DefineDescriptor(
                 message::DefineDescriptor::ChangeTemplate(context::DescriptorTemplate::Custom),
@@ -65,9 +66,9 @@ pub fn template_footer<'a>(valid: bool, processing: bool, customize: bool) -> Ro
 
     let msg = (!processing & valid).then_some(Message::Next);
     let msg_label = if processing {
-        "Processing..."
+        t!("common-processing")
     } else {
-        "Continue"
+        t!("common-continue")
     };
     let contin = button::primary(None, msg_label)
         .width(210)
@@ -83,7 +84,7 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
     layout(
         progress,
         None,
-        "Choose wallet type",
+        t!("installer-choose-wallet-type"),
         Column::new()
             .max_width(800.0)
             .align_x(Alignment::Start)
@@ -91,48 +92,54 @@ pub fn choose_descriptor_template(progress: (usize, usize)) -> Element<'static, 
                 Button::new(
                     Column::new()
                         .align_x(Alignment::Start)
-                        .push(h3("Simple inheritance"))
-                        .push(p2_regular("Two keys required, one for yourself to spend and another for your heir.").style(theme::text::secondary))
-                        .width(Length::Fill)
+                        .push(h3(t!("installer-simple-inheritance")))
+                        .push(
+                            p2_regular(t!("installer-simple-inheritance-description"))
+                                .style(theme::text::secondary),
+                        )
+                        .width(Length::Fill),
                 )
                 .padding(15)
-                .on_press(
-                        Message::SelectDescriptorTemplate(
-                            context::DescriptorTemplate::SimpleInheritance,
-                        )
-                ).style(theme::button::secondary)
+                .on_press(Message::SelectDescriptorTemplate(
+                    context::DescriptorTemplate::SimpleInheritance,
+                ))
+                .style(theme::button::secondary)
                 .width(Length::Fill),
             )
             .push(
                 Button::new(
                     Column::new()
                         .align_x(Alignment::Start)
-                        .push(h3("Expanding multisig"))
-                        .push(p2_regular("Two keys required to spend, with an extra key as a backup.").style(theme::text::secondary))
-                        .width(Length::Fill)
+                        .push(h3(t!("installer-expanding-multisig")))
+                        .push(
+                            p2_regular(t!("installer-expanding-multisig-description"))
+                                .style(theme::text::secondary),
+                        )
+                        .width(Length::Fill),
                 )
                 .padding(15)
-                .on_press(
-                        Message::SelectDescriptorTemplate(
-                            context::DescriptorTemplate::MultisigSecurity,
-                        )
-                ).style(theme::button::secondary)
+                .on_press(Message::SelectDescriptorTemplate(
+                    context::DescriptorTemplate::MultisigSecurity,
+                ))
+                .style(theme::button::secondary)
                 .width(Length::Fill),
             )
             .push(
                 Button::new(
                     Column::new()
                         .align_x(Alignment::Start)
-                        .push(h3("Build your own"))
-                        .push(p2_regular("Create a custom setup that fits all your needs.").style(theme::text::secondary))
-                        .width(Length::Fill)
+                        .push(h3(t!("installer-build-your-own")))
+                        .push(
+                            p2_regular(t!("installer-build-your-own-description"))
+                                .style(theme::text::secondary),
+                        )
+                        .width(Length::Fill),
                 )
                 .padding(15)
-                .on_press(
-                        Message::SelectDescriptorTemplate(
-                            context::DescriptorTemplate::Custom,
-                        )
-                ).style(theme::button::secondary)
+                .on_press(Message::SelectDescriptorTemplate(
+                    context::DescriptorTemplate::Custom,
+                ))
+                .style(theme::button::secondary)
                 .width(Length::Fill),
             )
             .spacing(20),

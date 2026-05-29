@@ -7,6 +7,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
+use liana_i18n::t;
 use liana_ui::{
     component::text::{self, truncate},
     theme,
@@ -86,8 +87,8 @@ pub fn org_card<'a>(
 ) -> Container<'a, Msg> {
     let wallets = match count {
         0 => "".to_string(),
-        1 => "(1 wallet)".to_string(),
-        c => format!("({c} wallets)"),
+        1 => t!("business-wallet-count", count = 1),
+        c => t!("business-wallet-count", count = c),
     };
 
     let name = truncate(&name, 30);
@@ -114,11 +115,9 @@ pub fn org_card<'a>(
 }
 
 pub fn no_org_card() -> Container<'static, Msg> {
-    let content = row![text::h5_regular(
-        "Contact WizardSardine to create an account."
-    )]
-    .width(Length::Fill)
-    .height(Length::Fill);
+    let content = row![text::h5_regular(t!("business-contact-create-account"))]
+        .width(Length::Fill)
+        .height(Length::Fill);
     menu_entry(content, None)
 }
 
@@ -153,10 +152,8 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
 
     if filtered_orgs.is_empty() && !orgs.is_empty() {
         // Show message when search filter returns no results
-        list_content = list_content.push(
-            text::p1_medium("No organizations found matching your search.")
-                .style(theme::text::primary),
-        );
+        list_content = list_content
+            .push(text::p1_medium(t!("business-no-orgs-search")).style(theme::text::primary));
     } else if orgs.is_empty() {
         list_content = list_content.push(no_org_card());
     } else {
@@ -215,10 +212,10 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
         progress: (3, INSTALLER_STEPS),
         email: current_user_email,
         is_ws_admin,
-        breadcrumb: vec!["Organizations".to_string()],
-        title: "Select an Organization".to_string(),
+        breadcrumb: vec![t!("business-organizations")],
+        title: t!("business-select-organization"),
         search: (is_ws_admin && !orgs.is_empty()).then_some(SelectSearch {
-            placeholder: "Filter organizations...",
+            placeholder: t!("business-filter-organizations"),
             value: &state.views.org_select.search_filter,
             on_change: Msg::OrgSelectUpdateSearchFilter,
         }),

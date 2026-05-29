@@ -994,7 +994,7 @@ impl SelectKeySource {
     fn view_no_devices(&self) -> Element<'_, Message> {
         column![
             icon::usb_icon().size(100),
-            p1_regular("Plug in a hardware device ...")
+            p1_regular(crate::t!("installer-plug-hardware-device"))
         ]
         .align_x(Horizontal::Center)
         .spacing(20)
@@ -1009,7 +1009,7 @@ impl SelectKeySource {
             bool, /* support taproot */
         )>,
     ) -> Element<'_, Message> {
-        let mut col = column![p1_bold("Detected hardware")]
+        let mut col = column![p1_bold(crate::t!("installer-detected-hardware"))]
             .spacing(5)
             .width(modal::BTN_W);
         for hw in hws {
@@ -1018,7 +1018,7 @@ impl SelectKeySource {
         if hws.is_empty() {
             col = col.push(row![
                 Space::with_width(Length::Fill),
-                p1_regular("- No other sources detected -"),
+                p1_regular(crate::t!("installer-no-other-sources")),
                 Space::with_width(Length::Fill)
             ])
         }
@@ -1026,7 +1026,7 @@ impl SelectKeySource {
     }
     fn view_keys(&self) -> Element<'_, Message> {
         let keys = self.already_used_keys();
-        let mut col = column![p1_bold("Already used sources")].spacing(5);
+        let mut col = column![p1_bold(crate::t!("installer-already-used-sources"))].spacing(5);
         for key in keys {
             col = col.push(self.widget_key(key));
         }
@@ -1357,13 +1357,13 @@ where
 {
     let pick_account = pick_account
         .map(|pick_account| row![pick_account, Space::with_width(Length::Fill)].spacing(5));
-    let info = "Switch account if you already uses the same hardware in other configurations";
+    let info = crate::t!("installer-switch-account-help");
 
     let error = error.clone().map(|e| p1_regular(e).color(color::ORANGE));
 
     let spacer = replace_message.is_some().then(|| Space::with_width(10));
     let replace_btn = replace_message.map(|m| {
-        let mut btn = button::secondary(None, "Replace");
+        let mut btn = button::secondary(None, crate::t!("common-replace"));
         if alias.valid {
             btn = btn.on_press(m);
         }
@@ -1375,12 +1375,12 @@ where
             .push(Space::with_width(Length::Fill))
             .push_maybe(replace_btn)
             .push_maybe(spacer)
-            .push(button::primary(None, "Apply").on_press_maybe(apply_msg))
+            .push(button::primary(None, crate::t!("common-apply")).on_press_maybe(apply_msg))
     } else if let Some(retry_msg) = retry_msg {
         row![
             Space::with_width(Length::Fill),
-            button::primary(None, "Retry").on_press(retry_msg),
-            button::secondary(None, "Apply")
+            button::primary(None, crate::t!("common-retry")).on_press(retry_msg),
+            button::secondary(None, crate::t!("common-apply"))
         ]
         .spacing(5)
         .align_y(Vertical::Center)
@@ -1389,26 +1389,39 @@ where
             .push(Space::with_width(Length::Fill))
             .push_maybe(replace_btn)
             .push_maybe(spacer)
-            .push(button::primary(None, "Apply"))
+            .push(button::primary(None, crate::t!("common-apply")))
     };
     let column = Column::new()
         .spacing(5)
         .push(header)
         .push(row![
-            p1_bold("Key name (alias):"),
+            p1_bold(crate::t!("installer-key-name-alias")),
             Space::with_width(Length::Fill)
         ])
         .push(row![
-            p1_regular("Give this key a friendly name. It will help you identify it later:"),
+            p1_regular(crate::t!("installer-key-name-help")),
             Space::with_width(Length::Fill)
         ])
         .push(
-            container(form::Form::new("E.g. My Hardware Wallet", alias, alias_msg).padding(10))
-                .width(300),
+            container(
+                form::Form::new(
+                    &crate::t!("installer-key-alias-placeholder"),
+                    alias,
+                    alias_msg,
+                )
+                .padding(10),
+            )
+            .width(300),
         )
         .push(Space::with_height(10))
         .push_maybe(if pick_account.is_some() {
-            Some(row![p1_bold("Key path account:"), tooltip(info)].align_y(Vertical::Center))
+            Some(
+                row![
+                    p1_bold(crate::t!("installer-key-path-account")),
+                    tooltip(info)
+                ]
+                .align_y(Vertical::Center),
+            )
         } else {
             None
         })

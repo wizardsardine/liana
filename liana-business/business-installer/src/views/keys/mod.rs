@@ -9,6 +9,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_connect::ws_business::{self, KeyType, UserRole};
+use liana_i18n::t;
 use liana_ui::{
     component::{
         pill,
@@ -65,14 +66,14 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
         .selected_org
         .and_then(|org_id| state.backend.get_org(org_id))
         .map(|org| org.name.clone())
-        .unwrap_or_else(|| "Organization".to_string());
+        .unwrap_or_else(|| t!("business-organization"));
     let wallet_name = state
         .app
         .selected_wallet
         .and_then(|wallet_id| state.backend.get_wallet(wallet_id))
         .map(|wallet| wallet.alias.clone())
-        .unwrap_or_else(|| "Wallet".to_string());
-    let breadcrumb = vec![org_name, wallet_name, "Keys".to_string()];
+        .unwrap_or_else(|| t!("business-wallet"));
+    let breadcrumb = vec![org_name, wallet_name, t!("business-keys")];
 
     layout_with_scrollable_list(
         (0, 0), // No progress indicator
@@ -90,9 +91,7 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
 fn keys_visualization(state: &State) -> Element<'static, Msg> {
     let current_user_email_lower = state.views.login.email.form.value.to_lowercase();
 
-    let instruction = text::p1_medium(
-                            "Add the keys that will be part of this wallet and link each one to its owner's email address.",
-                        ).style(theme::text::primary);
+    let instruction = text::p1_medium(t!("business-keys-instruction")).style(theme::text::primary);
     let instruction: Element<'_, Msg> =
         Container::new(Row::new().align_y(Alignment::Center).push(instruction))
             .align_x(Alignment::Center)
@@ -124,7 +123,7 @@ fn keys_visualization(state: &State) -> Element<'static, Msg> {
 
     // "Add a key" card
     let add_key_content =
-        row![text::p1_medium("+ Add a key").style(liana_ui::theme::text::secondary)]
+        row![text::p1_medium(t!("business-add-key")).style(liana_ui::theme::text::secondary)]
             .width(Length::Fill)
             .height(Length::Fill);
 

@@ -17,6 +17,7 @@ use liana_gui::{
     daemon::{Daemon, DaemonBackend},
     dir::LianaDirectory,
 };
+use liana_i18n as i18n;
 use liana_ui::widget::{modal, Element};
 
 use super::message::{Msg, Section};
@@ -74,7 +75,10 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
                 Task::none()
             }
             Msg::SelectSection(section) => self.on_select_section(section),
-            Msg::RegisterWallet | Msg::FiatEnable(_) | Msg::FiatCurrencyEdited(_) => Task::none(), // Handled in State::update()
+            Msg::RegisterWallet
+            | Msg::FiatEnable(_)
+            | Msg::FiatCurrencyEdited(_)
+            | Msg::LanguageEdited(_) => Task::none(), // Handled in State::update()
         }
     }
 
@@ -174,6 +178,9 @@ impl State for BusinessSettingsUI {
             Msg::FiatCurrencyEdited(c) => view::Message::Settings(view::SettingsMessage::Fiat(
                 view::FiatMessage::CurrencyEdited(c.into()),
             )),
+            Msg::LanguageEdited(locale) => {
+                view::Message::Settings(view::SettingsMessage::LanguageEdited(locale))
+            }
         });
         let dashboard = view::dashboard(&Menu::Settings, cache, None, content);
 
@@ -237,6 +244,18 @@ impl State for BusinessSettingsUI {
                     }
                     _ => Task::none(),
                 }
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::LanguageEdited(
+                locale,
+            ))) => {
+                i18n::set_locale(locale);
+                let path = liana_gui::app::settings::global::GlobalSettings::path(&self.data_dir);
+                if let Err(e) =
+                    liana_gui::app::settings::global::GlobalSettings::update_locale(&path, locale)
+                {
+                    tracing::error!("Failed to save language: {e}");
+                }
+                Task::none()
             }
             Message::View(view::Message::Settings(ref settings_msg)) => {
                 let msg = match settings_msg {

@@ -502,7 +502,7 @@ impl DecryptModal {
     }
 }
 
-fn invalid_content(hint: &str) -> Container<'_, installer::Message> {
+fn invalid_content(hint: String) -> Container<'static, installer::Message> {
     Container::new(
         Column::new()
             .spacing(5)
@@ -523,13 +523,13 @@ fn invalid_content(hint: &str) -> Container<'_, installer::Message> {
 fn widget_signing_device(
     name: String,
     fingerprint: Option<Fingerprint>,
-    message: &str,
+    message: String,
     pairing_code: Option<String>,
-) -> Button<'_, installer::Message> {
+) -> Button<'static, installer::Message> {
     let message = if let Some(code) = pairing_code {
         column![
             p1_regular(message),
-            p1_regular(format!("Pairing code: {code}")),
+            p1_regular(crate::t!("decrypt-pairing-code", code = code)),
         ]
     } else {
         column![p1_regular(message)]
@@ -557,22 +557,22 @@ fn cant_fetch_device(
     name: String,
     pairing_code: Option<String>,
 ) -> Button<'static, installer::Message> {
-    let message = "Please unlock or open app on the device";
+    let message = crate::t!("decrypt-unlock-device");
     widget_signing_device(name, None, message, pairing_code)
 }
 
 fn fetching_device(name: String, fingerprint: Fingerprint) -> Button<'static, installer::Message> {
-    let message = "Try to decrypt with this device...";
+    let message = crate::t!("decrypt-try-device");
     widget_signing_device(name, Some(fingerprint), message, None)
 }
 
 fn fetched_device(name: String, fingerprint: Fingerprint) -> Button<'static, installer::Message> {
-    let message = "Failed to decrypt file with this device";
+    let message = crate::t!("decrypt-device-failed");
     widget_signing_device(name, Some(fingerprint), message, None)
 }
 
 fn valid_content(state: &DecryptModal) -> Container<'static, installer::Message> {
-    let description = text::text("Plug in and unlock a hardware device belonging to this setup to \nautomatically decrypt the backup");
+    let description = text::text(crate::t!("decrypt-device-description"));
     let mut devices = state
         .fetching
         .iter()
@@ -587,7 +587,7 @@ fn valid_content(state: &DecryptModal) -> Container<'static, installer::Message>
     }
     let options_btn = modal::optional_section(
         state.show_options,
-        "Other options".to_string(),
+        crate::t!("decrypt-other-options"),
         || Decrypt::ShowOptions(true).into(),
         || Decrypt::ShowOptions(false).into(),
     );
@@ -605,7 +605,7 @@ fn valid_content(state: &DecryptModal) -> Container<'static, installer::Message>
 }
 
 fn optional_content(state: &DecryptModal) -> Container<'static, installer::Message> {
-    let mut tt = Column::new().push(text::text("Using an air-gapped device? Export the xpub from your device, then use the upload or paste option. If you don’t know the correct derivation path, try with the following:"));
+    let mut tt = Column::new().push(text::text(crate::t!("decrypt-airgap-help")));
     for d in &state.derivation_paths {
         tt = tt.push(text::text(format!("{d}")));
     }
@@ -615,7 +615,7 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
         .width(300);
 
     let airgap_hint = Row::new()
-        .push(p1_regular("Provide one of the xpubs used in this wallet."))
+        .push(p1_regular(crate::t!("decrypt-provide-xpub")))
         .push(tooltip::Tooltip::new(
             icon::tooltip_icon(),
             tt,
@@ -625,7 +625,7 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
 
     let import = modal::button_entry(
         Some(icon::import_icon()),
-        "Upload extended public key file",
+        crate::t!("decrypt-upload-xpub-file"),
         None,
         state.import_xpub_error.clone(),
         Some(|| Decrypt::SelectImportXpub.into()),
@@ -634,7 +634,7 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
     let xpub = modal::collapsible_input_button(
         state.focus == Focus::Xpub,
         Some(icon::paste_icon()),
-        "Paste an extended public key".to_string(),
+        crate::t!("decrypt-paste-xpub"),
         example_xpub(state.network),
         &state.xpub,
         Some(|s| Decrypt::Xpub(s).into()),
@@ -671,8 +671,8 @@ pub fn mnemonic_input_button<'a>(
         collapsed,
         ack,
         || icon::pencil_icon().color(color::WHITE),
-        "UNSAFE: Enter mnemonic of one of the keys",
-        " This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds.",
+        crate::t!("decrypt-enter-mnemonic-unsafe"),
+        crate::t!("decrypt-enter-mnemonic-warning"),
         "code code code code code code code code code code code brave",
         input_value,
         |ack| Decrypt::MnemonicAck(ack).into(),
@@ -685,22 +685,16 @@ pub fn mnemonic_input_button<'a>(
 /// Return the modal view for an export task
 pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Message> {
     let header = modal::header(
-        Some("Decrypt backup file".to_string()),
+        Some(crate::t!("decrypt-backup-file")),
         None::<FnMsg>,
         Some(|| installer::Message::Decrypt(Decrypt::Close)),
     );
 
     let content = match state.error {
         Some(e) => match e {
-            Error::InvalidEncoding => invalid_content(
-                "The file cannot be decoded properly, it seems no be an encrypted backup.",
-            ),
-            Error::InvalidType => invalid_content(
-                "The file have been decrypted but the content type is not supported.",
-            ),
-            Error::InvalidDescriptor => invalid_content(
-                "The file have been decrypted but the descriptor is not a valid Liana descriptor.",
-            ),
+            Error::InvalidEncoding => invalid_content(crate::t!("decrypt-invalid-encoding")),
+            Error::InvalidType => invalid_content(crate::t!("decrypt-invalid-type")),
+            Error::InvalidDescriptor => invalid_content(crate::t!("decrypt-invalid-descriptor")),
         },
         None => valid_content(state),
     };
