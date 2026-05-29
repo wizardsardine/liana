@@ -13,7 +13,7 @@ use iced::{
 use liana_connect::ws_business::Wallet;
 use liana_ui::{
     component::{
-        button::{btn_secondary, BtnWidth},
+        button::{btn_skip, BtnWidth},
         modal as ui_modal, text,
     },
     icon, theme,
@@ -75,7 +75,7 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
         None
     } else {
         let spacer = MENU_ENTRY_WIDTH - BtnWidth::XL as u32;
-        let skip_btn = btn_secondary(None, "Skip", BtnWidth::XL, Some(Msg::RegistrationSkipAll));
+        let skip_btn = btn_skip(Some(Msg::RegistrationSkipAll));
         let footer = row![
             Space::with_width(Length::Fill),
             Space::with_width(spacer),

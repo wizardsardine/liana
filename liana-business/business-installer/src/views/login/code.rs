@@ -8,10 +8,10 @@ use iced::{
 };
 use liana_ui::{
     component::{
-        button::{btn_secondary, BtnWidth},
+        button::{btn_change_email, btn_resend_token},
         form, text,
     },
-    icon, theme,
+    theme,
     widget::*,
 };
 
@@ -26,24 +26,16 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
     .padding(10);
     let form = Container::new(form).width(Length::Fill);
 
-    let btn_previous = btn_secondary(
-        Some(icon::previous_icon()),
-        " Change Email",
-        BtnWidth::XL,
-        (!state.views.login.code.can_send()).then_some(Msg::NavigateBack),
-    );
+    let btn_previous =
+        btn_change_email((!state.views.login.code.can_send()).then_some(Msg::NavigateBack));
 
-    let btn_resend_token = btn_secondary(
-        None,
-        "Resend token",
-        BtnWidth::XL,
-        state
-            .views
-            .login
-            .code
-            .can_resend_token
-            .then_some(Msg::LoginResendToken),
-    );
+    let resend_msg = state
+        .views
+        .login
+        .code
+        .can_resend_token
+        .then_some(Msg::LoginResendToken);
+    let btn_resend_token = btn_resend_token(resend_msg);
 
     let btn_row = row![btn_previous, btn_resend_token].spacing(10);
 
