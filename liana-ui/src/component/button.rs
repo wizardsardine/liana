@@ -401,6 +401,74 @@ pub fn btn_dismiss<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_destructive(Some(icon::big_cross_icon()), "Dismiss", BtnWidth::L, msg)
 }
 
+pub fn btn_customize<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Customize", BtnWidth::M, msg)
+}
+
+pub fn btn_clear_all<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Clear all", BtnWidth::M, msg)
+}
+
+pub fn btn_unlock<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Unlock all", BtnWidth::M, msg)
+}
+
+pub fn btn_reload<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "Reload", BtnWidth::M, msg)
+}
+
+pub fn btn_approve_template<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "Approve template", BtnWidth::XL, msg)
+}
+
+pub fn btn_send_for_approval<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "Send for approval", BtnWidth::XL, msg)
+}
+
+pub fn btn_keep_changes<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Keep my changes", BtnWidth::L, msg)
+}
+
+pub fn btn_send_token<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "Send token", BtnWidth::L, msg)
+}
+
+pub fn btn_breadcrumb_previous<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_flat(Some(icon::previous_icon()), "Previous", BtnWidth::L, msg)
+}
+
+pub fn btn_manage_keys<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Button<'a, T> {
+    let width = BtnWidth::XL;
+    let label = "Manage Keys";
+    let icon = Some(icon::key_icon());
+    if primary {
+        btn_primary(icon, label, width, msg)
+    } else {
+        btn_secondary(icon, label, width, msg)
+    }
+}
+
+pub fn btn_skip<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Skip", BtnWidth::XL, msg)
+}
+
+pub fn btn_resend_token<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Resend token", BtnWidth::XL, msg)
+}
+
+pub fn btn_change_email<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(
+        Some(icon::previous_icon()),
+        "Change email",
+        BtnWidth::XL,
+        msg,
+    )
+}
+
+pub fn btn_connect_another_email<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_tertiary(None, "Connect with another email", BtnWidth::XXL, msg)
+}
+
 pub fn icon_btn<'a, T: 'a + Clone>(icon: Text<'a>, message: Option<T>) -> Button<'a, T> {
     let inner = ICON_BTN_SIZE - 2.0 * ICON_BTN_PADDING;
     Button::new(

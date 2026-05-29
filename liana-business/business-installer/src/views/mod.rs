@@ -11,7 +11,7 @@ pub mod xpub;
 
 pub use keys::keys_view;
 use liana_connect::ws_business::{self, UserRole};
-use liana_ui::component::text::capitalize_first;
+use liana_ui::component::{button::btn_breadcrumb_previous, text::capitalize_first};
 pub use loading::loading_view;
 pub use login::login_view;
 pub use org_select::org_select_view;
@@ -27,7 +27,7 @@ use iced::{
 };
 use liana_ui::{
     component::{
-        button::{btn_flat, icon_btn, BtnWidth},
+        button::icon_btn,
         card::clickable_card,
         form, scrollable,
         text::{self, short_email, truncate},
@@ -115,17 +115,15 @@ fn layout_inner<'a>(
     padding_left: bool,
     previous_message: Option<Msg>,
 ) -> Element<'a, Msg> {
-    let icn = Some(icon::previous_icon());
     let has_left_button = previous_message.is_some() || email.is_some();
-    let (txt, msg) = if let Some(msg) = previous_message {
-        ("Previous", Some(msg))
+    let msg = if let Some(msg) = previous_message {
+        Some(msg)
     } else if email.is_some() {
-        ("Previous", Some(Msg::Disconnect))
+        Some(Msg::Disconnect)
     } else {
-        ("Previous", None)
+        None
     };
-
-    let left_button = btn_flat(icn, txt, BtnWidth::L, msg);
+    let left_button = btn_breadcrumb_previous(msg);
 
     // Build the top-right row with optional role badge and email
     let mut email_row = Row::new()

@@ -9,7 +9,7 @@ use iced::{
 
 use liana_ui::{
     component::{
-        button::{self, BtnWidth},
+        button::{self, btn_clear_all, btn_customize},
         collapse,
         text::{h3, p1_bold, p2_regular},
     },
@@ -51,17 +51,13 @@ pub fn advanced_settings_collapse<'a>(use_taproot: bool) -> Element<'a, Message>
 }
 
 pub fn template_footer<'a>(valid: bool, processing: bool, customize: bool) -> Row<'a, Message> {
-    let clear_all = button::secondary(None, "Clear All")
-        .width(BtnWidth::M)
-        .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset));
+    let clear_all = btn_clear_all(Some(Message::DefineDescriptor(
+        message::DefineDescriptor::Reset,
+    )));
 
-    let customize = customize.then_some(
-        button::secondary(None, "Customize")
-            .width(BtnWidth::M)
-            .on_press(Message::DefineDescriptor(
-                message::DefineDescriptor::ChangeTemplate(context::DescriptorTemplate::Custom),
-            )),
-    );
+    let customize = customize.then_some(btn_customize(Some(Message::DefineDescriptor(
+        message::DefineDescriptor::ChangeTemplate(context::DescriptorTemplate::Custom),
+    ))));
 
     let msg = (!processing & valid).then_some(Message::Next);
     let msg_label = if processing {

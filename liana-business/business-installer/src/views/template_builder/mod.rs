@@ -5,8 +5,7 @@ use crate::{
 use iced::{Alignment, Length};
 use liana_connect::ws_business::{UserRole, WalletStatus};
 use liana_ui::{
-    component::button::{btn_primary, btn_secondary, BtnWidth},
-    icon,
+    component::button::{btn_approve_template, btn_manage_keys, btn_send_for_approval, btn_unlock},
     widget::*,
 };
 
@@ -48,54 +47,28 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     // "Manage Keys" button: WS Admin or Wallet Manager, only on Draft status
     // Once the wallet is Locked/Validated/Finalized, keys cannot be managed
     if is_draft {
-        let icon = Some(icon::key_icon());
         if is_ws_admin {
-            buttons_row = buttons_row.push(btn_secondary(
-                icon,
-                "Manage Keys",
-                BtnWidth::XL,
-                Some(Msg::NavigateToKeys),
-            ));
+            buttons_row = buttons_row.push(btn_manage_keys(Some(Msg::NavigateToKeys), false));
         } else if is_owner {
-            buttons_row = buttons_row.push(btn_primary(
-                icon,
-                "Manage Keys",
-                BtnWidth::XL,
-                Some(Msg::NavigateToKeys),
-            ));
+            buttons_row = buttons_row.push(btn_manage_keys(Some(Msg::NavigateToKeys), true));
         }
     }
 
     // WS Admin on Draft: "Lock Template" (if valid)
     if is_ws_admin && is_draft {
         let is_valid = state.is_template_valid();
-        let lock_button = btn_primary(
-            None,
-            "Send for approval",
-            BtnWidth::XL,
-            is_valid.then_some(Msg::TemplateLock),
-        );
+        let lock_button = btn_send_for_approval(is_valid.then_some(Msg::TemplateLock));
         buttons_row = buttons_row.push(lock_button);
     }
 
     // WS Admin on Locked: "Unlock" button
     if is_ws_admin && is_locked {
-        buttons_row = buttons_row.push(btn_secondary(
-            None,
-            "Unlock",
-            BtnWidth::M,
-            Some(Msg::TemplateUnlock),
-        ));
+        buttons_row = buttons_row.push(btn_unlock(Some(Msg::TemplateUnlock)));
     }
 
     // Wallet Manager on Locked: "Approve Template" button
     if is_owner && is_locked {
-        buttons_row = buttons_row.push(btn_primary(
-            None,
-            "Approve Template",
-            BtnWidth::XL,
-            Some(Msg::TemplateValidate),
-        ));
+        btn_approve_template(Some(Msg::TemplateValidate));
     }
 
     let footer_content: Element<'_, Msg> = Container::new(buttons_row)

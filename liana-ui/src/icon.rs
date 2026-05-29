@@ -131,7 +131,7 @@ pub fn network_icon() -> Text<'static> {
     bootstrap_icon('\u{F40D}')
 }
 
-pub fn previous_icon() -> Text<'static> {
+pub fn previous_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F284}')
 }
 
@@ -209,7 +209,7 @@ pub fn clock_fill_icon() -> Text<'static> {
 
 const ICONEX_ICONS: Font = Font::with_name("Untitled1");
 
-fn iconex_icon(unicode: char) -> Text<'static> {
+fn iconex_icon<'a>(unicode: char) -> Text<'a> {
     Text::new(unicode.to_string())
         .font(ICONEX_ICONS)
         .width(Length::Fixed(20.0))
@@ -225,7 +225,7 @@ pub fn home_icon() -> Text<'static> {
     iconex_icon('\u{C722}')
 }
 
-pub fn key_icon() -> Text<'static> {
+pub fn key_icon<'a>() -> Text<'a> {
     iconex_icon('\u{FFEC}')
 }
 
