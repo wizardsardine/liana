@@ -237,16 +237,11 @@ pub fn device_with_height_clickable<'a, T: 'a + std::clone::Clone, C: Into<Eleme
 /// Button width presets.
 #[derive(Debug, Clone, Copy)]
 pub enum BtnWidth {
-    /// Short labels (Save, OK, Retry, Skip)
     S = 100,
-    /// Standard labels (Cancel, Clear, Unlock)
-    M = 120,
-    /// Longer labels (Keep my changes, Send token)
-    L = 160,
-    /// Long labels (Send for approval, Approve Template, Manage Keys)
-    XL = 200,
-    /// Very long labels (Connect with another email)
-    XXL = 260,
+    M = 140,
+    L = 180,
+    XL = 230,
+    XXL = 330,
     /// Default to Length::Shrink
     Auto,
 }
@@ -426,7 +421,7 @@ pub fn btn_send_for_approval<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T>
 }
 
 pub fn btn_keep_changes<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, "Keep my changes", BtnWidth::L, msg)
+    btn_secondary(None, "Keep my changes", BtnWidth::XL, msg)
 }
 
 pub fn btn_send_token<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
