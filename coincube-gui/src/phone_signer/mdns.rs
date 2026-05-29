@@ -22,11 +22,11 @@ pub const SERVICE_PROTOCOL_VERSION: u32 = 1;
 /// One discovered phone, surfaced to the discovery loop.
 #[derive(Debug, Clone)]
 pub struct DiscoveredPhone {
-    /// First 4 bytes of the phone's cert pin, hex-encoded (8 chars).
-    /// Comes from the `fp=` TXT record. We compare this against
-    /// `pairing_store::PairedPhone::identity_pubkey[..4]` to match a
-    /// discovery against a paired entry.
-    pub fingerprint_hex8: String,
+    /// First 8 hex chars of the phone's cert fingerprint
+    /// (`SHA-256(cert DER)`). Comes from the `fp=` TXT record. We
+    /// compare this against `pin_hex8(&paired.identity_pubkey)` to
+    /// match a discovery against a paired entry.
+    pub cert_fp8: String,
 
     /// Address to dial. From the mDNS A/AAAA + SRV port.
     pub addr: SocketAddr,
@@ -116,51 +116,13 @@ fn to_discovered(info: &ServiceInfo) -> Option<DiscoveredPhone> {
     let ip = info.get_addresses().iter().next()?;
     let addr = SocketAddr::new(*ip, port);
     Some(DiscoveredPhone {
-        fingerprint_hex8: fp,
+        cert_fp8: fp,
         addr,
         instance_name: info.get_fullname().to_string(),
     })
 }
 
-/// During the pairing window the desktop briefly advertises its own
-/// service so the phone can find which port to dial after scanning
-/// the QR. The returned handle keeps the registration alive; drop to
-/// unregister.
-pub fn advertise_pairing_target(
-    service_name: &str,
-    port: u16,
-    fp_hex8: &str,
-) -> Result<AdvertiseHandle, mdns_sd::Error> {
-    let d = daemon()?;
-    let host = format!("{}.local.", service_name);
-    let mut props = HashMap::new();
-    props.insert("v".to_string(), SERVICE_PROTOCOL_VERSION.to_string());
-    props.insert("fp".to_string(), fp_hex8.to_string());
-    let info = ServiceInfo::new(
-        SERVICE_TYPE,
-        service_name,
-        &host,
-        "",
-        port,
-        Some(props),
-    )?
-    .enable_addr_auto();
-    d.register(info)?;
-    Ok(AdvertiseHandle {
-        fullname: format!("{}.{}", service_name, SERVICE_TYPE),
-    })
-}
-
-/// RAII handle that keeps the desktop's pairing advertisement alive.
-/// Drop to unregister.
-pub struct AdvertiseHandle {
-    fullname: String,
-}
-
-impl Drop for AdvertiseHandle {
-    fn drop(&mut self) {
-        if let Ok(d) = daemon() {
-            let _ = d.unregister(&self.fullname);
-        }
-    }
-}
+// `advertise_pairing_target` + `AdvertiseHandle` were removed in
+// the cross-repo interop fixes: the phone is the TLS server in all
+// flows now, including pairing, so the desktop never advertises.
+// See plans/PLAN-local-signer-lan-interop-fixes-desktop.md §1.1.

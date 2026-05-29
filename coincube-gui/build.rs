@@ -41,8 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // sub-OUT_DIR so the extern stubs don't clobber the real
     // `connect.v1.rs` written by the first invocation above.
     println!("cargo:rerun-if-changed=../grpc/local_envelope.proto");
-    let local_out =
-        std::path::PathBuf::from(std::env::var("OUT_DIR")?).join("local_envelope");
+    let local_out = std::path::PathBuf::from(std::env::var("OUT_DIR")?).join("local_envelope");
     std::fs::create_dir_all(&local_out)?;
     tonic_build::configure()
         .build_server(false)

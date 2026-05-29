@@ -18,8 +18,7 @@ use rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvi
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{
-    ClientConfig, DigitallySignedStruct, DistinguishedName, Error as TlsError, ServerConfig,
-    SignatureScheme,
+    ClientConfig, DigitallySignedStruct, DistinguishedName, Error as TlsError, SignatureScheme,
 };
 use sha2::{Digest, Sha256};
 
@@ -199,8 +198,7 @@ mod tests {
         let cert = mint_cert();
         let pin = fingerprint_of(&cert);
         let v = PinnedVerifier::new(pin);
-        let res =
-            ServerCertVerifier::verify_server_cert(&*v, &cert, &[], &sni(), &[], unix_now());
+        let res = ServerCertVerifier::verify_server_cert(&*v, &cert, &[], &sni(), &[], unix_now());
         assert!(res.is_ok(), "matching pin should verify: {:?}", res.err());
     }
 
@@ -210,8 +208,7 @@ mod tests {
         let other = mint_cert();
         let pin = fingerprint_of(&cert);
         let v = PinnedVerifier::new(pin);
-        let res =
-            ServerCertVerifier::verify_server_cert(&*v, &other, &[], &sni(), &[], unix_now());
+        let res = ServerCertVerifier::verify_server_cert(&*v, &other, &[], &sni(), &[], unix_now());
         assert!(res.is_err(), "non-matching pin must reject");
     }
 
@@ -225,13 +222,27 @@ mod tests {
     }
 
     #[test]
+    fn capturing_verifier_records_cert_fp_after_handshake() {
+        let cert = mint_cert();
+        let (v, seen) = CapturingServerVerifier::new();
+        let res =
+            ServerCertVerifier::verify_server_cert(&*v, &cert, &[], &sni(), &[], unix_now());
+        assert!(res.is_ok(), "should accept any cert");
+        let recorded = seen.lock().expect("poisoned").expect("seen");
+        assert_eq!(recorded, fingerprint_of(&cert));
+    }
+
+    #[test]
     fn pinned_verifier_rejects_mismatched_client_cert() {
         let cert = mint_cert();
         let other = mint_cert();
         let pin = fingerprint_of(&cert);
         let v = PinnedVerifier::new(pin);
         let res = ClientCertVerifier::verify_client_cert(&*v, &other, &[], unix_now());
-        assert!(res.is_err(), "non-matching pin must reject (client direction)");
+        assert!(
+            res.is_err(),
+            "non-matching pin must reject (client direction)"
+        );
     }
 }
 
@@ -251,58 +262,65 @@ pub fn client_config(
     Ok(cfg)
 }
 
-/// Build a [`ServerConfig`] for the brief pairing window's TCP
-/// listener. The first phone to connect with the matching PSK echo
-/// gets bound to the offer; we accept any cert at TLS time and pin
-/// it *after* the in-band `PairingComplete` arrives.
-///
-/// `expected_pin = None` means "accept any cert" — used only during
-/// the initial pairing handshake. For steady-state inbound the
-/// desktop dials out, not the other way around, so this path is
-/// pairing-only.
-pub fn pairing_server_config(
+/// Build a [`ClientConfig`] for the **pairing dial** when the
+/// phone's cert pin isn't known yet (pair time is exactly when we
+/// learn it). Pairs with [`CapturingServerVerifier`] so the caller
+/// can read the cert fingerprint out of the verifier's `seen` slot
+/// after the TLS handshake completes.
+pub fn client_config_unpinned(
     desktop_cert: CertificateDer<'static>,
     desktop_key: PrivateKeyDer<'static>,
-) -> Result<ServerConfig, TlsError> {
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let cfg = ServerConfig::builder_with_provider(provider)
+) -> Result<(ClientConfig, std::sync::Arc<std::sync::Mutex<Option<CertFingerprint>>>), TlsError> {
+    let (verifier, seen) = CapturingServerVerifier::new();
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    let cfg = ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()?
-        .with_client_cert_verifier(AcceptAnyClientCert::new())
-        .with_single_cert(vec![desktop_cert], desktop_key)?;
-    Ok(cfg)
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_client_auth_cert(vec![desktop_cert], desktop_key)?;
+    Ok((cfg, seen))
 }
 
-/// Trivial ClientCertVerifier used only during the pairing window:
-/// accepts whatever cert the phone presents, because we don't yet
-/// know its pin. The cert bytes are then checked against the
-/// `PairingComplete` payload at the application layer.
+/// Accept-any server verifier used only during the pairing dial.
+/// Records the end-entity cert's SHA-256 in a side channel
+/// (`Arc<Mutex<Option<CertFingerprint>>>`) so the caller can pin it
+/// **after** the handshake — by which point the verifier has run
+/// and the slot is populated.
+///
+/// The signature-validity hooks delegate to the ring provider's
+/// supported algorithms; we don't blanket-accept signatures, only
+/// the chain-of-trust check.
 #[derive(Debug)]
-struct AcceptAnyClientCert {
+pub struct CapturingServerVerifier {
     crypto: Arc<CryptoProvider>,
-    no_dn: Vec<DistinguishedName>,
+    seen: std::sync::Arc<std::sync::Mutex<Option<CertFingerprint>>>,
 }
 
-impl AcceptAnyClientCert {
-    fn new() -> Arc<Self> {
-        Arc::new(Self {
+impl CapturingServerVerifier {
+    pub fn new() -> (Arc<Self>, std::sync::Arc<std::sync::Mutex<Option<CertFingerprint>>>) {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let v = Arc::new(Self {
             crypto: Arc::new(rustls::crypto::ring::default_provider()),
-            no_dn: Vec::new(),
-        })
+            seen: seen.clone(),
+        });
+        (v, seen)
     }
 }
 
-impl ClientCertVerifier for AcceptAnyClientCert {
-    fn root_hint_subjects(&self) -> &[DistinguishedName] {
-        &self.no_dn
-    }
-
-    fn verify_client_cert(
+impl ServerCertVerifier for CapturingServerVerifier {
+    fn verify_server_cert(
         &self,
-        _end_entity: &CertificateDer<'_>,
+        end_entity: &CertificateDer<'_>,
         _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
         _now: UnixTime,
-    ) -> Result<ClientCertVerified, TlsError> {
-        Ok(ClientCertVerified::assertion())
+    ) -> Result<ServerCertVerified, TlsError> {
+        let fp = fingerprint_of(end_entity);
+        if let Ok(mut slot) = self.seen.lock() {
+            *slot = Some(fp);
+        }
+        Ok(ServerCertVerified::assertion())
     }
 
     fn verify_tls12_signature(

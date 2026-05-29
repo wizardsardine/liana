@@ -11,7 +11,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use base64::engine::general_purpose::STANDARD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine as _;
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ED25519};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -42,9 +42,10 @@ struct StoredIdentity {
 pub struct DesktopIdentity {
     pub cert_der: CertificateDer<'static>,
     pub key_der: PrivateKeyDer<'static>,
-    /// Raw 32-byte Ed25519 public key. This is the bytes the phone
-    /// pins from the QR (alongside the cert hash) and the desktop
-    /// publishes as `fp=` in mDNS.
+    /// Raw 32-byte Ed25519 public key from the cert's SPKI. Retained
+    /// for debug/log purposes only; the wire contract identifies the
+    /// desktop by [`Self::cert_fp`] (SHA-256 of the cert DER), not by
+    /// this raw pubkey.
     pub pubkey: [u8; 32],
 }
 
@@ -52,21 +53,43 @@ impl DesktopIdentity {
     pub fn clone_key(&self) -> PrivateKeyDer<'static> {
         self.key_der.clone_key()
     }
+
+    /// SHA-256 of the cert DER, lowercase hex (64 chars). Embedded
+    /// in the pairing QR's `certFp` field so the phone can pin the
+    /// desktop's TLS cert; also matched against the cert presented
+    /// during steady-state handshakes.
+    pub fn cert_fp(&self) -> String {
+        use sha2::Digest;
+        let digest = sha2::Sha256::digest(self.cert_der.as_ref());
+        let mut s = String::with_capacity(64);
+        for byte in digest.as_slice() {
+            use std::fmt::Write as _;
+            let _ = write!(s, "{:02x}", byte);
+        }
+        s
+    }
+
+    /// First 8 hex chars of [`Self::cert_fp`] — the same shape the
+    /// phone publishes in its mDNS TXT `fp=` record.
+    pub fn cert_fp8(&self) -> String {
+        self.cert_fp().chars().take(8).collect()
+    }
+
+    /// Base64url-encoded (no padding) cert DER bytes. Embedded in
+    /// the pairing QR's `cert` field so the phone can add the
+    /// desktop's cert to its TLS trust store before the desktop
+    /// dials. Companion to [`Self::cert_fp`] — both source the same
+    /// `cert_der`, so they're guaranteed to agree.
+    pub fn cert_der_b64(&self) -> String {
+        URL_SAFE_NO_PAD.encode(self.cert_der.as_ref())
+    }
 }
 
 impl std::fmt::Debug for DesktopIdentity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DesktopIdentity")
-            .field("pubkey_fp8", &fingerprint_hex8(&self.pubkey))
+            .field("cert_fp8", &self.cert_fp8())
             .finish()
-    }
-}
-
-impl DesktopIdentity {
-    /// First-4-bytes-hex of the pubkey, the form we publish in mDNS
-    /// TXT records (`fp=…`).
-    pub fn fingerprint_hex8(&self) -> String {
-        fingerprint_hex8(&self.pubkey)
     }
 }
 
@@ -116,8 +139,7 @@ fn identity_from_stored(stored: &StoredIdentity) -> io::Result<DesktopIdentity> 
 
     // Parse the PKCS#8 key PEM -> DER, then wrap as PrivatePkcs8KeyDer.
     let key_bytes = pem_to_der(&stored.key_pem, "PRIVATE KEY")?;
-    let key_der: PrivateKeyDer<'static> =
-        PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_bytes));
+    let key_der: PrivateKeyDer<'static> = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_bytes));
 
     // Re-parse the PEM key with rcgen so we can extract the raw
     // 32-byte Ed25519 pubkey without writing our own PKCS#8 parser.
@@ -172,15 +194,20 @@ fn pem_to_der(pem_str: &str, expected_tag: &str) -> io::Result<Vec<u8>> {
 fn write_atomic(dir: &CoincubeDirectory, stored: &StoredIdentity) -> io::Result<()> {
     let path = identity_path(dir);
     let tmp = path.with_extension("json.tmp");
-    let bytes = serde_json::to_vec_pretty(stored)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let bytes =
+        serde_json::to_vec_pretty(stored).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     fs::write(&tmp, bytes)?;
     fs::rename(tmp, path)
 }
 
-pub fn fingerprint_hex8(pubkey: &[u8; 32]) -> String {
+/// First 8 hex chars of a paired-phone's 32-byte cert pin (which is
+/// `SHA-256(cert DER)` truncated to its first 4 bytes). The same
+/// shape the phone publishes in its mDNS `fp=` TXT record. Used
+/// across `hw.rs`, `mdns.rs`, and the settings panel as a short
+/// human-readable identifier.
+pub fn pin_hex8(pin: &[u8; 32]) -> String {
     let mut s = String::with_capacity(8);
-    for byte in &pubkey[..4] {
+    for byte in &pin[..4] {
         use std::fmt::Write as _;
         let _ = write!(s, "{:02x}", byte);
     }
@@ -205,16 +232,29 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_hex8_is_eight_hex_chars() {
-        let pubkey = [0xab, 0xcd, 0xef, 0x12, 0x99, 0x99, 0x99, 0x99].iter()
-            .copied()
-            .chain(std::iter::repeat(0).take(24))
-            .collect::<Vec<_>>();
+    fn pin_hex8_is_eight_hex_chars() {
         let mut arr = [0u8; 32];
-        arr.copy_from_slice(&pubkey);
-        let s = fingerprint_hex8(&arr);
+        arr[..4].copy_from_slice(&[0xab, 0xcd, 0xef, 0x12]);
+        let s = pin_hex8(&arr);
         assert_eq!(s, "abcdef12");
         assert_eq!(s.len(), 8);
+    }
+
+    #[test]
+    fn cert_fp_is_64_lowercase_hex_chars() {
+        let dir = fresh_dir();
+        let id = load_or_create(&dir).expect("mint");
+        let fp = id.cert_fp();
+        assert_eq!(fp.len(), 64);
+        assert!(fp.chars().all(|c| c.is_ascii_hexdigit() && (!c.is_alphabetic() || c.is_lowercase())));
+    }
+
+    #[test]
+    fn cert_fp8_matches_first_eight_of_cert_fp() {
+        let dir = fresh_dir();
+        let id = load_or_create(&dir).expect("mint");
+        let fp = id.cert_fp();
+        assert_eq!(id.cert_fp8(), &fp[..8]);
     }
 
     #[test]
@@ -236,15 +276,10 @@ mod tests {
     }
 
     #[test]
-    fn fresh_identity_has_32_byte_pubkey_and_matches_cert_pin() {
+    fn fresh_identity_has_32_byte_pubkey_and_non_empty_cert() {
         let dir = fresh_dir();
         let id = load_or_create(&dir).expect("mint");
-        // Ed25519 pubkeys are 32 bytes.
         assert_eq!(id.pubkey.len(), 32);
-        // Spot-check the helper exposes the same first 4 bytes.
-        let hex = id.fingerprint_hex8();
-        assert_eq!(hex.len(), 8);
-        // The cert exists and is non-empty.
         assert!(!id.cert_der.as_ref().is_empty());
     }
 

@@ -25,10 +25,17 @@ message LocalEnvelope {
   }
 }
 
-// Sent by the phone once the Noise/PSK handshake succeeds, so the
-// desktop can persist the phone's stable identity pubkey.
+// Sent by the phone as the first frame after the pairing TLS
+// handshake completes, so the desktop can confirm the phone's
+// reported cert fingerprint matches the one it pinned from the
+// just-completed handshake. Validation today is informational
+// (the pin is taken from the live TLS cert, not from this string)
+// but the string IS expected to round-trip cleanly so misconfigured
+// phones surface in logs.
 message PairingComplete {
-  bytes  phone_identity_pubkey = 1;   // Ed25519
+  // SHA-256 of the phone's self-signed cert DER, lowercase hex
+  // (64 chars). MUST match the bytes pinned from the TLS handshake.
+  string phone_cert_fp         = 1;
   string device_name           = 2;
   string app_version           = 3;
   repeated string capabilities = 4;
@@ -60,8 +67,12 @@ message PartialSignature {
 }
 
 // Either side -> peer: out-of-band error. Code is machine-readable;
-// message is human-readable.
+// message is human-readable. `session_id` is optional: set only when
+// the error pertains to a specific in-flight signing session, in
+// which case the desktop's correlator routes the error to that
+// session's waiter instead of broadcasting.
 message ErrorEnvelope {
-  string code    = 1;
-  string message = 2;
+  string code       = 1;
+  string message    = 2;
+  string session_id = 3;
 }

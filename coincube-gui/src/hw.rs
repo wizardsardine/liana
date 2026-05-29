@@ -706,18 +706,17 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
         match crate::phone_signer::pairing_store::load(&state.datadir_path) {
             Ok(store) if !store.phones.is_empty() => {
                 let discovered = crate::phone_signer::mdns::browse();
-                let identity = match crate::phone_signer::identity::load_or_create(
-                    &state.datadir_path,
-                ) {
-                    Ok(id) => Some(id),
-                    Err(e) => {
-                        warn!("local-signer identity unavailable: {}", e);
-                        None
-                    }
-                };
+                let identity =
+                    match crate::phone_signer::identity::load_or_create(&state.datadir_path) {
+                        Ok(id) => Some(id),
+                        Err(e) => {
+                            warn!("local-signer identity unavailable: {}", e);
+                            None
+                        }
+                    };
                 if let Some(identity) = identity {
                     for paired in &store.phones {
-                        let fp8 = crate::phone_signer::identity::fingerprint_hex8(
+                        let fp8 = crate::phone_signer::identity::pin_hex8(
                             &paired.identity_pubkey,
                         );
                         let id = format!("phone-{}", fp8);
@@ -1060,7 +1059,7 @@ pub(crate) fn resolve_phone_target(
 ) -> Option<std::net::SocketAddr> {
     let mdns_addr = discovered
         .iter()
-        .find(|d| d.fingerprint_hex8 == fp8)
+        .find(|d| d.cert_fp8 == fp8)
         .map(|d| d.addr);
     let fallback_addr = paired
         .fallback_addr
@@ -1088,7 +1087,7 @@ mod tests {
 
     fn discovered(fp8: &str, addr: &str) -> DiscoveredPhone {
         DiscoveredPhone {
-            fingerprint_hex8: fp8.into(),
+            cert_fp8: fp8.into(),
             addr: addr.parse::<SocketAddr>().expect("parse addr"),
             instance_name: "test".into(),
         }

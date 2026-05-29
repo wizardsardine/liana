@@ -27,7 +27,7 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
 use coincube_gui::phone_signer::{
-    identity::{fingerprint_hex8, DesktopIdentity},
+    identity::{pin_hex8, DesktopIdentity},
     pairing_store::PairedPhone,
     protocol::{local_v1, LocalEnvelope},
     tls,
@@ -131,7 +131,11 @@ async fn fake_phone(
         }),
         FakeResponse::Error { code, message } => Some(LocalEnvelope {
             payload: Some(local_v1::local_envelope::Payload::Error(
-                local_v1::ErrorEnvelope { code, message },
+                local_v1::ErrorEnvelope {
+                    code,
+                    message,
+                    session_id: String::new(),
+                },
             )),
         }),
         FakeResponse::Disconnect => None,
@@ -160,11 +164,16 @@ async fn fake_phone(
 /// `ClientCertVerifier` is therefore configured as "no client auth"
 /// so the desktop's TLS client cert isn't required to chain to
 /// anything.
-fn verifier_pinning(_pin: tls::CertFingerprint) -> Arc<dyn rustls::server::danger::ClientCertVerifier> {
+fn verifier_pinning(
+    _pin: tls::CertFingerprint,
+) -> Arc<dyn rustls::server::danger::ClientCertVerifier> {
     WebPkiClientVerifier::no_client_auth()
 }
 
-#[tokio::test]
+// Multi-threaded so a regression that holds the transport mutex
+// across `recv().await` would actually deadlock instead of being
+// papered over by single-threaded cooperative scheduling.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sign_tx_round_trips_through_fake_phone() {
     // 1. Mint desktop and phone identities.
     let (desk_cert, desk_key) = mint_ed25519_cert("Coincube Desktop (test)");
@@ -228,7 +237,7 @@ async fn sign_tx_round_trips_through_fake_phone() {
     let _ = phone_handle.await;
 
     // Sanity: the test also exercises the fingerprint helper.
-    let _hex = fingerprint_hex8(&phone_pin);
+    let _hex = pin_hex8(&phone_pin);
 }
 
 /// Shared scaffolding for the unhappy-path tests: spin up a fake

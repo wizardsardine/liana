@@ -345,11 +345,17 @@ pub enum SettingsMessage {
 
 #[derive(Debug, Clone)]
 pub enum LocalSigningMessage {
-    /// "Pair phone" button → settings state generates a fresh offer
-    /// and starts the pairing TLS listener.
+    /// "Pair phone" button → settings state browses mDNS and shows
+    /// the phone picker. The user then picks one with `PickPhone`.
     StartPairing,
+    /// User picked a phone from the discovered-phones list. Carries
+    /// the picked phone's 8-hex cert fingerprint; the settings state
+    /// looks it up in its current `PhonePicker.discovered` and uses
+    /// the resolved address + service name to build the offer.
+    PickPhone(String),
     /// Settings state's pairing-window timer fired one tick. Used to
-    /// update the on-screen countdown.
+    /// update the on-screen countdown and (in PhonePicker) to
+    /// refresh the mDNS-discovered list.
     Tick,
     /// User cancelled the pairing wizard before the phone connected.
     CancelPairing,

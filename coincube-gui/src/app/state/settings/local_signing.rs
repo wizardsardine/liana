@@ -28,10 +28,17 @@ use crate::phone_signer::pairing_store::{PairedPhone, PairingStoreFile};
 pub enum PairingFlow {
     /// No pairing in flight; render the paired-phones table.
     Idle,
-    /// Generated an offer and the TLS listener is running. The view
-    /// renders the QR + countdown until the offer expires or the
-    /// phone connects.
+    /// User clicked "Pair phone" and we're showing the list of
+    /// discovered phones on the LAN so they can pick one. mDNS
+    /// browse runs every tick to keep the list fresh.
+    PhonePicker {
+        discovered: Vec<crate::phone_signer::mdns::DiscoveredPhone>,
+    },
+    /// User picked a phone and we've generated an offer aimed at it.
+    /// The view renders the QR + countdown until the offer expires
+    /// or `run_pairing` returns.
     Waiting {
+        phone: crate::phone_signer::mdns::DiscoveredPhone,
         offer: PairingOffer,
         /// Pre-rendered QR pixel grid. Held on the state so the view
         /// can hand a reference to iced's `QRCode` widget without
@@ -41,7 +48,7 @@ pub enum PairingFlow {
     },
     /// Pairing completed with this phone.
     Done(PairedPhone),
-    /// The listener returned an error before completion. Typed so
+    /// `run_pairing` returned an error before completion. Typed so
     /// the view can render category-specific copy and decide whether
     /// to show a Try-Again button.
     Error(PairingError),
@@ -102,7 +109,7 @@ impl LocalSigningState {
 
     pub(crate) fn seed_row_drafts(&mut self) {
         for p in &self.phones.phones {
-            let fp8 = crate::phone_signer::identity::fingerprint_hex8(&p.identity_pubkey);
+            let fp8 = crate::phone_signer::identity::pin_hex8(&p.identity_pubkey);
             self.row_drafts.entry(fp8).or_insert_with(|| RowDraft {
                 name: p.name.clone(),
                 fallback: p.fallback_addr.clone().unwrap_or_default(),
@@ -123,17 +130,15 @@ impl LocalSigningState {
     /// Persist the draft for `fp8` into the matching `PairedPhone`
     /// and write the store back to disk. Empty name keeps the prior
     /// name; empty fallback clears it.
-    pub(crate) fn apply_save_row(
-        &mut self,
-        dir: &crate::dir::CoincubeDirectory,
-        fp8: &str,
-    ) {
+    pub(crate) fn apply_save_row(&mut self, dir: &crate::dir::CoincubeDirectory, fp8: &str) {
         let Some(draft) = self.row_drafts.get(fp8).cloned() else {
             return;
         };
-        if let Some(p) = self.phones.phones.iter_mut().find(|p| {
-            crate::phone_signer::identity::fingerprint_hex8(&p.identity_pubkey) == fp8
-        }) {
+        if let Some(p) =
+            self.phones.phones.iter_mut().find(|p| {
+                crate::phone_signer::identity::pin_hex8(&p.identity_pubkey) == fp8
+            })
+        {
             if !draft.name.trim().is_empty() {
                 p.name = draft.name.trim().to_string();
             }
@@ -143,18 +148,25 @@ impl LocalSigningState {
             } else {
                 Some(f.to_string())
             };
-            let _ = crate::phone_signer::pairing_store::save(dir, &self.phones);
+            if let Err(e) = crate::phone_signer::pairing_store::save(dir, &self.phones) {
+                // Persist failed — drop the in-memory edit so the
+                // table reflects what's actually on disk. The
+                // user's typed values stay in `row_drafts` (seed
+                // uses `or_insert_with`) so they can retry.
+                tracing::warn!(
+                    "pairing_store::save failed for {}: {}; reverting in-memory edit",
+                    fp8,
+                    e
+                );
+                self.refresh_phones_from(dir);
+            }
         }
     }
 
     /// Remove a row by 8-hex fingerprint. No-op if not present.
-    pub(crate) fn apply_remove_phone(
-        &mut self,
-        dir: &crate::dir::CoincubeDirectory,
-        fp8: &str,
-    ) {
+    pub(crate) fn apply_remove_phone(&mut self, dir: &crate::dir::CoincubeDirectory, fp8: &str) {
         let to_remove = self.phones.phones.iter().find_map(|p| {
-            if crate::phone_signer::identity::fingerprint_hex8(&p.identity_pubkey) == fp8 {
+            if crate::phone_signer::identity::pin_hex8(&p.identity_pubkey) == fp8 {
                 Some(p.identity_pubkey)
             } else {
                 None
@@ -189,28 +201,66 @@ impl State for LocalSigningState {
         };
         match msg {
             LocalSigningMessage::StartPairing => {
+                // We need a wallet fingerprint before we can build
+                // an offer. Bail with a typed error if there's no
+                // wallet loaded yet.
+                if self.wallet_fingerprint.is_none() {
+                    self.flow = PairingFlow::Error(PairingError::InternalError(
+                        "No wallet loaded — pairing needs a wallet fingerprint.".into(),
+                    ));
+                    return Task::none();
+                }
+                // Enter the picker; the Tick subscription will keep
+                // refreshing the discovered list every second.
+                self.flow = PairingFlow::PhonePicker {
+                    discovered: crate::phone_signer::mdns::browse(),
+                };
+                Task::none()
+            }
+            LocalSigningMessage::PickPhone(fp8) => {
                 let Some(fingerprint) = self.wallet_fingerprint else {
                     self.flow = PairingFlow::Error(PairingError::InternalError(
                         "No wallet loaded — pairing needs a wallet fingerprint.".into(),
                     ));
                     return Task::none();
                 };
+                // Look up the picked phone in whatever we last
+                // discovered. If the user picked from a stale list
+                // and the phone has since dropped, error out cleanly.
+                let Some(phone) = (match &self.flow {
+                    PairingFlow::PhonePicker { discovered } => discovered
+                        .iter()
+                        .find(|d| d.cert_fp8 == fp8)
+                        .cloned(),
+                    _ => None,
+                }) else {
+                    self.flow = PairingFlow::Error(PairingError::InternalError(format!(
+                        "Phone {} no longer discoverable on the LAN.",
+                        fp8
+                    )));
+                    return Task::none();
+                };
                 let identity =
                     match crate::phone_signer::identity::load_or_create(&cache.datadir_path) {
                         Ok(id) => id,
                         Err(e) => {
-                            self.flow = PairingFlow::Error(PairingError::InternalError(
-                                format!("identity: {}", e),
-                            ));
+                            self.flow = PairingFlow::Error(PairingError::InternalError(format!(
+                                "identity: {}",
+                                e
+                            )));
                             return Task::none();
                         }
                     };
-                let GeneratedOffer { offer, psk } =
-                    crate::phone_signer::pairing::generate_offer(fingerprint, &identity.pubkey);
+                let GeneratedOffer { offer } = crate::phone_signer::pairing::generate_offer(
+                    fingerprint,
+                    &identity,
+                    phone.instance_name.clone(),
+                );
                 let qr = crate::phone_signer::pairing::encode_offer(&offer)
                     .ok()
                     .and_then(|s| qr_code::Data::new(&s).ok());
                 self.flow = PairingFlow::Waiting {
+                    phone: phone.clone(),
                     offer: offer.clone(),
                     qr,
                 };
@@ -218,8 +268,10 @@ impl State for LocalSigningState {
                 let fps = vec![fingerprint];
                 Task::perform(
                     async move {
-                        crate::phone_signer::pairing_listener::run(identity, offer, psk, fps, dir)
-                            .await
+                        crate::phone_signer::pairing_listener::run_pairing(
+                            identity, offer, phone, fps, dir,
+                        )
+                        .await
                     },
                     |res| {
                         Message::View(view::Message::Settings(
@@ -230,7 +282,15 @@ impl State for LocalSigningState {
                     },
                 )
             }
-            LocalSigningMessage::Tick => Task::none(),
+            LocalSigningMessage::Tick => {
+                // Refresh the discovered list while the picker is
+                // open so the user sees phones appear/disappear in
+                // ~real time.
+                if let PairingFlow::PhonePicker { discovered } = &mut self.flow {
+                    *discovered = crate::phone_signer::mdns::browse();
+                }
+                Task::none()
+            }
             LocalSigningMessage::CancelPairing => {
                 self.flow = PairingFlow::Idle;
                 Task::none()
@@ -267,13 +327,17 @@ impl State for LocalSigningState {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        // Drive the countdown while a pairing offer is on-screen.
+        // Drive the countdown while a pairing offer is on-screen,
+        // and refresh the phone-picker list every second while the
+        // picker is open.
         match self.flow {
-            PairingFlow::Waiting { .. } => iced::time::every(Duration::from_secs(1)).map(|_| {
-                Message::View(view::Message::Settings(view::SettingsMessage::LocalSigning(
-                    LocalSigningMessage::Tick,
-                )))
-            }),
+            PairingFlow::Waiting { .. } | PairingFlow::PhonePicker { .. } => {
+                iced::time::every(Duration::from_secs(1)).map(|_| {
+                    Message::View(view::Message::Settings(view::SettingsMessage::LocalSigning(
+                        LocalSigningMessage::Tick,
+                    )))
+                })
+            }
             _ => iced::Subscription::none(),
         }
     }
@@ -311,7 +375,10 @@ mod tests {
 
     fn fresh_dir() -> CoincubeDirectory {
         let mut path = std::env::temp_dir();
-        path.push(format!("coincube-localsigning-test-{}", uuid::Uuid::new_v4()));
+        path.push(format!(
+            "coincube-localsigning-test-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&path).expect("mkdir tempdir");
         CoincubeDirectory::new(path)
     }
@@ -327,7 +394,7 @@ mod tests {
     }
 
     fn fp8_of(p: &PairedPhone) -> String {
-        crate::phone_signer::identity::fingerprint_hex8(&p.identity_pubkey)
+        crate::phone_signer::identity::pin_hex8(&p.identity_pubkey)
     }
 
     fn seed_store(dir: &CoincubeDirectory, phones: Vec<PairedPhone>) {
@@ -424,6 +491,41 @@ mod tests {
 
         let on_disk = pairing_store::load(&dir).unwrap();
         assert_eq!(on_disk.phones[0].name, "Prior");
+    }
+
+    #[test]
+    fn apply_save_row_reverts_in_memory_when_persist_fails() {
+        // Force `pairing_store::save` to fail by parking a directory
+        // at the temp path it writes to — `std::fs::write(&tmp, ..)`
+        // can't overwrite a directory.
+        let dir = fresh_dir();
+        let p = paired(10, "Original", Some("10.0.0.1:8443"));
+        seed_store(&dir, vec![p.clone()]);
+
+        let blocker = dir.path().join("paired-phones.json.tmp");
+        std::fs::create_dir(&blocker).expect("create blocker dir");
+
+        let mut state = LocalSigningState::default();
+        state.refresh_phones_from(&dir);
+        let fp = fp8_of(&p);
+        state.apply_draft_name(fp.clone(), "Renamed".into());
+        state.apply_draft_fallback(fp.clone(), "192.168.5.20:9000".into());
+        state.apply_save_row(&dir, &fp);
+
+        // In-memory phones reverted to what's actually on disk.
+        assert_eq!(state.phones.phones[0].name, "Original");
+        assert_eq!(
+            state.phones.phones[0].fallback_addr.as_deref(),
+            Some("10.0.0.1:8443")
+        );
+        let on_disk = pairing_store::load(&dir).unwrap();
+        assert_eq!(on_disk.phones[0].name, "Original");
+
+        // Draft preserved so the user can retry once the disk issue
+        // clears.
+        let draft = state.row_drafts.get(&fp).expect("draft still there");
+        assert_eq!(draft.name, "Renamed");
+        assert_eq!(draft.fallback, "192.168.5.20:9000");
     }
 
     #[test]

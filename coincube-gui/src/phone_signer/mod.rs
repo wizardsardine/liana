@@ -35,7 +35,7 @@ use crate::phone_signer::pairing_store::PairedPhone;
 use crate::phone_signer::protocol::{
     cancel_envelope, present_session_envelope, Correlator, SignResponse,
 };
-use crate::phone_signer::transport::PairedTransport;
+use crate::phone_signer::transport::{PairedTransport, PairedWriter};
 
 /// How long [`PhoneSigner::sign_tx`] waits for the phone to send a
 /// `PartialSignature` after `PresentSession`. Sized for a slow user
@@ -48,14 +48,16 @@ const SIGN_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 /// it in `HardwareWallet::Supported`, so the PSBT panel hits it via
 /// the same `hw.sign_tx(&mut psbt)` call path as Jade/Ledger.
 pub struct PhoneSigner {
-    /// Long-lived TLS transport for this paired phone. `Mutex`
-    /// because `sign_tx` takes `&self` but the framed write cursor
-    /// is stateful and needs serialised access.
-    pub(crate) transport: Arc<Mutex<PairedTransport>>,
+    /// Write half of the TLS transport. `Mutex` because `sign_tx`
+    /// takes `&self` but the framed write cursor is stateful and
+    /// needs serialised access. The matching read half lives inside
+    /// the [`Correlator`] reader task, so writes never contend with
+    /// `recv().await`.
+    pub(crate) writer: Arc<Mutex<PairedWriter>>,
 
     /// Demultiplexer that pulls envelopes off the wire and routes
     /// each `PartialSignature` by `session_id` to the right
-    /// `sign_tx` invocation. Shared with the reader task.
+    /// `sign_tx` invocation. Owns the read half of the transport.
     pub(crate) correlator: Arc<Correlator>,
 
     /// Master fingerprint reported by the phone at pair time. We
@@ -87,10 +89,10 @@ impl PhoneSigner {
         version: Option<Version>,
         paired_phone: PairedPhone,
     ) -> Self {
-        let transport = Arc::new(Mutex::new(transport));
-        let correlator = Arc::new(Correlator::spawn(transport.clone()));
+        let (reader, writer) = transport.split();
+        let correlator = Arc::new(Correlator::spawn(reader));
         Self {
-            transport,
+            writer: Arc::new(Mutex::new(writer)),
             correlator,
             fingerprint,
             version,
@@ -115,9 +117,7 @@ impl HWI for PhoneSigner {
     }
 
     async fn get_version(&self) -> Result<Version, HwiError> {
-        self.version
-            .clone()
-            .ok_or(HwiError::UnimplementedMethod)
+        self.version.clone().ok_or(HwiError::UnimplementedMethod)
     }
 
     async fn get_master_fingerprint(&self) -> Result<Fingerprint, HwiError> {
@@ -179,7 +179,7 @@ impl HWI for PhoneSigner {
         let envelope = present_session_envelope(session);
         let rx = self.correlator.register(session_id.clone()).await;
         {
-            let mut t = self.transport.lock().await;
+            let mut t = self.writer.lock().await;
             if let Err(e) = t.send(&envelope).await {
                 self.correlator.cancel(&session_id).await;
                 return Err(e);
@@ -195,7 +195,7 @@ impl HWI for PhoneSigner {
             Err(_) => {
                 // Timeout — best-effort tell the phone to drop it.
                 let cancel = cancel_envelope(&session_id, "desktop timeout");
-                let mut t = self.transport.lock().await;
+                let mut t = self.writer.lock().await;
                 let _ = t.send(&cancel).await;
                 self.correlator.cancel(&session_id).await;
                 return Err(HwiError::Device("sign_tx timeout".into()));
@@ -205,7 +205,7 @@ impl HWI for PhoneSigner {
         let partial = match response {
             SignResponse::Partial(p) => p,
             SignResponse::Error(msg) => {
-                return Err(HwiError::Device(msg));
+                return Err(map_phone_error(msg));
             }
             SignResponse::Disconnected => {
                 return Err(HwiError::DeviceDisconnected);
@@ -217,6 +217,24 @@ impl HWI for PhoneSigner {
 
         merge_signatures(psbt, &signed);
         Ok(())
+    }
+}
+
+/// Translate a phone-reported error string into a friendlier
+/// [`HwiError`]. Today the only specific case is `replay_refused:`,
+/// emitted by the phone's persistent replay guard when the desktop
+/// asks it to sign a `session_id` the phone has already finalised
+/// (possibly via the Connect transport). The PSBT panel already
+/// distinguishes `HwiError::Device` from `DeviceNotFound`, so we
+/// keep it as a Device error and just rewrite the message.
+fn map_phone_error(msg: String) -> HwiError {
+    if msg.starts_with("replay_refused:") {
+        HwiError::Device(format!(
+            "Session already signed by this phone — refusing replay. ({})",
+            msg,
+        ))
+    } else {
+        HwiError::Device(msg)
     }
 }
 
@@ -237,5 +255,35 @@ fn merge_signatures(target: &mut Psbt, signed: &Psbt) {
                 target_in.tap_script_sigs.insert(*k, *v);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replay_refused_error_gets_friendly_message() {
+        let err = map_phone_error("replay_refused: session abc already signed".into());
+        let msg = match err {
+            HwiError::Device(m) => m,
+            other => panic!("expected Device, got {:?}", other),
+        };
+        assert!(
+            msg.starts_with("Session already signed by this phone"),
+            "got: {}",
+            msg,
+        );
+        assert!(msg.contains("replay_refused:"), "got: {}", msg);
+    }
+
+    #[test]
+    fn non_replay_error_passes_through_unchanged() {
+        let err = map_phone_error("USER_DECLINED: tap reject".into());
+        let msg = match err {
+            HwiError::Device(m) => m,
+            other => panic!("expected Device, got {:?}", other),
+        };
+        assert_eq!(msg, "USER_DECLINED: tap reject");
     }
 }

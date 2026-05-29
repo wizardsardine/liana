@@ -58,7 +58,8 @@ fn pairing_card<'a>(state: &'a LocalSigningState) -> Element<'a, Message> {
 
     let body: Element<'a, Message> = match &state.flow {
         PairingFlow::Idle => idle_body(state),
-        PairingFlow::Waiting { offer, qr } => waiting_body(offer, qr.as_ref()),
+        PairingFlow::PhonePicker { discovered } => picker_body(discovered),
+        PairingFlow::Waiting { phone, offer, qr } => waiting_body(phone, offer, qr.as_ref()),
         PairingFlow::Done(p) => done_body(&p.name),
         PairingFlow::Error(e) => error_body(e),
     };
@@ -93,12 +94,13 @@ fn idle_body<'a>(state: &'a LocalSigningState) -> Element<'a, Message> {
 }
 
 fn waiting_body<'a>(
+    phone: &'a crate::phone_signer::mdns::DiscoveredPhone,
     offer: &'a crate::phone_signer::pairing::PairingOffer,
     qr: Option<&'a qr_code::Data>,
 ) -> Element<'a, Message> {
     let remaining = crate::phone_signer::pairing::seconds_remaining(offer);
     let countdown = if remaining > 0 {
-        format!("Waiting for phone — expires in {}s", remaining)
+        format!("Waiting for {} — expires in {}s", phone.cert_fp8, remaining)
     } else {
         "Pairing offer expired.".to_string()
     };
@@ -108,10 +110,11 @@ fn waiting_body<'a>(
         .spacing(10)
         .align_x(Alignment::Center)
         .push(text(countdown))
-        .push(text(
-            "Open the Keychain app on your phone and tap \
-             'Scan pairing QR'.",
-        ));
+        .push(text(format!(
+            "Scan this QR with the Keychain app on \
+             phone {} ({}).",
+            phone.cert_fp8, phone.addr,
+        )));
     if let Some(qr) = qr {
         body = body.push(
             Container::new(QRCode::<coincube_ui::theme::Theme>::new(qr).cell_size(8)).padding(10),
@@ -123,6 +126,65 @@ fn waiting_body<'a>(
         )),
     );
     body.into()
+}
+
+fn picker_body<'a>(
+    discovered: &'a [crate::phone_signer::mdns::DiscoveredPhone],
+) -> Element<'a, Message> {
+    if discovered.is_empty() {
+        return Column::new()
+            .padding(10)
+            .spacing(8)
+            .push(text("Looking for phones…").bold())
+            .push(text(
+                "No phones found on this Wi-Fi yet. Open the Keychain \
+                 app on a phone on the same network and make sure it's \
+                 unlocked, then wait a few seconds.",
+            ))
+            .push(
+                button::secondary(None, "Cancel").on_press(Message::Settings(
+                    SettingsMessage::LocalSigning(LocalSigningMessage::CancelPairing),
+                )),
+            )
+            .into();
+    }
+    let mut col = Column::new()
+        .padding(10)
+        .spacing(8)
+        .push(text("Pick a phone to pair with").bold())
+        .push(text(
+            "These are the Keychain phones currently advertising on \
+             this Wi-Fi. The list refreshes every second.",
+        ));
+    for d in discovered {
+        let fp8 = d.cert_fp8.clone();
+        let row = Row::new()
+            .padding([6, 0])
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .push(
+                Column::new()
+                    .push(text(format!("Phone {}", d.cert_fp8)).bold())
+                    .push(
+                        text(format!("{}", d.addr))
+                            .style(theme::text::secondary),
+                    )
+                    .width(Length::FillPortion(3)),
+            )
+            .push(
+                button::secondary(None, "Pair").on_press(Message::Settings(
+                    SettingsMessage::LocalSigning(LocalSigningMessage::PickPhone(fp8)),
+                )),
+            );
+        col = col.push(row);
+    }
+    col = col.push(separation().width(Length::Fill));
+    col = col.push(
+        button::secondary(None, "Cancel").on_press(Message::Settings(
+            SettingsMessage::LocalSigning(LocalSigningMessage::CancelPairing),
+        )),
+    );
+    col.into()
 }
 
 fn done_body<'a>(name: &'a str) -> Element<'a, Message> {
@@ -147,7 +209,8 @@ fn error_body<'a>(err: &'a PairingError) -> Element<'a, Message> {
         PairingError::OfferExpired => (
             "Offer expired",
             "The pairing offer ran out before any phone scanned it. \
-             Generate a new offer and try again.".to_string(),
+             Generate a new offer and try again."
+                .to_string(),
         ),
         PairingError::WalletFingerprintMismatch { expected, claimed } => (
             "Wrong wallet",
@@ -216,7 +279,7 @@ fn paired_phones_card<'a>(state: &'a LocalSigningState) -> Element<'a, Message> 
     } else {
         let mut rows = Column::new().padding(10).spacing(10);
         for p in &state.phones.phones {
-            let fp8 = crate::phone_signer::identity::fingerprint_hex8(&p.identity_pubkey);
+            let fp8 = crate::phone_signer::identity::pin_hex8(&p.identity_pubkey);
             let draft = state.row_drafts.get(&fp8);
             let name_value = draft.map(|d| d.name.as_str()).unwrap_or(&p.name);
             let fallback_value = draft
@@ -252,13 +315,16 @@ fn paired_phones_card<'a>(state: &'a LocalSigningState) -> Element<'a, Message> 
                         .spacing(8)
                         .align_y(Alignment::Center)
                         .push(
-                            text_input("Fallback host:port (mDNS-blocked networks)", fallback_value)
-                                .on_input(move |s| {
-                                    Message::Settings(SettingsMessage::LocalSigning(
-                                        LocalSigningMessage::DraftFallback(fp8_for_fb.clone(), s),
-                                    ))
-                                })
-                                .width(Length::FillPortion(3)),
+                            text_input(
+                                "Fallback host:port (mDNS-blocked networks)",
+                                fallback_value,
+                            )
+                            .on_input(move |s| {
+                                Message::Settings(SettingsMessage::LocalSigning(
+                                    LocalSigningMessage::DraftFallback(fp8_for_fb.clone(), s),
+                                ))
+                            })
+                            .width(Length::FillPortion(3)),
                         )
                         .push(
                             button::secondary(None, "Save")

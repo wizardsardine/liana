@@ -89,10 +89,7 @@ pub fn save(dir: &CoincubeDirectory, file: &PairingStoreFile) -> std::io::Result
 }
 
 /// Append (or replace by pubkey) a paired-phone record and persist.
-pub fn upsert(
-    dir: &CoincubeDirectory,
-    phone: PairedPhone,
-) -> std::io::Result<PairingStoreFile> {
+pub fn upsert(dir: &CoincubeDirectory, phone: PairedPhone) -> std::io::Result<PairingStoreFile> {
     let mut file = load(dir)?;
     if let Some(existing) = file
         .phones
@@ -108,9 +105,13 @@ pub fn upsert(
 }
 
 /// Remove a paired phone by identity pubkey. No-op if not present.
-pub fn remove(dir: &CoincubeDirectory, identity_pubkey: &[u8; 32]) -> std::io::Result<PairingStoreFile> {
+pub fn remove(
+    dir: &CoincubeDirectory,
+    identity_pubkey: &[u8; 32],
+) -> std::io::Result<PairingStoreFile> {
     let mut file = load(dir)?;
-    file.phones.retain(|p| &p.identity_pubkey != identity_pubkey);
+    file.phones
+        .retain(|p| &p.identity_pubkey != identity_pubkey);
     save(dir, &file)?;
     Ok(file)
 }
@@ -161,7 +162,10 @@ mod tests {
         save(&dir, &file).expect("save");
         let read = load(&dir).expect("load");
         assert_eq!(read.phones.len(), 2);
-        assert_eq!(read.phones[0].identity_pubkey, file.phones[0].identity_pubkey);
+        assert_eq!(
+            read.phones[0].identity_pubkey,
+            file.phones[0].identity_pubkey
+        );
         assert_eq!(read.phones[0].name, file.phones[0].name);
         assert_eq!(read.phones[1].fallback_addr, file.phones[1].fallback_addr);
         assert_eq!(

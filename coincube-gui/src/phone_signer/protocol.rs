@@ -87,7 +87,7 @@ pub fn classify_envelope(envelope: LocalEnvelope) -> DispatchAction {
     }
 }
 
-/// Demultiplexer over a [`super::transport::PairedTransport`]. One
+/// Demultiplexer over a [`super::transport::PairedReader`]. One
 /// reader task pulls envelopes off the wire and dispatches each
 /// `PartialSignature` / `SessionStatusUpdate` / `ErrorEnvelope` to
 /// the right `sign_tx` invocation by `session_id`.
@@ -109,29 +109,27 @@ pub enum SignResponse {
 }
 
 impl Correlator {
-    /// Spawn a reader task that pulls envelopes off `transport` and
-    /// dispatches each `session_id`-tagged payload to its registered
-    /// receiver. Returns the correlator handle; drop the handle to
-    /// abort the reader.
-    pub fn spawn(transport: Arc<Mutex<super::transport::PairedTransport>>) -> Self {
+    /// Spawn a reader task that owns `reader` outright and dispatches
+    /// each `session_id`-tagged payload to its registered receiver.
+    /// The reader half is moved into the task so writers using the
+    /// matching `PairedWriter` never contend with `recv().await`.
+    pub fn spawn(reader: super::transport::PairedReader) -> Self {
         let in_flight: Arc<Mutex<HashMap<String, oneshot::Sender<SignResponse>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let in_flight_for_reader = in_flight.clone();
         let reader = tokio::spawn(async move {
+            let mut reader = reader;
             loop {
-                let envelope = {
-                    let mut guard = transport.lock().await;
-                    match guard.recv().await {
-                        Ok(env) => env,
-                        Err(_) => {
-                            // Drain in-flight and notify each with
-                            // Disconnected so callers don't hang.
-                            let mut waiters = in_flight_for_reader.lock().await;
-                            for (_, tx) in waiters.drain() {
-                                let _ = tx.send(SignResponse::Disconnected);
-                            }
-                            return;
+                let envelope = match reader.recv().await {
+                    Ok(env) => env,
+                    Err(_) => {
+                        // Drain in-flight and notify each with
+                        // Disconnected so callers don't hang.
+                        let mut waiters = in_flight_for_reader.lock().await;
+                        for (_, tx) in waiters.drain() {
+                            let _ = tx.send(SignResponse::Disconnected);
                         }
+                        return;
                     }
                 };
                 match classify_envelope(envelope) {
@@ -199,6 +197,7 @@ mod tests {
                 local_v1::ErrorEnvelope {
                     code: code.into(),
                     message: message.into(),
+                    session_id: String::new(),
                 },
             )),
         }

@@ -62,10 +62,9 @@ impl std::fmt::Display for PairingError {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            Self::ReplayRefused => write!(
-                f,
-                "Pairing rejected: the QR code has already been used."
-            ),
+            Self::ReplayRefused => {
+                write!(f, "Pairing rejected: the QR code has already been used.")
+            }
             Self::NetworkError(s) => write!(f, "Network error during pairing: {}", s),
             Self::InternalError(s) => write!(f, "Pairing failed: {}", s),
         }
