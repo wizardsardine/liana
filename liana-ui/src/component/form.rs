@@ -1,8 +1,14 @@
-use crate::widget::text_input;
+use std::fmt::Display;
+
+use crate::{
+    color,
+    component::text,
+    theme,
+    widget::{text_input, *},
+};
+
 use bitcoin::Denomination;
 use iced::Length;
-
-use crate::{color, component::text, theme, widget::*};
 
 #[derive(Debug, Clone)]
 pub struct Value<T> {
@@ -37,7 +43,7 @@ where
     /// - a placeholder
     /// - the current value
     /// - a function that produces a message when the [`Form`] changes
-    pub fn new<F>(placeholder: &str, value: &Value<String>, on_change: F) -> Self
+    pub fn new<F>(placeholder: impl Display, value: &Value<String>, on_change: F) -> Self
     where
         F: 'static + Fn(String) -> Message,
     {
