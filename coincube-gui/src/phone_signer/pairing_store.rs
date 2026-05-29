@@ -82,8 +82,7 @@ pub fn load(dir: &CoincubeDirectory) -> std::io::Result<PairingStoreFile> {
 pub fn save(dir: &CoincubeDirectory, file: &PairingStoreFile) -> std::io::Result<()> {
     let path = store_path(dir);
     let tmp = path.with_extension("json.tmp");
-    let bytes = serde_json::to_vec_pretty(file)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let bytes = serde_json::to_vec_pretty(file).map_err(std::io::Error::other)?;
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(tmp, path)
 }
@@ -138,7 +137,7 @@ mod tests {
             name: format!("Phone {}", seed),
             paired_at_unix: 1_700_000_000 + seed as u64,
             wallet_fingerprints: vec![Fingerprint::from([seed, seed, seed, seed])],
-            fallback_addr: if seed % 2 == 0 {
+            fallback_addr: if seed.is_multiple_of(2) {
                 Some(format!("10.0.0.{}:8443", seed))
             } else {
                 None

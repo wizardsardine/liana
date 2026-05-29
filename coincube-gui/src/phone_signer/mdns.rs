@@ -2,10 +2,9 @@
 //!
 //! Service type: `_coincube-signer._tcp.local.`
 //! TXT records on the phone's advertised service:
-//!   - `v=1`               (protocol version)
-//!   - `fp=<8-hex>`        (first 4 bytes of the phone's identity
-//!                          pubkey — the desktop filters its paired
-//!                          list against this)
+//!   - `v=1` (protocol version)
+//!   - `fp=<8-hex>` (first 4 bytes of the phone's identity pubkey —
+//!     the desktop filters its paired list against this)
 
 use std::collections::HashMap;
 use std::net::SocketAddr;

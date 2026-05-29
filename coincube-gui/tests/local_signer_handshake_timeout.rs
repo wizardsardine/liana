@@ -68,7 +68,10 @@ async fn connect_unpinned_returns_error_when_phone_stalls_handshake() {
         msg,
     );
 
-    // Detach the stalled phone task — its sleep extends past the
-    // test, that's fine.
-    let _ = phone_task;
+    // Cancel the stalled phone task so it doesn't outlive the test;
+    // its 30 s sleep would otherwise sit in the runtime past the
+    // assertion. `abort()` signals cancellation and the JoinHandle
+    // then drops naturally without tripping clippy's
+    // `let_underscore_future`.
+    phone_task.abort();
 }

@@ -261,3 +261,134 @@ async fn run_pairing_returns_wallet_fingerprint_mismatch() {
 
     let _ = phone_handle.await;
 }
+
+#[tokio::test]
+async fn run_pairing_rejects_phone_reporting_mismatched_cert_fp() {
+    // The proto requires `PairingComplete.phone_cert_fp` to match the
+    // SHA-256 of the cert the phone presented during TLS. A
+    // misconfigured phone that reports a different value must fail
+    // pairing rather than silently persisting the live pin.
+    let (phone_cert, phone_key) = mint_ed25519_cert("Coincube Phone (test)");
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    // Deliberately wrong: 64 hex chars of zeros, not the real
+    // cert's SHA-256.
+    let bogus_fp = "0".repeat(64);
+    let phone_handle = tokio::spawn(fake_phone_server(
+        listener,
+        phone_cert,
+        phone_key,
+        "BogusPhone".into(),
+        bogus_fp,
+    ));
+
+    let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
+    let identity = fresh_desktop_identity();
+    let offer = fresh_offer(wallet_fp, identity.cert_fp(), 30);
+    let dir = fresh_dir();
+    let phone = DiscoveredPhone {
+        cert_fp8: "00000000".into(),
+        addr,
+        instance_name: "keychain-test".into(),
+    };
+
+    let result =
+        pairing_listener::run_pairing(identity, offer, phone, vec![wallet_fp], dir.clone()).await;
+
+    match result {
+        Err(PairingError::InternalError(msg)) => {
+            assert!(
+                msg.contains("doesn't match TLS handshake"),
+                "expected mismatch error, got: {}",
+                msg
+            );
+        }
+        other => panic!("expected InternalError(mismatch), got {:?}", other),
+    }
+
+    // Nothing should be persisted on the mismatch path.
+    let on_disk = pairing_store::load(&dir).expect("load store");
+    assert!(
+        on_disk.phones.is_empty(),
+        "mismatched-fp pairing must not persist; got {:?}",
+        on_disk.phones
+    );
+
+    let _ = phone_handle.await;
+}
+
+/// Fake phone that completes TLS but never sends the
+/// `PairingComplete` envelope. Used to exercise the recv-side TTL
+/// bound in [`pairing_listener::run_pairing`].
+async fn fake_phone_silent_after_tls(
+    listener: TcpListener,
+    phone_cert: CertificateDer<'static>,
+    phone_key: PrivateKeyDer<'static>,
+) {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let cfg = ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("protocol versions")
+        .with_client_cert_verifier(WebPkiClientVerifier::no_client_auth())
+        .with_single_cert(vec![phone_cert], phone_key)
+        .expect("single cert");
+    let acceptor = TlsAcceptor::from(Arc::new(cfg));
+
+    let (tcp, _peer) = listener.accept().await.expect("accept");
+    let _tls = acceptor.accept(tcp).await.expect("tls handshake");
+    // Hold the TLS connection open without sending PairingComplete.
+    // 30 s is well past the 1 s offer TTL used in the test.
+    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+}
+
+#[tokio::test]
+async fn run_pairing_returns_offer_expired_when_phone_stalls_after_tls() {
+    // Real regression for the recv-side TTL bound: phone completes
+    // TLS (so the dial succeeds and we get past the pre-dial expiry
+    // check), then never sends `PairingComplete`. Before the bound,
+    // `reader.recv().await` would hang indefinitely. With the bound,
+    // the recv is wrapped in `tokio::time::timeout(remaining_ttl,
+    // ...)` and returns `Err(OfferExpired)` when the TTL elapses.
+    let (phone_cert, phone_key) = mint_ed25519_cert("Coincube Phone (test)");
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+    let phone_handle = tokio::spawn(fake_phone_silent_after_tls(listener, phone_cert, phone_key));
+
+    let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
+    let identity = fresh_desktop_identity();
+    // Short TTL so the test wall-clock cost is ~1 s.
+    let offer = fresh_offer(wallet_fp, identity.cert_fp(), 1);
+    let dir = fresh_dir();
+    let phone = DiscoveredPhone {
+        cert_fp8: "deadbeef".into(),
+        addr,
+        instance_name: "keychain-test".into(),
+    };
+
+    // Outer cap fails the test fast on regression instead of hanging
+    // CI; ~3 s is plenty given the 1 s offer TTL.
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        pairing_listener::run_pairing(identity, offer, phone, vec![wallet_fp], dir),
+    )
+    .await
+    .expect("run_pairing must return within the outer cap");
+
+    assert!(
+        matches!(result, Err(PairingError::OfferExpired)),
+        "expected OfferExpired, got {:?}",
+        result,
+    );
+
+    // Cancel the stalled phone task so it doesn't outlive the test;
+    // its 30 s sleep would otherwise sit in the runtime past the
+    // assertion. `abort()` signals cancellation and the JoinHandle
+    // then drops naturally without tripping clippy's
+    // `let_underscore_future`.
+    phone_handle.abort();
+}

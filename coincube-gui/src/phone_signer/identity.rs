@@ -9,7 +9,6 @@
 use std::fs;
 use std::io;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine as _;
@@ -112,17 +111,17 @@ pub fn load_or_create(dir: &CoincubeDirectory) -> io::Result<DesktopIdentity> {
 
 fn mint_new() -> io::Result<(DesktopIdentity, StoredIdentity)> {
     let key_pair = KeyPair::generate_for(&PKCS_ED25519)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("ed25519 keygen: {}", e)))?;
+        .map_err(|e| io::Error::other(format!("ed25519 keygen: {}", e)))?;
 
     let mut params = CertificateParams::new(vec!["coincube-desktop.local".to_string()])
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("cert params: {}", e)))?;
+        .map_err(|e| io::Error::other(format!("cert params: {}", e)))?;
     let mut dn = DistinguishedName::new();
     dn.push(DnType::CommonName, "Coincube Desktop Local Signer");
     params.distinguished_name = dn;
 
     let cert = params
         .self_signed(&key_pair)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("self-sign: {}", e)))?;
+        .map_err(|e| io::Error::other(format!("self-sign: {}", e)))?;
 
     let stored = StoredIdentity {
         cert_pem: cert.pem(),
@@ -144,7 +143,7 @@ fn identity_from_stored(stored: &StoredIdentity) -> io::Result<DesktopIdentity> 
     // Re-parse the PEM key with rcgen so we can extract the raw
     // 32-byte Ed25519 pubkey without writing our own PKCS#8 parser.
     let key_pair = KeyPair::from_pem(&stored.key_pem)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("re-parse key: {}", e)))?;
+        .map_err(|e| io::Error::other(format!("re-parse key: {}", e)))?;
     let raw = key_pair.public_key_raw();
     if raw.len() != 32 {
         return Err(io::Error::new(
@@ -194,8 +193,7 @@ fn pem_to_der(pem_str: &str, expected_tag: &str) -> io::Result<Vec<u8>> {
 fn write_atomic(dir: &CoincubeDirectory, stored: &StoredIdentity) -> io::Result<()> {
     let path = identity_path(dir);
     let tmp = path.with_extension("json.tmp");
-    let bytes =
-        serde_json::to_vec_pretty(stored).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let bytes = serde_json::to_vec_pretty(stored).map_err(io::Error::other)?;
     fs::write(&tmp, bytes)?;
     fs::rename(tmp, path)
 }
@@ -212,12 +210,6 @@ pub fn pin_hex8(pin: &[u8; 32]) -> String {
         let _ = write!(s, "{:02x}", byte);
     }
     s
-}
-
-/// Wrap a [`DesktopIdentity`] in an `Arc` so the TLS layer can clone
-/// it cheaply across configs.
-pub fn as_arc(identity: DesktopIdentity) -> Arc<DesktopIdentity> {
-    Arc::new(identity)
 }
 
 #[cfg(test)]
@@ -288,7 +280,7 @@ mod tests {
     #[test]
     fn pem_to_der_rejects_wrong_tag() {
         let pem = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----";
-        let err = pem_to_der(pem, "PRIVATE KEY").err().expect("should fail");
+        let err = pem_to_der(pem, "PRIVATE KEY").expect_err("should fail");
         assert!(
             err.to_string().contains("missing PEM header"),
             "got: {}",

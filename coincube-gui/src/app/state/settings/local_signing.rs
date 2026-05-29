@@ -387,9 +387,19 @@ impl State for LocalSigningState {
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        // `Wallet::descriptor_keys` returns a `HashSet<Fingerprint>`,
+        // whose iteration order is per-process random (Rust's default
+        // RandomState). For single-sig wallets the set has one
+        // element and `.iter().next()` is deterministic; for
+        // multisig vaults it is not, which would let the QR's `wfp`
+        // and the persisted `PairedPhone.wallet_fingerprints` flip
+        // between fingerprints across runs / re-pairings of the same
+        // wallet. Pick the lexicographic min so the choice is
+        // deterministic per wallet without changing the wire
+        // contract's "wallet identifier" semantics.
         self.wallet_fingerprint = wallet
             .as_ref()
-            .and_then(|w| w.descriptor_keys().iter().next().copied());
+            .and_then(|w| w.descriptor_keys().into_iter().min());
         // Lazily load whatever's persisted so the table renders even
         // before the first pairing.
         if let Some(w) = wallet.as_ref() {
@@ -438,8 +448,7 @@ mod tests {
     }
 
     fn seed_store(dir: &CoincubeDirectory, phones: Vec<PairedPhone>) {
-        let mut file = pairing_store::PairingStoreFile::default();
-        file.phones = phones;
+        let file = pairing_store::PairingStoreFile { phones };
         pairing_store::save(dir, &file).expect("seed store");
     }
 

@@ -65,10 +65,32 @@ pub async fn run_pairing(
     // other. The connection drops when both halves go out of scope
     // at function end.
     let (mut reader, mut writer) = transport.split();
-    let envelope = reader
-        .recv()
-        .await
-        .map_err(|e| PairingError::NetworkError(format!("recv pairing_complete: {}", e)))?;
+    // Bound the read by the offer's remaining lifetime. A phone
+    // that completes TLS but stalls before sending PairingComplete
+    // would otherwise hang this future indefinitely, and pairing
+    // could complete long after the QR expired.
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let remaining_secs = offer.expires_at_unix.saturating_sub(now_unix);
+    if remaining_secs == 0 {
+        return Err(PairingError::OfferExpired);
+    }
+    let recv = tokio::time::timeout(
+        std::time::Duration::from_secs(remaining_secs),
+        reader.recv(),
+    );
+    let envelope = match recv.await {
+        Ok(Ok(env)) => env,
+        Ok(Err(e)) => {
+            return Err(PairingError::NetworkError(format!(
+                "recv pairing_complete: {}",
+                e
+            )));
+        }
+        Err(_) => return Err(PairingError::OfferExpired),
+    };
     let complete = match envelope.payload {
         Some(local_v1::local_envelope::Payload::PairingComplete(c)) => c,
         _ => {
@@ -78,10 +100,23 @@ pub async fn run_pairing(
         }
     };
 
+    // Enforce the proto's "MUST match" contract: the phone-reported
+    // cert fp has to agree with the bytes we pinned from the live
+    // TLS handshake. A divergence signals a buggy or misconfigured
+    // phone — persisting `phone_pin` regardless would hide the
+    // contract violation and let a bad pairing survive.
+    let expected_pin_hex: String = phone_pin.iter().map(|b| format!("{:02x}", b)).collect();
+    let reported_normalised = complete.phone_cert_fp.trim().to_ascii_lowercase();
+    if reported_normalised != expected_pin_hex {
+        return Err(PairingError::InternalError(format!(
+            "phone-reported cert fp {:?} doesn't match TLS handshake {}",
+            complete.phone_cert_fp, expected_pin_hex,
+        )));
+    }
     tracing::debug!(
         target: "phone_signer::pairing",
-        "phone reported cert fp = {}",
-        complete.phone_cert_fp,
+        "phone-reported cert fp matches handshake: {}",
+        expected_pin_hex,
     );
 
     // Tautological today — the phone-reported wallet fingerprint

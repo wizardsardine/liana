@@ -61,8 +61,15 @@ pub enum DispatchAction {
         session_id: String,
         partial: PartialSignature,
     },
-    /// Broadcast `SignResponse::Error(text)` to every in-flight
-    /// waiter (error envelopes are not session-keyed in v1).
+    /// Send `SignResponse::Error(text)` to the oneshot keyed by
+    /// `session_id` only — the phone tagged this error with a
+    /// specific session, so concurrent in-flight `sign_tx` calls
+    /// for *other* sessions must not be failed by it.
+    TargetedError { session_id: String, text: String },
+    /// Send `SignResponse::Error(text)` to every in-flight waiter.
+    /// Used when the phone's `ErrorEnvelope` has no `session_id`
+    /// (e.g. v1.0 phones or transport-level errors that don't
+    /// pertain to a specific session).
     BroadcastError(String),
     /// Envelope was a `SessionStatusUpdate` / `Pong` / malformed —
     /// reader continues without dispatching.
@@ -79,7 +86,17 @@ pub fn classify_envelope(envelope: LocalEnvelope) -> DispatchAction {
             partial: p,
         },
         Some(local_v1::local_envelope::Payload::Error(e)) => {
-            DispatchAction::BroadcastError(format!("{}: {}", e.code, e.message))
+            let text = format!("{}: {}", e.code, e.message);
+            // Proto3 default for `string` is `""`; non-empty means
+            // the phone explicitly tagged this error with a session.
+            if e.session_id.is_empty() {
+                DispatchAction::BroadcastError(text)
+            } else {
+                DispatchAction::TargetedError {
+                    session_id: e.session_id,
+                    text,
+                }
+            }
         }
         Some(local_v1::local_envelope::Payload::StatusUpdate(_)) => DispatchAction::Ignore,
         Some(local_v1::local_envelope::Payload::Pong(_)) => DispatchAction::Ignore,
@@ -145,6 +162,15 @@ impl Correlator {
                             let _ = tx.send(SignResponse::Partial(partial));
                         }
                     }
+                    DispatchAction::TargetedError { session_id, text } => {
+                        let tx = {
+                            let mut waiters = in_flight_for_reader.lock().await;
+                            waiters.remove(&session_id)
+                        };
+                        if let Some(tx) = tx {
+                            let _ = tx.send(SignResponse::Error(text));
+                        }
+                    }
                     DispatchAction::BroadcastError(text) => {
                         let mut waiters = in_flight_for_reader.lock().await;
                         for (_, tx) in waiters.drain() {
@@ -192,12 +218,16 @@ mod tests {
     }
 
     fn error_envelope(code: &str, message: &str) -> LocalEnvelope {
+        error_envelope_for(code, message, "")
+    }
+
+    fn error_envelope_for(code: &str, message: &str, session_id: &str) -> LocalEnvelope {
         LocalEnvelope {
             payload: Some(local_v1::local_envelope::Payload::Error(
                 local_v1::ErrorEnvelope {
                     code: code.into(),
                     message: message.into(),
-                    session_id: String::new(),
+                    session_id: session_id.into(),
                 },
             )),
         }
@@ -238,7 +268,9 @@ mod tests {
     }
 
     #[test]
-    fn classify_error_broadcasts_with_combined_message() {
+    fn classify_error_without_session_id_broadcasts() {
+        // Proto3 default `""` for `session_id` → unscoped error,
+        // fan it to every waiter (v1 / pre-session-id behaviour).
         let env = error_envelope("USER_DECLINED", "tap reject");
         match classify_envelope(env) {
             DispatchAction::BroadcastError(text) => {
@@ -249,6 +281,25 @@ mod tests {
                 );
             }
             other => panic!("expected BroadcastError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn classify_error_with_session_id_targets_only_that_session() {
+        // The phone tagged the error with a specific session_id; the
+        // dispatcher must route it to that waiter only so concurrent
+        // sign_tx calls for other sessions aren't collateral damage.
+        let env = error_envelope_for("USER_DECLINED", "tap reject", "sess-abc");
+        match classify_envelope(env) {
+            DispatchAction::TargetedError { session_id, text } => {
+                assert_eq!(session_id, "sess-abc");
+                assert!(
+                    text.contains("USER_DECLINED") && text.contains("tap reject"),
+                    "expected combined text, got: {}",
+                    text
+                );
+            }
+            other => panic!("expected TargetedError, got {:?}", other),
         }
     }
 

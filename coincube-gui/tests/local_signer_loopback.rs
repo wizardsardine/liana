@@ -134,7 +134,13 @@ async fn fake_phone(
                 local_v1::ErrorEnvelope {
                     code,
                     message,
-                    session_id: String::new(),
+                    // Tag the error with the session_id the desktop
+                    // just sent. This exercises the production
+                    // TargetedError dispatch path (per-session
+                    // routing) end-to-end through the reader task.
+                    // A real phone would do the same on a per-session
+                    // user reject.
+                    session_id,
                 },
             )),
         }),

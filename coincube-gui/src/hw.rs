@@ -731,15 +731,27 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                     for paired in &store.phones {
                         let fp8 = crate::phone_signer::identity::pin_hex8(&paired.identity_pubkey);
                         let id = format!("phone-{}", fp8);
-                        if state.connected_supported_hws.contains(&id) {
-                            still.push(id);
-                            continue;
-                        }
                         // Resolve a target address: prefer the
                         // mDNS-discovered one; fall back to the
                         // user-entered `fallback_addr` when mDNS is
                         // blocked or the phone isn't broadcasting.
                         let target = resolve_phone_target(&fp8, paired, &discovered);
+                        // "Already connected" short-circuit. Unlike
+                        // USB devices — which the HID-API path
+                        // re-enumerates each tick — the
+                        // paired-phone store is persistent, so an
+                        // entry in `connected_supported_hws` alone
+                        // isn't proof the phone is still up. Re-gate
+                        // the short-circuit on current
+                        // discoverability so a phone whose Wi-Fi
+                        // dropped gets downgraded to
+                        // `Unsupported(AppIsNotOpen)` on the next
+                        // tick instead of staying mislabelled as
+                        // Supported forever.
+                        if state.connected_supported_hws.contains(&id) && target.is_some() {
+                            still.push(id);
+                            continue;
+                        }
                         let Some(target) = target else {
                             // Paired but not visible. Surface offline
                             // without touching the cooldown — no dial

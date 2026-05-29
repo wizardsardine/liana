@@ -261,6 +261,10 @@ pub fn client_config(
     Ok(cfg)
 }
 
+/// Side channel for [`CapturingServerVerifier`] — the slot filled
+/// with the peer's cert fingerprint once the TLS handshake completes.
+pub type CapturedCertSlot = std::sync::Arc<std::sync::Mutex<Option<CertFingerprint>>>;
+
 /// Build a [`ClientConfig`] for the **pairing dial** when the
 /// phone's cert pin isn't known yet (pair time is exactly when we
 /// learn it). Pairs with [`CapturingServerVerifier`] so the caller
@@ -269,13 +273,7 @@ pub fn client_config(
 pub fn client_config_unpinned(
     desktop_cert: CertificateDer<'static>,
     desktop_key: PrivateKeyDer<'static>,
-) -> Result<
-    (
-        ClientConfig,
-        std::sync::Arc<std::sync::Mutex<Option<CertFingerprint>>>,
-    ),
-    TlsError,
-> {
+) -> Result<(ClientConfig, CapturedCertSlot), TlsError> {
     let (verifier, seen) = CapturingServerVerifier::new();
     let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
     let cfg = ClientConfig::builder_with_provider(provider)
