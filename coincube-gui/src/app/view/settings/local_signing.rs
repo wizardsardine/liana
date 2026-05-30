@@ -24,7 +24,10 @@ pub fn section<'a>(
 ) -> Element<'a, Message> {
     let mut col = Column::new()
         .spacing(20)
-        .push(super::header("Pair", SettingsMessage::LocalSigningSection))
+        .push(super::header(
+            "Pair with Keychain",
+            SettingsMessage::LocalSigningSection,
+        ))
         .push(pairing_card(state))
         .push(paired_phones_card(state))
         .width(Length::Fill);

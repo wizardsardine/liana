@@ -956,17 +956,20 @@ pub fn wallet_settings<'a>(
                     .align_y(Alignment::Center)
                     .push(text("Vault ID:").bold())
                     .push(text(vault_id.to_string()))
-                    .push(
-                        iced_tooltip::Tooltip::new(
-                            icon::tooltip_icon(),
-                            "A stable 4-byte identifier derived from the wallet descriptor. \
-                             Unique per vault and distinct from any individual signer's \
-                             master fingerprint. Used by the local-signer pairing flow to \
-                             scope a paired phone to this vault.",
-                            iced_tooltip::Position::Bottom,
-                        )
+                    .push(iced_tooltip::Tooltip::new(
+                        icon::tooltip_icon(),
+                        Container::new(text(
+                            "A stable 4-byte identifier derived from the wallet \
+                                 descriptor. Unique per vault and distinct from any \
+                                 individual signer's master fingerprint. Used by the \
+                                 local-signer pairing flow to scope a paired phone to \
+                                 this vault.",
+                        ))
+                        .padding(8)
+                        .max_width(320.0)
                         .style(theme::card::simple),
-                    ),
+                        iced_tooltip::Position::Bottom,
+                    )),
             )
             .push(
                 Row::new()
