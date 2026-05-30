@@ -47,10 +47,22 @@ pub struct PairedPhone {
     /// require pulling in the chrono `serde` feature.
     pub paired_at_unix: u64,
 
-    /// Master fingerprints of the wallets this phone is allowed to
-    /// sign for. Today this is always a single fingerprint (the one
-    /// that authored the offer), but the list shape lets us extend to
-    /// multi-wallet pairing without a migration.
+    /// BIP-32 master fingerprints from the wallet's descriptor that
+    /// this phone is allowed to sign for. Today this is the full
+    /// `descriptor_keys()` set captured at pairing time (sorted for
+    /// deterministic order); the proto doesn't yet carry a
+    /// phone-reported signer fingerprint, so we don't know which
+    /// specific descriptor key the phone owns. The hw refresh tick
+    /// uses `.first()` for `HardwareWallet::Supported.fingerprint`
+    /// — that fp must appear in the **current** descriptor's
+    /// `descriptor_keys()`, otherwise the phone is downgraded to
+    /// `Unsupported(NotPartOfWallet)`.
+    ///
+    /// **Not the vault id.** The offer's `wallet_fingerprint` is
+    /// the vault id (`Wallet::id_fingerprint`), which by
+    /// construction is NOT one of the descriptor keys — persisting
+    /// it here would get every paired phone immediately filtered
+    /// out at the refresh tick.
     pub wallet_fingerprints: Vec<Fingerprint>,
 
     /// Optional manually-entered fallback target. Phase 3 surfaces a

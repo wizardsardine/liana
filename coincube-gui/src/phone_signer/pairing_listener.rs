@@ -36,11 +36,26 @@ use crate::phone_signer::transport::PairedTransport;
 /// The caller is responsible for confirming `offer.expires_at_unix`
 /// hasn't passed before invoking this; we double-check below but
 /// the wizard's countdown should be doing it too.
+///
+/// `expected_vault_id` is the local wallet's [`Wallet::id_fingerprint`]:
+/// the offer's `wallet_fingerprint` claim MUST equal it, otherwise we
+/// raise `WalletFingerprintMismatch`. This catches the "QR was
+/// generated for a different vault" case (e.g. user scanned an old
+/// offer after switching wallets).
+///
+/// `signer_fingerprints` is the local wallet's `descriptor_keys()` —
+/// the real BIP-32 master fingerprints that appear in the descriptor.
+/// We persist this list as `PairedPhone.wallet_fingerprints` so the
+/// steady-state hw refresh tick has a real signer fp to put on
+/// `HardwareWallet::Supported`; otherwise the phone would be
+/// downgraded to `Unsupported(NotPartOfWallet)` because the vault id
+/// is by construction NOT one of the descriptor keys.
 pub async fn run_pairing(
     identity: DesktopIdentity,
     offer: PairingOffer,
     phone: mdns::DiscoveredPhone,
-    wallet_fingerprints: Vec<Fingerprint>,
+    expected_vault_id: Fingerprint,
+    signer_fingerprints: Vec<Fingerprint>,
     dir: CoincubeDirectory,
 ) -> Result<PairedPhone, PairingError> {
     if crate::phone_signer::pairing::is_expired(&offer) {
@@ -111,13 +126,16 @@ pub async fn run_pairing(
         expected_pin_hex,
     );
 
-    // Tautological today — the phone-reported wallet fingerprint
-    // isn't in the proto yet. Surface the typed variant anyway so it
-    // becomes meaningful as soon as the wire format grows the field.
+    // The offer's `wallet_fingerprint` is the desktop's vault id
+    // (`Wallet::id_fingerprint`) — a 4-byte digest of the descriptor.
+    // It must equal the locally-loaded wallet's vault id; otherwise
+    // the user scanned a QR meant for a different vault. (When the
+    // proto grows a phone-reported signer fingerprint we'll also
+    // validate that against `signer_fingerprints`.)
     let claimed_fp = offer.wallet_fingerprint;
-    if !wallet_fingerprints.contains(&claimed_fp) {
+    if claimed_fp != expected_vault_id {
         return Err(PairingError::WalletFingerprintMismatch {
-            expected: wallet_fingerprints.clone(),
+            expected: vec![expected_vault_id],
             claimed: claimed_fp,
         });
     }
@@ -143,7 +161,12 @@ pub async fn run_pairing(
         cert_pin: phone_pin,
         name,
         paired_at_unix: now,
-        wallet_fingerprints,
+        // Persist the descriptor's real signer fingerprints. The hw
+        // refresh tick reads `.first()` of this list for the
+        // `HardwareWallet::Supported.fingerprint` and the
+        // descriptor-keys filter at the end of the tick keeps the
+        // phone listed as Supported.
+        wallet_fingerprints: signer_fingerprints,
         fallback_addr: None,
     };
     pairing_store::upsert(&dir, paired.clone())

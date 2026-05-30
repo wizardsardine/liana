@@ -66,10 +66,22 @@ pub struct RowDraft {
 pub struct LocalSigningState {
     pub phones: PairingStoreFile,
     pub flow: PairingFlow,
-    /// Master fingerprint of the loaded wallet, captured during
-    /// `reload`. Threaded into the pairing offer so the phone can
-    /// verify it can sign for this wallet.
+    /// Vault id (`Wallet::id_fingerprint`) of the loaded wallet,
+    /// captured during `reload`. Threaded into the pairing offer's
+    /// `wallet_fingerprint` claim so the phone displays "pair with
+    /// vault X" and the listener can reject an offer that was
+    /// generated for a different vault.
     pub wallet_fingerprint: Option<Fingerprint>,
+    /// Sorted `descriptor_keys()` of the loaded wallet (the real
+    /// BIP-32 signer fingerprints). Persisted into
+    /// `PairedPhone.wallet_fingerprints` so the steady-state hw
+    /// refresh tick has a real signer fp to put on
+    /// `HardwareWallet::Supported`. Separate from
+    /// `wallet_fingerprint` (the vault id) because the vault id is
+    /// intentionally NOT one of the descriptor keys — using it as
+    /// the persisted signer fp would get the phone immediately
+    /// downgraded to `Unsupported(NotPartOfWallet)`.
+    pub wallet_signer_fingerprints: Vec<Fingerprint>,
     /// Per-row drafts keyed by the phone's 8-hex cert pin
     /// fingerprint. Seeded from the persisted row on load and
     /// after pairing completes; mutations are kept in memory until
@@ -94,6 +106,7 @@ impl Default for LocalSigningState {
             phones: PairingStoreFile::default(),
             flow: PairingFlow::Idle,
             wallet_fingerprint: None,
+            wallet_signer_fingerprints: Vec::new(),
             row_drafts: HashMap::new(),
             pairing_id: 0,
             initialised: false,
@@ -334,12 +347,18 @@ impl State for LocalSigningState {
                     qr,
                 };
                 let dir = cache.datadir_path.clone();
-                let fps = vec![fingerprint];
+                let expected_vault_id = fingerprint;
+                let signer_fps = self.wallet_signer_fingerprints.clone();
                 let run_id = self.start_pairing_run();
                 Task::perform(
                     async move {
                         crate::phone_signer::pairing_listener::run_pairing(
-                            identity, offer, phone, fps, dir,
+                            identity,
+                            offer,
+                            phone,
+                            expected_vault_id,
+                            signer_fps,
+                            dir,
                         )
                         .await
                     },
@@ -425,6 +444,17 @@ impl State for LocalSigningState {
         // (`Wallet::id_fingerprint`), which is unique per vault and
         // distinct from any signer key.
         self.wallet_fingerprint = wallet.as_ref().map(|w| w.id_fingerprint());
+        // Capture the descriptor's signer fingerprints (sorted for
+        // determinism — `descriptor_keys()` returns a HashSet) so
+        // pairing can persist them on the resulting `PairedPhone`.
+        self.wallet_signer_fingerprints = wallet
+            .as_ref()
+            .map(|w| {
+                let mut v: Vec<_> = w.descriptor_keys().into_iter().collect();
+                v.sort();
+                v
+            })
+            .unwrap_or_default();
         // Lazily load whatever's persisted so the table renders even
         // before the first pairing.
         if let Some(w) = wallet.as_ref() {
