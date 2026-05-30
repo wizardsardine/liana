@@ -183,12 +183,12 @@ async fn run_pairing_happy_path_persists_paired_phone() {
 
     assert_eq!(paired.name, "Test Pixel");
     assert_eq!(paired.wallet_fingerprints, vec![wallet_fp]);
-    assert_eq!(paired.identity_pubkey, phone_pin);
+    assert_eq!(paired.cert_pin, phone_pin);
 
     let on_disk = pairing_store::load(&dir).expect("load store");
     assert_eq!(on_disk.phones.len(), 1);
     assert_eq!(on_disk.phones[0].name, "Test Pixel");
-    assert_eq!(on_disk.phones[0].identity_pubkey, phone_pin);
+    assert_eq!(on_disk.phones[0].cert_pin, phone_pin);
 
     let _ = phone_handle.await;
 }
@@ -340,7 +340,7 @@ async fn fake_phone_silent_after_tls(
     let (tcp, _peer) = listener.accept().await.expect("accept");
     let _tls = acceptor.accept(tcp).await.expect("tls handshake");
     // Hold the TLS connection open without sending PairingComplete.
-    // 30 s is well past the 1 s offer TTL used in the test.
+    // 30 s is well past the 2 s offer TTL used in the test.
     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
 }
 
@@ -361,8 +361,19 @@ async fn run_pairing_returns_offer_expired_when_phone_stalls_after_tls() {
 
     let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
     let identity = fresh_desktop_identity();
-    // Short TTL so the test wall-clock cost is ~1 s.
-    let offer = fresh_offer(wallet_fp, identity.cert_fp(), 1);
+    // Why 2 s, not 1 s: `fresh_offer` computes `expires_at_unix =
+    // now_seconds + ttl`. After the TLS handshake the listener
+    // re-reads the wall clock with second granularity and computes
+    // `remaining = expires_at_unix - now`. With ttl=1, a test
+    // started near the end of a wall-clock second can see the next
+    // second tick before the handshake completes, leaving
+    // `remaining == 0` and triggering the **pre-recv** OfferExpired
+    // branch — the same one already covered by
+    // `run_pairing_returns_offer_expired_when_ttl_in_past`. ttl=2
+    // guarantees the handshake-completion timestamp sees ≥ 1 s
+    // remaining so the recv-side timeout is the only branch that
+    // can fire, which is what this test is meant to exercise.
+    let offer = fresh_offer(wallet_fp, identity.cert_fp(), 2);
     let dir = fresh_dir();
     let phone = DiscoveredPhone {
         cert_fp8: "deadbeef".into(),
@@ -371,9 +382,9 @@ async fn run_pairing_returns_offer_expired_when_phone_stalls_after_tls() {
     };
 
     // Outer cap fails the test fast on regression instead of hanging
-    // CI; ~3 s is plenty given the 1 s offer TTL.
+    // CI; ~5 s is plenty given the 2 s offer TTL.
     let result = tokio::time::timeout(
-        std::time::Duration::from_secs(3),
+        std::time::Duration::from_secs(5),
         pairing_listener::run_pairing(identity, offer, phone, vec![wallet_fp], dir),
     )
     .await

@@ -194,8 +194,47 @@ fn write_atomic(dir: &CoincubeDirectory, stored: &StoredIdentity) -> io::Result<
     let path = identity_path(dir);
     let tmp = path.with_extension("json.tmp");
     let bytes = serde_json::to_vec_pretty(stored).map_err(io::Error::other)?;
-    fs::write(&tmp, bytes)?;
-    fs::rename(tmp, path)
+
+    // The persisted JSON contains the desktop's PEM-encoded Ed25519
+    // private key, so the on-disk file must be owner-only. On Unix
+    // we explicitly create the tmp with 0o600 via OpenOptionsExt
+    // instead of `fs::write`, which would otherwise create the file
+    // with the process umask (typically 0o644 → world-readable). On
+    // non-Unix targets (Windows) `OpenOptionsExt::mode` is
+    // unavailable; we fall back to `fs::write` and rely on the
+    // user's profile directory ACL.
+    #[cfg(unix)]
+    {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let mut f = fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        f.write_all(&bytes)?;
+        f.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(&tmp, &bytes)?;
+    }
+
+    fs::rename(&tmp, &path)?;
+
+    // Belt-and-braces: re-apply 0o600 to the final path. The rename
+    // already preserves the tmp's mode, but this also tightens any
+    // pre-existing identity file written before this fix shipped
+    // (e.g. an existing 0o644 file from a prior release on the same
+    // installation).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    }
+
+    Ok(())
 }
 
 /// First 8 hex chars of a paired-phone's 32-byte cert pin (which is
@@ -294,5 +333,25 @@ mod tests {
         let pem = "-----BEGIN CERTIFICATE-----\nQUFB\n-----END CERTIFICATE-----";
         let der = pem_to_der(pem, "CERTIFICATE").expect("decode");
         assert_eq!(der, b"AAA");
+    }
+
+    /// The persisted identity contains the desktop's Ed25519 private
+    /// key, so the on-disk file must be owner-only. Default umask
+    /// would otherwise leave it world-readable (typically 0o644 on
+    /// Linux/macOS dev installs).
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_creates_owner_only_file() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = fresh_dir();
+        load_or_create(&dir).expect("mint");
+        let path = dir.path().join(IDENTITY_FILENAME);
+        let meta = std::fs::metadata(&path).expect("metadata");
+        let mode = meta.permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "identity file must be owner-only, got 0o{:o}",
+            mode,
+        );
     }
 }

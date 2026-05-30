@@ -117,7 +117,7 @@ impl LocalSigningState {
 
     pub(crate) fn seed_row_drafts(&mut self) {
         for p in &self.phones.phones {
-            let fp8 = crate::phone_signer::identity::pin_hex8(&p.identity_pubkey);
+            let fp8 = crate::phone_signer::identity::pin_hex8(&p.cert_pin);
             self.row_drafts.entry(fp8).or_insert_with(|| RowDraft {
                 name: p.name.clone(),
                 fallback: p.fallback_addr.clone().unwrap_or_default(),
@@ -176,22 +176,36 @@ impl LocalSigningState {
         let Some(draft) = self.row_drafts.get(fp8).cloned() else {
             return;
         };
-        if let Some(p) = self
-            .phones
-            .phones
-            .iter_mut()
-            .find(|p| crate::phone_signer::identity::pin_hex8(&p.identity_pubkey) == fp8)
-        {
-            if !draft.name.trim().is_empty() {
-                p.name = draft.name.trim().to_string();
-            }
-            let f = draft.fallback.trim();
-            p.fallback_addr = if f.is_empty() {
-                None
+        // Scoped so the `&mut self.phones.phones` borrow is released
+        // before we touch `self.row_drafts` below.
+        let save_outcome: Option<std::io::Result<()>> = {
+            if let Some(p) = self
+                .phones
+                .phones
+                .iter_mut()
+                .find(|p| crate::phone_signer::identity::pin_hex8(&p.cert_pin) == fp8)
+            {
+                if !draft.name.trim().is_empty() {
+                    p.name = draft.name.trim().to_string();
+                }
+                let f = draft.fallback.trim();
+                p.fallback_addr = if f.is_empty() {
+                    None
+                } else {
+                    Some(f.to_string())
+                };
+                Some(crate::phone_signer::pairing_store::save(dir, &self.phones))
             } else {
-                Some(f.to_string())
-            };
-            if let Err(e) = crate::phone_signer::pairing_store::save(dir, &self.phones) {
+                None
+            }
+        };
+
+        match save_outcome {
+            None => {
+                // No matching phone in `self.phones.phones`; nothing
+                // was written, nothing to revert or re-sync.
+            }
+            Some(Err(e)) => {
                 // Persist failed — drop the in-memory edit so the
                 // table reflects what's actually on disk. The
                 // user's typed values stay in `row_drafts` (seed
@@ -203,14 +217,27 @@ impl LocalSigningState {
                 );
                 self.refresh_phones_from(dir);
             }
+            Some(Ok(())) => {
+                // Drop the stale draft so the row's text inputs stop
+                // showing the user's pre-trim whitespace. The view
+                // prefers the draft entry whenever one is present,
+                // so without this the inputs would keep rendering
+                // `"  Pixel 7  "` (or whatever the user typed) even
+                // though disk now has `"Pixel 7"`. The subsequent
+                // `refresh_phones_from` re-seeds the draft from the
+                // just-persisted (trimmed) values via
+                // `seed_row_drafts`'s `or_insert_with`.
+                self.row_drafts.remove(fp8);
+                self.refresh_phones_from(dir);
+            }
         }
     }
 
     /// Remove a row by 8-hex fingerprint. No-op if not present.
     pub(crate) fn apply_remove_phone(&mut self, dir: &crate::dir::CoincubeDirectory, fp8: &str) {
         let to_remove = self.phones.phones.iter().find_map(|p| {
-            if crate::phone_signer::identity::pin_hex8(&p.identity_pubkey) == fp8 {
-                Some(p.identity_pubkey)
+            if crate::phone_signer::identity::pin_hex8(&p.cert_pin) == fp8 {
+                Some(p.cert_pin)
             } else {
                 None
             }
@@ -435,7 +462,7 @@ mod tests {
 
     fn paired(seed: u8, name: &str, fallback: Option<&str>) -> PairedPhone {
         PairedPhone {
-            identity_pubkey: [seed; 32],
+            cert_pin: [seed; 32],
             name: name.into(),
             paired_at_unix: 1_700_000_000,
             wallet_fingerprints: Vec::new(),
@@ -444,7 +471,7 @@ mod tests {
     }
 
     fn fp8_of(p: &PairedPhone) -> String {
-        crate::phone_signer::identity::pin_hex8(&p.identity_pubkey)
+        crate::phone_signer::identity::pin_hex8(&p.cert_pin)
     }
 
     fn seed_store(dir: &CoincubeDirectory, phones: Vec<PairedPhone>) {
@@ -542,6 +569,45 @@ mod tests {
         assert_eq!(on_disk.phones[0].name, "Prior");
     }
 
+    /// Regression: `apply_save_row` writes trimmed values to disk
+    /// but used to leave `row_drafts` holding the pre-trim
+    /// whitespace, so the view's text inputs (which prefer the
+    /// draft entry whenever present) would keep rendering the
+    /// user's leading/trailing whitespace after a successful save.
+    /// The fix drops the stale draft and re-seeds it from the
+    /// just-persisted values.
+    #[test]
+    fn apply_save_row_resyncs_draft_with_trimmed_values() {
+        let dir = fresh_dir();
+        let p = paired(11, "Original", None);
+        seed_store(&dir, vec![p.clone()]);
+
+        let mut state = LocalSigningState::default();
+        state.refresh_phones_from(&dir);
+        let fp = fp8_of(&p);
+        state.apply_draft_name(fp.clone(), "  Pixel 7  ".into());
+        state.apply_draft_fallback(fp.clone(), "  10.0.0.1:443  ".into());
+        state.apply_save_row(&dir, &fp);
+
+        // Disk has the trimmed values.
+        let on_disk = pairing_store::load(&dir).unwrap();
+        assert_eq!(on_disk.phones[0].name, "Pixel 7");
+        assert_eq!(
+            on_disk.phones[0].fallback_addr.as_deref(),
+            Some("10.0.0.1:443"),
+        );
+
+        // Draft must be re-synced so the row's text inputs reflect
+        // the trimmed values now on disk, not the user's
+        // pre-trim whitespace.
+        let d = state
+            .row_drafts
+            .get(&fp)
+            .expect("draft should be re-seeded after a successful save");
+        assert_eq!(d.name, "Pixel 7");
+        assert_eq!(d.fallback, "10.0.0.1:443");
+    }
+
     #[test]
     fn apply_save_row_reverts_in_memory_when_persist_fails() {
         // Force `pairing_store::save` to fail by parking a directory
@@ -591,7 +657,7 @@ mod tests {
 
         let on_disk = pairing_store::load(&dir).unwrap();
         assert_eq!(on_disk.phones.len(), 1);
-        assert_eq!(on_disk.phones[0].identity_pubkey, [7u8; 32]);
+        assert_eq!(on_disk.phones[0].cert_pin, [7u8; 32]);
         assert!(!state.row_drafts.contains_key(&fp2));
     }
 

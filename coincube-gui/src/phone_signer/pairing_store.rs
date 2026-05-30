@@ -21,10 +21,20 @@ use crate::dir::CoincubeDirectory;
 /// without doing any I/O.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairedPhone {
-    /// Phone's long-lived Ed25519 identity pubkey, 32 raw bytes.
-    /// Used for mutual auth on every subsequent reconnect — the
-    /// ephemeral pairing PSK is dropped after the initial handshake.
-    pub identity_pubkey: [u8; 32],
+    /// Phone's TLS cert pin: `SHA-256(self-signed cert DER)`, 32
+    /// raw bytes. Captured from the live TLS handshake via
+    /// [`crate::phone_signer::transport::PairedTransport::peer_cert_fingerprint`]
+    /// at pairing time and used to verify the phone's cert on every
+    /// subsequent reconnect (matched by
+    /// [`crate::phone_signer::tls::PinnedVerifier`]).
+    ///
+    /// **Not an Ed25519 pubkey** despite the on-disk JSON field name
+    /// (kept as `"identity_pubkey"` for backward compat with v1.0
+    /// stores via `#[serde(rename)]`). Attempting Ed25519 signature
+    /// verification against these bytes would silently fail — they
+    /// are a SHA-256 digest, not a curve point.
+    #[serde(rename = "identity_pubkey")]
+    pub cert_pin: [u8; 32],
 
     /// User-facing name. Defaults to the `device_name` reported by
     /// the phone in `PairingComplete`; the settings panel lets the
@@ -87,13 +97,13 @@ pub fn save(dir: &CoincubeDirectory, file: &PairingStoreFile) -> std::io::Result
     std::fs::rename(tmp, path)
 }
 
-/// Append (or replace by pubkey) a paired-phone record and persist.
+/// Append (or replace by cert pin) a paired-phone record and persist.
 pub fn upsert(dir: &CoincubeDirectory, phone: PairedPhone) -> std::io::Result<PairingStoreFile> {
     let mut file = load(dir)?;
     if let Some(existing) = file
         .phones
         .iter_mut()
-        .find(|p| p.identity_pubkey == phone.identity_pubkey)
+        .find(|p| p.cert_pin == phone.cert_pin)
     {
         *existing = phone;
     } else {
@@ -103,14 +113,10 @@ pub fn upsert(dir: &CoincubeDirectory, phone: PairedPhone) -> std::io::Result<Pa
     Ok(file)
 }
 
-/// Remove a paired phone by identity pubkey. No-op if not present.
-pub fn remove(
-    dir: &CoincubeDirectory,
-    identity_pubkey: &[u8; 32],
-) -> std::io::Result<PairingStoreFile> {
+/// Remove a paired phone by cert pin. No-op if not present.
+pub fn remove(dir: &CoincubeDirectory, cert_pin: &[u8; 32]) -> std::io::Result<PairingStoreFile> {
     let mut file = load(dir)?;
-    file.phones
-        .retain(|p| &p.identity_pubkey != identity_pubkey);
+    file.phones.retain(|p| &p.cert_pin != cert_pin);
     save(dir, &file)?;
     Ok(file)
 }
@@ -133,7 +139,7 @@ mod tests {
 
     fn sample_phone(seed: u8) -> PairedPhone {
         PairedPhone {
-            identity_pubkey: [seed; 32],
+            cert_pin: [seed; 32],
             name: format!("Phone {}", seed),
             paired_at_unix: 1_700_000_000 + seed as u64,
             wallet_fingerprints: vec![Fingerprint::from([seed, seed, seed, seed])],
@@ -161,10 +167,7 @@ mod tests {
         save(&dir, &file).expect("save");
         let read = load(&dir).expect("load");
         assert_eq!(read.phones.len(), 2);
-        assert_eq!(
-            read.phones[0].identity_pubkey,
-            file.phones[0].identity_pubkey
-        );
+        assert_eq!(read.phones[0].cert_pin, file.phones[0].cert_pin);
         assert_eq!(read.phones[0].name, file.phones[0].name);
         assert_eq!(read.phones[1].fallback_addr, file.phones[1].fallback_addr);
         assert_eq!(
@@ -183,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn upsert_replaces_existing_by_pubkey() {
+    fn upsert_replaces_existing_by_cert_pin() {
         let dir = fresh_dir();
         upsert(&dir, sample_phone(1)).expect("first");
         let mut updated = sample_phone(1);
@@ -202,7 +205,7 @@ mod tests {
         remove(&dir, &[1u8; 32]).expect("remove");
         let read = load(&dir).expect("load");
         assert_eq!(read.phones.len(), 1);
-        assert_eq!(read.phones[0].identity_pubkey, [2u8; 32]);
+        assert_eq!(read.phones[0].cert_pin, [2u8; 32]);
     }
 
     #[test]
@@ -233,5 +236,39 @@ mod tests {
             "tmp file leaked: {:?}",
             entries
         );
+    }
+
+    /// Regression: the in-memory field is `cert_pin` (it's a cert
+    /// SHA-256, not an Ed25519 pubkey), but for backward compat
+    /// with v1.0 stores the on-disk JSON key MUST stay
+    /// `"identity_pubkey"`. A future serde refactor that dropped
+    /// the `#[serde(rename)]` would silently invalidate every
+    /// installed user's pairing store.
+    #[test]
+    fn on_disk_json_field_name_stays_identity_pubkey() {
+        let phone = sample_phone(0xab);
+        let json = serde_json::to_string(&phone).expect("serialize");
+        assert!(
+            json.contains("\"identity_pubkey\""),
+            "on-disk JSON must keep the v1.0 field name; got {}",
+            json,
+        );
+        assert!(
+            !json.contains("\"cert_pin\""),
+            "on-disk JSON must NOT leak the renamed Rust identifier; got {}",
+            json,
+        );
+        // And round-trips: a v1.0 file using `identity_pubkey` must
+        // still deserialize.
+        let legacy = r#"{
+            "identity_pubkey": [1,2,3,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+            "name": "Legacy",
+            "paired_at_unix": 1700000000,
+            "wallet_fingerprints": [],
+            "fallback_addr": null
+        }"#;
+        let decoded: PairedPhone = serde_json::from_str(legacy).expect("decode legacy");
+        assert_eq!(decoded.cert_pin[..4], [1, 2, 3, 4]);
+        assert_eq!(decoded.name, "Legacy");
     }
 }

@@ -23,7 +23,7 @@ pub const SERVICE_PROTOCOL_VERSION: u32 = 1;
 pub struct DiscoveredPhone {
     /// First 8 hex chars of the phone's cert fingerprint
     /// (`SHA-256(cert DER)`). Comes from the `fp=` TXT record. We
-    /// compare this against `pin_hex8(&paired.identity_pubkey)` to
+    /// compare this against `pin_hex8(&paired.cert_pin)` to
     /// match a discovery against a paired entry.
     pub cert_fp8: String,
 

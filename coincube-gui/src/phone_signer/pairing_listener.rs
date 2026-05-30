@@ -43,11 +43,7 @@ pub async fn run_pairing(
     wallet_fingerprints: Vec<Fingerprint>,
     dir: CoincubeDirectory,
 ) -> Result<PairedPhone, PairingError> {
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    if now_unix >= offer.expires_at_unix {
+    if crate::phone_signer::pairing::is_expired(&offer) {
         return Err(PairingError::OfferExpired);
     }
 
@@ -69,11 +65,7 @@ pub async fn run_pairing(
     // that completes TLS but stalls before sending PairingComplete
     // would otherwise hang this future indefinitely, and pairing
     // could complete long after the QR expired.
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let remaining_secs = offer.expires_at_unix.saturating_sub(now_unix);
+    let remaining_secs = crate::phone_signer::pairing::seconds_remaining(&offer);
     if remaining_secs == 0 {
         return Err(PairingError::OfferExpired);
     }
@@ -148,7 +140,7 @@ pub async fn run_pairing(
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let paired = PairedPhone {
-        identity_pubkey: phone_pin,
+        cert_pin: phone_pin,
         name,
         paired_at_unix: now,
         wallet_fingerprints,

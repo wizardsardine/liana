@@ -251,14 +251,14 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
     )
     .await
     .expect("pairing ok");
-    assert_eq!(paired.identity_pubkey, phone_pin);
+    assert_eq!(paired.cert_pin, phone_pin);
 
     // ── Phase 2: steady-state pinned dial + sign_tx round-trip.
     let transport = PairedTransport::connect(addr, &identity, phone_pin)
         .await
         .expect("steady-state dial");
     let paired_clone = PairedPhone {
-        identity_pubkey: paired.identity_pubkey,
+        cert_pin: paired.cert_pin,
         name: paired.name.clone(),
         paired_at_unix: paired.paired_at_unix,
         wallet_fingerprints: paired.wallet_fingerprints.clone(),

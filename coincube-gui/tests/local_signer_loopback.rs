@@ -218,7 +218,7 @@ async fn sign_tx_round_trips_through_fake_phone() {
         .await
         .expect("dial fake phone");
     let paired = PairedPhone {
-        identity_pubkey: phone_pin,
+        cert_pin: phone_pin,
         name: "Test phone".into(),
         paired_at_unix: 0,
         wallet_fingerprints: vec![Fingerprint::default()],
@@ -278,7 +278,7 @@ async fn signer_against_response(
         .await
         .expect("dial fake phone");
     let paired = PairedPhone {
-        identity_pubkey: phone_pin,
+        cert_pin: phone_pin,
         name: "Test phone".into(),
         paired_at_unix: 0,
         wallet_fingerprints: vec![Fingerprint::default()],

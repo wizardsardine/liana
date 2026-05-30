@@ -274,7 +274,7 @@ fn paired_phones_card<'a>(state: &'a LocalSigningState) -> Element<'a, Message> 
     } else {
         let mut rows = Column::new().padding(10).spacing(10);
         for p in &state.phones.phones {
-            let fp8 = crate::phone_signer::identity::pin_hex8(&p.identity_pubkey);
+            let fp8 = crate::phone_signer::identity::pin_hex8(&p.cert_pin);
             let draft = state.row_drafts.get(&fp8);
             let name_value = draft.map(|d| d.name.as_str()).unwrap_or(&p.name);
             let fallback_value = draft

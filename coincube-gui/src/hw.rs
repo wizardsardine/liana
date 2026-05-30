@@ -729,7 +729,7 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                     let now = std::time::Instant::now();
                     let mut dials = Vec::new();
                     for paired in &store.phones {
-                        let fp8 = crate::phone_signer::identity::pin_hex8(&paired.identity_pubkey);
+                        let fp8 = crate::phone_signer::identity::pin_hex8(&paired.cert_pin);
                         let id = format!("phone-{}", fp8);
                         // Resolve a target address: prefer the
                         // mDNS-discovered one; fall back to the
@@ -782,7 +782,7 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                             continue;
                         }
                         let identity = identity.clone();
-                        let phone_pin = paired.identity_pubkey;
+                        let phone_pin = paired.cert_pin;
                         let paired = paired.clone();
                         dials.push(async move {
                             let res = crate::phone_signer::transport::PairedTransport::connect(
@@ -1206,7 +1206,7 @@ mod tests {
 
     fn phone_with_fallback(pin: [u8; 32], fallback: Option<&str>) -> PairedPhone {
         PairedPhone {
-            identity_pubkey: pin,
+            cert_pin: pin,
             name: "Test".into(),
             paired_at_unix: 0,
             wallet_fingerprints: Vec::new(),
