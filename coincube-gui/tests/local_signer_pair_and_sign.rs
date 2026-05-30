@@ -236,7 +236,6 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
         addr,
         instance_name: "keychain-test".into(),
     };
-    let dir = fresh_dir();
     let identity_for_pair = DesktopIdentity {
         cert_der: identity.cert_der.clone(),
         key_der: identity.clone_key(),
@@ -248,7 +247,6 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
         phone_discovered,
         wallet_fp,
         vec![wallet_fp],
-        dir.clone(),
     )
     .await
     .expect("pairing ok");
@@ -322,7 +320,6 @@ async fn handshake_fails_when_phone_pins_a_different_cert() {
     };
     let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
     let g = generate_offer(wallet_fp, &identity, "keychain-test".into());
-    let dir = fresh_dir();
 
     let result = pairing_listener::run_pairing(
         identity,
@@ -330,7 +327,6 @@ async fn handshake_fails_when_phone_pins_a_different_cert() {
         phone_discovered,
         wallet_fp,
         vec![wallet_fp],
-        dir,
     )
     .await;
 

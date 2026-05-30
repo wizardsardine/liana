@@ -151,6 +151,14 @@ impl LocalSigningState {
     /// `Waiting`. Returns `true` when the result was applied;
     /// `false` when ignored (cancelled, superseded, or already past
     /// the wizard). Datadir-typed so tests don't need a [`Cache`].
+    ///
+    /// Persistence happens here — not inside `run_pairing` — so a
+    /// `CancelPairing` between the dial and the phone's reply can't
+    /// leak a paired-phone row to disk. The in-flight `Task::perform`
+    /// future isn't cancellable from the dispatcher; gating
+    /// `pairing_store::upsert` on the same id-+-Waiting check that
+    /// drops the UI message is the kill-the-bug-at-the-right-layer
+    /// fix.
     pub(crate) fn apply_pairing_completed(
         &mut self,
         id: u64,
@@ -162,8 +170,44 @@ impl LocalSigningState {
         }
         match res {
             Ok(p) => {
-                self.flow = PairingFlow::Done(p);
-                self.refresh_phones_from(dir);
+                // Re-pair must preserve user-customised fields from
+                // the prior row keyed by `cert_pin`. Without this,
+                // re-pair clobbers a manual fallback host:port (set
+                // in the settings panel for mDNS-blocked networks)
+                // and any user-applied rename — the fresh pairing
+                // run only knows phone-reported defaults, so it
+                // can't be the source of truth for fields the
+                // desktop user has since edited. A load error here
+                // is harmless: `upsert` below would surface the
+                // same I/O failure, and on success this branch had
+                // no prior row to preserve from anyway.
+                let merged =
+                    match crate::phone_signer::pairing_store::load(dir).ok().and_then(
+                        |file| {
+                            file.phones
+                                .into_iter()
+                                .find(|existing| existing.cert_pin == p.cert_pin)
+                        },
+                    ) {
+                        Some(existing) => PairedPhone {
+                            fallback_addr: existing.fallback_addr,
+                            name: existing.name,
+                            ..p
+                        },
+                        None => p,
+                    };
+                match crate::phone_signer::pairing_store::upsert(dir, merged.clone()) {
+                    Ok(_) => {
+                        self.flow = PairingFlow::Done(merged);
+                        self.refresh_phones_from(dir);
+                    }
+                    Err(e) => {
+                        self.flow = PairingFlow::Error(PairingError::InternalError(format!(
+                            "persist: {}",
+                            e
+                        )));
+                    }
+                }
             }
             Err(e) => {
                 self.flow = PairingFlow::Error(e);
@@ -346,7 +390,6 @@ impl State for LocalSigningState {
                     offer: offer.clone(),
                     qr,
                 };
-                let dir = cache.datadir_path.clone();
                 let expected_vault_id = fingerprint;
                 let signer_fps = self.wallet_signer_fingerprints.clone();
                 let run_id = self.start_pairing_run();
@@ -358,7 +401,6 @@ impl State for LocalSigningState {
                             phone,
                             expected_vault_id,
                             signer_fps,
-                            dir,
                         )
                         .await
                     },
@@ -384,7 +426,11 @@ impl State for LocalSigningState {
                 // Bump the run id so any in-flight listener task's
                 // completion is ignored when it eventually arrives.
                 // (`Task::perform` futures aren't cancellable from
-                // here; this is the next-best thing.)
+                // here; this is the next-best thing.) The id bump
+                // also short-circuits the disk write in
+                // `apply_pairing_completed`, so a cancel between
+                // dial and the phone's reply can't leak a paired
+                // row to `paired-phones.json`.
                 self.start_pairing_run();
                 self.flow = PairingFlow::Idle;
                 Task::none()
@@ -740,6 +786,16 @@ mod tests {
         let applied = state.apply_pairing_completed(id, Ok(dummy_paired()), &dir);
         assert!(!applied, "stale completion must not be applied");
         assert!(matches!(state.flow, PairingFlow::Idle));
+        // Regression: a cancel-then-completion sequence must not
+        // leak a paired-phone row to disk. Before the fix the
+        // listener's `pairing_store::upsert` ran regardless of UI
+        // state, so the cancelled run still persisted.
+        let on_disk = pairing_store::load(&dir).expect("load store");
+        assert!(
+            on_disk.phones.is_empty(),
+            "cancelled pairing leaked to disk: {:?}",
+            on_disk.phones,
+        );
     }
 
     #[test]
@@ -766,6 +822,12 @@ mod tests {
         let applied = state.apply_pairing_completed(id, Ok(dummy_paired()), &dir);
         assert!(applied, "matching id while Waiting must be applied");
         assert!(matches!(state.flow, PairingFlow::Done(_)));
+        // Persistence is now the dispatcher's job — the matching-id
+        // path must write the row to disk so the steady-state hw
+        // refresh tick can pick it up.
+        let on_disk = pairing_store::load(&dir).expect("load store");
+        assert_eq!(on_disk.phones.len(), 1);
+        assert_eq!(on_disk.phones[0].cert_pin, dummy_paired().cert_pin);
     }
 
     #[test]
@@ -780,6 +842,89 @@ mod tests {
             "completion while non-Waiting must be ignored (defence in depth)",
         );
         assert!(matches!(state.flow, PairingFlow::Idle));
+    }
+
+    /// Regression: re-pairing the same phone (matched by cert pin)
+    /// used to wipe `fallback_addr` and any user-applied rename
+    /// because `run_pairing` rebuilds the row with phone-reported
+    /// defaults and `upsert` is a full replace. The merge in
+    /// `apply_pairing_completed` preserves both fields from the
+    /// prior row.
+    #[test]
+    fn repair_preserves_existing_fallback_and_name() {
+        let dir = fresh_dir();
+        // Seed an already-paired row with a user-set fallback and a
+        // user-applied rename.
+        let prior = PairedPhone {
+            cert_pin: [42u8; 32],
+            name: "My Phone".into(),
+            paired_at_unix: 1_700_000_000,
+            wallet_fingerprints: Vec::new(),
+            fallback_addr: Some("10.0.0.5:8443".into()),
+        };
+        pairing_store::save(
+            &dir,
+            &pairing_store::PairingStoreFile {
+                phones: vec![prior],
+            },
+        )
+        .expect("seed store");
+
+        let mut state = LocalSigningState::default();
+        let id = state.start_pairing_run();
+        state.flow = PairingFlow::Waiting {
+            phone: crate::phone_signer::mdns::DiscoveredPhone {
+                cert_fp8: "01010101".into(),
+                addr: "127.0.0.1:0".parse().unwrap(),
+                instance_name: "x".into(),
+            },
+            offer: crate::phone_signer::pairing::PairingOffer {
+                version: 1,
+                cert_der_b64: String::new(),
+                cert_fp: String::new(),
+                service_name: String::new(),
+                wallet_fingerprint: Fingerprint::default(),
+                expires_at_unix: 0,
+            },
+            qr: None,
+        };
+        // `run_pairing` would deliver a fresh row with the
+        // phone-reported defaults and no fallback. Same cert_pin so
+        // it joins to the prior row.
+        let fresh = PairedPhone {
+            cert_pin: [42u8; 32],
+            name: "Pixel 8".into(),
+            paired_at_unix: 1_700_999_999,
+            wallet_fingerprints: vec![Fingerprint::from([1, 2, 3, 4])],
+            fallback_addr: None,
+        };
+        let applied = state.apply_pairing_completed(id, Ok(fresh), &dir);
+        assert!(applied);
+
+        let on_disk = pairing_store::load(&dir).expect("load");
+        assert_eq!(on_disk.phones.len(), 1);
+        // Name and fallback preserved from the prior row.
+        assert_eq!(on_disk.phones[0].name, "My Phone");
+        assert_eq!(
+            on_disk.phones[0].fallback_addr.as_deref(),
+            Some("10.0.0.5:8443"),
+        );
+        // Fields that legitimately come from the fresh run survive.
+        assert_eq!(on_disk.phones[0].paired_at_unix, 1_700_999_999);
+        assert_eq!(
+            on_disk.phones[0].wallet_fingerprints,
+            vec![Fingerprint::from([1, 2, 3, 4])],
+        );
+
+        // And the in-memory `Done` reflects the merged row, not the
+        // raw listener output.
+        match &state.flow {
+            PairingFlow::Done(p) => {
+                assert_eq!(p.name, "My Phone");
+                assert_eq!(p.fallback_addr.as_deref(), Some("10.0.0.5:8443"));
+            }
+            _ => panic!("expected Done(merged) after re-pair"),
+        }
     }
 
     #[test]

@@ -5,6 +5,11 @@
 //! loopback, hands the desktop a `DiscoveredPhone` pointing at it,
 //! and drives `run_pairing` to completion.
 //!
+//! `run_pairing` no longer writes to disk; persistence is the
+//! caller's job (see
+//! `LocalSigningState::apply_pairing_completed`). These tests assert
+//! on the returned `PairedPhone` only.
+//!
 //! Three scenarios:
 //!   1. Happy path — desktop dials, fake phone sends
 //!      `PairingComplete`, listener returns `Ok(PairedPhone)` with
@@ -30,13 +35,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
-use coincube_gui::dir::CoincubeDirectory;
 use coincube_gui::phone_signer::{
     errors::PairingError,
     identity::DesktopIdentity,
     mdns::DiscoveredPhone,
     pairing::{PairingOffer, PAIRING_PROTOCOL_VERSION},
-    pairing_listener, pairing_store,
+    pairing_listener,
     protocol::{local_v1, LocalEnvelope},
     tls,
 };
@@ -52,13 +56,6 @@ fn mint_ed25519_cert(common_name: &str) -> (CertificateDer<'static>, PrivateKeyD
     let key_pkcs8 = key_pair.serialize_der();
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_pkcs8));
     (cert_der, key_der)
-}
-
-fn fresh_dir() -> CoincubeDirectory {
-    let mut path = std::env::temp_dir();
-    path.push(format!("coincube-pairing-test-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&path).expect("mkdir tempdir");
-    CoincubeDirectory::new(path)
 }
 
 fn fresh_offer(wallet_fp: Fingerprint, cert_fp: String, ttl_secs: u64) -> PairingOffer {
@@ -144,7 +141,7 @@ async fn fake_phone_server(
 }
 
 #[tokio::test]
-async fn run_pairing_happy_path_persists_paired_phone() {
+async fn run_pairing_happy_path_returns_paired_phone() {
     let (phone_cert, phone_key) = mint_ed25519_cert("Coincube Phone (test)");
     let phone_pin = tls::fingerprint_of(&phone_cert);
     let phone_cert_fp_hex = phone_pin
@@ -169,32 +166,20 @@ async fn run_pairing_happy_path_persists_paired_phone() {
     let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
     let identity = fresh_desktop_identity();
     let offer = fresh_offer(wallet_fp, identity.cert_fp(), 30);
-    let dir = fresh_dir();
     let phone = DiscoveredPhone {
         cert_fp8: phone_cert_fp_hex[..8].to_string(),
         addr,
         instance_name: "keychain-test".into(),
     };
 
-    let paired = pairing_listener::run_pairing(
-        identity,
-        offer,
-        phone,
-        wallet_fp,
-        vec![wallet_fp],
-        dir.clone(),
-    )
-    .await
-    .expect("run_pairing ok");
+    let paired =
+        pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp])
+            .await
+            .expect("run_pairing ok");
 
     assert_eq!(paired.name, "Test Pixel");
     assert_eq!(paired.wallet_fingerprints, vec![wallet_fp]);
     assert_eq!(paired.cert_pin, phone_pin);
-
-    let on_disk = pairing_store::load(&dir).expect("load store");
-    assert_eq!(on_disk.phones.len(), 1);
-    assert_eq!(on_disk.phones[0].name, "Test Pixel");
-    assert_eq!(on_disk.phones[0].cert_pin, phone_pin);
 
     let _ = phone_handle.await;
 }
@@ -204,7 +189,6 @@ async fn run_pairing_returns_offer_expired_when_ttl_in_past() {
     let identity = fresh_desktop_identity();
     let mut offer = fresh_offer(Fingerprint::default(), identity.cert_fp(), 10);
     offer.expires_at_unix = 1; // far in the past
-    let dir = fresh_dir();
     let phone = DiscoveredPhone {
         cert_fp8: "deadbeef".into(),
         addr: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), // never dialed
@@ -217,7 +201,6 @@ async fn run_pairing_returns_offer_expired_when_ttl_in_past() {
         phone,
         Fingerprint::default(),
         vec![Fingerprint::default()],
-        dir,
     )
     .await;
     assert!(
@@ -255,7 +238,6 @@ async fn run_pairing_returns_wallet_fingerprint_mismatch() {
     let actual = Fingerprint::from([1, 2, 3, 4]);
     let identity = fresh_desktop_identity();
     let offer = fresh_offer(wanted, identity.cert_fp(), 30);
-    let dir = fresh_dir();
     let phone = DiscoveredPhone {
         cert_fp8: phone_cert_fp_hex[..8].to_string(),
         addr,
@@ -266,7 +248,7 @@ async fn run_pairing_returns_wallet_fingerprint_mismatch() {
     // The listener compares them as scalars and surfaces the typed
     // mismatch.
     let result =
-        pairing_listener::run_pairing(identity, offer, phone, actual, vec![actual], dir).await;
+        pairing_listener::run_pairing(identity, offer, phone, actual, vec![actual]).await;
     match result {
         Err(PairingError::WalletFingerprintMismatch { expected, claimed }) => {
             assert_eq!(expected, vec![actual]);
@@ -304,22 +286,14 @@ async fn run_pairing_rejects_phone_reporting_mismatched_cert_fp() {
     let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
     let identity = fresh_desktop_identity();
     let offer = fresh_offer(wallet_fp, identity.cert_fp(), 30);
-    let dir = fresh_dir();
     let phone = DiscoveredPhone {
         cert_fp8: "00000000".into(),
         addr,
         instance_name: "keychain-test".into(),
     };
 
-    let result = pairing_listener::run_pairing(
-        identity,
-        offer,
-        phone,
-        wallet_fp,
-        vec![wallet_fp],
-        dir.clone(),
-    )
-    .await;
+    let result =
+        pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp]).await;
 
     match result {
         Err(PairingError::InternalError(msg)) => {
@@ -331,14 +305,6 @@ async fn run_pairing_rejects_phone_reporting_mismatched_cert_fp() {
         }
         other => panic!("expected InternalError(mismatch), got {:?}", other),
     }
-
-    // Nothing should be persisted on the mismatch path.
-    let on_disk = pairing_store::load(&dir).expect("load store");
-    assert!(
-        on_disk.phones.is_empty(),
-        "mismatched-fp pairing must not persist; got {:?}",
-        on_disk.phones
-    );
 
     let _ = phone_handle.await;
 }
@@ -397,7 +363,6 @@ async fn run_pairing_returns_offer_expired_when_phone_stalls_after_tls() {
     // remaining so the recv-side timeout is the only branch that
     // can fire, which is what this test is meant to exercise.
     let offer = fresh_offer(wallet_fp, identity.cert_fp(), 2);
-    let dir = fresh_dir();
     let phone = DiscoveredPhone {
         cert_fp8: "deadbeef".into(),
         addr,
@@ -408,7 +373,7 @@ async fn run_pairing_returns_offer_expired_when_phone_stalls_after_tls() {
     // CI; ~5 s is plenty given the 2 s offer TTL.
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp], dir),
+        pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp]),
     )
     .await
     .expect("run_pairing must return within the outer cap");
@@ -430,13 +395,13 @@ async fn run_pairing_returns_offer_expired_when_phone_stalls_after_tls() {
 /// Regression for the "Vault ID breaks phone signer" finding: the
 /// offer's `wallet_fingerprint` is the vault id (a descriptor-hash
 /// id_fingerprint), which is **not** one of `descriptor_keys()`. The
-/// listener must persist `signer_fingerprints` (the real BIP-32
+/// listener must surface `signer_fingerprints` (the real BIP-32
 /// master fps) on `PairedPhone.wallet_fingerprints`, not the vault
 /// id — otherwise the hw refresh tick's `descriptor_keys()` filter
 /// would downgrade the phone to `Unsupported(NotPartOfWallet)` on
 /// every tick.
 #[tokio::test]
-async fn run_pairing_persists_signer_fps_not_vault_id() {
+async fn run_pairing_returns_signer_fps_not_vault_id() {
     let (phone_cert, phone_key) = mint_ed25519_cert("Coincube Phone (test)");
     let phone_pin = tls::fingerprint_of(&phone_cert);
     let phone_cert_fp_hex = phone_pin
@@ -467,35 +432,25 @@ async fn run_pairing_persists_signer_fps_not_vault_id() {
 
     let identity = fresh_desktop_identity();
     let offer = fresh_offer(vault_id, identity.cert_fp(), 30);
-    let dir = fresh_dir();
     let phone = DiscoveredPhone {
         cert_fp8: phone_cert_fp_hex[..8].to_string(),
         addr,
         instance_name: "keychain-test".into(),
     };
 
-    let paired = pairing_listener::run_pairing(
-        identity,
-        offer,
-        phone,
-        vault_id,
-        signer_fps.clone(),
-        dir.clone(),
-    )
-    .await
-    .expect("run_pairing ok");
+    let paired =
+        pairing_listener::run_pairing(identity, offer, phone, vault_id, signer_fps.clone())
+            .await
+            .expect("run_pairing ok");
 
     assert_eq!(
         paired.wallet_fingerprints, signer_fps,
-        "persisted fps must be the real signer fps, not the vault id",
+        "returned fps must be the real signer fps, not the vault id",
     );
     assert!(
         !paired.wallet_fingerprints.contains(&vault_id),
-        "vault id must NOT leak into the persisted signer-fp list",
+        "vault id must NOT leak into the returned signer-fp list",
     );
-
-    let on_disk = pairing_store::load(&dir).expect("load store");
-    assert_eq!(on_disk.phones[0].wallet_fingerprints, signer_fps);
 
     let _ = phone_handle.await;
 }

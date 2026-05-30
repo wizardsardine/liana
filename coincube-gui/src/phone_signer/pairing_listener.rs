@@ -10,7 +10,14 @@
 //!      `PairingComplete`.
 //!   4. Validate the wallet fingerprint claim against the local
 //!      wallet's keys.
-//!   5. Persist a `PairedPhone` row.
+//!   5. Return the would-be `PairedPhone` row; the caller decides
+//!      whether to persist (see
+//!      [`crate::app::state::settings::local_signing::LocalSigningState::apply_pairing_completed`]).
+//!      Persisting here would leak a paired row if the user
+//!      cancelled the wizard while this future was still in flight —
+//!      `Task::perform` futures aren't cancellable from the caller,
+//!      so we gate persistence at the synchronous message-apply
+//!      point instead.
 //!   6. Drop the connection — the next 2s discovery tick redials via
 //!      the steady-state path.
 //!
@@ -20,18 +27,19 @@ use prost::Message as _;
 
 use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
 
-use crate::dir::CoincubeDirectory;
 use crate::phone_signer::errors::PairingError;
 use crate::phone_signer::identity::DesktopIdentity;
 use crate::phone_signer::mdns;
 use crate::phone_signer::pairing::PairingOffer;
-use crate::phone_signer::pairing_store::{self, PairedPhone};
+use crate::phone_signer::pairing_store::PairedPhone;
 use crate::phone_signer::protocol::{local_v1, LocalEnvelope};
 use crate::phone_signer::transport::PairedTransport;
 
 /// Dial the phone selected during the picker step, read its
-/// `PairingComplete`, validate, persist. Returns the persisted
-/// [`PairedPhone`] on success.
+/// `PairingComplete`, validate. Returns the would-be
+/// [`PairedPhone`] on success; the caller persists it (gated by the
+/// run-id + Waiting-state check in
+/// [`crate::app::state::settings::local_signing::LocalSigningState::apply_pairing_completed`]).
 ///
 /// The caller is responsible for confirming `offer.expires_at_unix`
 /// hasn't passed before invoking this; we double-check below but
@@ -45,7 +53,7 @@ use crate::phone_signer::transport::PairedTransport;
 ///
 /// `signer_fingerprints` is the local wallet's `descriptor_keys()` —
 /// the real BIP-32 master fingerprints that appear in the descriptor.
-/// We persist this list as `PairedPhone.wallet_fingerprints` so the
+/// We surface this list on `PairedPhone.wallet_fingerprints` so the
 /// steady-state hw refresh tick has a real signer fp to put on
 /// `HardwareWallet::Supported`; otherwise the phone would be
 /// downgraded to `Unsupported(NotPartOfWallet)` because the vault id
@@ -56,7 +64,6 @@ pub async fn run_pairing(
     phone: mdns::DiscoveredPhone,
     expected_vault_id: Fingerprint,
     signer_fingerprints: Vec<Fingerprint>,
-    dir: CoincubeDirectory,
 ) -> Result<PairedPhone, PairingError> {
     if crate::phone_signer::pairing::is_expired(&offer) {
         return Err(PairingError::OfferExpired);
@@ -161,16 +168,14 @@ pub async fn run_pairing(
         cert_pin: phone_pin,
         name,
         paired_at_unix: now,
-        // Persist the descriptor's real signer fingerprints. The hw
-        // refresh tick reads `.first()` of this list for the
+        // The descriptor's real signer fingerprints. The hw refresh
+        // tick reads `.first()` of this list for the
         // `HardwareWallet::Supported.fingerprint` and the
         // descriptor-keys filter at the end of the tick keeps the
         // phone listed as Supported.
         wallet_fingerprints: signer_fingerprints,
         fallback_addr: None,
     };
-    pairing_store::upsert(&dir, paired.clone())
-        .map_err(|e| PairingError::InternalError(format!("persist: {}", e)))?;
 
     // Both halves of `transport` drop here; the next discovery tick
     // redials via the steady-state pinned path.
