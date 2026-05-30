@@ -587,14 +587,19 @@ impl ConnectAccountPanel {
                             },
                         )),
                         Err(e) => {
-                            let msg = e.to_string();
-                            if msg.contains("Email not verified") {
+                            let is_unverified = matches!(
+                                &e,
+                                crate::services::coincube::CoincubeError::Unsuccessful(info)
+                                    if info.status_code == 401
+                                        && info.text.contains("Email not verified")
+                            );
+                            if is_unverified {
                                 Message::View(view::Message::ConnectAccount(
                                     ConnectAccountMessage::EmailNotVerified { email },
                                 ))
                             } else {
                                 Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::Error(msg),
+                                    ConnectAccountMessage::Error(e.to_string()),
                                 ))
                             }
                         }
@@ -697,9 +702,7 @@ impl ConnectAccountPanel {
                 return iced::Task::perform(
                     async move {
                         if is_signup {
-                            client
-                                .signup_send_otp(OtpRequest { email: email_val })
-                                .await
+                            client.resend_signup_otp(&email_val).await
                         } else {
                             client.login_send_otp(OtpRequest { email: email_val }).await
                         }
