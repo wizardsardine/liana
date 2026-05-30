@@ -114,7 +114,12 @@ pub fn classify_envelope(envelope: LocalEnvelope) -> DispatchAction {
 /// when the partial arrives.
 pub struct Correlator {
     in_flight: Arc<Mutex<HashMap<String, oneshot::Sender<SignResponse>>>>,
-    _reader: JoinHandle<()>,
+    /// Read-half pump task. Polled via [`Self::is_alive`] so the hw
+    /// refresh tick can detect a dead TLS session (the task exits as
+    /// soon as `reader.recv()` returns Err) and force a re-dial,
+    /// instead of keeping a paired phone listed as Supported while
+    /// signing silently fails.
+    reader: JoinHandle<()>,
 }
 
 /// What the reader hands back to a waiting `sign_tx` call.
@@ -181,10 +186,7 @@ impl Correlator {
                 }
             }
         });
-        Self {
-            in_flight,
-            _reader: reader,
-        }
+        Self { in_flight, reader }
     }
 
     /// Register a oneshot for the given `session_id`. The matching
@@ -198,6 +200,15 @@ impl Correlator {
     /// Drop the registration for `session_id` (e.g. on cancel).
     pub async fn cancel(&self, session_id: &str) {
         self.in_flight.lock().await.remove(session_id);
+    }
+
+    /// `true` while the reader task is still pumping envelopes off the
+    /// wire. Flips to `false` the moment `reader.recv()` returns Err
+    /// (peer closed, TCP reset, TLS torn down). Cheap and sync — safe
+    /// to call from the hw refresh tick before deciding whether to
+    /// short-circuit a re-dial.
+    pub fn is_alive(&self) -> bool {
+        !self.reader.is_finished()
     }
 }
 

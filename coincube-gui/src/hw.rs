@@ -400,6 +400,16 @@ struct State {
     /// `CONNECT_TIMEOUT`) until the window has elapsed. Cleared on
     /// a subsequent successful dial.
     phone_cooldowns: HashMap<String, PhoneCooldown>,
+    /// Live `PhoneSigner` handles keyed by the same `phone-{fp8}` id
+    /// surfaced to the consumer. Lets the refresh tick probe a
+    /// previously-issued signer with
+    /// [`crate::phone_signer::PhoneSigner::is_alive`] before
+    /// short-circuiting a re-dial — without this, a dead TLS session
+    /// whose mDNS record is still being advertised would stay listed
+    /// as Supported while every sign attempt fails. Pruned at the end
+    /// of every tick to drop ids that no longer survive into
+    /// `connected_supported_hws`.
+    phone_signers: HashMap<String, Arc<crate::phone_signer::PhoneSigner>>,
 }
 
 /// Function pointer for Subscription::run_with - creates the refresh stream from RefreshState
@@ -412,6 +422,7 @@ fn make_refresh_stream(rs: &RefreshState) -> impl Stream<Item = HardwareWalletMe
         api: None,
         datadir_path: rs.datadir_path.clone(),
         phone_cooldowns: HashMap::new(),
+        phone_signers: HashMap::new(),
     };
     refresh(state)
 }
@@ -741,17 +752,34 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                         // re-enumerates each tick — the
                         // paired-phone store is persistent, so an
                         // entry in `connected_supported_hws` alone
-                        // isn't proof the phone is still up. Re-gate
-                        // the short-circuit on current
-                        // discoverability so a phone whose Wi-Fi
-                        // dropped gets downgraded to
-                        // `Unsupported(AppIsNotOpen)` on the next
-                        // tick instead of staying mislabelled as
-                        // Supported forever.
-                        if state.connected_supported_hws.contains(&id) && target.is_some() {
+                        // isn't proof the phone is still up. We
+                        // re-gate the short-circuit on:
+                        //   (a) current mDNS / fallback reachability
+                        //       (`target.is_some()`) — catches a
+                        //       phone whose Wi-Fi dropped.
+                        //   (b) the previously-issued `PhoneSigner`
+                        //       still being alive — catches a phone
+                        //       whose TLS session died while mDNS
+                        //       keeps advertising (e.g. signer app
+                        //       suspended, TCP reset). Without this
+                        //       the consumer would keep a stale
+                        //       handle and every sign attempt would
+                        //       hit `Disconnected`.
+                        let prior_alive =
+                            state.phone_signers.get(&id).is_some_and(|s| s.is_alive());
+                        if state.connected_supported_hws.contains(&id)
+                            && target.is_some()
+                            && prior_alive
+                        {
                             still.push(id);
                             continue;
                         }
+                        // We're about to re-dial, so the prior
+                        // handle (if any) is being replaced — drop
+                        // it now so its TLS session can close as
+                        // soon as no in-flight signing op still
+                        // holds a clone.
+                        state.phone_signers.remove(&id);
                         let Some(target) = target else {
                             // Paired but not visible. Surface offline
                             // without touching the cooldown — no dial
@@ -804,13 +832,17 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                                     .first()
                                     .copied()
                                     .unwrap_or_default();
-                                let signer = crate::phone_signer::PhoneSigner::new(
+                                let signer = Arc::new(crate::phone_signer::PhoneSigner::new(
                                     t,
                                     fingerprint,
                                     None,
                                     paired.clone(),
-                                );
-                                let device: Arc<dyn HWI + Send + Sync> = Arc::new(signer);
+                                ));
+                                // Stash a clone so the next refresh
+                                // tick can probe `is_alive()` before
+                                // deciding whether to re-dial.
+                                state.phone_signers.insert(id.clone(), signer.clone());
+                                let device: Arc<dyn HWI + Send + Sync> = signer;
                                 hws.push(HardwareWallet::Supported {
                                     id,
                                     device,
@@ -875,6 +907,14 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
             }))
             .cloned()
             .collect();
+        // Drop phone handles whose ids didn't survive into the
+        // rebuilt list (offline, wallet-fp mismatch, removed from
+        // store). Without this we'd keep dead `Arc<PhoneSigner>`
+        // entries growing forever across reconnects.
+        let surviving_ids = state.connected_supported_hws.clone();
+        state
+            .phone_signers
+            .retain(|id, _| surviving_ids.contains(id));
         let _ = output
             .send(HardwareWalletMessage::List(ConnectedList {
                 new: hws,

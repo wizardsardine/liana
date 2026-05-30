@@ -355,3 +355,35 @@ async fn sign_tx_returns_timeout_error_when_phone_hangs() {
     // completion because it's deliberately sleeping past the
     // virtual end of the test.
 }
+
+/// Regression for the "stale phone skips redial" finding: once the
+/// underlying TLS session goes away, `PhoneSigner::is_alive()` must
+/// flip to `false` so the hw refresh tick redials instead of leaving
+/// a dead handle listed as Supported (which would silently fail every
+/// sign attempt until mDNS times out).
+#[tokio::test]
+async fn is_alive_flips_false_after_phone_disconnect() {
+    let (signer, handle) = signer_against_response(FakeResponse::Disconnect).await;
+    assert!(
+        signer.is_alive(),
+        "freshly-dialled PhoneSigner should report alive",
+    );
+    // Drive a sign so the fake phone reads PresentSession and then
+    // closes — that closes the read half, the reader task observes
+    // Err, and Correlator's task exits.
+    let mut psbt = empty_psbt();
+    let _ = async_hwi::HWI::sign_tx(&signer, &mut psbt).await;
+    let _ = handle.await;
+    // The reader task may take a tick to fully exit after the
+    // sign_tx future resolves on `Disconnected`. Yield until
+    // `is_finished()` observes the join, with a generous cap so a
+    // regression that never flips fails fast instead of hanging.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while signer.is_alive() && std::time::Instant::now() < deadline {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !signer.is_alive(),
+        "PhoneSigner::is_alive() should flip to false once the reader task exits",
+    );
+}

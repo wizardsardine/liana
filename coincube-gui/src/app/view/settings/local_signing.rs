@@ -24,10 +24,7 @@ pub fn section<'a>(
 ) -> Element<'a, Message> {
     let mut col = Column::new()
         .spacing(20)
-        .push(super::header(
-            "Local signing",
-            SettingsMessage::LocalSigningSection,
-        ))
+        .push(super::header("Pair", SettingsMessage::LocalSigningSection))
         .push(pairing_card(state))
         .push(paired_phones_card(state))
         .width(Length::Fill);
@@ -36,7 +33,10 @@ pub fn section<'a>(
         if let Some(fp) = state.wallet_fingerprint {
             col = col.push(
                 text(format!(
-                    "Phones paired through this panel will sign for wallet fingerprint {}.",
+                    "Phones paired through this panel will sign for this vault \
+                     (id {}). This identifier is derived from the vault \
+                     descriptor and is distinct from any individual signer's \
+                     master fingerprint.",
                     fp
                 ))
                 .style(theme::text::secondary),

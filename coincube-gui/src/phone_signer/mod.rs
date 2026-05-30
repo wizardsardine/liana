@@ -105,6 +105,16 @@ impl PhoneSigner {
     pub fn display_name(&self) -> &str {
         &self.paired_phone.name
     }
+
+    /// `true` while the underlying TLS session is still pumping
+    /// envelopes. `hw.rs` checks this before short-circuiting a
+    /// re-dial — a phone whose TCP/TLS died but whose mDNS keeps
+    /// advertising must be redialled, otherwise the consumer keeps a
+    /// stale handle and every sign attempt fails with
+    /// `Disconnected` until mDNS times out.
+    pub fn is_alive(&self) -> bool {
+        self.correlator.is_alive()
+    }
 }
 
 #[async_trait]

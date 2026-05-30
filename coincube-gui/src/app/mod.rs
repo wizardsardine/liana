@@ -1268,9 +1268,6 @@ impl App {
                     menu::CubeSettingsOption::Stats => {
                         Some(view::SettingsMessage::InstallStatsSection)
                     }
-                    menu::CubeSettingsOption::LocalSigning => {
-                        Some(view::SettingsMessage::LocalSigningSection)
-                    }
                     // Avatar / Members render from `ConnectCubePanel` via
                     // App::view; no section message is dispatched to the
                     // SettingsState. Side-effect loads (avatar fetch,
@@ -1281,28 +1278,13 @@ impl App {
                     // Fire even if daemon is None — the inner settings
                     // panels don't require daemon for construction; they
                     // just pass it through to their own reload().
-                    //
-                    // `panel.reload(daemon, wallet)` is sequenced ahead
-                    // of `panel.update(section_msg)` so SettingsState
-                    // captures the wallet on `self.wallet`. Without
-                    // this, the LocalSigningSection arm of
-                    // `SettingsState::update` would construct
-                    // `LocalSigningState` and call its reload with
-                    // `None`, leaving the Pair button disabled. The
-                    // panel's `reload` returns `Task::none()` today,
-                    // so the batch's only effect is the cache update
-                    // — but going through `Task::batch` keeps the
-                    // wiring correct if that ever changes.
-                    let wallet = self.wallet.clone();
                     let daemon = self.daemon.clone();
                     if let Some(panel) = self.panels.current_mut() {
-                        let reload_task = panel.reload(daemon.clone(), wallet);
-                        let update_task = panel.update(
+                        return panel.update(
                             daemon,
                             &self.cache,
                             Message::View(view::Message::Settings(section_msg)),
                         );
-                        return Task::batch([reload_task, update_task]);
                     }
                     return Task::none();
                 }
@@ -1379,6 +1361,9 @@ impl App {
                                             }
                                             menu::SettingsOption::ImportExport => {
                                                 view::SettingsMessage::ImportExportSection
+                                            }
+                                            menu::SettingsOption::LocalSigning => {
+                                                view::SettingsMessage::LocalSigningSection
                                             }
                                         })),
                                     );

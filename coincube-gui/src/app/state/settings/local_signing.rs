@@ -414,19 +414,17 @@ impl State for LocalSigningState {
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
-        // `Wallet::descriptor_keys` returns a `HashSet<Fingerprint>`,
-        // whose iteration order is per-process random (Rust's default
-        // RandomState). For single-sig wallets the set has one
-        // element and `.iter().next()` is deterministic; for
-        // multisig vaults it is not, which would let the QR's `wfp`
-        // and the persisted `PairedPhone.wallet_fingerprints` flip
-        // between fingerprints across runs / re-pairings of the same
-        // wallet. Pick the lexicographic min so the choice is
-        // deterministic per wallet without changing the wire
-        // contract's "wallet identifier" semantics.
-        self.wallet_fingerprint = wallet
-            .as_ref()
-            .and_then(|w| w.descriptor_keys().into_iter().min());
+        // Identify the **vault as a whole**, not one of its signers.
+        // Earlier rounds picked the lexicographic min of
+        // `descriptor_keys()` (the per-signer master fingerprints),
+        // which surfaced one of the user's hardware-wallet keys as
+        // the "wallet fingerprint" in the QR + UI — confusing on a
+        // multisig vault that contains multiple keys. The vault
+        // doesn't have a canonical BIP-32 fingerprint; instead derive
+        // a stable 4-byte identifier from the descriptor itself
+        // (`Wallet::id_fingerprint`), which is unique per vault and
+        // distinct from any signer key.
+        self.wallet_fingerprint = wallet.as_ref().map(|w| w.id_fingerprint());
         // Lazily load whatever's persisted so the table renders even
         // before the first pairing.
         if let Some(w) = wallet.as_ref() {

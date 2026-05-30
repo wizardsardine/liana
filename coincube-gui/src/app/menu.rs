@@ -38,9 +38,6 @@ pub enum CubeSettingsOption {
     /// `feature_flags::CUBE_MEMBERS_UI_ENABLED`; sidebar entry is hidden
     /// otherwise. Same App-level dispatch as Avatar.
     Members,
-    /// Local LAN signer ("Paired phones") — pair a Keychain phone over
-    /// Wi-Fi so it shows up in the signer list without Connect.
-    LocalSigning,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +125,12 @@ pub enum SettingsOption {
     Node,
     Wallet,
     ImportExport,
+    /// Local LAN signer ("Paired phones") — pair a Keychain phone over
+    /// Wi-Fi so it shows up in the signer list without Connect. Lives
+    /// under Vault → Settings because the paired phone signs PSBTs for
+    /// this vault specifically (the persisted record is scoped to the
+    /// vault's id fingerprint).
+    LocalSigning,
 }
 
 /// Discriminant for the primary (left-most) nav rail. Derived from `Menu`
