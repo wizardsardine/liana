@@ -1003,6 +1003,9 @@ pub enum ConnectAccountMessage {
     ResendOtp,
     OtpResent,
     VerifyOtp,
+    EmailNotVerified {
+        email: String,
+    },
     VerifiedDevicesLoaded(Vec<crate::services::coincube::VerifiedDevice>, u64),
     LoginActivityLoaded(Vec<crate::services::coincube::LoginActivity>, u64),
     CopyToClipboard(String),

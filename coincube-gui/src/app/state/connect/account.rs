@@ -572,23 +572,37 @@ impl ConnectAccountPanel {
                 let client = self.client.clone();
                 return iced::Task::perform(
                     async move {
-                        client
+                        let result = client
                             .login_send_otp(OtpRequest {
                                 email: email_val.clone(),
                             })
-                            .await
-                            .map(|()| email_val)
+                            .await;
+                        (email_val, result)
                     },
-                    |res| match res {
-                        Ok(email) => Message::View(view::Message::ConnectAccount(
+                    |(email, res)| match res {
+                        Ok(()) => Message::View(view::Message::ConnectAccount(
                             ConnectAccountMessage::OtpRequested {
                                 email,
                                 is_signup: false,
                             },
                         )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Error(e.to_string()),
-                        )),
+                        Err(e) => {
+                            let is_unverified = matches!(
+                                &e,
+                                crate::services::coincube::CoincubeError::Unsuccessful(info)
+                                    if info.status_code == 401
+                                        && info.text.contains("Email not verified")
+                            );
+                            if is_unverified {
+                                Message::View(view::Message::ConnectAccount(
+                                    ConnectAccountMessage::EmailNotVerified { email },
+                                ))
+                            } else {
+                                Message::View(view::Message::ConnectAccount(
+                                    ConnectAccountMessage::Error(e.to_string()),
+                                ))
+                            }
+                        }
                     },
                 );
             }
@@ -688,9 +702,7 @@ impl ConnectAccountPanel {
                 return iced::Task::perform(
                     async move {
                         if is_signup {
-                            client
-                                .signup_send_otp(OtpRequest { email: email_val })
-                                .await
+                            client.resend_signup_otp(&email_val).await
                         } else {
                             client.login_send_otp(OtpRequest { email: email_val }).await
                         }
@@ -752,6 +764,28 @@ impl ConnectAccountPanel {
                     |res| match res {
                         Ok(login) => Message::View(view::Message::ConnectAccount(
                             ConnectAccountMessage::SetSession(login),
+                        )),
+                        Err(e) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::Error(e.to_string()),
+                        )),
+                    },
+                );
+            }
+
+            ConnectAccountMessage::EmailNotVerified { email } => {
+                self.step = ConnectFlowStep::OtpVerification {
+                    email: email.clone(),
+                    otp: String::new(),
+                    sending: true,
+                    is_signup: true,
+                    cooldown: 0,
+                };
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move { client.resend_signup_otp(&email).await },
+                    |res| match res {
+                        Ok(()) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::OtpResent,
                         )),
                         Err(e) => Message::View(view::Message::ConnectAccount(
                             ConnectAccountMessage::Error(e.to_string()),
