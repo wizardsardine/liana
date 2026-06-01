@@ -115,7 +115,7 @@ pub fn org_card<'a>(
 
 pub fn no_org_card() -> Container<'static, Msg> {
     let content = row![text::h5_regular(
-        "Contact WizardSardine to create an account."
+        "Contact Wizardsardine to create an account."
     )]
     .width(Length::Fill)
     .height(Length::Fill);

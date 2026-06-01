@@ -285,7 +285,7 @@ impl State {
                 );
                 self.on_warning_show_modal(
                     "Error",
-                    "User session not found. Please log in again or contact WizardSardine",
+                    "User session not found. Please log in again or contact Wizardsardine",
                 );
                 return Task::none();
             }
