@@ -172,10 +172,9 @@ async fn run_pairing_happy_path_returns_paired_phone() {
         instance_name: "keychain-test".into(),
     };
 
-    let paired =
-        pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp])
-            .await
-            .expect("run_pairing ok");
+    let paired = pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp])
+        .await
+        .expect("run_pairing ok");
 
     assert_eq!(paired.name, "Test Pixel");
     assert_eq!(paired.wallet_fingerprints, vec![wallet_fp]);
@@ -247,8 +246,7 @@ async fn run_pairing_returns_wallet_fingerprint_mismatch() {
     // expected_vault_id = `actual`; offer.wallet_fingerprint = `wanted`.
     // The listener compares them as scalars and surfaces the typed
     // mismatch.
-    let result =
-        pairing_listener::run_pairing(identity, offer, phone, actual, vec![actual]).await;
+    let result = pairing_listener::run_pairing(identity, offer, phone, actual, vec![actual]).await;
     match result {
         Err(PairingError::WalletFingerprintMismatch { expected, claimed }) => {
             assert_eq!(expected, vec![actual]);

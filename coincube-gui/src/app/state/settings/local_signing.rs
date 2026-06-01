@@ -182,13 +182,13 @@ impl LocalSigningState {
                 // same I/O failure, and on success this branch had
                 // no prior row to preserve from anyway.
                 let merged =
-                    match crate::phone_signer::pairing_store::load(dir).ok().and_then(
-                        |file| {
+                    match crate::phone_signer::pairing_store::load(dir)
+                        .ok()
+                        .and_then(|file| {
                             file.phones
                                 .into_iter()
                                 .find(|existing| existing.cert_pin == p.cert_pin)
-                        },
-                    ) {
+                        }) {
                         Some(existing) => PairedPhone {
                             fallback_addr: existing.fallback_addr,
                             name: existing.name,
