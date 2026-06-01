@@ -68,7 +68,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
 
     // Wallet Manager on Locked: "Approve Template" button
     if is_owner && is_locked {
-        btn_approve_template(Some(Msg::TemplateValidate));
+        buttons_row = buttons_row.push(btn_approve_template(Some(Msg::TemplateValidate)));
     }
 
     let footer_content: Element<'_, Msg> = Container::new(buttons_row)
