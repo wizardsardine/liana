@@ -87,9 +87,9 @@ pub struct Feerate {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WalletBalance {
-    /// Total of funds that present in a block.
+    /// Total of funds that are present in a block.
     pub confirmed: u64,
-    /// Total of funds that is not yet in a block.
+    /// Total of funds that are not yet in a block.
     pub unconfirmed: u64,
     /// Total of funds that are mined but not yet available
     pub immature: u64,
@@ -442,7 +442,7 @@ pub mod payload {
     #[derive(Serialize)]
     pub struct Recipient {
         /// Recipient cannot have an empty amount and is_max set to false
-        /// Amount cannot be less that the DUST limit.
+        /// Amount cannot be less than the DUST limit.
         pub amount: Option<u64>,
         pub address: bitcoin::Address<bitcoin::address::NetworkUnchecked>,
         /// If is_max is set to true, API will calculate the remaining funds and
@@ -514,7 +514,7 @@ pub mod payload {
         pub is_cancel: bool,
         /// If save is set to true, API will save in database the generated psbt
         /// and, if a new change address is generated for the replacement, store
-        /// this also. Note that if the transaction being replaced has a change
+        /// this as well. Note that if the transaction being replaced has a change
         /// output, then its corresponding change address will be reused in the
         /// replacement.
         pub save: bool,

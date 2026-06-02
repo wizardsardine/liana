@@ -131,7 +131,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(notif_sender: channel::Sender<Message>, notif_waker: SharedWaker) -> Self {
-        // We prefil users with a dummy user, to avoid trying to fetch non exixting users.
+        // We prefill users with a dummy user, to avoid trying to fetch non-existing users.
         let dummy_user = User {
             name: "None".into(),
             uuid: Uuid::nil(),
