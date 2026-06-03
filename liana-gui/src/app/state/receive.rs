@@ -34,6 +34,7 @@ const PREV_ADDRESSES_PAGE_SIZE: usize = 20;
 pub enum Modal {
     VerifyAddress(VerifyAddressModal),
     ShowQrCode(ShowQrCodeModal),
+    EditLabel(String),
     None,
 }
 
@@ -140,6 +141,19 @@ impl State for ReceivePanel {
             Modal::ShowQrCode(m) => modal::Modal::new(content, m.view())
                 .on_blur(Some(view::Message::Close))
                 .into(),
+            Modal::EditLabel(addr) => {
+                let value = self
+                    .labels_edited
+                    .cache()
+                    .get(addr)
+                    .expect("seeded when EditLabel modal opened");
+                modal::Modal::new(content, view::receive::edit_label_modal(addr, value))
+                    .on_blur(Some(view::Message::Label(
+                        vec![addr.clone()],
+                        view::LabelMessage::Cancel,
+                    )))
+                    .into()
+            }
             Modal::None => content,
         }
     }
@@ -159,6 +173,36 @@ impl State for ReceivePanel {
         message: Message,
     ) -> Task<Message> {
         match message {
+            Message::View(view::Message::Label(items, view::LabelMessage::Edit)) => {
+                let addr = items.into_iter().next().unwrap_or_default();
+                let current = self
+                    .addresses
+                    .labels
+                    .get(&addr)
+                    .or_else(|| self.prev_addresses.labels.get(&addr))
+                    .cloned()
+                    .unwrap_or_default();
+                self.labels_edited.edit(addr.clone(), current);
+                self.modal = Modal::EditLabel(addr);
+                Task::none()
+            }
+            Message::View(view::Message::Label(_, view::LabelMessage::Confirm))
+            | Message::View(view::Message::Label(_, view::LabelMessage::Cancel)) => {
+                self.modal = Modal::None;
+                match self.labels_edited.update(
+                    daemon,
+                    message,
+                    std::iter::once(&mut self.addresses)
+                        .chain(std::iter::once(&mut self.prev_addresses))
+                        .map(|a| a as &mut dyn LabelsLoader),
+                ) {
+                    Ok(cmd) => cmd,
+                    Err(e) => {
+                        self.warning = Some(e);
+                        Task::none()
+                    }
+                }
+            }
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
                 match self.labels_edited.update(
                     daemon,

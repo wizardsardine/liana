@@ -1,5 +1,5 @@
 mod modals;
-pub use modals::{qr_modal, verify_address_modal};
+pub use modals::{edit_label_modal, qr_modal, verify_address_modal};
 
 use std::collections::{HashMap, HashSet};
 
