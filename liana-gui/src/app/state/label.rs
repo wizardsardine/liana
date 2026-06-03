@@ -21,6 +21,17 @@ impl LabelsEdited {
     pub fn cache(&self) -> &HashMap<String, form::Value<String>> {
         &self.0
     }
+    /// Seed the edit cache for `key` with its current `value` so an edit form pre-fills.
+    pub fn edit(&mut self, key: String, value: String) {
+        self.0.insert(
+            key,
+            form::Value {
+                valid: true,
+                warning: None,
+                value,
+            },
+        );
+    }
     pub fn update<'a, T: IntoIterator<Item = &'a mut dyn LabelsLoader>>(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,

@@ -8,7 +8,7 @@ use liana::miniscript::bitcoin::{
 };
 
 use liana_ui::{
-    component::{card, panels::receive, text::text},
+    component::{card, form, label, panels::receive, text::text},
     widget::*,
 };
 
@@ -20,7 +20,7 @@ use crate::{
     hw::HardwareWallet,
 };
 
-use crate::app::view::message::Message;
+use crate::app::view::message::{LabelMessage, Message};
 
 pub fn verify_address_modal<'a>(
     warning: Option<&Error>,
@@ -69,4 +69,15 @@ pub fn verify_address_modal<'a>(
 
 pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a str) -> Element<'a, Message> {
     receive::modal::qr_display(qr, address)
+}
+
+pub fn edit_label_modal<'a>(address: &str, value: &'a form::Value<String>) -> Element<'a, Message> {
+    let addr = address.to_string();
+    let on_change = {
+        let addr = addr.clone();
+        move |s| Message::Label(vec![addr.clone()], LabelMessage::Edited(s))
+    };
+    let confirm = Message::Label(vec![addr.clone()], LabelMessage::Confirm);
+    let cancel = Message::Label(vec![addr], LabelMessage::Cancel);
+    label::edit_label_modal("Edit label", "Label", value, on_change, confirm, cancel)
 }
