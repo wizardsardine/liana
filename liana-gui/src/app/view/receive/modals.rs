@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use iced::{widget::qr_code, Alignment, Length};
+use iced::{widget::qr_code, Length};
 
 use liana::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
@@ -8,7 +8,7 @@ use liana::miniscript::bitcoin::{
 };
 
 use liana_ui::{
-    component::{card, form, label, panels::receive, text::text},
+    component::{form, label, modal, panels::receive, text::text},
     widget::*,
 };
 
@@ -20,7 +20,7 @@ use crate::{
     hw::HardwareWallet,
 };
 
-use crate::app::view::message::{LabelMessage, Message};
+use crate::app::view::message::{LabelMessage, Message, NewAddressMessage};
 
 pub fn verify_address_modal<'a>(
     warning: Option<&Error>,
@@ -29,46 +29,48 @@ pub fn verify_address_modal<'a>(
     address: &Address,
     derivation_index: &ChildNumber,
 ) -> Element<'a, Message> {
-    Column::new()
+    let content = Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))
-        .push(card::simple(
-            Column::new()
-                .push(
-                    Column::new()
-                        .push(receive::modal::verify_address_modal(
-                            address,
-                            derivation_index,
-                            Message::Clipboard(address.to_string()),
-                        ))
-                        .push(text("Select device to verify address on:").width(Length::Fill))
-                        .spacing(10)
-                        .push(hws.iter().enumerate().fold(
-                            Column::new().spacing(10),
-                            |col, (i, hw)| {
-                                col.push(hw::hw_list_view_verify_address(
-                                    i,
-                                    hw,
-                                    if let HardwareWallet::Supported { fingerprint, .. } = hw {
-                                        chosen_hws.contains(fingerprint)
-                                    } else {
-                                        false
-                                    },
-                                ))
-                            },
-                        ))
-                        .width(Length::Fill),
-                )
-                .spacing(20)
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
+        .push(receive::modal::verify_address_modal(
+            address,
+            derivation_index,
+            Message::Clipboard(address.to_string()),
         ))
-        .width(Length::Fill)
-        .max_width(750)
-        .into()
+        .push(text("Select device to verify address on:").width(Length::Fill))
+        .push(
+            hws.iter()
+                .enumerate()
+                .fold(Column::new().spacing(10), |col, (i, hw)| {
+                    col.push(hw::hw_list_view_verify_address(
+                        i,
+                        hw,
+                        if let HardwareWallet::Supported { fingerprint, .. } = hw {
+                            chosen_hws.contains(fingerprint)
+                        } else {
+                            false
+                        },
+                    ))
+                }),
+        )
+        .spacing(20)
+        .width(Length::Fill);
+    modal::modal_view(
+        Some("Verify address"),
+        None,
+        Some(Message::Close),
+        modal::ModalWidth::XL,
+        content,
+    )
 }
 
 pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a str) -> Element<'a, Message> {
-    receive::modal::qr_display(qr, address)
+    modal::modal_view(
+        Some("Address"),
+        None,
+        Some(Message::Close),
+        modal::ModalWidth::M,
+        receive::modal::qr_display(qr, address),
+    )
 }
 
 pub fn edit_label_modal<'a>(address: &str, value: &'a form::Value<String>) -> Element<'a, Message> {
@@ -79,5 +81,35 @@ pub fn edit_label_modal<'a>(address: &str, value: &'a form::Value<String>) -> El
     };
     let confirm = Message::Label(vec![addr.clone()], LabelMessage::Confirm);
     let cancel = Message::Label(vec![addr], LabelMessage::Cancel);
-    label::edit_label_modal("Edit label", "Label", value, on_change, confirm, cancel)
+    label::edit_label_modal(
+        "Edit label",
+        "Enter an address label",
+        value,
+        on_change,
+        confirm,
+        cancel,
+        false,
+    )
+}
+
+pub fn new_address_label_modal<'a>(value: &'a form::Value<String>) -> Element<'a, Message> {
+    label::edit_label_modal(
+        "Label",
+        "Enter an address label",
+        value,
+        |s| Message::NewAddress(NewAddressMessage::LabelEdited(s)),
+        Message::NewAddress(NewAddressMessage::Confirm),
+        Message::NewAddress(NewAddressMessage::Close),
+        true,
+    )
+}
+
+pub fn new_address_show_modal<'a>(address: &Address) -> Element<'a, Message> {
+    receive::modal::show_address_modal(
+        address,
+        Message::NewAddress(NewAddressMessage::Close),
+        Message::NewAddress(NewAddressMessage::Verify),
+        Message::NewAddress(NewAddressMessage::ShowQr),
+        Message::Clipboard(address.to_string()),
+    )
 }
