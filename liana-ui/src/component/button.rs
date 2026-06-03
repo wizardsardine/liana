@@ -381,6 +381,10 @@ pub fn btn_ok<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, "OK", BtnWidth::M, msg)
 }
 
+pub fn btn_generate<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "Generate", BtnWidth::M, msg)
+}
+
 /// Clear button: secondary. Width M.
 pub fn btn_clear<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_secondary(None, "Clear", BtnWidth::M, msg)
@@ -502,7 +506,7 @@ pub fn btn_show_qr<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     btn_secondary(
         Some(icon::qr_icon()),
         "Show QR Code",
-        BtnWidth::M,
+        BtnWidth::XL,
         Some(msg),
     )
 }
@@ -511,7 +515,7 @@ pub fn btn_verify<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     btn_secondary(
         Some(icon::usb_icon()),
         "Verify on hardware device",
-        BtnWidth::L,
+        BtnWidth::XXL,
         Some(msg),
     )
 }

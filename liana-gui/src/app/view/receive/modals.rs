@@ -20,7 +20,7 @@ use crate::{
     hw::HardwareWallet,
 };
 
-use crate::app::view::message::{LabelMessage, Message};
+use crate::app::view::message::{LabelMessage, Message, NewAddressMessage};
 
 pub fn verify_address_modal<'a>(
     warning: Option<&Error>,
@@ -79,5 +79,35 @@ pub fn edit_label_modal<'a>(address: &str, value: &'a form::Value<String>) -> El
     };
     let confirm = Message::Label(vec![addr.clone()], LabelMessage::Confirm);
     let cancel = Message::Label(vec![addr], LabelMessage::Cancel);
-    label::edit_label_modal("Edit label", "Label", value, on_change, confirm, cancel)
+    label::edit_label_modal(
+        "Edit label",
+        "Enter an address label",
+        value,
+        on_change,
+        confirm,
+        cancel,
+        false,
+    )
+}
+
+pub fn new_address_label_modal<'a>(value: &'a form::Value<String>) -> Element<'a, Message> {
+    label::edit_label_modal(
+        "Label",
+        "Enter an address label",
+        value,
+        |s| Message::NewAddress(NewAddressMessage::LabelEdited(s)),
+        Message::NewAddress(NewAddressMessage::Confirm),
+        Message::NewAddress(NewAddressMessage::Close),
+        true,
+    )
+}
+
+pub fn new_address_show_modal<'a>(address: &Address) -> Element<'a, Message> {
+    receive::modal::show_address_modal(
+        address,
+        Message::NewAddress(NewAddressMessage::Close),
+        Message::NewAddress(NewAddressMessage::Verify),
+        Message::NewAddress(NewAddressMessage::ShowQr),
+        Message::Clipboard(address.to_string()),
+    )
 }

@@ -83,7 +83,7 @@ pub fn show_address_modal<'a, M: 'a + Clone>(
         Some("Address"),
         None,
         Some(close),
-        component::modal::ModalWidth::M,
+        component::modal::ModalWidth::XL,
         content,
     )
 }

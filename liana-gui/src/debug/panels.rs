@@ -5,7 +5,7 @@
 //! exception — it wraps in `dashboard()` itself, so we render it
 //! straight through `.map(|_| ())`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::OnceLock;
 
@@ -135,11 +135,6 @@ fn sample_addresses() -> &'static Vec<Address> {
     A.get_or_init(|| SAMPLE_ADDRESSES.iter().copied().map(parse_addr).collect())
 }
 
-fn empty_address_set() -> &'static HashSet<Address> {
-    static S: OnceLock<HashSet<Address>> = OnceLock::new();
-    S.get_or_init(HashSet::new)
-}
-
 pub static ENTRY_RECEIVE: DebugPageEntry = DebugPageEntry {
     view: render_receive,
 };
@@ -152,27 +147,21 @@ fn render_receive() -> Element<'static, DebugMessage> {
     let body = receive_view::receive(
         &addrs[..1],
         empty_labels(),
-        &[],
-        empty_labels(),
-        false,
-        empty_address_set(),
+        true,
         empty_label_forms(),
         true,
         false,
     )
     .map(|_| ());
-    dashboard_chrome(&RECEIVE_MENU, "Receive panel — single fresh address", body)
+    dashboard_chrome(&RECEIVE_MENU, "Receive panel — single address", body)
 }
 
 fn render_receive_with_prev() -> Element<'static, DebugMessage> {
     let addrs = sample_addresses();
     let body = receive_view::receive(
-        &addrs[..1],
-        empty_labels(),
-        &addrs[1..],
+        &addrs[..],
         empty_labels(),
         true,
-        empty_address_set(),
         empty_label_forms(),
         true,
         false,

@@ -1,21 +1,17 @@
 mod modals;
-pub use modals::{edit_label_modal, qr_modal, verify_address_modal};
-
-use std::collections::{HashMap, HashSet};
-
-use iced::{
-    alignment::Horizontal,
-    widget::{Button, Space},
-    Alignment, Length,
+pub use modals::{
+    edit_label_modal, new_address_label_modal, new_address_show_modal, qr_modal,
+    verify_address_modal,
 };
+
+use std::collections::HashMap;
+
+use iced::{alignment::Horizontal, widget::Button, Alignment, Length};
 
 use liana::miniscript::bitcoin;
 
 use liana_ui::{
-    component::{
-        button, form, scrollable,
-        text::{legacy, Text},
-    },
+    component::{button, form, panels::receive, text::legacy},
     icon, theme,
     widget::*,
 };
@@ -36,7 +32,7 @@ fn address_card<'a>(
         .map(|l| l.value.clone())
         .or_else(|| labels.get(&addr).cloned())
         .unwrap_or_default();
-    liana_ui::component::panels::receive::address_card(
+    receive::address_card(
         label,
         address,
         Message::Label(vec![addr.clone()], super::LabelMessage::Edit),
@@ -48,19 +44,13 @@ fn address_card<'a>(
 
 #[allow(clippy::too_many_arguments)]
 pub fn receive<'a>(
-    addresses: &'a [bitcoin::Address],
-    labels: &'a HashMap<String, String>,
     prev_addresses: &'a [bitcoin::Address],
     prev_labels: &'a HashMap<String, String>,
     show_prev_addresses: bool,
-    selected: &'a HashSet<bitcoin::Address>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
     is_last_page: bool,
     processing: bool,
 ) -> Element<'a, Message> {
-    // Number of start and end address characters to show in collapsed view.
-    const NUM_ADDR_CHARS: usize = 16;
-    let mut addresses_count = 0; // for counting number of new addresses generated
     Column::new()
         .push(
             Row::new()
@@ -70,7 +60,7 @@ pub fn receive<'a>(
                 )
                 .push({
                     let (icon, label) = (Some(icon::plus_icon()), "Generate address");
-                    if addresses.is_empty() {
+                    if prev_addresses.is_empty() {
                         button::primary(icon, label)
                     } else {
                         button::secondary(icon, label)
@@ -81,121 +71,17 @@ pub fn receive<'a>(
         .push(legacy::text(
             "Always generate a new address for each deposit.",
         ))
-        .push(
-            Row::new()
-                .spacing(10)
-                .push(addresses.iter().enumerate().rev().fold(
-                    // iterate starting from most recently generated
-                    Column::new().spacing(10).width(Length::Fill),
-                    |col, (i, address)| {
-                        addresses_count += 1;
-                        col.push(address_card(i, address, labels, labels_editing))
-                    },
-                )),
-        )
         .push_maybe(
-            (!prev_addresses.is_empty()).then_some(
-                Container::new(
-                    Button::new(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .push(
-                                legacy::p1_bold(
-                                    "Previously generated addresses still awaiting deposit",
-                                )
-                                .width(Length::Fill),
-                            )
-                            .push(if show_prev_addresses {
-                                icon::collapsed_icon()
-                            } else {
-                                icon::collapse_icon()
-                            }),
-                    )
-                    .on_press(Message::ToggleShowPreviousAddresses)
-                    .padding(20)
-                    .width(Length::Fill)
-                    .style(theme::button::transparent_border),
-                )
-                .style(theme::card::button_simple),
-            ),
+            (!prev_addresses.is_empty()).then_some(receive::previous_addresses_header(
+                show_prev_addresses,
+                Message::ToggleShowPreviousAddresses,
+            )),
         )
         .push_maybe(show_prev_addresses.then_some(Row::new().spacing(10).push(
             prev_addresses.iter().enumerate().fold(
                 // prev addresses are already ordered in descending order
                 Column::new().spacing(10).width(Length::Fill),
-                |col, (i, address)| {
-                    col.push(if !selected.contains(address) {
-                        Button::new(
-                            Row::new()
-                                .spacing(10)
-                                .push(
-                                    {
-                                        let addr = address.to_string();
-                                        let addr_len = addr.chars().count();
-                                        Container::new(
-                                            legacy::p2_regular(if addr_len > 2 * NUM_ADDR_CHARS {
-                                                format!(
-                                                    "{}...{}",
-                                                    addr.chars()
-                                                        .take(NUM_ADDR_CHARS)
-                                                        .collect::<String>(),
-                                                    addr.chars()
-                                                        .skip(addr_len - NUM_ADDR_CHARS)
-                                                        .collect::<String>(),
-                                                )
-                                            } else {
-                                                addr
-                                            })
-                                            .small()
-                                            .style(theme::text::secondary),
-                                        )
-                                    }
-                                    .padding(10)
-                                    .width(Length::Fixed(350.0)),
-                                )
-                                .push(
-                                    Container::new(scrollable::horizontal_thin(
-                                        Column::new()
-                                            .push(Space::with_height(Length::Fixed(10.0)))
-                                            .push(
-                                                legacy::text(
-                                                    prev_labels
-                                                        .get(&address.to_string())
-                                                        .cloned()
-                                                        .unwrap_or_default(),
-                                                )
-                                                .small()
-                                                .style(theme::text::secondary),
-                                            ),
-                                    ))
-                                    .padding(10)
-                                    .width(Length::Fill),
-                                )
-                                .align_y(Alignment::Center),
-                        )
-                        .on_press(Message::SelectAddress(address.clone()))
-                        .style(theme::button::clickable_card)
-                    } else {
-                        // Continue the row index from those of generated addresses above.
-                        let addr_str = address.to_string();
-                        let is_editing = labels_editing.contains_key(&addr_str);
-                        let btn = Button::new(address_card(
-                            addresses_count + i,
-                            address,
-                            prev_labels,
-                            labels_editing,
-                        ))
-                        .padding(0) // so that button & card borders match
-                        .style(theme::button::clickable_card);
-                        // Do not set on_press while editing label so that
-                        // clicking the form does not collapse the card.
-                        if is_editing {
-                            btn
-                        } else {
-                            btn.on_press(Message::SelectAddress(address.clone()))
-                        }
-                    })
-                },
+                |col, (i, address)| col.push(address_card(i, address, prev_labels, labels_editing)),
             ),
         )))
         .push_maybe(

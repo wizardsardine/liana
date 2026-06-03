@@ -5,7 +5,7 @@ use crate::{
     node::bitcoind::RpcAuthType,
     services::fiat::{Currency, PriceSource},
 };
-use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
+use liana::miniscript::bitcoin::{bip32::Fingerprint, OutPoint};
 
 pub trait Close {
     fn close() -> Self;
@@ -22,8 +22,8 @@ pub enum Message {
     SelectPayment(OutPoint),
     Label(Vec<String>, LabelMessage),
     NextReceiveAddress,
+    NewAddress(NewAddressMessage),
     ToggleShowPreviousAddresses,
-    SelectAddress(Address),
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
     ImportSpend(ImportSpendMessage),
@@ -52,6 +52,15 @@ pub enum LabelMessage {
     Edited(String),
     Cancel,
     Confirm,
+}
+
+#[derive(Debug, Clone)]
+pub enum NewAddressMessage {
+    LabelEdited(String),
+    Confirm,
+    Verify,
+    ShowQr,
+    Close,
 }
 
 #[derive(Debug, Clone)]
