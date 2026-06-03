@@ -319,7 +319,18 @@ async fn handshake_fails_when_phone_pins_a_different_cert() {
         instance_name: "keychain-test".into(),
     };
     let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
-    let g = generate_offer(wallet_fp, &identity, "keychain-test".into());
+    let mut g = generate_offer(wallet_fp, &identity, "keychain-test".into());
+    // Shorten the offer TTL: `run_pairing` now retries failed dials
+    // until the offer expires (so a user has time to scan the QR
+    // after the phone's first inbound-close). A 2 s budget is
+    // enough for the loop to detect the wrong-pin handshake failure
+    // and exit cleanly, without making CI sit on the production
+    // 120 s TTL.
+    g.offer.expires_at_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+        + 2;
 
     let result = pairing_listener::run_pairing(
         identity,

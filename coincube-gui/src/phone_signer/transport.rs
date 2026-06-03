@@ -30,10 +30,27 @@ use crate::phone_signer::tls::{self, client_config, CertFingerprint};
 /// Rejects framing-length runaways before we allocate.
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
-/// How long we wait on a TCP+TLS connect to a paired phone before
-/// declaring it unreachable. Kept tight so the discovery loop's 2s
-/// tick isn't blocked.
+/// How long we wait on a TCP+TLS connect during the steady-state
+/// per-tick dial. Kept tight so the discovery loop's 2s tick isn't
+/// blocked when a paired phone is offline.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_millis(750);
+
+/// How long we wait on a TCP+TLS connect during the user-initiated
+/// pairing dial. Much looser than [`CONNECT_TIMEOUT`] because:
+///
+///   * Pairing is one-shot, not per-tick, so we're not blocking any
+///     background loop.
+///   * The desktop's first dial to a phone is a cold path: ARP
+///     resolution, Wi-Fi power-save wake-up, and TCP SYN retries
+///     can each chew hundreds of ms on a marginal LAN. A 750ms
+///     budget reliably fails on Wi-Fi that ping shows working but
+///     lossy (~25% loss / ~200ms RTT), because a dropped SYN's
+///     retry lands well after the deadline.
+///   * The retry loop in `pairing_listener::run_pairing` already
+///     caps total wall time at the offer TTL, so a longer per-dial
+///     budget just shifts where the time is spent — fewer dials,
+///     each more likely to succeed.
+pub const PAIRING_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A live, authenticated transport to a paired phone.
 pub struct PairedTransport {
@@ -45,6 +62,8 @@ pub struct PairedTransport {
 
 impl PairedTransport {
     /// Dial a paired phone over TLS, verifying the phone's cert pin.
+    /// Steady-state path — uses the tight [`CONNECT_TIMEOUT`] so a
+    /// dead phone doesn't stall the 2s discovery tick.
     pub async fn connect(
         peer: SocketAddr,
         identity: &DesktopIdentity,
@@ -57,7 +76,7 @@ impl PairedTransport {
         )
         .map_err(|e| HwiError::Device(format!("rustls config: {}", e)))?;
 
-        let stream = dial_tls(peer, cfg).await?;
+        let stream = dial_tls(peer, cfg, CONNECT_TIMEOUT).await?;
         Ok(Self { peer, stream })
     }
 
@@ -66,6 +85,11 @@ impl PairedTransport {
     /// captured during the TLS handshake by
     /// [`tls::CapturingServerVerifier`]; read it via
     /// [`Self::peer_cert_fingerprint`] after this returns.
+    ///
+    /// Uses the looser [`PAIRING_CONNECT_TIMEOUT`] because the
+    /// pairing dial is a one-shot, user-initiated event over a
+    /// likely-cold network path — the tight steady-state budget
+    /// reliably fails on lossy Wi-Fi.
     pub async fn connect_unpinned(
         peer: SocketAddr,
         identity: &DesktopIdentity,
@@ -76,7 +100,7 @@ impl PairedTransport {
         // We rely on `peer_cert_fingerprint()` post-connect instead
         // of the `seen` side channel — rustls populates
         // `peer_certificates()` on the connection itself.
-        let stream = dial_tls(peer, cfg).await?;
+        let stream = dial_tls(peer, cfg, PAIRING_CONNECT_TIMEOUT).await?;
         Ok(Self { peer, stream })
     }
 
@@ -116,12 +140,26 @@ impl PairedTransport {
 async fn dial_tls(
     peer: SocketAddr,
     cfg: rustls::ClientConfig,
+    budget: Duration,
 ) -> Result<TlsStream<TcpStream>, HwiError> {
     let connector = TlsConnector::from(Arc::new(cfg));
-    let tcp = match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(peer)).await {
+    let tcp = match tokio::time::timeout(budget, TcpStream::connect(peer)).await {
         Ok(Ok(s)) => s,
-        Ok(Err(_)) => return Err(HwiError::DeviceNotFound),
-        Err(_) => return Err(HwiError::DeviceNotFound),
+        // Surface the underlying os error ("network is unreachable",
+        // "connection refused", etc.) instead of collapsing every
+        // TCP failure to a generic `DeviceNotFound`. The old
+        // behaviour hid the real cause from the pairing wizard's
+        // error toast and made remote bugs nearly impossible to
+        // diagnose from a screenshot.
+        Ok(Err(e)) => {
+            return Err(HwiError::Device(format!("tcp connect {}: {}", peer, e)));
+        }
+        Err(_) => {
+            return Err(HwiError::Device(format!(
+                "tcp connect {} timed out after {:?}",
+                peer, budget
+            )));
+        }
     };
     // SNI is required by rustls. The phone presents a cert with SAN
     // "coincube-phone.local"; pinning by cert hash makes the name
@@ -133,7 +171,7 @@ async fn dial_tls(
     // the handshake would otherwise hang this future indefinitely —
     // blocking the discovery-loop dial's per-phone future forever
     // and preventing the cooldown from being recorded.
-    match tokio::time::timeout(CONNECT_TIMEOUT, connector.connect(sni, tcp)).await {
+    match tokio::time::timeout(budget, connector.connect(sni, tcp)).await {
         Ok(Ok(stream)) => Ok(stream),
         Ok(Err(e)) => Err(HwiError::Device(format!("tls handshake: {}", e))),
         Err(_) => Err(HwiError::Device("tls handshake timeout".into())),

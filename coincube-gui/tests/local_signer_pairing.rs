@@ -452,3 +452,113 @@ async fn run_pairing_returns_signer_fps_not_vault_id() {
 
     let _ = phone_handle.await;
 }
+
+/// Two-shot fake phone: completes TLS on the first inbound
+/// connection and immediately drops it (mimicking a phone whose
+/// pairing handler hasn't seen the QR scan yet), then serves a
+/// real `PairingComplete` on the second connection. Used to
+/// exercise the redial loop in [`pairing_listener::run_pairing`].
+async fn fake_phone_close_then_serve(
+    listener: TcpListener,
+    phone_cert: CertificateDer<'static>,
+    phone_key: PrivateKeyDer<'static>,
+    device_name: String,
+    phone_cert_fp_hex: String,
+) {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let cfg = ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("protocol versions")
+        .with_client_cert_verifier(WebPkiClientVerifier::no_client_auth())
+        .with_single_cert(vec![phone_cert], phone_key)
+        .expect("single cert");
+    let acceptor = TlsAcceptor::from(Arc::new(cfg));
+
+    // Connection #1: complete handshake, drop without writing.
+    let (tcp, _peer) = listener.accept().await.expect("accept #1");
+    let tls = acceptor.accept(tcp).await.expect("tls handshake #1");
+    drop(tls);
+
+    // Connection #2: real pairing serve.
+    let (tcp, _peer) = listener.accept().await.expect("accept #2");
+    let mut tls = acceptor.accept(tcp).await.expect("tls handshake #2");
+    let envelope = LocalEnvelope {
+        payload: Some(local_v1::local_envelope::Payload::PairingComplete(
+            local_v1::PairingComplete {
+                phone_cert_fp: phone_cert_fp_hex,
+                device_name,
+                app_version: "test-1.0".into(),
+                capabilities: vec!["sign-psbt".into()],
+            },
+        )),
+    };
+    let mut buf = Vec::with_capacity(envelope.encoded_len());
+    envelope.encode(&mut buf).expect("encode");
+    tls.write_all(&(buf.len() as u32).to_be_bytes())
+        .await
+        .expect("write len");
+    tls.write_all(&buf).await.expect("write body");
+    tls.flush().await.expect("flush");
+
+    // Best-effort drain of the desktop's Pong ack. Tolerate EOF.
+    let mut len_buf = [0u8; 4];
+    let _ = tls.read_exact(&mut len_buf).await;
+    let len = u32::from_be_bytes(len_buf) as usize;
+    if len > 0 && len < 16 * 1024 {
+        let mut body = vec![0u8; len];
+        let _ = tls.read_exact(&mut body).await;
+    }
+}
+
+/// Regression: the phone closes inbound TLS sessions before it has
+/// seen the QR scan, so the user's very first dial after clicking
+/// "Pair" almost always fails. The desktop must redial within the
+/// offer TTL so the user has time to scan; without it, the QR
+/// vanishes on the first failure and the user never gets a chance.
+#[tokio::test]
+async fn run_pairing_redials_after_phone_closes_early() {
+    let (phone_cert, phone_key) = mint_ed25519_cert("Coincube Phone (test)");
+    let phone_pin = tls::fingerprint_of(&phone_cert);
+    let phone_cert_fp_hex = phone_pin
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    let phone_handle = tokio::spawn(fake_phone_close_then_serve(
+        listener,
+        phone_cert,
+        phone_key,
+        "Pixel".into(),
+        phone_cert_fp_hex.clone(),
+    ));
+
+    let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
+    let identity = fresh_desktop_identity();
+    let offer = fresh_offer(wallet_fp, identity.cert_fp(), 30);
+    let phone = DiscoveredPhone {
+        cert_fp8: phone_cert_fp_hex[..8].to_string(),
+        addr,
+        instance_name: "keychain-test".into(),
+    };
+
+    // Outer cap so a regression fails CI fast instead of hanging.
+    // 5s is plenty: one failed dial + REDIAL_BACKOFF (750ms) + one
+    // successful dial should land inside a second or two.
+    let paired = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp]),
+    )
+    .await
+    .expect("run_pairing must complete within cap")
+    .expect("run_pairing ok after redial");
+
+    assert_eq!(paired.cert_pin, phone_pin);
+    assert_eq!(paired.name, "Pixel");
+
+    let _ = phone_handle.await;
+}
