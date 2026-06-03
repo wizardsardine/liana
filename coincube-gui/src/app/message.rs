@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::{
+    address::NetworkUnchecked,
     bip32::{ChildNumber, Fingerprint},
     psbt::Psbt,
     Address, Txid,
@@ -53,6 +54,20 @@ pub enum Message {
     Labels(Result<HashMap<String, String>, Error>),
     SpendTxs(Result<Vec<SpendTx>, Error>),
     Psbt(Result<(Psbt, Vec<String>), Error>),
+    /// Debounced trigger to run the create-spend "redraft" (coin selection)
+    /// off the UI thread. Carries the redraft generation token; the handler
+    /// ignores it if a newer edit has since superseded this generation.
+    RedraftDebounce(u64),
+    /// Result of an async redraft. Applied only if `seq` still matches the
+    /// current redraft generation (otherwise it is a stale result from an
+    /// edit the user has already typed past).
+    RedraftResult {
+        seq: u64,
+        max_address: Address<NetworkUnchecked>,
+        recipient_with_max: Option<usize>,
+        destinations_is_empty: bool,
+        result: Result<CreateSpendResult, Error>,
+    },
     RbfPsbt(Result<Txid, Error>),
     Recovery(Result<SpendTx, Error>),
     Signed(Fingerprint, Result<Psbt, Error>),
