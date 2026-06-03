@@ -11,7 +11,7 @@ use crate::{
 };
 
 use super::{
-    button::{btn_edit, btn_ok},
+    button::{btn_cancel, btn_edit, btn_generate, btn_save},
     form::{Form, Value},
     modal::modal_view,
 };
@@ -36,12 +36,30 @@ pub fn edit_label_modal<'a, M: 'a + Clone, C>(
     on_change: C,
     confirm: M,
     close: M,
+    new: bool,
 ) -> Element<'a, M>
 where
     C: 'static + Fn(String) -> M,
 {
-    let input = Form::new(descr, value, on_change).on_submit(confirm.clone());
-    let btn_row = row![Space::fill_width(), btn_ok(Some(confirm))];
+    // An empty label is not an error (no warning shown), but it cannot be saved,
+    // so the confirm button stays disabled until a label is entered.
+    let confirm = (value.valid && !value.value.is_empty()).then_some(confirm);
+    let input = Form::new(descr, value, on_change);
+    let input = match &confirm {
+        Some(c) => input.on_submit(c.clone()),
+        None => input,
+    };
+    let cancel = if new {
+        None
+    } else {
+        Some(btn_cancel(Some(close.clone())))
+    };
+    let ok = if new {
+        btn_generate(confirm)
+    } else {
+        btn_save(confirm)
+    };
+    let btn_row = row![Space::fill_width(), cancel, ok].spacing(12);
     let content = column![input, btn_row].spacing(28);
     modal_view(
         Some(title),

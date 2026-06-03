@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use iced::{widget::qr_code, Subscription, Task};
+use iced::{widget::qr_code, Length, Subscription, Task};
 use liana::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     Address, Network,
 };
-use liana_ui::{widget::modal, widget::*};
+use liana_ui::{component::form, widget::modal, widget::*};
 
 use crate::daemon::model::LabelsLoader;
 use crate::dir::LianaDirectory;
@@ -35,6 +35,7 @@ pub enum Modal {
     VerifyAddress(VerifyAddressModal),
     ShowQrCode(ShowQrCodeModal),
     EditLabel(String),
+    NewAddress(NewAddressModal),
     None,
 }
 
@@ -66,11 +67,9 @@ impl Labelled for Addresses {
 pub struct ReceivePanel {
     data_dir: LianaDirectory,
     wallet: Arc<Wallet>,
-    addresses: Addresses,
     prev_addresses: Addresses,
     prev_continue_from: Option<ChildNumber>,
     show_prev_addresses: bool,
-    selected: HashSet<Address>,
     labels_edited: LabelsEdited,
     modal: Modal,
     warning: Option<Error>,
@@ -82,11 +81,9 @@ impl ReceivePanel {
         Self {
             data_dir,
             wallet,
-            addresses: Addresses::default(),
             prev_addresses: Addresses::default(),
             prev_continue_from: None,
             show_prev_addresses: false,
-            selected: HashSet::new(),
             labels_edited: LabelsEdited::default(),
             modal: Modal::None,
             warning: None,
@@ -95,23 +92,11 @@ impl ReceivePanel {
     }
 
     pub fn address(&self, i: usize) -> Option<&Address> {
-        if i < self.addresses.list.len() {
-            self.addresses.list.get(i)
-        } else {
-            // i >= self.addresses.list.len()
-            self.prev_addresses.list.get(i - self.addresses.list.len())
-        }
+        self.prev_addresses.list.get(i)
     }
 
     pub fn derivation_index(&self, i: usize) -> Option<&ChildNumber> {
-        if i < self.addresses.list.len() {
-            self.addresses.derivation_indexes.get(i)
-        } else {
-            // i >= self.addresses.list.len()
-            self.prev_addresses
-                .derivation_indexes
-                .get(i - self.addresses.list.len())
-        }
+        self.prev_addresses.derivation_indexes.get(i)
     }
 }
 
@@ -122,12 +107,9 @@ impl State for ReceivePanel {
             cache,
             self.warning.as_ref(),
             view::receive::receive(
-                &self.addresses.list,
-                &self.addresses.labels,
                 &self.prev_addresses.list,
                 &self.prev_addresses.labels,
                 self.show_prev_addresses,
-                &self.selected,
                 self.labels_edited.cache(),
                 self.prev_continue_from.is_none(),
                 self.processing,
@@ -154,15 +136,23 @@ impl State for ReceivePanel {
                     )))
                     .into()
             }
+            Modal::NewAddress(m) => modal::Modal::new(content, m.view())
+                .on_blur(Some(view::Message::NewAddress(
+                    view::NewAddressMessage::Close,
+                )))
+                .into(),
             Modal::None => content,
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        if let Modal::VerifyAddress(modal) = &self.modal {
-            modal.subscription()
-        } else {
-            Subscription::none()
+        match &self.modal {
+            Modal::VerifyAddress(modal) => modal.subscription(),
+            Modal::NewAddress(NewAddressModal {
+                sub: Some(NewAddressSubModal::Verify(modal)),
+                ..
+            }) => modal.subscription(),
+            _ => Subscription::none(),
         }
     }
 
@@ -176,10 +166,9 @@ impl State for ReceivePanel {
             Message::View(view::Message::Label(items, view::LabelMessage::Edit)) => {
                 let addr = items.into_iter().next().unwrap_or_default();
                 let current = self
-                    .addresses
+                    .prev_addresses
                     .labels
                     .get(&addr)
-                    .or_else(|| self.prev_addresses.labels.get(&addr))
                     .cloned()
                     .unwrap_or_default();
                 self.labels_edited.edit(addr.clone(), current);
@@ -192,9 +181,7 @@ impl State for ReceivePanel {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    std::iter::once(&mut self.addresses)
-                        .chain(std::iter::once(&mut self.prev_addresses))
-                        .map(|a| a as &mut dyn LabelsLoader),
+                    std::iter::once(&mut self.prev_addresses as &mut dyn LabelsLoader),
                 ) {
                     Ok(cmd) => cmd,
                     Err(e) => {
@@ -207,9 +194,7 @@ impl State for ReceivePanel {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    std::iter::once(&mut self.addresses)
-                        .chain(std::iter::once(&mut self.prev_addresses))
-                        .map(|a| a as &mut dyn LabelsLoader),
+                    std::iter::once(&mut self.prev_addresses as &mut dyn LabelsLoader),
                 ) {
                     Ok(cmd) => cmd,
                     Err(e) => {
@@ -222,14 +207,93 @@ impl State for ReceivePanel {
                 match res {
                     Ok((address, derivation_index)) => {
                         self.warning = None;
-                        self.addresses.list.push(address);
-                        self.addresses.derivation_indexes.push(derivation_index);
+                        self.modal =
+                            Modal::NewAddress(NewAddressModal::new(address, derivation_index));
                     }
                     Err(e) => self.warning = Some(e),
                 }
                 Task::none()
             }
+            Message::View(view::Message::NewAddress(msg)) => match msg {
+                view::NewAddressMessage::LabelEdited(s) => {
+                    if let Modal::NewAddress(m) = &mut self.modal {
+                        // Empty is valid (no warning); the Generate button is gated
+                        // on non-empty by the modal itself.
+                        m.label.valid = s.len() <= 100;
+                        m.label.value = s;
+                    }
+                    Task::none()
+                }
+                view::NewAddressMessage::Confirm => {
+                    if let Modal::NewAddress(m) = &mut self.modal {
+                        m.show_address = true;
+                    }
+                    Task::none()
+                }
+                view::NewAddressMessage::Verify => {
+                    let verify = if let Modal::NewAddress(m) = &self.modal {
+                        Some(VerifyAddressModal::new(
+                            self.data_dir.clone(),
+                            self.wallet.clone(),
+                            cache.network,
+                            m.address.clone(),
+                            m.derivation_index,
+                        ))
+                    } else {
+                        None
+                    };
+                    if let (Modal::NewAddress(m), Some(verify)) = (&mut self.modal, verify) {
+                        m.sub = Some(NewAddressSubModal::Verify(verify));
+                    }
+                    Task::none()
+                }
+                view::NewAddressMessage::ShowQr => {
+                    let qr = if let Modal::NewAddress(m) = &self.modal {
+                        ShowQrCodeModal::new(&m.address, m.derivation_index)
+                    } else {
+                        None
+                    };
+                    if let (Modal::NewAddress(m), Some(qr)) = (&mut self.modal, qr) {
+                        m.sub = Some(NewAddressSubModal::Qr(qr));
+                    }
+                    Task::none()
+                }
+                view::NewAddressMessage::Close => {
+                    let finish = if let Modal::NewAddress(m) = &self.modal {
+                        m.show_address
+                            .then(|| (m.address.clone(), m.derivation_index, m.label.value.clone()))
+                    } else {
+                        None
+                    };
+                    self.modal = Modal::None;
+                    if let Some((address, index, label)) = finish {
+                        let key = LabelItem::Address(address.clone()).to_string();
+                        self.prev_addresses.list.insert(0, address.clone());
+                        self.prev_addresses.derivation_indexes.insert(0, index);
+                        self.prev_addresses.labels.insert(key, label.clone());
+                        let updated = HashMap::from([(LabelItem::Address(address), Some(label))]);
+                        return Task::perform(
+                            async move {
+                                daemon
+                                    .update_labels(&updated)
+                                    .await
+                                    .map(|_| HashMap::new())
+                                    .map_err(|e| e.into())
+                            },
+                            Message::LabelsUpdated,
+                        );
+                    }
+                    Task::none()
+                }
+            },
             Message::View(view::Message::Close) => {
+                // Closing a stacked sub-modal returns to the show-address modal.
+                if let Modal::NewAddress(m) = &mut self.modal {
+                    if m.sub.is_some() {
+                        m.sub = None;
+                        return Task::none();
+                    }
+                }
                 self.modal = Modal::None;
                 Task::none()
             }
@@ -262,14 +326,6 @@ impl State for ReceivePanel {
             }
             Message::View(view::Message::ToggleShowPreviousAddresses) => {
                 self.show_prev_addresses = !self.show_prev_addresses;
-                Task::none()
-            }
-            Message::View(view::Message::SelectAddress(addr)) => {
-                if self.selected.contains(&addr) {
-                    self.selected.remove(&addr);
-                } else {
-                    self.selected.insert(addr);
-                }
                 Task::none()
             }
             Message::RevealedAddresses(res, start_index) => {
@@ -339,13 +395,14 @@ impl State for ReceivePanel {
                 }
                 Task::none()
             }
-            _ => {
-                if let Modal::VerifyAddress(ref mut m) = self.modal {
-                    m.update(daemon, cache, message)
-                } else {
-                    Task::none()
-                }
-            }
+            _ => match &mut self.modal {
+                Modal::VerifyAddress(m) => m.update(daemon, cache, message),
+                Modal::NewAddress(NewAddressModal {
+                    sub: Some(NewAddressSubModal::Verify(m)),
+                    ..
+                }) => m.update(daemon, cache, message),
+                _ => Task::none(),
+            },
         }
     }
 
@@ -479,6 +536,67 @@ impl ShowQrCodeModal {
     }
 }
 
+/// A modal stacked on top of the show-address step (verify on hardware, or QR code).
+#[allow(clippy::large_enum_variant)]
+enum NewAddressSubModal {
+    Verify(VerifyAddressModal),
+    Qr(ShowQrCodeModal),
+}
+
+impl NewAddressSubModal {
+    fn view(&self) -> Element<'_, view::Message> {
+        match self {
+            NewAddressSubModal::Verify(m) => m.view(),
+            NewAddressSubModal::Qr(m) => m.view(),
+        }
+    }
+}
+
+/// Two-step modal for a freshly generated address: enter a mandatory label, then
+/// display the address. The address is added to the list when the modal is closed.
+pub struct NewAddressModal {
+    address: Address,
+    derivation_index: ChildNumber,
+    label: form::Value<String>,
+    show_address: bool,
+    /// Verify/QR modal stacked on top of the show-address step, if open.
+    sub: Option<NewAddressSubModal>,
+}
+
+impl NewAddressModal {
+    fn new(address: Address, derivation_index: ChildNumber) -> Self {
+        Self {
+            address,
+            derivation_index,
+            label: form::Value {
+                value: String::new(),
+                warning: None,
+                valid: true,
+            },
+            show_address: false,
+            sub: None,
+        }
+    }
+
+    fn view(&self) -> Element<'_, view::Message> {
+        let base = if self.show_address {
+            view::receive::new_address_show_modal(&self.address)
+        } else {
+            view::receive::new_address_label_modal(&self.label)
+        };
+        // A nested sub-modal stacks on top of the show-address modal: it becomes
+        // an overlay over the (full-screen) base, so the base stays rendered behind
+        // and reappears once the sub-modal is closed.
+        if let Some(sub) = &self.sub {
+            modal::Modal::new(Container::new(base).center(Length::Fill), sub.view())
+                .on_blur(Some(view::Message::Close))
+                .into()
+        } else {
+            base
+        }
+    }
+}
+
 async fn verify_address(
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
     index: ChildNumber,
@@ -532,6 +650,8 @@ mod tests {
                     ChildNumber::from_normal_idx(0).unwrap()
                 ))),
             ),
+            // updatelabels, triggered when the new-address modal is closed.
+            (None, Ok(json!(null))),
         ]);
         let wallet = Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap()));
         let sandbox: Sandbox<ReceivePanel> = Sandbox::new(ReceivePanel::new(
@@ -543,13 +663,45 @@ mod tests {
         let sandbox = sandbox.load(client.clone(), &cache, wallet).await;
         let sandbox = sandbox
             .update(
-                client,
+                client.clone(),
                 &cache,
                 Message::View(viewMessage::NextReceiveAddress),
             )
             .await;
 
+        // Generating opens the new-address modal at the mandatory-label step.
+        assert!(matches!(
+            &sandbox.state().modal,
+            Modal::NewAddress(m) if m.address == addr && !m.show_address
+        ));
+
+        // Enter a label, confirm to reach the show-address step, then close.
+        let sandbox = sandbox
+            .update(
+                client.clone(),
+                &cache,
+                Message::View(viewMessage::NewAddress(
+                    view::NewAddressMessage::LabelEdited("test".to_string()),
+                )),
+            )
+            .await;
+        let sandbox = sandbox
+            .update(
+                client.clone(),
+                &cache,
+                Message::View(viewMessage::NewAddress(view::NewAddressMessage::Confirm)),
+            )
+            .await;
+        let sandbox = sandbox
+            .update(
+                client,
+                &cache,
+                Message::View(viewMessage::NewAddress(view::NewAddressMessage::Close)),
+            )
+            .await;
+
         let panel = sandbox.state();
-        assert_eq!(panel.addresses.list, vec![addr]);
+        assert_eq!(panel.prev_addresses.list, vec![addr]);
+        assert!(matches!(panel.modal, Modal::None));
     }
 }

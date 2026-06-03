@@ -35,12 +35,10 @@ const MODAL_SPACING: u32 = 15;
 /// Modal width presets.
 #[derive(Debug, Clone, Copy)]
 pub enum ModalWidth {
-    /// Small modals (confirmations, simple dialogs)
     S = 400,
-    /// Medium modals (forms, editors)
     M = 550,
-    /// Large modals (device selection, complex forms)
     L = 650,
+    XL = 800,
 }
 
 impl From<ModalWidth> for Length {

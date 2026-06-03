@@ -2,7 +2,7 @@ use iced::{
     widget::{
         column,
         qr_code::{self, QRCode},
-        row, Button, Space,
+        row, Space,
     },
     Alignment, Length,
 };
@@ -11,10 +11,10 @@ use crate::{
     component::{
         self,
         address::copyable_address,
-        button::{btn_show_qr, btn_verify},
+        button::{btn_copy, btn_show_qr, btn_verify},
         text::{text, Text},
     },
-    icon, theme,
+    theme,
     widget::*,
 };
 
@@ -26,24 +26,18 @@ pub fn verify_address_modal<'a, M: Clone + 'static>(
     clipboard: M,
 ) -> Element<'a, M> {
     let address_row = row![
-        Container::new(text("Address:").bold()).width(Length::Fill),
-        row![
-            Container::new(text(address.to_string()).small()),
-            Button::new(icon::clipboard_icon())
-                .on_press(clipboard)
-                .style(theme::button::transparent_border),
-        ]
-        .align_y(Alignment::Center)
-        .width(Length::Shrink),
+        text("Address:").bold(),
+        text(address.to_string()).small(),
+        btn_copy(Some(clipboard)),
     ]
-    .width(Length::Fill)
+    .spacing(10)
     .align_y(Alignment::Center);
 
     let index_row = row![
-        Container::new(text("Derivation index:").bold()).width(Length::Fill),
-        Container::new(text(derivation_index.to_string()).small()).width(Length::Shrink),
+        text("Derivation index:").bold(),
+        text(derivation_index.to_string()).small(),
     ]
-    .width(Length::Fill)
+    .spacing(10)
     .align_y(Alignment::Center);
 
     column![address_row, index_row].spacing(5).into()
@@ -83,7 +77,7 @@ pub fn show_address_modal<'a, M: 'a + Clone>(
         Some("Address"),
         None,
         Some(close),
-        component::modal::ModalWidth::M,
+        component::modal::ModalWidth::XL,
         content,
     )
 }
