@@ -5,7 +5,10 @@ use crate::{
     node::bitcoind::RpcAuthType,
     services::fiat::{Currency, PriceSource},
 };
-use liana::miniscript::bitcoin::{bip32::Fingerprint, OutPoint};
+use liana::miniscript::bitcoin::{
+    bip32::{ChildNumber, Fingerprint},
+    Address, OutPoint,
+};
 
 pub trait Close {
     fn close() -> Self;
@@ -32,7 +35,8 @@ pub enum Message {
     Previous,
     SelectHardwareWallet(usize),
     CreateRbf(CreateRbfMessage),
-    ShowQrCode(usize),
+    ShowAddressQrCode(AddressQrSource),
+    ShowQrOptSection(bool),
     ImportExport(ImportExportMessage),
     HideRescanWarning,
     ExportPsbt,
@@ -52,6 +56,12 @@ pub enum LabelMessage {
     Edited(String),
     Cancel,
     Confirm,
+}
+
+#[derive(Debug, Clone)]
+pub enum AddressQrSource {
+    Row(usize),                      // QR omits the derivation index
+    WithIndex(Address, ChildNumber), // specter DIY: QR includes the index
 }
 
 #[derive(Debug, Clone)]

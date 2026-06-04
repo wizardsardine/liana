@@ -249,7 +249,7 @@ impl State for ReceivePanel {
                 }
                 view::NewAddressMessage::ShowQr => {
                     let qr = if let Modal::NewAddress(m) = &self.modal {
-                        ShowQrCodeModal::new(&m.address, m.derivation_index)
+                        ShowQrCodeModal::new(&m.address, None)
                     } else {
                         None
                     };
@@ -387,11 +387,37 @@ impl State for ReceivePanel {
                     Task::none()
                 }
             }
-            Message::View(view::Message::ShowQrCode(i)) => {
-                if let (Some(address), Some(index)) = (self.address(i), self.derivation_index(i)) {
-                    if let Some(modal) = ShowQrCodeModal::new(address, *index) {
+            Message::View(view::Message::ShowAddressQrCode(view::AddressQrSource::Row(i))) => {
+                // The address QR code does not encode the derivation index.
+                if let Some(address) = self.address(i) {
+                    if let Some(modal) = ShowQrCodeModal::new(address, None) {
                         self.modal = Modal::ShowQrCode(modal);
                     }
+                }
+                Task::none()
+            }
+            Message::View(view::Message::ShowAddressQrCode(view::AddressQrSource::WithIndex(
+                address,
+                i,
+            ))) => {
+                // Specter DIY devices need the derivation index in the QR code.
+                if let Some(modal) = ShowQrCodeModal::new(&address, Some(i)) {
+                    self.modal = Modal::ShowQrCode(modal);
+                }
+                Task::none()
+            }
+            Message::View(view::Message::ShowQrOptSection(open)) => {
+                // The verify modal can be standalone or stacked on the new-address modal.
+                let modal = match &mut self.modal {
+                    Modal::VerifyAddress(m) => Some(m),
+                    Modal::NewAddress(NewAddressModal {
+                        sub: Some(NewAddressSubModal::Verify(m)),
+                        ..
+                    }) => Some(m),
+                    _ => None,
+                };
+                if let Some(modal) = modal {
+                    modal.qr_section_open = open;
                 }
                 Task::none()
             }
@@ -437,6 +463,8 @@ pub struct VerifyAddressModal {
     hws: HardwareWallets,
     address: Address,
     derivation_index: ChildNumber,
+    /// Whether the "Other options" (specter DIY QR code) section is open.
+    qr_section_open: bool,
 }
 
 impl VerifyAddressModal {
@@ -453,6 +481,7 @@ impl VerifyAddressModal {
             hws: HardwareWallets::new(data_dir, network).with_wallet(wallet),
             address,
             derivation_index,
+            qr_section_open: false,
         }
     }
 }
@@ -464,7 +493,8 @@ impl VerifyAddressModal {
             &self.hws.list,
             &self.chosen_hws,
             &self.address,
-            &self.derivation_index,
+            self.derivation_index,
+            self.qr_section_open,
         )
     }
 
@@ -522,8 +552,9 @@ pub struct ShowQrCodeModal {
 }
 
 impl ShowQrCodeModal {
-    pub fn new(address: &Address, index: ChildNumber) -> Option<Self> {
-        qr_code::Data::new(format!("bitcoin:{address}?index={index}"))
+    pub fn new(address: &Address, index: Option<ChildNumber>) -> Option<Self> {
+        let index = index.map(|i| format!("?index={i}")).unwrap_or_default();
+        qr_code::Data::new(format!("bitcoin:{address}{index}"))
             .ok()
             .map(|qr_code| Self {
                 qr_code,
