@@ -4,7 +4,7 @@ use super::{
     modal::BTN_W,
     text::{
         new::{button_text, button_text_compact, BUTTON_TEXT_COMPACT_SPEC},
-        panel_title, text,
+        p1_regular, panel_title, text,
     },
     tooltip,
 };
@@ -518,6 +518,29 @@ pub fn btn_verify<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
         BtnWidth::XXL,
         Some(msg),
     )
+}
+
+/// Full-width "Show QR Code" button for an optional modal section, with an
+/// optional tooltip.
+pub fn btn_show_qr_section<'a, M: 'a + 'static>(
+    tt: Option<&'static str>,
+    msg: Option<M>,
+) -> Button<'a, M> {
+    let mut btn = Button::new(
+        Row::new()
+            .push(icon::qr_icon().size(30))
+            .push(p1_regular("Show QR Code"))
+            .push_maybe(tt.map(tooltip))
+            .spacing(20)
+            .align_y(Vertical::Center)
+            .padding(15),
+    )
+    .style(theme::button::secondary)
+    .width(Length::Fill);
+    if let Some(msg) = msg {
+        btn = btn.on_press(msg);
+    }
+    btn
 }
 
 const CLICKABLE_ICON_SIZE: u32 = 26;

@@ -410,3 +410,12 @@ where
     let msg = on_press.map(|f| f());
     button::device(col, msg)
 }
+
+pub fn modal_no_devices_placeholder<'a, M: 'a>() -> Element<'a, M> {
+    Column::new()
+        .push(icon::usb_icon().size(100))
+        .push(text::p1_regular("Plug in a hardware device ..."))
+        .align_x(Horizontal::Center)
+        .spacing(20)
+        .into()
+}
