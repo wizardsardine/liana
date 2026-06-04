@@ -4,7 +4,7 @@ use iced::widget::{
     qr_code::{self, QRCode},
     text_input, Column, Container, Row, Space,
 };
-use iced::{Alignment, Length};
+use iced::{Alignment, Font, Length};
 
 use coincube_ui::component::{badge, button, card, separation, text::*};
 use coincube_ui::widget::Element;
@@ -63,7 +63,6 @@ fn pairing_card<'a>(state: &'a LocalSigningState) -> Element<'a, Message> {
         PairingFlow::Idle => idle_body(state),
         PairingFlow::PhonePicker { discovered } => picker_body(discovered),
         PairingFlow::Waiting { phone, offer, qr } => waiting_body(phone, offer, qr.as_ref()),
-        PairingFlow::Done(p) => done_body(&p.name),
         PairingFlow::Error(e) => error_body(e),
     };
 
@@ -185,23 +184,6 @@ fn picker_body<'a>(
     col.into()
 }
 
-fn done_body<'a>(name: &'a str) -> Element<'a, Message> {
-    Column::new()
-        .padding(10)
-        .spacing(8)
-        .push(text(format!("Paired with {} successfully.", name)).bold())
-        .push(text(
-            "The phone now appears in the signer list. You can pair \
-             another phone at any time.",
-        ))
-        .push(
-            button::secondary(None, "Pair another").on_press(Message::Settings(
-                SettingsMessage::LocalSigning(LocalSigningMessage::StartPairing),
-            )),
-        )
-        .into()
-}
-
 fn error_body<'a>(err: &'a PairingError) -> Element<'a, Message> {
     let (title, body) = match err {
         PairingError::OfferExpired => (
@@ -303,9 +285,14 @@ fn paired_phones_card<'a>(state: &'a LocalSigningState) -> Element<'a, Message> 
                                 .width(Length::FillPortion(3)),
                         )
                         .push(
-                            text(format!("fp {}", fp8))
-                                .style(theme::text::secondary)
-                                .width(Length::FillPortion(1)),
+                            Container::new(
+                                text(fp8.clone())
+                                    .size(P2_SIZE)
+                                    .font(Font::MONOSPACE)
+                                    .style(theme::text::secondary),
+                            )
+                            .padding([2, 6])
+                            .width(Length::Shrink),
                         ),
                 )
                 .push(

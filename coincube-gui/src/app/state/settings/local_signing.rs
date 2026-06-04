@@ -46,8 +46,6 @@ pub enum PairingFlow {
         /// a stack-local.
         qr: Option<qr_code::Data>,
     },
-    /// Pairing completed with this phone.
-    Done(PairedPhone),
     /// `run_pairing` returned an error before completion. Typed so
     /// the view can render category-specific copy and decide whether
     /// to show a Try-Again button.
@@ -196,9 +194,15 @@ impl LocalSigningState {
                         },
                         None => p,
                     };
-                match crate::phone_signer::pairing_store::upsert(dir, merged.clone()) {
+                match crate::phone_signer::pairing_store::upsert(dir, merged) {
                     Ok(_) => {
-                        self.flow = PairingFlow::Done(merged);
+                        // Transition back to Idle on success. The
+                        // success signal is the new row appearing in
+                        // the "Paired phones" list below the pairing
+                        // card — a separate "Paired with X
+                        // successfully" block in the card would just
+                        // duplicate that.
+                        self.flow = PairingFlow::Idle;
                         self.refresh_phones_from(dir);
                     }
                     Err(e) => {
@@ -799,7 +803,7 @@ mod tests {
     }
 
     #[test]
-    fn pairing_completed_with_matching_id_transitions_to_done() {
+    fn pairing_completed_with_matching_id_transitions_to_idle_and_persists() {
         let dir = fresh_dir();
         let mut state = LocalSigningState::default();
         let id = state.start_pairing_run();
@@ -821,7 +825,10 @@ mod tests {
         };
         let applied = state.apply_pairing_completed(id, Ok(dummy_paired()), &dir);
         assert!(applied, "matching id while Waiting must be applied");
-        assert!(matches!(state.flow, PairingFlow::Done(_)));
+        // Success drops back to Idle — the new row in the
+        // paired-phones list is the user-visible success signal,
+        // not a separate "Pairing complete" view state.
+        assert!(matches!(state.flow, PairingFlow::Idle));
         // Persistence is now the dispatcher's job — the matching-id
         // path must write the row to disk so the steady-state hw
         // refresh tick can pick it up.
@@ -900,6 +907,9 @@ mod tests {
         };
         let applied = state.apply_pairing_completed(id, Ok(fresh), &dir);
         assert!(applied);
+        // Successful re-pair returns the wizard to Idle; the merged
+        // row surfaces in `state.phones` via the refresh below.
+        assert!(matches!(state.flow, PairingFlow::Idle));
 
         let on_disk = pairing_store::load(&dir).expect("load");
         assert_eq!(on_disk.phones.len(), 1);
@@ -916,15 +926,14 @@ mod tests {
             vec![Fingerprint::from([1, 2, 3, 4])],
         );
 
-        // And the in-memory `Done` reflects the merged row, not the
-        // raw listener output.
-        match &state.flow {
-            PairingFlow::Done(p) => {
-                assert_eq!(p.name, "My Phone");
-                assert_eq!(p.fallback_addr.as_deref(), Some("10.0.0.5:8443"));
-            }
-            _ => panic!("expected Done(merged) after re-pair"),
-        }
+        // And the in-memory snapshot mirrors disk (rendered by the
+        // "Paired phones" card).
+        assert_eq!(state.phones.phones.len(), 1);
+        assert_eq!(state.phones.phones[0].name, "My Phone");
+        assert_eq!(
+            state.phones.phones[0].fallback_addr.as_deref(),
+            Some("10.0.0.5:8443"),
+        );
     }
 
     #[test]
