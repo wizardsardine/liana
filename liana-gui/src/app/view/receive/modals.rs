@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use iced::{widget::qr_code, Length};
+use iced::{
+    widget::{qr_code, row, Space},
+    Length,
+};
 
 use liana::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
@@ -8,7 +11,13 @@ use liana::miniscript::bitcoin::{
 };
 
 use liana_ui::{
-    component::{form, label, modal, panels::receive, text::text},
+    component::{
+        button::btn_show_qr_section,
+        form, label,
+        modal::{self, modal_no_devices_placeholder, optional_section},
+        panels::receive,
+        text::text,
+    },
     widget::*,
 };
 
@@ -20,22 +29,26 @@ use crate::{
     hw::HardwareWallet,
 };
 
-use crate::app::view::message::{LabelMessage, Message, NewAddressMessage};
+use crate::app::view::message::{AddressQrSource, LabelMessage, Message, NewAddressMessage};
 
 pub fn verify_address_modal<'a>(
     warning: Option<&Error>,
     hws: &'a [HardwareWallet],
     chosen_hws: &HashSet<Fingerprint>,
     address: &Address,
-    derivation_index: &ChildNumber,
+    derivation_index: ChildNumber,
+    qr_section_open: bool,
 ) -> Element<'a, Message> {
-    let title_row = text("Select device to verify address on:").width(Length::Fill);
-
-    let devices = hws
-        .iter()
-        .enumerate()
-        .fold(Column::new().spacing(10), |col, (i, hw)| {
-            col.push(hw::hw_list_view_verify_address(
+    let mut devices = Column::new().spacing(10);
+    if hws.is_empty() {
+        devices = devices.push(row![
+            Space::fill_width(),
+            modal_no_devices_placeholder(),
+            Space::fill_width()
+        ]);
+    } else {
+        for (i, hw) in hws.iter().enumerate() {
+            devices = devices.push(hw::hw_list_view_verify_address(
                 i,
                 hw,
                 if let HardwareWallet::Supported { fingerprint, .. } = hw {
@@ -43,17 +56,33 @@ pub fn verify_address_modal<'a>(
                 } else {
                     false
                 },
-            ))
-        });
+            ));
+        }
+    }
+    devices = devices.push(optional_section(
+        qr_section_open,
+        "Other options".to_string(),
+        || Message::ShowQrOptSection(true),
+        || Message::ShowQrOptSection(false),
+    ));
+    if qr_section_open {
+        devices = devices.push(btn_show_qr_section(
+            Some("For specter DIY devices"),
+            Some(Message::ShowAddressQrCode(AddressQrSource::WithIndex(
+                address.clone(),
+                derivation_index,
+            ))),
+        ));
+    }
 
     let content = Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))
         .push(receive::modal::verify_address_modal(
             address,
-            derivation_index,
+            &derivation_index,
             Message::Clipboard(address.to_string()),
         ))
-        .push(title_row)
+        .push(text("Select device to verify address on:").width(Length::Fill))
         .push(devices)
         .spacing(20)
         .width(Length::Fill);
