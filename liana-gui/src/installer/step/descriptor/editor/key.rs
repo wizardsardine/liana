@@ -24,7 +24,7 @@ use liana_ui::{
     color,
     component::{
         button, card, form,
-        modal::{self, collapsible_input_button, legacy},
+        modal::{self, collapsible_input_button, legacy, modal_no_devices_placeholder},
         pick_list,
         text::{p1_bold, p1_regular},
         tooltip,
@@ -991,13 +991,7 @@ impl SelectKeySource {
         )
     }
     fn view_no_devices(&self) -> Element<'_, Message> {
-        column![
-            icon::usb_icon().size(100),
-            p1_regular("Plug in a hardware device ...")
-        ]
-        .align_x(Horizontal::Center)
-        .spacing(20)
-        .into()
+        modal_no_devices_placeholder()
     }
     fn view_signing_devices(
         &self,
