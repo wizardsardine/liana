@@ -82,9 +82,9 @@ pub struct RemoteCube {
     pub network: String, // API string: "mainnet", "testnet", etc.
 }
 
-/// Which section is shown in the launcher's main content area.
+/// Which section is shown in the home's main content area.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LauncherSection {
+pub enum HomeSection {
     /// Cube list (default)
     Cubes,
     /// Connect account-level sub-page
@@ -98,7 +98,7 @@ struct PendingRemoteRename {
     new_name: String,
 }
 
-pub struct Launcher {
+pub struct Home {
     state: State,
     displayed_networks: Vec<Network>,
     network: Network,
@@ -122,7 +122,7 @@ pub struct Launcher {
     /// Whether the Connect sidebar section is expanded
     pub connect_expanded: bool,
     /// Which section is currently displayed in the main content area
-    pub active_section: LauncherSection,
+    pub active_section: HomeSection,
     /// Current theme mode (dark/light) — used for theme-aware rendering
     pub theme_mode: coincube_ui::theme::palette::ThemeMode,
     /// Whether the user has chosen to create a passkey-derived Cube (no PIN).
@@ -153,7 +153,7 @@ pub struct Launcher {
     welcome_image_handle: iced::widget::image::Handle,
 }
 
-impl Launcher {
+impl Home {
     pub fn new(datadir_path: CoincubeDirectory, network: Option<Network>) -> (Self, Task<Message>) {
         let developer_mode =
             GlobalSettings::load_developer_mode(&GlobalSettings::path(&datadir_path));
@@ -191,7 +191,7 @@ impl Launcher {
                 )),
                 connect_account: ConnectAccountPanel::new(),
                 connect_expanded: false,
-                active_section: LauncherSection::Cubes,
+                active_section: HomeSection::Cubes,
                 theme_mode: GlobalSettings::load_theme_mode(&GlobalSettings::path(&datadir_path)),
                 // Default to the feature flag value. When the passkey feature
                 // is disabled (the common case pre-launch), this is always
@@ -210,7 +210,16 @@ impl Launcher {
                 welcome_image_handle:
                     coincube_ui::component::quote_display::image_handle_for_context("first-launch"),
             },
-            Task::perform(check_network_datadir(network_dir), Message::Checked),
+            // Kick a Connect session check alongside the datadir probe
+            // so the sidebar reflects authenticated state immediately
+            // when a session is already in the keyring — without
+            // waiting for the user to navigate to the Connect section.
+            Task::batch([
+                Task::perform(check_network_datadir(network_dir), Message::Checked),
+                Task::done(Message::View(ViewMessage::ConnectAccount(
+                    ConnectAccountMessage::Init,
+                ))),
+            ]),
         )
     }
 
@@ -248,9 +257,9 @@ impl Launcher {
 
     pub fn stop(&mut self) {}
 
-    /// Set a top-level error message shown on the launcher screen.
+    /// Set a top-level error message shown on the home screen.
     /// Used by outer state machines (e.g. `gui::tab`) to surface issues
-    /// they detect while handling launcher-originated messages.
+    /// they detect while handling home-originated messages.
     pub fn set_error(&mut self, msg: impl Into<String>) {
         self.error = Some(msg.into());
     }
@@ -298,14 +307,14 @@ impl Launcher {
                 // installer picks the Recovery-Kit step sequence off
                 // the UserFlow.
                 //
-                // Forward the launcher's already-authenticated Connect
+                // Forward the home's already-authenticated Connect
                 // client so `RecoveryKitRestoreStep` can skip its own
                 // email + OTP form (the user already signed in to see
                 // the list of remote cubes on this very screen —
                 // re-prompting them for the same credentials right
                 // after they clicked "restore this one" is pure churn).
                 // Falls back to `None` when the session isn't active
-                // yet (developer-mode path, or stale cached launcher
+                // yet (developer-mode path, or stale cached home
                 // state), in which case the step's own auth form
                 // kicks in.
                 let datadir_path = self.datadir_path.clone();
@@ -1343,12 +1352,12 @@ impl Launcher {
 
             Message::View(ViewMessage::GoToSection(section)) => {
                 // Update the account panel's active_sub when navigating to a Connect submenu
-                if let LauncherSection::Connect(ref sub) = section {
+                if let HomeSection::Connect(ref sub) = section {
                     self.connect_account.active_sub = sub.clone();
                 }
                 self.active_section = section;
                 // If navigating to Connect and not yet initialized, trigger Init
-                if matches!(self.active_section, LauncherSection::Connect(_))
+                if matches!(self.active_section, HomeSection::Connect(_))
                     && matches!(
                         self.connect_account.step,
                         crate::app::state::connect::ConnectFlowStep::CheckingSession
@@ -1362,7 +1371,7 @@ impl Launcher {
                 // Load Security data on demand (mirrors App::set_current_panel)
                 if matches!(
                     self.active_section,
-                    LauncherSection::Connect(app::menu::ConnectSubMenu::Security)
+                    HomeSection::Connect(app::menu::ConnectSubMenu::Security)
                 ) && self.connect_account.is_authenticated()
                 {
                     return map_connect_task(
@@ -1375,7 +1384,7 @@ impl Launcher {
                 // Load Contacts data on demand
                 if matches!(
                     self.active_section,
-                    LauncherSection::Connect(app::menu::ConnectSubMenu::Contacts)
+                    HomeSection::Connect(app::menu::ConnectSubMenu::Contacts)
                 ) && self.connect_account.is_authenticated()
                 {
                     return map_connect_task(self.connect_account.reload_contacts());
@@ -1472,7 +1481,7 @@ impl Launcher {
                 // Auto-expand Connect submenu and navigate to Cubes after login
                 if !was_authenticated && now_authenticated {
                     self.connect_expanded = true;
-                    self.active_section = LauncherSection::Cubes;
+                    self.active_section = HomeSection::Cubes;
                 }
                 // Sync account tier from the Connect plan data
                 let old_tier = self.account_tier;
@@ -1483,7 +1492,7 @@ impl Launcher {
                         .map_or(AccountTier::default(), |plan| match plan.tier() {
                             crate::services::coincube::PlanTier::Free => AccountTier::Free,
                             crate::services::coincube::PlanTier::Pro => AccountTier::Pro,
-                            crate::services::coincube::PlanTier::Legacy => AccountTier::Legacy,
+                            crate::services::coincube::PlanTier::Estate => AccountTier::Estate,
                         });
                 // When the plan tier changes (e.g. upgrade), invalidate the
                 // cached server limit so `cube_limit()` uses the new tier
@@ -1501,6 +1510,13 @@ impl Launcher {
                 // On first login: catch-up sync unsynced cubes + fetch limits
                 if !was_authenticated && now_authenticated {
                     let mut tasks = vec![task];
+
+                    // Tell the pane so it can rebroadcast the session
+                    // check to every other open Cube tab — those panels
+                    // hold their own ConnectAccountPanel and would
+                    // otherwise stay on the "Sign in" prompt until the
+                    // user clicked it or restarted the tab.
+                    tasks.push(Task::done(Message::ConnectSignedInBubble));
 
                     // Fetch cube limits for the current network from the server
                     if let Some(limits_client) = self.connect_account.authenticated_client() {
@@ -1856,18 +1872,17 @@ impl Launcher {
         .map(Message::View);
 
         // If active section is Connect, show the account panel instead of cube list
-        let main_content: Element<Message> =
-            if let LauncherSection::Connect(_) = &self.active_section {
-                // Render Connect account panel view
-                let connect_view: Element<ConnectAccountMessage> =
-                    crate::app::view::connect::connect_account_panel(&self.connect_account);
-                connect_view.map(|msg| Message::View(ViewMessage::ConnectAccount(msg)))
-            } else {
-                content
-            };
+        let main_content: Element<Message> = if let HomeSection::Connect(_) = &self.active_section {
+            // Render Connect account panel view
+            let connect_view: Element<ConnectAccountMessage> =
+                crate::app::view::connect::connect_account_panel(&self.connect_account);
+            connect_view.map(|msg| Message::View(ViewMessage::ConnectAccount(msg)))
+        } else {
+            content
+        };
 
         // Build the sidebar
-        let sidebar = launcher_sidebar(self);
+        let sidebar = home_sidebar(self);
 
         // Wrap sidebar + content in a Row
         let layout: Element<Message> = Row::new()
@@ -2026,12 +2041,12 @@ impl Launcher {
     }
 }
 
-fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
+fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
     use coincube_ui::{color, component::button as btn, component::text as txt, icon as ic};
 
     let msg = |vm: ViewMessage| -> Message { Message::View(vm) };
 
-    let is_cubes_active = matches!(launcher.active_section, LauncherSection::Cubes);
+    let is_cubes_active = matches!(home.active_section, HomeSection::Cubes);
     let cubes_button = if is_cubes_active {
         Row::new()
             .push(btn::menu_active(Some(ic::cube_icon()), "Cubes").width(Length::Fill))
@@ -2040,13 +2055,13 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
         Row::new()
             .push(
                 btn::menu(Some(ic::cube_icon()), "Cubes")
-                    .on_press(msg(ViewMessage::GoToSection(LauncherSection::Cubes)))
+                    .on_press(msg(ViewMessage::GoToSection(HomeSection::Cubes)))
                     .width(Length::Fill),
             )
             .width(Length::Fill)
     };
 
-    let is_authenticated = launcher.connect_account.is_authenticated();
+    let is_authenticated = home.connect_account.is_authenticated();
 
     let mut col = Column::new()
         .spacing(0)
@@ -2059,7 +2074,7 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
         .push(cubes_button);
 
     if is_authenticated {
-        let connect_chevron = if launcher.connect_expanded {
+        let connect_chevron = if home.connect_expanded {
             ic::up_icon()
         } else {
             ic::down_icon()
@@ -2084,7 +2099,7 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
         col = col.push(connect_button);
     }
 
-    if launcher.connect_expanded && is_authenticated {
+    if home.connect_expanded && is_authenticated {
         use app::menu::ConnectSubMenu;
         let items: &[(&str, ConnectSubMenu)] = &[
             ("Overview", ConnectSubMenu::Overview),
@@ -2097,8 +2112,8 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
         ];
         for (label, sub) in items {
             let is_active = matches!(
-                &launcher.active_section,
-                LauncherSection::Connect(s) if *s == *sub
+                &home.active_section,
+                HomeSection::Connect(s) if *s == *sub
             );
             let item = if is_active {
                 Row::new()
@@ -2110,7 +2125,7 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
                     .push(Space::new().width(Length::Fixed(20.0)))
                     .push(
                         btn::menu(None, label)
-                            .on_press(msg(ViewMessage::GoToSection(LauncherSection::Connect(
+                            .on_press(msg(ViewMessage::GoToSection(HomeSection::Connect(
                                 sub.clone(),
                             ))))
                             .width(Length::Fill),
@@ -2128,7 +2143,7 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
         bottom_col = bottom_col.push(
             Container::new(
                 btn::primary(None, "Sign In")
-                    .on_press(msg(ViewMessage::GoToSection(LauncherSection::Connect(
+                    .on_press(msg(ViewMessage::GoToSection(HomeSection::Connect(
                         app::menu::ConnectSubMenu::Overview,
                     ))))
                     .width(Length::Fill),
@@ -2136,7 +2151,7 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
             .padding(10)
             .width(Length::Fill),
         );
-    } else if let Some(user) = &launcher.connect_account.user {
+    } else if let Some(user) = &home.connect_account.user {
         bottom_col = bottom_col.push(
             Container::new(
                 txt::caption(&user.email)
@@ -2150,7 +2165,7 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
     }
 
     let theme_toggle_btn =
-        coincube_ui::image::theme_toggle_button(launcher.theme_mode, msg(ViewMessage::ToggleTheme));
+        coincube_ui::image::theme_toggle_button(home.theme_mode, msg(ViewMessage::ToggleTheme));
 
     bottom_col = bottom_col.push(
         Container::new(theme_toggle_btn)
@@ -2386,7 +2401,7 @@ fn remote_cube_list_item<'a>(cube: &'a RemoteCube) -> Element<'a, ViewMessage> {
     .width(Length::Fixed(500.0))
     .style(theme::card::simple);
 
-    // W13 entry point on the launcher: clicking cloud-arrow-down on a
+    // W13 entry point on the home: clicking cloud-arrow-down on a
     // remote-only cube kicks off the Connect-Recovery-Kit restore flow.
     // The flow's cube picker (`RecoveryKitRestoreStep`) lets the user
     // choose which cube on their Connect account to restore — clicking
@@ -2612,7 +2627,7 @@ fn has_existing_wallet(data_dir: &CoincubeDirectory, network: Network) -> bool {
 }
 
 /// Map a `Task<app::message::Message>` (from ConnectAccountPanel) into a
-/// `Task<launcher::Message>` by extracting the ConnectAccountMessage.
+/// `Task<home::Message>` by extracting the ConnectAccountMessage.
 fn map_connect_task(task: Task<app::message::Message>) -> Task<Message> {
     task.map(|app_msg| match app_msg {
         app::message::Message::View(app::view::Message::ConnectAccount(acct_msg)) => {
@@ -2632,11 +2647,15 @@ fn map_connect_task(task: Task<app::message::Message>) -> Task<Message> {
 #[derive(Debug, Clone)]
 pub enum Message {
     View(ViewMessage),
+    /// Bubbles up to the pane on the auth-success edge so it can
+    /// broadcast a session re-check to every open Cube tab. Carries
+    /// no payload — the Cube tabs read the keyring themselves.
+    ConnectSignedInBubble,
     /// Launch the installer. The trailing `Option<CoincubeClient>`
-    /// forwards the launcher's already-authenticated Connect session
+    /// forwards the home's already-authenticated Connect session
     /// into the installer so steps like `RecoveryKitRestoreStep` don't
     /// demand the user retype email + OTP a second time. `None` means
-    /// "launcher had no Connect session" — the relevant installer step
+    /// "home had no Connect session" — the relevant installer step
     /// then falls back to its own auth form.
     Install(CoincubeDirectory, Network, UserFlow, Option<CoincubeClient>),
     Checked(Result<State, String>),
@@ -2720,8 +2739,8 @@ pub enum ViewMessage {
     RenameCubeConfirm,
     /// Cancel the rename modal.
     RenameCubeCancel,
-    /// Navigate to a launcher section (Cubes or Connect submenu)
-    GoToSection(LauncherSection),
+    /// Navigate to a home section (Cubes or Connect submenu)
+    GoToSection(HomeSection),
     /// Toggle the Connect sidebar section expand/collapse
     ToggleConnect,
     /// Account-level Connect messages (login, plan, security, etc.)

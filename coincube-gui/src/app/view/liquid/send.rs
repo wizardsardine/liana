@@ -1031,9 +1031,10 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
                         let max_btc = Amount::from_sat(max_sat);
                         amount_input_section = amount_input_section.push(
                             text(format!(
-                                "Enter an amount between {} and {}",
+                                "Enter an amount between {} and {} {}",
                                 min_btc.to_formatted_string_with_unit(config.bitcoin_unit),
                                 max_btc.to_formatted_string_with_unit(config.bitcoin_unit),
+                                config.bitcoin_unit,
                             ))
                             .size(12),
                         );
@@ -1043,9 +1044,10 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
                     let max_btc = Amount::from_sat(max_sat);
                     amount_input_section = amount_input_section.push(
                         text(format!(
-                            "Enter an amount between {} and {}",
+                            "Enter an amount between {} and {} {}",
                             min_btc.to_formatted_string_with_unit(config.bitcoin_unit),
                             max_btc.to_formatted_string_with_unit(config.bitcoin_unit),
+                            config.bitcoin_unit,
                         ))
                         .size(12),
                     );

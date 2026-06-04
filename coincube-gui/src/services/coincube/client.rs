@@ -29,7 +29,7 @@ const _: () = {
 ///
 /// `Debug` is implemented manually below so `{:?}` on a `CoincubeClient`
 /// — or anything that transitively contains one (notably
-/// `Message::Install` in `launcher.rs`, which derives `Debug` and logs
+/// `Message::Install` in `home.rs`, which derives `Debug` and logs
 /// through tracing snapshots) — redacts the JWT. The `Zeroizing` wrapper
 /// only scrubs the heap *on drop*; it does **not** hide the token from
 /// `{:?}` (`Zeroizing<T>` derefs to `T` for Debug), so without this impl
@@ -230,6 +230,20 @@ impl CoincubeClient {
         let response = response.check_success().await?;
 
         Ok(response.json().await?)
+    }
+
+    pub async fn resend_signup_otp(&self, email: &str) -> Result<(), CoincubeError> {
+        let body = serde_json::json!({
+            "email": email,
+            "otp_type": "signup_otp"
+        });
+        let response = {
+            let url = format!("{}{}", self.base_url, "/api/v1/auth/resend-otp");
+            self.client.post(&url).json(&body).send()
+        }
+        .await?;
+        response.check_success().await?;
+        Ok(())
     }
 }
 

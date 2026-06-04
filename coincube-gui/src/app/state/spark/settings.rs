@@ -1,4 +1,4 @@
-//! Spark Settings panel.
+//! Spark Settings — General sub-page.
 //!
 //! Two cards:
 //! - A "Stable Balance" toggle (Phase 6) — enables or disables the
@@ -8,14 +8,10 @@
 //!   `get_info` round-trip to the `coincube-spark-bridge` subprocess
 //!   succeeded.
 //!
-//! Everything else the old Phase 4b panel surfaced — balance,
-//! identity pubkey, network display, Default Lightning backend
-//! picker — moved elsewhere:
-//! - Balance is already rendered in Spark → Overview / Send.
-//! - Network lives in **Settings → General**.
-//! - Default Lightning backend lives in **Settings → Lightning**.
-//! - Identity pubkey was dropped entirely (not actionable for
-//!   end users).
+//! The Lightning Address sub-page is rendered at the App level
+//! ([`crate::app::view::spark::settings::lightning_address`]) because
+//! it needs a borrow of `ConnectCubePanel` that this panel can't
+//! receive through the `State::view` trait signature.
 
 use std::sync::Arc;
 

@@ -152,6 +152,14 @@ pub fn connect_stream(
                                             break;
                                         }
                                         Err(e) => {
+                                            if e.code() == tonic::Code::Aborted
+                                                && e.message().contains("superseded")
+                                            {
+                                                log::info!(
+                                                    "[CONNECT GRPC] Stream superseded by newer connection; stopping stale stream"
+                                                );
+                                                return;
+                                            }
                                             log::error!("[CONNECT GRPC] Stream error: {}", e);
                                             break;
                                         }
@@ -159,6 +167,14 @@ pub fn connect_stream(
                                 }
                             }
                             Err(e) => {
+                                if e.code() == tonic::Code::Aborted
+                                    && e.message().contains("superseded")
+                                {
+                                    log::info!(
+                                        "[CONNECT GRPC] Connect attempt superseded by newer connection; stopping stale stream"
+                                    );
+                                    return;
+                                }
                                 // Distinguish auth failures so the App
                                 // can prompt re-login rather than
                                 // tight-looping reconnects against the

@@ -679,9 +679,10 @@ fn input_fields<'a>(
         let max_btc = Amount::from_sat(max_sat);
         hints = hints.push(
             text(format!(
-                "Enter an amount between {} and {}",
+                "Enter an amount between {} and {} {}",
                 min_btc.to_formatted_string_with_unit(bitcoin_unit),
                 max_btc.to_formatted_string_with_unit(bitcoin_unit),
+                bitcoin_unit,
             ))
             .size(12)
             .style(theme::text::secondary),

@@ -172,7 +172,7 @@ pub async fn mark_cube_synced(
 /// Cube's seed and we'd silently bind the wrong wallet. The
 /// timestamp-window guard is what makes the match safe: the file
 /// is written `Utc::now()` milliseconds before `CubeSettings.
-/// created_at` is stamped (see `launcher.rs`), so a tight window
+/// created_at` is stamped (see `home.rs`), so a tight window
 /// uniquely associates the file with this Cube. PIN decryption
 /// stays as a second layer.
 ///
@@ -772,8 +772,9 @@ pub mod global {
         Free,
         /// Pro Connect account — 4 Cubes per network (with Lightning address & avatar).
         Pro,
-        /// Legacy Connect account — 7 Cubes per network (with Lightning address & avatar).
-        Legacy,
+        /// Estate Connect account — 7 Cubes per network (with Lightning address & avatar).
+        #[serde(alias = "legacy")]
+        Estate,
     }
 
     impl AccountTier {
@@ -782,7 +783,7 @@ pub mod global {
             match self {
                 Self::Free => 2,
                 Self::Pro => 4,
-                Self::Legacy => 7,
+                Self::Estate => 7,
             }
         }
 
@@ -790,7 +791,7 @@ pub mod global {
             match self {
                 Self::Free => "Free",
                 Self::Pro => "Pro",
-                Self::Legacy => "Legacy",
+                Self::Estate => "Estate",
             }
         }
     }

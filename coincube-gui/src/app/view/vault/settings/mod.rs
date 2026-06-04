@@ -29,7 +29,7 @@ use coincube_ui::{
 use crate::{
     app::{
         cache::Cache,
-        menu::{HomeSettingsOption, HomeSubMenu, Menu, VaultSubMenu},
+        menu::{CubeSettingsOption, CubeSubMenu, Menu, VaultSubMenu},
         settings::ProviderKey,
         view::vault::hw,
     },
@@ -153,8 +153,8 @@ pub fn import_export<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Messag
         "Back up your Wallet Descriptor (and Master Seed Phrase) to your Connect account. \
          Encrypted on-device with a password you choose.",
         icon::backup_icon(),
-        Message::Menu(Menu::Home(HomeSubMenu::Settings(
-            HomeSettingsOption::General,
+        Message::Menu(Menu::Cube(CubeSubMenu::Settings(
+            CubeSettingsOption::General,
         ))),
     );
 

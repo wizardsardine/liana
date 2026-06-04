@@ -80,6 +80,11 @@ pub fn received_celebration_page<'a, M: Clone + 'a>(
                 .width(Length::Fixed(150.0))
                 .on_press(on_dismiss),
         )
+        // Bottom breathing room below the Back button. Matches the
+        // 30px internal padding `sent_celebration_page` gets from its
+        // card wrapper — without it the button sits flush against the
+        // scrollable area's bottom edge.
+        .push(iced::widget::Space::new().height(Length::Fixed(30.0)))
         .into()
 }
 
@@ -130,10 +135,19 @@ pub fn sent_celebration_page<'a, M: Clone + 'a>(
     // but does not draw a surface behind its child, so without an opaque
     // wrapper the celebration text floats over the dimmed PSBT view. Wrap in
     // a card-styled Container so the celebration has a solid backing.
-    Container::new(inner)
+    let card = Container::new(inner)
         .padding(30)
         .max_width(640)
-        .style(theme::card::modal)
+        .style(theme::card::modal);
+
+    // The card itself caps at 640px; without an outer fill+center wrapper it
+    // would shrink to its content width and sit left-aligned inside the
+    // dashboard's content column (visible bug on Liquid Send / Spark Send /
+    // Vault PSBT full-page celebrations). The Modal widget centers its child
+    // on its own, so this extra wrapper is a no-op in the modal use case.
+    Container::new(card)
+        .width(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Center)
         .into()
 }
 

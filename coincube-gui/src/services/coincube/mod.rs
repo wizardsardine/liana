@@ -257,7 +257,8 @@ pub struct Currency {
 pub enum PlanTier {
     Free,
     Pro,
-    Legacy,
+    #[serde(alias = "legacy")]
+    Estate,
 }
 
 impl std::fmt::Display for PlanTier {
@@ -265,7 +266,7 @@ impl std::fmt::Display for PlanTier {
         match self {
             PlanTier::Free => write!(f, "Free"),
             PlanTier::Pro => write!(f, "Pro"),
-            PlanTier::Legacy => write!(f, "Legacy"),
+            PlanTier::Estate => write!(f, "Estate"),
         }
     }
 }
@@ -281,12 +282,14 @@ pub enum PlanStatus {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanEntitlements {
-    pub free_signing_key_count: i32,
-    pub policy_editing: bool,
-    pub legacy_invites: bool,
-    pub linked_keychains: bool,
-    pub duress_remote_lock: bool,
-    pub business_orgs: bool,
+    pub personal_key_limit: u32,
+    pub cube_limit: u32,
+    pub recovery_kit_limit: u32,
+    /// `None` = unlimited regenerations; `Some(n)` = capped at n; `Some(0)` = disabled.
+    pub avatar_regeneration_limit: Option<u32>,
+    pub duress: bool,
+    pub attach_policies: bool,
+    pub collaborative_invitations: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

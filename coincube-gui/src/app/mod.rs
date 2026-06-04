@@ -159,7 +159,7 @@ impl Panels {
         let initial_balance_masked = Self::initial_balance_masked(datadir, network, &cube_id);
 
         Self {
-            current: Menu::Home(crate::app::menu::HomeSubMenu::Overview),
+            current: Menu::Cube(crate::app::menu::CubeSubMenu::Overview),
             // Liquid panels always available (use LiquidBackend, not Vault wallet)
             global_home: if let Some(w) = &wallet {
                 GlobalHome::new(
@@ -272,7 +272,7 @@ impl Panels {
             Self::initial_balance_masked(&data_dir, cache.network, &cube_id);
 
         Self {
-            current: Menu::Home(crate::app::menu::HomeSubMenu::Overview),
+            current: Menu::Cube(crate::app::menu::CubeSubMenu::Overview),
             global_home: GlobalHome::new(
                 wallet.clone(),
                 liquid_backend.clone(),
@@ -483,8 +483,8 @@ impl Panels {
 
     fn current(&self) -> Option<&dyn State> {
         match &self.current {
-            Menu::Home(crate::app::menu::HomeSubMenu::Overview) => Some(&self.global_home),
-            Menu::Home(crate::app::menu::HomeSubMenu::Settings(_)) => {
+            Menu::Cube(crate::app::menu::CubeSubMenu::Overview) => Some(&self.global_home),
+            Menu::Cube(crate::app::menu::CubeSubMenu::Settings(_)) => {
                 Some(&self.global_settings as &dyn State)
             }
             Menu::Liquid(submenu) => match submenu {
@@ -542,14 +542,13 @@ impl Panels {
             Menu::Marketplace(MarketplaceSubMenu::P2P(_)) => {
                 self.p2p.as_ref().map(|v| v as &dyn State)
             }
-            Menu::Connect(_) => Some(&self.connect as &dyn State),
         }
     }
 
     fn current_mut(&mut self) -> Option<&mut dyn State> {
         match &self.current {
-            Menu::Home(crate::app::menu::HomeSubMenu::Overview) => Some(&mut self.global_home),
-            Menu::Home(crate::app::menu::HomeSubMenu::Settings(_)) => {
+            Menu::Cube(crate::app::menu::CubeSubMenu::Overview) => Some(&mut self.global_home),
+            Menu::Cube(crate::app::menu::CubeSubMenu::Settings(_)) => {
                 Some(&mut self.global_settings as &mut dyn State)
             }
             Menu::Liquid(submenu) => match submenu {
@@ -610,7 +609,6 @@ impl Panels {
             Menu::Marketplace(MarketplaceSubMenu::P2P(_)) => {
                 self.p2p.as_mut().map(|v| v as &mut dyn State)
             }
-            Menu::Connect(_) => Some(&mut self.connect as &mut dyn State),
         }
     }
 
@@ -620,7 +618,7 @@ impl Panels {
     /// already sends a separate RefreshLiquidBalance message).
     fn active_liquid_refresh(&self, exclude_home: bool) -> Option<Message> {
         match &self.current {
-            Menu::Home(crate::app::menu::HomeSubMenu::Overview) if !exclude_home => Some(
+            Menu::Cube(crate::app::menu::CubeSubMenu::Overview) if !exclude_home => Some(
                 Message::View(view::Message::Home(view::HomeMessage::RefreshLiquidBalance)),
             ),
             Menu::Liquid(sub) => match sub {
@@ -633,6 +631,21 @@ impl Panels {
                 crate::app::menu::LiquidSubMenu::Receive => Some(Message::View(
                     view::Message::LiquidReceive(view::LiquidReceiveMessage::RefreshRequested),
                 )),
+                // Route to a dedicated `BackgroundRefresh` rather than
+                // the generic `Reload` — `Reload` would call the
+                // panel's `reload()` which clears `selected_payment`,
+                // `selected_refundable`, the refund modal and form
+                // state. SDK events fire frequently (Synced,
+                // PaymentSucceeded, etc.), so a Reload arm would kick
+                // the user out of any drill-down they're in.
+                // `BackgroundRefresh` is gated to only fire when the
+                // panel is idle and uses `fetch_page(0)` to replace
+                // payments atomically without disturbing state.
+                crate::app::menu::LiquidSubMenu::Transactions(_) => {
+                    Some(Message::View(view::Message::LiquidTransactions(
+                        view::LiquidTransactionsMessage::BackgroundRefresh,
+                    )))
+                }
                 _ => None,
             },
             _ => None,
@@ -1011,8 +1024,7 @@ impl App {
                 .global_home
                 .reload(Some(daemon.clone()), Some(wallet.clone())),
         );
-        let set_cube_task = panels.connect.set_cube_uuid(Some(cube_settings.id.clone()));
-        tasks.push(set_cube_task);
+        tasks.push(panels.connect.ensure_session_check());
         let (connect_auth_arc, connect_email) = match connect_auth {
             Some((a, e)) => (Some(a), Some(e)),
             None => (None, None),
@@ -1126,8 +1138,10 @@ impl App {
         let mut cache = cache;
         cache.has_p2p = panels.p2p.is_some();
 
-        let set_cube_task = panels.connect.set_cube_uuid(Some(cube_settings.id.clone()));
-        let cmd = iced::Task::batch([set_cube_task, panels.global_home.reload(None, None)]);
+        let cmd = iced::Task::batch([
+            panels.connect.ensure_session_check(),
+            panels.global_home.reload(None, None),
+        ]);
 
         (
             Self {
@@ -1198,6 +1212,15 @@ impl App {
         self.panels.connect.account.authenticated_client()
     }
 
+    /// True when this tab's ConnectAccountPanel either already holds an
+    /// authenticated session or can pull one out of the shared keyring
+    /// entry. Lets the tab-level OpenConnectSignIn handler short-circuit
+    /// the Home-tab handoff when the in-tab inline refresh is enough.
+    pub fn can_restore_connect_session(&self) -> bool {
+        self.panels.connect.account.is_authenticated()
+            || self.panels.connect.account.has_stored_session()
+    }
+
     pub fn wallet(&self) -> Option<&Wallet> {
         self.wallet.as_ref().map(|w| w.as_ref())
     }
@@ -1235,22 +1258,53 @@ impl App {
             // matching sub-section so the inner SettingsState installs the
             // right child panel. The third rail visible alongside drives this
             // and highlights the active option.
-            menu::Menu::Home(menu::HomeSubMenu::Settings(option)) => {
-                let section_msg = match option {
-                    menu::HomeSettingsOption::General => view::SettingsMessage::GeneralSection,
-                    menu::HomeSettingsOption::About => view::SettingsMessage::AboutSection,
-                    menu::HomeSettingsOption::Stats => view::SettingsMessage::InstallStatsSection,
-                };
+            menu::Menu::Cube(menu::CubeSubMenu::Settings(option)) => {
                 self.panels.current = menu.clone();
-                // Fire even if daemon is None — the inner settings
-                // panels don't require daemon for construction; they
-                // just pass it through to their own reload().
-                if let Some(panel) = self.panels.current_mut() {
-                    return panel.update(
-                        self.daemon.clone(),
-                        &self.cache,
-                        Message::View(view::Message::Settings(section_msg)),
-                    );
+                let section_msg = match option {
+                    menu::CubeSettingsOption::General => {
+                        Some(view::SettingsMessage::GeneralSection)
+                    }
+                    menu::CubeSettingsOption::About => Some(view::SettingsMessage::AboutSection),
+                    menu::CubeSettingsOption::Stats => {
+                        Some(view::SettingsMessage::InstallStatsSection)
+                    }
+                    // Avatar / Members render from `ConnectCubePanel` via
+                    // App::view; no section message is dispatched to the
+                    // SettingsState. Side-effect loads (avatar fetch,
+                    // members fetch) are kicked below.
+                    menu::CubeSettingsOption::Avatar | menu::CubeSettingsOption::Members => None,
+                };
+                if let Some(section_msg) = section_msg {
+                    // Fire even if daemon is None — the inner settings
+                    // panels don't require daemon for construction; they
+                    // just pass it through to their own reload().
+                    if let Some(panel) = self.panels.current_mut() {
+                        return panel.update(
+                            self.daemon.clone(),
+                            &self.cache,
+                            Message::View(view::Message::Settings(section_msg)),
+                        );
+                    }
+                    return Task::none();
+                }
+                // Avatar and Members: trigger the underlying load via
+                // ConnectCubePanel, mirroring the per-Cube Connect arm.
+                match option {
+                    menu::CubeSettingsOption::Avatar => {
+                        return iced::Task::done(Message::View(view::Message::ConnectCube(
+                            view::ConnectCubeMessage::Avatar(view::AvatarMessage::Enter),
+                        )));
+                    }
+                    menu::CubeSettingsOption::Members
+                        if self.panels.connect.account.is_authenticated() =>
+                    {
+                        return iced::Task::done(Message::View(view::Message::ConnectCube(
+                            view::ConnectCubeMessage::Members(
+                                view::ConnectCubeMembersMessage::Enter,
+                            ),
+                        )));
+                    }
+                    _ => {}
                 }
                 return Task::none();
             }
@@ -1391,52 +1445,6 @@ impl App {
                         }
                         _ => {}
                     }
-                }
-            }
-            menu::Menu::Connect(submenu) => {
-                self.panels.connect.account.active_sub = submenu.clone();
-                // Load Security data on demand
-                if matches!(submenu, menu::ConnectSubMenu::Security) {
-                    let security_task = crate::app::state::connect::account::load_security_data(
-                        &self.panels.connect.account.client,
-                        self.panels.connect.account.session_generation(),
-                    );
-                    self.panels.current = menu;
-                    return security_task;
-                }
-                // Trigger avatar load on demand
-                if matches!(submenu, menu::ConnectSubMenu::Avatar) {
-                    self.panels.current = menu;
-                    return iced::Task::done(Message::View(
-                        crate::app::view::Message::ConnectCube(
-                            crate::app::view::ConnectCubeMessage::Avatar(
-                                crate::app::view::AvatarMessage::Enter,
-                            ),
-                        ),
-                    ));
-                }
-                // Load Contacts data on demand
-                if matches!(submenu, menu::ConnectSubMenu::Contacts)
-                    && self.panels.connect.account.is_authenticated()
-                {
-                    let contacts_task = self.panels.connect.account.reload_contacts();
-                    self.panels.current = menu;
-                    return contacts_task;
-                }
-                // Load Cube Members on demand (W8 — gated by
-                // CUBE_MEMBERS_UI_ENABLED at the sidebar, but defensive here
-                // in case a deep-link message sneaks through).
-                if matches!(submenu, menu::ConnectSubMenu::CubeMembers)
-                    && self.panels.connect.account.is_authenticated()
-                {
-                    self.panels.current = menu;
-                    return iced::Task::done(Message::View(
-                        crate::app::view::Message::ConnectCube(
-                            crate::app::view::ConnectCubeMessage::Members(
-                                crate::app::view::ConnectCubeMembersMessage::Enter,
-                            ),
-                        ),
-                    ));
                 }
             }
             menu::Menu::Liquid(_submenu) => {
@@ -1913,7 +1921,7 @@ impl App {
                 email,
             } => {
                 // Bridge the in-app Connect login → realtime stream
-                // bootstrap that the launcher path gets at App init.
+                // bootstrap that the home path gets at App init.
                 // Persists JWTs to `connect.json`, registers a signer
                 // device via gRPC, and re-fires
                 // `connect_stream_ready_task` to populate
@@ -1950,7 +1958,7 @@ impl App {
                         // Coincube backend issues 30-day JWTs (see
                         // `CLAUDE.md`); we approximate expires_at as
                         // now + 30d so the AccessTokenResponse shape
-                        // matches what the launcher path produces.
+                        // matches what the home path produces.
                         let now = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_secs() as i64)
@@ -2286,7 +2294,18 @@ impl App {
                 }
             }
             Message::UpdateDaemonCache(res) => match res {
-                Ok(daemon_cache) => {
+                Ok(mut daemon_cache) => {
+                    // Apply optimistic-broadcast overrides before the
+                    // cache is published: reconcile drops entries the
+                    // daemon now reflects on its own, then any still-
+                    // pending broadcasts get synthetic `spend_info` so
+                    // `coins_summary` (Vault balance) and every other
+                    // `cache.coins()` consumer treats the inputs as
+                    // already spent.
+                    if let Some(wallet) = &self.wallet {
+                        wallet.reconcile_with_coins(&daemon_cache.coins);
+                        wallet.apply_coin_overrides(&mut daemon_cache.coins);
+                    }
                     self.cache.daemon_cache = daemon_cache;
                     return Task::done(Message::CacheUpdated);
                 }
@@ -2359,7 +2378,7 @@ impl App {
                 // it actually owns.
                 let is_global_settings_current = matches!(
                     &self.panels.current,
-                    Menu::Home(crate::app::menu::HomeSubMenu::Settings(_))
+                    Menu::Cube(crate::app::menu::CubeSubMenu::Settings(_))
                 );
                 let mut commands = vec![self.panels.global_settings.update(
                     self.daemon.clone(),
@@ -2521,14 +2540,13 @@ impl App {
                 // orphan route like Marketplace(BuySell) with no vault).
                 // Otherwise rail clicks get silently dropped and the
                 // user is trapped on whichever screen is rendering.
-                if self.pending_switch_to_connect_after_login
-                    && !matches!(menu, menu::Menu::Connect(_))
-                {
-                    // User abandoned the auto-return trip by going somewhere
-                    // else; don't surprise them with a backend swap on a
-                    // future, unrelated Connect login.
-                    self.pending_switch_to_connect_after_login = false;
-                }
+                //
+                // We deliberately do not touch
+                // `pending_switch_to_connect_after_login` here. Sign-in
+                // happens on the Home tab now, so the user is expected
+                // to switch tabs (and possibly poke around this one)
+                // while it's in flight — the flag is consumed on the
+                // auth-success edge a few branches below, or on logout.
                 let close_task = self
                     .panels
                     .current_mut()
@@ -2589,6 +2607,10 @@ impl App {
                     self.cache.connect_device_id = None;
                     self.cache.connect_email = None;
                     self.cache.connect_stream_status = ConnectionStatus::Inactive;
+                    // Logout breaks the "Switch to Connect" trip the
+                    // user started; firing the auto-return on a fresh
+                    // unrelated login later would be surprising.
+                    self.pending_switch_to_connect_after_login = false;
                 }
                 // Auto-return for the "Switch to Connect" flow. When the user
                 // clicked it without an active session, we routed them to the
@@ -3120,8 +3142,10 @@ impl App {
                     }
                 } else {
                     self.pending_switch_to_connect_after_login = true;
-                    return self
-                        .set_current_panel(menu::Menu::Connect(menu::ConnectSubMenu::Overview));
+                    // No active Connect session on this Cube; bubble up
+                    // through the tab/pane so the Home tab takes focus
+                    // and the user can sign in there.
+                    return iced::Task::done(Message::View(view::Message::OpenConnectSignIn));
                 }
             }
 
@@ -3281,6 +3305,58 @@ impl App {
             })
     }
 
+    /// Render content for a settings sub-page that needs both its
+    /// owning panel and the ConnectCubePanel (Spark → Settings →
+    /// Lightning Address, Cube → Settings → Avatar / Members). Returns
+    /// `None` for routes the generic panel dispatch can handle.
+    ///
+    /// Auth and LN-address preconditions render an inline prompt in
+    /// place of the feature UI; the user signs in or claims an
+    /// address, then the page re-renders with the real form.
+    fn connect_settings_content(&self) -> Option<Element<'_, view::Message>> {
+        use crate::app::view::connect::sign_in_prompt;
+        let authenticated = self.panels.connect.account.is_authenticated();
+        let has_ln_address = self
+            .panels
+            .connect
+            .cube
+            .lightning_address
+            .as_ref()
+            .and_then(|la| la.lightning_address.as_ref())
+            .is_some();
+        match &self.panels.current {
+            Menu::Spark(menu::SparkSubMenu::Settings(Some(
+                menu::SparkSettingsOption::LightningAddress,
+            ))) => Some(if authenticated {
+                view::spark::settings::lightning_address::lightning_address_ux(
+                    &self.panels.connect.cube,
+                )
+                .map(view::Message::ConnectCube)
+            } else {
+                sign_in_prompt::sign_in_prompt("claim a Lightning Address")
+            }),
+            Menu::Cube(menu::CubeSubMenu::Settings(menu::CubeSettingsOption::Avatar)) => {
+                Some(if !authenticated {
+                    sign_in_prompt::sign_in_prompt("set up an Avatar")
+                } else if !has_ln_address {
+                    sign_in_prompt::claim_ln_address_prompt()
+                } else {
+                    view::connect::avatar_ux(&self.panels.connect.cube)
+                        .map(view::Message::ConnectCube)
+                })
+            }
+            Menu::Cube(menu::CubeSubMenu::Settings(menu::CubeSettingsOption::Members)) => {
+                Some(if authenticated {
+                    view::connect::cube_members::cube_members_ux(&self.panels.connect.cube)
+                        .map(view::Message::ConnectCube)
+                } else {
+                    sign_in_prompt::sign_in_prompt("manage Cube Members")
+                })
+            }
+            _ => None,
+        }
+    }
+
     pub fn view(&self) -> Element<'_, Message> {
         let view = if self.show_received_celebration {
             // Global celebration overlay takes precedence over the normal panel view
@@ -3292,6 +3368,14 @@ impl App {
                 view::Message::DismissReceivedCelebration,
             );
             view::dashboard(&self.panels.current, &self.cache, celebration)
+        } else if let Some(content) = self.connect_settings_content() {
+            // Connect-dependent settings sub-pages (Spark → Settings →
+            // Lightning Address, Cube → Settings → Avatar / Members)
+            // need both the relevant panel state and the
+            // ConnectCubePanel. The State trait's `view` only sees the
+            // active panel + Cache, so the dispatch lives here — App
+            // owns every panel.
+            view::dashboard(&self.panels.current, &self.cache, content)
         } else {
             self.panels
                 .current()

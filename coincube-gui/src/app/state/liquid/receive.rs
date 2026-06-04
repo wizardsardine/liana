@@ -1,6 +1,16 @@
 use std::convert::TryInto;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// Minimum gap between `Message::Tick` background refreshes of the
+/// Receive panel's "Last transactions" list. The SDK fires events
+/// (`PaymentSucceeded`, `PaymentWaitingConfirmation`, `Synced`) that
+/// already drive a `RefreshRequested` via `active_liquid_refresh`, so
+/// this Tick is a backstop for the case where the Breez Liquid SDK
+/// lags behind the chain (or an event is missed) and a freshly-
+/// observed incoming tx would otherwise sit invisible until the user
+/// navigates away and back.
+const LIQUID_RECEIVE_RELOAD_MAX_TTL: Duration = Duration::from_secs(10);
 
 use coincube_core::miniscript::bitcoin::{Amount, Denomination};
 use coincube_ui::component::form;
@@ -77,6 +87,18 @@ pub struct LiquidReceive {
     received_celebration_context: String,
     received_quote: coincube_ui::component::quote_display::Quote,
     received_image_handle: iced::widget::image::Handle,
+    /// Last time `load_recent_transactions` was issued — gates the
+    /// `Message::Tick` background refresh below
+    /// `LIQUID_RECEIVE_RELOAD_MAX_TTL`.
+    last_reload: Instant,
+    /// In-flight guard for `load_recent_transactions`. `self.loading`
+    /// can't fill this role because it's owned by the address /
+    /// invoice generation flows; recent-transactions refreshes need a
+    /// separate flag so two of them can't overlap and deliver
+    /// out-of-order `DataLoaded` updates (a slow earlier fetch
+    /// stomping a newer one's result). Set before each fetch issues,
+    /// cleared by both the `DataLoaded` and `Error` handlers.
+    reloading_transactions: bool,
 }
 
 impl LiquidReceive {
@@ -137,6 +159,8 @@ impl LiquidReceive {
             received_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
                 "liquid-receive",
             ),
+            last_reload: Instant::now(),
+            reloading_transactions: false,
         }
     }
 
@@ -274,6 +298,36 @@ impl State for LiquidReceive {
         // When SideShift flow is active, ignore other messages
         if self.sideshift_flow.is_some() {
             return Task::none();
+        }
+
+        // Background refresh of the "Last transactions" list when the
+        // user is idle on the Receive panel. The SDK event path
+        // (`active_liquid_refresh` → `RefreshRequested`) is the primary
+        // refresh — this Tick covers the case where the Breez Liquid
+        // SDK lags behind the chain or never fires an event for a
+        // freshly-observed incoming tx, so a 1-confirmation deposit
+        // would otherwise sit invisible until the user navigates away
+        // and back.
+        //
+        // Calls `load_recent_transactions` (not the heavy `reload`) so
+        // the receive address / picker / sideshift flow state is
+        // preserved. The DataLoaded handler replaces `recent_payments`
+        // atomically, so the visible list doesn't flash.
+        //
+        // Gated to only fire when no picker / QR modal / sync is in
+        // progress, and only after `LIQUID_RECEIVE_RELOAD_MAX_TTL` has
+        // elapsed since the last reload — the TTL doubles as a
+        // debounce against SDK event bursts.
+        if matches!(message, Message::Tick)
+            && !self.receive_picker_open
+            && !self.sender_picker_open
+            && !self.show_qr_modal
+            && !self.loading
+            && !self.reloading_transactions
+            && Instant::now() > self.last_reload + LIQUID_RECEIVE_RELOAD_MAX_TTL
+        {
+            self.last_reload = Instant::now();
+            return self.load_recent_transactions();
         }
 
         if let Message::View(view::Message::LiquidReceive(msg)) = message {
@@ -483,6 +537,14 @@ impl State for LiquidReceive {
                 }
 
                 LiquidReceiveMessage::Error(err) => {
+                    // Clear the recent-transactions guard regardless of
+                    // whether this error came from `load_recent_transactions`
+                    // or from an invoice/address generation path —
+                    // clearing a guard that was never set is a no-op,
+                    // and the alternative (only clearing on fetch-
+                    // sourced errors) would require a separate Error
+                    // variant or message tagging.
+                    self.reloading_transactions = false;
                     self.error = Some(err.to_string());
                     return Task::perform(
                         async {
@@ -607,6 +669,7 @@ impl State for LiquidReceive {
                     usdt_balance,
                     recent_payment,
                 } => {
+                    self.reloading_transactions = false;
                     self.btc_balance = btc_balance;
                     self.usdt_balance = usdt_balance;
 
@@ -737,6 +800,7 @@ impl State for LiquidReceive {
                     return redirect(Menu::Liquid(LiquidSubMenu::Transactions(None)));
                 }
                 LiquidReceiveMessage::RefreshRequested => {
+                    self.last_reload = Instant::now();
                     return self.load_recent_transactions();
                 }
             }
@@ -752,6 +816,7 @@ impl State for LiquidReceive {
         self.sideshift_flow = None;
         self.receive_picker_open = false;
         self.sender_picker_open = false;
+        self.last_reload = Instant::now();
         // Trigger an SDK sync in the background so on-chain state is fresh.
         // When the sync completes the SDK fires SdkEvent::Synced automatically.
         let breez = self.breez_client.clone();
@@ -984,7 +1049,13 @@ impl LiquidReceive {
         Amount::from_str_in(&self.amount_input.value, denomination).ok()
     }
 
-    fn load_recent_transactions(&self) -> Task<Message> {
+    fn load_recent_transactions(&mut self) -> Task<Message> {
+        // Marking the in-flight guard here (rather than at each call
+        // site) means every entrypoint — `Message::Tick`,
+        // `RefreshRequested`, `SetReceiveAsset`, `reload` — picks it
+        // up automatically. Cleared by the `DataLoaded` / `Error`
+        // handlers which are the only completion paths for this fetch.
+        self.reloading_transactions = true;
         let breez_client = self.breez_client.clone();
         Task::perform(
             async move {

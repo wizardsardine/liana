@@ -99,7 +99,7 @@ pub struct Installer {
     /// Context is data passed through each step.
     pub context: Context,
 
-    /// Track if installer was launched from an app without vault (true) or from launcher (false)
+    /// Track if installer was launched from an app without vault (true) or from home (false)
     pub launched_from_app: bool,
 
     /// Cube settings when launched from app (for returning to the same cube)

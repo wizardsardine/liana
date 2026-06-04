@@ -1,15 +1,17 @@
 {
   "_meta": {
     "description": "Loading screen quotes for COINCUBE desktop and mobile apps. Displayed below Kage animations during loading, syncing, transaction, and other app states.",
-    "usage": "Serve randomly within the matching context. Short quotes for brief states; medium quotes for longer screens. Every context has at least 3 quotes.",
-    "total": 76,
+    "usage": "Serve randomly within the matching context. Short quotes for brief states; medium quotes for longer screens. Every context has at least 2 quotes.",
+    "total": 65,
     "categories": {
       "booth": "Jeff Booth — Author of The Price of Tomorrow, Bitcoin advocate",
       "ammous": "Saifedean Ammous — Author of The Bitcoin Standard",
+      "svetski": "Aleks Svetski — Author of The Bushido of Bitcoin",
       "szabo": "Nick Szabo — Computer scientist, smart contracts pioneer",
       "finney": "Hal Finney — Cryptographer, first Bitcoin transaction recipient",
-      "back": "Adam Back — Inventor of Hashcash, Blockstream CEO",
       "satoshi": "Satoshi Nakamoto — Bitcoin whitepaper, forum posts, emails (2008–2010)",
+      "sovereign": "James Dale Davidson & Lord William Rees-Mogg — The Sovereign Individual, 1997",
+      "fuller": "R. Buckminster Fuller — Inventor, futurist, systems thinker",
       "hayek": "Friedrich A. Hayek — Nobel laureate, Austrian School economist",
       "mises": "Ludwig von Mises — Austrian School economist, monetary theorist",
       "rothbard": "Murray N. Rothbard — Austrian School economist, libertarian theorist",
@@ -33,39 +35,39 @@
   "quotes": [
     {
       "id": "booth-01",
-      "text": "Technology is deflationary, and deflation is abundance. Bitcoin is the first money that aligns with this truth.",
+      "text": "Exponentially advancing technological gains bring efficiency. That efficiency is deflationary.",
       "author": "Jeff Booth",
-      "source": "The Price of Tomorrow, 2020",
+      "source": "The Greatest Game, The Bitcoin Times Ed. 3, 2020",
       "category": "booth",
       "length": "short",
-      "contexts": ["loading", "syncing", "first-launch"]
+      "contexts": ["loading", "syncing", "first-launch", "idle"]
     },
     {
       "id": "booth-02",
-      "text": "In a world of infinite money printing, Bitcoin is the exit.",
+      "text": "Inflation is a tax on those most unable to pay.",
       "author": "Jeff Booth",
-      "source": "Interview, 2021",
+      "source": "The Greatest Game, The Bitcoin Times Ed. 3, 2020",
       "category": "booth",
       "length": "short",
-      "contexts": ["first-launch", "idle"]
+      "contexts": ["loading", "balance-update", "transaction-sent", "idle"]
     },
     {
       "id": "booth-03",
-      "text": "You don't change the existing system. You build a new one that makes the old one obsolete.",
+      "text": "For the first time in history… the unique characteristics of Bitcoin give everyone a choice on how they play the game.",
       "author": "Jeff Booth",
-      "source": "The Price of Tomorrow, 2020",
+      "source": "The Greatest Game, The Bitcoin Times Ed. 3, 2020",
       "category": "booth",
-      "length": "short",
-      "contexts": ["loading", "idle", "first-launch"]
+      "length": "medium",
+      "contexts": ["first-launch", "transaction-confirm", "transaction-sent"]
     },
     {
       "id": "booth-04",
-      "text": "Bitcoin fixes the money. Fixed money fixes the world.",
+      "text": "Learn about Bitcoin. Learn why its importance is so much greater than the wealth it might create for you and your family.",
       "author": "Jeff Booth",
-      "source": "Interview, 2022",
+      "source": "The Greatest Game, The Bitcoin Times Ed. 3, 2020",
       "category": "booth",
-      "length": "short",
-      "contexts": ["idle", "balance-update", "syncing"]
+      "length": "medium",
+      "contexts": ["first-launch", "backup-reminder", "empty-wallet"]
     },
 
     {
@@ -79,30 +81,49 @@
     },
     {
       "id": "ammous-02",
-      "text": "Sound money is a prerequisite for individual freedom and honest commerce.",
-      "author": "Saifedean Ammous",
-      "source": "The Bitcoin Standard, 2018",
-      "category": "ammous",
-      "length": "short",
-      "contexts": ["first-launch", "idle"]
-    },
-    {
-      "id": "ammous-03",
-      "text": "The len­gth of time an asset has held value is the single most important indicator that it will continue to hold value.",
-      "author": "Saifedean Ammous",
-      "source": "The Bitcoin Standard, 2018",
-      "category": "ammous",
-      "length": "short",
-      "contexts": ["loading", "idle", "balance-update"]
-    },
-    {
-      "id": "ammous-04",
       "text": "Bitcoin can be best understood as distributed software that allows for transfer of value using a currency protected from unexpected inflation without relying on trusted third parties.",
       "author": "Saifedean Ammous",
       "source": "The Bitcoin Standard, 2018",
       "category": "ammous",
       "length": "medium",
       "contexts": ["loading", "syncing"]
+    },
+
+    {
+      "id": "svetski-01",
+      "text": "The Samurai believed in doing, not saying. Action and behavior demonstrated their faith, knowledge and values, more than words ever could.",
+      "author": "Aleks Svetski",
+      "source": "The Bushido of Bitcoin, 2024 (p. 56)",
+      "category": "svetski",
+      "length": "medium",
+      "contexts": ["backup-reminder", "transaction-confirm", "first-launch", "transaction-sent"]
+    },
+    {
+      "id": "svetski-02",
+      "text": "There is a biological and memetic recognition that a return to paternal leadership and traditional \"revolutionary\" stability are what's needed to correct our bent-out-of-shape society and inverted culture. For this, patriarchs of a new caliber must rise - mature and responsible men who both respect tradition and have the courage to venture forth and establish something new.",
+      "author": "Aleks Svetski",
+      "source": "The Bushido of Bitcoin, 2024 (p. 297)",
+      "category": "svetski",
+      "length": "medium",
+      "contexts": ["first-launch", "idle"]
+    },
+    {
+      "id": "svetski-03",
+      "text": "This period of human history will not only herald the largest wealth transfer in human history, but I'd go so far as to call it a speciation event.",
+      "author": "Aleks Svetski",
+      "source": "The Bushido of Bitcoin, 2024 (p. 465)",
+      "category": "svetski",
+      "length": "medium",
+      "contexts": ["first-launch", "idle", "balance-update"]
+    },
+    {
+      "id": "svetski-04",
+      "text": "Beauty and life always win in the end, and this is why I believe that we had to go through this. We are the marble, and we are sculpting something new.",
+      "author": "Aleks Svetski",
+      "source": "The Bushido of Bitcoin, 2024 (p. 466)",
+      "category": "svetski",
+      "length": "medium",
+      "contexts": ["first-launch", "idle", "error"]
     },
 
     {
@@ -116,104 +137,40 @@
     },
     {
       "id": "szabo-02",
-      "text": "If clams can be money, furs can be money, gold can be money, and so on – if money is not just coins or notes issued by a government under legal tender laws, but rather can be a wide variety of objects – then just what is money anyway? ",
+      "text": "If clams can be money, furs can be money, gold can be money, and so on – if money is not just coins or notes issued by a government under legal tender laws, but rather can be a wide variety of objects – then just what is money anyway?",
       "author": "Nick Szabo",
       "source": "Shelling Out, 2002",
       "category": "szabo",
-      "length": "short",
-      "contexts": ["idle", "balance-update", "transaction-received"]
-    },
-    {
-      "id": "szabo-03",
-      "text": "A very unforgeable costly commodity provides money whose supply is unaffected by the lending cycle.",
-      "author": "Nick Szabo",
-      "source": "Bit Gold, 2005",
-      "category": "szabo",
-      "length": "short",
-      "contexts": ["loading", "syncing"]
-    },
-    {
-      "id": "szabo-04",
-      "text": "The problem is that our monetary system depends on trust — trust that a long and growing list of institutions won't abuse the power they wield.",
-      "author": "Nick Szabo",
-      "source": "Bit Gold, 2008",
-      "category": "szabo",
       "length": "medium",
-      "contexts": ["loading", "syncing", "first-launch"]
+      "contexts": ["idle", "balance-update", "transaction-received"]
     },
 
     {
       "id": "finney-01",
-      "text": "Running Bitcoin.",
+      "text": "Running bitcoin",
       "author": "Hal Finney",
-      "source": "First tweet about Bitcoin, 2009",
+      "source": "First tweet about Bitcoin, January 10, 2009",
       "category": "finney",
       "length": "short",
       "contexts": ["loading", "syncing", "first-launch"]
     },
     {
       "id": "finney-02",
-      "text": "I see Bitcoin as ultimately becoming a reserve currency for banks.",
+      "text": "I believe this will be the ultimate fate of Bitcoin, to be the 'high-powered money' that serves as a reserve currency for banks that issue their own digital cash.",
       "author": "Hal Finney",
       "source": "BitcoinTalk forum, 2010",
       "category": "finney",
-      "length": "short",
+      "length": "medium",
       "contexts": ["idle", "loading"]
     },
     {
       "id": "finney-03",
-      "text": "It seemed so obvious to me. Here we are, faced with the problems of loss of privacy, creeping computerization, massive databases. Crypto is the answer.",
+      "text": "It seemed so obvious to me: Here we are faced with the problems of loss of privacy, creeping computerization, massive databases, more centralization — and Chaum offers a completely different direction to go in, one which puts power into the hands of individuals rather than governments and corporations.",
       "author": "Hal Finney",
-      "source": "Cypherpunks mailing list, 1992",
+      "source": "Cypherpunks mailing list, November 1992",
       "category": "finney",
       "length": "medium",
       "contexts": ["first-launch", "backup-reminder"]
-    },
-    {
-      "id": "finney-04",
-      "text": "I'd like to die at peace, knowing that the technology I worked on will live on and continue to change the world.",
-      "author": "Hal Finney",
-      "source": "BitcoinTalk forum, 2013",
-      "category": "finney",
-      "length": "short",
-      "contexts": ["idle", "loading"]
-    },
-
-    {
-      "id": "back-01",
-      "text": "Bitcoin is the most important invention in the history of the world since the Internet.",
-      "author": "Adam Back",
-      "source": "Interview, 2015",
-      "category": "back",
-      "length": "short",
-      "contexts": ["first-launch", "idle", "loading"]
-    },
-    {
-      "id": "back-02",
-      "text": "I've been mass-producing hashcash tokens since 1997. But making it decentralized money — that's what Satoshi solved.",
-      "author": "Adam Back",
-      "source": "Interview, 2019",
-      "category": "back",
-      "length": "short",
-      "contexts": ["loading", "syncing"]
-    },
-    {
-      "id": "back-03",
-      "text": "Not your keys, not your coins.",
-      "author": "Adam Back",
-      "source": "Attributed",
-      "category": "back",
-      "length": "short",
-      "contexts": ["backup-reminder", "first-launch", "transaction-sent"]
-    },
-    {
-      "id": "back-04",
-      "text": "Bitcoin is a technological tour de force.",
-      "author": "Adam Back",
-      "source": "Interview, 2013",
-      "category": "back",
-      "length": "short",
-      "contexts": ["idle", "loading", "syncing", "transaction-received"]
     },
 
     {
@@ -301,7 +258,7 @@
       "id": "satoshi-10",
       "text": "I hope it's obvious it was only the centrally controlled nature of those systems that doomed them. I think this is the first time we're trying a decentralized, non-trust-based system.",
       "author": "Satoshi Nakamoto",
-      "source": "Cryptography mailing list, 2009",
+      "source": "P2P Foundation forum post, 2009",
       "category": "satoshi",
       "length": "medium",
       "contexts": ["loading", "first-launch"]
@@ -317,7 +274,7 @@
     },
     {
       "id": "satoshi-12",
-      "text": "With e-currency based on cryptographic proof, without the need to trust a third-party middleman, money can be secure and transactions effortless.",
+      "text": "With e-currency based on cryptographic proof, without the need to trust a third party middleman, money can be secure and transactions effortless.",
       "author": "Satoshi Nakamoto",
       "source": "P2P Foundation forum post, 2009",
       "category": "satoshi",
@@ -326,26 +283,73 @@
     },
 
     {
+      "id": "sovereign-01",
+      "text": "Faster than all but a few now imagine, microprocessing will subvert and destroy the nationstate, creating new forms of social organization in the process.",
+      "author": "James Dale Davidson & Lord William Rees-Mogg",
+      "source": "The Sovereign Individual, 1997",
+      "category": "sovereign",
+      "length": "medium",
+      "contexts": ["loading", "first-launch", "syncing", "idle"]
+    },
+    {
+      "id": "sovereign-02",
+      "text": "In the new millennium, cybermoney controlled by private markets will supersede fiat money issued by governments. Only the poor will be victims of inflation.",
+      "author": "James Dale Davidson & Lord William Rees-Mogg",
+      "source": "The Sovereign Individual, 1997",
+      "category": "sovereign",
+      "length": "medium",
+      "contexts": ["loading", "balance-update", "idle", "transaction-sent"]
+    },
+    {
+      "id": "sovereign-03",
+      "text": "New technologies will allow the holders of wealth to bypass the national monopolies that have issued and regulated money in the modern period.",
+      "author": "James Dale Davidson & Lord William Rees-Mogg",
+      "source": "The Sovereign Individual, 1997",
+      "category": "sovereign",
+      "length": "medium",
+      "contexts": ["first-launch", "transaction-sent", "transaction-confirm", "backup-reminder"]
+    },
+    {
+      "id": "sovereign-04",
+      "text": "An entirely new realm of economic activity that is not hostage to physical violence will emerge in cyberspace.",
+      "author": "James Dale Davidson & Lord William Rees-Mogg",
+      "source": "The Sovereign Individual, 1997",
+      "category": "sovereign",
+      "length": "short",
+      "contexts": ["loading", "syncing", "first-launch", "idle"]
+    },
+
+    {
+      "id": "fuller-01",
+      "text": "You never change things by fighting the existing reality. To change something, build a new model that makes the existing model obsolete.",
+      "author": "R. Buckminster Fuller",
+      "source": "Widely attributed; cited by Jeff Booth in The Greatest Game, 2020",
+      "category": "fuller",
+      "length": "medium",
+      "contexts": ["loading", "first-launch", "idle", "empty-wallet"]
+    },
+
+    {
       "id": "hayek-01",
       "text": "I don't believe we shall ever have a good money again before we take the thing out of the hands of government.",
       "author": "Friedrich A. Hayek",
-      "source": "Interview, 1984",
+      "source": "Interview with James U. Blanchard III, 1984",
       "category": "hayek",
       "length": "short",
       "contexts": ["loading", "syncing", "first-launch"]
     },
     {
       "id": "hayek-02",
-      "text": "All we can do is by some sly roundabout way introduce something that they can't stop.",
+      "text": "All we can do is by some sly roundabout way introduce something they can't stop.",
       "author": "Friedrich A. Hayek",
-      "source": "Interview, 1984",
+      "source": "Interview with James U. Blanchard III, 1984",
       "category": "hayek",
       "length": "short",
       "contexts": ["loading", "idle", "first-launch"]
     },
     {
       "id": "hayek-03",
-      "text": "I do not think it is an exaggeration to say that history is largely a history of inflation, usually inflations engineered by governments for the gain of governments.",
+      "text": "I do not think it is an exaggeration to say that history is largely a history of inflation, and usually of inflations engineered for the gain of governments.",
       "author": "Friedrich A. Hayek",
       "source": "Choice in Currency, 1976",
       "category": "hayek",
@@ -353,17 +357,8 @@
       "contexts": ["loading", "syncing"]
     },
     {
-      "id": "hayek-04",
-      "text": "If we want free enterprise and a market economy to survive, we have no choice but to replace the governmental currency monopoly by free competition between private currencies.",
-      "author": "Friedrich A. Hayek",
-      "source": "Denationalisation of Money, 1976",
-      "category": "hayek",
-      "length": "medium",
-      "contexts": ["loading", "syncing"]
-    },
-    {
       "id": "hayek-05",
-      "text": "With the exception only of the period of the gold standard, practically all governments of history have used their exclusive power to issue money to defraud and plunder the people.",
+      "text": "With the exception only of the 200-year period of the gold standard, practically all governments of history have used their exclusive power to issue money in order to defraud and plunder the people.",
       "author": "Friedrich A. Hayek",
       "source": "Choice in Currency, 1976",
       "category": "hayek",
@@ -411,34 +406,16 @@
       "id": "mises-03",
       "text": "The first thing a genius needs is to breathe free air.",
       "author": "Ludwig von Mises",
-      "source": "Liberalism, 1927",
+      "source": "The Anti-Capitalistic Mentality, 1956",
       "category": "mises",
       "length": "short",
       "contexts": ["loading", "idle", "first-launch"]
     },
     {
-      "id": "mises-04",
-      "text": "All the enemies of the gold standard spurn it precisely because of its main virtue: its incompatibility with a policy of credit expansion.",
-      "author": "Ludwig von Mises",
-      "source": "Human Action, 1949",
-      "category": "mises",
-      "length": "short",
-      "contexts": ["loading", "syncing"]
-    },
-    {
-      "id": "mises-05",
-      "text": "Government is the only institution that can take a valuable commodity like paper, and make it worthless by applying ink.",
-      "author": "Ludwig von Mises",
-      "source": "Attributed",
-      "category": "mises",
-      "length": "short",
-      "contexts": ["loading", "idle"]
-    },
-    {
       "id": "mises-06",
       "text": "A prosperity created by an expansionist monetary and credit policy is illusory and must end in a slump, an economic crisis.",
       "author": "Ludwig von Mises",
-      "source": "Human Action, 1949",
+      "source": "Inflation Must End in a Slump, 1951",
       "category": "mises",
       "length": "short",
       "contexts": ["loading", "syncing"]
@@ -481,48 +458,12 @@
       "contexts": ["loading", "syncing"]
     },
     {
-      "id": "rothbard-03",
-      "text": "If government manages to establish paper tickets as money, then the government becomes free to create money costlessly and at will.",
-      "author": "Murray N. Rothbard",
-      "source": "What Has Government Done to Our Money?, 1963",
-      "category": "rothbard",
-      "length": "short",
-      "contexts": ["loading", "syncing"]
-    },
-    {
       "id": "rothbard-04",
       "text": "Monetary inflation not only raises prices and destroys the value of the currency unit; it also acts as a giant system of expropriation.",
       "author": "Murray N. Rothbard",
-      "source": "Man, Economy, and State, 1962",
+      "source": "The Mystery of Banking, 1983",
       "category": "rothbard",
       "length": "short",
-      "contexts": ["loading", "syncing"]
-    },
-    {
-      "id": "rothbard-05",
-      "text": "The Federal Reserve, instead of being reviled as a counterfeiter and destroyer, is hailed as the wise governor of our economy.",
-      "author": "Murray N. Rothbard",
-      "source": "The Case Against the Fed, 1994",
-      "category": "rothbard",
-      "length": "short",
-      "contexts": ["loading", "idle"]
-    },
-    {
-      "id": "rothbard-06",
-      "text": "The state has always had a love-hate relationship with counterfeiting: it loves its own, and hates the competition.",
-      "author": "Murray N. Rothbard",
-      "source": "What Has Government Done to Our Money?, 1963",
-      "category": "rothbard",
-      "length": "short",
-      "contexts": ["loading", "idle"]
-    },
-    {
-      "id": "rothbard-07",
-      "text": "Since the Federal Reserve has the unlimited power to print money, it can never go bankrupt. This is the ultimate source of the moral hazard in our banking system.",
-      "author": "Murray N. Rothbard",
-      "source": "The Case Against the Fed, 1994",
-      "category": "rothbard",
-      "length": "medium",
       "contexts": ["loading", "syncing"]
     },
 
@@ -536,48 +477,12 @@
       "contexts": ["loading", "syncing"]
     },
     {
-      "id": "hoppe-02",
-      "text": "As long as money is tied to a commodity like gold, the amount of money cannot be arbitrarily increased, because it is impossible to increase the physical amount of gold at will.",
-      "author": "Hans-Hermann Hoppe",
-      "source": "Democracy: The God That Failed, 2001",
-      "category": "hoppe",
-      "length": "medium",
-      "contexts": ["loading", "syncing"]
-    },
-    {
       "id": "hoppe-03",
       "text": "More money makes its monopolistic producer and its earliest recipients richer at the expense of making the money's late and latest receivers poorer.",
       "author": "Hans-Hermann Hoppe",
       "source": "Democracy: The God That Failed, 2001",
       "category": "hoppe",
       "length": "medium",
-      "contexts": ["loading", "syncing"]
-    },
-    {
-      "id": "hoppe-04",
-      "text": "No one would accept paper money if it were not stamped by the state as legal tender and backed by the state's coercive power.",
-      "author": "Hans-Hermann Hoppe",
-      "source": "A Theory of Socialism and Capitalism, 1989",
-      "category": "hoppe",
-      "length": "short",
-      "contexts": ["loading", "syncing"]
-    },
-    {
-      "id": "hoppe-05",
-      "text": "Every government tax and regulation and every governmental money manipulation is a violation of property rights.",
-      "author": "Hans-Hermann Hoppe",
-      "source": "The Economics and Ethics of Private Property, 1993",
-      "category": "hoppe",
-      "length": "short",
-      "contexts": ["loading", "idle"]
-    },
-    {
-      "id": "hoppe-06",
-      "text": "All government growth is financed by two means: taxation, and the monopolization and debasement of money.",
-      "author": "Hans-Hermann Hoppe",
-      "source": "Democracy: The God That Failed, 2001",
-      "category": "hoppe",
-      "length": "short",
       "contexts": ["loading", "syncing"]
     },
 
@@ -646,7 +551,7 @@
     },
     {
       "id": "scripture-08",
-      "text": "The getting of treasures by a lying tongue is a fleeting fantasy of those who seek death.",
+      "text": "Getting treasures by a lying tongue is the fleeting fantasy of those who seek death.",
       "author": "Proverbs 21:6",
       "source": "NKJV",
       "category": "scripture",

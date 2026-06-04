@@ -30,7 +30,7 @@ use crate::{
     },
     dir::CoincubeDirectory,
     gui::cache::GlobalCache,
-    launcher,
+    home,
     logger::setup_logger,
     services::fiat::{
         api::{ListCurrenciesResult, PriceApi, PriceApiError},
@@ -342,8 +342,8 @@ impl GUI {
             // In case of cube deletion, remove any tab where the cube/wallet is currently running.
             Message::Pane(p, pane::Message::Tab(t, tab::Message::Launch(msg))) => {
                 let mut tasks = Vec::new();
-                if let launcher::Message::View(launcher::ViewMessage::DeleteCube(
-                    launcher::DeleteCubeMessage::Confirm(..),
+                if let home::Message::View(home::ViewMessage::DeleteCube(
+                    home::DeleteCubeMessage::Confirm(..),
                 )) = &msg
                 {
                     // When a cube is deleted, close all App and Loader tabs since they won't be valid anymore
@@ -369,7 +369,7 @@ impl GUI {
                     }
                     for (&id, pane) in self.panes.iter() {
                         for tab in &pane.tabs {
-                            if let tab::State::Launcher(l) = &tab.state {
+                            if let tab::State::Home(l) = &tab.state {
                                 let tab_id = tab.id;
                                 tasks.push(l.reload().map(move |msg| {
                                     Message::Pane(

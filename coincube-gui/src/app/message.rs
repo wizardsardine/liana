@@ -91,6 +91,19 @@ pub enum Message {
         u64,
         Result<(Vec<HistoryTransaction>, Vec<HistoryTransaction>), Error>,
     ),
+    /// Vault transactions background-refresh result dispatched from
+    /// `Message::Tick`. Carries the same payload as `HistoryTransactions`,
+    /// but the handler does NOT clear the currently displayed rows on
+    /// dispatch and only overwrites `page_cache` when the user is still
+    /// on page 0 with no NextPage fetch in flight, so a concurrent
+    /// pagination action can't be stomped by a stale background reply.
+    /// Errors are logged and swallowed — a silent retry on the next Tick
+    /// is preferable to flashing an error banner over an otherwise-usable
+    /// view.
+    BackgroundHistoryTransactions(
+        u64,
+        Result<(Vec<HistoryTransaction>, Vec<HistoryTransaction>), Error>,
+    ),
     Payments(Result<Vec<Payment>, Error>),
     /// Extension of payments for pagination.
     /// Tuple contains (Vec<Payment>, u64) where the u64 is the actual page limit used
@@ -163,7 +176,7 @@ pub enum Message {
     /// (REST OTP-verify or password). Carries the freshly-issued JWTs so
     /// the App can persist them to `connect.json`, register a signer
     /// device via gRPC `RegisterDevice`, and bootstrap the realtime
-    /// stream — work that the launcher path does via
+    /// stream — work that the home path does via
     /// `register_signer_device_best_effort` + `connect_stream_ready_task`
     /// at app-init time, but which the runtime in-app login flow
     /// previously skipped. See PLAN comment near `mod.rs:2374`.

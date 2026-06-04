@@ -78,7 +78,7 @@ fn default_loglevel() -> log::LevelFilter {
 }
 
 fn default_poll_interval() -> Duration {
-    Duration::from_secs(30)
+    Duration::from_secs(10)
 }
 
 /// Bitcoin backend config.
