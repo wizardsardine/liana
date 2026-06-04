@@ -29,6 +29,23 @@ pub fn verify_address_modal<'a>(
     address: &Address,
     derivation_index: &ChildNumber,
 ) -> Element<'a, Message> {
+    let title_row = text("Select device to verify address on:").width(Length::Fill);
+
+    let devices = hws
+        .iter()
+        .enumerate()
+        .fold(Column::new().spacing(10), |col, (i, hw)| {
+            col.push(hw::hw_list_view_verify_address(
+                i,
+                hw,
+                if let HardwareWallet::Supported { fingerprint, .. } = hw {
+                    chosen_hws.contains(fingerprint)
+                } else {
+                    false
+                },
+            ))
+        });
+
     let content = Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))
         .push(receive::modal::verify_address_modal(
@@ -36,22 +53,8 @@ pub fn verify_address_modal<'a>(
             derivation_index,
             Message::Clipboard(address.to_string()),
         ))
-        .push(text("Select device to verify address on:").width(Length::Fill))
-        .push(
-            hws.iter()
-                .enumerate()
-                .fold(Column::new().spacing(10), |col, (i, hw)| {
-                    col.push(hw::hw_list_view_verify_address(
-                        i,
-                        hw,
-                        if let HardwareWallet::Supported { fingerprint, .. } = hw {
-                            chosen_hws.contains(fingerprint)
-                        } else {
-                            false
-                        },
-                    ))
-                }),
-        )
+        .push(title_row)
+        .push(devices)
         .spacing(20)
         .width(Length::Fill);
     modal::modal_view(
