@@ -509,6 +509,48 @@ async fn fake_phone_close_then_serve(
     }
 }
 
+/// Regression: when the retry loop has accumulated `NetworkError`s
+/// from failed dials and the offer TTL then runs out, the wizard
+/// must surface `OfferExpired` (so the user sees "Offer expired —
+/// generate a new offer") rather than the last `NetworkError`
+/// (which would route them to the network-error toast with a Try
+/// Again that does nothing useful for a dead QR).
+#[tokio::test]
+async fn run_pairing_returns_offer_expired_when_retries_exhaust_ttl() {
+    // Bind, capture the address, then drop the listener. Any TCP
+    // connect to this address now gets RST → `Connection refused`,
+    // a `NetworkError` the retry loop treats as retriable.
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+    drop(listener);
+
+    let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
+    let identity = fresh_desktop_identity();
+    // 2 s budget — long enough for two or three retry cycles
+    // (REDIAL_BACKOFF is 750 ms), short enough not to slow CI.
+    let offer = fresh_offer(wallet_fp, identity.cert_fp(), 2);
+    let phone = DiscoveredPhone {
+        cert_fp8: "deadbeef".into(),
+        addr,
+        instance_name: "keychain-test".into(),
+    };
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp]),
+    )
+    .await
+    .expect("run_pairing must complete within outer cap");
+
+    assert!(
+        matches!(result, Err(PairingError::OfferExpired)),
+        "expected OfferExpired after TTL elapses through retries, got {:?}",
+        result,
+    );
+}
+
 /// Regression: the phone closes inbound TLS sessions before it has
 /// seen the QR scan, so the user's very first dial after clicking
 /// "Pair" almost always fails. The desktop must redial within the

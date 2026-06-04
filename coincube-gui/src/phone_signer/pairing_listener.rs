@@ -91,10 +91,19 @@ pub async fn run_pairing(
     // Anything except `NetworkError` is treated as terminal
     // (cert-mismatch, wallet-fingerprint mismatch, expired offer),
     // so we don't loop forever on a real fault.
-    let mut last_err: Option<PairingError> = None;
+    //
+    // When the loop exits via expiry we always return
+    // `OfferExpired`, never the last `NetworkError` we were
+    // retrying through. The TTL is what actually stopped us — the
+    // network errors are just noise from the dials that happened
+    // before the QR ran out. Surfacing one of them would route the
+    // user to the "Network error" toast with Try Again, even
+    // though the QR they were scanning is already dead and the
+    // only remedy is a fresh offer (which the `OfferExpired`
+    // branch's copy spells out).
     loop {
         if crate::phone_signer::pairing::is_expired(&offer) {
-            return Err(last_err.unwrap_or(PairingError::OfferExpired));
+            return Err(PairingError::OfferExpired);
         }
         // Re-resolve the target from mDNS on every attempt. Some
         // phone-side implementations rebind their TLS listener to
@@ -122,7 +131,6 @@ pub async fn run_pairing(
                     "pairing dial failed (will redial): {}",
                     e,
                 );
-                last_err = Some(e);
                 tokio::time::sleep(REDIAL_BACKOFF).await;
             }
             Err(e) => return Err(e),
