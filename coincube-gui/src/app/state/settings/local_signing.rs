@@ -144,6 +144,26 @@ impl LocalSigningState {
         self.pairing_id
     }
 
+    /// Capture the vault id and signer-fingerprint set for the
+    /// supplied wallet. Used both from [`Self::reload`] (initial
+    /// entry into the panel) and from the [`Message::WalletUpdated`]
+    /// path in [`Self::update`] — without the latter, switching
+    /// wallets while the user is sitting on this panel leaves these
+    /// two fields pointing at the previous vault, and the next
+    /// pairing offer would target the wrong vault id.
+    pub(crate) fn apply_wallet(&mut self, wallet: &Wallet) {
+        // Identify the **vault as a whole**, not one of its signers
+        // — `id_fingerprint` is a stable 4-byte digest of the
+        // descriptor, unique per vault and distinct from any signer
+        // key.
+        self.wallet_fingerprint = Some(wallet.id_fingerprint());
+        // Capture the descriptor's signer fingerprints, sorted for
+        // determinism (`descriptor_keys()` returns a HashSet).
+        let mut v: Vec<_> = wallet.descriptor_keys().into_iter().collect();
+        v.sort();
+        self.wallet_signer_fingerprints = v;
+    }
+
     /// Apply the result of a pairing run **only if** `id` matches
     /// the current `pairing_id` and the wizard is still in
     /// `Waiting`. Returns `true` when the result was applied;
@@ -218,6 +238,37 @@ impl LocalSigningState {
             }
         }
         true
+    }
+
+    /// One-second tick from the panel's subscription. While the
+    /// phone-picker is open we refresh the mDNS browse so phones
+    /// appear/disappear in roughly real time. While a pairing offer
+    /// is on-screen we also promote the offer-expired transition
+    /// here, rather than waiting for the background `run_pairing`
+    /// task to notice — its `try_pair_once` can hold inside a single
+    /// `recv` for up to the full offer TTL, so without this Tick
+    /// check the view would show "Pairing offer expired" while the
+    /// state was still `Waiting` and the background task was still
+    /// running in the background. Bumping `pairing_id` also gates
+    /// out the eventual `PairingCompleted` from the dispatcher so a
+    /// late-arriving Err doesn't stomp the just-set `Error` state.
+    pub(crate) fn apply_tick(&mut self) {
+        let mut waiting_expired = false;
+        match &mut self.flow {
+            PairingFlow::PhonePicker { discovered } => {
+                *discovered = crate::phone_signer::mdns::browse();
+            }
+            PairingFlow::Waiting { offer, .. } => {
+                if crate::phone_signer::pairing::is_expired(offer) {
+                    waiting_expired = true;
+                }
+            }
+            _ => {}
+        }
+        if waiting_expired {
+            self.start_pairing_run();
+            self.flow = PairingFlow::Error(PairingError::OfferExpired);
+        }
     }
 
     /// Apply a `DraftName` mutation. Doesn't touch disk.
@@ -326,6 +377,18 @@ impl State for LocalSigningState {
             self.refresh_phones(cache);
             self.initialised = true;
         }
+        // Wallet switches arrive here, not via `reload`. The parent
+        // `SettingsState` forwards `WalletUpdated` to the active
+        // sub-panel as an `update` message; without re-deriving the
+        // vault id and signer-fp set now, the next pairing offer
+        // would carry the previous vault's fingerprint and the
+        // resulting `PairedPhone` would be persisted with the
+        // previous vault's signer fps — i.e. paired to the wrong
+        // vault.
+        if let Message::WalletUpdated(Ok(wallet)) = &message {
+            self.apply_wallet(wallet);
+            return Task::none();
+        }
         let msg = match message {
             Message::View(view::Message::Settings(view::SettingsMessage::LocalSigning(m))) => m,
             _ => return Task::none(),
@@ -418,12 +481,7 @@ impl State for LocalSigningState {
                 )
             }
             LocalSigningMessage::Tick => {
-                // Refresh the discovered list while the picker is
-                // open so the user sees phones appear/disappear in
-                // ~real time.
-                if let PairingFlow::PhonePicker { discovered } = &mut self.flow {
-                    *discovered = crate::phone_signer::mdns::browse();
-                }
+                self.apply_tick();
                 Task::none()
             }
             LocalSigningMessage::CancelPairing => {
@@ -483,32 +541,12 @@ impl State for LocalSigningState {
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
-        // Identify the **vault as a whole**, not one of its signers.
-        // Earlier rounds picked the lexicographic min of
-        // `descriptor_keys()` (the per-signer master fingerprints),
-        // which surfaced one of the user's hardware-wallet keys as
-        // the "wallet fingerprint" in the QR + UI — confusing on a
-        // multisig vault that contains multiple keys. The vault
-        // doesn't have a canonical BIP-32 fingerprint; instead derive
-        // a stable 4-byte identifier from the descriptor itself
-        // (`Wallet::id_fingerprint`), which is unique per vault and
-        // distinct from any signer key.
-        self.wallet_fingerprint = wallet.as_ref().map(|w| w.id_fingerprint());
-        // Capture the descriptor's signer fingerprints (sorted for
-        // determinism — `descriptor_keys()` returns a HashSet) so
-        // pairing can persist them on the resulting `PairedPhone`.
-        self.wallet_signer_fingerprints = wallet
-            .as_ref()
-            .map(|w| {
-                let mut v: Vec<_> = w.descriptor_keys().into_iter().collect();
-                v.sort();
-                v
-            })
-            .unwrap_or_default();
-        // Lazily load whatever's persisted so the table renders even
-        // before the first pairing.
         if let Some(w) = wallet.as_ref() {
+            self.apply_wallet(w);
             tracing::debug!("local-signer reload with wallet {}", w.name);
+        } else {
+            self.wallet_fingerprint = None;
+            self.wallet_signer_fingerprints = Vec::new();
         }
         // Cache isn't passed to reload; the panel reads it on the
         // first update tick instead.
@@ -527,6 +565,14 @@ mod tests {
     use super::*;
     use crate::dir::CoincubeDirectory;
     use crate::phone_signer::pairing_store;
+    use coincube_core::descriptors::CoincubeDescriptor;
+    use std::str::FromStr;
+
+    /// Two distinct multisig descriptors (different keys, different
+    /// timelock branch) used to exercise [`apply_wallet`] from two
+    /// different vaults.
+    const DESC_A: &str = "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp";
+    const DESC_B: &str = "wsh(or_d(multi(2,[f714c228/48'/1'/0'/2']tpubDEwJnTwfKoMvu8AXXBPydBVWDpzNP5tatjjZ56q4TQioGL7iL9xzTbMoCCQ3tfGihtff7vtR4xsjcRuhZ7HWARVAkGZ1HZcpBhVdou76k7j/<0;1>/*,[2522f23c/48'/1'/0'/2']tpubDEoTU4bDW1EXN1rnLXnRfue1a7DeqjJcs39PkEeLcVXhVKzCnFo9yQX2EeeXJ6kh4hgbz5o9v7YAc1EE97AEJpJbKNmDxE3ZQo4msGPSp2J/<0;1>/*),and_v(v:thresh(1,pkh([f714c228/48'/1'/0'/2']tpubDEwJnTwfKoMvu8AXXBPydBVWDpzNP5tatjjZ56q4TQioGL7iL9xzTbMoCCQ3tfGihtff7vtR4xsjcRuhZ7HWARVAkGZ1HZcpBhVdou76k7j/<2;3>/*),a:pkh([2522f23c/48'/1'/0'/2']tpubDEoTU4bDW1EXN1rnLXnRfue1a7DeqjJcs39PkEeLcVXhVKzCnFo9yQX2EeeXJ6kh4hgbz5o9v7YAc1EE97AEJpJbKNmDxE3ZQo4msGPSp2J/<2;3>/*)),older(65535))))#9s8ekrce";
 
     fn fresh_dir() -> CoincubeDirectory {
         let mut path = std::env::temp_dir();
@@ -934,6 +980,114 @@ mod tests {
             state.phones.phones[0].fallback_addr.as_deref(),
             Some("10.0.0.5:8443"),
         );
+    }
+
+    /// Regression: while a pairing offer was on-screen, the Tick
+    /// handler only refreshed the picker list and never checked
+    /// offer expiry. The view's countdown would tick down to
+    /// "Pairing offer expired" but the flow stayed `Waiting`, the
+    /// background `run_pairing` task kept retrying until its own
+    /// expiry check finally fired (which, in the recv-stuck case,
+    /// could be up to a full TTL away). Tick now promotes the
+    /// transition synchronously and bumps `pairing_id` so the
+    /// stale completion is gated out.
+    #[test]
+    fn tick_promotes_expired_waiting_to_error() {
+        let mut state = LocalSigningState::default();
+        let prior_id = state.start_pairing_run();
+        state.flow = PairingFlow::Waiting {
+            phone: crate::phone_signer::mdns::DiscoveredPhone {
+                cert_fp8: "01010101".into(),
+                addr: "127.0.0.1:0".parse().unwrap(),
+                instance_name: "x".into(),
+            },
+            offer: crate::phone_signer::pairing::PairingOffer {
+                version: 1,
+                cert_der_b64: String::new(),
+                cert_fp: String::new(),
+                service_name: String::new(),
+                wallet_fingerprint: Fingerprint::default(),
+                expires_at_unix: 1, // far in the past
+            },
+            qr: None,
+        };
+
+        state.apply_tick();
+
+        assert!(matches!(
+            state.flow,
+            PairingFlow::Error(PairingError::OfferExpired)
+        ));
+        assert_ne!(
+            state.pairing_id, prior_id,
+            "tick must bump the run id so the in-flight task's eventual completion is ignored",
+        );
+    }
+
+    /// A still-valid offer must NOT be tipped into Error by Tick —
+    /// only genuine expiry transitions the state.
+    #[test]
+    fn tick_leaves_waiting_alone_when_offer_still_valid() {
+        let mut state = LocalSigningState::default();
+        let prior_id = state.start_pairing_run();
+        state.flow = PairingFlow::Waiting {
+            phone: crate::phone_signer::mdns::DiscoveredPhone {
+                cert_fp8: "01010101".into(),
+                addr: "127.0.0.1:0".parse().unwrap(),
+                instance_name: "x".into(),
+            },
+            offer: crate::phone_signer::pairing::PairingOffer {
+                version: 1,
+                cert_der_b64: String::new(),
+                cert_fp: String::new(),
+                service_name: String::new(),
+                wallet_fingerprint: Fingerprint::default(),
+                // Far future — `is_expired` will return false.
+                expires_at_unix: u64::MAX,
+            },
+            qr: None,
+        };
+
+        state.apply_tick();
+
+        assert!(matches!(state.flow, PairingFlow::Waiting { .. }));
+        assert_eq!(state.pairing_id, prior_id, "no bump while offer is alive");
+    }
+
+    /// Regression: switching wallets while the user is sitting on
+    /// the Paired phones page used to leave `wallet_fingerprint`
+    /// and `wallet_signer_fingerprints` pointing at the previous
+    /// vault, because `WalletUpdated` was forwarded to the sub-panel
+    /// as an `update` message and the `update` body dropped any
+    /// non-`LocalSigningMessage` variant on the floor. A pairing
+    /// offer generated afterwards then carried the wrong vault id.
+    /// `apply_wallet` is the helper both paths now go through.
+    #[test]
+    fn apply_wallet_overwrites_prior_vault_fingerprints() {
+        let wallet_a = Wallet::new(CoincubeDescriptor::from_str(DESC_A).unwrap());
+        let wallet_b = Wallet::new(CoincubeDescriptor::from_str(DESC_B).unwrap());
+        // Sanity: the two test fixtures must be distinct, otherwise
+        // the "overwrites" assertion below proves nothing.
+        assert_ne!(wallet_a.id_fingerprint(), wallet_b.id_fingerprint());
+
+        let mut state = LocalSigningState::default();
+        state.apply_wallet(&wallet_a);
+        assert_eq!(state.wallet_fingerprint, Some(wallet_a.id_fingerprint()));
+        let signers_a = state.wallet_signer_fingerprints.clone();
+        assert!(!signers_a.is_empty(), "fixture A should have signer keys");
+
+        // Switch wallets — the previous values must NOT survive.
+        state.apply_wallet(&wallet_b);
+        assert_eq!(state.wallet_fingerprint, Some(wallet_b.id_fingerprint()));
+        assert_ne!(
+            state.wallet_signer_fingerprints, signers_a,
+            "signer-fp set must be replaced, not augmented or stuck on the prior vault's",
+        );
+        // Defence in depth: the new set must match `wallet_b`'s
+        // `descriptor_keys()` exactly (sorted).
+        let mut expected_b: Vec<_> = wallet_b.descriptor_keys().into_iter().collect();
+        expected_b.sort();
+        assert_eq!(state.wallet_signer_fingerprints, expected_b);
     }
 
     #[test]
