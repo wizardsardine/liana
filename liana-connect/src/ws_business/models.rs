@@ -456,7 +456,7 @@ impl User {
     pub fn role(&self, wallet: &Wallet) -> Option<UserRole> {
         match self.role {
             UserRole::WalletManager => {
-                // NOTE: The admin role is dependant of the wallet, it cannot
+                // NOTE: The admin role is dependent on the wallet, it cannot
                 //       be assigned on server.
                 eprintln!(
                     "UserRole for {} is Admin on server! THIS IS A BUG, PLEASE REPORT",
