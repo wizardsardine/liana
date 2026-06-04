@@ -1,10 +1,26 @@
 //! Long-lived desktop identity for the local-signer TLS layer.
 //!
-//! We mint **one** Ed25519 keypair + self-signed cert per desktop on
-//! first use and persist them under [`CoincubeDirectory`]. The public
-//! key of that cert is the desktop's identity — it goes into every
-//! pairing QR so phones can pin it, and rustls server-side presents
-//! the cert to the connecting phone.
+//! We mint **one** ECDSA P-256 keypair + self-signed cert per desktop
+//! on first use and persist them under [`CoincubeDirectory`]. The cert
+//! DER is what we share with phones: it goes into every pairing QR so
+//! phones can pin it, and rustls presents the same cert to the
+//! connecting phone on every steady-state handshake.
+//!
+//! ### Key-alg history
+//!
+//! v1 used Ed25519 (OID `1.3.101.112`). The cert is valid TLS 1.3 in
+//! modern stacks but is rejected at handshake time by Dart's
+//! BoringSSL `X509_STORE` (the trust store the Keychain phone app
+//! installs the cert into) — handshake fails with
+//! "application verification failure" and the phone never sees the
+//! `PairingComplete` callback. See
+//! `plans/PLAN-local-signer-pairing-hang-fix-desktop.md`.
+//!
+//! v2 swaps to ECDSA P-256 (`PKCS_ECDSA_P256_SHA256`), which is TLS
+//! 1.3's default ECDHE curve and is accepted by every BoringSSL
+//! snapshot in use. The on-disk filename is bumped to
+//! [`IDENTITY_FILENAME`] (`…_v2.json`) so installs that minted an
+//! Ed25519 identity under v1 get a fresh re-mint on first launch.
 
 use std::fs;
 use std::io;
@@ -12,16 +28,29 @@ use std::path::PathBuf;
 
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine as _;
-use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ED25519};
+use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ECDSA_P256_SHA256};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use serde::{Deserialize, Serialize};
 
 use crate::dir::CoincubeDirectory;
 
-const IDENTITY_FILENAME: &str = "phone-signer-identity.json";
+/// Versioned filename. v1 was `phone-signer-identity.json` and held an
+/// Ed25519 keypair Dart's BoringSSL refused to verify; v2 holds an
+/// ECDSA P-256 keypair. [`load_or_create`] deletes the v1 file on
+/// first launch after the upgrade so the user never accidentally
+/// re-uses the broken cert.
+const IDENTITY_FILENAME: &str = "phone-signer-identity_v2.json";
+
+/// Legacy v1 filename. Removed by [`load_or_create`] on the first
+/// post-upgrade launch.
+const LEGACY_IDENTITY_FILENAME: &str = "phone-signer-identity.json";
 
 fn identity_path(dir: &CoincubeDirectory) -> PathBuf {
     dir.path().join(IDENTITY_FILENAME)
+}
+
+fn legacy_identity_path(dir: &CoincubeDirectory) -> PathBuf {
+    dir.path().join(LEGACY_IDENTITY_FILENAME)
 }
 
 /// On-disk record. PEM-encoded so the file is greppable for ops, and
@@ -41,11 +70,6 @@ struct StoredIdentity {
 pub struct DesktopIdentity {
     pub cert_der: CertificateDer<'static>,
     pub key_der: PrivateKeyDer<'static>,
-    /// Raw 32-byte Ed25519 public key from the cert's SPKI. Retained
-    /// for debug/log purposes only; the wire contract identifies the
-    /// desktop by [`Self::cert_fp`] (SHA-256 of the cert DER), not by
-    /// this raw pubkey.
-    pub pubkey: [u8; 32],
 }
 
 impl DesktopIdentity {
@@ -93,6 +117,12 @@ impl std::fmt::Debug for DesktopIdentity {
 }
 
 /// Load the persisted identity, generating one on first use.
+///
+/// On the first launch after the Ed25519→P-256 swap, deletes the
+/// pre-existing v1 file so we never accidentally fall back to a cert
+/// Dart's BoringSSL refuses to verify. The user has to re-pair any
+/// phones that pinned the v1 cert; that's expected and called out in
+/// the upgrade plan.
 pub fn load_or_create(dir: &CoincubeDirectory) -> io::Result<DesktopIdentity> {
     match fs::read(identity_path(dir)) {
         Ok(bytes) => {
@@ -101,6 +131,25 @@ pub fn load_or_create(dir: &CoincubeDirectory) -> io::Result<DesktopIdentity> {
             identity_from_stored(&stored)
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            // Drop the v1 Ed25519 file (best-effort) before minting a
+            // fresh P-256 identity. We don't propagate the removal
+            // error: if it fails the file just sits there harmlessly,
+            // and we'd rather complete the mint than fail the launch.
+            let legacy = legacy_identity_path(dir);
+            if legacy.exists() {
+                if let Err(e) = fs::remove_file(&legacy) {
+                    tracing::warn!(
+                        "failed to remove legacy v1 identity file {:?}: {}",
+                        legacy,
+                        e,
+                    );
+                } else {
+                    tracing::info!(
+                        "removed legacy v1 identity {:?}; minting fresh P-256 identity",
+                        legacy,
+                    );
+                }
+            }
             let (identity, stored) = mint_new()?;
             write_atomic(dir, &stored)?;
             Ok(identity)
@@ -110,8 +159,11 @@ pub fn load_or_create(dir: &CoincubeDirectory) -> io::Result<DesktopIdentity> {
 }
 
 fn mint_new() -> io::Result<(DesktopIdentity, StoredIdentity)> {
-    let key_pair = KeyPair::generate_for(&PKCS_ED25519)
-        .map_err(|e| io::Error::other(format!("ed25519 keygen: {}", e)))?;
+    // ECDSA P-256: rcgen built-in, TLS 1.3's default ECDHE curve,
+    // accepted by Dart's BoringSSL trust store. See module docs for
+    // why Ed25519 (the v1 choice) was rejected.
+    let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
+        .map_err(|e| io::Error::other(format!("p256 keygen: {}", e)))?;
 
     let mut params = CertificateParams::new(vec!["coincube-desktop.local".to_string()])
         .map_err(|e| io::Error::other(format!("cert params: {}", e)))?;
@@ -140,25 +192,7 @@ fn identity_from_stored(stored: &StoredIdentity) -> io::Result<DesktopIdentity> 
     let key_bytes = pem_to_der(&stored.key_pem, "PRIVATE KEY")?;
     let key_der: PrivateKeyDer<'static> = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_bytes));
 
-    // Re-parse the PEM key with rcgen so we can extract the raw
-    // 32-byte Ed25519 pubkey without writing our own PKCS#8 parser.
-    let key_pair = KeyPair::from_pem(&stored.key_pem)
-        .map_err(|e| io::Error::other(format!("re-parse key: {}", e)))?;
-    let raw = key_pair.public_key_raw();
-    if raw.len() != 32 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("expected 32-byte ed25519 pubkey, got {}", raw.len()),
-        ));
-    }
-    let mut pubkey = [0u8; 32];
-    pubkey.copy_from_slice(raw);
-
-    Ok(DesktopIdentity {
-        cert_der,
-        key_der,
-        pubkey,
-    })
+    Ok(DesktopIdentity { cert_der, key_der })
 }
 
 /// Tiny PEM body extractor: strips `-----BEGIN <tag>-----` / `-----END
@@ -195,9 +229,9 @@ fn write_atomic(dir: &CoincubeDirectory, stored: &StoredIdentity) -> io::Result<
     let tmp = path.with_extension("json.tmp");
     let bytes = serde_json::to_vec_pretty(stored).map_err(io::Error::other)?;
 
-    // The persisted JSON contains the desktop's PEM-encoded Ed25519
-    // private key, so the on-disk file must be owner-only. On Unix
-    // we explicitly create the tmp with 0o600 via OpenOptionsExt
+    // The persisted JSON contains the desktop's PEM-encoded ECDSA
+    // P-256 private key, so the on-disk file must be owner-only. On
+    // Unix we explicitly create the tmp with 0o600 via OpenOptionsExt
     // instead of `fs::write`, which would otherwise create the file
     // with the process umask (typically 0o644 → world-readable). On
     // non-Unix targets (Windows) `OpenOptionsExt::mode` is
@@ -298,9 +332,8 @@ mod tests {
         assert!(dir.path().join(IDENTITY_FILENAME).exists());
         let second = load_or_create(&dir).expect("reload");
 
-        // Persisted identity is stable across calls: pubkey + cert
-        // DER + key DER all roundtrip byte-for-byte.
-        assert_eq!(first.pubkey, second.pubkey);
+        // Persisted identity is stable across calls: cert DER + key
+        // DER both roundtrip byte-for-byte.
         assert_eq!(first.cert_der.as_ref(), second.cert_der.as_ref());
         assert_eq!(
             first.clone_key().secret_der(),
@@ -309,11 +342,39 @@ mod tests {
     }
 
     #[test]
-    fn fresh_identity_has_32_byte_pubkey_and_non_empty_cert() {
+    fn fresh_identity_has_non_empty_cert() {
         let dir = fresh_dir();
         let id = load_or_create(&dir).expect("mint");
-        assert_eq!(id.pubkey.len(), 32);
         assert!(!id.cert_der.as_ref().is_empty());
+    }
+
+    /// Upgrade regression: a v1 Ed25519 identity file
+    /// (`phone-signer-identity.json`) sitting in the datadir from a
+    /// pre-P-256 release must be removed on the first `load_or_create`
+    /// after the upgrade, and a fresh v2 file must take its place.
+    /// Otherwise the desktop would keep reading the v1 file (no, it
+    /// wouldn't — different filename), but worse, a curious user
+    /// inspecting their datadir would see two identity files and not
+    /// know which one is live.
+    #[test]
+    fn load_or_create_removes_legacy_v1_file_on_first_launch() {
+        let dir = fresh_dir();
+        // Plant a v1 file with non-JSON garbage — the contents don't
+        // matter, only the presence at `LEGACY_IDENTITY_FILENAME`.
+        let legacy = dir.path().join(LEGACY_IDENTITY_FILENAME);
+        std::fs::write(&legacy, b"legacy ed25519 identity").expect("plant legacy");
+        assert!(legacy.exists(), "legacy file should be present pre-mint");
+
+        let _ = load_or_create(&dir).expect("mint v2");
+
+        assert!(
+            !legacy.exists(),
+            "legacy v1 file must be removed on first v2 launch",
+        );
+        assert!(
+            dir.path().join(IDENTITY_FILENAME).exists(),
+            "v2 identity must be created",
+        );
     }
 
     #[test]
@@ -335,10 +396,10 @@ mod tests {
         assert_eq!(der, b"AAA");
     }
 
-    /// The persisted identity contains the desktop's Ed25519 private
-    /// key, so the on-disk file must be owner-only. Default umask
-    /// would otherwise leave it world-readable (typically 0o644 on
-    /// Linux/macOS dev installs).
+    /// The persisted identity contains the desktop's ECDSA P-256
+    /// private key, so the on-disk file must be owner-only. Default
+    /// umask would otherwise leave it world-readable (typically 0o644
+    /// on Linux/macOS dev installs).
     #[cfg(unix)]
     #[test]
     fn write_atomic_creates_owner_only_file() {

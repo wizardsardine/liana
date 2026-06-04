@@ -82,7 +82,6 @@ fn fresh_desktop_identity() -> DesktopIdentity {
     DesktopIdentity {
         cert_der: cert,
         key_der: key,
-        pubkey: [0u8; 32],
     }
 }
 

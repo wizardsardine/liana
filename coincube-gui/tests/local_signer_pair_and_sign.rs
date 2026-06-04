@@ -239,7 +239,6 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
     let identity_for_pair = DesktopIdentity {
         cert_der: identity.cert_der.clone(),
         key_der: identity.clone_key(),
-        pubkey: identity.pubkey,
     };
     let paired = pairing_listener::run_pairing(
         identity_for_pair,

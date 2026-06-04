@@ -191,8 +191,6 @@ async fn sign_tx_round_trips_through_fake_phone() {
     let desktop = DesktopIdentity {
         cert_der: desk_cert.clone(),
         key_der: desk_key,
-        // Test-only — pubkey field unused by sign_tx itself.
-        pubkey: [0u8; 32],
     };
 
     // 2. Bind the fake phone listener, capture its addr, hand the
@@ -261,7 +259,6 @@ async fn signer_against_response(
     let desktop = DesktopIdentity {
         cert_der: desk_cert.clone(),
         key_der: desk_key,
-        pubkey: [0u8; 32],
     };
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
