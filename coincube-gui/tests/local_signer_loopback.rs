@@ -220,6 +220,7 @@ async fn sign_tx_round_trips_through_fake_phone() {
         name: "Test phone".into(),
         paired_at_unix: 0,
         wallet_fingerprints: vec![Fingerprint::default()],
+        vault_fingerprint: Fingerprint::default(),
         fallback_addr: None,
     };
     let signer = PhoneSigner::new(transport, Fingerprint::default(), None, paired);
@@ -279,6 +280,7 @@ async fn signer_against_response(
         name: "Test phone".into(),
         paired_at_unix: 0,
         wallet_fingerprints: vec![Fingerprint::default()],
+        vault_fingerprint: Fingerprint::default(),
         fallback_addr: None,
     };
     let signer = PhoneSigner::new(transport, Fingerprint::default(), None, paired);

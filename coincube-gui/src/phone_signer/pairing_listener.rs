@@ -323,6 +323,11 @@ async fn try_pair_once(
         // descriptor-keys filter at the end of the tick keeps the
         // phone listed as Supported.
         wallet_fingerprints: signer_fingerprints.to_vec(),
+        // The vault id we validated the offer against, so the hw
+        // refresh loop can scope this phone to the vault it was
+        // actually paired with (not just any vault that shares a
+        // signer key).
+        vault_fingerprint: expected_vault_id,
         fallback_addr: None,
     };
 

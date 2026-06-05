@@ -59,11 +59,29 @@ pub struct PairedPhone {
     /// `Unsupported(NotPartOfWallet)`.
     ///
     /// **Not the vault id.** The offer's `wallet_fingerprint` is
-    /// the vault id (`Wallet::id_fingerprint`), which by
-    /// construction is NOT one of the descriptor keys — persisting
-    /// it here would get every paired phone immediately filtered
-    /// out at the refresh tick.
+    /// the vault id (`Wallet::id_fingerprint`), stored separately in
+    /// [`Self::vault_fingerprint`]; it is by construction NOT one of
+    /// the descriptor keys, so persisting it *here* would get every
+    /// paired phone immediately filtered out at the refresh tick.
     pub wallet_fingerprints: Vec<Fingerprint>,
+
+    /// Vault id (`Wallet::id_fingerprint`) this phone was paired
+    /// against — the `wallet_fingerprint` claim from the offer the
+    /// phone scanned, validated during pairing. This is the hash of
+    /// the whole descriptor (distinct from the signer keys in
+    /// `wallet_fingerprints`) and scopes the phone to a single vault:
+    /// the hw refresh loop only dials/surfaces a phone whose
+    /// `vault_fingerprint` matches the currently-loaded vault, so a
+    /// phone paired for one vault never appears under another. This is
+    /// what makes the settings copy ("will sign for this vault")
+    /// true.
+    ///
+    /// `#[serde(default)]` so a row written before this field existed
+    /// deserialises to `Fingerprint::default()`. An all-zero id never
+    /// matches a real vault (`id_fingerprint` is `sha256(descriptor)[..4]`),
+    /// so a legacy phone simply surfaces as offline until re-paired.
+    #[serde(default)]
+    pub vault_fingerprint: Fingerprint,
 
     /// Optional manually-entered fallback target. Phase 3 surfaces a
     /// "Connect by IP" field for networks where mDNS is blocked.
@@ -193,6 +211,7 @@ mod tests {
             name: format!("Phone {}", seed),
             paired_at_unix: 1_700_000_000 + seed as u64,
             wallet_fingerprints: vec![Fingerprint::from([seed, seed, seed, seed])],
+            vault_fingerprint: Fingerprint::from([0xaa, 0xbb, seed, seed]),
             fallback_addr: if seed.is_multiple_of(2) {
                 Some(format!("10.0.0.{}:8443", seed))
             } else {
@@ -223,6 +242,10 @@ mod tests {
         assert_eq!(
             read.phones[1].wallet_fingerprints,
             file.phones[1].wallet_fingerprints
+        );
+        assert_eq!(
+            read.phones[1].vault_fingerprint,
+            file.phones[1].vault_fingerprint
         );
     }
 
@@ -272,6 +295,7 @@ mod tests {
             name: "My Phone".into(),
             paired_at_unix: 1_700_000_000,
             wallet_fingerprints: Vec::new(),
+            vault_fingerprint: Fingerprint::from([0xaa, 0xaa, 0xaa, 0xaa]),
             fallback_addr: Some("10.0.0.5:8443".into()),
         };
         save(
@@ -287,6 +311,7 @@ mod tests {
             name: "Pixel 8".into(),
             paired_at_unix: 1_700_999_999,
             wallet_fingerprints: vec![Fingerprint::from([1, 2, 3, 4])],
+            vault_fingerprint: Fingerprint::from([0xbb, 0xbb, 0xbb, 0xbb]),
             fallback_addr: None,
         };
         let written = upsert_preserving_user_fields(&dir, fresh).expect("upsert");
@@ -303,11 +328,17 @@ mod tests {
             on_disk.phones[0].fallback_addr.as_deref(),
             Some("10.0.0.5:8443"),
         );
-        // Fields that legitimately come from the fresh run survive.
+        // Fields that legitimately come from the fresh run survive —
+        // including the vault id: re-pairing against a different vault
+        // re-scopes the phone to the freshly-paired vault.
         assert_eq!(on_disk.phones[0].paired_at_unix, 1_700_999_999);
         assert_eq!(
             on_disk.phones[0].wallet_fingerprints,
             vec![Fingerprint::from([1, 2, 3, 4])],
+        );
+        assert_eq!(
+            on_disk.phones[0].vault_fingerprint,
+            Fingerprint::from([0xbb, 0xbb, 0xbb, 0xbb]),
         );
     }
 

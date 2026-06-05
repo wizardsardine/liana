@@ -256,17 +256,33 @@ fn paired_phones_card<'a>(state: &'a LocalSigningState) -> Element<'a, Message> 
         .align_y(Alignment::Center)
         .width(Length::Fill);
 
-    let body: Element<'a, Message> = if state.phones.phones.is_empty() {
+    // Pairing is vault-scoped: only list phones paired with the
+    // currently-loaded vault, so this list agrees with the pairing
+    // card's "will sign for this vault" copy and the hw refresh loop's
+    // scoping. A phone paired for another vault is managed from that
+    // vault's panel.
+    let phones_for_vault: Vec<&crate::phone_signer::pairing_store::PairedPhone> =
+        match state.wallet_fingerprint {
+            Some(vid) => state
+                .phones
+                .phones
+                .iter()
+                .filter(|p| p.vault_fingerprint == vid)
+                .collect(),
+            None => Vec::new(),
+        };
+
+    let body: Element<'a, Message> = if phones_for_vault.is_empty() {
         text(
-            "No paired phones yet. Use 'Pair phone' above to add one. \
-             Paired phones appear as a signer whenever they're \
-             reachable on your Wi-Fi.",
+            "No paired phones for this vault yet. Use 'Pair phone' \
+             above to add one. Paired phones appear as a signer \
+             whenever they're reachable on your Wi-Fi.",
         )
         .style(theme::text::secondary)
         .into()
     } else {
         let mut rows = Column::new().padding(10).spacing(10);
-        for p in &state.phones.phones {
+        for p in phones_for_vault {
             let fp8 = crate::phone_signer::identity::pin_hex8(&p.cert_pin);
             let draft = state.row_drafts.get(&fp8);
             let name_value = draft.map(|d| d.name.as_str()).unwrap_or(&p.name);

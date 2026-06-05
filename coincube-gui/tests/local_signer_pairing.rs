@@ -198,6 +198,9 @@ async fn run_pairing_happy_path_returns_paired_phone() {
     assert_eq!(paired.name, "Test Pixel");
     assert_eq!(paired.wallet_fingerprints, vec![wallet_fp]);
     assert_eq!(paired.cert_pin, phone_pin);
+    // The validated vault id is recorded so the hw refresh loop can
+    // scope this phone to the vault it was paired with.
+    assert_eq!(paired.vault_fingerprint, wallet_fp);
 
     let _ = phone_handle.await;
 }

@@ -268,6 +268,7 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
         name: paired.name.clone(),
         paired_at_unix: paired.paired_at_unix,
         wallet_fingerprints: paired.wallet_fingerprints.clone(),
+        vault_fingerprint: paired.vault_fingerprint,
         fallback_addr: paired.fallback_addr.clone(),
     };
     let signer = PhoneSigner::new(transport, wallet_fp, None, paired_clone);

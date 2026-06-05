@@ -484,18 +484,34 @@ impl State for LocalSigningState {
                     &identity,
                     phone.instance_name.clone(),
                 );
-                let qr = crate::phone_signer::pairing::encode_offer(&offer)
+                // Build the QR up front and fail closed if it can't be
+                // rendered. Entering `Waiting` with `qr: None` would
+                // show the user a "scan this QR" prompt with no code
+                // and spawn the dial loop anyway — stranding them with
+                // no way to complete pairing. A typed error keeps the
+                // Try-Again path available instead.
+                let qr = match crate::phone_signer::pairing::encode_offer(&offer)
                     .ok()
-                    .and_then(|s| qr_code::Data::new(&s).ok());
+                    .and_then(|s| qr_code::Data::new(&s).ok())
+                {
+                    Some(qr) => qr,
+                    None => {
+                        self.flow = PairingFlow::Error(PairingError::InternalError(
+                            "Couldn't render the pairing QR code. Try again.".into(),
+                        ));
+                        return Task::none();
+                    }
+                };
                 self.flow = PairingFlow::Waiting {
                     phone: phone.clone(),
                     offer: offer.clone(),
-                    qr,
+                    qr: Some(qr),
                 };
                 let expected_vault_id = fingerprint;
                 let signer_fps = self.wallet_signer_fingerprints.clone();
                 let dir = cache.datadir_path.clone();
                 let run_id = self.start_pairing_run();
+                let tombstones = self.tombstones.clone();
                 Task::perform(
                     async move {
                         // Persist here, inside the spawned task, rather
@@ -506,7 +522,13 @@ impl State for LocalSigningState {
                         // dropped on the floor and never written — leaving
                         // the phone paired but the desktop unaware. Once
                         // `run_pairing` returns `Ok` the phone is
-                        // committed, so we always record it.
+                        // committed, so we always record it — UNLESS the
+                        // user explicitly removed this cert_pin while the
+                        // handshake was in flight (see `apply_remove_phone`
+                        // for the tombstone write). In that case, skip
+                        // the upsert and surface a clear error rather
+                        // than silently re-adding the row the user just
+                        // deleted.
                         match crate::phone_signer::pairing_listener::run_pairing(
                             identity,
                             offer,
@@ -517,6 +539,18 @@ impl State for LocalSigningState {
                         .await
                         {
                             Ok(p) => {
+                                let was_removed = tombstones
+                                    .lock()
+                                    .map(|g| g.contains(&p.cert_pin))
+                                    .unwrap_or(false);
+                                if was_removed {
+                                    return Err(PairingError::InternalError(
+                                        "phone was removed by the user before \
+                                         the pairing handshake completed; \
+                                         skipping persist"
+                                            .to_string(),
+                                    ));
+                                }
                                 crate::phone_signer::pairing_store::upsert_preserving_user_fields(
                                     &dir, p,
                                 )
@@ -645,6 +679,7 @@ mod tests {
             name: name.into(),
             paired_at_unix: 1_700_000_000,
             wallet_fingerprints: Vec::new(),
+            vault_fingerprint: Fingerprint::default(),
             fallback_addr: fallback.map(|s| s.to_string()),
         }
     }
@@ -851,6 +886,69 @@ mod tests {
 
         let on_disk = pairing_store::load(&dir).unwrap();
         assert_eq!(on_disk.phones.len(), 1);
+    }
+
+    /// Regression for the Cursor finding "Remove undone by pairing task":
+    /// the spawned pairing `Task::perform` would happily call
+    /// `upsert_preserving_user_fields` after its handshake completed,
+    /// even if the user had clicked Remove on that row in the meantime.
+    /// The fix has `apply_remove_phone` add the cert_pin to a shared
+    /// tombstone set that the spawned task checks before persisting.
+    /// This test pins the WRITE half of that contract: after Remove,
+    /// the cert_pin is in the tombstones (so a captured clone of the
+    /// Arc would see it). The READ half is exercised by the existing
+    /// loopback integration tests in tests/local_signer_pairing.rs.
+    #[test]
+    fn apply_remove_phone_tombstones_cert_pin_for_spawned_task() {
+        let dir = fresh_dir();
+        let p = paired(11, "Removed", None);
+        seed_store(&dir, vec![p.clone()]);
+
+        let mut state = LocalSigningState::default();
+        state.refresh_phones_from(&dir);
+
+        // Snapshot the Arc the way the spawned `Task::perform` would —
+        // captured at spawn time, dereferenced later. Insert by Remove
+        // must be visible through this captured clone.
+        let captured_for_task = state.tombstones.clone();
+        assert!(
+            captured_for_task.lock().unwrap().is_empty(),
+            "tombstones start empty"
+        );
+
+        state.apply_remove_phone(&dir, &fp8_of(&p));
+
+        // Captured clone now sees the tombstone — proves the spawned
+        // task's late completion would observe it and skip the upsert.
+        let g = captured_for_task.lock().unwrap();
+        assert!(
+            g.contains(&p.cert_pin),
+            "Remove must tombstone the cert_pin so an in-flight pairing \
+             task's late completion does NOT re-add the row the user \
+             just deleted. Pre-fix the tombstone was never written and \
+             the task happily persisted the phone back."
+        );
+        assert_eq!(g.len(), 1, "only the removed cert_pin should be tombstoned");
+    }
+
+    /// A no-op Remove (fp not present in the store) must NOT pollute
+    /// the tombstone set — otherwise a pairing for an unrelated cert
+    /// could be silently skipped because the user once "removed" a
+    /// stale fp that didn't exist.
+    #[test]
+    fn apply_remove_phone_does_not_tombstone_when_fp_not_present() {
+        let dir = fresh_dir();
+        seed_store(&dir, vec![paired(9, "Keep", None)]);
+
+        let mut state = LocalSigningState::default();
+        state.refresh_phones_from(&dir);
+
+        state.apply_remove_phone(&dir, "deadbeef");
+
+        assert!(
+            state.tombstones.lock().unwrap().is_empty(),
+            "Remove against an absent fp must not write a tombstone"
+        );
     }
 
     /// Helper: build a `PairedPhone` for the run-id tests. The

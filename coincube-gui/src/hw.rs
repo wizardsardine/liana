@@ -739,7 +739,23 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                     let identity = Arc::new(identity);
                     let now = std::time::Instant::now();
                     let mut dials = Vec::new();
+                    // Vault scoping: a phone is a candidate signer only
+                    // for the vault it was paired against. `None` means
+                    // no vault is loaded, so nothing is in scope.
+                    let active_vault_id = state.wallet.as_ref().map(|w| w.id_fingerprint());
                     for paired in &store.phones {
+                        // Skip phones paired for a different vault (or all
+                        // phones when no vault is loaded). Without this a
+                        // phone paired for vault A would be dialed and
+                        // surfaced under vault B whenever the two share a
+                        // signer key — contradicting the settings copy
+                        // that pairing is scoped to "this vault". A
+                        // legacy row predating `vault_fingerprint` has the
+                        // all-zero default, which matches no real vault,
+                        // so it's skipped until re-paired.
+                        if active_vault_id != Some(paired.vault_fingerprint) {
+                            continue;
+                        }
                         let fp8 = crate::phone_signer::identity::pin_hex8(&paired.cert_pin);
                         let id = format!("phone-{}", fp8);
                         // Resolve a target address: prefer the
@@ -1250,6 +1266,7 @@ mod tests {
             name: "Test".into(),
             paired_at_unix: 0,
             wallet_fingerprints: Vec::new(),
+            vault_fingerprint: Default::default(),
             fallback_addr: fallback.map(|s| s.to_string()),
         }
     }
