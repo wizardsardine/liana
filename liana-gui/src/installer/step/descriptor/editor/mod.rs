@@ -641,27 +641,36 @@ impl Step for DefineDescriptor {
                 self.processing,
             ),
         };
-        if self.processing {
-            Modal::new(
-                content,
+        let modal: Option<Element<'a, Message>> = if self.processing {
+            Some(
                 spinner::spinner_modal(
                     "Compiling descriptor",
                     "Generating and validating your wallet descriptor. This can take a few seconds.",
-                ),
+                )
+                .into(),
             )
-            .backdrop(liana_ui::color::BLACK_60)
-            .into()
-        } else if let Some(modal) = &self.modal {
-            Modal::new(content, modal.view(hws))
-                .on_blur(if modal.processing() {
-                    None
-                } else {
-                    Some(Message::Close)
-                })
-                .into()
         } else {
-            content
-        }
+            self.modal.as_ref().map(|modal| modal.view(hws))
+        };
+
+        let on_blur = self.modal.as_ref().and_then(|modal| {
+            if modal.processing() {
+                None
+            } else {
+                Some(Message::Close)
+            }
+        });
+
+        let backdrop = if self.processing {
+            liana_ui::color::BLACK_60
+        } else {
+            liana_ui::color::BLACK_80
+        };
+
+        Modal::with_optional(content, modal)
+            .on_blur(on_blur)
+            .backdrop(backdrop)
+            .into()
     }
 }
 
