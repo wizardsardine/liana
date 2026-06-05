@@ -641,7 +641,9 @@ impl Step for DefineDescriptor {
                 self.processing,
             ),
         };
-        if let Some(modal) = &self.modal {
+        if self.processing {
+            Modal::new(content, view::editor::processing_modal()).into()
+        } else if let Some(modal) = &self.modal {
             Modal::new(content, modal.view(hws))
                 .on_blur(if modal.processing() {
                     None

@@ -2,17 +2,18 @@
 
 pub mod template;
 
-use iced::widget::{container, slider, Button, Space};
+use iced::widget::{container, row, slider, Button, Space};
 use iced::{alignment, Alignment, Length};
 
 use liana_ui::component::text::{p1_bold, p2_regular, H3_SIZE};
 use std::borrow::Cow;
 use std::fmt::Display;
 use std::str::FromStr;
+use std::time::Duration;
 
 use liana_ui::{
     component::{
-        button, card, form, pick_list, separation,
+        button, card, form, modal, pick_list, separation, spinner,
         text::{p1_regular, text, Text},
     },
     icon, theme,
@@ -34,6 +35,24 @@ pub enum DescriptorKind {
 }
 
 const DESCRIPTOR_KINDS: [DescriptorKind; 2] = [DescriptorKind::P2WSH, DescriptorKind::Taproot];
+
+pub fn processing_modal<'a>() -> Element<'a, Message> {
+    let spinner =
+        spinner::typing_text_carousel("...", true, Duration::from_millis(500), |content| {
+            p1_bold(content).style(theme::text::secondary)
+        });
+    let content = row![p1_bold("Compiling policy"), spinner]
+        .align_y(Alignment::Center)
+        .spacing(0);
+
+    modal::modal_view(
+        Some("Please wait".to_string()),
+        modal::none_fn(),
+        modal::none_fn(),
+        modal::ModalWidth::S,
+        content,
+    )
+}
 
 impl std::fmt::Display for DescriptorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
