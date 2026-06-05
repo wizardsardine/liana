@@ -1,7 +1,7 @@
 //! Settings panel state for the local LAN signer ("Paired phones").
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
