@@ -183,30 +183,36 @@ impl LocalSigningState {
 
     /// Handle a `WalletUpdated` arriving while this panel is active.
     /// Re-derives the vault id + signer fps via [`Self::apply_wallet`]
-    /// and, when the vault **actually changes** mid-pairing, tears the
-    /// wizard down.
+    /// and, when the vault **actually changes**, resets any in-progress
+    /// pairing wizard back to `Idle`.
     ///
-    /// Why tear down: a `Waiting` offer (and the in-flight
-    /// `run_pairing` task spawned for it in [`LocalSigningMessage::PickPhone`])
-    /// is bound to the *previous* vault — its `wallet_fingerprint`
-    /// claim, its `expected_vault_id`, and the `signer_fps` it will
-    /// persist all belong to the old vault. Leaving the wizard in
-    /// `Waiting` would show the user a QR for a vault the panel has
-    /// navigated away from, and a phone that scans it would be
-    /// persisted against the old vault while the panel claims to be on
-    /// the new one. Bumping the run id gates the stale task's eventual
-    /// completion out of the UI; dropping to `Idle` makes the user
-    /// re-initiate pairing for the new vault.
+    /// Why reset: every non-`Idle` flow is scoped to the previous
+    /// vault, so leaving it up after a switch shows stale UI for a
+    /// vault the panel has navigated away from:
+    /// - `Waiting`: the offer (and the in-flight `run_pairing` task
+    ///   spawned in [`LocalSigningMessage::PickPhone`]) carries the old
+    ///   vault's `wallet_fingerprint`, `expected_vault_id`, and
+    ///   `signer_fps`. The QR on screen is for the old vault, and a
+    ///   phone that scans it would be persisted against it.
+    /// - `Error`: the failure copy / Try-Again action reflect the old
+    ///   vault (e.g. a wallet-fingerprint-mismatch message naming the
+    ///   previous vault's keys).
+    /// - `PhonePicker`: harmless on its own (the list is
+    ///   vault-independent), but reset too so the wizard is a clean
+    ///   slate after the switch rather than a half-started flow.
     ///
-    /// The task itself isn't cancellable, so a phone that *already*
-    /// scanned the old QR stays paired to the old vault — which is the
-    /// consistent outcome: that's the offer it cryptographically
-    /// consumed. Returns `true` if an in-flight pairing was
-    /// invalidated.
+    /// Bumping the run id gates any in-flight task's eventual
+    /// completion out of the UI (only meaningful for `Waiting`, but
+    /// harmless otherwise). The task itself isn't cancellable, so a
+    /// phone that *already* scanned the old QR stays paired to the old
+    /// vault — the consistent outcome, since that's the offer it
+    /// cryptographically consumed.
+    ///
+    /// Returns `true` if the wizard was reset.
     pub(crate) fn apply_wallet_update(&mut self, wallet: &Wallet) -> bool {
         let vault_changed = self.wallet_fingerprint != Some(wallet.id_fingerprint());
         self.apply_wallet(wallet);
-        if vault_changed && matches!(self.flow, PairingFlow::Waiting { .. }) {
+        if vault_changed && !matches!(self.flow, PairingFlow::Idle) {
             self.start_pairing_run();
             self.flow = PairingFlow::Idle;
             true
@@ -1311,6 +1317,53 @@ mod tests {
         assert!(!invalidated);
         assert!(matches!(state.flow, PairingFlow::Idle));
         assert_eq!(state.pairing_id, run_id, "no in-flight run, no id bump");
+        assert_eq!(state.wallet_fingerprint, Some(wallet_b.id_fingerprint()));
+    }
+
+    /// A vault switch while the phone picker is open resets it — the
+    /// picker is a half-started flow scoped to the prior vault.
+    #[test]
+    fn wallet_switch_during_phone_picker_resets_to_idle() {
+        let wallet_a = Wallet::new(CoincubeDescriptor::from_str(DESC_A).unwrap());
+        let wallet_b = Wallet::new(CoincubeDescriptor::from_str(DESC_B).unwrap());
+
+        let mut state = LocalSigningState::default();
+        state.apply_wallet(&wallet_a);
+        state.flow = PairingFlow::PhonePicker {
+            discovered: Vec::new(),
+        };
+
+        let invalidated = state.apply_wallet_update(&wallet_b);
+
+        assert!(
+            invalidated,
+            "an open picker must reset on a real vault switch"
+        );
+        assert!(matches!(state.flow, PairingFlow::Idle));
+        assert_eq!(state.wallet_fingerprint, Some(wallet_b.id_fingerprint()));
+    }
+
+    /// A vault switch while an error card is showing resets it — the
+    /// failure copy / Try-Again action are scoped to the prior vault.
+    #[test]
+    fn wallet_switch_during_error_resets_to_idle() {
+        let wallet_a = Wallet::new(CoincubeDescriptor::from_str(DESC_A).unwrap());
+        let wallet_b = Wallet::new(CoincubeDescriptor::from_str(DESC_B).unwrap());
+
+        let mut state = LocalSigningState::default();
+        state.apply_wallet(&wallet_a);
+        state.flow = PairingFlow::Error(PairingError::WalletFingerprintMismatch {
+            expected: vec![wallet_a.id_fingerprint()],
+            claimed: wallet_a.id_fingerprint(),
+        });
+
+        let invalidated = state.apply_wallet_update(&wallet_b);
+
+        assert!(
+            invalidated,
+            "a stale error card must reset on a real vault switch"
+        );
+        assert!(matches!(state.flow, PairingFlow::Idle));
         assert_eq!(state.wallet_fingerprint, Some(wallet_b.id_fingerprint()));
     }
 }
