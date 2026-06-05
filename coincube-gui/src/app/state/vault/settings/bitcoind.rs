@@ -147,18 +147,24 @@ impl BitcoindSettingsState {
             self.warning = Some(err);
             return Task::done(Message::View(view::Message::ShowError(err_msg)));
         };
-        // Reconstruct URL from cache.network so a stale fallback_esplora.addr
-        // (e.g. written before Testnet4 was handled) is never used.
+        // Reconstruct URLs from cache.network so a stale fallback_esplora.addr
+        // (e.g. written before Testnet4 was handled) is never used. Primary is
+        // public Esplora; Connect is the fallback so this user's wallet sync
+        // hits the per-IP rate limits on their own IP, not on coincube-api's.
         use coincubed::config::EsploraConfig;
-        let esplora_url = crate::installer::connect_url(cache.network);
+        let primary_url = crate::installer::public_esplora_url(cache.network);
+        let connect_url = crate::installer::connect_url(cache.network);
         info!(
-            "Switching to Connect: url={} token_len={}",
-            esplora_url,
+            "Switching to Connect: primary={} fallback={} token_len={}",
+            primary_url,
+            connect_url,
             jwt.len()
         );
         let esplora = EsploraConfig {
-            addr: esplora_url,
-            token: Some(jwt),
+            addr: primary_url,
+            token: None,
+            fallback_addr: Some(connect_url),
+            fallback_token: Some(jwt),
         };
         let mut new_cfg = cfg.clone();
         if let Some(BitcoinBackend::Bitcoind(current)) = cfg.bitcoin_backend.clone() {

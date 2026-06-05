@@ -19,6 +19,24 @@ pub(crate) fn connect_url(network: bitcoin::Network) -> String {
     format!("{}/api/v1/esplora/{}", base, network_path)
 }
 
+/// Public-Esplora URL for the given network, used as the daemon's primary
+/// endpoint so wallet sync traffic distributes across users' IPs instead of
+/// consolidating onto coincube-api's IP (which is where the per-IP rate limits
+/// bite). The [`connect_url`] is wired as the daemon's fallback in the same
+/// flow so users with a Connect session still have a quota-resilient backup.
+///
+/// Regtest has no public counterpart — callers in regtest builds should
+/// configure their own endpoint via the installer's manual-Esplora step.
+pub(crate) fn public_esplora_url(network: bitcoin::Network) -> String {
+    match network {
+        bitcoin::Network::Bitcoin => "https://mempool.space/api".to_string(),
+        bitcoin::Network::Testnet => "https://mempool.space/testnet/api".to_string(),
+        bitcoin::Network::Testnet4 => "https://mempool.space/testnet4/api".to_string(),
+        bitcoin::Network::Signet => "https://mempool.space/signet/api".to_string(),
+        _ => "http://localhost:3000/api".to_string(),
+    }
+}
+
 use coincube_core::miniscript::bitcoin::{self, Network};
 use coincube_ui::{
     component::network_banner,

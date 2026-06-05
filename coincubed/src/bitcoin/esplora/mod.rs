@@ -142,37 +142,53 @@ impl Esplora {
         const PARALLEL_REQUESTS: usize = 4;
         const STOP_GAP: usize = 200;
 
+        // SPK lists are rebuilt per attempt so the request closure can be
+        // re-invoked if the primary Esplora endpoint fails and the client
+        // retries on its fallback. BDK's request types are consumed by the
+        // call, so the only way to retry is to build a fresh request.
         let (chain_update, mut graph_update, keychain_update) = if !self.is_rescanning() {
             log::debug!("Performing sync.");
-            let mut request = SyncRequest::from_chain_tip(local_chain_tip.clone());
-
-            let all_spks: Vec<_> = self
-                .bdk_wallet
-                .index()
-                .inner()
-                .all_spks()
-                .values()
-                .cloned()
-                .collect();
-            request = request.chain_spks(all_spks);
-            log::debug!("num SPKs for sync: {}", request.spks.len());
-
+            let bdk_wallet = &self.bdk_wallet;
+            let local_chain_tip = local_chain_tip.clone();
             let sync_result = self
                 .client
-                .sync(request, PARALLEL_REQUESTS)
+                .sync(
+                    || -> SyncRequest {
+                        let mut request = SyncRequest::from_chain_tip(local_chain_tip.clone());
+                        let all_spks: Vec<_> = bdk_wallet
+                            .index()
+                            .inner()
+                            .all_spks()
+                            .values()
+                            .cloned()
+                            .collect();
+                        request = request.chain_spks(all_spks);
+                        log::debug!("num SPKs for sync: {}", request.spks.len());
+                        request
+                    },
+                    PARALLEL_REQUESTS,
+                )
                 .map_err(EsploraError::Client)?;
             log::debug!("Sync complete.");
             (sync_result.chain_update, sync_result.graph_update, None)
         } else {
             log::info!("Performing full scan.");
-            let mut request = FullScanRequest::from_chain_tip(local_chain_tip.clone());
-
-            for (k, spks) in self.bdk_wallet.index().all_unbounded_spk_iters() {
-                request = request.set_spks_for_keychain(k, spks);
-            }
+            let bdk_wallet = &self.bdk_wallet;
+            let local_chain_tip = local_chain_tip.clone();
             let scan_result = self
                 .client
-                .full_scan(request, STOP_GAP, PARALLEL_REQUESTS)
+                .full_scan(
+                    || {
+                        let mut request =
+                            FullScanRequest::from_chain_tip(local_chain_tip.clone());
+                        for (k, spks) in bdk_wallet.index().all_unbounded_spk_iters() {
+                            request = request.set_spks_for_keychain(k, spks);
+                        }
+                        request
+                    },
+                    STOP_GAP,
+                    PARALLEL_REQUESTS,
+                )
                 .map_err(EsploraError::Client)?;
             self.full_scan = false;
             log::info!("Full scan complete.");

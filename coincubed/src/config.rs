@@ -143,14 +143,27 @@ fn default_validate_domain() -> bool {
 }
 
 /// Everything we need to know for talking to an Esplora HTTP server.
+///
+/// Supports a primary endpoint plus an optional secondary used as failover.
+/// The two endpoints are independently authenticated because typical pairings
+/// span auth domains — a public Esplora (no token) as primary with COINCUBE |
+/// Connect (JWT) as fallback, or vice versa.
 #[derive(Clone, PartialEq, Deserialize, Serialize)]
 pub struct EsploraConfig {
-    /// The HTTP(S) URL of the Esplora server.
-    /// e.g. https://api.coincube.io/api/v1/esplora/bitcoin/mainnet
+    /// The HTTP(S) URL of the primary Esplora server.
+    /// e.g. https://mempool.space/api
     pub addr: String,
-    /// Optional JWT bearer token for authenticated Esplora endpoints (e.g. COINCUBE | Connect).
+    /// Optional JWT bearer token for the primary endpoint (e.g. COINCUBE | Connect).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub token: Option<String>,
+    /// Optional secondary Esplora endpoint, tried when the primary returns a
+    /// retryable failure (transport error, 402, 429, 5xx). Typical deployment
+    /// is `addr` → public Esplora and `fallback_addr` → COINCUBE | Connect.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fallback_addr: Option<String>,
+    /// Optional JWT bearer token for the fallback endpoint.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fallback_token: Option<String>,
 }
 
 impl std::fmt::Debug for EsploraConfig {
@@ -158,6 +171,11 @@ impl std::fmt::Debug for EsploraConfig {
         f.debug_struct("EsploraConfig")
             .field("addr", &self.addr)
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("fallback_addr", &self.fallback_addr)
+            .field(
+                "fallback_token",
+                &self.fallback_token.as_ref().map(|_| "<redacted>"),
+            )
             .finish()
     }
 }

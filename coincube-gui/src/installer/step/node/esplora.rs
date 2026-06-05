@@ -51,6 +51,8 @@ impl DefineEsplora {
             ctx.bitcoin_backend = Some(coincubed::config::BitcoinBackend::Esplora(EsploraConfig {
                 addr: self.address.value.clone(),
                 token: None,
+                fallback_addr: None,
+                fallback_token: None,
             }));
             return true;
         }

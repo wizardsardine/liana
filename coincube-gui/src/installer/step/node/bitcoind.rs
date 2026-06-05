@@ -375,16 +375,21 @@ impl Step for SelectBitcoindTypeStep {
                     ctx.bitcoin_backend = None;
                 }
             } else {
-                // Connect-only: set Esplora backend now.
-                let Some(token) = &ctx.connect_jwt else {
-                    return false;
-                };
+                // Connect-only: set Esplora backend now. Primary is a public
+                // Esplora so wallet sync traffic distributes across user IPs;
+                // Connect is the fallback so the safety net still exists when
+                // a public provider rate-limits an individual user.
                 // `EsploraConfig.token` is a plain `String` (serialized
                 // to disk in `coincubed` config), so we copy the inner
                 // string out of the `Zeroizing<String>` wrapper here.
+                let Some(token) = &ctx.connect_jwt else {
+                    return false;
+                };
                 ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
-                    addr: crate::installer::connect_url(ctx.network),
-                    token: Some(token.as_str().to_owned()),
+                    addr: crate::installer::public_esplora_url(ctx.network),
+                    token: None,
+                    fallback_addr: Some(crate::installer::connect_url(ctx.network)),
+                    fallback_token: Some(token.as_str().to_owned()),
                 }));
                 ctx.internal_bitcoind_config = None;
                 ctx.pending_bitcoind_config = None;
@@ -873,10 +878,13 @@ impl Step for InternalBitcoindStep {
                 // Inner `String` copy: `EsploraConfig.token` is a plain
                 // `String` (persisted to disk), so extract it from the
                 // `Zeroizing<String>` wrapper rather than cloning the
-                // wrapper itself.
+                // wrapper itself. Primary/fallback split: see the
+                // Connect-only branch above for the rationale.
                 ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
-                    addr: crate::installer::connect_url(ctx.network),
-                    token: Some(token.as_str().to_owned()),
+                    addr: crate::installer::public_esplora_url(ctx.network),
+                    token: None,
+                    fallback_addr: Some(crate::installer::connect_url(ctx.network)),
+                    fallback_token: Some(token.as_str().to_owned()),
                 }));
             } else {
                 ctx.bitcoin_backend = bitcoind_config.map(BitcoinBackend::Bitcoind);
