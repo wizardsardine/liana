@@ -136,11 +136,12 @@ impl State for ReceivePanel {
                     )))
                     .into()
             }
-            Modal::NewAddress(m) => modal::Modal::new(content, m.view())
-                .on_blur(Some(view::Message::NewAddress(
-                    view::NewAddressMessage::Close,
-                )))
-                .into(),
+            Modal::NewAddress(m) => {
+                // No blur-to-close while the label is saving and the address is revealing.
+                let on_blur = (!m.is_processing())
+                    .then_some(view::Message::NewAddress(view::NewAddressMessage::Close));
+                modal::Modal::new(content, m.view()).on_blur(on_blur).into()
+            }
             Modal::None => content,
         }
     }
@@ -148,10 +149,10 @@ impl State for ReceivePanel {
     fn subscription(&self) -> Subscription<Message> {
         match &self.modal {
             Modal::VerifyAddress(modal) => modal.subscription(),
-            Modal::NewAddress(NewAddressModal {
-                sub: Some(NewAddressSubModal::Verify(modal)),
-                ..
-            }) => modal.subscription(),
+            Modal::NewAddress(m) => m
+                .verify_sub()
+                .map(VerifyAddressModal::subscription)
+                .unwrap_or_else(Subscription::none),
             _ => Subscription::none(),
         }
     }
@@ -204,93 +205,107 @@ impl State for ReceivePanel {
                 }
             }
             Message::ReceiveAddress(res) => {
+                // Reveal-and-label completed: record the revealed address and switch the
+                // modal to its show step.
                 match res {
-                    Ok((address, derivation_index)) => {
+                    Ok((address, index)) => {
                         self.warning = None;
-                        self.modal =
-                            Modal::NewAddress(NewAddressModal::new(address, derivation_index));
+                        if let Modal::NewAddress(m) = &mut self.modal {
+                            if let Some(label) = m.revealed(address.clone(), index) {
+                                let key = LabelItem::Address(address.clone()).to_string();
+                                self.prev_addresses.list.insert(0, address);
+                                self.prev_addresses.derivation_indexes.insert(0, index);
+                                self.prev_addresses.labels.insert(key, label);
+                            }
+                        }
                     }
-                    Err(e) => self.warning = Some(e),
+                    Err(e) => {
+                        self.warning = Some(e);
+                        self.modal = Modal::None;
+                    }
                 }
                 Task::none()
             }
             Message::View(view::Message::NewAddress(msg)) => match msg {
                 view::NewAddressMessage::LabelEdited(s) => {
                     if let Modal::NewAddress(m) = &mut self.modal {
-                        // Empty is valid (no warning); the Generate button is gated
-                        // on non-empty by the modal itself.
-                        m.label.valid = s.len() <= 100;
-                        m.label.value = s;
+                        m.edit_label(s);
                     }
                     Task::none()
                 }
                 view::NewAddressMessage::Confirm => {
-                    if let Modal::NewAddress(m) = &mut self.modal {
-                        m.show_address = true;
+                    // Reveal first, then store the label on the address that was actually
+                    // revealed. Labelling the revealed address (not a guessed one) makes a
+                    // mislabel impossible; the worst case is a missing label.
+                    let label = if let Modal::NewAddress(m) = &mut self.modal {
+                        m.start_reveal()
+                    } else {
+                        None
+                    };
+                    if let Some(label) = label {
+                        let daemon = daemon.clone();
+                        Task::perform(
+                            async move {
+                                let res = daemon.get_new_address().await?;
+                                let updates = HashMap::from([(
+                                    LabelItem::Address(res.address.clone()),
+                                    Some(label),
+                                )]);
+                                if let Err(e) = daemon.update_labels(&updates).await {
+                                    // FIXME: should we add a retry or error mechanism here?
+                                    tracing::warn!(
+                                        "failed to store label for {}: {e}",
+                                        res.address
+                                    );
+                                }
+                                Ok((res.address, res.derivation_index))
+                            },
+                            Message::ReceiveAddress,
+                        )
+                    } else {
+                        Task::none()
                     }
-                    Task::none()
                 }
                 view::NewAddressMessage::Verify => {
                     let verify = if let Modal::NewAddress(m) = &self.modal {
-                        Some(VerifyAddressModal::new(
-                            self.data_dir.clone(),
-                            self.wallet.clone(),
-                            cache.network,
-                            m.address.clone(),
-                            m.derivation_index,
-                        ))
+                        m.shown().map(|(address, index)| {
+                            VerifyAddressModal::new(
+                                self.data_dir.clone(),
+                                self.wallet.clone(),
+                                cache.network,
+                                address.clone(),
+                                index,
+                            )
+                        })
                     } else {
                         None
                     };
                     if let (Modal::NewAddress(m), Some(verify)) = (&mut self.modal, verify) {
-                        m.sub = Some(NewAddressSubModal::Verify(verify));
+                        m.set_sub(NewAddressSubModal::Verify(verify));
                     }
                     Task::none()
                 }
                 view::NewAddressMessage::ShowQr => {
                     let qr = if let Modal::NewAddress(m) = &self.modal {
-                        ShowQrCodeModal::new(&m.address, None)
+                        m.shown()
+                            .and_then(|(address, _)| ShowQrCodeModal::new(address, None))
                     } else {
                         None
                     };
                     if let (Modal::NewAddress(m), Some(qr)) = (&mut self.modal, qr) {
-                        m.sub = Some(NewAddressSubModal::Qr(qr));
+                        m.set_sub(NewAddressSubModal::Qr(qr));
                     }
                     Task::none()
                 }
                 view::NewAddressMessage::Close => {
-                    let finish = if let Modal::NewAddress(m) = &self.modal {
-                        m.show_address
-                            .then(|| (m.address.clone(), m.derivation_index, m.label.value.clone()))
-                    } else {
-                        None
-                    };
                     self.modal = Modal::None;
-                    if let Some((address, index, label)) = finish {
-                        let key = LabelItem::Address(address.clone()).to_string();
-                        self.prev_addresses.list.insert(0, address.clone());
-                        self.prev_addresses.derivation_indexes.insert(0, index);
-                        self.prev_addresses.labels.insert(key, label.clone());
-                        let updated = HashMap::from([(LabelItem::Address(address), Some(label))]);
-                        return Task::perform(
-                            async move {
-                                daemon
-                                    .update_labels(&updated)
-                                    .await
-                                    .map(|_| HashMap::new())
-                                    .map_err(|e| e.into())
-                            },
-                            Message::LabelsUpdated,
-                        );
-                    }
                     Task::none()
                 }
             },
             Message::View(view::Message::Close) => {
                 // Closing a stacked sub-modal returns to the show-address modal.
                 if let Modal::NewAddress(m) = &mut self.modal {
-                    if m.sub.is_some() {
-                        m.sub = None;
+                    if m.close_sub() {
                         return Task::none();
                     }
                 }
@@ -312,17 +327,8 @@ impl State for ReceivePanel {
                 Task::none()
             }
             Message::View(view::Message::NextReceiveAddress) => {
-                let daemon = daemon.clone();
-                Task::perform(
-                    async move {
-                        daemon
-                            .get_new_address()
-                            .await
-                            .map(|res| (res.address, res.derivation_index))
-                            .map_err(|e| e.into())
-                    },
-                    Message::ReceiveAddress,
-                )
+                self.modal = Modal::NewAddress(NewAddressModal::new());
+                Task::none()
             }
             Message::View(view::Message::ToggleShowPreviousAddresses) => {
                 self.show_prev_addresses = !self.show_prev_addresses;
@@ -401,8 +407,14 @@ impl State for ReceivePanel {
                 i,
             ))) => {
                 // Specter DIY devices need the derivation index in the QR code.
-                if let Some(modal) = ShowQrCodeModal::new(&address, Some(i)) {
-                    self.modal = Modal::ShowQrCode(modal);
+                if let Some(qr) = ShowQrCodeModal::new(&address, Some(i)) {
+                    // From the generate flow's verify sub-modal, stack the QR so closing it
+                    // returns to the show-address step. From a standalone verify modal, replace.
+                    if let Modal::NewAddress(m) = &mut self.modal {
+                        m.set_sub(NewAddressSubModal::Qr(qr));
+                    } else {
+                        self.modal = Modal::ShowQrCode(qr);
+                    }
                 }
                 Task::none()
             }
@@ -410,10 +422,7 @@ impl State for ReceivePanel {
                 // The verify modal can be standalone or stacked on the new-address modal.
                 let modal = match &mut self.modal {
                     Modal::VerifyAddress(m) => Some(m),
-                    Modal::NewAddress(NewAddressModal {
-                        sub: Some(NewAddressSubModal::Verify(m)),
-                        ..
-                    }) => Some(m),
+                    Modal::NewAddress(m) => m.verify_sub_mut(),
                     _ => None,
                 };
                 if let Some(modal) = modal {
@@ -423,10 +432,10 @@ impl State for ReceivePanel {
             }
             _ => match &mut self.modal {
                 Modal::VerifyAddress(m) => m.update(daemon, cache, message),
-                Modal::NewAddress(NewAddressModal {
-                    sub: Some(NewAddressSubModal::Verify(m)),
-                    ..
-                }) => m.update(daemon, cache, message),
+                Modal::NewAddress(m) => m
+                    .verify_sub_mut()
+                    .map(|v| v.update(daemon, cache, message))
+                    .unwrap_or_else(Task::none),
                 _ => Task::none(),
             },
         }
@@ -583,47 +592,151 @@ impl NewAddressSubModal {
     }
 }
 
-/// Two-step modal for a freshly generated address: enter a mandatory label, then
-/// display the address. The address is added to the list when the modal is closed.
+/// Modal for a freshly generated address. The user enters a label, then the address
+/// is revealed and its label stored. The address is never shown before it is revealed.
 pub struct NewAddressModal {
-    address: Address,
-    derivation_index: ChildNumber,
-    label: form::Value<String>,
-    show_address: bool,
-    /// Verify/QR modal stacked on top of the show-address step, if open.
-    sub: Option<NewAddressSubModal>,
+    step: Step,
+}
+
+#[allow(clippy::large_enum_variant)]
+enum Step {
+    /// Entering the label. No address is revealed or displayed at this step.
+    Label { label: form::Value<String> },
+    /// Revealing the address and storing its label.
+    Processing { label: String },
+    /// Address revealed and displayed, with an optional stacked verify/QR sub-modal.
+    Show {
+        address: Address,
+        index: ChildNumber,
+        sub: Option<NewAddressSubModal>,
+    },
 }
 
 impl NewAddressModal {
-    fn new(address: Address, derivation_index: ChildNumber) -> Self {
+    fn new() -> Self {
         Self {
-            address,
-            derivation_index,
-            label: form::Value {
-                value: String::new(),
-                warning: None,
-                valid: true,
+            step: Step::Label {
+                label: form::Value {
+                    value: String::new(),
+                    warning: None,
+                    valid: true,
+                },
             },
-            show_address: false,
-            sub: None,
         }
     }
 
-    fn view(&self) -> Element<'_, view::Message> {
-        let base = if self.show_address {
-            view::receive::new_address_show_modal(&self.address)
-        } else {
-            view::receive::new_address_label_modal(&self.label)
+    fn edit_label(&mut self, value: String) {
+        if let Step::Label { label, .. } = &mut self.step {
+            // Empty is valid (no warning); the Generate button is gated on non-empty
+            // by the modal itself.
+            label.valid = value.len() <= 100;
+            label.value = value;
+        }
+    }
+
+    /// Move to the reveal step, returning the label to persist. None if not at the
+    /// label step or the label is empty.
+    fn start_reveal(&mut self) -> Option<String> {
+        let Step::Label { label } = &self.step else {
+            return None;
         };
-        // A nested sub-modal stacks on top of the show-address modal: it becomes
-        // an overlay over the (full-screen) base, so the base stays rendered behind
-        // and reappears once the sub-modal is closed.
-        if let Some(sub) = &self.sub {
-            modal::Modal::new(Container::new(base).center(Length::Fill), sub.view())
-                .on_blur(Some(view::Message::Close))
-                .into()
+        if label.value.is_empty() {
+            return None;
+        }
+        let label = label.value.clone();
+        self.step = Step::Processing {
+            label: label.clone(),
+        };
+        Some(label)
+    }
+
+    /// Complete the reveal: switch to the show step, returning the stored label. None
+    /// if not awaiting a reveal.
+    fn revealed(&mut self, address: Address, index: ChildNumber) -> Option<String> {
+        if let Step::Processing { label } = &mut self.step {
+            let label = std::mem::take(label);
+            self.step = Step::Show {
+                address,
+                index,
+                sub: None,
+            };
+            Some(label)
         } else {
-            base
+            None
+        }
+    }
+
+    /// The revealed address and its index, if at the show step.
+    fn shown(&self) -> Option<(&Address, ChildNumber)> {
+        if let Step::Show { address, index, .. } = &self.step {
+            Some((address, *index))
+        } else {
+            None
+        }
+    }
+
+    fn set_sub(&mut self, new_sub: NewAddressSubModal) {
+        if let Step::Show { sub, .. } = &mut self.step {
+            *sub = Some(new_sub);
+        }
+    }
+
+    /// Pop a stacked sub-modal, returning to the show step. True if one was open.
+    fn close_sub(&mut self) -> bool {
+        if let Step::Show { sub, .. } = &mut self.step {
+            if sub.is_some() {
+                *sub = None;
+                return true;
+            }
+        }
+        false
+    }
+
+    fn verify_sub(&self) -> Option<&VerifyAddressModal> {
+        if let Step::Show {
+            sub: Some(NewAddressSubModal::Verify(m)),
+            ..
+        } = &self.step
+        {
+            Some(m)
+        } else {
+            None
+        }
+    }
+
+    fn verify_sub_mut(&mut self) -> Option<&mut VerifyAddressModal> {
+        if let Step::Show {
+            sub: Some(NewAddressSubModal::Verify(m)),
+            ..
+        } = &mut self.step
+        {
+            Some(m)
+        } else {
+            None
+        }
+    }
+
+    fn is_processing(&self) -> bool {
+        matches!(self.step, Step::Processing { .. })
+    }
+
+    fn view(&self) -> Element<'_, view::Message> {
+        match &self.step {
+            Step::Label { label, .. } => view::receive::new_address_label_modal(label),
+            Step::Processing { .. } => view::receive::new_address_processing_modal(),
+            Step::Show { address, sub, .. } => {
+                let base = view::receive::new_address_show_modal(address);
+                // A nested sub-modal stacks on top of the show-address modal: it becomes
+                // an overlay over the (full-screen) base, so the base stays rendered behind
+                // and reappears once the sub-modal is closed.
+                if let Some(sub) = sub {
+                    modal::Modal::new(Container::new(base).center(Length::Fill), sub.view())
+                        .on_blur(Some(view::Message::Close))
+                        .into()
+                } else {
+                    base
+                }
+            }
         }
     }
 }
@@ -652,7 +765,7 @@ mod tests {
         utils::{mock::Daemon, sandbox::Sandbox},
     };
 
-    use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::Address};
+    use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::secp256k1};
     use serde_json::json;
     use std::{path::PathBuf, str::FromStr};
 
@@ -660,10 +773,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_receive_panel() {
-        let addr =
-            Address::from_str("tb1qkldgvljmjpxrjq2ev5qxe8dvhn0dph9q85pwtfkjeanmwdue2akqj4twxj")
-                .unwrap()
-                .assume_checked();
+        let wallet = Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap()));
+        // The reveal returns the next receive address; derive the same one here to build
+        // the getnewaddress mock response.
+        let secp = secp256k1::Secp256k1::verification_only();
+        let index = ChildNumber::from_normal_idx(1).unwrap();
+        let addr = wallet
+            .main_descriptor
+            .receive_descriptor()
+            .derive(index, &secp)
+            .address(Network::Bitcoin);
         let daemon = Daemon::new(vec![
             (
                 Some(
@@ -675,16 +794,13 @@ mod tests {
                 })),
             ),
             (
+                // getnewaddress: reveal first.
                 Some(json!({"method": "getnewaddress", "params": Option::<Request>::None})),
-                Ok(json!(GetAddressResult::new(
-                    addr.clone(),
-                    ChildNumber::from_normal_idx(0).unwrap()
-                ))),
+                Ok(json!(GetAddressResult::new(addr.clone(), index))),
             ),
-            // updatelabels, triggered when the new-address modal is closed.
+            // updatelabels: store the label on the revealed address.
             (None, Ok(json!(null))),
         ]);
-        let wallet = Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap()));
         let sandbox: Sandbox<ReceivePanel> = Sandbox::new(ReceivePanel::new(
             LianaDirectory::new(PathBuf::new()),
             wallet.clone(),
@@ -700,13 +816,14 @@ mod tests {
             )
             .await;
 
-        // Generating opens the new-address modal at the mandatory-label step.
+        // Generating opens the modal at the mandatory-label step, without revealing or
+        // displaying any address.
         assert!(matches!(
             &sandbox.state().modal,
-            Modal::NewAddress(m) if m.address == addr && !m.show_address
+            Modal::NewAddress(m) if matches!(&m.step, Step::Label { .. })
         ));
 
-        // Enter a label, confirm to reach the show-address step, then close.
+        // Enter a label, then confirm: the address is revealed, then its label stored.
         let sandbox = sandbox
             .update(
                 client.clone(),
@@ -718,21 +835,22 @@ mod tests {
             .await;
         let sandbox = sandbox
             .update(
-                client.clone(),
+                client,
                 &cache,
                 Message::View(viewMessage::NewAddress(view::NewAddressMessage::Confirm)),
             )
             .await;
-        let sandbox = sandbox
-            .update(
-                client,
-                &cache,
-                Message::View(viewMessage::NewAddress(view::NewAddressMessage::Close)),
-            )
-            .await;
 
+        // After the reveal, the address is recorded with its label and shown.
         let panel = sandbox.state();
-        assert_eq!(panel.prev_addresses.list, vec![addr]);
-        assert!(matches!(panel.modal, Modal::None));
+        assert_eq!(panel.prev_addresses.list, vec![addr.clone()]);
+        assert_eq!(
+            panel.prev_addresses.labels.get(&addr.to_string()),
+            Some(&"test".to_string())
+        );
+        assert!(matches!(
+            &panel.modal,
+            Modal::NewAddress(m) if matches!(m.step, Step::Show { .. })
+        ));
     }
 }

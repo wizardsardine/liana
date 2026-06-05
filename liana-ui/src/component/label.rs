@@ -6,7 +6,7 @@ use iced::{
 };
 
 use crate::{
-    component::text::new::{self},
+    component::text::new,
     widget::{Element, SpaceExt},
 };
 
@@ -36,7 +36,7 @@ pub fn edit_label_modal<'a, M: 'a + Clone, C>(
     on_change: C,
     confirm: M,
     close: M,
-    new: bool,
+    is_new: bool,
 ) -> Element<'a, M>
 where
     C: 'static + Fn(String) -> M,
@@ -49,12 +49,12 @@ where
         Some(c) => input.on_submit(c.clone()),
         None => input,
     };
-    let cancel = if new {
+    let cancel = if is_new {
         None
     } else {
         Some(btn_cancel(Some(close.clone())))
     };
-    let ok = if new {
+    let ok = if is_new {
         btn_generate(confirm)
     } else {
         btn_save(confirm)

@@ -1,18 +1,18 @@
 mod modals;
 pub use modals::{
-    edit_label_modal, new_address_label_modal, new_address_show_modal, qr_modal,
-    verify_address_modal,
+    edit_label_modal, new_address_label_modal, new_address_processing_modal,
+    new_address_show_modal, qr_modal, verify_address_modal,
 };
 
 use std::collections::HashMap;
 
-use iced::{alignment::Horizontal, widget::Button, Alignment, Length};
+use iced::{widget::row, Alignment, Length};
 
 use liana::miniscript::bitcoin;
 
 use liana_ui::{
-    component::{button, form, panels::receive, text::legacy},
-    icon, theme,
+    component::{button, form, list, panels::receive, text::new},
+    icon,
     widget::*,
 };
 
@@ -51,60 +51,42 @@ pub fn receive<'a>(
     is_last_page: bool,
     processing: bool,
 ) -> Element<'a, Message> {
+    let title = Container::new(new::d2(Menu::Receive.title())).width(Length::Fill);
+    let generate = {
+        let (icon, label) = (Some(icon::plus_icon()), "Generate address");
+        if prev_addresses.is_empty() {
+            button::primary(icon, label)
+        } else {
+            button::secondary(icon, label)
+        }
+        .on_press(Message::NextReceiveAddress)
+    };
+    let header = row![title, generate].align_y(Alignment::Center);
+
+    let description = new::b1("Always generate a new address for each deposit.");
+
+    let prev_header = (!prev_addresses.is_empty()).then_some(receive::previous_addresses_header(
+        show_prev_addresses,
+        Message::ToggleShowPreviousAddresses,
+    ));
+
+    // prev addresses are already ordered in descending order
+    let cards = show_prev_addresses.then(|| {
+        prev_addresses.iter().enumerate().fold(
+            Column::new().spacing(14).width(Length::Fill),
+            |col, (i, address)| col.push(address_card(i, address, prev_labels, labels_editing)),
+        )
+    });
+
+    let see_more =
+        (!is_last_page && show_prev_addresses).then(|| list::see_more(processing, Message::Next));
+
     Column::new()
-        .push(
-            Row::new()
-                .align_y(Alignment::Center)
-                .push(
-                    Container::new(legacy::panel_title(Menu::Receive.title())).width(Length::Fill),
-                )
-                .push({
-                    let (icon, label) = (Some(icon::plus_icon()), "Generate address");
-                    if prev_addresses.is_empty() {
-                        button::primary(icon, label)
-                    } else {
-                        button::secondary(icon, label)
-                    }
-                    .on_press(Message::NextReceiveAddress)
-                }),
-        )
-        .push(legacy::text(
-            "Always generate a new address for each deposit.",
-        ))
-        .push_maybe(
-            (!prev_addresses.is_empty()).then_some(receive::previous_addresses_header(
-                show_prev_addresses,
-                Message::ToggleShowPreviousAddresses,
-            )),
-        )
-        .push_maybe(show_prev_addresses.then_some(Row::new().spacing(10).push(
-            prev_addresses.iter().enumerate().fold(
-                // prev addresses are already ordered in descending order
-                Column::new().spacing(10).width(Length::Fill),
-                |col, (i, address)| col.push(address_card(i, address, prev_labels, labels_editing)),
-            ),
-        )))
-        .push_maybe(
-            (!is_last_page && show_prev_addresses).then_some(
-                Container::new(
-                    Button::new(
-                        legacy::text(if processing {
-                            "Fetching ..."
-                        } else {
-                            "See more"
-                        })
-                        .width(Length::Fill)
-                        .align_x(Horizontal::Center),
-                    )
-                    .width(Length::Fill)
-                    .padding(15)
-                    .style(theme::button::transparent_border)
-                    .on_press_maybe((!processing).then_some(Message::Next)),
-                )
-                .width(Length::Fill)
-                .style(theme::card::simple),
-            ),
-        )
+        .push(header)
+        .push(description)
+        .push_maybe(prev_header)
+        .push_maybe(cards)
+        .push_maybe(see_more)
         .spacing(20)
         .into()
 }
