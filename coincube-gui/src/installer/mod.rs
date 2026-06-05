@@ -3,6 +3,7 @@ mod context;
 mod decrypt;
 mod descriptor;
 mod message;
+pub(crate) mod migration;
 mod prompt;
 pub(crate) mod step;
 mod view;
@@ -22,8 +23,11 @@ pub(crate) fn connect_url(network: bitcoin::Network) -> String {
 /// Public-Esplora URL for the given network, used as the daemon's primary
 /// endpoint so wallet sync traffic distributes across users' IPs instead of
 /// consolidating onto coincube-api's IP (which is where the per-IP rate limits
-/// bite). The [`connect_url`] is wired as the daemon's fallback in the same
-/// flow so users with a Connect session still have a quota-resilient backup.
+/// bite). The chain in the same flow goes
+/// `public_esplora_url` (mempool.space) → [`public_esplora_fallback_url`]
+/// (blockstream.info) → [`connect_url`] (authenticated backstop), so a
+/// throttled mempool doesn't immediately push the user to the metered
+/// Connect URL.
 ///
 /// Regtest has no public counterpart — callers in regtest builds should
 /// configure their own endpoint via the installer's manual-Esplora step.
@@ -34,6 +38,27 @@ pub(crate) fn public_esplora_url(network: bitcoin::Network) -> String {
         bitcoin::Network::Testnet4 => "https://mempool.space/testnet4/api".to_string(),
         bitcoin::Network::Signet => "https://mempool.space/signet/api".to_string(),
         _ => "http://localhost:3000/api".to_string(),
+    }
+}
+
+/// Second public-Esplora URL, used as the daemon's *first* fallback
+/// between [`public_esplora_url`] (mempool.space) and [`connect_url`]
+/// (the metered backstop). Using a different provider for this slot —
+/// `blockstream.info` — means a mempool 429 doesn't imply this
+/// endpoint is also throttled.
+///
+/// Returns `None` for networks where blockstream doesn't publish a
+/// public Esplora (signet, testnet4, regtest); those flows just skip
+/// straight from mempool to the Connect backstop.
+pub(crate) fn public_esplora_fallback_url(network: bitcoin::Network) -> Option<String> {
+    match network {
+        bitcoin::Network::Bitcoin => Some("https://blockstream.info/api".to_string()),
+        bitcoin::Network::Testnet => Some("https://blockstream.info/testnet/api".to_string()),
+        // Blockstream doesn't host signet / testnet4 / regtest. Returning
+        // None means the daemon's provider chain shrinks to
+        // mempool → Connect for these networks, which matches the
+        // previous behaviour exactly.
+        _ => None,
     }
 }
 

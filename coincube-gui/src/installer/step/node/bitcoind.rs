@@ -385,11 +385,33 @@ impl Step for SelectBitcoindTypeStep {
                 let Some(token) = &ctx.connect_jwt else {
                     return false;
                 };
+                // Three-tier chain: mempool.space → blockstream.info →
+                // Connect (JWT). Picking up `public_esplora_fallback_url`
+                // when it's available for this network distributes
+                // sync load across two independent public providers
+                // before falling back to the metered Connect URL.
+                let (fallback_addr, fallback_token, secondary_fallback_addr, secondary_fallback_token) =
+                    match crate::installer::public_esplora_fallback_url(ctx.network) {
+                        Some(public_fallback) => (
+                            Some(public_fallback),
+                            None,
+                            Some(crate::installer::connect_url(ctx.network)),
+                            Some(token.as_str().to_owned()),
+                        ),
+                        None => (
+                            Some(crate::installer::connect_url(ctx.network)),
+                            Some(token.as_str().to_owned()),
+                            None,
+                            None,
+                        ),
+                    };
                 ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
                     addr: crate::installer::public_esplora_url(ctx.network),
                     token: None,
-                    fallback_addr: Some(crate::installer::connect_url(ctx.network)),
-                    fallback_token: Some(token.as_str().to_owned()),
+                    fallback_addr,
+                    fallback_token,
+                    secondary_fallback_addr,
+                    secondary_fallback_token,
                 }));
                 ctx.internal_bitcoind_config = None;
                 ctx.pending_bitcoind_config = None;
@@ -880,11 +902,31 @@ impl Step for InternalBitcoindStep {
                 // `Zeroizing<String>` wrapper rather than cloning the
                 // wrapper itself. Primary/fallback split: see the
                 // Connect-only branch above for the rationale.
+                // Same three-tier chain as the Connect-only branch above:
+                // mempool.space → blockstream.info (where available) →
+                // Connect (JWT).
+                let (fallback_addr, fallback_token, secondary_fallback_addr, secondary_fallback_token) =
+                    match crate::installer::public_esplora_fallback_url(ctx.network) {
+                        Some(public_fallback) => (
+                            Some(public_fallback),
+                            None,
+                            Some(crate::installer::connect_url(ctx.network)),
+                            Some(token.as_str().to_owned()),
+                        ),
+                        None => (
+                            Some(crate::installer::connect_url(ctx.network)),
+                            Some(token.as_str().to_owned()),
+                            None,
+                            None,
+                        ),
+                    };
                 ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
                     addr: crate::installer::public_esplora_url(ctx.network),
                     token: None,
-                    fallback_addr: Some(crate::installer::connect_url(ctx.network)),
-                    fallback_token: Some(token.as_str().to_owned()),
+                    fallback_addr,
+                    fallback_token,
+                    secondary_fallback_addr,
+                    secondary_fallback_token,
                 }));
             } else {
                 ctx.bitcoin_backend = bitcoind_config.map(BitcoinBackend::Bitcoind);

@@ -148,23 +148,38 @@ impl BitcoindSettingsState {
             return Task::done(Message::View(view::Message::ShowError(err_msg)));
         };
         // Reconstruct URLs from cache.network so a stale fallback_esplora.addr
-        // (e.g. written before Testnet4 was handled) is never used. Primary is
-        // public Esplora; Connect is the fallback so this user's wallet sync
-        // hits the per-IP rate limits on their own IP, not on coincube-api's.
+        // (e.g. written before Testnet4 was handled) is never used. Three-tier
+        // chain: mempool.space → blockstream.info (where available) → Connect
+        // (JWT). Two independent public providers in front means a 429 from
+        // one doesn't immediately push the user onto the metered Connect URL.
         use coincubed::config::EsploraConfig;
         let primary_url = crate::installer::public_esplora_url(cache.network);
+        let public_fallback = crate::installer::public_esplora_fallback_url(cache.network);
         let connect_url = crate::installer::connect_url(cache.network);
         info!(
-            "Switching to Connect: primary={} fallback={} token_len={}",
+            "Switching to Connect: primary={} public_fallback={:?} backstop={} token_len={}",
             primary_url,
+            public_fallback,
             connect_url,
             jwt.len()
         );
+        let (fallback_addr, fallback_token, secondary_fallback_addr, secondary_fallback_token) =
+            match public_fallback {
+                Some(public_fallback) => (
+                    Some(public_fallback),
+                    None,
+                    Some(connect_url),
+                    Some(jwt),
+                ),
+                None => (Some(connect_url), Some(jwt), None, None),
+            };
         let esplora = EsploraConfig {
             addr: primary_url,
             token: None,
-            fallback_addr: Some(connect_url),
-            fallback_token: Some(jwt),
+            fallback_addr,
+            fallback_token,
+            secondary_fallback_addr,
+            secondary_fallback_token,
         };
         let mut new_cfg = cfg.clone();
         if let Some(BitcoinBackend::Bitcoind(current)) = cfg.bitcoin_backend.clone() {

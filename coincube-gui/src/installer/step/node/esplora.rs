@@ -53,6 +53,8 @@ impl DefineEsplora {
                 token: None,
                 fallback_addr: None,
                 fallback_token: None,
+                secondary_fallback_addr: None,
+                secondary_fallback_token: None,
             }));
             return true;
         }
