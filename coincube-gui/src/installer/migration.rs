@@ -65,6 +65,13 @@ pub(crate) fn migrate_esplora_config(path: &Path) -> std::io::Result<bool> {
         None => return Ok(false),
     };
 
+    // Bump short poll intervals to a value that fits inside public
+    // Esplora free tiers. Done independently of (and before) the
+    // provider-chain rewrite below so it also covers configs that
+    // are already on the right chain shape. Tracked so the final
+    // "did we change anything?" return covers both edits.
+    let bumped_poll_interval = bump_short_poll_interval(&mut value);
+
     // `bitcoin_backend` on `coincubed::config::Config` is
     // `#[serde(flatten)]`, so an `Esplora(EsploraConfig)` variant
     // serialises with `[esplora_config]` at the document root rather
@@ -75,8 +82,13 @@ pub(crate) fn migrate_esplora_config(path: &Path) -> std::io::Result<bool> {
         .get_mut("esplora_config")
         .and_then(|v| v.as_table_mut())
     else {
-        // Not an Esplora backend (Bitcoind / Electrum / missing) —
-        // nothing to migrate.
+        // Not an Esplora backend (Bitcoind / Electrum / missing).
+        // If we already bumped the poll interval above we still need
+        // to persist that edit, so flush instead of an unconditional
+        // no-op return.
+        if bumped_poll_interval {
+            return write_back(path, &value);
+        }
         return Ok(false);
     };
 
@@ -180,22 +192,93 @@ pub(crate) fn migrate_esplora_config(path: &Path) -> std::io::Result<bool> {
             );
         }
     } else {
-        // Customised, already three-tier, or some other shape — skip.
+        // Customised, already three-tier, or some other shape — the
+        // provider chain itself doesn't need rewriting. Still flush
+        // if we bumped the poll interval up above.
+        if bumped_poll_interval {
+            return write_back(path, &value);
+        }
         return Ok(false);
     }
 
-    let serialized = toml::to_string_pretty(&value)
-        .map_err(|e| std::io::Error::other(format!("serialize daemon.toml: {}", e)))?;
+    write_back(path, &value)
+}
 
-    // Atomic rewrite: write to a sibling tmp and rename. A
-    // crash mid-write would otherwise leave a half-written file
-    // that the daemon would refuse to start with.
+/// Bump `bitcoin_config.poll_interval_secs` to
+/// [`MIN_POLL_INTERVAL_SECS`] when (a) the config has an
+/// `esplora_config` block (i.e. this is an Esplora-backed daemon —
+/// bitcoind/Electrum backends don't have public-provider rate
+/// limits to dodge) and (b) the current value is below the floor.
+/// Returns `true` if the value was changed.
+///
+/// Old Coincube builds defaulted to 10s or 30s, which on an
+/// Esplora backend with ~80 SPKs translates to ~9,600 HTTP
+/// requests/hour — far over public providers' free-tier hourly
+/// caps (~700/hr on Blockstream). The bump aligns existing
+/// installs with the new default and the cooldown machinery's
+/// expectations.
+fn bump_short_poll_interval(value: &mut toml::Table) -> bool {
+    /// Below this we know the user is on an old default, not a
+    /// deliberate "I want fast polls" choice. Anything at or
+    /// above is left untouched so power users who set a custom
+    /// value keep it.
+    const POLL_INTERVAL_FLOOR_SECS: i64 = 300;
+    /// Value we bump up to — same as `default_poll_interval()` in
+    /// `coincubed::config`.
+    const MIN_POLL_INTERVAL_SECS: i64 = 600;
+
+    // Bitcoind/Electrum backends don't pay per-request to a public
+    // API — they talk to a local node. Their old poll cadence is
+    // fine; leave them alone.
+    if !value.contains_key("esplora_config") {
+        return false;
+    }
+
+    let Some(bitcoin_config) = value
+        .get_mut("bitcoin_config")
+        .and_then(|v| v.as_table_mut())
+    else {
+        return false;
+    };
+    let current = match bitcoin_config
+        .get("poll_interval_secs")
+        .and_then(|v| v.as_integer())
+    {
+        Some(n) => n,
+        None => return false,
+    };
+    if current >= POLL_INTERVAL_FLOOR_SECS {
+        return false;
+    }
+    bitcoin_config.insert(
+        "poll_interval_secs".to_string(),
+        toml::Value::Integer(MIN_POLL_INTERVAL_SECS),
+    );
+    tracing::info!(
+        "esplora-config migration: bumped poll_interval_secs from {} to {} \
+         (old value below the free-tier-safe floor of {})",
+        current,
+        MIN_POLL_INTERVAL_SECS,
+        POLL_INTERVAL_FLOOR_SECS,
+    );
+    true
+}
+
+/// Atomically write the (possibly edited) TOML back to disk.
+/// Returns `Ok(true)` so the caller can use the result directly.
+/// Pulled into a helper so the multiple early-return paths above
+/// don't need to copy the serialize + tmp + rename incantation.
+fn write_back(path: &Path, value: &toml::Table) -> std::io::Result<bool> {
+    let serialized = toml::to_string_pretty(value)
+        .map_err(|e| std::io::Error::other(format!("serialize daemon.toml: {}", e)))?;
+    // Atomic rewrite via tmp + rename. A crash mid-write would
+    // otherwise leave a half-written file the daemon would refuse
+    // to start with.
     let tmp = path.with_extension("toml.tmp");
     std::fs::write(&tmp, serialized)?;
     std::fs::rename(&tmp, path)?;
-
     tracing::info!(
-        "esplora-config migration: rewrote provider chain in {}",
+        "esplora-config migration: persisted edits to {}",
         path.display(),
     );
     Ok(true)
@@ -264,6 +347,127 @@ addr = "{addr}"
             addr = super::super::connect_url(network),
             token_line = token_line,
         )
+    }
+
+    /// Reading `poll_interval_secs` out of a parsed TOML table.
+    fn poll_interval(parsed: &toml::Table) -> Option<i64> {
+        parsed
+            .get("bitcoin_config")
+            .and_then(|v| v.get("poll_interval_secs"))
+            .and_then(|v| v.as_integer())
+    }
+
+    /// On an Esplora-backed config with a sub-floor `poll_interval_secs`,
+    /// the migration must bump it to 600 (the new default) and persist
+    /// the edit, even if everything else about the file is already
+    /// in the current three-tier shape.
+    #[test]
+    fn poll_interval_is_bumped_on_esplora_config() {
+        let p = fresh_path();
+        let three_tier = format!(
+            r#"
+data_directory = "/tmp/whatever"
+log_level = "debug"
+
+[bitcoin_config]
+network = "bitcoin"
+poll_interval_secs = 30
+
+[esplora_config]
+addr = "{primary}"
+fallback_addr = "{blockstream}"
+secondary_fallback_addr = "{connect}"
+secondary_fallback_token = "jwt-here"
+"#,
+            primary = super::super::public_esplora_url(Network::Bitcoin),
+            blockstream =
+                super::super::public_esplora_fallback_url(Network::Bitcoin).unwrap(),
+            connect = super::super::connect_url(Network::Bitcoin),
+        );
+        std::fs::write(&p, three_tier).expect("seed");
+
+        // Already on the right chain shape, so the chain-rewrite
+        // branches are no-ops; the poll-interval bump is the only
+        // edit.
+        assert!(migrate_esplora_config(&p).expect("ok"));
+
+        let after = std::fs::read_to_string(&p).expect("read");
+        let parsed: toml::Table = toml::from_str(&after).expect("re-parse");
+        assert_eq!(
+            poll_interval(&parsed),
+            Some(600),
+            "Esplora config with poll_interval_secs < 300 must be bumped to 600",
+        );
+
+        // Second pass must be a no-op now that we're at 600.
+        assert!(!migrate_esplora_config(&p).expect("ok"));
+
+        std::fs::remove_file(&p).ok();
+    }
+
+    /// A user who explicitly set a poll interval at or above the
+    /// floor (300s = 5 min) is expressing a preference; the
+    /// migration must leave them alone.
+    #[test]
+    fn poll_interval_at_or_above_floor_is_left_alone() {
+        let p = fresh_path();
+        let custom = format!(
+            r#"
+data_directory = "/tmp/whatever"
+log_level = "debug"
+
+[bitcoin_config]
+network = "bitcoin"
+poll_interval_secs = 300
+
+[esplora_config]
+addr = "{primary}"
+fallback_addr = "{blockstream}"
+secondary_fallback_addr = "{connect}"
+"#,
+            primary = super::super::public_esplora_url(Network::Bitcoin),
+            blockstream =
+                super::super::public_esplora_fallback_url(Network::Bitcoin).unwrap(),
+            connect = super::super::connect_url(Network::Bitcoin),
+        );
+        std::fs::write(&p, custom).expect("seed");
+        let before = std::fs::read_to_string(&p).expect("read");
+
+        assert!(!migrate_esplora_config(&p).expect("ok"));
+
+        let after = std::fs::read_to_string(&p).expect("read");
+        assert_eq!(before, after, "300s poll must not be bumped");
+
+        std::fs::remove_file(&p).ok();
+    }
+
+    /// Bitcoind / Electrum backends talk to a local node and don't
+    /// pay per-request to a public API. Their old poll cadence is
+    /// fine; the migration must not touch them.
+    #[test]
+    fn poll_interval_is_not_bumped_on_non_esplora_backend() {
+        let p = fresh_path();
+        let bitcoind = r#"
+data_directory = "/tmp/whatever"
+log_level = "debug"
+
+[bitcoin_config]
+network = "bitcoin"
+poll_interval_secs = 10
+
+[bitcoind_config]
+network = "bitcoin"
+addr = "127.0.0.1:8332"
+"#;
+        std::fs::write(&p, bitcoind).expect("seed");
+        let before = std::fs::read_to_string(&p).expect("read");
+
+        assert!(!migrate_esplora_config(&p).expect("ok"));
+
+        let after = std::fs::read_to_string(&p).expect("read");
+        assert_eq!(before, after, "bitcoind backend must not have its poll bumped");
+
+        std::fs::remove_file(&p).ok();
     }
 
     #[test]
@@ -483,9 +687,14 @@ fallback_token = "jwt-token-here"
 
     #[test]
     fn user_customized_addr_is_left_alone() {
-        // User chose mempool.space (or any non-Connect URL) during
-        // install. The migration must not touch their `addr`, even
-        // though `fallback_addr` is absent.
+        // User chose a non-Connect URL (e.g. their own blockstream
+        // mirror or a self-hosted Esplora) during install. The
+        // migration must not touch their `addr`, even though
+        // `fallback_addr` is absent.
+        //
+        // Poll interval is set above the bump floor so this test
+        // covers *only* the customised-addr path. The bump
+        // behaviour is exercised separately.
         let p = fresh_path();
         let custom = r#"
 data_directory = "/tmp/whatever"
@@ -493,7 +702,7 @@ log_level = "debug"
 
 [bitcoin_config]
 network = "bitcoin"
-poll_interval_secs = 30
+poll_interval_secs = 600
 
 [esplora_config]
 addr = "https://blockstream.info/api"

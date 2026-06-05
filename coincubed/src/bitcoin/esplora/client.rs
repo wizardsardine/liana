@@ -22,12 +22,44 @@ const RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(600);
 #[derive(Debug)]
 pub enum Error {
     Client(Box<esplora_client::Error>),
+    /// Every configured provider is currently in a 402/429 cooldown,
+    /// so no network call was actually attempted. This is a
+    /// transient "wait" signal, not a fault — callers (the poller in
+    /// particular) should treat it as a no-op outcome rather than a
+    /// real failure to log at ERROR level. The next tick after any
+    /// provider's cooldown expires will see a normal result.
+    AllCooling,
 }
+
+impl Error {
+    /// `true` for the [`Error::AllCooling`] variant. Lets the
+    /// poller's error-handling arm downgrade the log level and back
+    /// off longer without having to import the variant by name.
+    pub fn is_all_cooling(&self) -> bool {
+        matches!(self, Error::AllCooling)
+    }
+}
+
+/// Marker substring placed at the start of [`Error::AllCooling`]'s
+/// `Display` output. The [`BitcoinInterface::sync_wallet`] trait
+/// boundary forces us to stringify the error, so the poller can't
+/// pattern-match on the typed variant directly — instead it checks
+/// for this marker in the error string and routes to a quieter log
+/// level + longer backoff. A test asserts the marker stays in the
+/// rendered output so a future refactor can't silently strand the
+/// poller's special-case branch.
+pub const ALL_COOLING_DISPLAY_MARKER: &str =
+    "All Esplora providers are temporarily backing off";
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Error::Client(e) => write!(f, "Esplora client error: '{}'.", e),
+            Error::AllCooling => write!(
+                f,
+                "{} after recent rate limits; the poller will retry once a cooldown expires.",
+                ALL_COOLING_DISPLAY_MARKER,
+            ),
         }
     }
 }
@@ -181,29 +213,47 @@ impl Client {
         // a 402/429 response here pre-seeds the provider's cooldown so
         // the first real sync tick after launch doesn't waste a call
         // re-discovering the same throttle.
+        //
+        // The checks run concurrently via `thread::scope` — total
+        // startup wait is `max(per-provider latency)` instead of the
+        // sum. With three providers and the steady-state 5–11s
+        // per check observed in the wild, that shaves ~15s off cold
+        // start at no semantic cost: a slow Connect handshake no
+        // longer holds up an already-answered mempool.
+        let results: Vec<(usize, Result<u32, esplora_client::Error>)> =
+            std::thread::scope(|s| {
+                let handles: Vec<_> = providers
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, p)| s.spawn(move || (idx, p.client.get_height())))
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|h| h.join().expect("startup check thread panicked"))
+                    .collect()
+            });
+
         let mut any_ok = false;
-        for provider in &providers {
-            match provider.client.get_height() {
+        for (idx, result) in results {
+            let provider = &providers[idx];
+            match result {
                 Ok(_) => {
                     log::info!("Esplora {} reachable at startup", provider.name);
                     any_ok = true;
                 }
+                Err(esplora_client::Error::HttpResponse { status, message })
+                    if matches!(status, 402 | 429) =>
+                {
+                    provider.enter_cooldown();
+                    log::warn!(
+                        "Esplora {} throttled at startup (status {}): {} — pre-seeded cooldown",
+                        provider.name,
+                        status,
+                        message,
+                    );
+                }
                 Err(e) => {
-                    let throttle_result: Result<(), _> = Err(e);
-                    if is_throttled(&throttle_result) {
-                        provider.enter_cooldown();
-                        log::warn!(
-                            "Esplora {} throttled at startup ({}); pre-seeded cooldown",
-                            provider.name,
-                            throttle_result.unwrap_err(),
-                        );
-                    } else {
-                        log::warn!(
-                            "Esplora {} unreachable at startup: {}",
-                            provider.name,
-                            throttle_result.unwrap_err(),
-                        );
-                    }
+                    log::warn!("Esplora {} unreachable at startup: {}", provider.name, e);
                 }
             }
         }
@@ -263,17 +313,14 @@ impl Client {
         }
         // Every provider either failed retryably or was on cooldown.
         // Surface the last real result if we have one; otherwise the
-        // entire chain was on cooldown — surface that as a generic
-        // "no provider available" so the caller can retry on the next
-        // tick.
-        last_result
-            .unwrap_or_else(|| {
-                Err(esplora_client::Error::HttpResponse {
-                    status: 503,
-                    message: "every configured Esplora provider is currently in cooldown".into(),
-                })
-            })
-            .map_err(|e| Error::Client(Box::new(e)))
+        // entire chain was on cooldown — return the typed
+        // [`Error::AllCooling`] so the poller can log it at a sane
+        // level and back off longer than its normal 2s retry, since
+        // a cooldown won't lift for minutes.
+        match last_result {
+            Some(r) => r.map_err(|e| Error::Client(Box::new(e))),
+            None => Err(Error::AllCooling),
+        }
     }
 
     /// Get the genesis block hash (block at height 0).
@@ -575,24 +622,47 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// If every provider is cooling, `try_in_order` must surface a
-    /// synthesised 503 rather than panicking or returning Ok — the
-    /// caller can then back off and retry on the next tick.
+    /// If every provider is cooling, `try_in_order` must surface the
+    /// typed [`Error::AllCooling`] rather than masquerading as a
+    /// real failure (or synthesising a 503 that looks like an
+    /// upstream HTTP error). The poller routes `AllCooling` to a
+    /// quieter log level and a longer backoff.
     #[test]
-    fn all_cooling_returns_synthesised_503() {
+    fn all_cooling_returns_typed_variant() {
         let client = client_with(vec![fake_provider("p1"), fake_provider("p2")]);
         for p in &client.providers {
             p.enter_cooldown();
         }
         let result: Result<u32, Error> = client.try_in_order(|_| Ok(1));
         match result {
-            Err(Error::Client(boxed)) => match *boxed {
-                esplora_client::Error::HttpResponse { status, .. } => {
-                    assert_eq!(status, 503);
-                }
-                other => panic!("expected HttpResponse, got {:?}", other),
-            },
-            other => panic!("expected Err, got Ok ({:?})", other.is_ok()),
+            Err(e) => {
+                assert!(e.is_all_cooling(), "expected AllCooling, got {:?}", e);
+                // Display must communicate "this is transient" so a
+                // human glancing at the log doesn't read it as a
+                // real fault.
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("temporarily backing off"),
+                    "Display should describe the transient nature; got: {}",
+                    msg,
+                );
+            }
+            Ok(v) => panic!("expected Err(AllCooling), got Ok({})", v),
         }
+    }
+
+    /// Regression: the poller pattern-matches the rendered error
+    /// string at the trait boundary. If a refactor changes the
+    /// `Display` impl without updating
+    /// [`ALL_COOLING_DISPLAY_MARKER`], the poller would silently
+    /// stop quieting the spam.
+    #[test]
+    fn all_cooling_display_contains_the_published_marker() {
+        let msg = Error::AllCooling.to_string();
+        assert!(
+            msg.starts_with(ALL_COOLING_DISPLAY_MARKER),
+            "Display must start with the marker the poller scans for; got: {}",
+            msg,
+        );
     }
 }

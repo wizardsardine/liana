@@ -78,7 +78,23 @@ fn default_loglevel() -> log::LevelFilter {
 }
 
 fn default_poll_interval() -> Duration {
-    Duration::from_secs(10)
+    // Public Esplora providers (mempool.space, blockstream.info) cap
+    // anonymous traffic at ~700 requests/hour and 500k/month per IP.
+    // A typical Coincube wallet with ~80 SPKs at the previous 10s
+    // poll interval would burn through ~9,600 req/hour — over the
+    // free-tier hourly cap by 14×. 600s (10 min) brings steady-state
+    // request volume comfortably under any anonymous free tier
+    // while still surfacing new blocks within a poll of their
+    // arrival. The smart-poll tip-guard in
+    // [`crate::bitcoin::esplora::Esplora::sync_wallet`] makes the
+    // common case (tip unchanged since last poll) cost a single
+    // `chain_tip` request rather than a full per-SPK rescan.
+    //
+    // Existing on-disk configs are auto-migrated to at least 300s
+    // by `coincube_gui::installer::migration` when they're below
+    // that threshold; users who deliberately set a higher interval
+    // are left alone.
+    Duration::from_secs(600)
 }
 
 /// Bitcoin backend config.
