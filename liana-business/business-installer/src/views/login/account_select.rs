@@ -7,10 +7,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_ui::{
-    component::{
-        button::{btn_tertiary, BtnWidth},
-        text,
-    },
+    component::{button::btn_connect_another_email, text},
     widget::*,
 };
 
@@ -92,13 +89,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     // Separator
     list_content = list_content.push(Space::with_height(20));
 
-    // "Connect with another email" button
-    let new_email = btn_tertiary(
-        None,
-        "Connect with another email",
-        BtnWidth::XXL,
-        (!processing).then_some(Msg::AccountSelectNewEmail),
-    );
+    let new_email = btn_connect_another_email((!processing).then_some(Msg::AccountSelectNewEmail));
 
     // Wrap in a container to maintain alignment with account rows
     let new_email_row = Row::new()
