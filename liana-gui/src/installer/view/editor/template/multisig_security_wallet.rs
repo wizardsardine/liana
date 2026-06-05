@@ -78,7 +78,7 @@ pub fn multisig_security_template<'a>(
     valid: bool,
     processing: bool,
 ) -> Element<'a, Message> {
-    let advanced_settings = super::advanced_settings_collapse(use_taproot);
+    let advanced_settings = super::advanced_settings_collapse(use_taproot, !processing);
 
     let primary = path(
         color::GREEN,
@@ -102,6 +102,7 @@ pub fn multisig_security_template<'a>(
                             None
                         },
                         true,
+                        !processing,
                     )
                 } else {
                     undefined_key(
@@ -109,12 +110,14 @@ pub fn multisig_security_template<'a>(
                         format!("Primary key #{}", i + 1),
                         !primary_path.keys[0..i].iter().any(|k| k.is_none()),
                         true,
+                        !processing,
                     )
                 }
                 .map(move |msg| message::DefinePath::Key(i, msg))
             })
             .collect(),
         true,
+        !processing,
     )
     .map(move |msg| {
         if let message::DefinePath::Key(i, message::DefineKey::Edit) = msg {
@@ -161,6 +164,7 @@ pub fn multisig_security_template<'a>(
                                 None
                             },
                             true,
+                            !processing,
                         )
                     }
                 } else {
@@ -174,12 +178,14 @@ pub fn multisig_security_template<'a>(
                         !(primary_path.keys.iter().any(|k| k.is_none())
                             || recovery_path.keys[0..j].iter().any(|k| k.is_none())),
                         true,
+                        !processing,
                     )
                 }
                 .map(move |msg| message::DefinePath::Key(j, msg))
             })
             .collect(),
         true,
+        !processing,
     )
     .map(move |msg| {
         if let message::DefinePath::Key(i, message::DefineKey::Edit) = msg {

@@ -1452,6 +1452,7 @@ pub fn defined_threshold<'a>(
     color: iced::Color,
     fixed: bool,
     threshold: (usize, usize),
+    editable: bool,
 ) -> Element<'a, message::DefinePath> {
     if !fixed && threshold.1 > 1 {
         Button::new(
@@ -1473,7 +1474,7 @@ pub fn defined_threshold<'a>(
                 .push(icon::pencil_icon()),
         )
         .padding(10)
-        .on_press(message::DefinePath::EditThreshold)
+        .on_press_maybe(editable.then_some(message::DefinePath::EditThreshold))
         .style(theme::button::secondary)
         .into()
     } else {
@@ -1502,6 +1503,7 @@ pub fn defined_threshold<'a>(
 pub fn defined_sequence<'a>(
     sequence: PathSequence,
     warning: Option<PathWarning>,
+    editable: bool,
 ) -> Element<'a, message::DefinePath> {
     let duration_row = Row::new()
         .padding(5)
@@ -1536,7 +1538,9 @@ pub fn defined_sequence<'a>(
                             .push(
                                 Button::new(duration_row.push(icon::pencil_icon()))
                                     .style(theme::button::secondary)
-                                    .on_press(message::DefinePath::EditSequence),
+                                    .on_press_maybe(
+                                        editable.then_some(message::DefinePath::EditSequence),
+                                    ),
                             ),
                     )
                     .width(Length::Fill)

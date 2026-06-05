@@ -29,7 +29,7 @@ pub const MAX_WIDTH: f32 = 1000.0;
 /// Bottom padding below the footer of the editor templates.
 pub const BOTTOM_PADDING: f32 = 100.0;
 
-pub fn advanced_settings_collapse<'a>(use_taproot: bool) -> Element<'a, Message> {
+pub fn advanced_settings_collapse<'a>(use_taproot: bool, editable: bool) -> Element<'a, Message> {
     fn collapse<'a>(collapsed: bool) -> Element<'a, Message> {
         let icn = if collapsed {
             icon::collapsed_icon()
@@ -44,20 +44,22 @@ pub fn advanced_settings_collapse<'a>(use_taproot: bool) -> Element<'a, Message>
     collapse::Collapse::new(
         collapse(false),
         collapse(true),
-        define_descriptor_advanced_settings(use_taproot),
+        define_descriptor_advanced_settings(use_taproot, editable),
     )
     .style(theme::button::transparent)
     .into()
 }
 
 pub fn template_footer<'a>(valid: bool, processing: bool, customize: bool) -> Row<'a, Message> {
-    let clear_all = btn_clear_all(Some(Message::DefineDescriptor(
-        message::DefineDescriptor::Reset,
-    )));
+    let clear_all = btn_clear_all(
+        (!processing).then_some(Message::DefineDescriptor(message::DefineDescriptor::Reset)),
+    );
 
-    let customize = customize.then_some(btn_customize(Some(Message::DefineDescriptor(
-        message::DefineDescriptor::ChangeTemplate(context::DescriptorTemplate::Custom),
-    ))));
+    let customize = customize.then_some(btn_customize((!processing).then_some(
+        Message::DefineDescriptor(message::DefineDescriptor::ChangeTemplate(
+            context::DescriptorTemplate::Custom,
+        )),
+    )));
 
     let msg = (!processing & valid).then_some(Message::Next);
     let msg_label = if processing {

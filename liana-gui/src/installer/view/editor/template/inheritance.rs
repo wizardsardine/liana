@@ -77,7 +77,7 @@ pub fn inheritance_template<'a>(
         None
     };
 
-    let advanced_settings = super::advanced_settings_collapse(use_taproot);
+    let advanced_settings = super::advanced_settings_collapse(use_taproot, !processing);
 
     let primary = path(
         color::GREEN,
@@ -96,12 +96,14 @@ pub fn inheritance_template<'a>(
                     None
                 },
                 true,
+                !processing,
             )
         } else {
-            undefined_key(color::GREEN, "Primary key", true, true)
+            undefined_key(color::GREEN, "Primary key", true, true, !processing)
         }
         .map(|msg| message::DefinePath::Key(0, msg))],
         true,
+        !processing,
     )
     .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(0, msg)));
 
@@ -122,12 +124,20 @@ pub fn inheritance_template<'a>(
                     None
                 },
                 true,
+                !processing,
             )
         } else {
-            undefined_key(color::WHITE, "Inheritance key", primary_key.is_some(), true)
+            undefined_key(
+                color::WHITE,
+                "Inheritance key",
+                primary_key.is_some(),
+                true,
+                !processing,
+            )
         }
         .map(|msg| message::DefinePath::Key(0, msg))],
         true,
+        !processing,
     )
     .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(1, msg)));
 

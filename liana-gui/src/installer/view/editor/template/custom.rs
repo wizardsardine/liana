@@ -66,7 +66,7 @@ pub fn custom_template<'a>(
 ) -> Element<'a, Message> {
     let prim_keys_fixed = primary_path.keys.len() < 2; // can only delete a primary key if there are 2 or more
 
-    let advanced_settings = super::advanced_settings_collapse(use_taproot);
+    let advanced_settings = super::advanced_settings_collapse(use_taproot, !processing);
 
     let primary = path(
         color::GREEN,
@@ -90,6 +90,7 @@ pub fn custom_template<'a>(
                             None
                         },
                         prim_keys_fixed,
+                        !processing,
                     )
                 } else {
                     undefined_key(
@@ -97,12 +98,14 @@ pub fn custom_template<'a>(
                         "Primary key",
                         !primary_path.keys[0..i].iter().any(|k| k.is_none()),
                         prim_keys_fixed,
+                        !processing,
                     )
                 }
                 .map(move |msg| message::DefinePath::Key(i, msg))
             })
             .collect(),
         false,
+        !processing,
     )
     .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(0, msg)));
 
@@ -135,6 +138,7 @@ pub fn custom_template<'a>(
                                         None
                                     },
                                     fixed,
+                                    !processing,
                                 )
                             } else {
                                 undefined_key(
@@ -142,12 +146,14 @@ pub fn custom_template<'a>(
                                     "Recovery key",
                                     !p.keys[0..j].iter().any(|k| k.is_none()),
                                     fixed,
+                                    !processing,
                                 )
                             }
                             .map(move |msg| message::DefinePath::Key(j, msg))
                         })
                         .collect(),
                     false,
+                    !processing,
                 )
                 .map(move |msg| {
                     Message::DefineDescriptor(message::DefineDescriptor::Path(
@@ -159,21 +165,24 @@ pub fn custom_template<'a>(
         },
     );
 
+    let add_recovery_msg = (!processing).then_some(Message::DefineDescriptor(
+        message::DefineDescriptor::AddRecoveryPath,
+    ));
+    let add_safety_net_msg = (!processing).then_some(Message::DefineDescriptor(
+        message::DefineDescriptor::AddSafetyNetPath,
+    ));
+
     let btn_row = Row::new()
         .push(
             button::secondary(Some(icon::plus_icon()), "Add recovery option")
                 .width(210)
-                .on_press(Message::DefineDescriptor(
-                    message::DefineDescriptor::AddRecoveryPath,
-                )),
+                .on_press_maybe(add_recovery_msg),
         )
         .push_maybe(
             safety_net_path.is_none().then_some(tooltip::Tooltip::new(
                 button::secondary(Some(icon::plus_icon()), "Add Safety Net")
                     .width(210)
-                    .on_press(Message::DefineDescriptor(
-                        message::DefineDescriptor::AddSafetyNetPath,
-                    )),
+                    .on_press_maybe(add_safety_net_msg),
                 Container::new(text(SAFETY_NET_DESCRIPTION))
                     .style(theme::card::simple)
                     .padding(10),
@@ -208,6 +217,7 @@ pub fn custom_template<'a>(
                                 None
                             },
                             fixed,
+                            !processing,
                         )
                     } else {
                         undefined_key(
@@ -215,12 +225,14 @@ pub fn custom_template<'a>(
                             "Safety Net key",
                             !sn_path.keys[0..i].iter().any(|k| k.is_none()),
                             fixed,
+                            !processing,
                         )
                     }
                     .map(move |msg| message::DefinePath::Key(i, msg))
                 })
                 .collect(),
             false,
+            !processing,
         )
         .map(move |msg| {
             // Add 1 to index to account for primary path.

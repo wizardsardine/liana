@@ -45,22 +45,31 @@ impl std::fmt::Display for DescriptorKind {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a, Message> {
+pub fn define_descriptor_advanced_settings<'a>(
+    use_taproot: bool,
+    editable: bool,
+) -> Element<'a, Message> {
+    let descriptor_kind = if use_taproot {
+        DescriptorKind::Taproot
+    } else {
+        DescriptorKind::P2WSH
+    };
+    let descriptor_type: Element<_> = if editable {
+        pick_list::pick_list(&DESCRIPTOR_KINDS[..], Some(descriptor_kind), move |kind| {
+            Message::CreateTaprootDescriptor(kind == DescriptorKind::Taproot)
+        })
+        .padding(10)
+        .into()
+    } else {
+        card::simple(text(descriptor_kind.to_string()))
+            .padding(10)
+            .into()
+    };
+
     let col_wallet = Column::new()
         .spacing(10)
         .push(text("Descriptor type").bold())
-        .push(container(
-            pick_list::pick_list(
-                &DESCRIPTOR_KINDS[..],
-                Some(if use_taproot {
-                    DescriptorKind::Taproot
-                } else {
-                    DescriptorKind::P2WSH
-                }),
-                |kind| Message::CreateTaprootDescriptor(kind == DescriptorKind::Taproot),
-            )
-            .padding(10),
-        ));
+        .push(container(descriptor_type));
 
     container(
         Column::new()
@@ -88,13 +97,14 @@ pub fn path(
     threshold: usize,
     keys: Vec<Element<message::DefinePath>>,
     fixed: bool,
+    editable: bool,
 ) -> Element<message::DefinePath> {
     let keys_len = keys.len();
     Container::new(
         Column::new()
             .spacing(10)
             .push_maybe(title.map(|t| Row::new().push(Space::with_width(10)).push(p1_bold(t))))
-            .push(defined_sequence(sequence, warning))
+            .push(defined_sequence(sequence, warning, editable))
             .push(
                 Column::new()
                     .spacing(5)
@@ -105,13 +115,23 @@ pub fn path(
                 if keys_len == 1 {
                     None
                 } else {
-                    Some(Row::new().push(defined_threshold(color, fixed, (threshold, keys_len))))
+                    Some(Row::new().push(defined_threshold(
+                        color,
+                        fixed,
+                        (threshold, keys_len),
+                        editable,
+                    )))
                 }
             } else {
                 Some(
                     Row::new()
                         .spacing(10)
-                        .push(defined_threshold(color, fixed, (threshold, keys_len)))
+                        .push(defined_threshold(
+                            color,
+                            fixed,
+                            (threshold, keys_len),
+                            editable,
+                        ))
                         .push(
                             button::secondary(
                                 Some(icon::plus_icon()),
@@ -121,7 +141,7 @@ pub fn path(
                                     "Add key"
                                 },
                             )
-                            .on_press(message::DefinePath::AddKey),
+                            .on_press_maybe(editable.then_some(message::DefinePath::AddKey)),
                         ),
                 )
             }),
@@ -170,6 +190,7 @@ pub fn defined_key<'a>(
     title: impl Display,
     warning: Option<&'static str>,
     fixed: bool,
+    editable: bool,
 ) -> Element<'a, message::DefineKey> {
     card::simple(
         Row::new()
@@ -196,7 +217,7 @@ pub fn defined_key<'a>(
             })
             .push(
                 button::secondary(Some(icon::pencil_icon()), "Edit")
-                    .on_press(message::DefineKey::EditAlias),
+                    .on_press_maybe(editable.then_some(message::DefineKey::EditAlias)),
             )
             .push_maybe(if fixed {
                 None
@@ -205,7 +226,7 @@ pub fn defined_key<'a>(
                     Button::new(icon::trash_icon())
                         .style(theme::button::secondary)
                         .padding(5)
-                        .on_press(message::DefineKey::Delete),
+                        .on_press_maybe(editable.then_some(message::DefineKey::Delete)),
                 )
             }),
     )
@@ -217,6 +238,7 @@ pub fn undefined_key<'a>(
     title: impl Into<Cow<'a, str>> + std::fmt::Display,
     active: bool,
     fixed: bool,
+    editable: bool,
 ) -> Element<'a, message::DefineKey> {
     card::simple(
         Row::new()
@@ -233,7 +255,7 @@ pub fn undefined_key<'a>(
             .push_maybe(if active {
                 Some(
                     button::primary(Some(icon::pencil_icon()), "Set")
-                        .on_press(message::DefineKey::Edit),
+                        .on_press_maybe(editable.then_some(message::DefineKey::Edit)),
                 )
             } else {
                 None
@@ -245,7 +267,7 @@ pub fn undefined_key<'a>(
                     Button::new(icon::trash_icon())
                         .style(theme::button::secondary)
                         .padding(5)
-                        .on_press(message::DefineKey::Delete),
+                        .on_press_maybe(editable.then_some(message::DefineKey::Delete)),
                 )
             }),
     )
