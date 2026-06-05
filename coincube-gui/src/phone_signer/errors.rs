@@ -30,12 +30,20 @@ pub enum PairingError {
     },
 
     /// A second pairing attempt arrived after one had already
-    /// completed in this listener window, or the phone failed a
-    /// PSK-based proof-of-QR-scan check. Placeholder until the
-    /// proto carries a PSK HMAC field — today the listener accepts
+    /// completed in this listener window. Today the listener accepts
     /// exactly one connection per offer, so this variant isn't
     /// produced.
     ReplayRefused,
+
+    /// The peer that answered the pairing dial failed the
+    /// proof-of-QR-scan check: its `pairing_proof` didn't match the
+    /// HMAC the desktop recomputed from the offer's `psk` and the
+    /// observed cert fingerprints (or it was missing — e.g. a
+    /// pre-v2 phone). The desktop refuses to pin a cert it can't
+    /// tie back to the device that scanned the QR, so this also
+    /// fires when an active LAN attacker wins the dial race. See
+    /// `crate::phone_signer::pairing::verify_pairing_proof`.
+    PhoneVerificationFailed,
 
     /// Anything below the application layer: socket bind failure,
     /// mDNS registration error, TLS handshake failure, framed-read
@@ -65,6 +73,10 @@ impl std::fmt::Display for PairingError {
             Self::ReplayRefused => {
                 write!(f, "Pairing rejected: the QR code has already been used.")
             }
+            Self::PhoneVerificationFailed => write!(
+                f,
+                "Pairing rejected: couldn't verify the phone that scanned the QR."
+            ),
             Self::NetworkError(s) => write!(f, "Network error during pairing: {}", s),
             Self::InternalError(s) => write!(f, "Pairing failed: {}", s),
         }
@@ -95,6 +107,10 @@ mod tests {
             claimed: Fingerprint::default(),
         }
         .is_retriable());
+        // A failed proof is retriable — Try Again mints a fresh offer
+        // (new psk), which is the legitimate remedy for a transient
+        // mismatch and harmless against a persistent attacker.
+        assert!(PairingError::PhoneVerificationFailed.is_retriable());
         assert!(!PairingError::ReplayRefused.is_retriable());
     }
 
@@ -111,6 +127,9 @@ mod tests {
 
         let s = PairingError::ReplayRefused.to_string();
         assert!(s.to_lowercase().contains("already"), "got: {}", s);
+
+        let s = PairingError::PhoneVerificationFailed.to_string();
+        assert!(s.to_lowercase().contains("verify"), "got: {}", s);
 
         let s = PairingError::WalletFingerprintMismatch {
             expected: vec![Fingerprint::default()],

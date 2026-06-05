@@ -212,6 +212,14 @@ fn error_body<'a>(err: &'a PairingError) -> Element<'a, Message> {
              and start a fresh offer rather than re-using it."
                 .to_string(),
         ),
+        PairingError::PhoneVerificationFailed => (
+            "Couldn't verify the phone",
+            "The device that scanned the QR couldn't prove it's the \
+             phone you're pairing. This can happen on an untrusted \
+             network. Make sure both devices are on a network you \
+             trust, then start a fresh pairing."
+                .to_string(),
+        ),
         PairingError::NetworkError(s) => (
             "Network error",
             format!(

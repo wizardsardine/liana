@@ -128,6 +128,15 @@ rustls-pki-types = "1"
 rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 mdns-sd = "0.13"
+# HMAC-SHA256 for the pairing proof-of-QR-scan. Already in the tree
+# via rustls's `ring` feature; depending on it directly avoids the
+# digest-trait version split between hmac 0.12 (digest 0.10) and sha2
+# 0.11 (digest 0.11).
+ring = "0.17"
+# Constant-time comparison of the pairing proof MAC. `ring`'s own
+# constant_time helper is deprecated ("no promises regarding side
+# channels"), so use the dedicated, audited primitive.
+subtle = "2"
 
 dotenvy = "0.15.7"
 

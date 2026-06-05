@@ -125,6 +125,43 @@ pub fn upsert(dir: &CoincubeDirectory, phone: PairedPhone) -> std::io::Result<Pa
     Ok(file)
 }
 
+/// Persist a freshly completed pairing, preserving the user-customised
+/// `name` and `fallback_addr` from any prior row with the same
+/// `cert_pin`. Returns the merged row that was written.
+///
+/// Re-pairing the same phone must not clobber a manual fallback
+/// `host:port` (set in the settings panel for mDNS-blocked networks)
+/// or a user-applied rename: the fresh `run_pairing` result only
+/// carries phone-reported defaults, so it can't be the source of
+/// truth for fields the desktop user has since edited. A load error
+/// while looking up the prior row is harmless — `upsert` below would
+/// surface the same I/O failure, and on a first-time pairing there's
+/// no prior row to preserve anyway.
+///
+/// This runs inside the spawned pairing task (not the UI handler) so a
+/// completed pairing is recorded even if the user navigated away from
+/// the panel before the handshake finished — the phone is committed
+/// once `run_pairing` returns `Ok`, so the desktop must record it too
+/// or the two sides drift into a half-paired state.
+pub fn upsert_preserving_user_fields(
+    dir: &CoincubeDirectory,
+    fresh: PairedPhone,
+) -> std::io::Result<PairedPhone> {
+    let merged = match load(dir)
+        .ok()
+        .and_then(|file| file.phones.into_iter().find(|e| e.cert_pin == fresh.cert_pin))
+    {
+        Some(existing) => PairedPhone {
+            fallback_addr: existing.fallback_addr,
+            name: existing.name,
+            ..fresh
+        },
+        None => fresh,
+    };
+    upsert(dir, merged.clone())?;
+    Ok(merged)
+}
+
 /// Remove a paired phone by cert pin. No-op if not present.
 pub fn remove(dir: &CoincubeDirectory, cert_pin: &[u8; 32]) -> std::io::Result<PairingStoreFile> {
     let mut file = load(dir)?;
@@ -218,6 +255,73 @@ mod tests {
         let read = load(&dir).expect("load");
         assert_eq!(read.phones.len(), 1);
         assert_eq!(read.phones[0].cert_pin, [2u8; 32]);
+    }
+
+    /// Re-pairing the same phone (matched by cert pin) must preserve a
+    /// user-applied rename and a manually-entered fallback addr, while
+    /// still taking the fresh run's `paired_at_unix` and
+    /// `wallet_fingerprints`. The fresh row only carries phone-reported
+    /// defaults, so it can't be the source of truth for fields the
+    /// desktop user has since edited.
+    #[test]
+    fn upsert_preserving_user_fields_keeps_rename_and_fallback() {
+        let dir = fresh_dir();
+        let prior = PairedPhone {
+            cert_pin: [42u8; 32],
+            name: "My Phone".into(),
+            paired_at_unix: 1_700_000_000,
+            wallet_fingerprints: Vec::new(),
+            fallback_addr: Some("10.0.0.5:8443".into()),
+        };
+        save(
+            &dir,
+            &PairingStoreFile {
+                phones: vec![prior],
+            },
+        )
+        .expect("seed store");
+
+        let fresh = PairedPhone {
+            cert_pin: [42u8; 32],
+            name: "Pixel 8".into(),
+            paired_at_unix: 1_700_999_999,
+            wallet_fingerprints: vec![Fingerprint::from([1, 2, 3, 4])],
+            fallback_addr: None,
+        };
+        let written = upsert_preserving_user_fields(&dir, fresh).expect("upsert");
+
+        // Returned row reflects the merge.
+        assert_eq!(written.name, "My Phone");
+        assert_eq!(written.fallback_addr.as_deref(), Some("10.0.0.5:8443"));
+
+        let on_disk = load(&dir).expect("load");
+        assert_eq!(on_disk.phones.len(), 1);
+        // User-customised fields preserved from the prior row.
+        assert_eq!(on_disk.phones[0].name, "My Phone");
+        assert_eq!(
+            on_disk.phones[0].fallback_addr.as_deref(),
+            Some("10.0.0.5:8443"),
+        );
+        // Fields that legitimately come from the fresh run survive.
+        assert_eq!(on_disk.phones[0].paired_at_unix, 1_700_999_999);
+        assert_eq!(
+            on_disk.phones[0].wallet_fingerprints,
+            vec![Fingerprint::from([1, 2, 3, 4])],
+        );
+    }
+
+    /// First-time pairing (no prior row) writes the fresh row verbatim.
+    #[test]
+    fn upsert_preserving_user_fields_first_pair_writes_fresh() {
+        let dir = fresh_dir();
+        let fresh = sample_phone(5);
+        let written = upsert_preserving_user_fields(&dir, fresh.clone()).expect("upsert");
+        assert_eq!(written.name, fresh.name);
+
+        let on_disk = load(&dir).expect("load");
+        assert_eq!(on_disk.phones.len(), 1);
+        assert_eq!(on_disk.phones[0].cert_pin, fresh.cert_pin);
+        assert_eq!(on_disk.phones[0].name, fresh.name);
     }
 
     #[test]

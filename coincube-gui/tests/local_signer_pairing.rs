@@ -39,11 +39,19 @@ use coincube_gui::phone_signer::{
     errors::PairingError,
     identity::DesktopIdentity,
     mdns::DiscoveredPhone,
-    pairing::{PairingOffer, PAIRING_PROTOCOL_VERSION},
+    pairing::{self, PairingOffer, PAIRING_PROTOCOL_VERSION},
     pairing_listener,
     protocol::{local_v1, LocalEnvelope},
     tls,
 };
+
+/// Compute the v2 proof-of-QR-scan the fake phone must return so the
+/// desktop will pin its cert. Mirrors what the keychain-app does after
+/// scanning the QR. See
+/// `coincube_gui::phone_signer::pairing::pairing_proof`.
+fn proof_for(offer: &PairingOffer, phone_cert_fp_hex: &str) -> String {
+    pairing::pairing_proof(&offer.psk_b64, &offer.cert_fp, phone_cert_fp_hex).expect("proof")
+}
 
 fn mint_ed25519_cert(common_name: &str) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
     let key_pair = KeyPair::generate_for(&PKCS_ED25519).expect("ed25519 keygen");
@@ -74,6 +82,13 @@ fn fresh_offer(wallet_fp: Fingerprint, cert_fp: String, ttl_secs: u64) -> Pairin
         service_name: "keychain-test".to_string(),
         wallet_fingerprint: wallet_fp,
         expires_at_unix: exp,
+        // Borrow a well-formed psk from a throwaway generated offer so
+        // the test crate doesn't need base64 directly. The value is
+        // arbitrary; what matters is that the fake phone's proof is
+        // computed over this same psk (via `proof_for`).
+        psk_b64: pairing::generate_offer(wallet_fp, &fresh_desktop_identity(), "x".into())
+            .offer
+            .psk_b64,
     }
 }
 
@@ -94,6 +109,7 @@ async fn fake_phone_server(
     phone_key: PrivateKeyDer<'static>,
     device_name: String,
     phone_cert_fp_hex: String,
+    pairing_proof: String,
 ) {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let cfg = ServerConfig::builder_with_provider(provider)
@@ -118,6 +134,7 @@ async fn fake_phone_server(
                 device_name,
                 app_version: "test-1.0".into(),
                 capabilities: vec!["sign-psbt".into()],
+                pairing_proof,
             },
         )),
     };
@@ -153,6 +170,11 @@ async fn run_pairing_happy_path_returns_paired_phone() {
         .expect("bind");
     let addr = listener.local_addr().expect("local_addr");
 
+    let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
+    let identity = fresh_desktop_identity();
+    let offer = fresh_offer(wallet_fp, identity.cert_fp(), 30);
+    let proof = proof_for(&offer, &phone_cert_fp_hex);
+
     let phone_cert_for_server = phone_cert.clone();
     let phone_handle = tokio::spawn(fake_phone_server(
         listener,
@@ -160,11 +182,9 @@ async fn run_pairing_happy_path_returns_paired_phone() {
         phone_key,
         "Test Pixel".into(),
         phone_cert_fp_hex.clone(),
+        proof,
     ));
 
-    let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
-    let identity = fresh_desktop_identity();
-    let offer = fresh_offer(wallet_fp, identity.cert_fp(), 30);
     let phone = DiscoveredPhone {
         cert_fp8: phone_cert_fp_hex[..8].to_string(),
         addr,
@@ -222,20 +242,25 @@ async fn run_pairing_returns_wallet_fingerprint_mismatch() {
         .expect("bind");
     let addr = listener.local_addr().expect("local_addr");
 
-    let phone_handle = tokio::spawn(fake_phone_server(
-        listener,
-        phone_cert,
-        phone_key,
-        "Wrong-wallet phone".into(),
-        phone_cert_fp_hex.clone(),
-    ));
-
     // Offer is for `wanted`; desktop's local wallet only contains
     // `actual`. The post-handshake fingerprint check should reject.
     let wanted = Fingerprint::from([9, 9, 9, 9]);
     let actual = Fingerprint::from([1, 2, 3, 4]);
     let identity = fresh_desktop_identity();
     let offer = fresh_offer(wanted, identity.cert_fp(), 30);
+    // Valid proof so we get PAST the phone-auth check and actually
+    // exercise the wallet-fingerprint mismatch this test is about.
+    let proof = proof_for(&offer, &phone_cert_fp_hex);
+
+    let phone_handle = tokio::spawn(fake_phone_server(
+        listener,
+        phone_cert,
+        phone_key,
+        "Wrong-wallet phone".into(),
+        phone_cert_fp_hex.clone(),
+        proof,
+    ));
+
     let phone = DiscoveredPhone {
         cert_fp8: phone_cert_fp_hex[..8].to_string(),
         addr,
@@ -272,12 +297,16 @@ async fn run_pairing_rejects_phone_reporting_mismatched_cert_fp() {
     // Deliberately wrong: 64 hex chars of zeros, not the real
     // cert's SHA-256.
     let bogus_fp = "0".repeat(64);
+    // The reported-cert-fp equality check runs before the proof check,
+    // so this never reaches proof verification — an empty proof is
+    // fine.
     let phone_handle = tokio::spawn(fake_phone_server(
         listener,
         phone_cert,
         phone_key,
         "BogusPhone".into(),
         bogus_fp,
+        String::new(),
     ));
 
     let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
@@ -302,6 +331,60 @@ async fn run_pairing_rejects_phone_reporting_mismatched_cert_fp() {
         }
         other => panic!("expected InternalError(mismatch), got {:?}", other),
     }
+
+    let _ = phone_handle.await;
+}
+
+#[tokio::test]
+async fn run_pairing_rejects_invalid_pairing_proof() {
+    // Security regression: the desktop dials unpinned and pins
+    // whatever cert answers, so the proof-of-QR-scan is the ONLY thing
+    // tying that cert to the device that scanned the QR. A peer that
+    // reports a correct cert fp (passes the equality check) but a
+    // wrong/absent proof must be refused, not pinned — this is the
+    // active-LAN-attacker / wrong-psk case. See
+    // plans/PLAN-local-signer-pairing-phone-auth.md.
+    let (phone_cert, phone_key) = mint_ed25519_cert("Coincube Phone (test)");
+    let phone_pin = tls::fingerprint_of(&phone_cert);
+    let phone_cert_fp_hex = phone_pin
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    // Correct cert fp (equality check passes), but a proof that
+    // doesn't match the offer's psk — 64 hex chars of zeros.
+    let bad_proof = "0".repeat(64);
+    let phone_handle = tokio::spawn(fake_phone_server(
+        listener,
+        phone_cert,
+        phone_key,
+        "Impostor".into(),
+        phone_cert_fp_hex.clone(),
+        bad_proof,
+    ));
+
+    let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
+    let identity = fresh_desktop_identity();
+    let offer = fresh_offer(wallet_fp, identity.cert_fp(), 30);
+    let phone = DiscoveredPhone {
+        cert_fp8: phone_cert_fp_hex[..8].to_string(),
+        addr,
+        instance_name: "keychain-test".into(),
+    };
+
+    let result =
+        pairing_listener::run_pairing(identity, offer, phone, wallet_fp, vec![wallet_fp]).await;
+
+    assert!(
+        matches!(result, Err(PairingError::PhoneVerificationFailed)),
+        "expected PhoneVerificationFailed, got {:?}",
+        result,
+    );
 
     let _ = phone_handle.await;
 }
@@ -410,13 +493,6 @@ async fn run_pairing_returns_signer_fps_not_vault_id() {
         .await
         .expect("bind");
     let addr = listener.local_addr().expect("local_addr");
-    let phone_handle = tokio::spawn(fake_phone_server(
-        listener,
-        phone_cert,
-        phone_key,
-        "Test Pixel".into(),
-        phone_cert_fp_hex.clone(),
-    ));
 
     // Vault id and signer fps are deliberately disjoint — this is
     // the realistic shape: `id_fingerprint` is sha256(descriptor)[..4]
@@ -429,6 +505,16 @@ async fn run_pairing_returns_signer_fps_not_vault_id() {
 
     let identity = fresh_desktop_identity();
     let offer = fresh_offer(vault_id, identity.cert_fp(), 30);
+    let proof = proof_for(&offer, &phone_cert_fp_hex);
+    let phone_handle = tokio::spawn(fake_phone_server(
+        listener,
+        phone_cert,
+        phone_key,
+        "Test Pixel".into(),
+        phone_cert_fp_hex.clone(),
+        proof,
+    ));
+
     let phone = DiscoveredPhone {
         cert_fp8: phone_cert_fp_hex[..8].to_string(),
         addr,
@@ -463,6 +549,7 @@ async fn fake_phone_close_then_serve(
     phone_key: PrivateKeyDer<'static>,
     device_name: String,
     phone_cert_fp_hex: String,
+    pairing_proof: String,
 ) {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let cfg = ServerConfig::builder_with_provider(provider)
@@ -488,6 +575,7 @@ async fn fake_phone_close_then_serve(
                 device_name,
                 app_version: "test-1.0".into(),
                 capabilities: vec!["sign-psbt".into()],
+                pairing_proof,
             },
         )),
     };
@@ -570,17 +658,20 @@ async fn run_pairing_redials_after_phone_closes_early() {
         .expect("bind");
     let addr = listener.local_addr().expect("local_addr");
 
+    let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
+    let identity = fresh_desktop_identity();
+    let offer = fresh_offer(wallet_fp, identity.cert_fp(), 30);
+    let proof = proof_for(&offer, &phone_cert_fp_hex);
+
     let phone_handle = tokio::spawn(fake_phone_close_then_serve(
         listener,
         phone_cert,
         phone_key,
         "Pixel".into(),
         phone_cert_fp_hex.clone(),
+        proof,
     ));
 
-    let wallet_fp = Fingerprint::from([1, 2, 3, 4]);
-    let identity = fresh_desktop_identity();
-    let offer = fresh_offer(wallet_fp, identity.cert_fp(), 30);
     let phone = DiscoveredPhone {
         cert_fp8: phone_cert_fp_hex[..8].to_string(),
         addr,

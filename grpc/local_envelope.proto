@@ -26,12 +26,10 @@ message LocalEnvelope {
 }
 
 // Sent by the phone as the first frame after the pairing TLS
-// handshake completes, so the desktop can confirm the phone's
-// reported cert fingerprint matches the one it pinned from the
-// just-completed handshake. Validation today is informational
-// (the pin is taken from the live TLS cert, not from this string)
-// but the string IS expected to round-trip cleanly so misconfigured
-// phones surface in logs.
+// handshake completes. Carries the phone's reported cert fingerprint
+// (informational — the pin is taken from the live TLS cert) and, as
+// of pairing protocol v2, the proof-of-QR-scan that lets the desktop
+// authenticate the phone it just dialed.
 message PairingComplete {
   // SHA-256 of the phone's self-signed cert DER, lowercase hex
   // (64 chars). MUST match the bytes pinned from the TLS handshake.
@@ -39,6 +37,28 @@ message PairingComplete {
   string device_name           = 2;
   string app_version           = 3;
   repeated string capabilities = 4;
+  // Proof that the sender actually scanned THIS QR, bound to both
+  // cert pins so it can't be relayed/substituted. REQUIRED as of
+  // pairing protocol v2 — the desktop rejects pairing if it's
+  // missing or wrong.
+  //
+  //   pairing_proof = lowercase_hex(
+  //       HMAC-SHA256(
+  //           key = psk_bytes,            // base64url-no-pad-decoded from QR `psk`
+  //           msg = "coincube-pair-v2"    // 16 ASCII bytes, no NUL
+  //               || desktop_cert_fp      // 64 lowercase-hex ASCII (QR `certFp`)
+  //               || phone_cert_fp        // 64 lowercase-hex ASCII (this phone's cert SHA-256)
+  //       )
+  //   )
+  //
+  // The three msg segments are concatenated as raw bytes in exactly
+  // this order, no separators. `desktop_cert_fp` is the value the
+  // phone read from the QR; `phone_cert_fp` is the SHA-256 of the
+  // phone's own self-signed cert DER (same value as field 1). The
+  // desktop recomputes this using the cert fp it captured from the
+  // live TLS handshake (not field 1) and constant-time compares.
+  // See plans/PLAN-local-signer-pairing-phone-auth.md.
+  string pairing_proof         = 5;
 }
 
 // Desktop -> phone: a PSBT to sign, wrapped in the same SigningSession

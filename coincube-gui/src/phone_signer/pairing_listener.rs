@@ -255,6 +255,35 @@ async fn try_pair_once(
         expected_pin_hex,
     );
 
+    // Proof-of-QR-scan (protocol v2). The phone returns an HMAC over
+    // both cert fingerprints keyed by the per-offer `psk` carried in
+    // the QR. Only a device that actually scanned this QR knows the
+    // psk, so a valid proof is the desktop's evidence that the cert
+    // it just captured belongs to the phone the user is holding —
+    // without this, the unpinned dial (`connect_unpinned`) would pin
+    // whatever cert answered on the LAN, letting an active attacker
+    // who wins the dial race become a permanent MITM. Binding the MAC
+    // to the **handshake** cert fp (`expected_pin_hex`, not the
+    // phone-reported string) means a relay/substitution attacker —
+    // who terminates TLS with a different cert — can't forward a
+    // genuine phone's proof. See
+    // plans/PLAN-local-signer-pairing-phone-auth.md.
+    if crate::phone_signer::pairing::verify_pairing_proof(
+        &offer.psk_b64,
+        &offer.cert_fp,
+        &expected_pin_hex,
+        complete.pairing_proof.trim(),
+    )
+    .is_err()
+    {
+        tracing::warn!(
+            target: "phone_signer::pairing",
+            "pairing proof verification failed for cert {} — refusing to pin",
+            expected_pin_hex,
+        );
+        return Err(PairingError::PhoneVerificationFailed);
+    }
+
     // The offer's `wallet_fingerprint` is the desktop's vault id
     // (`Wallet::id_fingerprint`) — a 4-byte digest of the descriptor.
     // It must equal the locally-loaded wallet's vault id; otherwise

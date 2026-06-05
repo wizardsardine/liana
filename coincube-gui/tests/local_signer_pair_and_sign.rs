@@ -37,7 +37,7 @@ use coincube_gui::dir::CoincubeDirectory;
 use coincube_gui::phone_signer::{
     identity::DesktopIdentity,
     mdns::DiscoveredPhone,
-    pairing::{decode_offer, encode_offer, generate_offer, PairingOffer},
+    pairing::{decode_offer, encode_offer, generate_offer, pairing_proof, PairingOffer},
     pairing_listener,
     pairing_store::PairedPhone,
     protocol::{local_v1, LocalEnvelope},
@@ -124,6 +124,7 @@ async fn fake_phone_pair_then_sign(
     phone_key: PrivateKeyDer<'static>,
     phone_cert_fp_hex: String,
     trust_desktop_pin: CertFingerprint,
+    pairing_proof: String,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cfg = fake_phone_server_config(phone_cert, phone_key, trust_desktop_pin);
     let acceptor = TlsAcceptor::from(Arc::new(cfg));
@@ -140,6 +141,7 @@ async fn fake_phone_pair_then_sign(
                     device_name: "TestPhone".into(),
                     app_version: "test-1.0".into(),
                     capabilities: vec!["sign-psbt".into()],
+                    pairing_proof,
                 },
             )),
         };
@@ -220,6 +222,11 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
     // ── Phone side: validate cert/certFp agreement; pin desktop's
     // cert into the TLS trust slot.
     let trust_desktop_pin = extract_trusted_desktop_pin(&decoded);
+    // Proof-of-QR-scan over the round-tripped offer's psk — the phone
+    // computes this after scanning, and the desktop verifies it before
+    // pinning.
+    let proof =
+        pairing_proof(&decoded.psk_b64, &decoded.cert_fp, &phone_cert_fp_hex).expect("proof");
     let phone_cert_for_server = phone_cert.clone();
     let phone_handle = tokio::spawn(fake_phone_pair_then_sign(
         listener,
@@ -227,6 +234,7 @@ async fn full_pair_then_sign_flow_via_offer_trust_path() {
         phone_key,
         phone_cert_fp_hex.clone(),
         trust_desktop_pin,
+        proof,
     ));
 
     // ── Phase 1: pair. Use the decoded offer to prove the wire
@@ -304,12 +312,16 @@ async fn handshake_fails_when_phone_pins_a_different_cert() {
     let (other_desk_cert, _other_desk_key) = mint_ed25519_cert("Some other desktop");
     let wrong_pin = tls::fingerprint_of(&other_desk_cert);
 
+    // The TLS handshake fails on the wrong pin before any
+    // PairingComplete is sent, so the proof is never reached — empty
+    // is fine.
     let phone_handle = tokio::spawn(fake_phone_pair_then_sign(
         listener,
         phone_cert,
         phone_key,
         phone_cert_fp_hex.clone(),
         wrong_pin,
+        String::new(),
     ));
 
     let phone_discovered = DiscoveredPhone {
