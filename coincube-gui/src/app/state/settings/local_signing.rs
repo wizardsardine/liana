@@ -92,6 +92,22 @@ pub struct LocalSigningState {
     /// ignored. Bumped on `PickPhone` (start a new run) and
     /// `CancelPairing` (invalidate any in-flight run).
     pub pairing_id: u64,
+    /// Cert pins the user has explicitly removed during this app
+    /// session. The spawned `Task::perform` for a pairing handshake
+    /// captures a clone of this `Arc` and checks it before persisting
+    /// the result — without the check, an in-flight pairing whose
+    /// handshake completes AFTER the user clicks "Remove" on the same
+    /// row would call `upsert_preserving_user_fields` and silently
+    /// re-add the row the user just deleted (the existing `pairing_id`
+    /// guard only gates the UI update, not the disk write).
+    ///
+    /// `Arc<Mutex<_>>` rather than a plain field so the spawned task
+    /// can read it after the state's owning panel has been dropped on
+    /// settings navigation. The set is purely in-memory and not
+    /// persisted: tombstones only need to outlive any in-flight
+    /// `run_pairing` future (at most the pairing-offer TTL, ~120s),
+    /// not across app restarts.
+    pub tombstones: Arc<Mutex<HashSet<[u8; 32]>>>,
     /// `reload` doesn't get a `Cache` (it only sees daemon + wallet),
     /// so we defer the first store load to the first `update` tick
     /// where `cache` is available.
@@ -107,6 +123,7 @@ impl Default for LocalSigningState {
             wallet_signer_fingerprints: Vec::new(),
             row_drafts: HashMap::new(),
             pairing_id: 0,
+            tombstones: Arc::new(Mutex::new(HashSet::new())),
             initialised: false,
         }
     }
@@ -360,6 +377,18 @@ impl LocalSigningState {
             }
         });
         if let Some(pk) = to_remove {
+            // Tombstone BEFORE the store delete so an in-flight
+            // `Task::perform` whose `run_pairing` resolves between
+            // here and the disk write sees the tombstone and skips
+            // its own `upsert_preserving_user_fields`. Without this,
+            // a pairing handshake that completes immediately after
+            // the user clicks Remove would re-add the row the user
+            // just deleted — the existing `pairing_id` mechanism
+            // only gates the UI; it doesn't reach the spawned task's
+            // persistence step.
+            if let Ok(mut g) = self.tombstones.lock() {
+                g.insert(pk);
+            }
             let _ = crate::phone_signer::pairing_store::remove(dir, &pk);
             self.row_drafts.remove(fp8);
             self.refresh_phones_from(dir);
