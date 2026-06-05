@@ -39,57 +39,54 @@ impl LabelsEdited {
         targets: T,
     ) -> Result<Task<Message>, Error> {
         match message {
-            Message::View(view::Message::Label(items, msg)) => match msg {
-                view::LabelMessage::Edited(value) => {
-                    let valid = value.len() <= 100;
-                    for item in items {
-                        if let Some(label) = self.0.get_mut(&item) {
-                            label.valid = valid;
-                            label.value.clone_from(&value);
+            // Edit (open the label editor) is handled by each panel before it reaches the
+            // shared cache; it falls through to the catch-all below.
+            Message::View(view::Message::Label(items, view::LabelMessage::Edited(value))) => {
+                let valid = value.len() <= 100;
+                for item in items {
+                    if let Some(label) = self.0.get_mut(&item) {
+                        label.valid = valid;
+                        label.value.clone_from(&value);
+                    } else {
+                        self.0.insert(
+                            item,
+                            form::Value {
+                                valid,
+                                warning: None,
+                                value: value.clone(),
+                            },
+                        );
+                    }
+                }
+            }
+            Message::View(view::Message::Label(items, view::LabelMessage::Cancel)) => {
+                for item in items {
+                    self.0.remove(&item);
+                }
+            }
+            Message::View(view::Message::Label(items, view::LabelMessage::Confirm)) => {
+                let mut updated_labels = HashMap::<LabelItem, Option<String>>::new();
+                let mut updated_labels_str = HashMap::<String, Option<String>>::new();
+                for item in items {
+                    if let Some(label) = self.0.get(&item).cloned() {
+                        let item_str = label_item_from_str(&item);
+                        if label.value.is_empty() {
+                            updated_labels.insert(item_str, None);
+                            updated_labels_str.insert(item, None);
                         } else {
-                            self.0.insert(
-                                item,
-                                form::Value {
-                                    valid,
-                                    warning: None,
-                                    value: value.clone(),
-                                },
-                            );
+                            updated_labels.insert(item_str, Some(label.value.clone()));
+                            updated_labels_str.insert(item, Some(label.value));
                         }
                     }
                 }
-                view::LabelMessage::Cancel => {
-                    for item in items {
-                        self.0.remove(&item);
-                    }
-                }
-                view::LabelMessage::Confirm => {
-                    let mut updated_labels = HashMap::<LabelItem, Option<String>>::new();
-                    let mut updated_labels_str = HashMap::<String, Option<String>>::new();
-                    for item in items {
-                        if let Some(label) = self.0.get(&item).cloned() {
-                            let item_str = label_item_from_str(&item);
-                            if label.value.is_empty() {
-                                updated_labels.insert(item_str, None);
-                                updated_labels_str.insert(item, None);
-                            } else {
-                                updated_labels.insert(item_str, Some(label.value.clone()));
-                                updated_labels_str.insert(item, Some(label.value));
-                            }
-                        }
-                    }
-                    return Ok(Task::perform(
-                        async move {
-                            daemon.update_labels(&updated_labels).await?;
-                            Ok(updated_labels_str)
-                        },
-                        Message::LabelsUpdated,
-                    ));
-                }
-                view::LabelMessage::Edit => {
-                    // TODO: open label edit modal
-                }
-            },
+                return Ok(Task::perform(
+                    async move {
+                        daemon.update_labels(&updated_labels).await?;
+                        Ok(updated_labels_str)
+                    },
+                    Message::LabelsUpdated,
+                ));
+            }
             Message::LabelsUpdated(res) => match res {
                 Ok(new_labels) => {
                     for target in targets {

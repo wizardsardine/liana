@@ -145,3 +145,13 @@ pub fn new_address_show_modal<'a>(address: &Address) -> Element<'a, Message> {
         Message::Clipboard(address.to_string()),
     )
 }
+
+pub fn new_address_processing_modal<'a>() -> Element<'a, Message> {
+    modal::modal_view(
+        Some("Generating address"),
+        None,
+        None,
+        modal::ModalWidth::M,
+        Container::new(text("Generating address ...")).center_x(Length::Fill),
+    )
+}
