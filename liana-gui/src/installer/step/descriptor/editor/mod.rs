@@ -16,7 +16,7 @@ use liana::{
 };
 
 use liana_ui::{
-    component::form,
+    component::{form, spinner},
     widget::{modal::Modal, Element},
 };
 
@@ -642,7 +642,15 @@ impl Step for DefineDescriptor {
             ),
         };
         if self.processing {
-            Modal::new(content, view::editor::processing_modal()).into()
+            Modal::new(
+                content,
+                spinner::spinner_modal(
+                    "Compiling descriptor",
+                    "Generating and validating your wallet descriptor. This can take a few seconds.",
+                ),
+            )
+            .backdrop(liana_ui::color::BLACK_60)
+            .into()
         } else if let Some(modal) = &self.modal {
             Modal::new(content, modal.view(hws))
                 .on_blur(if modal.processing() {

@@ -79,6 +79,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     .scale_factor(LianaBusiness::scale_factor)
     .subscription(LianaBusiness::subscription)
     .settings(settings)
+    .antialiasing(true)
     .window(window_settings)
     .run()
     {

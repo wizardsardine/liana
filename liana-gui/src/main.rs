@@ -57,6 +57,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     .scale_factor(LianaGUI::scale_factor)
     .subscription(LianaGUI::subscription)
     .settings(settings)
+    .antialiasing(true)
     .window(window_settings)
     .run()
     {

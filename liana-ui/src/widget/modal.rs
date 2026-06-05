@@ -6,13 +6,14 @@ use iced::advanced::widget::{self, Tree, Widget};
 use iced::advanced::{self, Clipboard, Shell};
 use iced::alignment::Alignment;
 use iced::mouse;
-use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
+use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Vector};
 
 /// A widget that centers a modal element over some base element
 pub struct Modal<'a, Message, Theme, Renderer> {
     base: Element<'a, Message, Theme, Renderer>,
     modal: Element<'a, Message, Theme, Renderer>,
     on_blur: Option<Message>,
+    backdrop: Color,
 }
 
 impl<'a, Message, Theme, Renderer> Modal<'a, Message, Theme, Renderer> {
@@ -25,6 +26,7 @@ impl<'a, Message, Theme, Renderer> Modal<'a, Message, Theme, Renderer> {
             base: base.into(),
             modal: modal.into(),
             on_blur: None,
+            backdrop: crate::color::BLACK_80,
         }
     }
 
@@ -32,6 +34,11 @@ impl<'a, Message, Theme, Renderer> Modal<'a, Message, Theme, Renderer> {
     /// of the [`Modal`] is pressed
     pub fn on_blur(self, on_blur: Option<Message>) -> Self {
         Self { on_blur, ..self }
+    }
+
+    /// Sets the color used to dim the base element behind the modal.
+    pub fn backdrop(self, backdrop: Color) -> Self {
+        Self { backdrop, ..self }
     }
 }
 
@@ -122,6 +129,7 @@ where
             tree: &mut state.children[1],
             size: layout.bounds().size(),
             on_blur: self.on_blur.clone(),
+            backdrop: self.backdrop,
         })))
     }
 
@@ -161,6 +169,7 @@ struct Overlay<'a, 'b, Message, Theme, Renderer> {
     tree: &'b mut Tree,
     size: Size,
     on_blur: Option<Message>,
+    backdrop: Color,
 }
 
 impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
@@ -237,7 +246,7 @@ where
                 bounds: layout.bounds(),
                 ..renderer::Quad::default()
             },
-            crate::color::BLACK_80,
+            self.backdrop,
         );
 
         self.content.as_widget().draw(
