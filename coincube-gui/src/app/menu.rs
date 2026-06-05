@@ -125,6 +125,12 @@ pub enum SettingsOption {
     Node,
     Wallet,
     ImportExport,
+    /// Local LAN signer ("Paired phones") — pair a Keychain phone over
+    /// Wi-Fi so it shows up in the signer list without Connect. Lives
+    /// under Vault → Settings because the paired phone signs PSBTs for
+    /// this vault specifically (the persisted record is scoped to the
+    /// vault's id fingerprint).
+    LocalSigning,
 }
 
 /// Discriminant for the primary (left-most) nav rail. Derived from `Menu`

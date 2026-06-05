@@ -1278,9 +1278,10 @@ impl App {
                     // Fire even if daemon is None — the inner settings
                     // panels don't require daemon for construction; they
                     // just pass it through to their own reload().
+                    let daemon = self.daemon.clone();
                     if let Some(panel) = self.panels.current_mut() {
                         return panel.update(
-                            self.daemon.clone(),
+                            daemon,
                             &self.cache,
                             Message::View(view::Message::Settings(section_msg)),
                         );
@@ -1360,6 +1361,9 @@ impl App {
                                             }
                                             menu::SettingsOption::ImportExport => {
                                                 view::SettingsMessage::ImportExportSection
+                                            }
+                                            menu::SettingsOption::LocalSigning => {
+                                                view::SettingsMessage::LocalSigningSection
                                             }
                                         })),
                                     );

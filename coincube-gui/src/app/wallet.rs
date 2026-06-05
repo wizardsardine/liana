@@ -326,6 +326,25 @@ impl Wallet {
         self
     }
 
+    /// Stable 4-byte identifier derived from the wallet's descriptor.
+    /// Unique per vault (same descriptor → same id), distinct from
+    /// any individual signer's BIP-32 master fingerprint in
+    /// [`Self::descriptor_keys`].
+    ///
+    /// Used by the local-signer pairing flow to identify the **vault
+    /// as a whole** in the QR offer and on the persisted
+    /// `PairedPhone`. A multisig wallet has no canonical BIP-32
+    /// "master fingerprint" — picking one of its key fingerprints
+    /// would conflate the wallet with one of its signers — so the
+    /// identifier is hashed from the descriptor string itself.
+    pub fn id_fingerprint(&self) -> Fingerprint {
+        use sha2::Digest;
+        let digest = sha2::Sha256::digest(self.main_descriptor.to_string().as_bytes());
+        let mut bytes = [0u8; 4];
+        bytes.copy_from_slice(&digest[..4]);
+        Fingerprint::from(bytes)
+    }
+
     pub fn descriptor_keys(&self) -> HashSet<Fingerprint> {
         let info = self.main_descriptor.policy();
         let mut descriptor_keys = HashSet::new();
@@ -508,4 +527,39 @@ pub fn sync_status(
         return SyncStatus::LatestWalletSync;
     }
     SyncStatus::Synced
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    const DESC: &str = "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp";
+
+    /// `id_fingerprint` must be deterministic: the same descriptor
+    /// produces the same 4-byte identifier across constructions.
+    #[test]
+    fn id_fingerprint_is_stable_per_descriptor() {
+        let a = Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap());
+        let b = Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap());
+        assert_eq!(a.id_fingerprint(), b.id_fingerprint());
+    }
+
+    /// Regression for the bug where the local-signer panel surfaced
+    /// one of the *signer* fingerprints as the wallet identifier on
+    /// a multisig vault. The vault id MUST NOT collide with any
+    /// individual signer's master fingerprint from `descriptor_keys`.
+    #[test]
+    fn id_fingerprint_is_distinct_from_descriptor_keys() {
+        let wallet = Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap());
+        let id = wallet.id_fingerprint();
+        let keys = wallet.descriptor_keys();
+        assert!(!keys.is_empty(), "test fixture should have signer keys");
+        assert!(
+            !keys.contains(&id),
+            "vault id {} collided with a signer key fingerprint in {:?}",
+            id,
+            keys,
+        );
+    }
 }

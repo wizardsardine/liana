@@ -908,6 +908,7 @@ pub fn wallet_settings<'a>(
     menu: &'a Menu,
     cache: &'a Cache,
     descriptor: &'a CoincubeDescriptor,
+    vault_id: Fingerprint,
     wallet_alias: &'a form::Value<String>,
     keys_aliases: &'a [(Fingerprint, form::Value<String>)],
     provider_keys: &'a HashMap<Fingerprint, ProviderKey>,
@@ -948,6 +949,27 @@ pub fn wallet_settings<'a>(
                 .direction(scrollable::Direction::Horizontal(
                     scrollable::Scrollbar::new().width(5).scroller_width(5),
                 )),
+            )
+            .push(
+                Row::new()
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .push(text("Vault ID:").bold())
+                    .push(text(vault_id.to_string()))
+                    .push(iced_tooltip::Tooltip::new(
+                        icon::tooltip_icon(),
+                        Container::new(text(
+                            "A stable 4-byte identifier derived from the wallet \
+                                 descriptor. Unique per vault and distinct from any \
+                                 individual signer's master fingerprint. Used by the \
+                                 local-signer pairing flow to scope a paired phone to \
+                                 this vault.",
+                        ))
+                        .padding(8)
+                        .max_width(320.0)
+                        .style(theme::card::simple),
+                        iced_tooltip::Position::Bottom,
+                    )),
             )
             .push(
                 Row::new()

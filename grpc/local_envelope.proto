@@ -1,0 +1,98 @@
+syntax = "proto3";
+
+package coincube.local.v1;
+
+// Wire format for the LAN signer transport between the desktop
+// (coincube-gui) and the Keychain phone app. Mirrors the gRPC types
+// from connect.proto so the same Phone <-> Vault flow can run over a
+// local TLS/Noise socket without the Connect API.
+//
+// See plans/PLAN-local-signer-lan-desktop.md and
+// keychain-app/plans/PLAN-local-signer-lan.md.
+
+import "connect.proto";
+
+message LocalEnvelope {
+  oneof payload {
+    PairingComplete     pairing_complete = 1;
+    connect.v1.Ping     ping             = 2;
+    connect.v1.Pong     pong             = 3;
+    PresentSession      present_session  = 4;
+    CancelSession       cancel_session   = 5;
+    SessionStatusUpdate status_update    = 6;
+    PartialSignature    partial          = 7;
+    ErrorEnvelope       error            = 8;
+  }
+}
+
+// Sent by the phone as the first frame after the pairing TLS
+// handshake completes. Carries the phone's reported cert fingerprint
+// (informational — the pin is taken from the live TLS cert) and, as
+// of pairing protocol v2, the proof-of-QR-scan that lets the desktop
+// authenticate the phone it just dialed.
+message PairingComplete {
+  // SHA-256 of the phone's self-signed cert DER, lowercase hex
+  // (64 chars). MUST match the bytes pinned from the TLS handshake.
+  string phone_cert_fp         = 1;
+  string device_name           = 2;
+  string app_version           = 3;
+  repeated string capabilities = 4;
+  // Proof that the sender actually scanned THIS QR, bound to both
+  // cert pins so it can't be relayed/substituted. REQUIRED as of
+  // pairing protocol v2 — the desktop rejects pairing if it's
+  // missing or wrong.
+  //
+  //   pairing_proof = lowercase_hex(
+  //       HMAC-SHA256(
+  //           key = psk_bytes,            // base64url-no-pad-decoded from QR `psk`
+  //           msg = "coincube-pair-v2"    // 16 ASCII bytes, no NUL
+  //               || desktop_cert_fp      // 64 lowercase-hex ASCII (QR `certFp`)
+  //               || phone_cert_fp        // 64 lowercase-hex ASCII (this phone's cert SHA-256)
+  //       )
+  //   )
+  //
+  // The three msg segments are concatenated as raw bytes in exactly
+  // this order, no separators. `desktop_cert_fp` is the value the
+  // phone read from the QR; `phone_cert_fp` is the SHA-256 of the
+  // phone's own self-signed cert DER (same value as field 1). The
+  // desktop recomputes this using the cert fp it captured from the
+  // live TLS handshake (not field 1) and constant-time compares.
+  // See plans/PLAN-local-signer-pairing-phone-auth.md.
+  string pairing_proof         = 5;
+}
+
+// Desktop -> phone: a PSBT to sign, wrapped in the same SigningSession
+// type the Connect-mediated path uses.
+message PresentSession {
+  connect.v1.SigningSession session = 1;
+}
+
+// Desktop -> phone: abort an in-flight session.
+message CancelSession {
+  string session_id = 1;
+  string reason     = 2;
+}
+
+// Phone -> desktop: status transitions for the in-flight session.
+message SessionStatusUpdate {
+  string session_id = 1;
+  connect.v1.SessionStatus status = 2;
+}
+
+// Phone -> desktop: signed PSBT and which key_ids were signed for.
+message PartialSignature {
+  string session_id = 1;
+  bytes  signed_psbt = 2;
+  repeated string signed_key_ids = 3;
+}
+
+// Either side -> peer: out-of-band error. Code is machine-readable;
+// message is human-readable. `session_id` is optional: set only when
+// the error pertains to a specific in-flight signing session, in
+// which case the desktop's correlator routes the error to that
+// session's waiter instead of broadcasting.
+message ErrorEnvelope {
+  string code       = 1;
+  string message    = 2;
+  string session_id = 3;
+}
