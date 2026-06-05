@@ -191,8 +191,9 @@ pub fn pairing_proof(
         .decode(psk_b64)
         .map_err(|e| format!("decode psk: {}", e))?;
     let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &psk);
-    let mut msg =
-        Vec::with_capacity(PAIRING_PROOF_DOMAIN.len() + desktop_cert_fp.len() + phone_cert_fp.len());
+    let mut msg = Vec::with_capacity(
+        PAIRING_PROOF_DOMAIN.len() + desktop_cert_fp.len() + phone_cert_fp.len(),
+    );
     msg.extend_from_slice(PAIRING_PROOF_DOMAIN);
     msg.extend_from_slice(desktop_cert_fp.as_bytes());
     msg.extend_from_slice(phone_cert_fp.as_bytes());
@@ -301,8 +302,14 @@ mod tests {
         // Distinct per offer (a reused psk would let a captured proof
         // replay across pairings).
         assert_ne!(a.psk_b64, b.psk_b64, "psk must be fresh per offer");
-        let raw = URL_SAFE_NO_PAD.decode(&a.psk_b64).expect("psk is base64url");
-        assert_eq!(raw.len(), PAIRING_PSK_LEN, "psk must be {PAIRING_PSK_LEN} bytes");
+        let raw = URL_SAFE_NO_PAD
+            .decode(&a.psk_b64)
+            .expect("psk is base64url");
+        assert_eq!(
+            raw.len(),
+            PAIRING_PSK_LEN,
+            "psk must be {PAIRING_PSK_LEN} bytes"
+        );
     }
 
     /// The whole encoded QR (not just the cert field) must stay inside
@@ -310,9 +317,17 @@ mod tests {
     #[test]
     fn encoded_offer_stays_within_qr_budget() {
         let identity = fresh_identity();
-        let g = generate_offer(Fingerprint::default(), &identity, "keychain-12345678".into());
+        let g = generate_offer(
+            Fingerprint::default(),
+            &identity,
+            "keychain-12345678".into(),
+        );
         let encoded = encode_offer(&g.offer).expect("encode");
-        assert!(encoded.len() < 1024, "encoded QR len {} >= 1024", encoded.len());
+        assert!(
+            encoded.len() < 1024,
+            "encoded QR len {} >= 1024",
+            encoded.len()
+        );
     }
 
     #[test]

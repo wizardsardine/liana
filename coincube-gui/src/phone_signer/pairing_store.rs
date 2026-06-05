@@ -147,10 +147,11 @@ pub fn upsert_preserving_user_fields(
     dir: &CoincubeDirectory,
     fresh: PairedPhone,
 ) -> std::io::Result<PairedPhone> {
-    let merged = match load(dir)
-        .ok()
-        .and_then(|file| file.phones.into_iter().find(|e| e.cert_pin == fresh.cert_pin))
-    {
+    let merged = match load(dir).ok().and_then(|file| {
+        file.phones
+            .into_iter()
+            .find(|e| e.cert_pin == fresh.cert_pin)
+    }) {
         Some(existing) => PairedPhone {
             fallback_addr: existing.fallback_addr,
             name: existing.name,

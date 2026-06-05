@@ -452,10 +452,12 @@ impl State for LocalSigningState {
                         )
                         .await
                         {
-                            Ok(p) => crate::phone_signer::pairing_store::upsert_preserving_user_fields(
-                                &dir, p,
-                            )
-                            .map_err(|e| PairingError::InternalError(format!("persist: {}", e))),
+                            Ok(p) => {
+                                crate::phone_signer::pairing_store::upsert_preserving_user_fields(
+                                    &dir, p,
+                                )
+                                .map_err(|e| PairingError::InternalError(format!("persist: {}", e)))
+                            }
                             Err(e) => Err(e),
                         }
                     },
@@ -864,7 +866,10 @@ mod tests {
             qr: None,
         };
         let applied = state.apply_pairing_completed(id, Ok(dummy_paired()), &dir);
-        assert!(applied, "matching id while Waiting must transition the flow");
+        assert!(
+            applied,
+            "matching id while Waiting must transition the flow"
+        );
         // Success drops back to Idle — the new row in the
         // paired-phones list is the user-visible success signal,
         // not a separate "Pairing complete" view state.
