@@ -201,10 +201,10 @@ pub fn pairing_proof(
     Ok(tag.as_ref().iter().map(|b| format!("{:02x}", b)).collect())
 }
 
-/// Verify a phone-reported `pairing_proof` in constant time. `Ok(())`
-/// only when the recomputed proof matches `reported_proof` exactly;
-/// `Err(())` on any mismatch, an empty/short report (e.g. a v1 phone
-/// that doesn't send the field), or a malformed psk.
+/// Verify a phone-reported `pairing_proof` in constant time. Returns
+/// `true` only when the recomputed proof matches `reported_proof`
+/// exactly; `false` on any mismatch, an empty/short report (e.g. a v1
+/// phone that doesn't send the field), or a malformed psk.
 ///
 /// `phone_cert_fp` MUST be the fingerprint the desktop captured from
 /// the live TLS handshake (the cert it is about to pin), not the
@@ -215,16 +215,14 @@ pub fn verify_pairing_proof(
     desktop_cert_fp: &str,
     phone_cert_fp: &str,
     reported_proof: &str,
-) -> Result<(), ()> {
-    let expected = pairing_proof(psk_b64, desktop_cert_fp, phone_cert_fp).map_err(|_| ())?;
+) -> bool {
+    let Ok(expected) = pairing_proof(psk_b64, desktop_cert_fp, phone_cert_fp) else {
+        return false;
+    };
     // Constant-time over the hex strings. A length difference (e.g. an
     // empty report) compares unequal without leaking timing on the
     // matching prefix — and length alone is not secret.
-    if expected.as_bytes().ct_eq(reported_proof.as_bytes()).into() {
-        Ok(())
-    } else {
-        Err(())
-    }
+    expected.as_bytes().ct_eq(reported_proof.as_bytes()).into()
 }
 
 /// Encode a pairing offer to the base64url(JSON) form the phone
@@ -337,7 +335,9 @@ mod tests {
         let phone_fp = "ab".repeat(32); // any 64-hex string
         let proof = pairing_proof(&g.psk_b64, desktop_fp, &phone_fp).expect("compute");
         assert_eq!(proof.len(), 64, "proof is 64 lowercase-hex chars");
-        assert!(verify_pairing_proof(&g.psk_b64, desktop_fp, &phone_fp, &proof).is_ok());
+        assert!(verify_pairing_proof(
+            &g.psk_b64, desktop_fp, &phone_fp, &proof
+        ));
     }
 
     #[test]
@@ -352,13 +352,13 @@ mod tests {
         // different phone fp than the desktop expects → rejected.
         let other_phone_fp = "cd".repeat(32);
         assert!(
-            verify_pairing_proof(&g.psk_b64, desktop_fp, &other_phone_fp, &proof).is_err(),
+            !verify_pairing_proof(&g.psk_b64, desktop_fp, &other_phone_fp, &proof),
             "proof must not verify against a different phone cert fp",
         );
         // Wrong desktop fp.
         let other_desktop_fp = "ef".repeat(32);
         assert!(
-            verify_pairing_proof(&g.psk_b64, &other_desktop_fp, &phone_fp, &proof).is_err(),
+            !verify_pairing_proof(&g.psk_b64, &other_desktop_fp, &phone_fp, &proof),
             "proof must not verify against a different desktop cert fp",
         );
     }
@@ -380,7 +380,12 @@ mod tests {
             proof,
             "87f118c74fd540810db273e2ff4c00ee805831dce43aa649553d636e795239b9",
         );
-        assert!(verify_pairing_proof(psk_b64, &desktop_fp, &phone_fp, &proof).is_ok());
+        assert!(verify_pairing_proof(
+            psk_b64,
+            &desktop_fp,
+            &phone_fp,
+            &proof
+        ));
     }
 
     #[test]
@@ -392,13 +397,20 @@ mod tests {
         let proof = pairing_proof(&g.psk_b64, desktop_fp, &phone_fp).expect("compute");
 
         // A different psk (didn't scan THIS QR).
-        assert!(verify_pairing_proof(&other.psk_b64, desktop_fp, &phone_fp, &proof).is_err());
+        assert!(!verify_pairing_proof(
+            &other.psk_b64,
+            desktop_fp,
+            &phone_fp,
+            &proof
+        ));
         // Tampered proof.
         let mut tampered = proof.clone();
         tampered.replace_range(0..1, if proof.starts_with('0') { "1" } else { "0" });
-        assert!(verify_pairing_proof(&g.psk_b64, desktop_fp, &phone_fp, &tampered).is_err());
+        assert!(!verify_pairing_proof(
+            &g.psk_b64, desktop_fp, &phone_fp, &tampered
+        ));
         // Empty / missing (e.g. a pre-v2 phone).
-        assert!(verify_pairing_proof(&g.psk_b64, desktop_fp, &phone_fp, "").is_err());
+        assert!(!verify_pairing_proof(&g.psk_b64, desktop_fp, &phone_fp, ""));
     }
 
     #[test]

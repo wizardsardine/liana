@@ -268,14 +268,12 @@ async fn try_pair_once(
     // who terminates TLS with a different cert — can't forward a
     // genuine phone's proof. See
     // plans/PLAN-local-signer-pairing-phone-auth.md.
-    if crate::phone_signer::pairing::verify_pairing_proof(
+    if !crate::phone_signer::pairing::verify_pairing_proof(
         &offer.psk_b64,
         &offer.cert_fp,
         &expected_pin_hex,
         complete.pairing_proof.trim(),
-    )
-    .is_err()
-    {
+    ) {
         tracing::warn!(
             target: "phone_signer::pairing",
             "pairing proof verification failed for cert {} — refusing to pin",

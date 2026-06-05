@@ -164,6 +164,40 @@ impl LocalSigningState {
         self.wallet_signer_fingerprints = v;
     }
 
+    /// Handle a `WalletUpdated` arriving while this panel is active.
+    /// Re-derives the vault id + signer fps via [`Self::apply_wallet`]
+    /// and, when the vault **actually changes** mid-pairing, tears the
+    /// wizard down.
+    ///
+    /// Why tear down: a `Waiting` offer (and the in-flight
+    /// `run_pairing` task spawned for it in [`LocalSigningMessage::PickPhone`])
+    /// is bound to the *previous* vault — its `wallet_fingerprint`
+    /// claim, its `expected_vault_id`, and the `signer_fps` it will
+    /// persist all belong to the old vault. Leaving the wizard in
+    /// `Waiting` would show the user a QR for a vault the panel has
+    /// navigated away from, and a phone that scans it would be
+    /// persisted against the old vault while the panel claims to be on
+    /// the new one. Bumping the run id gates the stale task's eventual
+    /// completion out of the UI; dropping to `Idle` makes the user
+    /// re-initiate pairing for the new vault.
+    ///
+    /// The task itself isn't cancellable, so a phone that *already*
+    /// scanned the old QR stays paired to the old vault — which is the
+    /// consistent outcome: that's the offer it cryptographically
+    /// consumed. Returns `true` if an in-flight pairing was
+    /// invalidated.
+    pub(crate) fn apply_wallet_update(&mut self, wallet: &Wallet) -> bool {
+        let vault_changed = self.wallet_fingerprint != Some(wallet.id_fingerprint());
+        self.apply_wallet(wallet);
+        if vault_changed && matches!(self.flow, PairingFlow::Waiting { .. }) {
+            self.start_pairing_run();
+            self.flow = PairingFlow::Idle;
+            true
+        } else {
+            false
+        }
+    }
+
     /// React to the result of a pairing run. Persistence already
     /// happened inside the spawned task (see [`PickPhone`]'s
     /// `Task::perform`), so this handler is UI-only: it decides what
@@ -355,9 +389,10 @@ impl State for LocalSigningState {
         // would carry the previous vault's fingerprint and the
         // resulting `PairedPhone` would be persisted with the
         // previous vault's signer fps — i.e. paired to the wrong
-        // vault.
+        // vault. A switch mid-pairing also invalidates the on-screen
+        // offer (see `apply_wallet_update`).
         if let Message::WalletUpdated(Ok(wallet)) = &message {
-            self.apply_wallet(wallet);
+            self.apply_wallet_update(wallet);
             return Task::none();
         }
         let msg = match message {
@@ -476,13 +511,14 @@ impl State for LocalSigningState {
             }
             LocalSigningMessage::CancelPairing => {
                 // Bump the run id so any in-flight listener task's
-                // completion is ignored when it eventually arrives.
-                // (`Task::perform` futures aren't cancellable from
-                // here; this is the next-best thing.) The id bump
-                // also short-circuits the disk write in
-                // `apply_pairing_completed`, so a cancel between
-                // dial and the phone's reply can't leak a paired
-                // row to `paired-phones.json`.
+                // completion is gated out of the UI when it eventually
+                // arrives. (`Task::perform` futures aren't cancellable
+                // from here; this is the next-best thing.) Note this
+                // does NOT prevent the disk write: persistence now
+                // lives in the spawned task, so a phone that already
+                // completed the handshake before the user hit Cancel
+                // stays paired — it's committed once `run_pairing`
+                // returns `Ok`. Cancel only abandons the wizard UI.
                 self.start_pairing_run();
                 self.flow = PairingFlow::Idle;
                 Task::none()
@@ -1058,5 +1094,96 @@ mod tests {
             !applied,
             "first run's completion must not stomp the second run"
         );
+    }
+
+    /// A `Waiting` flow stamped with an arbitrary offer, for the
+    /// wallet-switch tests below.
+    fn waiting_flow() -> PairingFlow {
+        PairingFlow::Waiting {
+            phone: crate::phone_signer::mdns::DiscoveredPhone {
+                cert_fp8: "01010101".into(),
+                addr: "127.0.0.1:0".parse().unwrap(),
+                instance_name: "x".into(),
+            },
+            offer: crate::phone_signer::pairing::PairingOffer {
+                version: 2,
+                cert_der_b64: String::new(),
+                cert_fp: String::new(),
+                service_name: String::new(),
+                wallet_fingerprint: Fingerprint::default(),
+                expires_at_unix: u64::MAX,
+                psk_b64: String::new(),
+            },
+            qr: None,
+        }
+    }
+
+    /// Regression for the "wallet switch mid-pairing stale" finding:
+    /// switching to a *different* vault while a pairing offer is on
+    /// screen must invalidate the in-flight run (bump the id so the
+    /// stale task's completion is gated out) and drop the wizard back
+    /// to Idle — the offer was bound to the previous vault.
+    #[test]
+    fn wallet_switch_during_waiting_invalidates_pairing() {
+        let wallet_a = Wallet::new(CoincubeDescriptor::from_str(DESC_A).unwrap());
+        let wallet_b = Wallet::new(CoincubeDescriptor::from_str(DESC_B).unwrap());
+        assert_ne!(wallet_a.id_fingerprint(), wallet_b.id_fingerprint());
+
+        let mut state = LocalSigningState::default();
+        state.apply_wallet(&wallet_a);
+        let run_id = state.start_pairing_run();
+        state.flow = waiting_flow();
+
+        let invalidated = state.apply_wallet_update(&wallet_b);
+
+        assert!(
+            invalidated,
+            "a real vault switch while Waiting must invalidate"
+        );
+        assert!(matches!(state.flow, PairingFlow::Idle));
+        assert_ne!(
+            state.pairing_id, run_id,
+            "run id must bump so the stale task's completion is gated out",
+        );
+        // Panel now reflects the new vault for the next pairing.
+        assert_eq!(state.wallet_fingerprint, Some(wallet_b.id_fingerprint()));
+    }
+
+    /// A `WalletUpdated` for the *same* vault (a routine refresh) must
+    /// NOT disturb an in-flight pairing.
+    #[test]
+    fn wallet_refresh_same_vault_leaves_pairing_untouched() {
+        let wallet_a = Wallet::new(CoincubeDescriptor::from_str(DESC_A).unwrap());
+
+        let mut state = LocalSigningState::default();
+        state.apply_wallet(&wallet_a);
+        let run_id = state.start_pairing_run();
+        state.flow = waiting_flow();
+
+        let invalidated = state.apply_wallet_update(&wallet_a);
+
+        assert!(!invalidated, "same-vault refresh must not invalidate");
+        assert!(matches!(state.flow, PairingFlow::Waiting { .. }));
+        assert_eq!(state.pairing_id, run_id, "no id bump on same-vault refresh");
+    }
+
+    /// A vault switch while NOT mid-pairing (Idle) is a no-op beyond
+    /// re-deriving the vault fields — nothing to invalidate.
+    #[test]
+    fn wallet_switch_while_idle_only_updates_fingerprints() {
+        let wallet_a = Wallet::new(CoincubeDescriptor::from_str(DESC_A).unwrap());
+        let wallet_b = Wallet::new(CoincubeDescriptor::from_str(DESC_B).unwrap());
+
+        let mut state = LocalSigningState::default();
+        state.apply_wallet(&wallet_a);
+        let run_id = state.pairing_id;
+        // flow is Idle by default.
+
+        let invalidated = state.apply_wallet_update(&wallet_b);
+
+        assert!(!invalidated);
+        assert!(matches!(state.flow, PairingFlow::Idle));
+        assert_eq!(state.pairing_id, run_id, "no in-flight run, no id bump");
+        assert_eq!(state.wallet_fingerprint, Some(wallet_b.id_fingerprint()));
     }
 }
