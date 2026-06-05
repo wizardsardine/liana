@@ -126,7 +126,6 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 rustls-pki-types = "1"
 rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
-ed25519-dalek = { version = "2", features = ["rand_core"] }
 mdns-sd = "0.13"
 # HMAC-SHA256 for the pairing proof-of-QR-scan. Already in the tree
 # via rustls's `ring` feature; depending on it directly avoids the
