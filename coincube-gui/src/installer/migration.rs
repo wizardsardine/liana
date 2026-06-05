@@ -151,10 +151,7 @@ pub(crate) fn migrate_esplora_config(path: &Path) -> std::io::Result<bool> {
             None => {
                 esplora.insert("fallback_addr".to_string(), toml::Value::String(connect));
                 if let Some(token) = primary_token {
-                    esplora.insert(
-                        "fallback_token".to_string(),
-                        toml::Value::String(token),
-                    );
+                    esplora.insert("fallback_token".to_string(), toml::Value::String(token));
                 }
             }
         }
@@ -380,8 +377,7 @@ secondary_fallback_addr = "{connect}"
 secondary_fallback_token = "jwt-here"
 "#,
             primary = super::super::public_esplora_url(Network::Bitcoin),
-            blockstream =
-                super::super::public_esplora_fallback_url(Network::Bitcoin).unwrap(),
+            blockstream = super::super::public_esplora_fallback_url(Network::Bitcoin).unwrap(),
             connect = super::super::connect_url(Network::Bitcoin),
         );
         std::fs::write(&p, three_tier).expect("seed");
@@ -426,8 +422,7 @@ fallback_addr = "{blockstream}"
 secondary_fallback_addr = "{connect}"
 "#,
             primary = super::super::public_esplora_url(Network::Bitcoin),
-            blockstream =
-                super::super::public_esplora_fallback_url(Network::Bitcoin).unwrap(),
+            blockstream = super::super::public_esplora_fallback_url(Network::Bitcoin).unwrap(),
             connect = super::super::connect_url(Network::Bitcoin),
         );
         std::fs::write(&p, custom).expect("seed");
@@ -465,7 +460,10 @@ addr = "127.0.0.1:8332"
         assert!(!migrate_esplora_config(&p).expect("ok"));
 
         let after = std::fs::read_to_string(&p).expect("read");
-        assert_eq!(before, after, "bitcoind backend must not have its poll bumped");
+        assert_eq!(
+            before, after,
+            "bitcoind backend must not have its poll bumped"
+        );
 
         std::fs::remove_file(&p).ok();
     }
@@ -517,12 +515,16 @@ addr = "127.0.0.1:8332"
             "blockstream.info is anonymous so no fallback_token should be written",
         );
         assert_eq!(
-            esplora.get("secondary_fallback_addr").and_then(|v| v.as_str()),
+            esplora
+                .get("secondary_fallback_addr")
+                .and_then(|v| v.as_str()),
             Some(super::super::connect_url(Network::Bitcoin).as_str()),
             "Connect URL must move to secondary_fallback_addr",
         );
         assert_eq!(
-            esplora.get("secondary_fallback_token").and_then(|v| v.as_str()),
+            esplora
+                .get("secondary_fallback_token")
+                .and_then(|v| v.as_str()),
             Some("jwt-token-here"),
             "JWT must move to secondary_fallback_token",
         );
@@ -557,7 +559,10 @@ fallback_token = "jwt-token-here"
         std::fs::write(&p, two_tier).expect("seed");
 
         let migrated = migrate_esplora_config(&p).expect("ok");
-        assert!(migrated, "two-tier shape must trigger insertion of blockstream");
+        assert!(
+            migrated,
+            "two-tier shape must trigger insertion of blockstream"
+        );
 
         let after = std::fs::read_to_string(&p).expect("read back");
         let parsed: toml::Table = toml::from_str(&after).expect("re-parse");
@@ -581,12 +586,16 @@ fallback_token = "jwt-token-here"
             "blockstream.info is anonymous — fallback_token must be cleared",
         );
         assert_eq!(
-            esplora.get("secondary_fallback_addr").and_then(|v| v.as_str()),
+            esplora
+                .get("secondary_fallback_addr")
+                .and_then(|v| v.as_str()),
             Some(super::super::connect_url(Network::Bitcoin).as_str()),
             "Connect URL must shift down to secondary_fallback_addr",
         );
         assert_eq!(
-            esplora.get("secondary_fallback_token").and_then(|v| v.as_str()),
+            esplora
+                .get("secondary_fallback_token")
+                .and_then(|v| v.as_str()),
             Some("jwt-token-here"),
             "JWT must move from fallback_token to secondary_fallback_token",
         );

@@ -390,21 +390,25 @@ impl Step for SelectBitcoindTypeStep {
                 // when it's available for this network distributes
                 // sync load across two independent public providers
                 // before falling back to the metered Connect URL.
-                let (fallback_addr, fallback_token, secondary_fallback_addr, secondary_fallback_token) =
-                    match crate::installer::public_esplora_fallback_url(ctx.network) {
-                        Some(public_fallback) => (
-                            Some(public_fallback),
-                            None,
-                            Some(crate::installer::connect_url(ctx.network)),
-                            Some(token.as_str().to_owned()),
-                        ),
-                        None => (
-                            Some(crate::installer::connect_url(ctx.network)),
-                            Some(token.as_str().to_owned()),
-                            None,
-                            None,
-                        ),
-                    };
+                let (
+                    fallback_addr,
+                    fallback_token,
+                    secondary_fallback_addr,
+                    secondary_fallback_token,
+                ) = match crate::installer::public_esplora_fallback_url(ctx.network) {
+                    Some(public_fallback) => (
+                        Some(public_fallback),
+                        None,
+                        Some(crate::installer::connect_url(ctx.network)),
+                        Some(token.as_str().to_owned()),
+                    ),
+                    None => (
+                        Some(crate::installer::connect_url(ctx.network)),
+                        Some(token.as_str().to_owned()),
+                        None,
+                        None,
+                    ),
+                };
                 ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
                     addr: crate::installer::public_esplora_url(ctx.network),
                     token: None,
@@ -905,21 +909,25 @@ impl Step for InternalBitcoindStep {
                 // Same three-tier chain as the Connect-only branch above:
                 // mempool.space → blockstream.info (where available) →
                 // Connect (JWT).
-                let (fallback_addr, fallback_token, secondary_fallback_addr, secondary_fallback_token) =
-                    match crate::installer::public_esplora_fallback_url(ctx.network) {
-                        Some(public_fallback) => (
-                            Some(public_fallback),
-                            None,
-                            Some(crate::installer::connect_url(ctx.network)),
-                            Some(token.as_str().to_owned()),
-                        ),
-                        None => (
-                            Some(crate::installer::connect_url(ctx.network)),
-                            Some(token.as_str().to_owned()),
-                            None,
-                            None,
-                        ),
-                    };
+                let (
+                    fallback_addr,
+                    fallback_token,
+                    secondary_fallback_addr,
+                    secondary_fallback_token,
+                ) = match crate::installer::public_esplora_fallback_url(ctx.network) {
+                    Some(public_fallback) => (
+                        Some(public_fallback),
+                        None,
+                        Some(crate::installer::connect_url(ctx.network)),
+                        Some(token.as_str().to_owned()),
+                    ),
+                    None => (
+                        Some(crate::installer::connect_url(ctx.network)),
+                        Some(token.as_str().to_owned()),
+                        None,
+                        None,
+                    ),
+                };
                 ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
                     addr: crate::installer::public_esplora_url(ctx.network),
                     token: None,

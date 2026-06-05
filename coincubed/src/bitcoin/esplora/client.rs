@@ -48,8 +48,7 @@ impl Error {
 /// level + longer backoff. A test asserts the marker stays in the
 /// rendered output so a future refactor can't silently strand the
 /// poller's special-case branch.
-pub const ALL_COOLING_DISPLAY_MARKER: &str =
-    "All Esplora providers are temporarily backing off";
+pub const ALL_COOLING_DISPLAY_MARKER: &str = "All Esplora providers are temporarily backing off";
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -95,10 +94,7 @@ struct Provider {
 
 impl Provider {
     fn is_cooling(&self) -> bool {
-        let guard = self
-            .cooldown_until
-            .lock()
-            .expect("cooldown mutex poisoned");
+        let guard = self.cooldown_until.lock().expect("cooldown mutex poisoned");
         match *guard {
             Some(deadline) => Instant::now() < deadline,
             None => false,
@@ -106,18 +102,12 @@ impl Provider {
     }
 
     fn enter_cooldown(&self) {
-        let mut guard = self
-            .cooldown_until
-            .lock()
-            .expect("cooldown mutex poisoned");
+        let mut guard = self.cooldown_until.lock().expect("cooldown mutex poisoned");
         *guard = Some(Instant::now() + RATE_LIMIT_COOLDOWN);
     }
 
     fn clear_cooldown(&self) {
-        let mut guard = self
-            .cooldown_until
-            .lock()
-            .expect("cooldown mutex poisoned");
+        let mut guard = self.cooldown_until.lock().expect("cooldown mutex poisoned");
         *guard = None;
     }
 }
@@ -220,18 +210,17 @@ impl Client {
         // per check observed in the wild, that shaves ~15s off cold
         // start at no semantic cost: a slow Connect handshake no
         // longer holds up an already-answered mempool.
-        let results: Vec<(usize, Result<u32, esplora_client::Error>)> =
-            std::thread::scope(|s| {
-                let handles: Vec<_> = providers
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, p)| s.spawn(move || (idx, p.client.get_height())))
-                    .collect();
-                handles
-                    .into_iter()
-                    .map(|h| h.join().expect("startup check thread panicked"))
-                    .collect()
-            });
+        let results: Vec<(usize, Result<u32, esplora_client::Error>)> = std::thread::scope(|s| {
+            let handles: Vec<_> = providers
+                .iter()
+                .enumerate()
+                .map(|(idx, p)| s.spawn(move || (idx, p.client.get_height())))
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("startup check thread panicked"))
+                .collect()
+        });
 
         let mut any_ok = false;
         for (idx, result) in results {
@@ -515,7 +504,10 @@ mod tests {
         assert_eq!(result.unwrap(), 42);
         // First provider must now be cooling; second must not.
         assert!(client.providers[0].is_cooling(), "p1 must be on cooldown");
-        assert!(!client.providers[1].is_cooling(), "p2 must NOT be on cooldown");
+        assert!(
+            !client.providers[1].is_cooling(),
+            "p2 must NOT be on cooldown"
+        );
     }
 
     /// Once a provider is in cooldown, `try_in_order` must skip it on
@@ -618,7 +610,10 @@ mod tests {
             })
         });
 
-        assert_eq!(call_count, 1, "404 must not be retried on the next provider");
+        assert_eq!(
+            call_count, 1,
+            "404 must not be retried on the next provider"
+        );
         assert!(result.is_err());
     }
 

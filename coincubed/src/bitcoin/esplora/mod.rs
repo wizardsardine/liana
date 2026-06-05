@@ -199,8 +199,7 @@ impl Esplora {
                         "Esplora tip unchanged ({}), skipping per-SPK rescan \
                          (forced rescan in {} more polls)",
                         current_tip,
-                        MAX_POLLS_BEFORE_FORCED_RESCAN
-                            .saturating_sub(self.polls_since_full_sync),
+                        MAX_POLLS_BEFORE_FORCED_RESCAN.saturating_sub(self.polls_since_full_sync),
                     );
                     return Ok(None);
                 }
@@ -270,8 +269,7 @@ impl Esplora {
                 .client
                 .full_scan(
                     || {
-                        let mut request =
-                            FullScanRequest::from_chain_tip(local_chain_tip.clone());
+                        let mut request = FullScanRequest::from_chain_tip(local_chain_tip.clone());
                         for (k, spks) in bdk_wallet.index().all_unbounded_spk_iters() {
                             request = request.set_spks_for_keychain(k, spks);
                         }

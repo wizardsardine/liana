@@ -165,12 +165,9 @@ impl BitcoindSettingsState {
         );
         let (fallback_addr, fallback_token, secondary_fallback_addr, secondary_fallback_token) =
             match public_fallback {
-                Some(public_fallback) => (
-                    Some(public_fallback),
-                    None,
-                    Some(connect_url),
-                    Some(jwt),
-                ),
+                Some(public_fallback) => {
+                    (Some(public_fallback), None, Some(connect_url), Some(jwt))
+                }
                 None => (Some(connect_url), Some(jwt), None, None),
             };
         let esplora = EsploraConfig {
