@@ -64,11 +64,7 @@ impl Poller {
     /// chain is actually caught up, so the caller doesn't have to
     /// repeat that bookkeeping or decide independently when the
     /// next scheduled tick should fire.
-    fn run_immediate_poll(
-        &mut self,
-        synced: &mut bool,
-        last_poll: &mut Option<time::Instant>,
-    ) {
+    fn run_immediate_poll(&mut self, synced: &mut bool, last_poll: &mut Option<time::Instant>) {
         // Polling while the block chain is syncing could lead to
         // poller restarts if the height increases before
         // completion, and in any case this is consistent with

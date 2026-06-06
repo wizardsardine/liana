@@ -87,10 +87,13 @@ pub struct Esplora {
     /// One-shot flag set by [`Self::request_eager_sync`]. When
     /// `true`, the next [`Self::sync_wallet`] call bypasses the
     /// smart-poll tip-guard and does a full per-SPK walk even when
-    /// the chain tip hasn't moved. Consumed (cleared) at the top
-    /// of `sync_wallet` so subsequent ticks resume normal cadence.
-    /// Drives the "user opened Receive / app regained focus / new
-    /// receive address" UX hooks.
+    /// the chain tip hasn't moved. Cleared only after a *successful*
+    /// sync — a transient failure (e.g. every provider in cooldown,
+    /// transport error) preserves the flag so the next poller tick
+    /// also honors the user's "fresh data, now" intent rather than
+    /// silently falling back to the tip-guard short-circuit. Drives
+    /// the "user opened Receive / app regained focus / new receive
+    /// address" UX hooks.
     eager_sync_requested: bool,
 }
 
@@ -198,10 +201,16 @@ impl Esplora {
             local_chain_tip.block_id().height
         );
 
-        // Eager-sync override. Consumed unconditionally so a
-        // request that arrives during a forced rescan doesn't
-        // linger and double-fire later.
-        let eager = std::mem::replace(&mut self.eager_sync_requested, false);
+        // Eager-sync override. Read without clearing: if the sync
+        // attempt below fails transiently (all-cooling, transport
+        // error, BDK rejected the chain update, …) we want the
+        // next poller tick to also bypass the tip-guard rather
+        // than silently consume the user's "fresh data, now"
+        // intent on a poll that returned no useful data. The flag
+        // is cleared at the success-return path at the bottom of
+        // this function, after the wallet has actually been
+        // brought up to date.
+        let eager = self.eager_sync_requested;
         if eager {
             log::debug!("Esplora eager sync requested; bypassing tip-guard");
         }
@@ -216,19 +225,30 @@ impl Esplora {
         if !self.is_rescanning() && !eager {
             if let Some(last_tip) = self.last_synced_tip {
                 let current_tip = self.client.chain_tip().map_err(EsploraError::Client)?;
-                if current_tip == last_tip
-                    && self.polls_since_full_sync < MAX_POLLS_BEFORE_FORCED_RESCAN
-                {
-                    self.polls_since_full_sync = self.polls_since_full_sync.saturating_add(1);
-                    log::debug!(
-                        "Esplora tip unchanged ({}), skipping per-SPK rescan \
-                         (forced rescan in {} more polls)",
-                        current_tip,
-                        MAX_POLLS_BEFORE_FORCED_RESCAN.saturating_sub(self.polls_since_full_sync),
-                    );
-                    return Ok(None);
-                }
                 if current_tip == last_tip {
+                    // Counting the *prospective* skip first so the
+                    // boundary fires exactly on the
+                    // `MAX_POLLS_BEFORE_FORCED_RESCAN`th unchanged
+                    // poll (the staleness cap documented on the
+                    // constant). The pre-fix shape incremented
+                    // *after* the comparison, which let one extra
+                    // tick of staleness through before the forced
+                    // rescan — every Nth+1 poll instead of every
+                    // Nth. We only persist the increment when we
+                    // actually skip; on the boundary tick we fall
+                    // through to a full sync, which resets the
+                    // counter to 0 at its success-return below.
+                    let prospective = self.polls_since_full_sync.saturating_add(1);
+                    if prospective < MAX_POLLS_BEFORE_FORCED_RESCAN {
+                        self.polls_since_full_sync = prospective;
+                        log::debug!(
+                            "Esplora tip unchanged ({}), skipping per-SPK rescan \
+                             (forced rescan in {} more polls)",
+                            current_tip,
+                            MAX_POLLS_BEFORE_FORCED_RESCAN.saturating_sub(prospective),
+                        );
+                        return Ok(None);
+                    }
                     log::debug!(
                         "Esplora tip unchanged ({}) but forced-rescan boundary reached \
                          after {} skipped polls; performing full rescan",
@@ -373,6 +393,11 @@ impl Esplora {
         // hasn't moved, and reset the forced-rescan counter.
         self.last_synced_tip = Some(self.wallet_tip());
         self.polls_since_full_sync = 0;
+        // Sync succeeded — the user's eager request (if any) is
+        // now honored, so clear the flag. Earlier transient
+        // failures left it set so this point would eventually be
+        // reached on a retry.
+        self.eager_sync_requested = false;
 
         Ok(reorg_common_ancestor)
     }

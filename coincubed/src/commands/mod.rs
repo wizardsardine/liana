@@ -334,22 +334,41 @@ impl DaemonControl {
     /// inside the free-tier hourly budget at the current 10-min
     /// poll interval.
     pub fn request_sync(&self) {
-        // Set the eager flag on the backend so that whenever the
-        // poller runs next, the smart-poll guard is bypassed and
-        // we do a real per-SPK walk. Non-Esplora backends take the
-        // trait's default no-op.
+        // Set the eager flag on the backend FIRST so it's already
+        // armed by the time the poller wakes — whether via the
+        // message we're about to enqueue or via whatever message
+        // happens to already be queued. The flag lives on `Esplora`,
+        // not on the channel payload, so a dropped wake-up signal
+        // doesn't lose the user's request.
         self.bitcoin.lock().unwrap().request_eager_sync();
-        // Wake the poller now rather than waiting for its current
-        // sleep to elapse. Use the no-ack variant so the poller
-        // doesn't log a spurious "send failed" error on every
-        // trigger — completion surfaces naturally through
-        // subsequent `get_info`/state calls from the GUI, and
-        // blocking here on a completion signal would freeze the
-        // JSON-RPC handler thread for as long as the sync takes,
-        // which is not what we want for a UX-triggered "kick the
-        // poller" request.
-        if let Err(e) = self.poller_sender.send(PollerMessage::PollNowNoAck) {
-            log::warn!("request_sync: poller send failed: {}", e);
+        // Non-blocking send: the poller channel is a `sync_channel(1)`,
+        // so a plain `send` would block under burst pressure (e.g.
+        // user opens Receive twice in rapid succession while a sync
+        // is mid-flight). Blocking the JSON-RPC handler thread for
+        // however long that sync takes is exactly what we're trying
+        // to avoid for a UX-triggered "kick the poller" request.
+        //
+        // `try_send` semantics map cleanly:
+        //   * Ok            – wake-up enqueued; poller will wake now.
+        //   * Err(Full)     – a wake-up (ours or the broadcast-spend
+        //                     flow's `PollNow(sender)`) is already in
+        //                     flight. The eager flag is already set
+        //                     above, so whichever tick fires next
+        //                     honors it. Drop our signal silently —
+        //                     it would be redundant.
+        //   * Err(Disconnected) – poller is gone; nothing left to
+        //                     do but log.
+        match self.poller_sender.try_send(PollerMessage::PollNowNoAck) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(_)) => {
+                log::debug!(
+                    "request_sync: poller channel full; eager flag will be \
+                     honored by the already-pending wake-up"
+                );
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                log::warn!("request_sync: poller channel disconnected");
+            }
         }
     }
 
