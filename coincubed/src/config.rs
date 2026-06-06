@@ -77,8 +77,31 @@ fn default_loglevel() -> log::LevelFilter {
     log::LevelFilter::Info
 }
 
+/// Recommended `poll_interval_secs` for the Esplora backend. Picked
+/// so the per-poll request volume fits comfortably inside public
+/// Esplora providers' anonymous free tiers (mempool.space ≈ 60/min,
+/// blockstream.info ≈ 700/hr). ~80-SPK wallets at this cadence land
+/// at ~85 HTTP requests/hour against the active provider with the
+/// smart-poll tip-guard active — well under any free-tier ceiling.
+pub const ESPLORA_POLL_INTERVAL_SECS: u64 = 600;
+
+/// Recommended `poll_interval_secs` for local-node backends
+/// (`bitcoind`, `electrum`). These talk to a process you run on
+/// localhost, so there's no per-request HTTP cost and no upstream
+/// rate cap — a snappier cadence costs nothing and surfaces new
+/// blocks/mempool activity to the UI within seconds.
+pub const LOCAL_BACKEND_POLL_INTERVAL_SECS: u64 = 10;
+
 fn default_poll_interval() -> Duration {
-    Duration::from_secs(10)
+    // Used by serde when `poll_interval_secs` is missing from the
+    // TOML. We can't tell which backend the config will end up
+    // pointing at, so default to the Esplora-safe value
+    // ([`ESPLORA_POLL_INTERVAL_SECS`]) — better to be a touch lazy
+    // on bitcoind for one boot than to silently exceed an Esplora
+    // free tier. The installer/migration in `coincube-gui` sets
+    // a backend-appropriate value explicitly, so this serde
+    // default only fires for hand-written or truncated configs.
+    Duration::from_secs(ESPLORA_POLL_INTERVAL_SECS)
 }
 
 /// Bitcoin backend config.
@@ -143,14 +166,77 @@ fn default_validate_domain() -> bool {
 }
 
 /// Everything we need to know for talking to an Esplora HTTP server.
+///
+/// Supports a primary endpoint plus up to two ordered fallbacks, tried in
+/// declaration order on retryable failures. Each endpoint is independently
+/// authenticated because typical pairings span auth domains — a public
+/// Esplora (no token) as primary, a second public Esplora as
+/// `fallback_addr`, and COINCUBE | Connect (JWT) as
+/// `secondary_fallback_addr`.
+///
+/// The intent of the three-tier shape: primary + first fallback distribute
+/// sync traffic across independent public providers (so a 429 on one doesn't
+/// take the user to the metered backstop), and the secondary fallback
+/// guarantees a route home for users whose IP has been rate-limited by both
+/// public providers.
 #[derive(Clone, PartialEq, Deserialize, Serialize)]
 pub struct EsploraConfig {
-    /// The HTTP(S) URL of the Esplora server.
-    /// e.g. https://api.coincube.io/api/v1/esplora/bitcoin/mainnet
+    /// The HTTP(S) URL of the primary Esplora server.
+    /// e.g. https://mempool.space/api
     pub addr: String,
-    /// Optional JWT bearer token for authenticated Esplora endpoints (e.g. COINCUBE | Connect).
+    /// Optional JWT bearer token for the primary endpoint (e.g. COINCUBE | Connect).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub token: Option<String>,
+    /// Optional first fallback Esplora endpoint, tried when the primary
+    /// returns a retryable failure (transport error, 402, 429, 5xx). Typical
+    /// deployment is a second public Esplora (`blockstream.info`) — using a
+    /// different provider so a mempool 429 doesn't imply this one is also
+    /// throttled.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fallback_addr: Option<String>,
+    /// Optional JWT bearer token for the first fallback endpoint.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fallback_token: Option<String>,
+    /// Optional second fallback Esplora endpoint, tried after the first
+    /// fallback fails. Typical deployment is COINCUBE | Connect — the
+    /// authenticated backstop, used only when both public providers have
+    /// rejected the request.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub secondary_fallback_addr: Option<String>,
+    /// Optional JWT bearer token for the second fallback endpoint.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub secondary_fallback_token: Option<String>,
+}
+
+impl EsploraConfig {
+    /// Reject orphan tokens — a `fallback_token` without a
+    /// matching `fallback_addr` (and likewise for the secondary
+    /// pair) is almost certainly a typo or a partial hand-edit of
+    /// the TOML; the daemon's `Client::new` would silently ignore
+    /// the token because the whole provider is gated on the addr
+    /// being present. We don't require the converse (addr without
+    /// token is perfectly valid: anonymous public providers like
+    /// mempool.space and blockstream.info are exactly that shape).
+    fn check(&self) -> Result<(), ConfigError> {
+        if self.fallback_token.is_some() && self.fallback_addr.is_none() {
+            return Err(ConfigError::Unexpected(
+                "esplora_config.fallback_token set without esplora_config.fallback_addr — \
+                 the token would be silently ignored. Either add a fallback_addr or \
+                 remove the orphan fallback_token."
+                    .into(),
+            ));
+        }
+        if self.secondary_fallback_token.is_some() && self.secondary_fallback_addr.is_none() {
+            return Err(ConfigError::Unexpected(
+                "esplora_config.secondary_fallback_token set without \
+                 esplora_config.secondary_fallback_addr — the token would be silently \
+                 ignored. Either add a secondary_fallback_addr or remove the orphan \
+                 secondary_fallback_token."
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl std::fmt::Debug for EsploraConfig {
@@ -158,6 +244,16 @@ impl std::fmt::Debug for EsploraConfig {
         f.debug_struct("EsploraConfig")
             .field("addr", &self.addr)
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("fallback_addr", &self.fallback_addr)
+            .field(
+                "fallback_token",
+                &self.fallback_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("secondary_fallback_addr", &self.secondary_fallback_addr)
+            .field(
+                "secondary_fallback_token",
+                &self.secondary_fallback_token.as_ref().map(|_| "<redacted>"),
+            )
             .finish()
     }
 }
@@ -349,6 +445,17 @@ impl Config {
             )));
         }
 
+        // Validate Esplora endpoint pairs wherever they appear:
+        // - The active backend when it's the Esplora variant.
+        // - The legacy `fallback_esplora` slot used as a backup
+        //   when a Bitcoind backend becomes unreachable.
+        if let Some(BitcoinBackend::Esplora(e)) = &self.bitcoin_backend {
+            e.check()?;
+        }
+        if let Some(e) = &self.fallback_esplora {
+            e.check()?;
+        }
+
         // TODO: check the semantics of the main descriptor
 
         Ok(())
@@ -360,6 +467,80 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    /// Helper: an `EsploraConfig` with only the mandatory `addr`
+    /// set. Other fields default to `None`. Tests mutate the
+    /// individual slots they care about.
+    fn bare_esplora_config() -> EsploraConfig {
+        EsploraConfig {
+            addr: "https://mempool.space/api".into(),
+            token: None,
+            fallback_addr: None,
+            fallback_token: None,
+            secondary_fallback_addr: None,
+            secondary_fallback_token: None,
+        }
+    }
+
+    /// Regression: an orphan `fallback_token` (no matching
+    /// `fallback_addr`) used to slide through the daemon's
+    /// `Client::new` silently — the provider would be skipped and
+    /// the token never used. Now rejected at config-load time.
+    #[test]
+    fn orphan_fallback_token_is_rejected() {
+        let mut esp = bare_esplora_config();
+        esp.fallback_token = Some("orphan-jwt".into());
+        let err = esp.check().expect_err("orphan fallback_token must error");
+        assert!(
+            matches!(err, ConfigError::Unexpected(ref m) if m.contains("fallback_token")
+                && m.contains("fallback_addr")),
+            "error message must name both fields; got: {:?}",
+            err,
+        );
+    }
+
+    #[test]
+    fn orphan_secondary_fallback_token_is_rejected() {
+        let mut esp = bare_esplora_config();
+        esp.secondary_fallback_token = Some("orphan-jwt".into());
+        let err = esp
+            .check()
+            .expect_err("orphan secondary_fallback_token must error");
+        assert!(
+            matches!(err, ConfigError::Unexpected(ref m) if m.contains("secondary_fallback_token")
+                && m.contains("secondary_fallback_addr")),
+            "error message must name both fields; got: {:?}",
+            err,
+        );
+    }
+
+    /// Anonymous public providers (no auth) are the entire
+    /// point of the fallback layer — addr with no token must
+    /// stay valid. This is the converse case the bot's prompt
+    /// almost asked us to reject; we deliberately don't.
+    #[test]
+    fn addr_without_token_is_valid() {
+        let mut esp = bare_esplora_config();
+        esp.fallback_addr = Some("https://blockstream.info/api".into());
+        esp.secondary_fallback_addr =
+            Some("https://api.coincube.io/api/v1/esplora/bitcoin/mainnet".into());
+        esp.check()
+            .expect("addr-only fallback shapes must validate");
+    }
+
+    /// A correctly-paired addr+token must validate, ensuring the
+    /// rejection above is targeted at the orphan-token case
+    /// rather than a blanket "token requires …" overreach.
+    #[test]
+    fn paired_addr_and_token_is_valid() {
+        let mut esp = bare_esplora_config();
+        esp.fallback_addr = Some("https://blockstream.info/api".into());
+        esp.fallback_token = Some("legit-jwt".into());
+        esp.secondary_fallback_addr =
+            Some("https://api.coincube.io/api/v1/esplora/bitcoin/mainnet".into());
+        esp.secondary_fallback_token = Some("legit-secondary-jwt".into());
+        esp.check().expect("paired addr+token must validate");
+    }
 
     // Test the format of the configuration file
     #[test]

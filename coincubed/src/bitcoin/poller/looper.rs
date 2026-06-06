@@ -288,8 +288,27 @@ fn updates(
             return updates(db_conn, bit, descs, secp);
         }
         Err(e) => {
-            log::error!("Error syncing wallet: '{}'.", e);
-            thread::sleep(time::Duration::from_secs(2));
+            // The Esplora "every provider cooling" case isn't a real
+            // failure — no network call was attempted — so log it at
+            // debug and back off long enough for at least one
+            // provider's cooldown to expire (cooldowns run 10 min,
+            // so 30s here just keeps the tick from being wasteful;
+            // future ticks will still skip-fast until something
+            // recovers). Without this branch the poller spammed
+            // ~30 ERROR lines/min while every backend was throttled.
+            // The string check is intentional: the
+            // `BitcoinInterface::sync_wallet` signature returns
+            // `Result<_, String>`, so we can't pattern-match on the
+            // typed `client::Error::AllCooling` variant from here.
+            // A regression test in `bitcoin::esplora::client`
+            // guards the marker.
+            if e.contains(crate::bitcoin::esplora::client::ALL_COOLING_DISPLAY_MARKER) {
+                log::debug!("Esplora poll skipped: {}", e);
+                thread::sleep(time::Duration::from_secs(30));
+            } else {
+                log::error!("Error syncing wallet: '{}'.", e);
+                thread::sleep(time::Duration::from_secs(2));
+            }
             return updates(db_conn, bit, descs, secp);
         }
     };

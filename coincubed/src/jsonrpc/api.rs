@@ -522,6 +522,13 @@ pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Respo
             rbf_psbt(control, params)?
         }
         "getinfo" => serde_json::json!(&control.get_info()),
+        "requestsync" => {
+            control.request_sync();
+            // Fire-and-forget — the daemon kicks the poller and
+            // returns immediately. The GUI will see the result via
+            // the next state refresh.
+            serde_json::json!({})
+        }
         "getnewaddress" => serde_json::json!(&control.get_new_address()),
         "updatederivationindexes" => {
             let params = req.params.ok_or_else(|| {

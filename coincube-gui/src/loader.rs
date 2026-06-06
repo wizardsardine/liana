@@ -823,6 +823,21 @@ pub async fn start_bitcoind_and_daemon(
         .path()
         .to_path_buf();
     config_path.push("daemon.toml");
+    // Promote pre-fallback vaults: rewrite `daemon.toml` so the
+    // Connect URL moves to `fallback_addr` and `mempool.space`
+    // becomes the primary `addr`. Idempotent (skips when
+    // `fallback_addr` is already present or `addr` isn't the
+    // Connect URL), so subsequent starts no-op. An I/O failure
+    // here is surfaced as a startup error rather than swallowed
+    // — if we can't migrate the file we shouldn't pretend we
+    // did.
+    if let Err(e) = crate::installer::migration::migrate_esplora_config(&config_path) {
+        tracing::warn!(
+            "esplora-config migration failed for {}: {} — continuing with the existing daemon.toml",
+            config_path.display(),
+            e,
+        );
+    }
     let config = Config::from_file(Some(config_path)).map_err(Error::Config)?;
     let bitcoind = match (start_internal_bitcoind, &config.bitcoin_backend) {
         (true, Some(BitcoinBackend::Bitcoind(bitcoind_config))) => Some(

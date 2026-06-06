@@ -221,11 +221,19 @@ impl State for VaultReceivePanel {
                 let daemon = daemon.clone();
                 Task::perform(
                     async move {
-                        daemon
+                        let res = daemon
                             .get_new_address()
                             .await
                             .map(|res| (res.address, res.derivation_index))
-                            .map_err(|e| e.into())
+                            .map_err(|e| e.into());
+                        // User just generated a fresh receive
+                        // address — they're staring at the QR
+                        // waiting for an incoming payment, so kick
+                        // the poller for a per-SPK rescan on the
+                        // next tick instead of waiting up to 10
+                        // min for the smart-poll cadence.
+                        let _ = daemon.request_sync().await;
+                        res
                     },
                     Message::ReceiveAddress,
                 )
@@ -332,10 +340,18 @@ impl State for VaultReceivePanel {
         *self = Self::new(data_dir, wallet);
         Task::perform(
             async move {
-                daemon
+                let res = daemon
                     .list_revealed_addresses(false, true, PREV_ADDRESSES_PAGE_SIZE, None)
                     .await
-                    .map_err(|e| e.into())
+                    .map_err(|e| e.into());
+                // The Receive panel just opened — user is here to
+                // either generate a new address or check on an
+                // existing one. Kick the poller for fresh mempool
+                // state so an incoming unconfirmed tx shows up
+                // promptly instead of waiting for the smart-poll
+                // safety-net rescan.
+                let _ = daemon.request_sync().await;
+                res
             },
             |res| Message::RevealedAddresses(res, None),
         )
@@ -493,6 +509,19 @@ mod tests {
             Address::from_str("tb1qkldgvljmjpxrjq2ev5qxe8dvhn0dph9q85pwtfkjeanmwdue2akqj4twxj")
                 .unwrap()
                 .assume_checked();
+        // The mock daemon is a strict ordered queue (see
+        // `utils::mock::Daemon`). Each entry consumes the next
+        // outgoing RPC. The Receive panel's `reload` and
+        // `NextReceiveAddress` paths both fire a fire-and-forget
+        // `requestsync` after their primary RPC, so the queue has
+        // to interleave them in real call order:
+        //   1. listrevealedaddresses    (reload's primary)
+        //   2. requestsync              (reload's eager-sync kick)
+        //   3. getnewaddress            (NextReceiveAddress primary)
+        //   4. requestsync              (NextReceiveAddress kick)
+        // The daemon answers `requestsync` with the empty JSON
+        // object `{}`; the client deserialises into a discarded
+        // `serde_json::Value`.
         let daemon = Daemon::new(vec![
             (
                 Some(
@@ -504,11 +533,19 @@ mod tests {
                 })),
             ),
             (
+                Some(json!({"method": "requestsync", "params": Option::<Request>::None})),
+                Ok(json!({})),
+            ),
+            (
                 Some(json!({"method": "getnewaddress", "params": Option::<Request>::None})),
                 Ok(json!(GetAddressResult::new(
                     addr.clone(),
                     ChildNumber::from_normal_idx(0).unwrap()
                 ))),
+            ),
+            (
+                Some(json!({"method": "requestsync", "params": Option::<Request>::None})),
+                Ok(json!({})),
             ),
         ]);
         let wallet = Arc::new(Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap()));

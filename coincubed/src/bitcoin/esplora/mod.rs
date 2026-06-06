@@ -49,6 +49,18 @@ impl std::fmt::Display for EsploraError {
     }
 }
 
+/// How often we force a full per-SPK rescan even when the chain tip
+/// hasn't moved, as a safety net for mempool-only activity
+/// (transactions broadcast to us between blocks, RBF replacements, …).
+/// Mempool-only activity is invisible to the [`Esplora::sync_wallet`]
+/// tip-guard, so without this cap a quiet chain could let mempool
+/// state silently drift out of sync for hours.
+///
+/// At the default `poll_interval = 600s` (10 min), a value of 6
+/// means we do a full rescan at least every hour, capping the
+/// mempool-staleness window.
+const MAX_POLLS_BEFORE_FORCED_RESCAN: u32 = 6;
+
 /// Interface for the Esplora backend.
 pub struct Esplora {
     client: client::Client,
@@ -59,6 +71,30 @@ pub struct Esplora {
     /// Set to `true` to force a full scan from the genesis block regardless of
     /// the wallet's local chain height.
     full_scan: bool,
+    /// Chain tip observed at the end of the most recent successful
+    /// full sync. The smart-poll guard in [`Self::sync_wallet`]
+    /// fetches the current tip on every call and compares it here:
+    /// if the chain hasn't advanced *and* we're not at the forced-
+    /// rescan boundary, the per-SPK walk is skipped, dropping the
+    /// poll cost from ~80 HTTP requests to 1. Set back to `None`
+    /// only by a deliberate `trigger_rescan` or on first run.
+    last_synced_tip: Option<BlockChainTip>,
+    /// Number of polls since the last full per-SPK sync.
+    /// Incremented every time the tip-guard short-circuits; reset
+    /// to 0 on every actual sync run (including the safety-net
+    /// rescans at [`MAX_POLLS_BEFORE_FORCED_RESCAN`]).
+    polls_since_full_sync: u32,
+    /// One-shot flag set by [`Self::request_eager_sync`]. When
+    /// `true`, the next [`Self::sync_wallet`] call bypasses the
+    /// smart-poll tip-guard and does a full per-SPK walk even when
+    /// the chain tip hasn't moved. Cleared only after a *successful*
+    /// sync — a transient failure (e.g. every provider in cooldown,
+    /// transport error) preserves the flag so the next poller tick
+    /// also honors the user's "fresh data, now" intent rather than
+    /// silently falling back to the tip-guard short-circuit. Drives
+    /// the "user opened Receive / app regained focus / new receive
+    /// address" UX hooks.
+    eager_sync_requested: bool,
 }
 
 impl Esplora {
@@ -72,7 +108,17 @@ impl Esplora {
             bdk_wallet,
             sync_count: 0,
             full_scan,
+            last_synced_tip: None,
+            polls_since_full_sync: 0,
+            eager_sync_requested: false,
         })
+    }
+
+    /// Bypass the smart-poll tip-guard on the next sync. See
+    /// [`crate::bitcoin::BitcoinInterface::request_eager_sync`] for
+    /// the rationale.
+    pub fn request_eager_sync(&mut self) {
+        self.eager_sync_requested = true;
     }
 
     pub fn sanity_checks(&self, expected_hash: &bitcoin::BlockHash) -> Result<(), EsploraError> {
@@ -123,10 +169,26 @@ impl Esplora {
     /// Make the poller perform a full scan on the next iteration.
     pub fn trigger_rescan(&mut self) {
         self.full_scan = true;
+        // Forget the cached tip — the rescan rebuilds the chain
+        // from genesis, so any post-rescan tip we observe is
+        // genuinely new information and the tip-guard should treat
+        // it as such.
+        self.last_synced_tip = None;
+        self.polls_since_full_sync = 0;
     }
 
     /// Sync the wallet with the Esplora server. If there was any reorg since the last poll, this
     /// returns the first common ancestor between the previous and the new chain.
+    ///
+    /// Smart-poll guard: when we're not in a forced full-scan state
+    /// and the chain tip we just fetched matches the one cached
+    /// from our last full sync, the per-SPK walk is skipped
+    /// entirely. This is the common case on a quiet chain and
+    /// drops the per-poll cost from ~80 HTTP requests to 1. The
+    /// [`MAX_POLLS_BEFORE_FORCED_RESCAN`] safety net forces a full
+    /// rescan every Nth idle tick to surface mempool-only activity
+    /// (RBF replacements, broadcasts targeting us between blocks)
+    /// that the tip-guard would otherwise hide.
     pub fn sync_wallet(
         &mut self,
         receive_index: ChildNumber,
@@ -139,40 +201,128 @@ impl Esplora {
             local_chain_tip.block_id().height
         );
 
-        const PARALLEL_REQUESTS: usize = 4;
+        // Eager-sync override. Read without clearing: if the sync
+        // attempt below fails transiently (all-cooling, transport
+        // error, BDK rejected the chain update, …) we want the
+        // next poller tick to also bypass the tip-guard rather
+        // than silently consume the user's "fresh data, now"
+        // intent on a poll that returned no useful data. The flag
+        // is cleared at the success-return path at the bottom of
+        // this function, after the wallet has actually been
+        // brought up to date.
+        let eager = self.eager_sync_requested;
+        if eager {
+            log::debug!("Esplora eager sync requested; bypassing tip-guard");
+        }
+
+        // Tip-guard. A single `chain_tip` request is cheap enough
+        // (one HTTP call vs. ~80 for the SPK walk) that we always
+        // pay it; the savings come from skipping the walk when the
+        // tip is unchanged. Only applies when we're not in a
+        // forced full-scan, an eager sync wasn't requested, and
+        // there's a `last_synced_tip` to compare against — first-
+        // poll has no baseline.
+        if !self.is_rescanning() && !eager {
+            if let Some(last_tip) = self.last_synced_tip {
+                let current_tip = self.client.chain_tip().map_err(EsploraError::Client)?;
+                if current_tip == last_tip {
+                    // Counting the *prospective* skip first so the
+                    // boundary fires exactly on the
+                    // `MAX_POLLS_BEFORE_FORCED_RESCAN`th unchanged
+                    // poll (the staleness cap documented on the
+                    // constant). The pre-fix shape incremented
+                    // *after* the comparison, which let one extra
+                    // tick of staleness through before the forced
+                    // rescan — every Nth+1 poll instead of every
+                    // Nth. We only persist the increment when we
+                    // actually skip; on the boundary tick we fall
+                    // through to a full sync, which resets the
+                    // counter to 0 at its success-return below.
+                    let prospective = self.polls_since_full_sync.saturating_add(1);
+                    if prospective < MAX_POLLS_BEFORE_FORCED_RESCAN {
+                        self.polls_since_full_sync = prospective;
+                        log::debug!(
+                            "Esplora tip unchanged ({}), skipping per-SPK rescan \
+                             (forced rescan in {} more polls)",
+                            current_tip,
+                            MAX_POLLS_BEFORE_FORCED_RESCAN.saturating_sub(prospective),
+                        );
+                        return Ok(None);
+                    }
+                    log::debug!(
+                        "Esplora tip unchanged ({}) but forced-rescan boundary reached \
+                         after {} skipped polls; performing full rescan",
+                        current_tip,
+                        self.polls_since_full_sync,
+                    );
+                } else {
+                    log::debug!(
+                        "Esplora tip advanced from {} to {}; performing full sync",
+                        last_tip,
+                        current_tip,
+                    );
+                }
+            }
+        }
+
+        // Lowered from 4 to 2 to play nicer with mempool.space's
+        // per-IP rate window. Hitting 4 concurrent requests against
+        // the public mempool tier reliably triggers 429s mid-sync,
+        // and a 429 mid-sync is much more expensive than a 2×
+        // slowdown on the happy path: BDK throws away the partial
+        // result and the next provider in the chain has to redo
+        // every SPK from scratch. Two-wide keeps us under mempool's
+        // per-second budget more often, so the happy path stays
+        // happy.
+        const PARALLEL_REQUESTS: usize = 2;
         const STOP_GAP: usize = 200;
 
+        // SPK lists are rebuilt per attempt so the request closure can be
+        // re-invoked if the primary Esplora endpoint fails and the client
+        // retries on its fallback. BDK's request types are consumed by the
+        // call, so the only way to retry is to build a fresh request.
         let (chain_update, mut graph_update, keychain_update) = if !self.is_rescanning() {
             log::debug!("Performing sync.");
-            let mut request = SyncRequest::from_chain_tip(local_chain_tip.clone());
-
-            let all_spks: Vec<_> = self
-                .bdk_wallet
-                .index()
-                .inner()
-                .all_spks()
-                .values()
-                .cloned()
-                .collect();
-            request = request.chain_spks(all_spks);
-            log::debug!("num SPKs for sync: {}", request.spks.len());
-
+            let bdk_wallet = &self.bdk_wallet;
+            let local_chain_tip = local_chain_tip.clone();
             let sync_result = self
                 .client
-                .sync(request, PARALLEL_REQUESTS)
+                .sync(
+                    || -> SyncRequest {
+                        let mut request = SyncRequest::from_chain_tip(local_chain_tip.clone());
+                        let all_spks: Vec<_> = bdk_wallet
+                            .index()
+                            .inner()
+                            .all_spks()
+                            .values()
+                            .cloned()
+                            .collect();
+                        request = request.chain_spks(all_spks);
+                        log::debug!("num SPKs for sync: {}", request.spks.len());
+                        request
+                    },
+                    PARALLEL_REQUESTS,
+                )
                 .map_err(EsploraError::Client)?;
             log::debug!("Sync complete.");
             (sync_result.chain_update, sync_result.graph_update, None)
         } else {
             log::info!("Performing full scan.");
-            let mut request = FullScanRequest::from_chain_tip(local_chain_tip.clone());
-
-            for (k, spks) in self.bdk_wallet.index().all_unbounded_spk_iters() {
-                request = request.set_spks_for_keychain(k, spks);
-            }
+            let bdk_wallet = &self.bdk_wallet;
+            let local_chain_tip = local_chain_tip.clone();
             let scan_result = self
                 .client
-                .full_scan(request, STOP_GAP, PARALLEL_REQUESTS)
+                .full_scan(
+                    || {
+                        let mut request = FullScanRequest::from_chain_tip(local_chain_tip.clone());
+                        for (k, spks) in bdk_wallet.index().all_unbounded_spk_iters() {
+                            request = request.set_spks_for_keychain(k, spks);
+                        }
+                        request
+                    },
+                    STOP_GAP,
+                    PARALLEL_REQUESTS,
+                )
                 .map_err(EsploraError::Client)?;
             self.full_scan = false;
             log::info!("Full scan complete.");
@@ -237,6 +387,18 @@ impl Esplora {
             }
         }
         self.bdk_wallet.apply_graph_update(graph_update);
+
+        // The wallet's local chain is now caught up. Cache its tip so
+        // the next poll's tip-guard can short-circuit when the chain
+        // hasn't moved, and reset the forced-rescan counter.
+        self.last_synced_tip = Some(self.wallet_tip());
+        self.polls_since_full_sync = 0;
+        // Sync succeeded — the user's eager request (if any) is
+        // now honored, so clear the flag. Earlier transient
+        // failures left it set so this point would eventually be
+        // reached on a retry.
+        self.eager_sync_requested = false;
+
         Ok(reorg_common_ancestor)
     }
 

@@ -89,6 +89,13 @@ impl<C: Client + Send + Sync + Debug> Daemon for Coincubed<C> {
         self.call("getinfo", Option::<Request>::None)
     }
 
+    async fn request_sync(&self) -> Result<(), DaemonError> {
+        // The daemon returns `{}`; we don't need the payload, so
+        // deserialise into a unit value and discard.
+        let _: serde_json::Value = self.call("requestsync", Option::<Request>::None)?;
+        Ok(())
+    }
+
     async fn get_new_address(&self) -> Result<GetAddressResult, DaemonError> {
         self.call("getnewaddress", Option::<Request>::None)
     }
