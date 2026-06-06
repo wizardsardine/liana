@@ -1,11 +1,8 @@
 //! View renderer for [`crate::app::state::spark::receive::SparkReceive`].
-//!
-//! Phase 4c ships the minimum viable Receive UI: method radio buttons,
-//! BOLT11 amount/description inputs (hidden for on-chain), a Generate
-//! button, and a result card that shows the invoice/address as a
-//! selectable text field. QR codes, copy animations, Lightning Address
-//! display, and the on-chain claim-deposit lifecycle land in Phase 4d.
 
+use std::collections::HashMap;
+
+use coincube_core::miniscript::bitcoin::Network;
 use coincube_ui::{
     component::{
         amount::BitcoinDisplayUnit,
@@ -22,6 +19,7 @@ use iced::{
 
 use coincube_spark_protocol::DepositInfo;
 
+use crate::app::state::spark::esplora::DEPOSIT_MATURITY_CONFIRMATIONS;
 use crate::app::state::spark::receive::{SparkReceiveMethod, SparkReceivePhase};
 use crate::app::view::spark::{last_tx::last_transactions_section, SparkRecentTransaction};
 use crate::app::view::{Message, SparkReceiveMessage};
@@ -42,6 +40,13 @@ pub struct SparkReceiveView<'a> {
     pub claiming: Option<&'a (String, u32)>,
     /// Phase 4f: transient error from the most recent claim attempt.
     pub claim_error: Option<&'a str>,
+    /// Live on-chain confirmation count per pending deposit, keyed by
+    /// `(txid, vout)`. Sourced from a public Esplora and refreshed on a
+    /// 30s tick; missing keys render the SDK's plain fallback text.
+    pub pending_deposit_confirmations: &'a HashMap<(String, u32), u32>,
+    /// Bitcoin network the cube is running on. Drives the Pending
+    /// Deposits explanatory copy (live counts only available on mainnet).
+    pub network: Network,
     pub received_amount_display: &'a str,
     pub received_celebration_context: &'a str,
     pub received_quote: &'a coincube_ui::component::quote_display::Quote,
@@ -135,21 +140,21 @@ impl<'a> SparkReceiveView<'a> {
             .style(theme::card::simple);
             content = content.push(form_card);
         } else if self.method == SparkReceiveMethod::OnchainBitcoin {
-            // On-chain: nothing to configure in Phase 4c. Explain the
-            // deposit model so the user knows what to expect.
+            // On-chain: nothing to configure. Explain the deposit
+            // model so the user knows what to expect.
             let info_card = Container::new(
                 Column::new()
                     .spacing(8)
                     .push(h4_bold("Spark on-chain receive"))
-                    .push(p2_regular(
-                        "Spark uses a deposit-address model — the user sends \
-                         BTC to the address below, the bridge notices the \
-                         incoming tx, and the funds become spendable after \
-                         the SDK claims the deposit (automatic background \
-                         process in a future phase; today the user may need \
-                         to restart the cube to surface the claim). Phase \
-                         4d wires the explicit claim lifecycle into the UI.",
-                    )),
+                    .push(p2_regular(format!(
+                        "Spark uses a deposit-address model — send BTC to \
+                         the address below and Spark will notice the \
+                         incoming transaction automatically. The deposit \
+                         becomes spendable once it has {} on-chain \
+                         confirmations, at which point the SDK claims it \
+                         into your wallet.",
+                        DEPOSIT_MATURITY_CONFIRMATIONS,
+                    ))),
             )
             .padding(16)
             .style(theme::card::simple);
@@ -188,6 +193,8 @@ impl<'a> SparkReceiveView<'a> {
                 self.pending_deposits,
                 self.claiming,
                 self.claim_error,
+                self.pending_deposit_confirmations,
+                self.network,
             ));
         }
 
@@ -208,21 +215,28 @@ fn pending_deposits_card<'a>(
     deposits: &'a [DepositInfo],
     claiming: Option<&'a (String, u32)>,
     claim_error: Option<&'a str>,
+    confirmations: &'a HashMap<(String, u32), u32>,
+    network: Network,
 ) -> Element<'a, Message> {
     let mut card = Column::new()
         .spacing(12)
         .push(h4_bold("Pending deposits"))
-        .push(p2_regular(
+        .push(p2_regular(format!(
             "Spark notices incoming on-chain transactions automatically. \
-             Mature deposits can be claimed into your wallet below.",
-        ));
+             Each deposit becomes claimable after {} on-chain confirmations, \
+             at which point the SDK claims it into your wallet.",
+            DEPOSIT_MATURITY_CONFIRMATIONS,
+        )));
 
     if let Some(err) = claim_error {
         card = card.push(p2_regular(format!("Claim failed: {}", err)));
     }
 
     for deposit in deposits {
-        card = card.push(deposit_row(deposit, claiming));
+        let confs = confirmations
+            .get(&(deposit.txid.clone(), deposit.vout))
+            .copied();
+        card = card.push(deposit_row(deposit, claiming, confs, network));
     }
 
     Container::new(card)
@@ -234,6 +248,8 @@ fn pending_deposits_card<'a>(
 fn deposit_row<'a>(
     deposit: &'a DepositInfo,
     claiming: Option<&'a (String, u32)>,
+    confirmations: Option<u32>,
+    network: Network,
 ) -> Element<'a, Message> {
     let is_being_claimed = claiming
         .map(|(txid, vout)| txid == &deposit.txid && *vout == deposit.vout)
@@ -262,8 +278,20 @@ fn deposit_row<'a>(
             .width(Length::Fixed(140.0))
             .into()
     } else if !deposit.is_mature {
-        // Immature — show waiting status, no button.
-        p2_regular("Waiting for confirmation").into()
+        // Immature — show "X / N confirmations" if Esplora has
+        // answered, otherwise the SDK-driven fallback wording. The
+        // fallback also applies on networks where no public Esplora
+        // is available (regtest).
+        let label = match confirmations {
+            Some(c) if network == Network::Bitcoin => {
+                format!("{} / {} confirmations", c, DEPOSIT_MATURITY_CONFIRMATIONS)
+            }
+            _ => format!(
+                "Waiting for confirmations ({} required)",
+                DEPOSIT_MATURITY_CONFIRMATIONS
+            ),
+        };
+        p2_regular(label).into()
     } else if let Some(err) = &deposit.claim_error {
         // Previous claim attempt failed for a reason the SDK
         // surfaces. Show a short hint + Retry button.
