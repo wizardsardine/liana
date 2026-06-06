@@ -509,6 +509,19 @@ mod tests {
             Address::from_str("tb1qkldgvljmjpxrjq2ev5qxe8dvhn0dph9q85pwtfkjeanmwdue2akqj4twxj")
                 .unwrap()
                 .assume_checked();
+        // The mock daemon is a strict ordered queue (see
+        // `utils::mock::Daemon`). Each entry consumes the next
+        // outgoing RPC. The Receive panel's `reload` and
+        // `NextReceiveAddress` paths both fire a fire-and-forget
+        // `requestsync` after their primary RPC, so the queue has
+        // to interleave them in real call order:
+        //   1. listrevealedaddresses    (reload's primary)
+        //   2. requestsync              (reload's eager-sync kick)
+        //   3. getnewaddress            (NextReceiveAddress primary)
+        //   4. requestsync              (NextReceiveAddress kick)
+        // The daemon answers `requestsync` with the empty JSON
+        // object `{}`; the client deserialises into a discarded
+        // `serde_json::Value`.
         let daemon = Daemon::new(vec![
             (
                 Some(
@@ -520,11 +533,19 @@ mod tests {
                 })),
             ),
             (
+                Some(json!({"method": "requestsync", "params": Option::<Request>::None})),
+                Ok(json!({})),
+            ),
+            (
                 Some(json!({"method": "getnewaddress", "params": Option::<Request>::None})),
                 Ok(json!(GetAddressResult::new(
                     addr.clone(),
                     ChildNumber::from_normal_idx(0).unwrap()
                 ))),
+            ),
+            (
+                Some(json!({"method": "requestsync", "params": Option::<Request>::None})),
+                Ok(json!({})),
             ),
         ]);
         let wallet = Arc::new(Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap()));

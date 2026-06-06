@@ -340,15 +340,15 @@ impl DaemonControl {
         // trait's default no-op.
         self.bitcoin.lock().unwrap().request_eager_sync();
         // Wake the poller now rather than waiting for its current
-        // sleep to elapse. We pass a `sync_channel(0)` sender but
-        // never block on the matching receiver — completion will
-        // surface naturally through subsequent `get_info`/state
-        // calls from the GUI, and waiting here would block the
-        // JSON-RPC handler thread for as long as the sync takes
-        // (potentially seconds), which is not what we want for a
-        // UX-triggered "kick the poller" request.
-        let (tx, _rx) = mpsc::sync_channel(0);
-        if let Err(e) = self.poller_sender.send(PollerMessage::PollNow(tx)) {
+        // sleep to elapse. Use the no-ack variant so the poller
+        // doesn't log a spurious "send failed" error on every
+        // trigger — completion surfaces naturally through
+        // subsequent `get_info`/state calls from the GUI, and
+        // blocking here on a completion signal would freeze the
+        // JSON-RPC handler thread for as long as the sync takes,
+        // which is not what we want for a UX-triggered "kick the
+        // poller" request.
+        if let Err(e) = self.poller_sender.send(PollerMessage::PollNowNoAck) {
             log::warn!("request_sync: poller send failed: {}", e);
         }
     }

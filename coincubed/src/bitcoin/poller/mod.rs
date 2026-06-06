@@ -16,6 +16,14 @@ pub enum PollerMessage {
     /// Ask the Bitcoin poller to poll immediately, get notified through the passed channel once
     /// it's done.
     PollNow(mpsc::SyncSender<()>),
+    /// Same as [`Self::PollNow`] but without an ack channel.
+    /// Intended for fire-and-forget triggers (UX hooks: app focus,
+    /// Receive panel open, new receive address) where the caller
+    /// has no use for the completion signal — and where supplying
+    /// a sender whose matching receiver gets dropped immediately
+    /// would cause the poller to log a spurious "send failed"
+    /// error on every trigger.
+    PollNowNoAck,
 }
 
 /// The Bitcoin poller handler.
@@ -47,6 +55,42 @@ impl Poller {
             db,
             secp,
             descs,
+        }
+    }
+
+    /// Shared body for the immediate-poll message arms
+    /// ([`PollerMessage::PollNow`] and [`PollerMessage::PollNowNoAck`]).
+    /// Updates `synced` and `last_poll` regardless of whether the
+    /// chain is actually caught up, so the caller doesn't have to
+    /// repeat that bookkeeping or decide independently when the
+    /// next scheduled tick should fire.
+    fn run_immediate_poll(
+        &mut self,
+        synced: &mut bool,
+        last_poll: &mut Option<time::Instant>,
+    ) {
+        // Polling while the block chain is syncing could lead to
+        // poller restarts if the height increases before
+        // completion, and in any case this is consistent with
+        // regular poller behaviour: re-check sync progress before
+        // committing to a poll.
+        if !*synced {
+            let progress = self.bit.sync_progress();
+            log::info!(
+                "Block chain synchronization progress: {:.2}% ({} blocks / {} headers)",
+                progress.rounded_up_progress() * 100.0,
+                progress.blocks,
+                progress.headers
+            );
+            *synced = progress.is_complete();
+        }
+        // Update `last_poll` even if we don't poll now so that we
+        // don't attempt another poll too soon.
+        *last_poll = Some(time::Instant::now());
+        if *synced {
+            looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs);
+        } else {
+            log::warn!("Skipped poll as block chain is still synchronizing.");
         }
     }
 
@@ -89,32 +133,17 @@ impl Poller {
                     return;
                 }
                 Ok(PollerMessage::PollNow(sender)) => {
-                    // We've been asked to poll, don't wait any further and signal completion to
-                    // the caller, unless the block chain is still syncing.
-                    // Polling while the block chain is syncing could lead to poller restarts
-                    // if the height increases before completion, and in any case this is consistent
-                    // with regular poller behaviour.
-                    if !synced {
-                        let progress = self.bit.sync_progress();
-                        log::info!(
-                            "Block chain synchronization progress: {:.2}% ({} blocks / {} headers)",
-                            progress.rounded_up_progress() * 100.0,
-                            progress.blocks,
-                            progress.headers
-                        );
-                        synced = progress.is_complete();
-                    }
-                    // Update `last_poll` even if we don't poll now so that we don't attempt another
-                    // poll too soon.
-                    last_poll = Some(time::Instant::now());
-                    if synced {
-                        looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs);
-                    } else {
-                        log::warn!("Skipped poll as block chain is still synchronizing.");
-                    }
+                    self.run_immediate_poll(&mut synced, &mut last_poll);
                     if let Err(e) = sender.send(()) {
                         log::error!("Error sending immediate poll completion signal: {}.", e);
                     }
+                    continue;
+                }
+                Ok(PollerMessage::PollNowNoAck) => {
+                    // Same work, no completion signal — see the
+                    // `PollNowNoAck` variant doc for why this
+                    // exists separately from `PollNow`.
+                    self.run_immediate_poll(&mut synced, &mut last_poll);
                     continue;
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
