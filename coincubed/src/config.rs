@@ -77,24 +77,31 @@ fn default_loglevel() -> log::LevelFilter {
     log::LevelFilter::Info
 }
 
+/// Recommended `poll_interval_secs` for the Esplora backend. Picked
+/// so the per-poll request volume fits comfortably inside public
+/// Esplora providers' anonymous free tiers (mempool.space ≈ 60/min,
+/// blockstream.info ≈ 700/hr). ~80-SPK wallets at this cadence land
+/// at ~85 HTTP requests/hour against the active provider with the
+/// smart-poll tip-guard active — well under any free-tier ceiling.
+pub const ESPLORA_POLL_INTERVAL_SECS: u64 = 600;
+
+/// Recommended `poll_interval_secs` for local-node backends
+/// (`bitcoind`, `electrum`). These talk to a process you run on
+/// localhost, so there's no per-request HTTP cost and no upstream
+/// rate cap — a snappier cadence costs nothing and surfaces new
+/// blocks/mempool activity to the UI within seconds.
+pub const LOCAL_BACKEND_POLL_INTERVAL_SECS: u64 = 10;
+
 fn default_poll_interval() -> Duration {
-    // Public Esplora providers (mempool.space, blockstream.info) cap
-    // anonymous traffic at ~700 requests/hour and 500k/month per IP.
-    // A typical Coincube wallet with ~80 SPKs at the previous 10s
-    // poll interval would burn through ~9,600 req/hour — over the
-    // free-tier hourly cap by 14×. 600s (10 min) brings steady-state
-    // request volume comfortably under any anonymous free tier
-    // while still surfacing new blocks within a poll of their
-    // arrival. The smart-poll tip-guard in
-    // [`crate::bitcoin::esplora::Esplora::sync_wallet`] makes the
-    // common case (tip unchanged since last poll) cost a single
-    // `chain_tip` request rather than a full per-SPK rescan.
-    //
-    // Existing on-disk configs are auto-migrated to at least 300s
-    // by `coincube_gui::installer::migration` when they're below
-    // that threshold; users who deliberately set a higher interval
-    // are left alone.
-    Duration::from_secs(600)
+    // Used by serde when `poll_interval_secs` is missing from the
+    // TOML. We can't tell which backend the config will end up
+    // pointing at, so default to the Esplora-safe value
+    // ([`ESPLORA_POLL_INTERVAL_SECS`]) — better to be a touch lazy
+    // on bitcoind for one boot than to silently exceed an Esplora
+    // free tier. The installer/migration in `coincube-gui` sets
+    // a backend-appropriate value explicitly, so this serde
+    // default only fires for hand-written or truncated configs.
+    Duration::from_secs(ESPLORA_POLL_INTERVAL_SECS)
 }
 
 /// Bitcoin backend config.

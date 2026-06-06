@@ -221,11 +221,19 @@ impl State for VaultReceivePanel {
                 let daemon = daemon.clone();
                 Task::perform(
                     async move {
-                        daemon
+                        let res = daemon
                             .get_new_address()
                             .await
                             .map(|res| (res.address, res.derivation_index))
-                            .map_err(|e| e.into())
+                            .map_err(|e| e.into());
+                        // User just generated a fresh receive
+                        // address — they're staring at the QR
+                        // waiting for an incoming payment, so kick
+                        // the poller for a per-SPK rescan on the
+                        // next tick instead of waiting up to 10
+                        // min for the smart-poll cadence.
+                        let _ = daemon.request_sync().await;
+                        res
                     },
                     Message::ReceiveAddress,
                 )
@@ -332,10 +340,18 @@ impl State for VaultReceivePanel {
         *self = Self::new(data_dir, wallet);
         Task::perform(
             async move {
-                daemon
+                let res = daemon
                     .list_revealed_addresses(false, true, PREV_ADDRESSES_PAGE_SIZE, None)
                     .await
-                    .map_err(|e| e.into())
+                    .map_err(|e| e.into());
+                // The Receive panel just opened — user is here to
+                // either generate a new address or check on an
+                // existing one. Kick the poller for fresh mempool
+                // state so an incoming unconfirmed tx shows up
+                // promptly instead of waiting for the smart-poll
+                // safety-net rescan.
+                let _ = daemon.request_sync().await;
+                res
             },
             |res| Message::RevealedAddresses(res, None),
         )

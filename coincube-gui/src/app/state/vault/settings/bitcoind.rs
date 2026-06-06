@@ -183,6 +183,13 @@ impl BitcoindSettingsState {
             new_cfg.pending_bitcoind = Some(current);
         }
         new_cfg.bitcoin_backend = Some(BitcoinBackend::Esplora(esplora));
+        // Bump the poll cadence to the Esplora-safe interval so
+        // we don't carry a snappy localhost cadence into a path
+        // that pays HTTP cost per poll and would burn through
+        // public-tier rate windows. See
+        // `coincubed::config::ESPLORA_POLL_INTERVAL_SECS`.
+        new_cfg.bitcoin_config.poll_interval_secs =
+            std::time::Duration::from_secs(coincubed::config::ESPLORA_POLL_INTERVAL_SECS);
         new_cfg.fallback_esplora = None;
         self.node_switch_processing = true;
         self.warning = None;
@@ -568,6 +575,16 @@ impl State for BitcoindSettingsState {
                                 new_cfg.bitcoin_backend = Some(BitcoinBackend::Bitcoind(pending));
                                 new_cfg.pending_bitcoind = None;
                                 new_cfg.fallback_esplora = old_esplora;
+                                // Drop the poll cadence back to the
+                                // snappy local-node interval. The
+                                // Esplora-safe 10-min value made
+                                // sense for HTTPS-per-poll against
+                                // a rate-limited public provider;
+                                // bitcoind is a free localhost RPC.
+                                new_cfg.bitcoin_config.poll_interval_secs =
+                                    std::time::Duration::from_secs(
+                                        coincubed::config::LOCAL_BACKEND_POLL_INTERVAL_SECS,
+                                    );
                                 self.node_switch_processing = true;
                                 self.warning = None;
                                 return Task::done(Message::LoadDaemonConfig(Box::new(new_cfg)));

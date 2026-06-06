@@ -106,6 +106,21 @@ pub trait BitcoinInterface: Send {
     /// Broadcast this transaction to the Bitcoin P2P network
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String>;
 
+    /// Request that the next [`Self::sync_wallet`] call bypass any
+    /// short-circuit optimisations (e.g. the smart-poll tip-guard
+    /// on the Esplora backend) and do a full sync against the
+    /// providers. No-op for backends that don't have such an
+    /// optimisation, so the default impl is fine for everyone but
+    /// Esplora.
+    ///
+    /// The GUI calls this — via the `requestsync` JSON-RPC — when
+    /// the user does something that signals "I want fresh data
+    /// now": app regains focus, the Receive panel opens, a new
+    /// receive address is generated, etc. The flag is consumed on
+    /// the next sync, so subsequent ticks resume normal smart-poll
+    /// behaviour.
+    fn request_eager_sync(&mut self) {}
+
     /// Trigger a rescan of the block chain for transactions related to this descriptor since
     /// the given date.
     fn start_rescan(
@@ -602,6 +617,10 @@ impl BitcoinInterface for esplora::Esplora {
             .map_err(|e| e.to_string())
     }
 
+    fn request_eager_sync(&mut self) {
+        self.request_eager_sync();
+    }
+
     fn received_coins(
         &self,
         tip: &BlockChainTip,
@@ -834,6 +853,10 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
         self.lock().unwrap().broadcast_tx(tx)
+    }
+
+    fn request_eager_sync(&mut self) {
+        self.lock().unwrap().request_eager_sync();
     }
 
     fn start_rescan(

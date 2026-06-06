@@ -84,6 +84,14 @@ pub struct Esplora {
     /// to 0 on every actual sync run (including the safety-net
     /// rescans at [`MAX_POLLS_BEFORE_FORCED_RESCAN`]).
     polls_since_full_sync: u32,
+    /// One-shot flag set by [`Self::request_eager_sync`]. When
+    /// `true`, the next [`Self::sync_wallet`] call bypasses the
+    /// smart-poll tip-guard and does a full per-SPK walk even when
+    /// the chain tip hasn't moved. Consumed (cleared) at the top
+    /// of `sync_wallet` so subsequent ticks resume normal cadence.
+    /// Drives the "user opened Receive / app regained focus / new
+    /// receive address" UX hooks.
+    eager_sync_requested: bool,
 }
 
 impl Esplora {
@@ -99,7 +107,15 @@ impl Esplora {
             full_scan,
             last_synced_tip: None,
             polls_since_full_sync: 0,
+            eager_sync_requested: false,
         })
+    }
+
+    /// Bypass the smart-poll tip-guard on the next sync. See
+    /// [`crate::bitcoin::BitcoinInterface::request_eager_sync`] for
+    /// the rationale.
+    pub fn request_eager_sync(&mut self) {
+        self.eager_sync_requested = true;
     }
 
     pub fn sanity_checks(&self, expected_hash: &bitcoin::BlockHash) -> Result<(), EsploraError> {
@@ -182,13 +198,22 @@ impl Esplora {
             local_chain_tip.block_id().height
         );
 
+        // Eager-sync override. Consumed unconditionally so a
+        // request that arrives during a forced rescan doesn't
+        // linger and double-fire later.
+        let eager = std::mem::replace(&mut self.eager_sync_requested, false);
+        if eager {
+            log::debug!("Esplora eager sync requested; bypassing tip-guard");
+        }
+
         // Tip-guard. A single `chain_tip` request is cheap enough
         // (one HTTP call vs. ~80 for the SPK walk) that we always
         // pay it; the savings come from skipping the walk when the
         // tip is unchanged. Only applies when we're not in a
-        // forced full-scan and there's a `last_synced_tip` to
-        // compare against — first-poll has no baseline.
-        if !self.is_rescanning() {
+        // forced full-scan, an eager sync wasn't requested, and
+        // there's a `last_synced_tip` to compare against — first-
+        // poll has no baseline.
+        if !self.is_rescanning() && !eager {
             if let Some(last_tip) = self.last_synced_tip {
                 let current_tip = self.client.chain_tip().map_err(EsploraError::Client)?;
                 if current_tip == last_tip

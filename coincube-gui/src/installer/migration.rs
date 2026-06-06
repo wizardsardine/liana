@@ -65,12 +65,14 @@ pub(crate) fn migrate_esplora_config(path: &Path) -> std::io::Result<bool> {
         None => return Ok(false),
     };
 
-    // Bump short poll intervals to a value that fits inside public
-    // Esplora free tiers. Done independently of (and before) the
-    // provider-chain rewrite below so it also covers configs that
-    // are already on the right chain shape. Tracked so the final
-    // "did we change anything?" return covers both edits.
-    let bumped_poll_interval = bump_short_poll_interval(&mut value);
+    // Backend-aware poll-interval adjustments. Either bumps a too-
+    // fast Esplora cadence into the safe band (`bump_short_…`), OR
+    // lowers an inherited-Esplora-default cadence on a local
+    // backend back to the snappy default (`lower_inherited_…`).
+    // Exactly one will fire on any given config; the OR captures
+    // "did anything change?" for the final write decision.
+    let touched_poll_interval = bump_short_poll_interval(&mut value)
+        || lower_inherited_esplora_default_for_local_backend(&mut value);
 
     // `bitcoin_backend` on `coincubed::config::Config` is
     // `#[serde(flatten)]`, so an `Esplora(EsploraConfig)` variant
@@ -86,7 +88,7 @@ pub(crate) fn migrate_esplora_config(path: &Path) -> std::io::Result<bool> {
         // If we already bumped the poll interval above we still need
         // to persist that edit, so flush instead of an unconditional
         // no-op return.
-        if bumped_poll_interval {
+        if touched_poll_interval {
             return write_back(path, &value);
         }
         return Ok(false);
@@ -192,7 +194,7 @@ pub(crate) fn migrate_esplora_config(path: &Path) -> std::io::Result<bool> {
         // Customised, already three-tier, or some other shape — the
         // provider chain itself doesn't need rewriting. Still flush
         // if we bumped the poll interval up above.
-        if bumped_poll_interval {
+        if touched_poll_interval {
             return write_back(path, &value);
         }
         return Ok(false);
@@ -257,6 +259,67 @@ fn bump_short_poll_interval(value: &mut toml::Table) -> bool {
         current,
         MIN_POLL_INTERVAL_SECS,
         POLL_INTERVAL_FLOOR_SECS,
+    );
+    true
+}
+
+/// Lower `bitcoin_config.poll_interval_secs` back to the snappy
+/// local-node default if the active backend is `bitcoind` or
+/// `electrum` *and* the current value is exactly
+/// [`ESPLORA_POLL_INTERVAL_SECS`]. The intent: catch users who had
+/// the inherited Esplora cadence (likely via
+/// `bump_short_poll_interval` from an earlier round of this
+/// migration) and have since switched to a local node — the
+/// settings-panel switch now sets the right value at switch time,
+/// but this handles the population that switched before that fix
+/// landed.
+///
+/// Conservative — only fires when the value is EXACTLY 600. Any
+/// other number signals "the user picked this deliberately" and
+/// we leave it alone. Returns `true` if the value was changed.
+fn lower_inherited_esplora_default_for_local_backend(value: &mut toml::Table) -> bool {
+    // Same constants as `coincubed::config` but duplicated here to
+    // avoid pulling the coincubed crate into the migration's
+    // type-graph for a literal-integer comparison. A regression
+    // test pins them together so a future bump in the daemon-side
+    // constant fails the test rather than silently desyncs.
+    const INHERITED_ESPLORA_DEFAULT_SECS: i64 = 600;
+    const LOCAL_BACKEND_DEFAULT_SECS: i64 = 10;
+
+    // Only fire for known local-node backends — Esplora configs
+    // need the slower cadence, and unknown shapes get left alone.
+    if value.contains_key("esplora_config") {
+        return false;
+    }
+    if !value.contains_key("bitcoind_config") && !value.contains_key("electrum_config") {
+        return false;
+    }
+
+    let Some(bitcoin_config) = value
+        .get_mut("bitcoin_config")
+        .and_then(|v| v.as_table_mut())
+    else {
+        return false;
+    };
+    let current = match bitcoin_config
+        .get("poll_interval_secs")
+        .and_then(|v| v.as_integer())
+    {
+        Some(n) => n,
+        None => return false,
+    };
+    if current != INHERITED_ESPLORA_DEFAULT_SECS {
+        return false;
+    }
+    bitcoin_config.insert(
+        "poll_interval_secs".to_string(),
+        toml::Value::Integer(LOCAL_BACKEND_DEFAULT_SECS),
+    );
+    tracing::info!(
+        "config migration: lowered poll_interval_secs from {} to {} on a local backend \
+         (inherited Esplora default; bitcoind/electrum don't pay HTTP cost per poll)",
+        current,
+        LOCAL_BACKEND_DEFAULT_SECS,
     );
     true
 }
@@ -432,6 +495,99 @@ secondary_fallback_addr = "{connect}"
 
         let after = std::fs::read_to_string(&p).expect("read");
         assert_eq!(before, after, "300s poll must not be bumped");
+
+        std::fs::remove_file(&p).ok();
+    }
+
+    /// Regression: the migration's local-backend-default constants
+    /// (the literals embedded here so the type-graph stays narrow)
+    /// must match the canonical values exported by
+    /// `coincubed::config`. A future bump of the daemon-side
+    /// constant without updating the migration would silently
+    /// desync — this test makes that a compile-time-noisy
+    /// test-time failure instead.
+    #[test]
+    fn migration_constants_match_coincubed_config() {
+        assert_eq!(
+            coincubed::config::ESPLORA_POLL_INTERVAL_SECS,
+            600,
+            "migration's literal must track ESPLORA_POLL_INTERVAL_SECS",
+        );
+        assert_eq!(
+            coincubed::config::LOCAL_BACKEND_POLL_INTERVAL_SECS,
+            10,
+            "migration's literal must track LOCAL_BACKEND_POLL_INTERVAL_SECS",
+        );
+    }
+
+    /// A bitcoind config carrying the inherited Esplora default
+    /// (poll=600) must have its cadence lowered back to the snappy
+    /// local-node default (poll=10). This is the "user switched
+    /// from Esplora to bitcoind before the settings-panel fix"
+    /// recovery path.
+    #[test]
+    fn poll_interval_is_lowered_when_bitcoind_inherited_esplora_default() {
+        let p = fresh_path();
+        let bitcoind_with_inherited_esplora_poll = r#"
+data_directory = "/tmp/whatever"
+log_level = "debug"
+
+[bitcoin_config]
+network = "bitcoin"
+poll_interval_secs = 600
+
+[bitcoind_config]
+network = "bitcoin"
+addr = "127.0.0.1:8332"
+"#;
+        std::fs::write(&p, bitcoind_with_inherited_esplora_poll).expect("seed");
+
+        assert!(migrate_esplora_config(&p).expect("ok"));
+
+        let after = std::fs::read_to_string(&p).expect("read");
+        let parsed: toml::Table = toml::from_str(&after).expect("re-parse");
+        assert_eq!(
+            poll_interval(&parsed),
+            Some(10),
+            "bitcoind backend on inherited Esplora poll=600 must drop back to 10s",
+        );
+
+        // Second pass must no-op now that we're at 10.
+        assert!(!migrate_esplora_config(&p).expect("ok"));
+
+        std::fs::remove_file(&p).ok();
+    }
+
+    /// A bitcoind config with a deliberately chosen poll interval
+    /// (anything other than the exact-600 inherited-default
+    /// signal) must be left alone. The lowering is opt-in via the
+    /// signal value, not a blanket "make all bitcoind configs 10s"
+    /// override.
+    #[test]
+    fn poll_interval_left_alone_when_bitcoind_has_custom_value() {
+        let p = fresh_path();
+        let custom = r#"
+data_directory = "/tmp/whatever"
+log_level = "debug"
+
+[bitcoin_config]
+network = "bitcoin"
+poll_interval_secs = 60
+
+[bitcoind_config]
+network = "bitcoin"
+addr = "127.0.0.1:8332"
+"#;
+        std::fs::write(&p, custom).expect("seed");
+        let before = std::fs::read_to_string(&p).expect("read");
+
+        assert!(!migrate_esplora_config(&p).expect("ok"));
+
+        let after = std::fs::read_to_string(&p).expect("read");
+        assert_eq!(
+            before, after,
+            "custom (non-600) poll value on bitcoind must be preserved byte-identical",
+        );
 
         std::fs::remove_file(&p).ok();
     }

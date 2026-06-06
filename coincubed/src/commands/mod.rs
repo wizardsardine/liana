@@ -316,6 +316,43 @@ impl DaemonControl {
 }
 
 impl DaemonControl {
+    /// Ask the poller to run a sync **now**, bypassing both the
+    /// remaining sleep on the poll-interval timer and the Esplora
+    /// backend's smart-poll tip-guard. Fire-and-forget — returns
+    /// immediately rather than waiting on the poller's completion
+    /// signal; the GUI will see the result through the regular
+    /// state-cache refresh.
+    ///
+    /// Intended UX hooks (called by the GUI):
+    /// - The app regains focus after a stretch in the background.
+    /// - The user opens the Receive panel.
+    /// - A new receive address is generated.
+    ///
+    /// In all three cases the user has just expressed "I want
+    /// fresh data" and the few extra HTTP requests this triggers
+    /// (~80 against the active Esplora provider) easily fit
+    /// inside the free-tier hourly budget at the current 10-min
+    /// poll interval.
+    pub fn request_sync(&self) {
+        // Set the eager flag on the backend so that whenever the
+        // poller runs next, the smart-poll guard is bypassed and
+        // we do a real per-SPK walk. Non-Esplora backends take the
+        // trait's default no-op.
+        self.bitcoin.lock().unwrap().request_eager_sync();
+        // Wake the poller now rather than waiting for its current
+        // sleep to elapse. We pass a `sync_channel(0)` sender but
+        // never block on the matching receiver — completion will
+        // surface naturally through subsequent `get_info`/state
+        // calls from the GUI, and waiting here would block the
+        // JSON-RPC handler thread for as long as the sync takes
+        // (potentially seconds), which is not what we want for a
+        // UX-triggered "kick the poller" request.
+        let (tx, _rx) = mpsc::sync_channel(0);
+        if let Err(e) = self.poller_sender.send(PollerMessage::PollNow(tx)) {
+            log::warn!("request_sync: poller send failed: {}", e);
+        }
+    }
+
     /// Get information about the current state of the daemon
     pub fn get_info(&self) -> GetInfoResult {
         let mut db_conn = self.db.connection();

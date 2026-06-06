@@ -108,6 +108,14 @@ pub trait Daemon: Debug {
     ) -> Result<(), DaemonError>;
     async fn stop(&self) -> Result<(), DaemonError>;
     async fn get_info(&self) -> Result<model::GetInfoResult, DaemonError>;
+    /// Ask the daemon's poller to run a sync now, bypassing both
+    /// the remaining sleep on the poll-interval timer and the
+    /// Esplora backend's smart-poll tip-guard. Fire-and-forget —
+    /// the daemon kicks the poller and returns immediately; the
+    /// new state surfaces via the next `get_info`/state refresh.
+    /// Hooked into the GUI on app focus, Receive panel opens, and
+    /// new receive-address generation.
+    async fn request_sync(&self) -> Result<(), DaemonError>;
     async fn get_new_address(&self) -> Result<model::GetAddressResult, DaemonError>;
     async fn list_revealed_addresses(
         &self,
