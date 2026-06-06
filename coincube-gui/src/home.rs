@@ -1758,14 +1758,19 @@ impl Home {
                                             &self.error,
                                             self.creating_cube,
                                             self.passkey_mode,
+                                            self.connect_account.authenticated_client().is_some(),
                                         )
                                     } else {
                                         let current_net_str =
                                             settings::network_to_api_string(self.network);
+                                        let signed_in =
+                                            self.connect_account.authenticated_client().is_some();
                                         let mut col =
                                             cubes.iter().enumerate().fold(
                                                 Column::new().spacing(20),
-                                                |col, (i, cube)| col.push(cubes_list_item(cube, i)),
+                                                |col, (i, cube)| {
+                                                    col.push(cubes_list_item(cube, i, signed_in))
+                                                },
                                             );
                                         // Show remote-only cubes (on server but not local)
                                         for rc in self
@@ -1858,6 +1863,7 @@ impl Home {
                                             &self.error,
                                             self.creating_cube,
                                             self.passkey_mode,
+                                            self.connect_account.authenticated_client().is_some(),
                                         ));
                                     }
                                     col.into()
@@ -2193,6 +2199,7 @@ fn create_cube_form<'a>(
     error: &'a Option<String>,
     creating_cube: bool,
     passkey_mode: bool,
+    signed_in: bool,
 ) -> Element<'a, ViewMessage> {
     use coincube_ui::component::form;
     use std::time::Duration;
@@ -2208,6 +2215,50 @@ fn create_cube_form<'a>(
             )
             .style(theme::text::secondary),
         );
+
+    // When signed out, the cube is created and stored locally but is NOT
+    // registered with the Connect server (see the `authenticated_client()`
+    // gate in the CreateCube handler). It therefore won't appear on paired
+    // mobile signers (the Keychain app) until the user signs in, which
+    // triggers the catch-up sync. Surface that up front so the absence on
+    // mobile isn't a surprise.
+    if !signed_in {
+        column = column.push(
+            Container::new(
+                Column::new()
+                    .spacing(10)
+                    .push(
+                        Row::new()
+                            .spacing(10)
+                            .align_y(Alignment::Center)
+                            .push(icon::cloud_slash_icon().style(theme::text::warning))
+                            .push(
+                                p2_regular(
+                                    "You're signed out. This Cube will be saved on this device \
+                                     only. Sign in to Connect to sync it to your other devices \
+                                     and the Keychain mobile app.",
+                                )
+                                .style(theme::text::secondary),
+                            ),
+                    )
+                    .push(
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .push(Space::new().width(Length::Fill))
+                            .push(
+                                button::secondary(None, "Sign In")
+                                    .on_press(ViewMessage::GoToSection(HomeSection::Connect(
+                                        app::menu::ConnectSubMenu::Overview,
+                                    )))
+                                    .width(Length::Fixed(140.0)),
+                            ),
+                    ),
+            )
+            .padding(12)
+            .width(Length::Fill)
+            .style(theme::card::simple),
+        );
+    }
 
     // Passkey toggle — hidden entirely when the passkey feature is disabled
     // via the COINCUBE_ENABLE_PASSKEY env var. The surrounding PIN flow
@@ -2326,12 +2377,40 @@ fn create_cube_form<'a>(
         .into()
 }
 
-fn cubes_list_item<'a>(cube: &'a CubeSettings, i: usize) -> Element<'a, ViewMessage> {
-    let sync_indicator = if cube.remote_synced {
-        icon::cloud_check_icon().style(theme::text::success)
+fn cubes_list_item<'a>(
+    cube: &'a CubeSettings,
+    i: usize,
+    signed_in: bool,
+) -> Element<'a, ViewMessage> {
+    // Hover hint on the cloud icon explains the sync state. When the user
+    // is signed out, an unsynced Cube is local-only and the tooltip points
+    // them at sign-in; when signed in, an unsynced Cube is mid-sync (the
+    // catch-up sync registers it on reload) so the wording differs.
+    let (sync_icon, sync_hint): (Element<'a, ViewMessage>, &'static str) = if cube.remote_synced {
+        (
+            icon::cloud_check_icon().style(theme::text::success).into(),
+            "Synced to Connect and available on your other devices.",
+        )
+    } else if signed_in {
+        (
+            icon::cloud_slash_icon().style(theme::text::secondary).into(),
+            "Not yet synced to Connect. It will sync automatically in a moment.",
+        )
     } else {
-        icon::cloud_slash_icon().style(theme::text::secondary)
+        (
+            icon::cloud_slash_icon().style(theme::text::warning).into(),
+            "Saved on this device only. Sign in to Connect to sync this Cube to \
+             your other devices and the Keychain mobile app.",
+        )
     };
+    let sync_indicator = iced_tooltip::Tooltip::new(
+        sync_icon,
+        Container::new(p2_regular(sync_hint))
+            .padding(8)
+            .max_width(260)
+            .style(theme::card::simple),
+        iced_tooltip::Position::Bottom,
+    );
 
     Container::new(
         Row::new()
