@@ -92,7 +92,7 @@ impl DescKeyChecker {
     }
 
     /// We require the descriptor key to:
-    ///  - Be deriveable (to contain a wildcard)
+    ///  - Be derivable (to contain a wildcard)
     ///  - Be multipath (to contain a step in the derivation path with multiple indexes)
     ///  - The multipath step to only contain two indexes. These can be any indexes, which is
     ///    useful for deriving multiple keys from the same xpub.
