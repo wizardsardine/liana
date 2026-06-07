@@ -20,12 +20,13 @@
 //! Lightning Address display, and the on-chain claim lifecycle all
 //! land in Phase 4d.
 
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::Arc;
 
 use coincube_spark_protocol::{DepositInfo, ReceivePaymentOk};
 use coincube_ui::widget::Element;
-use iced::{widget::qr_code, Task};
+use iced::{widget::qr_code, Subscription, Task};
 
 use crate::app::cache::Cache;
 use crate::app::menu::{Menu, SparkSubMenu};
@@ -63,16 +64,12 @@ pub enum SparkReceivePhase {
     /// RPC succeeded — `payment_request` is the copyable result.
     Generated(ReceivePaymentOk),
     /// A `PaymentSucceeded` event arrived while the panel was in
-    /// `Generated` state. Carries the amount from the event so the
-    /// confirmation screen can show it directly (saves a follow-up
-    /// `list_payments` round-trip).
-    ///
-    /// Phase 4d treats "any payment succeeded while an invoice is
-    /// on screen" as matching the displayed invoice. That's wrong in
-    /// the edge case where multiple channels settle at once, but
-    /// it's the simplest MVP. Phase 4e can correlate via the
-    /// payment's bolt11 field when we plumb richer event payloads.
-    Received { amount_sat: i64 },
+    /// `Generated` state. Carries the running sum of all qualifying
+    /// `PaymentReceived` events that have arrived since this phase
+    /// was entered, plus a `count` so the celebration label can say
+    /// "(2 deposits)" when multiple back-to-back receives stack up
+    /// before the user dismisses the screen.
+    Received { amount_sat: i64, count: u32 },
     /// RPC failed — user-visible error.
     Error(String),
 }
@@ -107,6 +104,14 @@ pub struct SparkReceive {
     /// Phase 4f: surface a transient claim error to the user. Cleared
     /// on the next reload or successful claim.
     pub claim_error: Option<String>,
+    /// Live on-chain confirmation count per pending deposit, fetched
+    /// from a public Esplora ([`esplora::fetch_confirmations`]). The
+    /// SDK only tells us `is_mature: bool`, so we query Esplora
+    /// ourselves to surface progress like "1 / 3 confirmations" on
+    /// rows that haven't matured yet. Entries are dropped when the
+    /// deposit list refreshes; missing keys render the SDK's plain
+    /// "Waiting for confirmations" fallback text.
+    pub pending_deposit_confirmations: HashMap<(String, u32), u32>,
     /// Phase 4f: the BOLT11 invoice string of the currently-displayed
     /// generated invoice, captured at `GenerateSucceeded` time. Used
     /// by the auto-advance handler to correlate `PaymentSucceeded`
@@ -138,6 +143,7 @@ impl SparkReceive {
             pending_deposits: Vec::new(),
             claiming: None,
             claim_error: None,
+            pending_deposit_confirmations: HashMap::new(),
             displayed_invoice: None,
             received_amount_display: String::new(),
             received_celebration_context: "lightning-receive".to_string(),
@@ -176,6 +182,8 @@ impl State for SparkReceive {
                 pending_deposits: &self.pending_deposits,
                 claiming: self.claiming.as_ref(),
                 claim_error: self.claim_error.as_deref(),
+                pending_deposit_confirmations: &self.pending_deposit_confirmations,
+                network: cache.network,
                 received_amount_display: &self.received_amount_display,
                 received_celebration_context: &self.received_celebration_context,
                 received_quote: &self.received_quote,
@@ -201,6 +209,25 @@ impl State for SparkReceive {
             fetch_deposits_task(self.backend.clone()),
             fetch_payments_task(self.backend.clone()),
         ])
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        // Esplora doesn't push — we poll on a fixed cadence while at
+        // least one immature deposit is on screen so the "X / 3
+        // confirmations" badge keeps ticking between block arrivals
+        // (the SDK only re-emits `DepositsChanged` at maturity /
+        // refund-status transitions, not on every new confirmation).
+        // The poll stops automatically the moment the list is empty
+        // or every deposit has matured.
+        let has_immature = self.pending_deposits.iter().any(|d| !d.is_mature);
+        if !has_immature {
+            return Subscription::none();
+        }
+        iced::time::every(std::time::Duration::from_secs(30)).map(|_| {
+            Message::View(crate::app::view::Message::SparkReceive(
+                crate::app::view::SparkReceiveMessage::RefreshConfirmations,
+            ))
+        })
     }
 
     fn update(
@@ -323,10 +350,14 @@ impl State for SparkReceive {
                 Task::none()
             }
             SparkReceiveMessage::PaymentReceived { amount_sat, bolt11 } => {
-                // Only react if the user is actually looking at an
-                // invoice — events that arrive while the panel is
-                // idle or showing an error are no-ops.
-                if !matches!(self.phase, SparkReceivePhase::Generated(_)) {
+                // Accept events while either showing an invoice
+                // (`Generated`) — first arrival — or already on the
+                // celebration screen (`Received`) — back-to-back
+                // deposits accumulate into the running total instead
+                // of being silently dropped. Idle / error / generating
+                // phases stay no-op.
+                let already_celebrating = matches!(self.phase, SparkReceivePhase::Received { .. });
+                if !already_celebrating && !matches!(self.phase, SparkReceivePhase::Generated(_)) {
                     return Task::none();
                 }
 
@@ -354,13 +385,27 @@ impl State for SparkReceive {
                 //
                 // BOLT11 comparison is case-insensitive — canonical
                 // form is lowercase but some SDKs hand back mixed case.
-                let matches_invoice = match (&self.displayed_invoice, &bolt11) {
-                    (Some(displayed), Some(event_bolt11)) => {
-                        displayed.eq_ignore_ascii_case(event_bolt11)
+                //
+                // For follow-ups during the celebration we only
+                // aggregate when the panel was generating an on-chain /
+                // Spark address AND the event has no bolt11 — a BOLT11
+                // invoice is single-use and unrelated Lightning
+                // activity that happens to settle while the on-chain
+                // celebration is on screen would otherwise inflate the
+                // running total. For BOLT11 celebrations we never
+                // aggregate: a second event after invoice settlement
+                // is by definition a different payment.
+                let matches_invoice = if already_celebrating {
+                    self.method != SparkReceiveMethod::Bolt11 && bolt11.is_none()
+                } else {
+                    match (&self.displayed_invoice, &bolt11) {
+                        (Some(displayed), Some(event_bolt11)) => {
+                            displayed.eq_ignore_ascii_case(event_bolt11)
+                        }
+                        (Some(_), None) => false,
+                        (None, None) => true,
+                        (None, Some(_)) => false,
                     }
-                    (Some(_), None) => false,
-                    (None, None) => true,
-                    (None, Some(_)) => false,
                 };
                 if !matches_invoice {
                     return Task::none();
@@ -368,18 +413,42 @@ impl State for SparkReceive {
 
                 self.qr_data = None;
                 self.displayed_invoice = None;
-                self.received_amount_display = format!("+{} sats", amount_sat.unsigned_abs());
-                // Pick celebration image based on receive method.
-                let context = if self.method == SparkReceiveMethod::Bolt11 {
-                    "lightning-receive"
-                } else {
-                    "spark-receive"
+                let (running_total, count) = match self.phase {
+                    SparkReceivePhase::Received {
+                        amount_sat: prev,
+                        count,
+                    } => (prev.saturating_add(amount_sat), count.saturating_add(1)),
+                    _ => (amount_sat, 1),
                 };
-                self.received_celebration_context = context.to_string();
-                self.received_quote = coincube_ui::component::quote_display::random_quote(context);
-                self.received_image_handle =
-                    coincube_ui::component::quote_display::image_handle_for_context(context);
-                self.phase = SparkReceivePhase::Received { amount_sat };
+                self.received_amount_display = if count > 1 {
+                    format!(
+                        "+{} sats ({} deposits)",
+                        running_total.unsigned_abs(),
+                        count
+                    )
+                } else {
+                    format!("+{} sats", running_total.unsigned_abs())
+                };
+                // Pick celebration image based on receive method.
+                // Only re-roll the quote on the first arrival so the
+                // imagery doesn't flicker when a follow-up deposit
+                // bumps the total.
+                if !already_celebrating {
+                    let context = if self.method == SparkReceiveMethod::Bolt11 {
+                        "lightning-receive"
+                    } else {
+                        "spark-receive"
+                    };
+                    self.received_celebration_context = context.to_string();
+                    self.received_quote =
+                        coincube_ui::component::quote_display::random_quote(context);
+                    self.received_image_handle =
+                        coincube_ui::component::quote_display::image_handle_for_context(context);
+                }
+                self.phase = SparkReceivePhase::Received {
+                    amount_sat: running_total,
+                    count,
+                };
                 // Surface the just-received payment in the Last
                 // Transactions list the moment it arrives.
                 fetch_payments_task(self.backend.clone())
@@ -387,14 +456,55 @@ impl State for SparkReceive {
             SparkReceiveMessage::PendingDepositsLoaded(deposits) => {
                 self.pending_deposits = deposits;
                 self.claim_error = None;
-                Task::none()
+                // Drop confirmation entries for deposits that left
+                // the list (claimed or refunded), then kick off a
+                // fresh Esplora fetch for any immature deposit still
+                // in the list. Mature deposits skip the fetch — they
+                // already have a Claim button and the per-confirmation
+                // count is no longer useful.
+                let live_keys: std::collections::HashSet<(String, u32)> = self
+                    .pending_deposits
+                    .iter()
+                    .map(|d| (d.txid.clone(), d.vout))
+                    .collect();
+                self.pending_deposit_confirmations
+                    .retain(|k, _| live_keys.contains(k));
+                refresh_confirmations_task(cache.network, &self.pending_deposits)
             }
             SparkReceiveMessage::PendingDepositsFailed(err) => {
                 tracing::warn!("Spark list_unclaimed_deposits failed: {}", err);
                 // Don't surface as a hard error — the rest of the
                 // panel still works. Just clear the displayed list.
                 self.pending_deposits.clear();
+                self.pending_deposit_confirmations.clear();
                 Task::none()
+            }
+            SparkReceiveMessage::DepositConfirmationsUpdated(map) => {
+                // Merge rather than replace: a partial fetch (one
+                // deposit's GET failed) shouldn't wipe the confirmation
+                // count for the others.
+                //
+                // Plain overwrite per key — we deliberately do NOT
+                // `max` here. A reorg can legitimately drop a
+                // deposit's confirmation count (the block at height
+                // H got replaced, so the tx is back in the mempool
+                // until it re-confirms), and the user should see
+                // that reflected. The cost is that if the 30s
+                // subscription tick fires a second fetch before the
+                // first completes (possible when many immature
+                // deposits serialize through Esplora's 8s per-request
+                // timeout) and the slower one lands after the faster
+                // one, the displayed count can briefly flicker
+                // backward until the next tick corrects it — but
+                // both responses are valid past-chain snapshots, so
+                // it's stale display, not wrong data.
+                for (key, confs) in map {
+                    self.pending_deposit_confirmations.insert(key, confs);
+                }
+                Task::none()
+            }
+            SparkReceiveMessage::RefreshConfirmations => {
+                refresh_confirmations_task(cache.network, &self.pending_deposits)
             }
             SparkReceiveMessage::ClaimDepositRequested { txid, vout } => {
                 let Some(backend) = self.backend.clone() else {
@@ -487,6 +597,36 @@ fn fetch_payments_task(backend: Option<Arc<SparkBackend>>) -> Task<Message> {
         |err| {
             Message::View(crate::app::view::Message::SparkReceive(
                 crate::app::view::SparkReceiveMessage::PaymentsFailed(err),
+            ))
+        },
+    )
+}
+
+/// Kick off an Esplora confirmation-count fetch for every immature
+/// deposit in `deposits`. Returns `Task::none()` when there's nothing
+/// to fetch, or when `network` has no public Esplora to hit — keeps
+/// the call site at `PendingDepositsLoaded` / `RefreshConfirmations`
+/// branch-free.
+fn refresh_confirmations_task(
+    network: coincube_core::miniscript::bitcoin::Network,
+    deposits: &[DepositInfo],
+) -> Task<Message> {
+    if !super::esplora::is_supported(network) {
+        return Task::none();
+    }
+    let targets: Vec<(String, u32)> = deposits
+        .iter()
+        .filter(|d| !d.is_mature)
+        .map(|d| (d.txid.clone(), d.vout))
+        .collect();
+    if targets.is_empty() {
+        return Task::none();
+    }
+    Task::perform(
+        super::esplora::fetch_confirmations(network, targets),
+        |map| {
+            Message::View(crate::app::view::Message::SparkReceive(
+                crate::app::view::SparkReceiveMessage::DepositConfirmationsUpdated(map),
             ))
         },
     )

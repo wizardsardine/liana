@@ -1172,6 +1172,7 @@ pub fn received_celebration_page<'a>(
         amount_display,
         quote,
         image_handle,
+        "has arrived.",
         LiquidReceiveMessage::DismissCelebration,
     )
 }

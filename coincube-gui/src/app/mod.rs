@@ -3369,6 +3369,7 @@ impl App {
                 &self.received_celebration_amount,
                 &self.received_celebration_quote,
                 &self.received_celebration_image,
+                "has arrived.",
                 view::Message::DismissReceivedCelebration,
             );
             view::dashboard(&self.panels.current, &self.cache, celebration)

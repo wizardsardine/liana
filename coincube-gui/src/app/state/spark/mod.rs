@@ -5,6 +5,7 @@
 //! (None when the cube has no Spark signer or the bridge subprocess
 //! failed to spawn) and renders an "unavailable" stub in that case.
 
+pub mod esplora;
 pub mod overview;
 pub mod receive;
 pub mod send;

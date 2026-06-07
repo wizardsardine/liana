@@ -40,6 +40,7 @@ pub fn received_celebration_page<'a, M: Clone + 'a>(
     amount_display: &'a str,
     quote: &'a quote_display::Quote,
     image_handle: &'a iced::widget::image::Handle,
+    verb_phrase: &'a str,
     on_dismiss: M,
 ) -> Element<'a, M> {
     use quote_display::{self as qd, QuoteDisplayProps};
@@ -65,14 +66,10 @@ pub fn received_celebration_page<'a, M: Clone + 'a>(
                             ..Default::default()
                         }),
                 )
-                .push(
-                    iced::widget::text("has arrived.")
-                        .size(20)
-                        .font(iced::Font {
-                            style: iced::font::Style::Italic,
-                            ..Default::default()
-                        }),
-                ),
+                .push(iced::widget::text(verb_phrase).size(20).font(iced::Font {
+                    style: iced::font::Style::Italic,
+                    ..Default::default()
+                })),
         )
         .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
         .push(
