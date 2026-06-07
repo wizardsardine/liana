@@ -49,6 +49,14 @@ fn esplora_base(network: Network) -> Option<&'static str> {
     }
 }
 
+/// Whether [`fetch_confirmations`] has anywhere to query for `network`.
+/// Callers short-circuit on `false` to avoid scheduling work that's
+/// guaranteed to come back empty (and to suppress the 30s poll
+/// subscription on regtest).
+pub fn is_supported(network: Network) -> bool {
+    esplora_base(network).is_some()
+}
+
 /// Fetch the current confirmation count for each `(txid, vout)` against
 /// the given network's Esplora.
 ///

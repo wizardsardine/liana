@@ -387,11 +387,16 @@ impl State for SparkReceive {
                 // form is lowercase but some SDKs hand back mixed case.
                 //
                 // For follow-ups during the celebration we only
-                // aggregate non-BOLT11 events — a BOLT11 invoice is
-                // single-use, so any second BOLT11 must be unrelated
-                // and is skipped.
+                // aggregate when the panel was generating an on-chain /
+                // Spark address AND the event has no bolt11 — a BOLT11
+                // invoice is single-use and unrelated Lightning
+                // activity that happens to settle while the on-chain
+                // celebration is on screen would otherwise inflate the
+                // running total. For BOLT11 celebrations we never
+                // aggregate: a second event after invoice settlement
+                // is by definition a different payment.
                 let matches_invoice = if already_celebrating {
-                    bolt11.is_none()
+                    self.method != SparkReceiveMethod::Bolt11 && bolt11.is_none()
                 } else {
                     match (&self.displayed_invoice, &bolt11) {
                         (Some(displayed), Some(event_bolt11)) => {
@@ -478,8 +483,23 @@ impl State for SparkReceive {
                 // Merge rather than replace: a partial fetch (one
                 // deposit's GET failed) shouldn't wipe the confirmation
                 // count for the others.
+                //
+                // Take the max of stored vs. incoming per key — if the
+                // 30s subscription tick fires a second fetch before the
+                // first completes (possible when many immature deposits
+                // serialize through the 8s per-request Esplora
+                // timeout), an older slower response can land after a
+                // newer one. Confirmations only ever go up between
+                // reorgs, so `max` keeps the freshest count without
+                // needing a nonce/cancellation handshake; reorg-driven
+                // decreases reach us via the SDK's `DepositsChanged`
+                // event, which clears stale entries by way of the
+                // `live_keys` retain in `PendingDepositsLoaded`.
                 for (key, confs) in map {
-                    self.pending_deposit_confirmations.insert(key, confs);
+                    self.pending_deposit_confirmations
+                        .entry(key)
+                        .and_modify(|v| *v = (*v).max(confs))
+                        .or_insert(confs);
                 }
                 Task::none()
             }
@@ -584,12 +604,16 @@ fn fetch_payments_task(backend: Option<Arc<SparkBackend>>) -> Task<Message> {
 
 /// Kick off an Esplora confirmation-count fetch for every immature
 /// deposit in `deposits`. Returns `Task::none()` when there's nothing
-/// to fetch — keeps the call site at `PendingDepositsLoaded` /
-/// `RefreshConfirmations` branch-free.
+/// to fetch, or when `network` has no public Esplora to hit — keeps
+/// the call site at `PendingDepositsLoaded` / `RefreshConfirmations`
+/// branch-free.
 fn refresh_confirmations_task(
     network: coincube_core::miniscript::bitcoin::Network,
     deposits: &[DepositInfo],
 ) -> Task<Message> {
+    if !super::esplora::is_supported(network) {
+        return Task::none();
+    }
     let targets: Vec<(String, u32)> = deposits
         .iter()
         .filter(|d| !d.is_mature)
