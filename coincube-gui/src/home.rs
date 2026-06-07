@@ -2393,7 +2393,9 @@ fn cubes_list_item<'a>(
         )
     } else if signed_in {
         (
-            icon::cloud_slash_icon().style(theme::text::secondary).into(),
+            icon::cloud_slash_icon()
+                .style(theme::text::secondary)
+                .into(),
             "Not yet synced to Connect. It will sync automatically in a moment.",
         )
     } else {
