@@ -484,22 +484,22 @@ impl State for SparkReceive {
                 // deposit's GET failed) shouldn't wipe the confirmation
                 // count for the others.
                 //
-                // Take the max of stored vs. incoming per key — if the
-                // 30s subscription tick fires a second fetch before the
-                // first completes (possible when many immature deposits
-                // serialize through the 8s per-request Esplora
-                // timeout), an older slower response can land after a
-                // newer one. Confirmations only ever go up between
-                // reorgs, so `max` keeps the freshest count without
-                // needing a nonce/cancellation handshake; reorg-driven
-                // decreases reach us via the SDK's `DepositsChanged`
-                // event, which clears stale entries by way of the
-                // `live_keys` retain in `PendingDepositsLoaded`.
+                // Plain overwrite per key — we deliberately do NOT
+                // `max` here. A reorg can legitimately drop a
+                // deposit's confirmation count (the block at height
+                // H got replaced, so the tx is back in the mempool
+                // until it re-confirms), and the user should see
+                // that reflected. The cost is that if the 30s
+                // subscription tick fires a second fetch before the
+                // first completes (possible when many immature
+                // deposits serialize through Esplora's 8s per-request
+                // timeout) and the slower one lands after the faster
+                // one, the displayed count can briefly flicker
+                // backward until the next tick corrects it — but
+                // both responses are valid past-chain snapshots, so
+                // it's stale display, not wrong data.
                 for (key, confs) in map {
-                    self.pending_deposit_confirmations
-                        .entry(key)
-                        .and_modify(|v| *v = (*v).max(confs))
-                        .or_insert(confs);
+                    self.pending_deposit_confirmations.insert(key, confs);
                 }
                 Task::none()
             }

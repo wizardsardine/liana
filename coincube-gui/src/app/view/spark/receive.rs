@@ -69,12 +69,18 @@ impl<'a> SparkReceiveView<'a> {
         }
 
         // ── Full-screen celebration for received payments ─────────────
-        if matches!(self.phase, SparkReceivePhase::Received { .. }) {
+        if let SparkReceivePhase::Received { count, .. } = self.phase {
+            let verb_phrase = if *count > 1 {
+                "have arrived."
+            } else {
+                "has arrived."
+            };
             return coincube_ui::component::received_celebration_page(
                 self.received_celebration_context,
                 self.received_amount_display,
                 self.received_quote,
                 self.received_image_handle,
+                verb_phrase,
                 Message::SparkReceive(SparkReceiveMessage::Reset),
             );
         }
