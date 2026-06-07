@@ -31,6 +31,13 @@ pub struct CoincubeConnectStep {
     processing: bool,
     error: Option<String>,
     skipped: bool,
+    /// Set by `load_context` when the installer was launched with an
+    /// already-authenticated Connect session (e.g. Vault setup started
+    /// from Home while signed in). Tells `load()` to fire `Message::Next`
+    /// so the step auto-advances past the redundant email + OTP form,
+    /// adopting the existing token instead of asking the user to
+    /// re-authenticate the same account.
+    preauthenticated: bool,
 }
 
 impl CoincubeConnectStep {
@@ -49,6 +56,7 @@ impl CoincubeConnectStep {
             processing: false,
             error: None,
             skipped: false,
+            preauthenticated: false,
         }
     }
 }
@@ -76,6 +84,51 @@ async fn send_otp(client: CoincubeClient, email: String, is_signup: bool) -> Res
 }
 
 impl Step for CoincubeConnectStep {
+    /// Adopt an already-authenticated Connect session forwarded from the
+    /// app (`ctx.coincube_client`) the first time this step becomes
+    /// active. When a Vault is set up from Home while signed in, the
+    /// home's session is threaded into the installer; without this hook
+    /// the step would start at the email form and force a second
+    /// email + OTP round on the same account — the redundant-login bug.
+    ///
+    /// Guards:
+    ///   * `self.jwt.is_some()` / `self.otp_sent` — the user has already
+    ///     captured a token or started the in-step OTP flow; don't
+    ///     override their in-progress auth.
+    ///   * `self.preauthenticated` — only adopt once; avoids re-arming
+    ///     the auto-advance if `load_context` runs again.
+    ///   * `client.token().is_some()` — an unauthenticated client is
+    ///     useless here and would just 401 downstream.
+    fn load_context(&mut self, ctx: &Context) {
+        if self.jwt.is_some() || self.otp_sent || self.preauthenticated {
+            return;
+        }
+        let Some(client) = &ctx.coincube_client else {
+            return;
+        };
+        let Some(token) = client.token() else {
+            return;
+        };
+        // Clone the client (not just the token) to inherit the base URL /
+        // HTTP plumbing the app already configured. Stash the JWT in
+        // `Zeroizing` so it's scrubbed on drop — same handling as the
+        // in-step OTP path. `apply()` moves it into `ctx.connect_jwt`.
+        self.client = client.clone();
+        self.jwt = Some(Zeroizing::new(token.to_string()));
+        self.preauthenticated = true;
+    }
+
+    /// When pre-authenticated, fire `Message::Next` so the step machine
+    /// runs `apply()` (which moves the adopted token into
+    /// `ctx.connect_jwt`) and advances — skipping the auth UI entirely.
+    fn load(&self) -> Task<Message> {
+        if self.preauthenticated && self.jwt.is_some() {
+            Task::done(Message::Next)
+        } else {
+            Task::none()
+        }
+    }
+
     fn skip(&self, ctx: &Context) -> bool {
         ctx.network == coincube_core::miniscript::bitcoin::Network::Regtest
             || ctx.remote_backend.is_some()
