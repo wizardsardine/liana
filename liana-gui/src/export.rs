@@ -1139,7 +1139,7 @@ pub async fn from_backup(sender: &UnboundedSender<Progress>, path: PathBuf) -> R
         Err(_) => return Err(Error::UnknownFormat),
     };
 
-    // else we try to parse as plaintetxt descriptor or backup file
+    // else we try to parse as plaintext descriptor or backup file
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
         Ok(b) => b,

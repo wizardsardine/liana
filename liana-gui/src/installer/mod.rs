@@ -809,7 +809,7 @@ pub async fn create_remote_wallet(
 
     // create liana GUI settings file
     // if the wallet is using the remote backend, then the hardware wallet settings and
-    // keys will be store on the remote backend side and not in the settings file.
+    // keys will be stored on the remote backend side and not in the settings file.
     let wallet_settings = WalletSettings {
         name: wallet_name(descriptor),
         alias: Some(ctx.wallet_alias.clone()),
@@ -885,7 +885,7 @@ pub async fn import_remote_wallet(
 
     // create liana GUI settings file
     // if the wallet is using the remote backend, then the hardware wallet settings and
-    // keys will be store on the remote backend side and not in the settings file.
+    // keys will be stored on the remote backend side and not in the settings file.
     let wallet_settings = WalletSettings {
         name: wallet_name(
             ctx.descriptor
