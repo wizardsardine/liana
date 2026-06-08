@@ -282,14 +282,12 @@ pub enum PlanStatus {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanEntitlements {
-    pub personal_key_limit: u32,
-    pub cube_limit: u32,
-    pub recovery_kit_limit: u32,
-    /// `None` = unlimited regenerations; `Some(n)` = capped at n; `Some(0)` = disabled.
-    pub avatar_regeneration_limit: Option<u32>,
-    pub duress: bool,
-    pub attach_policies: bool,
-    pub collaborative_invitations: bool,
+    pub free_signing_key_count: i32,
+    pub policy_editing: bool,
+    pub legacy_invites: bool,
+    pub linked_keychains: bool,
+    pub duress_remote_lock: bool,
+    pub business_orgs: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

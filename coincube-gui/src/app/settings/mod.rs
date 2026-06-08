@@ -172,7 +172,7 @@ pub async fn mark_cube_synced(
 /// Cube's seed and we'd silently bind the wrong wallet. The
 /// timestamp-window guard is what makes the match safe: the file
 /// is written `Utc::now()` milliseconds before `CubeSettings.
-/// created_at` is stamped (see `home.rs`), so a tight window
+/// created_at` is stamped (see `launcher.rs`), so a tight window
 /// uniquely associates the file with this Cube. PIN decryption
 /// stays as a second layer.
 ///

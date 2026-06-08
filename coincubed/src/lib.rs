@@ -340,7 +340,7 @@ fn setup_esplora(
         let chain_hash = ChainHash::using_genesis_block(config.bitcoin_config.network);
         BlockHash::from_byte_array(*chain_hash.as_bytes())
     };
-    let client = crate::bitcoin::esplora::client::Client::new(esplora_config, Some(genesis_hash))
+    let client = crate::bitcoin::esplora::client::Client::new(esplora_config)
         .map_err(|e| StartupError::Esplora(EsploraError::Client(e)))?;
     let mut db_conn = db.connection();
     let tip = db_conn.chain_tip();
