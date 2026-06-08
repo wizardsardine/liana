@@ -2355,12 +2355,28 @@ impl State for GlobalHome {
         wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.wallet = wallet;
-        let mut tasks = vec![
-            self.load_liquid_balance(),
-            self.load_usdt_balance(),
-            self.load_pending_sends(),
-            self.restore_pending_liquid_to_vault_transfer(),
-        ];
+        let mut tasks = Vec::new();
+        if matches!(
+            self.network,
+            coincube_core::miniscript::bitcoin::Network::Bitcoin
+                | coincube_core::miniscript::bitcoin::Network::Regtest
+        ) {
+            tasks.extend([
+                self.load_liquid_balance(),
+                self.load_usdt_balance(),
+                self.load_pending_sends(),
+                self.restore_pending_liquid_to_vault_transfer(),
+            ]);
+        } else {
+            self.liquid_balance = Amount::ZERO;
+            self.usdt_balance = 0;
+            self.liquid_balance_loaded = true;
+            self.usdt_balance_loaded = true;
+            self.pending_liquid_send_sats = 0;
+            self.pending_liquid_receive_sats = 0;
+            self.pending_usdt_send_sats = 0;
+            self.pending_usdt_receive_sats = 0;
+        }
         if let Some(spark) = self.load_spark_balance() {
             tasks.push(spark);
         }
@@ -2583,6 +2599,11 @@ impl GlobalHome {
     }
 
     fn load_liquid_balance(&self) -> Task<Message> {
+        // Networks without a Breez backend (Signet/Testnet) only ever return
+        // `NetworkNotSupported` here — skip the RPC entirely to keep logs clean.
+        if !self.breez_client.is_supported() {
+            return Task::none();
+        }
         let breez_client = self.breez_client.clone();
         Task::perform(async move { breez_client.info().await }, |info| {
             if let Ok(info) = info {
@@ -2602,6 +2623,9 @@ impl GlobalHome {
 
     fn load_pending_sends(&self) -> Task<Message> {
         use crate::app::breez_liquid::assets::{asset_kind_for_id, AssetKind};
+        if !self.breez_client.is_supported() {
+            return Task::none();
+        }
         let breez_client = self.breez_client.clone();
         let network = self.network;
         Task::perform(
@@ -2677,6 +2701,9 @@ impl GlobalHome {
 
     fn load_usdt_balance(&self) -> Task<Message> {
         use crate::app::breez_liquid::assets::{asset_kind_for_id, AssetKind};
+        if !self.breez_client.is_supported() {
+            return Task::none();
+        }
         let breez_client = self.breez_client.clone();
         let network = self.network;
         Task::perform(

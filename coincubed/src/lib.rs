@@ -336,6 +336,10 @@ fn setup_esplora(
         Some(config::BitcoinBackend::Esplora(esplora_config)) => esplora_config,
         _ => Err(StartupError::MissingEsploraConfig)?,
     };
+    let genesis_hash = {
+        let chain_hash = ChainHash::using_genesis_block(config.bitcoin_config.network);
+        BlockHash::from_byte_array(*chain_hash.as_bytes())
+    };
     let client = crate::bitcoin::esplora::client::Client::new(esplora_config)
         .map_err(|e| StartupError::Esplora(EsploraError::Client(e)))?;
     let mut db_conn = db.connection();
@@ -367,10 +371,6 @@ fn setup_esplora(
         .map(|(tx, _, _)| tx)
         .collect();
     let (receive_index, change_index) = (db_conn.receive_index(), db_conn.change_index());
-    let genesis_hash = {
-        let chain_hash = ChainHash::using_genesis_block(config.bitcoin_config.network);
-        BlockHash::from_byte_array(*chain_hash.as_bytes())
-    };
     let bdk_wallet = electrum::wallet::BdkWallet::new(
         &config.main_descriptor,
         genesis_hash,

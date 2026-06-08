@@ -620,6 +620,14 @@ impl BreezClient {
         self.network
     }
 
+    /// Returns true when the SDK is connected and Liquid/USDt RPCs will actually
+    /// succeed. Callers should gate balance/refresh tasks on this to avoid
+    /// firing requests that can only return `NetworkNotSupported` on networks
+    /// without a Breez backend (Signet, Testnet, Testnet4).
+    pub fn is_supported(&self) -> bool {
+        self.sdk.is_some()
+    }
+
     pub fn subscription(&self) -> iced::Subscription<breez::SdkEvent> {
         iced::Subscription::run_with(
             BreezSubscriptionState {
