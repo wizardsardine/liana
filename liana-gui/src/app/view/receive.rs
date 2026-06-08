@@ -17,6 +17,7 @@ use liana::miniscript::bitcoin::{
 
 use liana_ui::{
     component::{
+        address::address as address_view,
         button, card, form, scrollable,
         text::{self, *},
     },
@@ -55,7 +56,11 @@ fn address_card<'a>(
                         Container::new(scrollable::horizontal_thin(
                             Column::new()
                                 .push(Space::with_height(Length::Fixed(10.0)))
-                                .push(p2_regular(address).small().style(theme::text::secondary)),
+                                .push(
+                                    address_view(addr.clone())
+                                        .small()
+                                        .style(theme::text::secondary),
+                                ),
                         ))
                         .width(Length::Fill),
                     )
@@ -94,8 +99,6 @@ pub fn receive<'a>(
     is_last_page: bool,
     processing: bool,
 ) -> Element<'a, Message> {
-    // Number of start and end address characters to show in collapsed view.
-    const NUM_ADDR_CHARS: usize = 16;
     let mut addresses_count = 0; // for counting number of new addresses generated
     Column::new()
         .push(
@@ -159,27 +162,15 @@ pub fn receive<'a>(
                             Row::new()
                                 .spacing(10)
                                 .push(
-                                    {
-                                        let addr = address.to_string();
-                                        let addr_len = addr.chars().count();
-                                        Container::new(
-                                            p2_regular(if addr_len > 2 * NUM_ADDR_CHARS {
-                                                format!(
-                                                    "{}...{}",
-                                                    addr.chars()
-                                                        .take(NUM_ADDR_CHARS)
-                                                        .collect::<String>(),
-                                                    addr.chars()
-                                                        .skip(addr_len - NUM_ADDR_CHARS)
-                                                        .collect::<String>(),
-                                                )
-                                            } else {
-                                                addr
-                                            })
-                                            .small()
-                                            .style(theme::text::secondary),
-                                        )
-                                    }
+                                    Container::new(scrollable::horizontal_thin(
+                                        Column::new()
+                                            .push(Space::with_height(Length::Fixed(10.0)))
+                                            .push(
+                                                address_view(address.to_string())
+                                                    .small()
+                                                    .style(theme::text::secondary),
+                                            ),
+                                    ))
                                     .padding(10)
                                     .width(Length::Fixed(350.0)),
                                 )
@@ -279,9 +270,10 @@ pub fn verify_address_modal<'a>(
                                         .push(
                                             Row::new()
                                                 .align_y(Alignment::Center)
-                                                .push(Container::new(
-                                                    text(address.to_string()).small(),
-                                                ))
+                                                .push(Container::new({
+                                                    let addr = address.to_string();
+                                                    address_view(addr.clone()).small()
+                                                }))
                                                 .push(
                                                     Button::new(icon::clipboard_icon())
                                                         .on_press(Message::Clipboard(
@@ -336,7 +328,7 @@ pub fn verify_address_modal<'a>(
         .into()
 }
 
-pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a String) -> Element<'a, Message> {
+pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a str) -> Element<'a, Message> {
     Column::new()
         .push(
             Row::new()
@@ -348,7 +340,7 @@ pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a String) -> Element<'a, M
                 .push(Space::with_width(Length::Fill)),
         )
         .push(Space::with_height(Length::Fixed(15.0)))
-        .push(Container::new(text(address).size(15)).center_x(Length::Fill))
+        .push(Container::new(address_view(address.to_owned()).size(15)).center_x(Length::Fill))
         .width(Length::Fill)
         .max_width(400)
         .into()
