@@ -1,4 +1,8 @@
-use std::time::Duration;
+use std::{
+    f32::consts::{FRAC_PI_2, TAU},
+    fmt::Display,
+    time::Duration,
+};
 
 use iced::{
     advanced::{
@@ -6,10 +10,105 @@ use iced::{
         widget::tree::{self, Tree},
         Clipboard, Layout, Shell, Widget,
     },
-    mouse,
+    alignment, mouse,
     time::Instant,
-    window, Element, Event, Length, Rectangle, Renderer, Size,
+    widget::canvas::{self, path::Arc, Canvas, LineCap, Path, Stroke},
+    window, Element as IcedElement, Event, Length, Point, Radians, Rectangle, Renderer, Size,
 };
+
+use crate::{
+    component::{
+        modal::{modal_view, none_fn, ModalWidth},
+        text::new,
+    },
+    theme::{self, Theme},
+    widget::{Column, Element},
+};
+
+const RING_SIZE: f32 = 100.0;
+const RING_RADIUS: f32 = 40.0;
+const RING_STROKE: f32 = 10.0;
+const RING_PERIOD: f32 = 0.9;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Ring;
+
+#[derive(Debug)]
+pub struct RingState {
+    start: Instant,
+    elapsed: Duration,
+}
+
+impl Default for RingState {
+    fn default() -> Self {
+        Self {
+            start: Instant::now(),
+            elapsed: Duration::ZERO,
+        }
+    }
+}
+
+pub fn spinner<'a, Message: 'a>() -> Element<'a, Message> {
+    Canvas::<Ring, Message, Theme, Renderer>::new(Ring)
+        .width(RING_SIZE)
+        .height(RING_SIZE)
+        .into()
+}
+
+impl<Message> canvas::Program<Message, Theme, Renderer> for Ring {
+    type State = RingState;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: &canvas::Event,
+        _bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Option<canvas::Action<Message>> {
+        if let canvas::Event::Window(window::Event::RedrawRequested(now)) = event {
+            state.elapsed = now.duration_since(state.start);
+            return Some(canvas::Action::request_redraw());
+        }
+        None
+    }
+
+    fn draw(
+        &self,
+        state: &Self::State,
+        renderer: &Renderer,
+        theme: &crate::theme::Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let center = Point::new(bounds.width / 2.0, bounds.height / 2.0);
+        let track = Path::circle(center, RING_RADIUS);
+        frame.stroke(
+            &track,
+            Stroke::default()
+                .with_color(theme.colors.spinner.track)
+                .with_width(RING_STROKE),
+        );
+
+        let start_angle = (state.elapsed.as_secs_f32() / RING_PERIOD * TAU) % TAU;
+        let arc = Path::new(|arc| {
+            arc.arc(Arc {
+                center,
+                radius: RING_RADIUS,
+                start_angle: Radians(start_angle),
+                end_angle: Radians(start_angle + FRAC_PI_2),
+            });
+        });
+        frame.stroke(
+            &arc,
+            Stroke::default()
+                .with_color(theme.colors.spinner.arc)
+                .with_width(RING_STROKE)
+                .with_line_cap(LineCap::Round),
+        );
+        vec![frame.into_geometry()]
+    }
+}
 
 /// A loading spinner widget that cycles through a collection of
 /// `children` at a fixed rate.
@@ -17,11 +116,14 @@ use iced::{
 /// `interval` is how long to wait before displaying the next child.
 pub struct Carousel<'a, Message, Theme> {
     interval: Duration,
-    children: Vec<Element<'a, Message, Theme>>,
+    children: Vec<IcedElement<'a, Message, Theme>>,
 }
 
 impl<'a, Message, Theme> Carousel<'a, Message, Theme> {
-    pub fn new(interval: Duration, children: Vec<impl Into<Element<'a, Message, Theme>>>) -> Self {
+    pub fn new(
+        interval: Duration,
+        children: Vec<impl Into<IcedElement<'a, Message, Theme>>>,
+    ) -> Self {
         Carousel {
             interval,
             children: children.into_iter().map(|child| child.into()).collect(),
@@ -145,13 +247,13 @@ where
     }
 }
 
-impl<'a, Message, Theme> From<Carousel<'a, Message, Theme>> for Element<'a, Message, Theme>
+impl<'a, Message, Theme> From<Carousel<'a, Message, Theme>> for IcedElement<'a, Message, Theme>
 where
     Message: 'a + Clone,
     Theme: 'a,
 {
     fn from(carousel: Carousel<'a, Message, Theme>) -> Self {
-        Element::new(carousel)
+        IcedElement::new(carousel)
     }
 }
 
@@ -181,4 +283,27 @@ where
         children.push(text_builder(&content[0..=end_char]));
     }
     Carousel::new(interval, children)
+}
+
+pub fn spinner_modal<'a, Message: Clone + 'static>(
+    title: impl Display,
+    description: impl Display,
+) -> Element<'a, Message> {
+    let text = new::b3(description.to_string())
+        .style(theme::text::secondary)
+        .align_x(alignment::Horizontal::Center);
+
+    let content = Column::new()
+        .align_x(alignment::Horizontal::Center)
+        .spacing(22)
+        .push(spinner())
+        .push(text);
+
+    modal_view(
+        Some(title.to_string()),
+        none_fn::<Message>(),
+        none_fn::<Message>(),
+        ModalWidth::S,
+        content,
+    )
 }

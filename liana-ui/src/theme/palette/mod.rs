@@ -24,6 +24,7 @@ pub struct Palette {
     pub pane_grid: PaneGrid,
     pub togglers: Togglers,
     pub menus: Menus,
+    pub spinner: Spinner,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -203,6 +204,12 @@ pub struct ProgressBars {
     pub background: iced::Color,
     pub bar: iced::Color,
     pub border: Option<iced::Color>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Spinner {
+    pub track: iced::Color,
+    pub arc: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
