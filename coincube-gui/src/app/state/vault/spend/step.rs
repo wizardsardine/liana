@@ -480,7 +480,12 @@ impl DefineSpend {
                         .map_err(|e| e.into())
                 } else {
                     daemon
-                        .create_spend_tx(&outpoints, &destinations, feerate_vb, Some(max_address.clone()))
+                        .create_spend_tx(
+                            &outpoints,
+                            &destinations,
+                            feerate_vb,
+                            Some(max_address.clone()),
+                        )
                         .await
                         .map_err(|e| e.into())
                 }

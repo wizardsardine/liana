@@ -1116,7 +1116,10 @@ impl KeychainSignModal {
                         .map_err(OpError::from_status)
                 },
                 move |r| {
-                    Message::KeychainSign(KeychainSignMessage::SessionPolled(sid_for_msg.clone(), r))
+                    Message::KeychainSign(KeychainSignMessage::SessionPolled(
+                        sid_for_msg.clone(),
+                        r,
+                    ))
                 },
             ));
         }
