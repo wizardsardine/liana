@@ -20,7 +20,7 @@ use crate::app::{
 use coincube_ui::{
     icon::{
         bitcoin_icon, chat_icon, coins_icon, graph_icon, home_icon, lightning_icon, person_icon,
-        plus_icon, receipt_icon, settings_icon, tooltip_icon, wallet_icon, wrench_icon,
+        phone_icon, plus_icon, receipt_icon, settings_icon, tooltip_icon, wallet_icon, wrench_icon,
     },
     theme,
     widget::{Column, Element},
@@ -258,6 +258,17 @@ fn vault_settings_items() -> Vec<SubItem> {
                 matches!(
                     m,
                     Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::ImportExport)))
+                )
+            },
+        },
+        SubItem {
+            label: "Pair",
+            icon: phone_icon,
+            route: Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::LocalSigning))),
+            matches: |m| {
+                matches!(
+                    m,
+                    Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::LocalSigning)))
                 )
             },
         },

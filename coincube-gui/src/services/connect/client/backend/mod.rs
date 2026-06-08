@@ -597,6 +597,14 @@ impl Daemon for BackendWalletClient {
         })
     }
 
+    async fn request_sync(&self) -> Result<(), DaemonError> {
+        // Connect-backed wallets run their polling in coincube-api
+        // and don't expose a remote "sync now" hook. The remote
+        // service does its own refresh on a schedule; the local
+        // app's eager-sync triggers are a no-op for this backend.
+        Ok(())
+    }
+
     async fn get_new_address(&self) -> Result<GetAddressResult, DaemonError> {
         let res: api::Address = self
             .inner

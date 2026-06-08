@@ -33,5 +33,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_transport(false) // Avoid generating `connect()` which uses TryInto (edition 2021)
         .compile_protos(&["../grpc/connect.proto"], &["../grpc/"])?;
 
+    // Local-signer wire format (LAN transport for the Keychain phone
+    // app). connect.v1 types are mapped via extern_path to the
+    // already-generated module in
+    // coincube-gui/src/services/connect/grpc/mod.rs, so we don't
+    // re-emit them. The generated file is written to a dedicated
+    // sub-OUT_DIR so the extern stubs don't clobber the real
+    // `connect.v1.rs` written by the first invocation above.
+    println!("cargo:rerun-if-changed=../grpc/local_envelope.proto");
+    let local_out = std::path::PathBuf::from(std::env::var("OUT_DIR")?).join("local_envelope");
+    std::fs::create_dir_all(&local_out)?;
+    tonic_build::configure()
+        .build_server(false)
+        .build_transport(false)
+        .out_dir(&local_out)
+        .extern_path(".connect.v1", "crate::services::connect::grpc::connect_v1")
+        .compile_protos(&["../grpc/local_envelope.proto"], &["../grpc/"])?;
+
     Ok(())
 }

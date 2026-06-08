@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Hardened-runtime entitlements for Coincube. Applied at codesign
+        time via `rcodesign sign --entitlements-xml-path coincube.entitlements`
+        (or equivalent). See contrib/release/macos/README.md for the full
+        codesign + notarize workflow.
+
+        Network entitlements are required for the local LAN signer
+        (`phone_signer` module): we open a TCP listener during pairing,
+        we dial the phone's TLS endpoint at steady state, and we
+        multicast for the mDNS browse/advertise.
+    -->
+
+    <!-- Accept inbound TCP connections (pairing listener). -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- Dial outbound TCP connections (PhoneSigner steady-state). -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>

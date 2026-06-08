@@ -101,6 +101,14 @@ impl Daemon for EmbeddedDaemon {
         self.command(|daemon| Ok(daemon.get_info())).await
     }
 
+    async fn request_sync(&self) -> Result<(), DaemonError> {
+        self.command(|daemon| {
+            daemon.request_sync();
+            Ok(())
+        })
+        .await
+    }
+
     async fn get_new_address(&self) -> Result<GetAddressResult, DaemonError> {
         self.command(|daemon| Ok(daemon.get_new_address())).await
     }

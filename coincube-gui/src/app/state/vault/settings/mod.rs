@@ -11,6 +11,8 @@ use coincube_ui::{component::form, widget::Element};
 use bitcoind::BitcoindSettingsState;
 use wallet::{update_aliases, WalletSettingsState};
 
+use crate::app::state::settings::local_signing::LocalSigningState;
+
 use crate::{
     app::{
         cache::Cache,
@@ -106,6 +108,14 @@ impl State for SettingsState {
                     )
                     .into(),
                 );
+                let wallet = self.wallet.clone();
+                self.setting
+                    .as_mut()
+                    .map(|s| s.reload(Some(daemon), Some(wallet)))
+                    .unwrap_or_else(Task::none)
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::LocalSigningSection)) => {
+                self.setting = Some(LocalSigningState::default().into());
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()

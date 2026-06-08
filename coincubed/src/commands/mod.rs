@@ -316,6 +316,62 @@ impl DaemonControl {
 }
 
 impl DaemonControl {
+    /// Ask the poller to run a sync **now**, bypassing both the
+    /// remaining sleep on the poll-interval timer and the Esplora
+    /// backend's smart-poll tip-guard. Fire-and-forget — returns
+    /// immediately rather than waiting on the poller's completion
+    /// signal; the GUI will see the result through the regular
+    /// state-cache refresh.
+    ///
+    /// Intended UX hooks (called by the GUI):
+    /// - The app regains focus after a stretch in the background.
+    /// - The user opens the Receive panel.
+    /// - A new receive address is generated.
+    ///
+    /// In all three cases the user has just expressed "I want
+    /// fresh data" and the few extra HTTP requests this triggers
+    /// (~80 against the active Esplora provider) easily fit
+    /// inside the free-tier hourly budget at the current 10-min
+    /// poll interval.
+    pub fn request_sync(&self) {
+        // Set the eager flag on the backend FIRST so it's already
+        // armed by the time the poller wakes — whether via the
+        // message we're about to enqueue or via whatever message
+        // happens to already be queued. The flag lives on `Esplora`,
+        // not on the channel payload, so a dropped wake-up signal
+        // doesn't lose the user's request.
+        self.bitcoin.lock().unwrap().request_eager_sync();
+        // Non-blocking send: the poller channel is a `sync_channel(1)`,
+        // so a plain `send` would block under burst pressure (e.g.
+        // user opens Receive twice in rapid succession while a sync
+        // is mid-flight). Blocking the JSON-RPC handler thread for
+        // however long that sync takes is exactly what we're trying
+        // to avoid for a UX-triggered "kick the poller" request.
+        //
+        // `try_send` semantics map cleanly:
+        //   * Ok            – wake-up enqueued; poller will wake now.
+        //   * Err(Full)     – a wake-up (ours or the broadcast-spend
+        //                     flow's `PollNow(sender)`) is already in
+        //                     flight. The eager flag is already set
+        //                     above, so whichever tick fires next
+        //                     honors it. Drop our signal silently —
+        //                     it would be redundant.
+        //   * Err(Disconnected) – poller is gone; nothing left to
+        //                     do but log.
+        match self.poller_sender.try_send(PollerMessage::PollNowNoAck) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(_)) => {
+                log::debug!(
+                    "request_sync: poller channel full; eager flag will be \
+                     honored by the already-pending wake-up"
+                );
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                log::warn!("request_sync: poller channel disconnected");
+            }
+        }
+    }
+
     /// Get information about the current state of the daemon
     pub fn get_info(&self) -> GetInfoResult {
         let mut db_conn = self.db.connection();

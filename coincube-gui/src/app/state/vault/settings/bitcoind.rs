@@ -147,24 +147,49 @@ impl BitcoindSettingsState {
             self.warning = Some(err);
             return Task::done(Message::View(view::Message::ShowError(err_msg)));
         };
-        // Reconstruct URL from cache.network so a stale fallback_esplora.addr
-        // (e.g. written before Testnet4 was handled) is never used.
+        // Reconstruct URLs from cache.network so a stale fallback_esplora.addr
+        // (e.g. written before Testnet4 was handled) is never used. Three-tier
+        // chain: mempool.space → blockstream.info (where available) → Connect
+        // (JWT). Two independent public providers in front means a 429 from
+        // one doesn't immediately push the user onto the metered Connect URL.
         use coincubed::config::EsploraConfig;
-        let esplora_url = crate::installer::connect_url(cache.network);
+        let primary_url = crate::installer::public_esplora_url(cache.network);
+        let public_fallback = crate::installer::public_esplora_fallback_url(cache.network);
+        let connect_url = crate::installer::connect_url(cache.network);
         info!(
-            "Switching to Connect: url={} token_len={}",
-            esplora_url,
+            "Switching to Connect: primary={} public_fallback={:?} backstop={} token_len={}",
+            primary_url,
+            public_fallback,
+            connect_url,
             jwt.len()
         );
+        let (fallback_addr, fallback_token, secondary_fallback_addr, secondary_fallback_token) =
+            match public_fallback {
+                Some(public_fallback) => {
+                    (Some(public_fallback), None, Some(connect_url), Some(jwt))
+                }
+                None => (Some(connect_url), Some(jwt), None, None),
+            };
         let esplora = EsploraConfig {
-            addr: esplora_url,
-            token: Some(jwt),
+            addr: primary_url,
+            token: None,
+            fallback_addr,
+            fallback_token,
+            secondary_fallback_addr,
+            secondary_fallback_token,
         };
         let mut new_cfg = cfg.clone();
         if let Some(BitcoinBackend::Bitcoind(current)) = cfg.bitcoin_backend.clone() {
             new_cfg.pending_bitcoind = Some(current);
         }
         new_cfg.bitcoin_backend = Some(BitcoinBackend::Esplora(esplora));
+        // Bump the poll cadence to the Esplora-safe interval so
+        // we don't carry a snappy localhost cadence into a path
+        // that pays HTTP cost per poll and would burn through
+        // public-tier rate windows. See
+        // `coincubed::config::ESPLORA_POLL_INTERVAL_SECS`.
+        new_cfg.bitcoin_config.poll_interval_secs =
+            std::time::Duration::from_secs(coincubed::config::ESPLORA_POLL_INTERVAL_SECS);
         new_cfg.fallback_esplora = None;
         self.node_switch_processing = true;
         self.warning = None;
@@ -550,6 +575,16 @@ impl State for BitcoindSettingsState {
                                 new_cfg.bitcoin_backend = Some(BitcoinBackend::Bitcoind(pending));
                                 new_cfg.pending_bitcoind = None;
                                 new_cfg.fallback_esplora = old_esplora;
+                                // Drop the poll cadence back to the
+                                // snappy local-node interval. The
+                                // Esplora-safe 10-min value made
+                                // sense for HTTPS-per-poll against
+                                // a rate-limited public provider;
+                                // bitcoind is a free localhost RPC.
+                                new_cfg.bitcoin_config.poll_interval_secs =
+                                    std::time::Duration::from_secs(
+                                        coincubed::config::LOCAL_BACKEND_POLL_INTERVAL_SECS,
+                                    );
                                 self.node_switch_processing = true;
                                 self.warning = None;
                                 return Task::done(Message::LoadDaemonConfig(Box::new(new_cfg)));

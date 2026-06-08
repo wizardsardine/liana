@@ -170,6 +170,17 @@ pub enum SparkReceiveMessage {
     /// Phase 4f: app-level signal that the bridge emitted a
     /// `DepositsChanged` event. The panel re-fetches the list.
     DepositsChanged,
+    /// An Esplora `/tx/<txid>/status` + tip query batch came back with
+    /// per-deposit confirmation counts. Map key is `(txid, vout)`,
+    /// value is `0` for mempool / unconfirmed and `>= 1` once mined.
+    /// Used to render "X / 3 confirmations" on immature rows.
+    DepositConfirmationsUpdated(std::collections::HashMap<(String, u32), u32>),
+    /// 30s subscription tick while immature deposits are on screen —
+    /// fires a fresh Esplora batch so the confirmation counts update
+    /// between block arrivals without waiting for a `DepositsChanged`
+    /// event (the SDK only re-emits at mature/refund-status boundaries,
+    /// not on every new confirmation).
+    RefreshConfirmations,
     Reset,
     /// A `list_payments` RPC completed — used to populate the Last
     /// Transactions section under the Receive form.

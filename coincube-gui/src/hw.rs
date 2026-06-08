@@ -395,6 +395,21 @@ struct State {
     connected_supported_hws: Vec<String>,
     api: Option<ledger::HidApi>,
     datadir_path: CoincubeDirectory,
+    /// Per-phone retry cooldowns keyed by `fp8`. Set on a failed
+    /// dial so the next refresh tick skips the phone (and pays no
+    /// `CONNECT_TIMEOUT`) until the window has elapsed. Cleared on
+    /// a subsequent successful dial.
+    phone_cooldowns: HashMap<String, PhoneCooldown>,
+    /// Live `PhoneSigner` handles keyed by the same `phone-{fp8}` id
+    /// surfaced to the consumer. Lets the refresh tick probe a
+    /// previously-issued signer with
+    /// [`crate::phone_signer::PhoneSigner::is_alive`] before
+    /// short-circuiting a re-dial — without this, a dead TLS session
+    /// whose mDNS record is still being advertised would stay listed
+    /// as Supported while every sign attempt fails. Pruned at the end
+    /// of every tick to drop ids that no longer survive into
+    /// `connected_supported_hws`.
+    phone_signers: HashMap<String, Arc<crate::phone_signer::PhoneSigner>>,
 }
 
 /// Function pointer for Subscription::run_with - creates the refresh stream from RefreshState
@@ -406,6 +421,8 @@ fn make_refresh_stream(rs: &RefreshState) -> impl Stream<Item = HardwareWalletMe
         connected_supported_hws: Vec::new(),
         api: None,
         datadir_path: rs.datadir_path.clone(),
+        phone_cooldowns: HashMap::new(),
+        phone_signers: HashMap::new(),
     };
     refresh(state)
 }
@@ -695,6 +712,185 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
             }
         }
 
+        // LAN-paired phones via the local-signer protocol. We browse
+        // mDNS for `_coincube-signer._tcp.local.`, match the TXT
+        // `fp=` against persisted `pairing_store` entries, and dial
+        // each match over TLS. On a successful pinned-cert handshake
+        // we surface a `PhoneSigner` as `Supported`; phones that are
+        // paired but currently unreachable (mDNS silent or dial
+        // failed) surface as `Unsupported(AppIsNotOpen)` so the user
+        // sees "phone offline" rather than silence.
+        match crate::phone_signer::pairing_store::load(&state.datadir_path) {
+            Ok(store) if !store.phones.is_empty() => {
+                let discovered = crate::phone_signer::mdns::browse();
+                let identity =
+                    match crate::phone_signer::identity::load_or_create(&state.datadir_path) {
+                        Ok(id) => Some(id),
+                        Err(e) => {
+                            warn!("local-signer identity unavailable: {}", e);
+                            None
+                        }
+                    };
+                if let Some(identity) = identity {
+                    // Sharing the identity across N concurrent dials —
+                    // `PairedTransport::connect` only borrows for the
+                    // duration of the rustls config build, so an Arc
+                    // clone per future is cheap.
+                    let identity = Arc::new(identity);
+                    let now = std::time::Instant::now();
+                    let mut dials = Vec::new();
+                    // Vault scoping: a phone is a candidate signer only
+                    // for the vault it was paired against. `None` means
+                    // no vault is loaded, so nothing is in scope.
+                    let active_vault_id = state.wallet.as_ref().map(|w| w.id_fingerprint());
+                    for paired in &store.phones {
+                        // Skip phones paired for a different vault (or all
+                        // phones when no vault is loaded). Without this a
+                        // phone paired for vault A would be dialed and
+                        // surfaced under vault B whenever the two share a
+                        // signer key — contradicting the settings copy
+                        // that pairing is scoped to "this vault". A
+                        // legacy row predating `vault_fingerprint` has the
+                        // all-zero default, which matches no real vault,
+                        // so it's skipped until re-paired.
+                        if active_vault_id != Some(paired.vault_fingerprint) {
+                            continue;
+                        }
+                        let fp8 = crate::phone_signer::identity::pin_hex8(&paired.cert_pin);
+                        let id = format!("phone-{}", fp8);
+                        // Resolve a target address: prefer the
+                        // mDNS-discovered one; fall back to the
+                        // user-entered `fallback_addr` when mDNS is
+                        // blocked or the phone isn't broadcasting.
+                        let target = resolve_phone_target(&fp8, paired, &discovered);
+                        // "Already connected" short-circuit. Unlike
+                        // USB devices — which the HID-API path
+                        // re-enumerates each tick — the
+                        // paired-phone store is persistent, so an
+                        // entry in `connected_supported_hws` alone
+                        // isn't proof the phone is still up. We
+                        // re-gate the short-circuit on:
+                        //   (a) current mDNS / fallback reachability
+                        //       (`target.is_some()`) — catches a
+                        //       phone whose Wi-Fi dropped.
+                        //   (b) the previously-issued `PhoneSigner`
+                        //       still being alive — catches a phone
+                        //       whose TLS session died while mDNS
+                        //       keeps advertising (e.g. signer app
+                        //       suspended, TCP reset). Without this
+                        //       the consumer would keep a stale
+                        //       handle and every sign attempt would
+                        //       hit `Disconnected`.
+                        let prior_alive =
+                            state.phone_signers.get(&id).is_some_and(|s| s.is_alive());
+                        if state.connected_supported_hws.contains(&id)
+                            && target.is_some()
+                            && prior_alive
+                        {
+                            still.push(id);
+                            continue;
+                        }
+                        // We're about to re-dial, so the prior
+                        // handle (if any) is being replaced — drop
+                        // it now so its TLS session can close as
+                        // soon as no in-flight signing op still
+                        // holds a clone.
+                        state.phone_signers.remove(&id);
+                        let Some(target) = target else {
+                            // Paired but not visible. Surface offline
+                            // without touching the cooldown — no dial
+                            // attempt happened.
+                            hws.push(HardwareWallet::Unsupported {
+                                id,
+                                kind: DeviceKind::Specter,
+                                version: None,
+                                reason: UnsupportedReason::AppIsNotOpen,
+                            });
+                            continue;
+                        };
+                        // Cooldown gate: a phone that just failed
+                        // shouldn't pay another full `CONNECT_TIMEOUT`
+                        // this tick. Surface as offline; the window
+                        // expires on a later tick.
+                        if state
+                            .phone_cooldowns
+                            .get(&fp8)
+                            .is_some_and(|cd| cd.is_cooling(now))
+                        {
+                            hws.push(HardwareWallet::Unsupported {
+                                id,
+                                kind: DeviceKind::Specter,
+                                version: None,
+                                reason: UnsupportedReason::AppIsNotOpen,
+                            });
+                            continue;
+                        }
+                        let identity = identity.clone();
+                        let phone_pin = paired.cert_pin;
+                        let paired = paired.clone();
+                        dials.push(async move {
+                            let res = crate::phone_signer::transport::PairedTransport::connect(
+                                target, &identity, phone_pin,
+                            )
+                            .await;
+                            (fp8, id, paired, res)
+                        });
+                    }
+                    // Run the dials concurrently so one slow / offline
+                    // phone can't stall the whole refresh tick.
+                    let results = iced::futures::future::join_all(dials).await;
+                    for (fp8, id, paired, res) in results {
+                        match res {
+                            Ok(t) => {
+                                state.phone_cooldowns.remove(&fp8);
+                                let fingerprint = paired
+                                    .wallet_fingerprints
+                                    .first()
+                                    .copied()
+                                    .unwrap_or_default();
+                                let signer = Arc::new(crate::phone_signer::PhoneSigner::new(
+                                    t,
+                                    fingerprint,
+                                    None,
+                                    paired.clone(),
+                                ));
+                                // Stash a clone so the next refresh
+                                // tick can probe `is_alive()` before
+                                // deciding whether to re-dial.
+                                state.phone_signers.insert(id.clone(), signer.clone());
+                                let device: Arc<dyn HWI + Send + Sync> = signer;
+                                hws.push(HardwareWallet::Supported {
+                                    id,
+                                    device,
+                                    kind: DeviceKind::Specter,
+                                    fingerprint,
+                                    version: None,
+                                    registered: Some(true),
+                                    alias: Some(paired.name.clone()),
+                                });
+                            }
+                            Err(e) => {
+                                debug!("phone {} dial failed: {}", paired.name, e);
+                                state
+                                    .phone_cooldowns
+                                    .entry(fp8)
+                                    .or_default()
+                                    .record_failure(std::time::Instant::now());
+                                hws.push(HardwareWallet::Unsupported {
+                                    id,
+                                    kind: DeviceKind::Specter,
+                                    version: None,
+                                    reason: UnsupportedReason::AppIsNotOpen,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(e) => debug!("local-signer pairing store: {}", e),
+        }
+
         if let Some(wallet) = &state.wallet {
             let wallet_keys = wallet.descriptor_keys();
             for hw in &mut hws {
@@ -727,6 +923,14 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
             }))
             .cloned()
             .collect();
+        // Drop phone handles whose ids didn't survive into the
+        // rebuilt list (offline, wallet-fp mismatch, removed from
+        // store). Without this we'd keep dead `Arc<PhoneSigner>`
+        // entries growing forever across reconnects.
+        let surviving_ids = state.connected_supported_hws.clone();
+        state
+            .phone_signers
+            .retain(|id, _| surviving_ids.contains(id));
         let _ = output
             .send(HardwareWalletMessage::List(ConnectedList {
                 new: hws,
@@ -946,7 +1150,288 @@ pub fn is_compatible_with_tapminiscript(
                     (Some(v1), Some(v2)) => v1 >= v2,
                     (None, Some(_)) => false,
                     (Some(_), None) => true,
-                    (None, None) => true,
+                    // Conservative: even when the table entry has
+                    // no minimum-version requirement (Specter /
+                    // SpecterSimulator), require the device to
+                    // actually report a version. The PhoneSigner is
+                    // surfaced with `kind: Specter, version: None`
+                    // because async_hwi 0.0.29 has no `Phone`
+                    // variant — claiming it's tap-script-capable
+                    // because the table says "Specter, any
+                    // version" would let the descriptor editor
+                    // include a phone-signed key in a taproot
+                    // multisig, where the phone may not actually
+                    // support BIP-371 tap-script signing.
+                    //
+                    // Real Specter devices populate `version` via
+                    // `device.get_version().await` in
+                    // `HardwareWallet::new`, so they still match.
+                    // The only regression is "real Specter whose
+                    // `get_version` happened to fail" — which is a
+                    // degraded state where being conservative is
+                    // the right default.
+                    (None, None) => false,
                 }
         })
+}
+
+/// Initial delay between consecutive failed dials of the same phone.
+/// The window doubles on each subsequent failure, up to
+/// [`PHONE_RETRY_MAX`]. Cleared on successful connect.
+pub(crate) const PHONE_RETRY_INITIAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Upper bound on the per-phone retry window so a long-offline
+/// phone doesn't stay invisible for hours after coming back.
+pub(crate) const PHONE_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Per-phone retry/backoff state. Held in `State::phone_cooldowns`
+/// keyed by `fp8` so the refresh loop can skip phones whose last
+/// dial attempt failed recently without paying the full
+/// `CONNECT_TIMEOUT` (750ms) every tick. Cleared on the next
+/// successful connect.
+#[derive(Debug, Clone)]
+pub(crate) struct PhoneCooldown {
+    /// Instant before which we won't attempt another dial.
+    pub next_retry_at: std::time::Instant,
+    /// Most recently applied backoff window. The next failure
+    /// doubles it (capped at [`PHONE_RETRY_MAX`]); empty on a fresh
+    /// `Default` so the first call to `record_failure` settles on
+    /// [`PHONE_RETRY_INITIAL`].
+    pub current_window: std::time::Duration,
+}
+
+impl Default for PhoneCooldown {
+    fn default() -> Self {
+        Self {
+            next_retry_at: std::time::Instant::now(),
+            current_window: std::time::Duration::ZERO,
+        }
+    }
+}
+
+impl PhoneCooldown {
+    /// Caller skips the dial when this is `true`.
+    pub fn is_cooling(&self, now: std::time::Instant) -> bool {
+        now < self.next_retry_at
+    }
+
+    /// Push `next_retry_at` out by a doubled (capped) window. First
+    /// call settles on [`PHONE_RETRY_INITIAL`].
+    pub fn record_failure(&mut self, now: std::time::Instant) {
+        self.current_window = if self.current_window.is_zero() {
+            PHONE_RETRY_INITIAL
+        } else {
+            std::cmp::min(self.current_window.saturating_mul(2), PHONE_RETRY_MAX)
+        };
+        self.next_retry_at = now + self.current_window;
+    }
+}
+
+/// Resolve a paired phone's reachable address. Prefers the
+/// mDNS-discovered endpoint (TXT `fp` matches the phone's cert pin
+/// fingerprint); falls back to the user-entered `host:port` for
+/// networks that block mDNS.
+///
+/// `None` means "paired but unreachable" — the caller surfaces that
+/// as `HardwareWallet::Unsupported(AppIsNotOpen)`.
+///
+/// Pulled out of the discovery loop so the resolution decision is
+/// pure and unit-testable.
+pub(crate) fn resolve_phone_target(
+    fp8: &str,
+    paired: &crate::phone_signer::pairing_store::PairedPhone,
+    discovered: &[crate::phone_signer::mdns::DiscoveredPhone],
+) -> Option<std::net::SocketAddr> {
+    let mdns_addr = discovered
+        .iter()
+        .find(|d| d.cert_fp8 == fp8)
+        .map(|d| d.addr);
+    let fallback_addr = paired
+        .fallback_addr
+        .as_deref()
+        .and_then(|s| s.parse::<std::net::SocketAddr>().ok());
+    mdns_addr.or(fallback_addr)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::phone_signer::mdns::DiscoveredPhone;
+    use crate::phone_signer::pairing_store::PairedPhone;
+    use std::net::SocketAddr;
+
+    fn phone_with_fallback(pin: [u8; 32], fallback: Option<&str>) -> PairedPhone {
+        PairedPhone {
+            cert_pin: pin,
+            name: "Test".into(),
+            paired_at_unix: 0,
+            wallet_fingerprints: Vec::new(),
+            vault_fingerprint: Default::default(),
+            fallback_addr: fallback.map(|s| s.to_string()),
+        }
+    }
+
+    fn discovered(fp8: &str, addr: &str) -> DiscoveredPhone {
+        DiscoveredPhone {
+            cert_fp8: fp8.into(),
+            addr: addr.parse::<SocketAddr>().expect("parse addr"),
+            instance_name: "test".into(),
+        }
+    }
+
+    #[test]
+    fn resolve_prefers_mdns_when_both_available() {
+        let phone = phone_with_fallback([1u8; 32], Some("10.0.0.5:8443"));
+        let discoveries = vec![discovered("01010101", "192.168.1.20:7777")];
+        let target = resolve_phone_target("01010101", &phone, &discoveries);
+        assert_eq!(target.unwrap().to_string(), "192.168.1.20:7777");
+    }
+
+    #[test]
+    fn resolve_falls_back_when_no_mdns_match() {
+        let phone = phone_with_fallback([1u8; 32], Some("10.0.0.5:8443"));
+        // The discovery is for a different phone.
+        let discoveries = vec![discovered("ffffffff", "192.168.1.20:7777")];
+        let target = resolve_phone_target("01010101", &phone, &discoveries);
+        assert_eq!(target.unwrap().to_string(), "10.0.0.5:8443");
+    }
+
+    #[test]
+    fn resolve_returns_none_when_neither_mdns_nor_fallback() {
+        let phone = phone_with_fallback([1u8; 32], None);
+        let target = resolve_phone_target("01010101", &phone, &[]);
+        assert!(target.is_none(), "expected None, got {:?}", target);
+    }
+
+    #[test]
+    fn resolve_returns_none_when_fallback_is_malformed() {
+        let phone = phone_with_fallback([1u8; 32], Some("not-an-addr"));
+        let target = resolve_phone_target("01010101", &phone, &[]);
+        assert!(
+            target.is_none(),
+            "malformed fallback should not crash; got {:?}",
+            target
+        );
+    }
+
+    #[test]
+    fn resolve_uses_only_mdns_when_no_fallback() {
+        let phone = phone_with_fallback([1u8; 32], None);
+        let discoveries = vec![discovered("01010101", "192.168.1.20:7777")];
+        let target = resolve_phone_target("01010101", &phone, &discoveries);
+        assert_eq!(target.unwrap().to_string(), "192.168.1.20:7777");
+    }
+
+    #[test]
+    fn cooldown_default_is_not_cooling() {
+        // A fresh default cooldown has `next_retry_at == created_at`,
+        // so a clock that's advanced at all is past the deadline.
+        let cd = PhoneCooldown::default();
+        let later = cd.next_retry_at + std::time::Duration::from_millis(1);
+        assert!(!cd.is_cooling(later));
+    }
+
+    #[test]
+    fn cooldown_first_failure_uses_initial_window() {
+        let mut cd = PhoneCooldown::default();
+        let t0 = std::time::Instant::now();
+        cd.record_failure(t0);
+        assert_eq!(cd.current_window, PHONE_RETRY_INITIAL);
+        assert_eq!(cd.next_retry_at, t0 + PHONE_RETRY_INITIAL);
+        assert!(cd.is_cooling(t0));
+        assert!(cd.is_cooling(t0 + PHONE_RETRY_INITIAL - std::time::Duration::from_millis(1)));
+        assert!(!cd.is_cooling(t0 + PHONE_RETRY_INITIAL));
+    }
+
+    #[test]
+    fn tapminiscript_compat_rejects_specter_without_version() {
+        // The bug this guards against: PhoneSigner is surfaced as
+        // (DeviceKind::Specter, version: None) because async_hwi has
+        // no Phone variant. Without the (None, None) => false arm,
+        // the compat check would falsely report taproot capability
+        // for paired phones.
+        assert!(!is_compatible_with_tapminiscript(
+            &DeviceKind::Specter,
+            None
+        ));
+        assert!(!is_compatible_with_tapminiscript(
+            &DeviceKind::SpecterSimulator,
+            None,
+        ));
+    }
+
+    #[test]
+    fn tapminiscript_compat_accepts_specter_with_any_reported_version() {
+        // Real Specter devices populate `version` via
+        // `device.get_version().await`. Any reported version
+        // satisfies the "no minimum required" table entry.
+        let v = async_hwi::Version {
+            major: 1,
+            minor: 0,
+            patch: 0,
+            prerelease: None,
+        };
+        assert!(is_compatible_with_tapminiscript(
+            &DeviceKind::Specter,
+            Some(&v),
+        ));
+        assert!(is_compatible_with_tapminiscript(
+            &DeviceKind::SpecterSimulator,
+            Some(&v),
+        ));
+    }
+
+    #[test]
+    fn tapminiscript_compat_still_enforces_minimum_versions() {
+        // Sanity: per-device minimums weren't disturbed by the
+        // (None, None) tightening.
+        let too_old = async_hwi::Version {
+            major: 2,
+            minor: 0,
+            patch: 0,
+            prerelease: None,
+        };
+        let new_enough = async_hwi::Version {
+            major: 2,
+            minor: 2,
+            patch: 0,
+            prerelease: None,
+        };
+        assert!(!is_compatible_with_tapminiscript(
+            &DeviceKind::Ledger,
+            Some(&too_old),
+        ));
+        assert!(is_compatible_with_tapminiscript(
+            &DeviceKind::Ledger,
+            Some(&new_enough),
+        ));
+        // Devices outside the table are never compatible regardless
+        // of version reporting.
+        assert!(!is_compatible_with_tapminiscript(&DeviceKind::Jade, None));
+        assert!(!is_compatible_with_tapminiscript(
+            &DeviceKind::Jade,
+            Some(&new_enough),
+        ));
+    }
+
+    #[test]
+    fn cooldown_subsequent_failures_double_until_cap() {
+        let mut cd = PhoneCooldown::default();
+        let t0 = std::time::Instant::now();
+        cd.record_failure(t0);
+        let mut prev = cd.current_window;
+        for step in 0..6 {
+            cd.record_failure(t0 + std::time::Duration::from_secs(step * 1000));
+            let expected_double = prev.saturating_mul(2);
+            let expected = std::cmp::min(expected_double, PHONE_RETRY_MAX);
+            assert_eq!(
+                cd.current_window, expected,
+                "step {} expected {:?} got {:?}",
+                step, expected, cd.current_window
+            );
+            prev = cd.current_window;
+        }
+        // After enough doublings we sit at the cap.
+        assert_eq!(cd.current_window, PHONE_RETRY_MAX);
+    }
 }

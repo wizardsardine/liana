@@ -168,7 +168,14 @@ jobs:
 
       - name: Sign macOS app
         if: matrix.platform == 'macos'
-        run: rcodesign sign --for-notarization --p12-file cert.p12 --p12-password-file cert.pass Coincube.app
+        # --entitlements-xml-path: the local LAN signer (phone_signer
+        # module) needs com.apple.security.network.client under the
+        # hardened runtime to dial paired phones over TLS. Without
+        # this flag, signed/notarized builds get the hardened runtime
+        # with no network entitlements and the feature breaks at
+        # runtime. See contrib/release/macos/README.md and
+        # contrib/release/macos/coincube.entitlements.
+        run: rcodesign sign --for-notarization --entitlements-xml-path contrib/release/macos/coincube.entitlements --p12-file cert.p12 --p12-password-file cert.pass Coincube.app
 
       - name: Notarize and staple app
         if: matrix.platform == 'macos'

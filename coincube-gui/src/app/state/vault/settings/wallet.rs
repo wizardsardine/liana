@@ -112,6 +112,7 @@ impl State for WalletSettingsState {
             menu,
             cache,
             &self.descriptor,
+            self.wallet.id_fingerprint(),
             &self.wallet_alias,
             &self.keys_aliases,
             &self.wallet.provider_keys,

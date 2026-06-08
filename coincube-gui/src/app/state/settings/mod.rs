@@ -1,6 +1,7 @@
 pub mod about;
 pub mod general;
 mod install_stats;
+pub mod local_signing;
 pub mod recovery_kit;
 
 use std::sync::Arc;

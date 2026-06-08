@@ -54,9 +54,19 @@ Sign the packaged application using the `sign` command (mind `--code-signature-f
 
 ```
 
-./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign sign --code-signature-flags runtime --pem-source coincubetech_coincube.key --der-source allen_robert_coincube_codesigning.cer Coincube.app
+./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign sign --code-signature-flags runtime --entitlements-xml-path contrib/release/macos/coincube.entitlements --pem-source coincubetech_coincube.key --der-source allen_robert_coincube_codesigning.cer Coincube.app
 
 ```
+
+The `--entitlements-xml-path` flag is required so the hardened
+runtime allows the local LAN signer (`phone_signer` module) to open
+its pairing listener and to dial paired phones. The entitlements file
+itself is at
+[`contrib/release/macos/coincube.entitlements`](coincube.entitlements);
+see [`Info.plist.local-signer.md`](Info.plist.local-signer.md) for
+the matching Info.plist keys (Bonjour usage description + service
+list) that need to be spliced into the bundle's Info.plist on macOS
+14+ until the `_coincube.zip` template is regenerated.
 
 You can see the chain of certificates was applied using the `diff-signatures` command against
 another bundle. The best way to verify the signature is by using the `codesign` command on a Mac.
