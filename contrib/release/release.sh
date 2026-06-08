@@ -195,6 +195,9 @@ else
     )
 fi
 
-find "$RELEASE_DIR" -type f ! -name "$LIANA_PREFIX-shasums.txt" -exec sha256sum {} + | sed "s|$RELEASE_DIR/||" | tee "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
+find "$RELEASE_DIR" -type f ! -name "$LIANA_PREFIX-shasums.txt" -exec sha256sum {} + \
+    | sed "s|$RELEASE_DIR/||" \
+    | LC_ALL=C sort -k2,2 \
+    | tee "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
 
 set +ex
