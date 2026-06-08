@@ -2,7 +2,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use bdk_electrum::bdk_chain::{
-    bitcoin::{self, BlockHash},
+    bitcoin,
     spk_client::{FullScanRequest, FullScanResult, SyncRequest, SyncResult},
 };
 use bdk_esplora::{esplora_client, EsploraExt};

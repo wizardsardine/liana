@@ -96,11 +96,15 @@ pub struct PendingSession {
     /// Most recent error message, populated on rejected / expired /
     /// transport failure. Cleared on retry.
     pub error: Option<String>,
-    /// Set by `cancel_all` when the user cancels while this row's
-    /// `CreateSigningSession` RPC is still in flight (empty
-    /// `session_id`). `on_session_created` consults it so the
+    /// Set by `cancel_all` for every non-terminal row the user cancels.
+    /// For a row whose `CreateSigningSession` RPC is still in flight
+    /// (empty `session_id`), `on_session_created` consults it so the
     /// just-created session is cancelled immediately rather than
-    /// outliving the cancelled flow. Cleared on retry.
+    /// outliving the cancelled flow. For a row with a live session it
+    /// also guards the poll/fetch path: a signature fetched in the window
+    /// before the cancel RPC's reply lands is dropped instead of
+    /// persisted, matching the flow's "discard partial signatures"
+    /// contract. Cleared on retry.
     pub cancel_requested: bool,
     /// True once this session's signed PSBT has been fetched, merged
     /// into the local `SpendTx`, and successfully persisted via
@@ -956,6 +960,17 @@ impl KeychainSignModal {
         result: Result<GetSigningSessionResponse, OpError>,
         is_poll: bool,
     ) -> Task<Message> {
+        // If the user cancelled this session, drop whatever a poll/fetch
+        // returned — even a submitted signature. The cancel-all flow
+        // discards partial signatures, so a result that raced in before
+        // the cancel RPC's reply must not be merged/persisted. Clear the
+        // in-flight flag so nothing else waits on this fetch.
+        if let Some(entry) = self.pending.iter_mut().find(|p| p.session_id == session_id) {
+            if entry.cancel_requested || matches!(entry.status, PendingSessionStatus::Cancelled) {
+                entry.signed_psbt_fetching = false;
+                return Task::none();
+            }
+        }
         let resp = match result {
             Ok(r) => r,
             Err(e) => {
@@ -1085,9 +1100,12 @@ impl KeychainSignModal {
         let desktop_device_id = self.desktop_device_id.clone();
         let mut tasks = Vec::new();
         for entry in self.pending.iter_mut() {
-            // Skip sessions that are finished, not yet created, already being
-            // fetched (event path or a previous tick), or already captured.
+            // Skip sessions that are finished, cancelled by the user (cancel
+            // RPC may still be in flight, so status isn't `Cancelled` yet),
+            // not yet created, already being fetched (event path or a
+            // previous tick), or already captured.
             if entry.status.is_terminal()
+                || entry.cancel_requested
                 || entry.session_id.is_empty()
                 || entry.signed_psbt_fetching
                 || entry.signed_psbt_persisted
@@ -1163,12 +1181,16 @@ impl KeychainSignModal {
             if entry.status.is_terminal() {
                 continue;
             }
+            // Flag the cancellation before spawning the cancel RPC so a
+            // poll already in flight (or a tick that fires before the
+            // `SessionCancelled` reply lands) drops its fetched signature
+            // instead of persisting work the user just cancelled.
+            entry.cancel_requested = true;
             if entry.session_id.is_empty() {
                 // CreateSigningSession is still in flight — there's no
-                // session_id to cancel yet. Flag the intent so
-                // `on_session_created` cancels it the moment it lands,
-                // instead of letting it outlive this cancel-all.
-                entry.cancel_requested = true;
+                // session_id to cancel yet. The `cancel_requested` flag set
+                // above lets `on_session_created` cancel it the moment it
+                // lands, instead of letting it outlive this cancel-all.
                 continue;
             }
             let sid = entry.session_id.clone();
