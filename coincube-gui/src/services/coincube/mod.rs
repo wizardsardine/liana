@@ -1347,6 +1347,167 @@ pub struct UpsertRecoveryKitRequest<'a> {
     pub encryption_scheme: &'a str,
 }
 
+// =============================================================================
+// Duress (desktop) — Phase 0 client plumbing
+// =============================================================================
+//
+// The desktop is the surface where duress *happens*. These DTOs back the
+// Connect REST client methods in `client.rs`. Trust-posture notes that bind
+// the shapes below:
+//
+//   * Every desktop generates its OWN ~128-bit duress code locally with a
+//     CSPRNG, argon2id-hashes it, and sends only the hash. The server stores
+//     N per-device hashes per account and never sees plaintext, so a DB breach
+//     reveals only argon2id hashes of 128-bit inputs (infeasible to brute
+//     force → no grief-triggering duress).
+//   * `trigger-with-code` is UNAUTHENTICATED on purpose: the Cube-unlock
+//     surface may be reached without a live Connect session, and even with one
+//     we don't want activation to depend on session validity at the moment of
+//     coercion.
+
+/// Body for `POST /api/v1/connect/duress/enroll` (authenticated).
+///
+/// The enrolling desktop has already generated its own duress code and
+/// argon2id-hashed it; only `duress_code_hash` crosses the wire. The raw code
+/// lives solely in this desktop's `DuressLocalState`. `duress_crk_password_hash`
+/// is `None` for Tier 2/3 (no CRK), `Some(..)` for Tier 1 (Approach C).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrollDuressRequest {
+    pub all_clear_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duress_crk_password_hash: Option<String>,
+    pub unlock_delay_minutes: u32,
+    pub device_fingerprint: String,
+    pub duress_code_hash: String,
+}
+
+/// Body for `POST /api/v1/connect/duress/register-device-code` (authenticated).
+/// Called by every desktop OTHER than the enrolling one, on its first sign-in
+/// after the account has duress enrolled.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterDeviceDuressCodeRequest {
+    pub device_fingerprint: String,
+    pub duress_code_hash: String,
+}
+
+/// Body for `POST /api/v1/connect/duress/trigger-with-code` (UNAUTHENTICATED).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerWithCodeRequest {
+    pub account_id: String,
+    pub duress_code: String,
+}
+
+/// Body for `POST /api/v1/connect/duress/clear` (authenticated).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClearDuressRequest {
+    pub all_clear_passphrase_hash: String,
+}
+
+/// Returned by the trigger routes — the timestamp after which the account can
+/// be cleared with the all-clear passphrase (the lockout-window expiry).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuressUnlockAt {
+    pub unlock_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// `GET /api/v1/connect/duress` (authenticated).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuressState {
+    pub active: bool,
+    #[serde(default)]
+    pub unlock_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub enrolled: bool,
+    /// Whether THIS desktop (by device fingerprint) already has a code hash
+    /// registered server-side. `enrolled && !this_device_registered` means
+    /// "new device on an enrolled account" → generate + register a code.
+    #[serde(default)]
+    pub this_device_registered: bool,
+}
+
+/// Typed failure modes for the password-gated recovery-kit download
+/// (Approach C, Phase 7). The server returns `423 Locked` with a
+/// discriminating `error.code` for both the duress-lock and
+/// trusted-device-delay cases; everything else collapses to `Invalid`
+/// (wrong password / malformed) or `Other`.
+#[derive(Debug)]
+pub enum DownloadError {
+    /// `423 DURESS_LOCKED` — the account is in duress; the kit is withheld
+    /// until `unlock_at`.
+    DuressLocked {
+        unlock_at: Option<chrono::DateTime<chrono::Utc>>,
+    },
+    /// `423 TRUSTED_DEVICE_DELAY` — a fresh device must wait until
+    /// `available_at` even with the correct password.
+    TrustedDeviceDelay {
+        available_at: Option<chrono::DateTime<chrono::Utc>>,
+    },
+    /// Wrong password / malformed request (4xx other than 423).
+    Invalid,
+    /// Network, 5xx, or parse failure.
+    Other(CoincubeError),
+}
+
+impl std::fmt::Display for DownloadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DownloadError::DuressLocked { .. } => {
+                write!(f, "Recovery kit cannot be downloaded at this time.")
+            }
+            DownloadError::TrustedDeviceDelay { .. } => {
+                write!(f, "Recovery kit download is delayed on new devices.")
+            }
+            DownloadError::Invalid => write!(f, "Incorrect recovery kit password."),
+            DownloadError::Other(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl std::error::Error for DownloadError {}
+
+/// `423 Locked` body shape, used to discriminate `DURESS_LOCKED` from
+/// `TRUSTED_DEVICE_DELAY`. Both timestamp fields are optional — the
+/// duress case carries `unlock_at`, the trusted-device case `available_at`.
+#[derive(Debug, Deserialize)]
+struct DuressLockEnvelope {
+    error: DuressLockBody,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DuressLockBody {
+    code: String,
+    #[serde(default)]
+    unlock_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    available_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl DownloadError {
+    /// Parses a `423 Locked` body into the discriminated variant. Falls back
+    /// to `DuressLocked { unlock_at: None }` when the body can't be parsed —
+    /// the safe default is to treat an opaque 423 as a duress lock rather than
+    /// leak the kit.
+    pub(crate) fn from_locked_body(body: &str) -> Self {
+        match serde_json::from_str::<DuressLockEnvelope>(body) {
+            Ok(env) if env.error.code == "TRUSTED_DEVICE_DELAY" => {
+                DownloadError::TrustedDeviceDelay {
+                    available_at: env.error.available_at,
+                }
+            }
+            Ok(env) => DownloadError::DuressLocked {
+                unlock_at: env.error.unlock_at,
+            },
+            Err(_) => DownloadError::DuressLocked { unlock_at: None },
+        }
+    }
+}
+
 #[cfg(test)]
 mod recovery_kit_response_tests {
     //! Regression tests for `RecoveryKit` deserialisation tolerance.
