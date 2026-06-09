@@ -800,22 +800,26 @@ pub(crate) async fn persist_duress_enrollment(
     duress_pin: zeroize::Zeroizing<String>,
     duress_code: zeroize::Zeroizing<String>,
     account_id: Option<String>,
-) {
+) -> Result<(), String> {
     // 1. Duress PIN hash → every Cube in the network settings.
-    if let Ok(hash) = crate::services::duress::enroll::hash_duress_secret(&duress_pin) {
-        let network_dir = datadir.network_directory(network);
-        let _ = crate::app::settings::update_settings_file(&network_dir, move |mut s| {
-            for cube in s.cubes.iter_mut() {
-                cube.duress_pin_hash = Some(hash.clone());
-            }
-            Some(s)
-        })
-        .await;
-    }
+    let hash = crate::services::duress::enroll::hash_duress_secret(&duress_pin)?;
+    let network_dir = datadir.network_directory(network);
+    crate::app::settings::update_settings_file(&network_dir, move |mut s| {
+        for cube in s.cubes.iter_mut() {
+            cube.duress_pin_hash = Some(hash.clone());
+        }
+        Some(s)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
     // 2. Encrypted device code + account id → DuressLocalState. The encrypted
     //    code is skipped when empty (the server-enroll path re-enters with an
     //    empty code once it's already stored), but the account id is always
     //    recorded so the activation POST can address the right account.
+    //    `load` is resilient (missing → default); only `save` and the
+    //    encryption are fail-loud, since a silent failure here would leave the
+    //    user believing duress is armed when its PIN won't trigger.
     let root = datadir.path().to_path_buf();
     let mut st = crate::services::duress::DuressLocalState::load(&root).unwrap_or_default();
     st.enrolled = true;
@@ -823,13 +827,12 @@ pub(crate) async fn persist_duress_enrollment(
         st.account_id = account_id;
     }
     if !duress_code.is_empty() {
-        if let Ok(key) = crate::services::duress::cipher::DeviceKey::load_or_create(&root) {
-            if let Ok(enc) = key.encrypt(&duress_code) {
-                st.duress_code = Some(enc);
-            }
-        }
+        let key = crate::services::duress::cipher::DeviceKey::load_or_create(&root)
+            .map_err(|e| e.to_string())?;
+        st.duress_code = Some(key.encrypt(&duress_code)?);
     }
-    let _ = st.save(&root);
+    st.save(&root).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Poll the local bitcoind's IBD progress via its JSON-RPC interface.
@@ -2485,7 +2488,15 @@ impl App {
                         duress_code,
                         account_id,
                     ),
-                    |_| Message::CacheUpdated,
+                    |res| match res {
+                        Ok(()) => Message::CacheUpdated,
+                        Err(e) => {
+                            log::error!("duress: failed to persist enrollment: {e}");
+                            Message::View(view::Message::ShowError(format!(
+                                "Couldn't finish enabling duress mode: {e}. Please try again."
+                            )))
+                        }
+                    },
                 );
             }
             Message::CacheUpdated => {

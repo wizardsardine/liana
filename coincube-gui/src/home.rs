@@ -1481,7 +1481,18 @@ impl Home {
                         duress_code,
                         account_id,
                     ),
-                    |_| Message::View(ViewMessage::Check),
+                    |res| match res {
+                        Ok(()) => Message::View(ViewMessage::Check),
+                        Err(e) => {
+                            log::error!("duress: failed to persist enrollment: {e}");
+                            // Surface via the Connect panel's error display.
+                            Message::View(ViewMessage::ConnectAccount(
+                                ConnectAccountMessage::Error(format!(
+                                    "Couldn't finish enabling duress mode: {e}. Please try again."
+                                )),
+                            ))
+                        }
+                    },
                 )
             }
             Message::View(ViewMessage::ConnectAccount(msg)) => {
