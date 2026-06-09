@@ -2545,11 +2545,6 @@ fn register_device_duress_task(client: CoincubeClient, account_id: String) -> ic
             };
             let root = datadir.path();
             let mut st = DuressLocalState::load(root).unwrap_or_default();
-            // Idempotent: this device already minted a code (enrollment or a
-            // prior registration). Nothing to do.
-            if st.duress_code.is_some() {
-                return;
-            }
             let fingerprint = match crate::services::duress::device_fingerprint(root) {
                 Ok(f) => f,
                 Err(e) => {
@@ -2557,23 +2552,6 @@ fn register_device_duress_task(client: CoincubeClient, account_id: String) -> ic
                     return;
                 }
             };
-            let code = enroll::generate_duress_code();
-            let code_hash = match enroll::hash_duress_secret(&code) {
-                Ok(h) => h,
-                Err(e) => {
-                    log::warn!("[CONNECT] device duress register: hash error: {e}");
-                    return;
-                }
-            };
-            if let Err(e) = client
-                .register_device_duress_code(&fingerprint, &code_hash)
-                .await
-            {
-                log::warn!("[CONNECT] register_device_duress_code failed: {e}");
-                return;
-            }
-            // Persist the plaintext code (encrypted at rest) + account id so
-            // local activation can address the right account offline.
             let key = match DeviceKey::load_or_create(root) {
                 Ok(k) => k,
                 Err(e) => {
@@ -2581,16 +2559,56 @@ fn register_device_duress_task(client: CoincubeClient, account_id: String) -> ic
                     return;
                 }
             };
-            match key.encrypt(&code) {
-                Ok(enc) => {
-                    st.enrolled = true;
-                    st.account_id = Some(account_id);
-                    st.duress_code = Some(enc);
-                    if let Err(e) = st.save(root) {
-                        log::warn!("[CONNECT] device duress register: save error: {e}");
+            // Reuse an existing local code (re-hash it for the server) when one
+            // is already held, so a re-fire after a failed registration — or a
+            // stale `this_device_registered` from the server — re-registers the
+            // SAME code instead of churning it. Otherwise mint a fresh one.
+            let (enc, code_hash) = match st.duress_code.as_ref().and_then(|e| key.decrypt(e).ok()) {
+                Some(existing) => match enroll::hash_duress_secret(&existing) {
+                    Ok(h) => (st.duress_code.clone().unwrap(), h),
+                    Err(e) => {
+                        log::warn!("[CONNECT] device duress register: hash error: {e}");
+                        return;
                     }
+                },
+                None => {
+                    let code = enroll::generate_duress_code();
+                    let enc = match key.encrypt(&code) {
+                        Ok(enc) => enc,
+                        Err(e) => {
+                            log::warn!("[CONNECT] device duress register: encrypt error: {e}");
+                            return;
+                        }
+                    };
+                    let hash = match enroll::hash_duress_secret(&code) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            log::warn!("[CONNECT] device duress register: hash error: {e}");
+                            return;
+                        }
+                    };
+                    (enc, hash)
                 }
-                Err(e) => log::warn!("[CONNECT] device duress register: encrypt error: {e}"),
+            };
+            // Persist the code locally BEFORE registering with the server, so
+            // the server never marks this device registered while this install
+            // lacks the matching code — which would block both activation's
+            // trigger-with-code and the auto re-registration retry (gated on the
+            // server's `!this_device_registered`). If the local save fails the
+            // server is left untouched; if the server register fails, local
+            // keeps the code and the next sign-in re-registers it.
+            st.enrolled = true;
+            st.account_id = Some(account_id);
+            st.duress_code = Some(enc);
+            if let Err(e) = st.save(root) {
+                log::warn!("[CONNECT] device duress register: local save failed: {e}");
+                return;
+            }
+            if let Err(e) = client
+                .register_device_duress_code(&fingerprint, &code_hash)
+                .await
+            {
+                log::warn!("[CONNECT] register_device_duress_code failed: {e}");
             }
         },
         |_| {
