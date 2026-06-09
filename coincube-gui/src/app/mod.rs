@@ -831,22 +831,22 @@ pub(crate) async fn persist_duress_enrollment(
     //    meaningless) or the duress PIN is within one edit of a real unlock
     //    PIN, refuse — otherwise a fat-fingered unlock could trip a wipe.
     for network_dir in &network_dirs {
-        if let Ok(settings) = crate::app::settings::Settings::from_file(network_dir) {
-            for cube in &settings.cubes {
-                if cube.has_pin() {
-                    if !cube.verify_pin(&regular_pin) {
-                        return Err(
-                            "That PIN doesn't match your Cube PIN. Enter your real PIN so the \
-                             duress PIN can be safely checked against it. (All your Cubes must \
-                             share the same PIN to enable duress.)"
-                                .to_string(),
-                        );
-                    }
-                    crate::services::duress::enroll::validate_duress_pin(
-                        &regular_pin,
-                        &duress_pin,
-                    )?;
+        // We enumerated this dir because it HAS a settings.json. If it now
+        // can't be read (corrupt/parse/IO, or a race), fail loud rather than
+        // skip the safety check and arm an unverified duress PIN anyway.
+        let settings = crate::app::settings::Settings::from_file(network_dir)
+            .map_err(|e| format!("Couldn't read your Cube settings to verify your PIN: {e}"))?;
+        for cube in &settings.cubes {
+            if cube.has_pin() {
+                if !cube.verify_pin(&regular_pin) {
+                    return Err(
+                        "That PIN doesn't match your Cube PIN. Enter your real PIN so the \
+                         duress PIN can be safely checked against it. (All your Cubes must \
+                         share the same PIN to enable duress.)"
+                            .to_string(),
+                    );
                 }
+                crate::services::duress::enroll::validate_duress_pin(&regular_pin, &duress_pin)?;
             }
         }
     }
