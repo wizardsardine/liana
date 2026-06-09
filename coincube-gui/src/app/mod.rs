@@ -830,6 +830,8 @@ pub(crate) async fn persist_duress_enrollment(
     //    real one. If the user mistyped their PIN (so the wizard's check was
     //    meaningless) or the duress PIN is within one edit of a real unlock
     //    PIN, refuse — otherwise a fat-fingered unlock could trip a wipe.
+    let mut prior_settings: Vec<crate::app::settings::Settings> =
+        Vec::with_capacity(network_dirs.len());
     for network_dir in &network_dirs {
         // We enumerated this dir because it HAS a settings.json. If it now
         // can't be read (corrupt/parse/IO, or a race), fail loud rather than
@@ -849,20 +851,44 @@ pub(crate) async fn persist_duress_enrollment(
                 crate::services::duress::enroll::validate_duress_pin(&regular_pin, &duress_pin)?;
             }
         }
+        // Snapshot the pre-write state so a later failure can roll back.
+        prior_settings.push(settings);
     }
 
-    // 1. Duress PIN hash → every Cube on every network.
+    // 1. Duress PIN hash → every Cube on every network. Sequential file writes
+    //    have no cross-file transaction, so if a later network fails, roll back
+    //    the networks already written to their snapshot — the device must never
+    //    end up with some networks armed and others not.
     let hash = crate::services::duress::enroll::hash_duress_secret(&duress_pin)?;
-    for network_dir in &network_dirs {
-        let hash = hash.clone();
-        crate::app::settings::update_settings_file(network_dir, move |mut s| {
+    let mut written = 0usize;
+    for (i, network_dir) in network_dirs.iter().enumerate() {
+        let h = hash.clone();
+        let write = crate::app::settings::update_settings_file(network_dir, move |mut s| {
             for cube in s.cubes.iter_mut() {
-                cube.duress_pin_hash = Some(hash.clone());
+                cube.duress_pin_hash = Some(h.clone());
             }
             Some(s)
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await;
+        match write {
+            Ok(()) => written = i + 1,
+            Err(e) => {
+                for j in 0..written {
+                    let restore = prior_settings[j].clone();
+                    if let Err(re) =
+                        crate::app::settings::update_settings_file(&network_dirs[j], move |_| {
+                            Some(restore)
+                        })
+                        .await
+                    {
+                        log::error!("duress: rollback of network {j} settings failed: {re}");
+                    }
+                }
+                return Err(format!(
+                    "Couldn't arm the duress PIN on all your Cubes ({e}); no changes were kept."
+                ));
+            }
+        }
     }
 
     // 2. Encrypted device code + account id → DuressLocalState. The encrypted
