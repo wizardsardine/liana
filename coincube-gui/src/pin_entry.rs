@@ -43,6 +43,11 @@ pub enum Message {
     Submit,
     Back,
     PinVerified,
+    /// The submitted PIN matched this Cube's **duress** PIN. Bubbles up to the
+    /// tab state machine, which wipes Cube data and locks into the cryptic
+    /// "Duress Mode Activated" screen. The parent intercepts this; it is never
+    /// handled inside `PinEntry::update`.
+    DuressDetected,
 }
 
 impl PinEntry {
@@ -93,13 +98,23 @@ impl PinEntry {
                 if self.cube.verify_pin(&pin) {
                     self.loading = true;
                     Task::perform(async {}, |_| Message::PinVerified)
+                } else if self.cube.verify_duress_pin(&pin) {
+                    // Duress PIN match. Check regular FIRST (above) so the happy
+                    // path is never shadowed and the two argon2 verifies take
+                    // comparable time. Clear the buffer and bubble up — the
+                    // cryptic screen reveals the duress signal regardless, so a
+                    // fake-success delay buys nothing.
+                    self.pin_input.clear();
+                    Task::perform(async {}, |_| Message::DuressDetected)
                 } else {
                     self.error = Some("Incorrect PIN. Please try again.".to_string());
                     self.pin_input.clear();
                     Task::none()
                 }
             }
-            Message::Back | Message::PinVerified => Task::none(),
+            // `DuressDetected` is intercepted by the parent (tab state machine);
+            // if it ever reaches here it's a no-op.
+            Message::Back | Message::PinVerified | Message::DuressDetected => Task::none(),
         }
     }
 

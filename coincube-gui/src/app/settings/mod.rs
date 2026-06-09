@@ -268,6 +268,12 @@ pub struct CubeSettings {
     /// Optional security PIN (stored as Argon2id hash with salt in PHC format)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security_pin_hash: Option<String>,
+    /// Optional duress PIN (Argon2id PHC hash). Entering this PIN at Cube
+    /// unlock activates duress mode (Phase 3) instead of unlocking. Distinct
+    /// from `security_pin_hash`; enrollment enforces a Levenshtein distance of
+    /// at least 2 between them so it can't be triggered by accident.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duress_pin_hash: Option<String>,
     /// Fingerprint of this Cube's master seed MasterSigner.
     /// All wallets (Vault, Liquid, Spark) derive from this single seed.
     /// The serde aliases keep existing settings.json files readable without migration.
@@ -329,6 +335,7 @@ impl CubeSettings {
             created_at: chrono::Utc::now().timestamp(),
             vault_wallet_id: None,
             security_pin_hash: None,
+            duress_pin_hash: None,
             master_signer_fingerprint: None,
             backed_up: false,
             mfa_done: false,
@@ -406,6 +413,33 @@ impl CubeSettings {
         } else {
             // No PIN set, allow access
             true
+        }
+    }
+
+    /// Sets this Cube's duress PIN (Argon2id PHC hash). Callers must have
+    /// already validated distinctness from the regular PIN via
+    /// [`services::duress::enroll::validate_duress_pin`].
+    pub fn with_duress_pin(mut self, pin: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        self.duress_pin_hash = Some(Self::hash_pin(pin)?);
+        Ok(self)
+    }
+
+    pub fn has_duress_pin(&self) -> bool {
+        self.duress_pin_hash.is_some()
+    }
+
+    /// Verifies a candidate PIN against the stored duress-PIN hash.
+    ///
+    /// Returns `false` when no duress PIN is configured — the opposite default
+    /// from [`verify_pin`](Self::verify_pin), which *allows* access when unset.
+    /// A duress match must only ever happen on an explicit, deliberate
+    /// configuration. Callers MUST run [`verify_pin`](Self::verify_pin) first
+    /// and only consult this on a regular-PIN miss, so the regular unlock path
+    /// is never shadowed and the two argon2 verifies take comparable time.
+    pub fn verify_duress_pin(&self, pin: &str) -> bool {
+        match &self.duress_pin_hash {
+            Some(stored_hash) => Self::verify_argon2_pin(pin, stored_hash),
+            None => false,
         }
     }
 
@@ -1385,6 +1419,32 @@ mod test {
         // as Sovereign — registration is the gating signal.
         cube.remote_synced = false;
         assert_eq!(cube.connect_state(), CubeConnectState::Sovereign);
+    }
+
+    #[test]
+    fn duress_pin_verify_is_independent_of_regular_pin() {
+        use super::CubeSettings;
+        use coincube_core::miniscript::bitcoin::Network;
+
+        // No duress PIN set → never matches (opposite default from verify_pin).
+        let plain = CubeSettings::new("No duress".to_string(), Network::Bitcoin)
+            .with_pin("1234")
+            .unwrap();
+        assert!(!plain.has_duress_pin());
+        assert!(!plain.verify_duress_pin("1234"));
+        assert!(!plain.verify_duress_pin("0000"));
+
+        // With a duress PIN: only the duress PIN matches verify_duress_pin, and
+        // only the regular PIN matches verify_pin.
+        let cube = CubeSettings::new("Both".to_string(), Network::Bitcoin)
+            .with_pin("1234")
+            .unwrap()
+            .with_duress_pin("8765")
+            .unwrap();
+        assert!(cube.verify_pin("1234"));
+        assert!(!cube.verify_pin("8765"));
+        assert!(cube.verify_duress_pin("8765"));
+        assert!(!cube.verify_duress_pin("1234"));
     }
 
     #[test]

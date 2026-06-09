@@ -36,6 +36,10 @@ pub enum State {
     Login(login::CoincubeLiteLogin),
     PinEntry(crate::pin_entry::PinEntry),
     App(App),
+    /// Cryptic "Duress Mode Activated" dead-end. Entered when a duress PIN is
+    /// detected at Cube unlock (after the wipe runs); the device is effectively
+    /// retired until duress clears server-side.
+    DuressActive(crate::app::view::duress::active_screen::DuressActiveScreen),
 }
 
 impl State {
@@ -48,6 +52,51 @@ impl State {
     }
 }
 
+/// Performs the on-device duress wipe and returns the cryptic screen to lock
+/// into. The wipe is the trust anchor (the plan's invariant): every byte of
+/// Cube data under `<root>/<network>/data` is obliterated atomically with
+/// respect to the wipe journal, and `DuressLocalState.active` is persisted so a
+/// relaunch routes straight back here. The duress stores at the data-dir root
+/// (`duress-state.json`, `duress-queue.json`, `duress.key`, the journal) are
+/// outside the wiped tree and survive by construction.
+fn activate_local_duress(
+    root: &std::path::Path,
+    network: bitcoin::Network,
+) -> crate::app::view::duress::active_screen::DuressActiveScreen {
+    use crate::app::view::duress::active_screen::DuressActiveScreen;
+    use crate::services::duress::{journal::WipeJournal, wipe::CubeWiper, DuressLocalState};
+
+    let journal = WipeJournal::new(root);
+    // Mark pending BEFORE enumeration so a crash mid-wipe is completed on the
+    // next launch. The account id is recorded by the orchestrator engine; the
+    // marker's existence is what drives completion.
+    if let Err(e) = journal.mark_pending_activation("") {
+        error!("duress: failed to write wipe journal: {e}");
+    }
+
+    let targets = vec![root.join(network.to_string()).join("data")];
+    let wiper = CubeWiper::new(targets, journal);
+    if let Err(e) = wiper.execute_atomic() {
+        error!("duress: wipe error (continuing to cryptic screen): {e}");
+    }
+
+    // Persist active state so launch-time reconcile re-enters the cryptic
+    // screen. Load-or-default tolerates a never-enrolled sovereign device.
+    let mut st = DuressLocalState::load(root).unwrap_or_default();
+    st.active = true;
+    st.last_activation_attempt = Some(chrono::Utc::now());
+    if let Err(e) = st.save(root) {
+        error!("duress: failed to persist active state: {e}");
+    }
+
+    let mut screen = DuressActiveScreen::new();
+    screen.queue_pending = crate::services::duress::queue::DuressQueue::new(root)
+        .is_empty()
+        .map(|empty| !empty)
+        .unwrap_or(false);
+    screen
+}
+
 #[derive(Debug)]
 pub enum Message {
     Launch(home::Message),
@@ -56,6 +105,8 @@ pub enum Message {
     Run(app::Message),
     Login(login::Message),
     PinEntry(crate::pin_entry::Message),
+    /// Messages from the cryptic "Duress Mode Activated" screen.
+    Duress(crate::app::view::duress::active_screen::Message),
     RemoteBackendBreezLoaded {
         wallet_settings: WalletSettings,
         backend_client: BackendWalletClient,
@@ -169,6 +220,7 @@ impl Tab {
             State::Login(_) => "Login",
             State::PinEntry(_) => "Enter PIN",
             State::App(a) => a.title(),
+            State::DuressActive(_) => "COINCUBE",
         }
     }
 
@@ -1000,7 +1052,34 @@ impl Tab {
                     self.state = State::Home(home);
                     command.map(Message::Launch)
                 }
+                crate::pin_entry::Message::DuressDetected => {
+                    // Duress PIN entered at Cube unlock. The on-device trust
+                    // anchor is the atomic local wipe — run it now, BEFORE
+                    // rendering anything, then lock into the cryptic screen.
+                    // (The activation POST/queue is driven by the duress
+                    // orchestrator engine; threading the Connect account context
+                    // into this surface so it can fire here is a follow-up.)
+                    let network = pin_entry.cube().network;
+                    let datadir = match &pin_entry.on_success {
+                        crate::pin_entry::PinEntrySuccess::LoadApp { datadir, .. } => {
+                            datadir.clone()
+                        }
+                    };
+                    let screen = activate_local_duress(datadir.path(), network);
+                    self.state = State::DuressActive(screen);
+                    Task::none()
+                }
                 m => pin_entry.update(m).map(Message::PinEntry),
+            },
+            (State::DuressActive(screen), Message::Duress(msg)) => match msg {
+                crate::app::view::duress::active_screen::Message::SignInPressed => {
+                    // Phase 5 turns this into a `get_duress_state` check that
+                    // either stays (active) or exits (cleared). Until then,
+                    // staying on the cryptic screen is the safe default: never
+                    // show a credential prompt while duress may still be active.
+                    screen.error = Some("Duress mode is active. Try again later.".to_string());
+                    Task::none()
+                }
             },
             (
                 _,
@@ -1138,6 +1217,7 @@ impl Tab {
             State::Home(v) => v.subscription().map(Message::Launch),
             State::Login(_) => Subscription::none(),
             State::PinEntry(_) => Subscription::none(),
+            State::DuressActive(_) => Subscription::none(),
         }
     }
 
@@ -1149,6 +1229,7 @@ impl Tab {
             State::Loader(v) => v.view().map(Message::Load),
             State::Login(v) => v.view().map(Message::Login),
             State::PinEntry(v) => v.view().map(Message::PinEntry),
+            State::DuressActive(v) => v.view().map(Message::Duress),
         }
     }
 
@@ -1160,6 +1241,7 @@ impl Tab {
             State::App(s) => s.stop(),
             State::Login(_) => {}
             State::PinEntry(_) => {}
+            State::DuressActive(_) => {}
         }
     }
 }

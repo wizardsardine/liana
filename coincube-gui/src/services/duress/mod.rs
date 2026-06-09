@@ -18,12 +18,35 @@
 //! Both stores are written atomically (temp file + `fsync` + `rename`) so a
 //! crash never leaves a half-written JSON document on disk.
 
+pub mod cipher;
 pub mod enroll;
+pub mod journal;
+pub mod orchestrator;
+pub mod queue;
+pub mod wipe;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+
+/// UI-facing duress lifecycle events. Emitted by the orchestrator and the gRPC
+/// stream dispatcher; the app shell routes them to the cryptic screen (Phase 5)
+/// and back.
+///
+/// `Activated` (local duress-PIN path) implies the local Cube wipe ran;
+/// `ActivatedRemote` (Phase 7b, triggered elsewhere) locks the screen but does
+/// **not** wipe — the only behavioural difference between the two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DuressEvent {
+    /// Local duress-PIN activation — Cube data was wiped on this device.
+    Activated,
+    /// Remote activation received over the Connect gRPC stream — screen locks,
+    /// no wipe.
+    ActivatedRemote,
+    /// Duress cleared (server-side all-clear) — exit the cryptic screen.
+    Cleared,
+}
 
 /// Filename for the persisted [`DuressLocalState`], relative to the Coincube
 /// data-directory root.
