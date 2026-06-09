@@ -1474,12 +1474,23 @@ impl ConnectAccountPanel {
                     }
                     None => None,
                 };
+                // A stable device fingerprint is required so the server can
+                // recognise this desktop. If it can't be resolved, fail the
+                // enrollment rather than send an unstable one.
+                let fingerprint = match device_fingerprint() {
+                    Ok(fp) => fp,
+                    Err(msg) => {
+                        e.error = Some(msg);
+                        e.submitting = false;
+                        return iced::Task::none();
+                    }
+                };
                 let client = self.client.clone();
                 let req = crate::services::coincube::EnrollDuressRequest {
                     all_clear_hash,
                     duress_crk_password_hash: crk_hash,
                     unlock_delay_minutes: delay_minutes,
-                    device_fingerprint: device_fingerprint(),
+                    device_fingerprint: fingerprint,
                     duress_code_hash: code_hash,
                 };
                 return iced::Task::perform(
@@ -2344,13 +2355,17 @@ fn duress_state_check_task(client: CoincubeClient, gen: u64, attempt: u8) -> ice
 /// server keys its per-device rows and `this_device_registered` on this value,
 /// so it must be the same across launches, repeat enrollments, and
 /// re-registrations — hence it's loaded from (or minted into) a persisted file
-/// at the data-directory root rather than freshly generated each time. Falls
-/// back to an ephemeral UUID only if the data directory can't be resolved.
-fn device_fingerprint() -> String {
-    crate::dir::CoincubeDirectory::new_default()
-        .ok()
-        .and_then(|dir| crate::services::duress::device_fingerprint(dir.path()).ok())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+/// at the data-directory root.
+///
+/// Errors are **propagated**, not masked: falling back to a fresh UUID on an
+/// I/O failure would silently send a different fingerprint each time and defeat
+/// the stability guarantee, so the wizard surfaces the failure and lets the
+/// user retry instead.
+fn device_fingerprint() -> Result<String, String> {
+    let dir = crate::dir::CoincubeDirectory::new_default()
+        .map_err(|e| format!("data directory unavailable: {e}"))?;
+    crate::services::duress::device_fingerprint(dir.path())
+        .map_err(|e| format!("device fingerprint unavailable: {e}"))
 }
 
 /// The ordered steps for a tier. Sovereign opens with the Connect
