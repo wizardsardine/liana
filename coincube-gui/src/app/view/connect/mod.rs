@@ -705,20 +705,26 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         .unwrap_or_default();
 
     if cards.is_empty() {
-        return container(
-            Column::new()
-                .push(text::h4_bold("Plan & Billing").style(theme::text::primary))
-                .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
-                .push(
-                    text::p1_regular(
-                        "Pricing temporarily unavailable.\n\
-                         Reconnect to the internet to view current plans and features.",
-                    )
-                    .color(color::GREY_3),
-                ),
-        )
-        .padding(16)
-        .into();
+        // Features failed to load, but the renewal/expired prompt is driven
+        // by `/connect/plan` (not features), so still surface it here —
+        // otherwise an expired user routed to Plan & Billing only sees the
+        // generic "unavailable" copy and loses the renew messaging.
+        let mut col = Column::new()
+            .push(text::h4_bold("Plan & Billing").style(theme::text::primary))
+            .push(iced::widget::Space::new().height(Length::Fixed(20.0)));
+        if let Some(banner) = renewal_banner(state) {
+            col = col
+                .push(banner)
+                .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+        }
+        col = col.push(
+            text::p1_regular(
+                "Pricing temporarily unavailable.\n\
+                 Reconnect to the internet to view current plans and features.",
+            )
+            .color(color::GREY_3),
+        );
+        return container(col).padding(16).into();
     }
 
     let mut col = Column::new()
