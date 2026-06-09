@@ -2744,8 +2744,12 @@ mod plan_lifecycle_tests {
     #[test]
     fn paid_plan_without_renewal_date_is_active() {
         // No renewal_at to reason about — treat as active (not in-window).
-        let panel =
-            panel_with_plan(plan(PlanTier::Pro, PlanStatus::Active, None, Some(BillingCycle::Monthly)));
+        let panel = panel_with_plan(plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            None,
+            Some(BillingCycle::Monthly),
+        ));
         assert_eq!(panel.plan_lifecycle_at(at(NOW)), PlanLifecycle::Active);
     }
 
