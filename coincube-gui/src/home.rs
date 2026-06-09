@@ -1477,7 +1477,6 @@ impl Home {
                 Task::perform(
                     app::persist_duress_enrollment(
                         self.datadir_path.clone(),
-                        self.network,
                         regular_pin,
                         duress_pin,
                         duress_code,
