@@ -72,22 +72,31 @@ pub const DEVICE_FINGERPRINT_FILE: &str = "duress-device-fingerprint";
 pub fn device_fingerprint(coincube_dir: &Path) -> io::Result<String> {
     let path = coincube_dir.join(DEVICE_FINGERPRINT_FILE);
     match std::fs::read_to_string(&path) {
-        Ok(s) if !s.trim().is_empty() => Ok(s.trim().to_string()),
-        // Missing or empty/corrupt → mint and persist a fresh one.
+        // Accept only a well-formed UUID. A non-empty-but-corrupt file (e.g. a
+        // truncated write from a crash) must NOT be handed to the server as a
+        // fingerprint — treat it like "missing" and re-mint.
+        Ok(s) if uuid::Uuid::parse_str(s.trim()).is_ok() => Ok(s.trim().to_string()),
         Ok(_) => create_fingerprint(&path),
         Err(e) if e.kind() == io::ErrorKind::NotFound => create_fingerprint(&path),
         Err(e) => Err(e),
     }
 }
 
+/// Mints a fresh fingerprint and persists it atomically (temp file + `fsync` +
+/// `rename`), so a crash mid-write can never leave a truncated id at the final
+/// path — a reader sees either the old file or the complete new one.
 fn create_fingerprint(path: &Path) -> io::Result<String> {
     let fp = uuid::Uuid::new_v4().to_string();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut f = std::fs::File::create(path)?;
-    f.write_all(fp.as_bytes())?;
-    f.sync_all()?;
+    let tmp = path.with_extension("tmp");
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(fp.as_bytes())?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, path)?;
     Ok(fp)
 }
 
@@ -254,6 +263,29 @@ mod tests {
         let dir2 = dir.join("other");
         std::fs::create_dir_all(&dir2).unwrap();
         assert_ne!(device_fingerprint(&dir2).unwrap(), a);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn device_fingerprint_rejects_corrupt_file_and_remints() {
+        let dir = std::env::temp_dir().join(format!(
+            "coincube-duress-fp-corrupt-{}-{:p}",
+            std::process::id(),
+            &0u8
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A truncated / non-UUID value (e.g. left by a crash mid-write) must
+        // not be accepted; it gets re-minted into a valid UUID.
+        let path = dir.join(DEVICE_FINGERPRINT_FILE);
+        std::fs::write(&path, b"not-a-uuid-truncat").unwrap();
+        let fp = device_fingerprint(&dir).unwrap();
+        assert!(
+            uuid::Uuid::parse_str(&fp).is_ok(),
+            "re-minted value must be a UUID"
+        );
+        // The corrupt content is gone, and the value is now stable.
+        assert_eq!(device_fingerprint(&dir).unwrap(), fp);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
