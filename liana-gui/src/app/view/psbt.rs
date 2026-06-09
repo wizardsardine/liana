@@ -16,6 +16,7 @@ use liana::{
 
 use liana_ui::{
     component::{
+        address::address as address_view,
         amount::*,
         button, card,
         collapse::Collapse,
@@ -800,7 +801,7 @@ fn input_view<'a>(
                                 .width(Length::Fill)
                                 .spacing(5)
                                 .push(p1_bold("Address:").style(theme::text::secondary))
-                                .push(p2_regular(addr.clone()).style(theme::text::secondary))
+                                .push(address_view(addr.clone()))
                                 .push(
                                     Button::new(
                                         icon::clipboard_icon().style(theme::text::secondary),
@@ -889,7 +890,7 @@ fn payment_view<'a>(
                                 .width(Length::Fill)
                                 .spacing(5)
                                 .push(p1_bold("Address:").style(theme::text::secondary))
-                                .push(p2_regular(addr.clone()).style(theme::text::secondary))
+                                .push(address_view(addr.clone()))
                                 .push(
                                     Button::new(
                                         icon::clipboard_icon().style(theme::text::secondary),
@@ -938,7 +939,7 @@ fn change_view(output: &TxOut, network: Network) -> Element<'_, Message> {
                         .width(Length::Fill)
                         .spacing(5)
                         .push(p1_bold("Address:").style(theme::text::secondary))
-                        .push(p2_regular(addr.clone()).style(theme::text::secondary))
+                        .push(address_view(addr.clone()))
                         .push(
                             Button::new(icon::clipboard_icon().style(theme::text::secondary))
                                 .on_press(Message::Clipboard(addr))

@@ -100,7 +100,7 @@ pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a str) -> Element<'a, Mess
         Some("Address"),
         None,
         Some(Message::Close),
-        modal::ModalWidth::M,
+        modal::ModalWidth::L,
         receive::modal::qr_display(qr, address),
     )
 }
