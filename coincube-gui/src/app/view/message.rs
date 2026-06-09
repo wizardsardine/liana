@@ -1085,9 +1085,12 @@ pub enum ConnectAccountMessage {
     /// User profile refresh failed (non-auth error)
     UserProfileFailed(String),
     // --- Duress (Phases 6 & 8) ---
-    /// Result of the post-sign-in `get_duress_state` gate. When `active`,
-    /// the panel replaces the dashboard with the recovery flow.
-    DuressStateChecked(Option<crate::services::coincube::DuressState>, u64),
+    /// Result of the post-sign-in `get_duress_state` gate. `Some` switches to
+    /// the recovery flow when `active`; `None` is a failed/unreachable check
+    /// and triggers a bounded retry (the `u8` is the attempt count) so a
+    /// transient error doesn't silently leave the user on the dashboard while
+    /// the account is in duress.
+    DuressStateChecked(Option<crate::services::coincube::DuressState>, u64, u8),
     /// Recovery flow + enrollment wizard messages (nested to keep this enum
     /// tidy).
     Duress(DuressMessage),

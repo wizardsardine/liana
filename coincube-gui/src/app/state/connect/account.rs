@@ -579,15 +579,10 @@ impl ConnectAccountPanel {
                         },
                     ),
                     // Phase 6: gate on duress state. If the account is in
-                    // duress, the recovery flow replaces the dashboard.
-                    iced::Task::perform(
-                        async move { (c3.get_duress_state().await.ok(), gen) },
-                        |(state, g)| {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::DuressStateChecked(state, g),
-                            ))
-                        },
-                    ),
+                    // duress, the recovery flow replaces the dashboard. A
+                    // failed check retries (see the handler) so a transient
+                    // error doesn't leave a duress account on the dashboard.
+                    duress_state_check_task(c3, gen, 0),
                 ]);
             }
 
@@ -1155,19 +1150,39 @@ impl ConnectAccountPanel {
                 // Non-auth error - just show error, don't redirect to login
                 self.error = Some(error);
             }
-            ConnectAccountMessage::DuressStateChecked(state, gen) => {
+            ConnectAccountMessage::DuressStateChecked(state, gen, attempt) => {
                 // Phase 6: post-sign-in gate. If the account is in duress,
                 // replace the dashboard with the recovery flow.
-                if gen == self.session_generation {
-                    if let Some(s) = state {
-                        if s.active {
-                            self.step = ConnectFlowStep::DuressRecovery {
-                                unlock_at: s.unlock_at,
-                                passphrase: String::new(),
-                                submitting: false,
-                                cleared: false,
-                            };
-                        }
+                if gen != self.session_generation {
+                    return iced::Task::none();
+                }
+                match state {
+                    Some(s) if s.active => {
+                        self.step = ConnectFlowStep::DuressRecovery {
+                            unlock_at: s.unlock_at,
+                            passphrase: String::new(),
+                            submitting: false,
+                            cleared: false,
+                        };
+                    }
+                    // Confirmed not in duress — stay on the dashboard.
+                    Some(_) => {}
+                    // Failed / unreachable check. Don't silently leave a duress
+                    // account on the dashboard: retry with a short delay, up to
+                    // a bounded number of attempts. (We deliberately do NOT
+                    // fail-closed into the recovery gate, which would wrongly
+                    // block a non-duress account during a transient outage; the
+                    // gRPC stream and the relaunch reconcile are the other
+                    // safety nets.)
+                    None if attempt + 1 < DURESS_CHECK_MAX_ATTEMPTS => {
+                        return duress_state_check_task(self.client.clone(), gen, attempt + 1);
+                    }
+                    None => {
+                        log::warn!(
+                            "[CONNECT] duress state check failed after {} attempts; \
+                             leaving dashboard (live stream / relaunch will reconcile)",
+                            attempt + 1
+                        );
                     }
                 }
             }
@@ -2225,7 +2240,34 @@ pub fn load_security_data(client: &CoincubeClient, generation: u64) -> iced::Tas
     ])
 }
 
-// ── Duress enrollment wizard helpers (Phases 2 & 8) ──
+// ── Duress recovery + enrollment helpers (Phases 2, 6 & 8) ──
+
+/// How many times the post-sign-in duress-state check is retried before giving
+/// up (and leaving the dashboard, with the gRPC stream / relaunch reconcile as
+/// the remaining safety nets).
+const DURESS_CHECK_MAX_ATTEMPTS: u8 = 3;
+
+/// Delay before each duress-state-check retry.
+const DURESS_CHECK_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Issues a post-sign-in `get_duress_state` check (Phase 6). `attempt > 0`
+/// sleeps first so a transient failure backs off before retrying. A failed
+/// request collapses to `None`, which the handler turns into a bounded retry.
+fn duress_state_check_task(client: CoincubeClient, gen: u64, attempt: u8) -> iced::Task<Message> {
+    iced::Task::perform(
+        async move {
+            if attempt > 0 {
+                tokio::time::sleep(DURESS_CHECK_RETRY_DELAY).await;
+            }
+            (client.get_duress_state().await.ok(), gen, attempt)
+        },
+        |(state, g, a)| {
+            Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::DuressStateChecked(state, g, a),
+            ))
+        },
+    )
+}
 
 /// A stable-enough per-device fingerprint for duress enrollment. Each device
 /// registers its own row server-side keyed on this value; a fresh UUID at
