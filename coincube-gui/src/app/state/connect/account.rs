@@ -235,6 +235,15 @@ pub enum ConnectFlowStep {
         is_signup: bool,
         cooldown: u8,
     },
+    /// Post-auth, pre-dashboard gate (Phase 6): block on `get_duress_state` so
+    /// the dashboard is never shown to a possibly-in-duress account. `failed`
+    /// is set once retries are exhausted, switching the view to an error +
+    /// Retry affordance. We fail CLOSED here (no dashboard) rather than open —
+    /// the whole Connect dashboard is server-backed, so if this check is
+    /// unreachable the dashboard is non-functional anyway.
+    CheckingDuress {
+        failed: bool,
+    },
     Dashboard,
     /// Post-lockout recovery (Phase 6). Shown as the FIRST thing after sign-in
     /// when the account is in duress — there is no normal dashboard until the
@@ -576,7 +585,9 @@ impl ConnectAccountPanel {
                 self.session_generation += 1;
                 self.user = Some(user);
                 self.plan = plan;
-                self.step = ConnectFlowStep::Dashboard;
+                // Phase 6: gate on the duress check FIRST — don't reveal the
+                // dashboard until we've confirmed the account isn't in duress.
+                self.step = ConnectFlowStep::CheckingDuress { failed: false };
                 self.error = None;
                 // Fetch plan + features in background (non-blocking)
                 let gen = self.session_generation;
@@ -1179,8 +1190,9 @@ impl ConnectAccountPanel {
                 self.error = Some(error);
             }
             ConnectAccountMessage::DuressStateChecked(state, gen, attempt) => {
-                // Phase 6: post-sign-in gate. If the account is in duress,
-                // replace the dashboard with the recovery flow.
+                // Phase 6: post-sign-in gate. We sit in `CheckingDuress` until
+                // this resolves, so the dashboard is never shown to a possibly-
+                // in-duress account.
                 if gen != self.session_generation {
                     return iced::Task::none();
                 }
@@ -1193,26 +1205,31 @@ impl ConnectAccountPanel {
                             cleared: false,
                         };
                     }
-                    // Confirmed not in duress — stay on the dashboard.
-                    Some(_) => {}
-                    // Failed / unreachable check. Don't silently leave a duress
-                    // account on the dashboard: retry with a short delay, up to
-                    // a bounded number of attempts. (We deliberately do NOT
-                    // fail-closed into the recovery gate, which would wrongly
-                    // block a non-duress account during a transient outage; the
-                    // gRPC stream and the relaunch reconcile are the other
-                    // safety nets.)
+                    // Confirmed not in duress — NOW reveal the dashboard.
+                    Some(_) => self.step = ConnectFlowStep::Dashboard,
+                    // Failed / unreachable check — retry with backoff.
                     None if attempt + 1 < DURESS_CHECK_MAX_ATTEMPTS => {
                         return duress_state_check_task(self.client.clone(), gen, attempt + 1);
                     }
+                    // Retries exhausted. Fail CLOSED: do not reveal the
+                    // dashboard. Show an error + Retry on the checking screen.
+                    // (The dashboard is server-backed anyway, so it would be
+                    // non-functional during this outage.)
                     None => {
                         log::warn!(
                             "[CONNECT] duress state check failed after {} attempts; \
-                             leaving dashboard (live stream / relaunch will reconcile)",
+                             holding at the verification gate",
                             attempt + 1
                         );
+                        self.step = ConnectFlowStep::CheckingDuress { failed: true };
                     }
                 }
+            }
+            ConnectAccountMessage::RetryDuressCheck => {
+                // From the CheckingDuress error screen.
+                self.step = ConnectFlowStep::CheckingDuress { failed: false };
+                let gen = self.session_generation;
+                return duress_state_check_task(self.client.clone(), gen, 0);
             }
             ConnectAccountMessage::Duress(m) => return self.update_duress(m),
         }

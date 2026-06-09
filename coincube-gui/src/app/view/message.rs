@@ -1096,6 +1096,9 @@ pub enum ConnectAccountMessage {
     /// transient error doesn't silently leave the user on the dashboard while
     /// the account is in duress.
     DuressStateChecked(Option<crate::services::coincube::DuressState>, u64, u8),
+    /// User tapped Retry on the post-login duress verification gate after the
+    /// check failed (retries exhausted).
+    RetryDuressCheck,
     /// Recovery flow + enrollment wizard messages (nested to keep this enum
     /// tidy).
     Duress(DuressMessage),

@@ -64,6 +64,10 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
             ..
         } => otp_ux(email, otp, *sending, *cooldown).map(ViewMessage::ConnectAccount),
 
+        ConnectFlowStep::CheckingDuress { failed } => {
+            checking_duress_ux(*failed).map(ViewMessage::ConnectAccount)
+        }
+
         ConnectFlowStep::DuressRecovery {
             unlock_at,
             passphrase,
@@ -140,6 +144,7 @@ pub fn connect_account_panel<'a>(
             cooldown,
             ..
         } => otp_ux(email, otp, *sending, *cooldown),
+        ConnectFlowStep::CheckingDuress { failed } => checking_duress_ux(*failed),
         ConnectFlowStep::DuressRecovery {
             unlock_at,
             passphrase,
@@ -1089,6 +1094,26 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
         .spacing(0)
         .width(Length::Fill)
         .into()
+}
+
+/// Post-login duress verification gate (Phase 6). Shown after auth while
+/// `get_duress_state` is in flight, so the dashboard isn't revealed to a
+/// possibly-in-duress account. On terminal failure (`failed`) it offers a Retry
+/// rather than falling through to the dashboard.
+fn checking_duress_ux<'a>(failed: bool) -> Element<'a, ConnectAccountMessage> {
+    let mut col = Column::new().spacing(16).align_x(Alignment::Center);
+    if failed {
+        col = col
+            .push(text::p1_regular("Couldn't verify your account status.").color(color::GREY_3))
+            .push(
+                button::primary(None, "Retry")
+                    .width(Length::Fixed(160.0))
+                    .on_press(ConnectAccountMessage::RetryDuressCheck),
+            );
+    } else {
+        col = col.push(text::p1_regular("Checking your account…").color(color::GREY_3));
+    }
+    col.width(Length::Fill).into()
 }
 
 /// Duress enrollment eligibility gate (Phase 2, Task 2.1).
