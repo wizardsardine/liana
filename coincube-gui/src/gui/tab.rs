@@ -268,8 +268,28 @@ fn activate_local_duress(
     // 4. Wipe (anchor) — runs in parallel with the POST above. Targets EVERY
     //    network's Cube data, matching the launch-time reconcile, so a PIN
     //    unlock on one network can't leave another network's Cubes on disk.
-    if let Err(e) = CubeWiper::new(duress_wipe_targets(root), journal).execute_atomic() {
-        error!("duress: wipe error (continuing to cryptic screen): {e}");
+    //    Retry on failure so a transient lock/IO error doesn't leave Cube seeds
+    //    or PIN material on disk. CubeWiper does NOT clear the journal on a
+    //    failed pass, so even if every attempt here fails, the launch-time
+    //    reconcile (complete_pending_wipe) finishes the wipe on next launch.
+    //    The device still locks into the cryptic screen regardless — showing a
+    //    normal app with Cube data after a duress trigger would be far worse.
+    let wiper = CubeWiper::new(duress_wipe_targets(root), journal);
+    let mut wiped = false;
+    for attempt in 1..=3 {
+        match wiper.execute_atomic() {
+            Ok(()) => {
+                wiped = true;
+                break;
+            }
+            Err(e) => error!("duress: wipe attempt {attempt}/3 failed: {e}"),
+        }
+    }
+    if !wiped {
+        error!(
+            "duress: Cube data may remain on disk; journal retained, wipe will be \
+             retried on next launch"
+        );
     }
 
     // 5. Persist active state so launch-time reconcile re-enters the cryptic
