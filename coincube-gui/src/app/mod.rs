@@ -786,6 +786,47 @@ fn is_daemon_unreachable(e: &Error) -> bool {
     )
 }
 
+/// Persist a completed duress enrollment locally (Phases 2 & 8). Writes the
+/// duress PIN hash onto **every** Cube in `network` — a duress wipe takes all
+/// Cubes on the device, so the duress PIN must trip from any Cube's unlock —
+/// and stores this device's ChaCha20-encrypted duress code in
+/// `DuressLocalState` (data-dir root, outside the wiped tree). Shared by the
+/// App, Home, and Launcher surfaces, all of which can host the Connect Duress
+/// panel. Hashing happens inside this async task so the UI thread never blocks
+/// on argon2.
+pub(crate) async fn persist_duress_enrollment(
+    datadir: CoincubeDirectory,
+    network: bitcoin::Network,
+    duress_pin: String,
+    duress_code: String,
+) {
+    // 1. Duress PIN hash → every Cube in the network settings.
+    if let Ok(hash) = crate::services::duress::enroll::hash_duress_secret(&duress_pin) {
+        let network_dir = datadir.network_directory(network);
+        let _ = crate::app::settings::update_settings_file(&network_dir, move |mut s| {
+            for cube in s.cubes.iter_mut() {
+                cube.duress_pin_hash = Some(hash.clone());
+            }
+            Some(s)
+        })
+        .await;
+    }
+    // 2. Encrypted device code → DuressLocalState. Skipped when empty (the
+    //    server-enroll path re-enters with an empty code once already stored).
+    if !duress_code.is_empty() {
+        let root = datadir.path().to_path_buf();
+        if let Ok(key) = crate::services::duress::cipher::DeviceKey::load_or_create(&root) {
+            if let Ok(enc) = key.encrypt(&duress_code) {
+                let mut st =
+                    crate::services::duress::DuressLocalState::load(&root).unwrap_or_default();
+                st.enrolled = true;
+                st.duress_code = Some(enc);
+                let _ = st.save(&root);
+            }
+        }
+    }
+}
+
 /// Poll the local bitcoind's IBD progress via its JSON-RPC interface.
 /// Returns `(verificationprogress, initialblockdownload)` or an error string.
 async fn check_bitcoind_sync_progress(
@@ -2416,58 +2457,19 @@ impl App {
             Message::CompleteDuressEnrollment(payload) => {
                 // Phases 2 & 8: the Connect panel collected + validated the
                 // credentials and (for Connect tiers) enrolled on the server;
-                // persist the per-Cube duress PIN and this device's encrypted
-                // duress code here, where the Cube + datadir context lives.
+                // persist the duress PIN + this device's encrypted code here,
+                // where the Cube + datadir context lives. Shared with the Home
+                // and Launcher surfaces, which also host the Connect Duress
+                // panel (see `persist_duress_enrollment`).
                 let crate::app::message::DuressEnrollmentPayload {
                     duress_pin,
                     duress_code,
                     ..
                 } = payload;
-                let pin_hash =
-                    crate::services::duress::enroll::hash_duress_secret(&duress_pin).ok();
-                // Reflect immediately in the in-memory cube so this session's
-                // unlock screen recognises the duress PIN without a reload.
-                if let Some(h) = &pin_hash {
-                    self.cube_settings.duress_pin_hash = Some(h.clone());
-                }
                 let datadir = self.datadir.clone();
                 let network = self.cache.network;
-                let cube_id = self.cube_settings.id.clone();
-                let root = self.datadir.path().to_path_buf();
                 return Task::perform(
-                    async move {
-                        // 1. Persist the duress PIN hash on the active Cube.
-                        if let Some(hash) = pin_hash {
-                            let network_dir = datadir.network_directory(network);
-                            let _ = crate::app::settings::update_settings_file(
-                                &network_dir,
-                                move |mut s| {
-                                    if let Some(cube) = s.cubes.iter_mut().find(|c| c.id == cube_id)
-                                    {
-                                        cube.duress_pin_hash = Some(hash.clone());
-                                    }
-                                    Some(s)
-                                },
-                            )
-                            .await;
-                        }
-                        // 2. Persist this device's encrypted duress code in
-                        //    DuressLocalState (data-dir root, survives the wipe).
-                        if !duress_code.is_empty() {
-                            if let Ok(key) =
-                                crate::services::duress::cipher::DeviceKey::load_or_create(&root)
-                            {
-                                if let Ok(enc) = key.encrypt(&duress_code) {
-                                    let mut st =
-                                        crate::services::duress::DuressLocalState::load(&root)
-                                            .unwrap_or_default();
-                                    st.enrolled = true;
-                                    st.duress_code = Some(enc);
-                                    let _ = st.save(&root);
-                                }
-                            }
-                        }
-                    },
+                    persist_duress_enrollment(datadir, network, duress_pin, duress_code),
                     |_| Message::CacheUpdated,
                 );
             }

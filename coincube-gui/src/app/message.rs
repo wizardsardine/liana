@@ -207,7 +207,10 @@ pub enum Message {
 
 /// Sensitive payload for [`Message::CompleteDuressEnrollment`]. `Debug` is
 /// hand-written to redact the plaintext duress PIN and code so they never reach
-/// a tracing snapshot of the parent message.
+/// a tracing snapshot of the parent message. `Clone` is required because the
+/// Home/Launcher `Message` enums (which relay this from their Connect panels)
+/// derive `Clone`.
+#[derive(Clone)]
 pub struct DuressEnrollmentPayload {
     pub duress_pin: String,
     pub duress_code: String,
