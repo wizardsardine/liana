@@ -298,6 +298,11 @@ pub struct DuressEnrollState {
     pub memorized: bool,
     pub submitting: bool,
     pub error: Option<String>,
+    /// This device's generated duress code, held between SubmitEnrollment and a
+    /// successful server EnrollResult. For Connect tiers the code is NOT
+    /// persisted locally until the server confirms enrollment, so a server
+    /// failure can't leave a half-armed duress PIN on disk.
+    pub pending_code: Option<String>,
 }
 
 pub struct ConnectAccountPanel {
@@ -1207,6 +1212,7 @@ impl ConnectAccountPanel {
             memorized: false,
             submitting: false,
             error: None,
+            pending_code: None,
         });
     }
 
@@ -1365,10 +1371,6 @@ impl ConnectAccountPanel {
                 }
             }
             DuressMessage::SubmitEnrollment => {
-                // Read the Connect account id before borrowing `duress_enroll`
-                // mutably (disjoint-field borrows don't extend across the `e`
-                // binding once we hold an owned copy).
-                let user_account_id = self.user.as_ref().map(|u| u.id.to_string());
                 let Some(e) = &mut self.duress_enroll else {
                     return iced::Task::none();
                 };
@@ -1380,34 +1382,30 @@ impl ConnectAccountPanel {
                 e.error = None;
                 let tier = e.tier;
                 let gen = self.session_generation;
-                let duress_pin = e.duress_pin.clone();
-                let account_id = if tier == EnrollTier::Sovereign {
-                    None
-                } else {
-                    user_account_id
-                };
 
                 // Generate this device's duress code ONCE: its hash goes to the
-                // server, the same plaintext is persisted (encrypted) locally by
-                // the App. The local persist is the wipe anchor and always
-                // fires; the server enroll is best-effort on top.
+                // server, the same plaintext is persisted (encrypted) locally.
                 let code = enroll::generate_duress_code();
-                let local_persist = iced::Task::done(Message::CompleteDuressEnrollment(
-                    crate::app::message::DuressEnrollmentPayload {
-                        duress_pin: zeroize::Zeroizing::new(duress_pin),
-                        duress_code: zeroize::Zeroizing::new(code.clone()),
-                        account_id,
-                        gen,
-                    },
-                ));
 
                 if tier == EnrollTier::Sovereign {
-                    // No Connect call — local wipe + cryptic only.
+                    // No Connect call — local wipe + cryptic only. Persist now.
+                    let duress_pin = e.duress_pin.clone();
                     self.duress_enroll = None;
-                    return local_persist;
+                    return iced::Task::done(Message::CompleteDuressEnrollment(
+                        crate::app::message::DuressEnrollmentPayload {
+                            duress_pin: zeroize::Zeroizing::new(duress_pin),
+                            duress_code: zeroize::Zeroizing::new(code),
+                            account_id: None,
+                            gen,
+                        },
+                    ));
                 }
 
-                // Connect tiers: enroll on the server in parallel.
+                // Connect tiers: enroll on the server FIRST. The duress PIN +
+                // code are persisted locally only after a successful
+                // EnrollResult, so a server failure can't leave a half-armed
+                // duress PIN on disk. Stash the code for that success handler.
+                e.pending_code = Some(code.clone());
                 let all_clear_hash = enroll::hash_duress_secret(&e.all_clear);
                 let crk_hash = if tier == EnrollTier::Tier1 {
                     Some(enroll::hash_duress_secret(&e.crk_password))
@@ -1442,7 +1440,7 @@ impl ConnectAccountPanel {
                     device_fingerprint: device_fingerprint(),
                     duress_code_hash: code_hash,
                 };
-                let server_enroll = iced::Task::perform(
+                return iced::Task::perform(
                     async move { client.enroll_duress(req).await },
                     move |res| {
                         Message::View(view::Message::ConnectAccount(
@@ -1453,17 +1451,34 @@ impl ConnectAccountPanel {
                         ))
                     },
                 );
-                return iced::Task::batch([local_persist, server_enroll]);
             }
             DuressMessage::EnrollResult(res, gen) => {
                 if gen != self.session_generation {
                     return iced::Task::none();
                 }
                 match res {
-                    // Server enrolled — close the wizard (the local persist
-                    // already fired in parallel from SubmitEnrollment).
-                    Ok(()) => self.duress_enroll = None,
+                    Ok(()) => {
+                        // Server enrolled — NOW persist locally (PIN hash +
+                        // encrypted code) from the wizard state, then close it.
+                        // Doing this only on success means a server failure
+                        // never leaves a half-armed duress PIN on disk.
+                        let account_id = self.user.as_ref().map(|u| u.id.to_string());
+                        if let Some(e) = self.duress_enroll.take() {
+                            return iced::Task::done(Message::CompleteDuressEnrollment(
+                                crate::app::message::DuressEnrollmentPayload {
+                                    duress_pin: zeroize::Zeroizing::new(e.duress_pin),
+                                    duress_code: zeroize::Zeroizing::new(
+                                        e.pending_code.unwrap_or_default(),
+                                    ),
+                                    account_id,
+                                    gen,
+                                },
+                            ));
+                        }
+                    }
                     Err(msg) => {
+                        // No local state was written — just surface the error
+                        // and keep the wizard open for a retry.
                         if let Some(e) = &mut self.duress_enroll {
                             e.submitting = false;
                             e.error = Some(msg);
@@ -2382,6 +2397,7 @@ mod duress_enroll_tests {
             memorized: false,
             submitting: false,
             error: None,
+            pending_code: None,
         }
     }
 
