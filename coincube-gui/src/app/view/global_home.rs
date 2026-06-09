@@ -1138,37 +1138,41 @@ fn confirm_transfer_view<'a>(
             // signer path handles both Liquid and Spark destinations.
             TransferDirection::VaultToLiquid | TransferDirection::VaultToSpark => {
                 if is_tx_signed {
-                    button::primary(None, "Confirm & Broadcast").on_press_maybe(if !is_sending {
-                        Some(Message::Home(HomeMessage::ConfirmTransfer))
-                    } else {
-                        None
-                    })
+                    button::primary_loading(
+                        None,
+                        "Confirm & Broadcast",
+                        is_sending,
+                        Some(Message::Home(HomeMessage::ConfirmTransfer)),
+                    )
                 } else {
-                    button::primary(None, "Sign Transaction").on_press_maybe(
-                        if !is_sending && transfer_feerate.valid {
-                            Some(Message::Home(HomeMessage::SignVaultToLiquidTx))
-                        } else {
-                            None
-                        },
+                    button::primary_loading(
+                        None,
+                        "Sign Transaction",
+                        is_sending,
+                        transfer_feerate
+                            .valid
+                            .then_some(Message::Home(HomeMessage::SignVaultToLiquidTx)),
                     )
                 }
             }
             TransferDirection::LiquidToVault | TransferDirection::LiquidToSpark => {
-                button::primary(None, "Confirm Transfer").on_press_maybe(if !is_sending {
-                    Some(Message::Home(HomeMessage::ConfirmTransfer))
-                } else {
-                    None
-                })
+                button::primary_loading(
+                    None,
+                    "Confirm Transfer",
+                    is_sending,
+                    Some(Message::Home(HomeMessage::ConfirmTransfer)),
+                )
             }
             // Spark-sourced: the prepare handle was fetched at step 1→2. Confirm
             // calls `spark.send_payment(handle)` synchronously from the UI's
             // perspective; stage flips to PendingDeposit on success.
             TransferDirection::SparkToLiquid | TransferDirection::SparkToVault => {
-                button::primary(None, "Confirm Transfer").on_press_maybe(if !is_sending {
-                    Some(Message::Home(HomeMessage::ConfirmSparkSend))
-                } else {
-                    None
-                })
+                button::primary_loading(
+                    None,
+                    "Confirm Transfer",
+                    is_sending,
+                    Some(Message::Home(HomeMessage::ConfirmSparkSend)),
+                )
             }
         });
 

@@ -173,6 +173,7 @@ pub struct DefineSpend {
     loading_fee_estimate: Option<usize>,
     fee_amount: Option<Amount>,
     generated: Option<(Psbt, Vec<String>)>,
+    generating: bool,
     warning: Option<Error>,
     /// Whether this is the first step of the spend creation.
     /// Required in order to know whether the user can navigate to a previous step.
@@ -215,6 +216,7 @@ impl DefineSpend {
             recovery_timelock,
             tip_height,
             generated: None,
+            generating: false,
             coins,
             coins_labels: HashMap::new(),
             batch_label: form::Value::default(),
@@ -783,6 +785,11 @@ impl Step for DefineSpend {
                         );
                     }
                     view::CreateSpendMessage::Generate => {
+                        // Single-flight: ignore extra clicks while a spend is
+                        // being built so we don't fire duplicate round-trips.
+                        if self.generating {
+                            return Task::none();
+                        }
                         let inputs: Vec<OutPoint> = self
                             .coins
                             .iter()
@@ -800,6 +807,7 @@ impl Step for DefineSpend {
                             HashMap::new();
                         let feerate_vb = self.feerate.value.parse::<u64>().unwrap_or(0);
                         self.warning = None;
+                        self.generating = true;
                         if let Some(reco_tl) = self.recovery_timelock {
                             let recovery_address = Address::from_str(
                                 &self
@@ -886,17 +894,20 @@ impl Step for DefineSpend {
                 self.check_valid();
                 return redraft_task;
             }
-            Message::Psbt(res) => match res {
-                Ok(psbt) => {
-                    self.generated = Some(psbt);
-                    return Task::perform(async {}, |_| Message::View(view::Message::Next));
+            Message::Psbt(res) => {
+                self.generating = false;
+                match res {
+                    Ok(psbt) => {
+                        self.generated = Some(psbt);
+                        return Task::perform(async {}, |_| Message::View(view::Message::Next));
+                    }
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        self.warning = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                    }
                 }
-                Err(e) => {
-                    let err_msg = e.to_string();
-                    self.warning = Some(e);
-                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                }
-            },
+            }
             Message::Labels(res) => match res {
                 Ok(labels) => {
                     self.coins_labels = labels;
@@ -1049,6 +1060,7 @@ impl Step for DefineSpend {
             &self.sync_status,
             self.is_first_step,
             self.loading_fee_estimate,
+            self.generating,
             self.bitcoin_unit,
         )
     }

@@ -73,6 +73,7 @@ pub struct VaultReceivePanel {
     modal: Modal,
     warning: Option<Error>,
     processing: bool,
+    generating: bool,
 }
 
 impl VaultReceivePanel {
@@ -89,6 +90,7 @@ impl VaultReceivePanel {
             modal: Modal::None,
             warning: None,
             processing: false,
+            generating: false,
         }
     }
 
@@ -128,6 +130,7 @@ impl State for VaultReceivePanel {
                 self.labels_edited.cache(),
                 self.prev_continue_from.is_none(),
                 self.processing,
+                self.generating,
             ),
         );
 
@@ -186,19 +189,22 @@ impl State for VaultReceivePanel {
                     }
                 }
             }
-            Message::ReceiveAddress(res) => match res {
-                Ok((address, derivation_index)) => {
-                    self.warning = None;
-                    self.addresses.list.push(address);
-                    self.addresses.derivation_indexes.push(derivation_index);
-                    Task::none()
+            Message::ReceiveAddress(res) => {
+                self.generating = false;
+                match res {
+                    Ok((address, derivation_index)) => {
+                        self.warning = None;
+                        self.addresses.list.push(address);
+                        self.addresses.derivation_indexes.push(derivation_index);
+                        Task::none()
+                    }
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        self.warning = Some(e);
+                        Task::done(Message::View(view::Message::ShowError(err_msg)))
+                    }
                 }
-                Err(e) => {
-                    let err_msg = e.to_string();
-                    self.warning = Some(e);
-                    Task::done(Message::View(view::Message::ShowError(err_msg)))
-                }
-            },
+            }
             Message::View(view::Message::Close) => {
                 self.modal = Modal::None;
                 Task::none()
@@ -218,6 +224,11 @@ impl State for VaultReceivePanel {
                 Task::none()
             }
             Message::View(view::Message::NextReceiveAddress) => {
+                // flight so we don't burn through receive addresses.
+                if self.generating {
+                    return Task::none();
+                }
+                self.generating = true;
                 let daemon = daemon.clone();
                 Task::perform(
                     async move {
