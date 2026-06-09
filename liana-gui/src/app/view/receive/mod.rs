@@ -12,7 +12,6 @@ use liana::miniscript::bitcoin;
 
 use liana_ui::{
     component::{button, form, list, panels::receive, text::new},
-    icon,
     widget::*,
 };
 
@@ -52,15 +51,7 @@ pub fn receive<'a>(
     processing: bool,
 ) -> Element<'a, Message> {
     let title = Container::new(new::d2(Menu::Receive.title())).width(Length::Fill);
-    let generate = {
-        let (icon, label) = (Some(icon::plus_icon()), "Generate address");
-        if prev_addresses.is_empty() {
-            button::primary(icon, label)
-        } else {
-            button::secondary(icon, label)
-        }
-        .on_press(Message::NextReceiveAddress)
-    };
+    let generate = button::btn_generate_address(Some(Message::NextReceiveAddress));
     let header = row![title, generate].align_y(Alignment::Center);
 
     let description = new::b1("Always generate a new address for each deposit.");
