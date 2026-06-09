@@ -867,16 +867,16 @@ pub(crate) async fn persist_duress_enrollment(
 
     // 2. Encrypted device code + account id → DuressLocalState. The encrypted
     //    code is skipped when empty (the server-enroll path re-enters with an
-    //    empty code once it's already stored), but the account id is always
-    //    recorded so the activation POST can address the right account.
+    //    empty code once it's already stored). The account id is set
+    //    unconditionally — including to `None` for a sovereign enrollment — so
+    //    re-enrolling sovereign clears any previously stored Connect account id
+    //    and local activation can't trigger-with-code against a stale account.
     //    `load` is resilient (missing → default); only `save` and the
     //    encryption are fail-loud, since a silent failure here would leave the
     //    user believing duress is armed when its PIN won't trigger.
     let mut st = crate::services::duress::DuressLocalState::load(&root).unwrap_or_default();
     st.enrolled = true;
-    if account_id.is_some() {
-        st.account_id = account_id;
-    }
+    st.account_id = account_id;
     if !duress_code.is_empty() {
         let key = crate::services::duress::cipher::DeviceKey::load_or_create(&root)
             .map_err(|e| e.to_string())?;
