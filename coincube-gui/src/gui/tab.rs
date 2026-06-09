@@ -47,9 +47,80 @@ impl State {
         directory: CoincubeDirectory,
         network: Option<bitcoin::Network>,
     ) -> (Self, Task<Message>) {
+        // Duress launch-time reconcile (Phase 5 Task 5.2, path 1). If this
+        // device is locked into duress — or a wipe was interrupted (journal
+        // marker present) — complete the wipe and route straight to the cryptic
+        // screen. The user clears from another trusted device; the Sign-in
+        // button here only confirms whether that has happened.
+        let root = directory.path().to_path_buf();
+        let st = crate::services::duress::DuressLocalState::load(&root).unwrap_or_default();
+        let journal = crate::services::duress::journal::WipeJournal::new(&root);
+        if st.active || journal.is_pending() {
+            complete_pending_wipe(&root, &journal);
+            let queue_pending = crate::services::duress::queue::DuressQueue::new(&root)
+                .is_empty()
+                .map(|empty| !empty)
+                .unwrap_or(false);
+            let mut screen =
+                crate::app::view::duress::active_screen::DuressActiveScreen::with_context(
+                    directory, network,
+                );
+            screen.queue_pending = queue_pending;
+            return (State::DuressActive(screen), Task::none());
+        }
+
         let (home, command) = Home::new(directory, network);
         (State::Home(home), command.map(Message::Launch))
     }
+}
+
+/// Completes an interrupted duress wipe on launch. Targets the `data` subdir of
+/// every per-network directory under the data root, so a multi-network device
+/// is fully scrubbed regardless of which Cube's PIN triggered duress. No-op
+/// when the journal marker is absent (wipe already finished cleanly).
+fn complete_pending_wipe(
+    root: &std::path::Path,
+    journal: &crate::services::duress::journal::WipeJournal,
+) {
+    use crate::services::duress::wipe::CubeWiper;
+    if !journal.is_pending() {
+        return;
+    }
+    let mut targets = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let data = entry.path().join("data");
+            if data.is_dir() {
+                targets.push(data);
+            }
+        }
+    }
+    let wiper = CubeWiper::new(targets, journal.clone());
+    if let Err(e) = wiper.complete_if_pending() {
+        error!("duress: failed to complete interrupted wipe on launch: {e}");
+    }
+}
+
+/// Builds an authenticated `get_duress_state` check from the Connect auth
+/// cached at `<network>/connect.json` (preserved through the wipe). Returns a
+/// task whose message is `Some(active)` on a successful check, or `None` when
+/// the cache/token/network is unavailable or the request fails — `None` is
+/// treated as "still locked" so a failed check never opens a sign-in form.
+fn duress_state_check_task(datadir: CoincubeDirectory, network: bitcoin::Network) -> Task<Message> {
+    use crate::app::view::duress::active_screen::Message as DuressMsg;
+    Task::perform(
+        async move {
+            let network_dir = datadir.network_directory(network);
+            let cache =
+                crate::services::connect::client::cache::ConnectCache::from_file(&network_dir)
+                    .ok()?;
+            let account = cache.accounts.into_iter().next()?;
+            let mut client = crate::services::coincube::CoincubeClient::new();
+            client.set_token(&account.tokens.access_token);
+            client.get_duress_state().await.ok().map(|s| s.active)
+        },
+        |active: Option<bool>| Message::Duress(DuressMsg::StateChecked(active)),
+    )
 }
 
 /// Performs the on-device duress wipe and returns the cryptic screen to lock
@@ -60,12 +131,14 @@ impl State {
 /// (`duress-state.json`, `duress-queue.json`, `duress.key`, the journal) are
 /// outside the wiped tree and survive by construction.
 fn activate_local_duress(
-    root: &std::path::Path,
+    datadir: CoincubeDirectory,
     network: bitcoin::Network,
 ) -> crate::app::view::duress::active_screen::DuressActiveScreen {
     use crate::app::view::duress::active_screen::DuressActiveScreen;
     use crate::services::duress::{journal::WipeJournal, wipe::CubeWiper, DuressLocalState};
 
+    let root = datadir.path().to_path_buf();
+    let root = root.as_path();
     let journal = WipeJournal::new(root);
     // Mark pending BEFORE enumeration so a crash mid-wipe is completed on the
     // next launch. The account id is recorded by the orchestrator engine; the
@@ -89,11 +162,12 @@ fn activate_local_duress(
         error!("duress: failed to persist active state: {e}");
     }
 
-    let mut screen = DuressActiveScreen::new();
-    screen.queue_pending = crate::services::duress::queue::DuressQueue::new(root)
+    let queue_pending = crate::services::duress::queue::DuressQueue::new(root)
         .is_empty()
         .map(|empty| !empty)
         .unwrap_or(false);
+    let mut screen = DuressActiveScreen::with_context(datadir.clone(), Some(network));
+    screen.queue_pending = queue_pending;
     screen
 }
 
@@ -1065,7 +1139,7 @@ impl Tab {
                             datadir.clone()
                         }
                     };
-                    let screen = activate_local_duress(datadir.path(), network);
+                    let screen = activate_local_duress(datadir, network);
                     self.state = State::DuressActive(screen);
                     Task::none()
                 }
@@ -1073,12 +1147,56 @@ impl Tab {
             },
             (State::DuressActive(screen), Message::Duress(msg)) => match msg {
                 crate::app::view::duress::active_screen::Message::SignInPressed => {
-                    // Phase 5 turns this into a `get_duress_state` check that
-                    // either stays (active) or exits (cleared). Until then,
-                    // staying on the cryptic screen is the safe default: never
-                    // show a credential prompt while duress may still be active.
-                    screen.error = Some("Duress mode is active. Try again later.".to_string());
-                    Task::none()
+                    // Gated entirely on server-side duress state. Read cached
+                    // Connect auth (preserved through the wipe) and check
+                    // get_duress_state BEFORE rendering any sign-in surface. No
+                    // credential prompt ever appears here.
+                    match (screen.datadir().cloned(), screen.network()) {
+                        (Some(datadir), Some(network)) => {
+                            screen.checking = true;
+                            screen.error = None;
+                            duress_state_check_task(datadir, network)
+                        }
+                        _ => {
+                            // No way to reach the server (no network resolved) —
+                            // safe default is to stay locked.
+                            screen.error =
+                                Some("Duress mode is active. Try again later.".to_string());
+                            Task::none()
+                        }
+                    }
+                }
+                crate::app::view::duress::active_screen::Message::StateChecked(active) => {
+                    match active {
+                        Some(false) => {
+                            // Server reports duress cleared from another device.
+                            // Update local state and exit into the normal flow.
+                            if let Some(datadir) = screen.datadir().cloned() {
+                                let root = datadir.path();
+                                let mut st = crate::services::duress::DuressLocalState::load(root)
+                                    .unwrap_or_default();
+                                st.active = false;
+                                st.unlock_at = None;
+                                if let Err(e) = st.save(root) {
+                                    error!("duress: failed to clear local state: {e}");
+                                }
+                                let network = screen.network();
+                                let (home, command) = Home::new(datadir, network);
+                                self.state = State::Home(home);
+                                return command.map(Message::Launch);
+                            }
+                            screen.checking = false;
+                            Task::none()
+                        }
+                        // Still active, or the check failed/was unreachable —
+                        // never reveal more than the cryptic message already does.
+                        _ => {
+                            screen.checking = false;
+                            screen.error =
+                                Some("Duress mode is active. Try again later.".to_string());
+                            Task::none()
+                        }
+                    }
                 }
             },
             (

@@ -4,10 +4,12 @@
 //! This screen replaces every other view. It reveals nothing recoverable and
 //! offers no recovery affordances on this device: no countdown, no remaining
 //! window, no balances, no Cube list, no support link. Its **only** interactive
-//! element is a single "Sign in to Connect" button which, in Phase 5, gates
-//! entirely on server-side duress state — while duress is active it shows an
-//! inline "Try again later" and never a credential prompt.
+//! element is a single "Sign in to Connect" button which gates entirely on
+//! server-side duress state — while duress is active it shows an inline "Try
+//! again later" and **never** a credential prompt. Only when the server reports
+//! duress cleared does the screen exit into the normal flow.
 
+use coincube_core::miniscript::bitcoin::Network;
 use coincube_ui::{
     color,
     component::{button, text},
@@ -15,16 +17,22 @@ use coincube_ui::{
 };
 use iced::{Alignment, Length};
 
+use crate::dir::CoincubeDirectory;
+
 #[derive(Debug, Clone)]
 pub enum Message {
-    /// User tapped "Sign in to Connect". Phase 5 turns this into a
-    /// `get_duress_state` check that either stays (active) or exits (cleared).
+    /// User tapped "Sign in to Connect" — triggers a `get_duress_state` check.
     SignInPressed,
+    /// Result of the check: `Some(true)` still active, `Some(false)` cleared,
+    /// `None` couldn't reach/parse the server. Only `Some(false)` exits the
+    /// screen; everything else stays put with "Try again later".
+    StateChecked(Option<bool>),
 }
 
-/// Cryptic-screen state. Deliberately tiny — it must not cache anything
-/// sensitive.
-#[derive(Debug, Default)]
+/// Cryptic-screen state. Holds just enough context to run the gated Sign-in
+/// check and, on a server-side clear, hand back to the normal launch flow. It
+/// caches nothing sensitive.
+#[derive(Default)]
 pub struct DuressActiveScreen {
     /// Inline error shown beneath the button (e.g. "Duress mode is active.
     /// Try again later.").
@@ -34,11 +42,35 @@ pub struct DuressActiveScreen {
     /// Whether the retry queue still has pending work — drives the subtle
     /// corner dot (Phase 4 Task 4.2). No text, no explanation.
     pub queue_pending: bool,
+    /// Data directory + network, used to locate cached Connect auth
+    /// (`<network>/connect.json`, preserved through the wipe) for the Sign-in
+    /// check and to rebuild the Home flow on exit. `network` is `None` only on
+    /// a launch reconcile where the network wasn't resolved.
+    datadir: Option<CoincubeDirectory>,
+    network: Option<Network>,
 }
 
 impl DuressActiveScreen {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Constructs the screen with the context needed for the gated Sign-in
+    /// check and a clean exit.
+    pub fn with_context(datadir: CoincubeDirectory, network: Option<Network>) -> Self {
+        Self {
+            datadir: Some(datadir),
+            network,
+            ..Self::default()
+        }
+    }
+
+    pub fn datadir(&self) -> Option<&CoincubeDirectory> {
+        self.datadir.as_ref()
+    }
+
+    pub fn network(&self) -> Option<Network> {
+        self.network
     }
 
     pub fn view(&self) -> Element<Message> {
