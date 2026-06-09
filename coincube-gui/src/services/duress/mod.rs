@@ -57,6 +57,40 @@ pub const DURESS_STATE_FILE: &str = "duress-state.json";
 /// data-directory root.
 pub const DURESS_QUEUE_FILE: &str = "duress-queue.json";
 
+/// Filename for this device's stable enrollment fingerprint, relative to the
+/// Coincube data-directory root.
+pub const DEVICE_FINGERPRINT_FILE: &str = "duress-device-fingerprint";
+
+/// Loads this device's **stable** duress enrollment fingerprint, generating and
+/// persisting one (a random UUID) on first use.
+///
+/// The server keys its per-device duress rows and `this_device_registered`
+/// semantics on this value, so it MUST be the same across launches, repeat
+/// enrollments, and re-registrations on the same install — a fresh value each
+/// time would make the server unable to recognise the same desktop. Persisted
+/// at the data-directory root, outside the wiped `cubes/` tree.
+pub fn device_fingerprint(coincube_dir: &Path) -> io::Result<String> {
+    let path = coincube_dir.join(DEVICE_FINGERPRINT_FILE);
+    match std::fs::read_to_string(&path) {
+        Ok(s) if !s.trim().is_empty() => Ok(s.trim().to_string()),
+        // Missing or empty/corrupt → mint and persist a fresh one.
+        Ok(_) => create_fingerprint(&path),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => create_fingerprint(&path),
+        Err(e) => Err(e),
+    }
+}
+
+fn create_fingerprint(path: &Path) -> io::Result<String> {
+    let fp = uuid::Uuid::new_v4().to_string();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut f = std::fs::File::create(path)?;
+    f.write_all(fp.as_bytes())?;
+    f.sync_all()?;
+    Ok(fp)
+}
+
 /// This desktop's persisted duress configuration and live status.
 ///
 /// `duress_code` is **this desktop's own** ~128-bit code, generated locally
@@ -201,6 +235,26 @@ mod tests {
         assert!(json.contains("\"pendingActivation\""));
         assert!(json.contains("\"duressCode\""));
         assert!(json.contains("\"enqueuedAt\""));
+    }
+
+    #[test]
+    fn device_fingerprint_is_stable_across_calls() {
+        let dir = std::env::temp_dir().join(format!(
+            "coincube-duress-fp-{}-{:p}",
+            std::process::id(),
+            &0u8
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = device_fingerprint(&dir).unwrap();
+        let b = device_fingerprint(&dir).unwrap();
+        assert_eq!(a, b, "fingerprint must be stable across calls");
+        assert!(!a.trim().is_empty());
+        // A fresh data dir yields a different fingerprint.
+        let dir2 = dir.join("other");
+        std::fs::create_dir_all(&dir2).unwrap();
+        assert_ne!(device_fingerprint(&dir2).unwrap(), a);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
