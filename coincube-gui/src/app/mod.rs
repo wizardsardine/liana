@@ -822,6 +822,14 @@ pub(crate) async fn persist_duress_enrollment(
     // all per-network settings, not just the active one.
     let root = datadir.path().to_path_buf();
     let network_dirs = duress_enroll_network_dirs(&root);
+    // No per-network settings.json found — there are no Cubes to arm (or the
+    // data directory couldn't be read). Fail loud instead of marking duress
+    // "enabled" with no duress PIN written anywhere.
+    if network_dirs.is_empty() {
+        return Err(
+            "Couldn't find any Cubes on this device to protect with duress mode.".to_string(),
+        );
+    }
 
     // 0. Guard against arming a near-miss duress PIN, across ALL networks,
     //    BEFORE writing anything. The wizard could only check the duress PIN
