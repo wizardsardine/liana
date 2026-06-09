@@ -1103,7 +1103,13 @@ pub enum ConnectAccountMessage {
 
 /// Messages for the duress recovery flow (Phase 6) and enrollment wizard
 /// (Phases 2 & 8), nested under [`ConnectAccountMessage::Duress`].
-#[derive(Debug, Clone)]
+///
+/// `Debug` is hand-written (not derived) because the `*Changed` variants carry
+/// secret keystrokes — duress/regular PINs, the all-clear and CRK passwords —
+/// that would otherwise leak into any tracing snapshot of a parent message
+/// (this enum bubbles up through `ConnectAccountMessage` → `view::Message` →
+/// top-level `Message`, all of which derive `Debug`).
+#[derive(Clone)]
 pub enum DuressMessage {
     // ── Recovery (Phase 6) ──
     RecoveryPassphraseChanged(String),
@@ -1137,6 +1143,37 @@ pub enum DuressMessage {
     MemorizedToggled(bool),
     SubmitEnrollment,
     EnrollResult(Result<(), String>, u64),
+}
+
+impl std::fmt::Debug for DuressMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use DuressMessage::*;
+        match self {
+            // Sensitive — never print the typed secret.
+            RecoveryPassphraseChanged(_) => write!(f, "RecoveryPassphraseChanged(<redacted>)"),
+            RegularPinChanged(_) => write!(f, "RegularPinChanged(<redacted>)"),
+            DuressPinChanged(_) => write!(f, "DuressPinChanged(<redacted>)"),
+            AllClearChanged(_) => write!(f, "AllClearChanged(<redacted>)"),
+            CrkPasswordChanged(_) => write!(f, "CrkPasswordChanged(<redacted>)"),
+            SovereignConfirmChanged(_) => write!(f, "SovereignConfirmChanged(<redacted>)"),
+            // Non-sensitive — `ClearResult`/`EnrollResult` carry only an error
+            // string (no secret), so they format normally.
+            SubmitClear => write!(f, "SubmitClear"),
+            ClearResult(res, gen) => write!(f, "ClearResult({:?}, {})", res, gen),
+            ForgotAllClear => write!(f, "ForgotAllClear"),
+            FinishRecovery => write!(f, "FinishRecovery"),
+            StartEnrollment => write!(f, "StartEnrollment"),
+            StartEnrollmentWithoutCrk => write!(f, "StartEnrollmentWithoutCrk"),
+            SignUpForConnect => write!(f, "SignUpForConnect"),
+            CancelEnrollment => write!(f, "CancelEnrollment"),
+            EnrollBack => write!(f, "EnrollBack"),
+            EnrollNext => write!(f, "EnrollNext"),
+            DelaySelected(d) => write!(f, "DelaySelected({:?})", d),
+            MemorizedToggled(b) => write!(f, "MemorizedToggled({})", b),
+            SubmitEnrollment => write!(f, "SubmitEnrollment"),
+            EnrollResult(res, gen) => write!(f, "EnrollResult({:?}, {})", res, gen),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1769,5 +1806,47 @@ mod recovery_kit_upload_outcome_debug_tests {
             rendered
         );
         assert!(rendered.contains("<redacted>"));
+    }
+}
+
+#[cfg(test)]
+mod duress_message_debug_tests {
+    use super::DuressMessage;
+
+    /// Canary string; if it ever shows up in a Debug render the redaction has
+    /// regressed and a typed PIN/passphrase would leak into logs.
+    const CANARY: &str = "canary-secret-XYZZY-do-not-leak";
+
+    #[test]
+    fn sensitive_variants_are_redacted() {
+        let sensitive = [
+            DuressMessage::RecoveryPassphraseChanged(CANARY.to_string()),
+            DuressMessage::RegularPinChanged(CANARY.to_string()),
+            DuressMessage::DuressPinChanged(CANARY.to_string()),
+            DuressMessage::AllClearChanged(CANARY.to_string()),
+            DuressMessage::CrkPasswordChanged(CANARY.to_string()),
+            DuressMessage::SovereignConfirmChanged(CANARY.to_string()),
+        ];
+        for msg in &sensitive {
+            let rendered = format!("{:?}", msg);
+            assert!(
+                !rendered.contains(CANARY),
+                "Debug({:?}) leaked the secret payload",
+                rendered
+            );
+            assert!(rendered.contains("<redacted>"), "got {}", rendered);
+        }
+    }
+
+    #[test]
+    fn non_sensitive_variants_format_normally() {
+        assert_eq!(
+            format!("{:?}", DuressMessage::SubmitEnrollment),
+            "SubmitEnrollment"
+        );
+        assert_eq!(
+            format!("{:?}", DuressMessage::MemorizedToggled(true)),
+            "MemorizedToggled(true)"
+        );
     }
 }
