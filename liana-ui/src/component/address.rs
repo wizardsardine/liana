@@ -20,7 +20,7 @@ pub fn copyable_address<'a, M: Clone + 'a>(
     address: impl Display,
     clipboard: M,
 ) -> LianaElement<'a, M> {
-    let addr = new::caption(address).style(theme::text::card_secondary);
+    let addr = Address::new(address.to_string());
     let cpy = btn_copy(Some(clipboard));
     row![addr, cpy]
         .align_y(Alignment::Center)

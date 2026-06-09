@@ -10,7 +10,7 @@ use iced::{
 use crate::{
     component::{
         self,
-        address::copyable_address,
+        address::{address as address_view, copyable_address},
         button::{btn_copy, btn_show_qr, btn_verify},
         text::{text, Text},
     },
@@ -27,7 +27,7 @@ pub fn verify_address_modal<'a, M: Clone + 'static>(
 ) -> Element<'a, M> {
     let address_row = row![
         text("Address:").bold(),
-        text(address.to_string()).small(),
+        address_view(address.to_string()),
         btn_copy(Some(clipboard)),
     ]
     .spacing(10)
@@ -46,16 +46,12 @@ pub fn verify_address_modal<'a, M: Clone + 'static>(
 /// QR code for an address, with the address shown below it.
 pub fn qr_display<'a, M: 'a>(qr: &'a qr_code::Data, address: &'a str) -> Element<'a, M> {
     column![
-        row![
-            Space::fill_width(),
-            Container::new(QRCode::<theme::Theme>::new(qr).cell_size(8)).padding(10),
-            Space::fill_width(),
-        ],
+        Container::new(QRCode::<theme::Theme>::new(qr).cell_size(8)).padding(10),
         Space::with_height(Length::Fixed(15.0)),
-        Container::new(text(address).size(15)).center_x(Length::Fill),
+        Container::new(address_view(address)).center_x(Length::Fill),
     ]
+    .align_x(Alignment::Center)
     .width(Length::Fill)
-    .max_width(400)
     .into()
 }
 
