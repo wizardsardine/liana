@@ -66,6 +66,18 @@ pub fn card_secondary(theme: &Theme) -> Style {
     }
 }
 
+pub fn address(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.text.address),
+    }
+}
+
+pub fn address_dimmed(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.text.address_dimmed),
+    }
+}
+
 pub fn custom(color: iced::Color) -> Style {
     Style { color: Some(color) }
 }
