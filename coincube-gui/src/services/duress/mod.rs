@@ -18,6 +18,8 @@
 //! Both stores are written atomically (temp file + `fsync` + `rename`) so a
 //! crash never leaves a half-written JSON document on disk.
 
+pub mod enroll;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
