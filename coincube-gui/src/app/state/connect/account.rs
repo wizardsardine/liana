@@ -605,6 +605,7 @@ impl ConnectAccountPanel {
             ConnectAccountMessage::RefreshFailed(err) => {
                 log::warn!("[CONNECT] Session refresh failed (transient): {}", err);
                 self.error = Some(format!("Connection error: {}. Tap to retry.", err));
+                self.scrub_recovery_passphrase();
                 self.step = ConnectFlowStep::Login {
                     email: String::new(),
                     loading: false,
@@ -678,11 +679,13 @@ impl ConnectAccountPanel {
                 self.selected_billing_cycle = BillingCycle::Monthly;
                 self.contacts_state.clear();
                 // Scrub any in-flight enrollment wizard secrets (PINs,
-                // passphrases, generated code) before dropping it, so they
-                // don't survive the session reset.
+                // passphrases, generated code) and the recovery all-clear
+                // passphrase before dropping them, so they don't survive the
+                // session reset.
                 if let Some(mut wizard) = self.duress_enroll.take() {
                     wizard.zeroize_secrets();
                 }
+                self.scrub_recovery_passphrase();
                 self.clear_keyring_session();
                 self.client = CoincubeClient::new();
                 self.step = ConnectFlowStep::Login {
@@ -1359,6 +1362,16 @@ impl ConnectAccountPanel {
         });
     }
 
+    /// Zeroizes the in-memory all-clear passphrase when the panel is in the
+    /// duress recovery flow. Call before replacing `self.step` so the secret
+    /// (it clears duress) doesn't linger on the heap after the user leaves
+    /// recovery. No-op when not in recovery.
+    fn scrub_recovery_passphrase(&mut self) {
+        if let ConnectFlowStep::DuressRecovery { passphrase, .. } = &mut self.step {
+            zeroize::Zeroize::zeroize(passphrase);
+        }
+    }
+
     /// Recovery flow (Phase 6) + enrollment wizard (Phases 2 & 8) dispatcher.
     fn update_duress(&mut self, msg: DuressMessage) -> iced::Task<Message> {
         use crate::services::duress::enroll;
@@ -1423,6 +1436,7 @@ impl ConnectAccountPanel {
                 )));
             }
             DuressMessage::FinishRecovery => {
+                self.scrub_recovery_passphrase();
                 self.step = ConnectFlowStep::Dashboard;
                 self.error = None;
             }
