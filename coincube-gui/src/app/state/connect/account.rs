@@ -2506,7 +2506,11 @@ fn duress_state_check_task(client: CoincubeClient, gen: u64, attempt: u8) -> ice
 /// the stability guarantee, so the wizard surfaces the failure and lets the
 /// user retry instead.
 fn device_fingerprint() -> Result<String, String> {
-    let dir = crate::dir::CoincubeDirectory::new_default()
+    // Use the process's ACTIVE data directory (honours a custom `--datadir`),
+    // not the OS default — otherwise the fingerprint would be persisted at a
+    // different path than the Cubes / DuressLocalState and diverge from what the
+    // server was told.
+    let dir = crate::dir::CoincubeDirectory::active()
         .map_err(|e| format!("data directory unavailable: {e}"))?;
     crate::services::duress::device_fingerprint(dir.path())
         .map_err(|e| format!("device fingerprint unavailable: {e}"))

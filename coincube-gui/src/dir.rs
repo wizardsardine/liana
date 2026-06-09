@@ -2,9 +2,16 @@ use crate::app::settings::WalletId;
 use coincube_core::miniscript::bitcoin::Network;
 use coincubed::datadir::DataDirectory;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CoincubeDirectory(PathBuf);
+
+/// The process-wide active data directory, resolved once at startup from
+/// `--datadir` (or the OS default). Set in `GUI::new`; read by code that runs
+/// outside the datadir-carrying structs (e.g. the account-level Connect panel's
+/// duress-fingerprint helper) so it uses the REAL data path, not the default.
+static ACTIVE_DATADIR: OnceLock<CoincubeDirectory> = OnceLock::new();
 
 impl CoincubeDirectory {
     pub fn new(p: PathBuf) -> Self {
@@ -12,6 +19,21 @@ impl CoincubeDirectory {
     }
     pub fn new_default() -> Result<Self, Box<dyn std::error::Error>> {
         default_datadir().map(CoincubeDirectory::new)
+    }
+
+    /// Records the active data directory for the process (idempotent — only the
+    /// first call wins, which is the startup resolution).
+    pub fn set_active(dir: CoincubeDirectory) {
+        let _ = ACTIVE_DATADIR.set(dir);
+    }
+
+    /// The active data directory, honouring a custom `--datadir`. Falls back to
+    /// the OS default if it was never recorded (e.g. in unit tests).
+    pub fn active() -> Result<CoincubeDirectory, Box<dyn std::error::Error>> {
+        match ACTIVE_DATADIR.get() {
+            Some(dir) => Ok(dir.clone()),
+            None => Self::new_default(),
+        }
     }
 }
 
