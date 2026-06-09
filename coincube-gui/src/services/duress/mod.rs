@@ -19,6 +19,7 @@
 //! crash never leaves a half-written JSON document on disk.
 
 pub mod cipher;
+pub mod drain;
 pub mod enroll;
 pub mod journal;
 pub mod orchestrator;

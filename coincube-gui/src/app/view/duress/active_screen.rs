@@ -71,6 +71,17 @@ impl DuressActiveScreen {
 
         col = col.push(iced::widget::Space::new().height(Length::Fill));
 
+        // Subtle pending-work indicator (Phase 4 Task 4.2): a single muted dot,
+        // no text, no explanation — an attacker can infer nothing from it. Only
+        // shown while the activation POST is still queued.
+        if self.queue_pending {
+            col = col.push(
+                Container::new(text::p2_regular("•").color(color::GREY_5))
+                    .width(Length::Fill)
+                    .align_right(Length::Fill),
+            );
+        }
+
         Container::new(col)
             .width(Length::Fill)
             .height(Length::Fill)

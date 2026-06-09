@@ -32,22 +32,43 @@ use super::queue::DuressQueue;
 use super::wipe::CubeWiper;
 use super::{DuressEvent, DuressLocalState, PendingActivation};
 
+/// Whether a failed activation POST should be retried by the drain loop or
+/// abandoned. The wipe has already happened, so a terminal error just means
+/// "we did our best" — drop the entry rather than retry forever.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TriggerError {
+    /// Transient (network down, 429, 5xx) — keep the entry, retry later.
+    Retriable,
+    /// Permanent (4xx other than 429: bad request, already cleared, etc.) —
+    /// log and drop the entry.
+    Terminal,
+}
+
 /// The network side of activation, abstracted so the orchestrator can be tested
 /// without a live HTTP stack and so the wipe ordering can be exercised against
 /// a slow/failing/hanging server.
 #[async_trait]
 pub trait DuressTrigger: Send + Sync + 'static {
     /// Fire the unauthenticated `trigger-with-code` POST. `Ok(())` on success.
-    async fn trigger(&self, account_id: &str, duress_code: &str) -> Result<(), String>;
+    async fn trigger(&self, account_id: &str, duress_code: &str) -> Result<(), TriggerError>;
 }
 
 #[async_trait]
 impl DuressTrigger for crate::services::coincube::CoincubeClient {
-    async fn trigger(&self, account_id: &str, duress_code: &str) -> Result<(), String> {
-        self.trigger_duress_with_code(account_id, duress_code)
-            .await
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+    async fn trigger(&self, account_id: &str, duress_code: &str) -> Result<(), TriggerError> {
+        use crate::services::coincube::CoincubeError;
+        match self.trigger_duress_with_code(account_id, duress_code).await {
+            Ok(_) => Ok(()),
+            Err(CoincubeError::Network(_)) | Err(CoincubeError::RateLimited { .. }) => {
+                Err(TriggerError::Retriable)
+            }
+            Err(CoincubeError::Unsuccessful(info)) if info.status_code >= 500 => {
+                Err(TriggerError::Retriable)
+            }
+            // 4xx (other than 429, handled above), parse errors, etc. — the
+            // server will never accept this request; stop retrying.
+            Err(_) => Err(TriggerError::Terminal),
+        }
     }
 }
 
@@ -252,12 +273,12 @@ mod tests {
 
     #[async_trait]
     impl DuressTrigger for MockTrigger {
-        async fn trigger(&self, account_id: &str, _code: &str) -> Result<(), String> {
+        async fn trigger(&self, account_id: &str, _code: &str) -> Result<(), TriggerError> {
             self.calls.lock().unwrap().push(account_id.to_string());
             self.notify.notify_one();
             match self.behavior {
                 Behavior::Ok => Ok(()),
-                Behavior::Err => Err("boom".to_string()),
+                Behavior::Err => Err(TriggerError::Retriable),
                 Behavior::Hang => {
                     // Sleep well past POST_TIMEOUT so the timeout fires.
                     tokio::time::sleep(Duration::from_secs(3600)).await;
