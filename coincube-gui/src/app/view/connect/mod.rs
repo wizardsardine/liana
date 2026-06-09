@@ -21,7 +21,7 @@ use crate::{
         settings::global::AccountTier,
         state::connect::{
             AvatarFlowStep, CheckoutPhase, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep,
-            ConnectPanel,
+            ConnectPanel, PlanLifecycle,
         },
         view::{AvatarMessage, ConnectAccountMessage, ConnectCubeMessage},
     },
@@ -391,10 +391,18 @@ fn overview_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
         text::p2_regular("✗ Unverified").color(color::GREY_3).into()
     };
 
-    Column::new()
+    let mut col = Column::new()
         .push(text::h4_bold("Account Overview").style(theme::text::primary))
-        .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
-        .push(
+        .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+
+    // Pre-expiry renewal reminder (D1) / expired prompt (D3).
+    if let Some(banner) = renewal_banner(state) {
+        col = col
+            .push(banner)
+            .push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+    }
+
+    col.push(
             container(
                 Column::new()
                     .push(
@@ -457,6 +465,132 @@ fn cube_limit_for(tier: &PlanTier) -> usize {
         PlanTier::Pro => AccountTier::Pro.cube_limit(),
         PlanTier::Estate => AccountTier::Estate.cube_limit(),
     }
+}
+
+// ── Renewal reminder / expired prompt banner (D1 / D3) ──────────────────────
+
+/// Pre-expiry renewal reminder (D1) or, for a lapsed plan, an expired
+/// prompt (D3). Returns `None` when the plan is comfortably active, free,
+/// or the user dismissed the banner this session. Shared by the account
+/// overview and the plan view; the renewal CTA opens checkout pre-selected
+/// to the current tier + cycle, while the expired CTA opens the picker.
+fn renewal_banner<'a>(
+    state: &'a ConnectAccountPanel,
+) -> Option<Element<'a, ConnectAccountMessage>> {
+    if state.renewal_banner_dismissed {
+        return None;
+    }
+    let (title, accent, copy, cta_label, cta_msg): (
+        &str,
+        iced::Color,
+        String,
+        &str,
+        ConnectAccountMessage,
+    ) = match state.plan_lifecycle() {
+        PlanLifecycle::RenewalDue { .. } => {
+            let plan = state.plan.as_ref()?;
+            let date = plan
+                .renewal_at
+                .as_deref()
+                .map(format_date)
+                .unwrap_or_else(|| "soon".to_string());
+            (
+                "Renewal reminder",
+                color::ORANGE,
+                format!(
+                    "Your {} plan renews on {}. Renew now to keep your features.",
+                    plan.tier(),
+                    date
+                ),
+                "Renew",
+                ConnectAccountMessage::RenewCurrentPlan,
+            )
+        }
+        PlanLifecycle::Expired => {
+            let copy = match state
+                .plan
+                .as_ref()
+                .and_then(|p| p.renewal_at.as_deref())
+                .map(format_date)
+            {
+                Some(d) => format!(
+                    "Your plan expired on {} — renew to restore premium features.",
+                    d
+                ),
+                None => "Your plan expired — renew to restore premium features.".to_string(),
+            };
+            (
+                "Plan expired",
+                color::RED,
+                copy,
+                "Renew",
+                ConnectAccountMessage::OpenPlanBilling,
+            )
+        }
+        PlanLifecycle::Active | PlanLifecycle::Free => return None,
+    };
+
+    let body = Row::new()
+        .push(
+            Column::new()
+                .push(text::p2_bold(title).color(accent))
+                .push(iced::widget::Space::new().height(Length::Fixed(2.0)))
+                .push(text::p2_regular(copy).style(theme::text::primary))
+                .width(Length::Fill),
+        )
+        .push(iced::widget::Space::new().width(Length::Fixed(10.0)))
+        .push(
+            Column::new()
+                .push(button::primary(None, cta_label).on_press(cta_msg))
+                .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+                .push(
+                    button::secondary(None, "Dismiss")
+                        .on_press(ConnectAccountMessage::DismissRenewalBanner),
+                )
+                .align_x(Alignment::End),
+        )
+        .align_y(Alignment::Center);
+
+    Some(
+        container(body)
+            .padding(14)
+            .width(Length::Fill)
+            .style(move |t| container::Style {
+                background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+                border: iced::Border {
+                    color: accent,
+                    width: 1.0,
+                    radius: 14.0.into(),
+                },
+                ..Default::default()
+            })
+            .into(),
+    )
+}
+
+/// Soft "update available" note shown in the plan picker when the
+/// backend's pricing schema version exceeds what this build supports
+/// (D4). Non-blocking — the picker still renders the plans it understands.
+fn schema_update_note<'a>() -> Element<'a, ConnectAccountMessage> {
+    container(
+        text::p2_regular(
+            "A newer pricing update is available. Some plan details may be \
+             incomplete — update Coincube to see the latest plans and prices.",
+        )
+        .color(color::GREY_3),
+    )
+    .padding(12)
+    .width(Length::Fill)
+    .style(|t| container::Style {
+        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+        border: iced::Border {
+            color: color::ORANGE,
+            width: 0.5,
+            radius: 10.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 // ── Plan & Billing — top-level router ───────────────────────────────────────
@@ -577,7 +711,25 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
 
     let mut col = Column::new()
         .push(text::h4_bold("Plan & Billing").style(theme::text::primary))
-        .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
+        .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+
+    // Renewal reminder (D1) / expired prompt (D3). On the plan view the
+    // expired prompt sits above the picker so the user can renew in place.
+    if let Some(banner) = renewal_banner(state) {
+        col = col
+            .push(banner)
+            .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+    }
+
+    // Soft "update available" note when the backend advertises a pricing
+    // schema newer than this build understands (D4).
+    if state.pricing_schema_outdated() {
+        col = col
+            .push(schema_update_note())
+            .push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+    }
+
+    col = col
         .push(cycle_toggle)
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
 
