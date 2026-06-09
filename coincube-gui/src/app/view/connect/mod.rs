@@ -717,6 +717,14 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                 .push(banner)
                 .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
         }
+        // A newer schema can rename tiers so every card is filtered out,
+        // landing here — exactly when the "update available" note is most
+        // relevant, so surface it on this path too (D4).
+        if state.pricing_schema_outdated() {
+            col = col
+                .push(schema_update_note())
+                .push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+        }
         col = col.push(
             text::p1_regular(
                 "Pricing temporarily unavailable.\n\
