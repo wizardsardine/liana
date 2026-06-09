@@ -797,13 +797,37 @@ fn is_daemon_unreachable(e: &Error) -> bool {
 pub(crate) async fn persist_duress_enrollment(
     datadir: CoincubeDirectory,
     network: bitcoin::Network,
+    regular_pin: zeroize::Zeroizing<String>,
     duress_pin: zeroize::Zeroizing<String>,
     duress_code: zeroize::Zeroizing<String>,
     account_id: Option<String>,
 ) -> Result<(), String> {
+    let network_dir = datadir.network_directory(network);
+
+    // 0. Guard against arming a near-miss duress PIN. The wizard could only
+    //    check the duress PIN against the *re-typed* regular PIN; verify that
+    //    re-typed value against each Cube's ACTUAL stored PIN, and re-check
+    //    distinctness against the real one. If the user mistyped their PIN (so
+    //    the wizard's check was meaningless) or the duress PIN is within one
+    //    edit of a real unlock PIN, refuse — otherwise a fat-fingered unlock
+    //    could trip an accidental wipe.
+    if let Ok(settings) = crate::app::settings::Settings::from_file(&network_dir) {
+        for cube in &settings.cubes {
+            if cube.has_pin() {
+                if !cube.verify_pin(&regular_pin) {
+                    return Err(
+                        "That PIN doesn't match your current Cube PIN. Enter your real \
+                         PIN so the duress PIN can be safely checked against it."
+                            .to_string(),
+                    );
+                }
+                crate::services::duress::enroll::validate_duress_pin(&regular_pin, &duress_pin)?;
+            }
+        }
+    }
+
     // 1. Duress PIN hash → every Cube in the network settings.
     let hash = crate::services::duress::enroll::hash_duress_secret(&duress_pin)?;
-    let network_dir = datadir.network_directory(network);
     crate::app::settings::update_settings_file(&network_dir, move |mut s| {
         for cube in s.cubes.iter_mut() {
             cube.duress_pin_hash = Some(hash.clone());
@@ -2473,6 +2497,7 @@ impl App {
                 // and Launcher surfaces, which also host the Connect Duress
                 // panel (see `persist_duress_enrollment`).
                 let crate::app::message::DuressEnrollmentPayload {
+                    regular_pin,
                     duress_pin,
                     duress_code,
                     account_id,
@@ -2484,6 +2509,7 @@ impl App {
                     persist_duress_enrollment(
                         datadir,
                         network,
+                        regular_pin,
                         duress_pin,
                         duress_code,
                         account_id,

@@ -215,6 +215,10 @@ pub enum Message {
 /// `Message` enums (which relay this from their Connect panels) derive `Clone`.
 #[derive(Clone)]
 pub struct DuressEnrollmentPayload {
+    /// The user's re-typed regular PIN. Carried so the persist step can verify
+    /// it against each Cube's ACTUAL stored PIN (the wizard can only check the
+    /// re-typed value) before arming the duress PIN.
+    pub regular_pin: Zeroizing<String>,
     pub duress_pin: Zeroizing<String>,
     pub duress_code: Zeroizing<String>,
     /// Connect account id, persisted so the unauth activation POST can address
@@ -226,6 +230,7 @@ pub struct DuressEnrollmentPayload {
 impl std::fmt::Debug for DuressEnrollmentPayload {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DuressEnrollmentPayload")
+            .field("regular_pin", &"<redacted>")
             .field("duress_pin", &"<redacted>")
             .field("duress_code", &"<redacted>")
             .field("gen", &self.gen)

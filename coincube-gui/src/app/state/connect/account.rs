@@ -1389,10 +1389,12 @@ impl ConnectAccountPanel {
 
                 if tier == EnrollTier::Sovereign {
                     // No Connect call — local wipe + cryptic only. Persist now.
+                    let regular_pin = e.regular_pin.clone();
                     let duress_pin = e.duress_pin.clone();
                     self.duress_enroll = None;
                     return iced::Task::done(Message::CompleteDuressEnrollment(
                         crate::app::message::DuressEnrollmentPayload {
+                            regular_pin: zeroize::Zeroizing::new(regular_pin),
                             duress_pin: zeroize::Zeroizing::new(duress_pin),
                             duress_code: zeroize::Zeroizing::new(code),
                             account_id: None,
@@ -1466,6 +1468,7 @@ impl ConnectAccountPanel {
                         if let Some(e) = self.duress_enroll.take() {
                             return iced::Task::done(Message::CompleteDuressEnrollment(
                                 crate::app::message::DuressEnrollmentPayload {
+                                    regular_pin: zeroize::Zeroizing::new(e.regular_pin),
                                     duress_pin: zeroize::Zeroizing::new(e.duress_pin),
                                     duress_code: zeroize::Zeroizing::new(
                                         e.pending_code.unwrap_or_default(),

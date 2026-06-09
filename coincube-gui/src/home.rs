@@ -1468,6 +1468,7 @@ impl Home {
 
             Message::PersistDuressEnrollment(payload) => {
                 let app::message::DuressEnrollmentPayload {
+                    regular_pin,
                     duress_pin,
                     duress_code,
                     account_id,
@@ -1477,6 +1478,7 @@ impl Home {
                     app::persist_duress_enrollment(
                         self.datadir_path.clone(),
                         self.network,
+                        regular_pin,
                         duress_pin,
                         duress_code,
                         account_id,
