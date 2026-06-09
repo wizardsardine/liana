@@ -1049,8 +1049,13 @@ impl ConnectAccountPanel {
                 // The view dispatches the body off `active_sub`, so flipping
                 // it here switches the visible sub-view to the picker. Used
                 // by the expired-state renew CTA (D3), which opens the
-                // picker rather than pre-filling an invoice.
+                // picker rather than pre-filling an invoice. Clear the
+                // billing-history toggle so the picker actually renders —
+                // `plan_billing_ux` shows history ahead of the picker, and a
+                // session-stale `show_billing_history` would otherwise route
+                // "View plans" to the history list instead.
                 self.active_sub = ConnectSubMenu::PlanBilling;
+                self.show_billing_history = false;
             }
 
             ConnectAccountMessage::RenewCurrentPlan => {
@@ -1062,6 +1067,10 @@ impl ConnectAccountPanel {
                 let tier = plan.plan.clone();
                 let cycle = plan.billing_cycle;
                 self.active_sub = ConnectSubMenu::PlanBilling;
+                // Same routing concern as OpenPlanBilling: a stale history
+                // toggle would mask the picker on the Free/lapsed fallback
+                // path below (where no checkout is started).
+                self.show_billing_history = false;
                 // A Free/lapsed plan has no tier to pre-fill an invoice for
                 // — fall back to the picker.
                 if matches!(tier, PlanTier::Free) {
@@ -2767,6 +2776,29 @@ mod plan_lifecycle_tests {
         assert!(panel.renewal_banner_dismissed);
         // Dismissed banner never shows, regardless of lifecycle.
         assert!(!panel.show_renewal_banner());
+    }
+
+    #[test]
+    fn open_plan_billing_clears_stale_history_toggle() {
+        // Regression: "View plans" must land on the picker even if the user
+        // left billing history open earlier in the session — `plan_billing_ux`
+        // renders history ahead of the picker.
+        let mut panel = ConnectAccountPanel::new();
+        panel.show_billing_history = true;
+        let _ = panel.update_message(ConnectAccountMessage::OpenPlanBilling);
+        assert_eq!(panel.active_sub, ConnectSubMenu::PlanBilling);
+        assert!(!panel.show_billing_history);
+    }
+
+    #[test]
+    fn renew_current_plan_clears_stale_history_toggle() {
+        // The Free/lapsed fallback path starts no checkout, so a stale
+        // history toggle would otherwise mask the picker there too.
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.show_billing_history = true;
+        let _ = panel.update_message(ConnectAccountMessage::RenewCurrentPlan);
+        assert_eq!(panel.active_sub, ConnectSubMenu::PlanBilling);
+        assert!(!panel.show_billing_history);
     }
 
     // ── Pricing schema soft-update note (D4) ──────────────────────────
