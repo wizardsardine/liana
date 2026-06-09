@@ -331,6 +331,19 @@ pub struct PlanFeatureInfo {
 #[derive(Debug, Clone, Deserialize)]
 pub struct FeaturesResponse {
     pub plans: Vec<PlanFeatureInfo>,
+    /// Version of the pricing schema the backend emitted. The desktop
+    /// build understands up to `SUPPORTED_PRICING_SCHEMA_VERSION`; a
+    /// higher value means the server is describing plans/prices with a
+    /// newer contract this build can't fully render, so the picker shows
+    /// a soft "update available" note. `None`/absent (older backends, or
+    /// the field unset) is treated as version 0 — never outdated.
+    #[serde(
+        default,
+        alias = "schemaVersion",
+        alias = "pricingSchemaVersion",
+        alias = "pricing_schema_version"
+    )]
+    pub pricing_schema_version: Option<u32>,
 }
 
 // ── Checkout / Billing ──────────────────────────────────────────────────────
