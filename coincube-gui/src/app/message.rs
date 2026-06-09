@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use zeroize::Zeroizing;
+
 use coincube_core::miniscript::bitcoin::{
     address::NetworkUnchecked,
     bip32::{ChildNumber, Fingerprint},
@@ -205,15 +207,16 @@ pub enum Message {
     CompleteDuressEnrollment(DuressEnrollmentPayload),
 }
 
-/// Sensitive payload for [`Message::CompleteDuressEnrollment`]. `Debug` is
-/// hand-written to redact the plaintext duress PIN and code so they never reach
-/// a tracing snapshot of the parent message. `Clone` is required because the
-/// Home/Launcher `Message` enums (which relay this from their Connect panels)
-/// derive `Clone`.
+/// Sensitive payload for [`Message::CompleteDuressEnrollment`]. The duress PIN
+/// and code are wrapped in `Zeroizing` so their heap bytes are scrubbed on
+/// drop (the message is cloned/relayed across the App/Home/Launcher surfaces).
+/// `Debug` is also hand-written to redact them so they never reach a tracing
+/// snapshot of the parent message. `Clone` is required because the Home/Launcher
+/// `Message` enums (which relay this from their Connect panels) derive `Clone`.
 #[derive(Clone)]
 pub struct DuressEnrollmentPayload {
-    pub duress_pin: String,
-    pub duress_code: String,
+    pub duress_pin: Zeroizing<String>,
+    pub duress_code: Zeroizing<String>,
     /// Connect account id, persisted so the unauth activation POST can address
     /// it later. `None` for sovereign (no-Connect) enrollment.
     pub account_id: Option<String>,

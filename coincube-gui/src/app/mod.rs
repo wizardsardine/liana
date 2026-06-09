@@ -797,8 +797,8 @@ fn is_daemon_unreachable(e: &Error) -> bool {
 pub(crate) async fn persist_duress_enrollment(
     datadir: CoincubeDirectory,
     network: bitcoin::Network,
-    duress_pin: String,
-    duress_code: String,
+    duress_pin: zeroize::Zeroizing<String>,
+    duress_code: zeroize::Zeroizing<String>,
     account_id: Option<String>,
 ) {
     // 1. Duress PIN hash → every Cube in the network settings.

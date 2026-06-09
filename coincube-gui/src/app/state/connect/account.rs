@@ -1381,8 +1381,8 @@ impl ConnectAccountPanel {
                 let code = enroll::generate_duress_code();
                 let local_persist = iced::Task::done(Message::CompleteDuressEnrollment(
                     crate::app::message::DuressEnrollmentPayload {
-                        duress_pin,
-                        duress_code: code.clone(),
+                        duress_pin: zeroize::Zeroizing::new(duress_pin),
+                        duress_code: zeroize::Zeroizing::new(code.clone()),
                         account_id,
                         gen,
                     },
