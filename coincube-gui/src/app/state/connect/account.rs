@@ -305,6 +305,23 @@ pub struct DuressEnrollState {
     pub pending_code: Option<String>,
 }
 
+impl DuressEnrollState {
+    /// Scrubs the in-memory secret fields (PINs, passphrases, and the generated
+    /// duress code) so they don't linger on the heap after the wizard is torn
+    /// down — e.g. on logout, where the rest of the session is reset.
+    fn zeroize_secrets(&mut self) {
+        use zeroize::Zeroize;
+        self.regular_pin.zeroize();
+        self.duress_pin.zeroize();
+        self.all_clear.zeroize();
+        self.crk_password.zeroize();
+        self.sovereign_confirm.zeroize();
+        if let Some(code) = self.pending_code.as_mut() {
+            code.zeroize();
+        }
+    }
+}
+
 pub struct ConnectAccountPanel {
     pub step: ConnectFlowStep,
     pub active_sub: ConnectSubMenu,
@@ -613,6 +630,12 @@ impl ConnectAccountPanel {
                 self.show_billing_history = false;
                 self.selected_billing_cycle = BillingCycle::Monthly;
                 self.contacts_state.clear();
+                // Scrub any in-flight enrollment wizard secrets (PINs,
+                // passphrases, generated code) before dropping it, so they
+                // don't survive the session reset.
+                if let Some(mut wizard) = self.duress_enroll.take() {
+                    wizard.zeroize_secrets();
+                }
                 self.clear_keyring_session();
                 self.client = CoincubeClient::new();
                 self.step = ConnectFlowStep::Login {
@@ -2402,6 +2425,26 @@ mod duress_enroll_tests {
             error: None,
             pending_code: None,
         }
+    }
+
+    #[test]
+    fn zeroize_secrets_clears_all_sensitive_fields() {
+        let mut s = state(EnrollTier::Tier1, DuressEnrollStep::Confirm);
+        s.regular_pin = "1234".to_string();
+        s.duress_pin = "8765".to_string();
+        s.all_clear = "correct horse battery".to_string();
+        s.crk_password = "a-long-crk-password".to_string();
+        s.sovereign_confirm = "I have my seed-phrase backup".to_string();
+        s.pending_code = Some("deadbeefcafebabe".to_string());
+
+        s.zeroize_secrets();
+
+        assert!(s.regular_pin.is_empty());
+        assert!(s.duress_pin.is_empty());
+        assert!(s.all_clear.is_empty());
+        assert!(s.crk_password.is_empty());
+        assert!(s.sovereign_confirm.is_empty());
+        assert!(s.pending_code.as_deref().unwrap_or("").is_empty());
     }
 
     #[test]
