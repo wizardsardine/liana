@@ -479,12 +479,16 @@ fn cube_limit_for(tier: &PlanTier) -> usize {
 fn renewal_banner<'a>(
     state: &'a ConnectAccountPanel,
 ) -> Option<Element<'a, ConnectAccountMessage>> {
-    let (title, accent, copy, cta_label, cta_msg): (
+    // `dismissible` gates the Dismiss control: only the pre-expiry reminder
+    // honours `renewal_banner_dismissed`, so the expired prompt omits the
+    // button entirely rather than rendering a no-op.
+    let (title, accent, copy, cta_label, cta_msg, dismissible): (
         &str,
         iced::Color,
         String,
         &str,
         ConnectAccountMessage,
+        bool,
     ) = match state.plan_lifecycle() {
         PlanLifecycle::RenewalDue { .. } => {
             if state.renewal_banner_dismissed {
@@ -506,6 +510,7 @@ fn renewal_banner<'a>(
                 ),
                 "Renew",
                 ConnectAccountMessage::RenewCurrentPlan,
+                true,
             )
         }
         PlanLifecycle::Expired => {
@@ -530,10 +535,21 @@ fn renewal_banner<'a>(
                 // nothing to pre-fill an invoice with. Label reflects that.
                 "View plans",
                 ConnectAccountMessage::OpenPlanBilling,
+                false,
             )
         }
         PlanLifecycle::Active | PlanLifecycle::Free => return None,
     };
+
+    let mut actions = Column::new().push(button::primary(None, cta_label).on_press(cta_msg));
+    if dismissible {
+        actions = actions
+            .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+            .push(
+                button::secondary(None, "Dismiss")
+                    .on_press(ConnectAccountMessage::DismissRenewalBanner),
+            );
+    }
 
     let body = Row::new()
         .push(
@@ -544,16 +560,7 @@ fn renewal_banner<'a>(
                 .width(Length::Fill),
         )
         .push(iced::widget::Space::new().width(Length::Fixed(10.0)))
-        .push(
-            Column::new()
-                .push(button::primary(None, cta_label).on_press(cta_msg))
-                .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
-                .push(
-                    button::secondary(None, "Dismiss")
-                        .on_press(ConnectAccountMessage::DismissRenewalBanner),
-                )
-                .align_x(Alignment::End),
-        )
+        .push(actions.align_x(Alignment::End))
         .align_y(Alignment::Center);
 
     Some(
