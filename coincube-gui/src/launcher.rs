@@ -1458,6 +1458,20 @@ impl Launcher {
             }
 
             Message::View(ViewMessage::ConnectAccount(msg)) => {
+                // The banner CTAs navigate the panel to Plan & Billing by
+                // setting its `active_sub`, but the sidebar highlight follows
+                // the host's `active_section`. Mirror the move here so the two
+                // stay in sync (otherwise the rail keeps highlighting Overview
+                // while the pane shows the picker/checkout, and re-selecting
+                // Overview would silently reset `active_sub`).
+                if matches!(
+                    msg,
+                    ConnectAccountMessage::OpenPlanBilling
+                        | ConnectAccountMessage::RenewCurrentPlan
+                ) {
+                    self.active_section =
+                        LauncherSection::Connect(app::menu::ConnectSubMenu::PlanBilling);
+                }
                 let was_authenticated = self.connect_account.is_authenticated();
                 let task = map_connect_task(self.connect_account.update_message(msg));
                 let now_authenticated = self.connect_account.is_authenticated();

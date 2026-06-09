@@ -1075,6 +1075,14 @@ pub enum ConnectAccountMessage {
     ),
     DismissCheckout,
     OpenCheckoutUrl(String),
+    /// User dismissed the pre-expiry renewal banner for this session (D1).
+    DismissRenewalBanner,
+    /// Renewal banner CTA — open Plan & Billing checkout pre-selected to
+    /// the current tier + cycle (D1).
+    RenewCurrentPlan,
+    /// Navigate to the Plan & Billing picker (e.g. the expired-state renew
+    /// CTA, D3).
+    OpenPlanBilling,
     BillingHistoryLoaded(
         Result<Vec<crate::services::coincube::BillingHistoryEntry>, String>,
         u64,

@@ -10,7 +10,7 @@ use crate::{
         BillingCycle, BillingHistoryEntry, ChargeStatus, CheckoutRequest, CheckoutResponse,
         CoincubeClient, ConnectPlan, Contact, ContactCube, ContactRole, CreateInviteRequest,
         FeaturesResponse, Invite, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
-        ReceivedInvite, User, VerifiedDevice,
+        PlanStatus, PlanTier, ReceivedInvite, User, VerifiedDevice,
     },
 };
 
@@ -49,6 +49,36 @@ pub struct CheckoutState {
     pub checkout: Option<CheckoutResponse>,
     pub lightning_qr: Option<qr_code::Data>,
     pub poll_errors: u8,
+}
+
+// ── Plan lifecycle (renewal banner / expired state) ─────────────────────────
+
+/// Number of days before `renewal_at` at which the pre-expiry renewal
+/// banner begins showing (PLAN-billing-desktop D1).
+pub const PLAN_RENEWAL_BANNER_DAYS: i64 = 7;
+
+/// Highest pricing-schema version this build can fully render. A
+/// `/connect/features` payload advertising a higher version triggers the
+/// soft "update available" note in the plan picker (D4).
+pub const SUPPORTED_PRICING_SCHEMA_VERSION: u32 = 1;
+
+/// Where the user's plan sits in its lifecycle, derived from the
+/// `/connect/plan` response plus the current time. Drives the renewal
+/// banner (D1) and the expired-state UX (D3); kept as a pure projection
+/// so that branching stays unit-testable without a running clock.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanLifecycle {
+    /// Free tier with no lapsed paid plan — the ordinary free experience.
+    Free,
+    /// Active paid plan, comfortably before its renewal date.
+    Active,
+    /// Active paid plan within `PLAN_RENEWAL_BANNER_DAYS` of renewal.
+    /// `days_remaining` is clamped at 0 (today, or just past but not yet
+    /// demoted, reads as "0 days").
+    RenewalDue { days_remaining: i64 },
+    /// A paid plan that lapsed — the backend demoted it (reported as
+    /// `past_due`, typically alongside the Free tier).
+    Expired,
 }
 
 /// Which sub-view of the Contacts section is shown.
@@ -261,6 +291,10 @@ pub struct ConnectAccountPanel {
     pub billing_history: Option<Vec<BillingHistoryEntry>>,
     /// Whether the billing history sub-view is shown.
     pub show_billing_history: bool,
+    /// Whether the user dismissed the pre-expiry renewal banner this
+    /// session (D1). Not persisted — re-shows on next launch while the
+    /// plan is still within its renewal window.
+    pub renewal_banner_dismissed: bool,
 }
 
 impl ConnectAccountPanel {
@@ -281,6 +315,7 @@ impl ConnectAccountPanel {
             checkout: None,
             billing_history: None,
             show_billing_history: false,
+            renewal_banner_dismissed: false,
         }
     }
 
@@ -535,6 +570,7 @@ impl ConnectAccountPanel {
                 self.checkout = None;
                 self.billing_history = None;
                 self.show_billing_history = false;
+                self.renewal_banner_dismissed = false;
                 self.selected_billing_cycle = BillingCycle::Monthly;
                 self.contacts_state.clear();
                 self.clear_keyring_session();
@@ -1000,6 +1036,54 @@ impl ConnectAccountPanel {
 
             ConnectAccountMessage::OpenCheckoutUrl(url) => {
                 return iced::Task::done(Message::View(view::Message::OpenUrl(url)));
+            }
+
+            ConnectAccountMessage::DismissRenewalBanner => {
+                // Per-session only — `renewal_banner_dismissed` resets on
+                // logout and isn't persisted, so the banner re-shows on the
+                // next launch while the plan is still in-window.
+                self.renewal_banner_dismissed = true;
+            }
+
+            ConnectAccountMessage::OpenPlanBilling => {
+                // The view dispatches the body off `active_sub`, so flipping
+                // it here switches the visible sub-view to the picker. Used
+                // by the expired-state renew CTA (D3), which opens the
+                // picker rather than pre-filling an invoice. Clear the
+                // billing-history toggle so the picker actually renders —
+                // `plan_billing_ux` shows history ahead of the picker, and a
+                // session-stale `show_billing_history` would otherwise route
+                // "View plans" to the history list instead.
+                self.active_sub = ConnectSubMenu::PlanBilling;
+                self.show_billing_history = false;
+            }
+
+            ConnectAccountMessage::RenewCurrentPlan => {
+                // D1 banner CTA: jump to Plan & Billing and open checkout
+                // pre-selected to the user's current tier + cycle.
+                let Some(plan) = self.plan.as_ref() else {
+                    return iced::Task::none();
+                };
+                let tier = plan.plan.clone();
+                let cycle = plan.billing_cycle;
+                self.active_sub = ConnectSubMenu::PlanBilling;
+                // Same routing concern as OpenPlanBilling: a stale history
+                // toggle would mask the picker on the Free/lapsed fallback
+                // path below (where no checkout is started).
+                self.show_billing_history = false;
+                // A Free/lapsed plan has no tier to pre-fill an invoice for
+                // — fall back to the picker.
+                if matches!(tier, PlanTier::Free) {
+                    return iced::Task::none();
+                }
+                if let Some(cycle) = cycle {
+                    self.selected_billing_cycle = cycle;
+                }
+                // Reuse the existing StartCheckout path so the invoice
+                // creation + polling stay in one place.
+                return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::StartCheckout(tier),
+                )));
             }
 
             ConnectAccountMessage::ToggleBillingHistory => {
@@ -1657,6 +1741,66 @@ impl ConnectAccountPanel {
 impl Default for ConnectAccountPanel {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ── Plan lifecycle / pricing-schema helpers (D1 / D3 / D4) ──────────────────
+impl ConnectAccountPanel {
+    /// Classify the current plan against `now`. Pure (takes the clock as
+    /// an argument) so the banner/expired-state branching is unit-testable.
+    pub fn plan_lifecycle_at(&self, now: chrono::DateTime<chrono::Utc>) -> PlanLifecycle {
+        let Some(plan) = self.plan.as_ref() else {
+            return PlanLifecycle::Free;
+        };
+        // The backend demotes a lapsed paid plan and reports it as
+        // `past_due` — surface that as Expired regardless of the tier it
+        // was reset to.
+        if matches!(plan.status, PlanStatus::PastDue) {
+            return PlanLifecycle::Expired;
+        }
+        if matches!(plan.plan, PlanTier::Free) {
+            return PlanLifecycle::Free;
+        }
+        // Paid + active: decide on the renewal window.
+        let Some(renewal_raw) = plan.renewal_at.as_deref() else {
+            return PlanLifecycle::Active;
+        };
+        let Ok(renewal) = chrono::DateTime::parse_from_rfc3339(renewal_raw) else {
+            return PlanLifecycle::Active;
+        };
+        let days_remaining = (renewal.with_timezone(&chrono::Utc) - now).num_days();
+        if days_remaining <= PLAN_RENEWAL_BANNER_DAYS {
+            PlanLifecycle::RenewalDue {
+                days_remaining: days_remaining.max(0),
+            }
+        } else {
+            PlanLifecycle::Active
+        }
+    }
+
+    /// Lifecycle against the wall clock — used by the view layer.
+    pub fn plan_lifecycle(&self) -> PlanLifecycle {
+        self.plan_lifecycle_at(chrono::Utc::now())
+    }
+
+    /// Whether the pre-expiry renewal banner should render: the plan is
+    /// within its renewal window AND the user hasn't dismissed it this
+    /// session. The expired state has its own dedicated UX (D3), so the
+    /// banner intentionally does not cover `Expired`.
+    pub fn show_renewal_banner(&self) -> bool {
+        !self.renewal_banner_dismissed
+            && matches!(self.plan_lifecycle(), PlanLifecycle::RenewalDue { .. })
+    }
+
+    /// True when `/connect/features` advertised a pricing schema newer
+    /// than this build understands — drives the soft "update available"
+    /// note in the plan picker (D4).
+    pub fn pricing_schema_outdated(&self) -> bool {
+        self.features
+            .as_ref()
+            .and_then(|f| f.pricing_schema_version)
+            .map(|v| v > SUPPORTED_PRICING_SCHEMA_VERSION)
+            .unwrap_or(false)
     }
 }
 
@@ -2458,5 +2602,237 @@ mod add_to_cube_tests {
             sample_contact_cube(42, "bitcoin"),
         ]);
         assert!(panel.contacts_state.contact_is_in_active_cube(7));
+    }
+}
+
+// =============================================================================
+// Plan lifecycle / pricing-schema tests (PLAN-billing-desktop §3)
+// =============================================================================
+//
+// Cover the pure `plan_lifecycle_at` projection across renewal-date windows
+// (outside window, within window, expired), the `past_due` → Expired branch,
+// banner visibility/dismissal, and the schema-version soft-update trigger.
+#[cfg(test)]
+mod plan_lifecycle_tests {
+    use super::*;
+    use crate::services::coincube::{PlanEntitlements, PlanFeatureInfo};
+
+    /// Parse a fixed RFC-3339 instant for deterministic `now`/renewal math.
+    fn at(iso: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(iso)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
+
+    fn plan(
+        tier: PlanTier,
+        status: PlanStatus,
+        renewal_at: Option<&str>,
+        cycle: Option<BillingCycle>,
+    ) -> ConnectPlan {
+        ConnectPlan {
+            plan: tier,
+            status,
+            renewal_at: renewal_at.map(|s| s.to_string()),
+            entitlements: PlanEntitlements {
+                free_signing_key_count: 0,
+                policy_editing: false,
+                legacy_invites: false,
+                linked_keychains: false,
+                duress_remote_lock: false,
+                business_orgs: false,
+            },
+            billing_cycle: cycle,
+        }
+    }
+
+    fn panel_with_plan(plan: ConnectPlan) -> ConnectAccountPanel {
+        let mut panel = ConnectAccountPanel::new();
+        panel.plan = Some(plan);
+        panel
+    }
+
+    const NOW: &str = "2026-06-08T00:00:00Z";
+
+    #[test]
+    fn no_plan_is_free() {
+        let panel = ConnectAccountPanel::new();
+        assert_eq!(panel.plan_lifecycle_at(at(NOW)), PlanLifecycle::Free);
+    }
+
+    #[test]
+    fn free_active_plan_is_free() {
+        let panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        assert_eq!(panel.plan_lifecycle_at(at(NOW)), PlanLifecycle::Free);
+    }
+
+    #[test]
+    fn paid_plan_outside_window_is_active() {
+        // Renewal a month out — well beyond the 7-day banner threshold.
+        let panel = panel_with_plan(plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2026-07-08T00:00:00Z"),
+            Some(BillingCycle::Monthly),
+        ));
+        assert_eq!(panel.plan_lifecycle_at(at(NOW)), PlanLifecycle::Active);
+    }
+
+    #[test]
+    fn paid_plan_within_window_is_renewal_due() {
+        // Renewal 5 days out → inside the window, days_remaining == 5.
+        let panel = panel_with_plan(plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2026-06-13T00:00:00Z"),
+            Some(BillingCycle::Annual),
+        ));
+        assert_eq!(
+            panel.plan_lifecycle_at(at(NOW)),
+            PlanLifecycle::RenewalDue { days_remaining: 5 }
+        );
+    }
+
+    #[test]
+    fn paid_plan_exactly_at_threshold_is_renewal_due() {
+        // Boundary: renewal exactly PLAN_RENEWAL_BANNER_DAYS out is in-window.
+        let panel = panel_with_plan(plan(
+            PlanTier::Estate,
+            PlanStatus::Active,
+            Some("2026-06-15T00:00:00Z"),
+            Some(BillingCycle::Monthly),
+        ));
+        assert_eq!(
+            panel.plan_lifecycle_at(at(NOW)),
+            PlanLifecycle::RenewalDue {
+                days_remaining: PLAN_RENEWAL_BANNER_DAYS
+            }
+        );
+    }
+
+    #[test]
+    fn paid_plan_past_renewal_but_not_yet_demoted_clamps_to_zero() {
+        // Renewal already elapsed but the backend hasn't demoted yet —
+        // days_remaining clamps at 0 rather than going negative.
+        let panel = panel_with_plan(plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2026-06-06T00:00:00Z"),
+            Some(BillingCycle::Monthly),
+        ));
+        assert_eq!(
+            panel.plan_lifecycle_at(at(NOW)),
+            PlanLifecycle::RenewalDue { days_remaining: 0 }
+        );
+    }
+
+    #[test]
+    fn free_past_due_is_expired() {
+        // The D3 case: backend demoted a lapsed paid plan to Free + past_due.
+        let panel = panel_with_plan(plan(
+            PlanTier::Free,
+            PlanStatus::PastDue,
+            Some("2026-06-01T00:00:00Z"),
+            None,
+        ));
+        assert_eq!(panel.plan_lifecycle_at(at(NOW)), PlanLifecycle::Expired);
+    }
+
+    #[test]
+    fn paid_past_due_is_expired() {
+        // Defensive: a paid tier still flagged past_due also reads Expired.
+        let panel = panel_with_plan(plan(
+            PlanTier::Pro,
+            PlanStatus::PastDue,
+            Some("2026-06-01T00:00:00Z"),
+            Some(BillingCycle::Monthly),
+        ));
+        assert_eq!(panel.plan_lifecycle_at(at(NOW)), PlanLifecycle::Expired);
+    }
+
+    #[test]
+    fn paid_plan_without_renewal_date_is_active() {
+        // No renewal_at to reason about — treat as active (not in-window).
+        let panel = panel_with_plan(plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            None,
+            Some(BillingCycle::Monthly),
+        ));
+        assert_eq!(panel.plan_lifecycle_at(at(NOW)), PlanLifecycle::Active);
+    }
+
+    // ── Banner visibility / dismissal ─────────────────────────────────
+    #[test]
+    fn dismiss_renewal_banner_sets_flag() {
+        let mut panel = panel_with_plan(plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2026-06-13T00:00:00Z"),
+            Some(BillingCycle::Monthly),
+        ));
+        assert!(!panel.renewal_banner_dismissed);
+        let _ = panel.update_message(ConnectAccountMessage::DismissRenewalBanner);
+        assert!(panel.renewal_banner_dismissed);
+        // Dismissed banner never shows, regardless of lifecycle.
+        assert!(!panel.show_renewal_banner());
+    }
+
+    #[test]
+    fn open_plan_billing_clears_stale_history_toggle() {
+        // Regression: "View plans" must land on the picker even if the user
+        // left billing history open earlier in the session — `plan_billing_ux`
+        // renders history ahead of the picker.
+        let mut panel = ConnectAccountPanel::new();
+        panel.show_billing_history = true;
+        let _ = panel.update_message(ConnectAccountMessage::OpenPlanBilling);
+        assert_eq!(panel.active_sub, ConnectSubMenu::PlanBilling);
+        assert!(!panel.show_billing_history);
+    }
+
+    #[test]
+    fn renew_current_plan_clears_stale_history_toggle() {
+        // The Free/lapsed fallback path starts no checkout, so a stale
+        // history toggle would otherwise mask the picker there too.
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.show_billing_history = true;
+        let _ = panel.update_message(ConnectAccountMessage::RenewCurrentPlan);
+        assert_eq!(panel.active_sub, ConnectSubMenu::PlanBilling);
+        assert!(!panel.show_billing_history);
+    }
+
+    // ── Pricing schema soft-update note (D4) ──────────────────────────
+    fn features(version: Option<u32>) -> FeaturesResponse {
+        FeaturesResponse {
+            plans: vec![PlanFeatureInfo {
+                name: "pro".to_string(),
+                price: None,
+                features: Vec::new(),
+                included_linked_participants: None,
+            }],
+            pricing_schema_version: version,
+        }
+    }
+
+    #[test]
+    fn schema_not_outdated_when_features_absent() {
+        let panel = ConnectAccountPanel::new();
+        assert!(!panel.pricing_schema_outdated());
+    }
+
+    #[test]
+    fn schema_not_outdated_at_or_below_supported_version() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.features = Some(features(None));
+        assert!(!panel.pricing_schema_outdated());
+        panel.features = Some(features(Some(SUPPORTED_PRICING_SCHEMA_VERSION)));
+        assert!(!panel.pricing_schema_outdated());
+    }
+
+    #[test]
+    fn schema_outdated_above_supported_version() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.features = Some(features(Some(SUPPORTED_PRICING_SCHEMA_VERSION + 1)));
+        assert!(panel.pricing_schema_outdated());
     }
 }

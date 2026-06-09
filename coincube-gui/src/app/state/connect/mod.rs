@@ -83,7 +83,7 @@ pub(crate) fn delete_connect_secret(user_key: &str) {
 
 pub use account::{
     AddToCubeDialog, CheckoutPhase, CheckoutState, ConnectAccountPanel, ConnectFlowStep,
-    ContactsState, ContactsStep, InviteCubeOption,
+    ContactsState, ContactsStep, InviteCubeOption, PlanLifecycle,
 };
 pub use cube::ConnectCubePanel;
 pub use cube_members::ConnectCubeMembersState;
