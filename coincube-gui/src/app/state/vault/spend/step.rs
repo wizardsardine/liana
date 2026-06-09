@@ -895,6 +895,13 @@ impl Step for DefineSpend {
                 return redraft_task;
             }
             Message::Psbt(res) => {
+                // Ignore late replies when no generate request is in flight
+                // (e.g. the user hit Clear after pressing Generate). Clear
+                // resets `generating` to false via `Self::new`, so a stale
+                // response must not set `generated` or emit `Next`.
+                if !self.generating {
+                    return Task::none();
+                }
                 self.generating = false;
                 match res {
                     Ok(psbt) => {
