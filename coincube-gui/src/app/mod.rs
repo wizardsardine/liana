@@ -810,6 +810,27 @@ fn duress_enroll_network_dirs(root: &std::path::Path) -> Vec<crate::dir::Network
     dirs
 }
 
+/// Best-effort restore of the first `count` networks' settings to their
+/// pre-enrollment snapshot, undoing the duress PIN hashes written in step 1.
+/// Used when a later step (another network, or the local-state save) fails, so
+/// the device never ends up with Cubes armed but the matching enrollment state
+/// missing.
+async fn rollback_duress_pin_writes(
+    network_dirs: &[crate::dir::NetworkDirectory],
+    prior_settings: &[crate::app::settings::Settings],
+    count: usize,
+) {
+    for j in 0..count {
+        let restore = prior_settings[j].clone();
+        if let Err(re) =
+            crate::app::settings::update_settings_file(&network_dirs[j], move |_| Some(restore))
+                .await
+        {
+            log::error!("duress: rollback of network {j} settings failed: {re}");
+        }
+    }
+}
+
 pub(crate) async fn persist_duress_enrollment(
     datadir: CoincubeDirectory,
     regular_pin: zeroize::Zeroizing<String>,
@@ -881,17 +902,7 @@ pub(crate) async fn persist_duress_enrollment(
         match write {
             Ok(()) => written = i + 1,
             Err(e) => {
-                for j in 0..written {
-                    let restore = prior_settings[j].clone();
-                    if let Err(re) =
-                        crate::app::settings::update_settings_file(&network_dirs[j], move |_| {
-                            Some(restore)
-                        })
-                        .await
-                    {
-                        log::error!("duress: rollback of network {j} settings failed: {re}");
-                    }
-                }
+                rollback_duress_pin_writes(&network_dirs, &prior_settings, written).await;
                 return Err(format!(
                     "Couldn't arm the duress PIN on all your Cubes ({e}); no changes were kept."
                 ));
@@ -906,17 +917,24 @@ pub(crate) async fn persist_duress_enrollment(
     //    re-enrolling sovereign clears any previously stored Connect account id
     //    and local activation can't trigger-with-code against a stale account.
     //    `load` is resilient (missing → default); only `save` and the
-    //    encryption are fail-loud, since a silent failure here would leave the
-    //    user believing duress is armed when its PIN won't trigger.
-    let mut st = crate::services::duress::DuressLocalState::load(&root).unwrap_or_default();
-    st.enrolled = true;
-    st.account_id = account_id;
-    if !duress_code.is_empty() {
-        let key = crate::services::duress::cipher::DeviceKey::load_or_create(&root)
-            .map_err(|e| e.to_string())?;
-        st.duress_code = Some(key.encrypt(&duress_code)?);
+    //    encryption are fail-loud. If this fails AFTER step 1 armed the PIN
+    //    hashes, roll those back too — otherwise Cubes stay armed (and would
+    //    wipe on the duress PIN) while the matching enrollment state is missing.
+    let local: Result<(), String> = (|| {
+        let mut st = crate::services::duress::DuressLocalState::load(&root).unwrap_or_default();
+        st.enrolled = true;
+        st.account_id = account_id;
+        if !duress_code.is_empty() {
+            let key = crate::services::duress::cipher::DeviceKey::load_or_create(&root)
+                .map_err(|e| e.to_string())?;
+            st.duress_code = Some(key.encrypt(&duress_code)?);
+        }
+        st.save(&root).map_err(|e| e.to_string())
+    })();
+    if let Err(e) = local {
+        rollback_duress_pin_writes(&network_dirs, &prior_settings, network_dirs.len()).await;
+        return Err(e);
     }
-    st.save(&root).map_err(|e| e.to_string())?;
     Ok(())
 }
 
