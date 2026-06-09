@@ -74,18 +74,13 @@ impl State {
     }
 }
 
-/// Completes an interrupted duress wipe on launch. Targets the `data` subdir of
-/// every per-network directory under the data root, so a multi-network device
-/// is fully scrubbed regardless of which Cube's PIN triggered duress. No-op
-/// when the journal marker is absent (wipe already finished cleanly).
-fn complete_pending_wipe(
-    root: &std::path::Path,
-    journal: &crate::services::duress::journal::WipeJournal,
-) {
-    use crate::services::duress::wipe::CubeWiper;
-    if !journal.is_pending() {
-        return;
-    }
+/// The set of Cube-data directories a duress wipe must obliterate: the `data`
+/// subdir of EVERY per-network directory under the data root. A duress wipe
+/// takes every Cube on the device regardless of which network's Cube triggered
+/// it, so activation and the launch-time reconcile must agree on this set —
+/// otherwise a PIN unlock on one network would leave other networks' Cube data
+/// on disk.
+fn duress_wipe_targets(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut targets = Vec::new();
     if let Ok(entries) = std::fs::read_dir(root) {
         for entry in entries.flatten() {
@@ -95,7 +90,20 @@ fn complete_pending_wipe(
             }
         }
     }
-    let wiper = CubeWiper::new(targets, journal.clone());
+    targets
+}
+
+/// Completes an interrupted duress wipe on launch. No-op when the journal
+/// marker is absent (wipe already finished cleanly).
+fn complete_pending_wipe(
+    root: &std::path::Path,
+    journal: &crate::services::duress::journal::WipeJournal,
+) {
+    use crate::services::duress::wipe::CubeWiper;
+    if !journal.is_pending() {
+        return;
+    }
+    let wiper = CubeWiper::new(duress_wipe_targets(root), journal.clone());
     if let Err(e) = wiper.complete_if_pending() {
         error!("duress: failed to complete interrupted wipe on launch: {e}");
     }
@@ -218,9 +226,10 @@ fn activate_local_duress(
         }
     }
 
-    // 4. Wipe (anchor) — runs in parallel with the POST above.
-    let targets = vec![root.join(network.to_string()).join("data")];
-    if let Err(e) = CubeWiper::new(targets, journal).execute_atomic() {
+    // 4. Wipe (anchor) — runs in parallel with the POST above. Targets EVERY
+    //    network's Cube data, matching the launch-time reconcile, so a PIN
+    //    unlock on one network can't leave another network's Cubes on disk.
+    if let Err(e) = CubeWiper::new(duress_wipe_targets(root), journal).execute_atomic() {
         error!("duress: wipe error (continuing to cryptic screen): {e}");
     }
 
