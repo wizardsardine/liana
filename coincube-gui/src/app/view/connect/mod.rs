@@ -1234,6 +1234,14 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
                 DuressMessage::StartEnrollment,
             )),
     );
+    // Tier 2 (Connect, no recovery kit) — the plan's Task 2.1 secondary path.
+    // The panel can't see per-Cube CRK state, so the user picks: this skips the
+    // duress recovery-kit password step.
+    col = col.push(
+        button::transparent(None, "Continue without a recovery kit (advanced)").on_press(
+            ConnectAccountMessage::Duress(DuressMessage::StartEnrollmentWithoutCrk),
+        ),
+    );
 
     col.width(Length::Fill).into()
 }

@@ -1192,6 +1192,24 @@ impl ConnectAccountPanel {
         iced::Task::none()
     }
 
+    /// Opens the duress enrollment wizard at `step` for `tier`, resetting all
+    /// inputs. Shared by the Tier 1 / Tier 2 / Sovereign entry points.
+    fn open_enroll_wizard(&mut self, tier: EnrollTier, step: DuressEnrollStep) {
+        self.duress_enroll = Some(DuressEnrollState {
+            tier,
+            step,
+            regular_pin: String::new(),
+            duress_pin: String::new(),
+            all_clear: String::new(),
+            crk_password: String::new(),
+            delay: crate::services::duress::enroll::DuressDelay::default(),
+            sovereign_confirm: String::new(),
+            memorized: false,
+            submitting: false,
+            error: None,
+        });
+    }
+
     /// Recovery flow (Phase 6) + enrollment wizard (Phases 2 & 8) dispatcher.
     fn update_duress(&mut self, msg: DuressMessage) -> iced::Task<Message> {
         use crate::services::duress::enroll;
@@ -1267,28 +1285,23 @@ impl ConnectAccountPanel {
                     .as_ref()
                     .map(|p| p.entitlements.duress_remote_lock)
                     .unwrap_or(false);
-                // Inside the Connect dashboard the user is signed in, so the
-                // tier is Tier 1/2 when entitled (we can't see per-Cube CRK
-                // state here, so default to Tier 1 and let the CRK step be
-                // optional), else the sovereign-style encouragement flow.
-                let (tier, step) = if entitled {
-                    (EnrollTier::Tier1, DuressEnrollStep::SetDuressPin)
+                // Entitled (signed-in) users default to Tier 1, which collects
+                // the account-level duress recovery-kit password — that password
+                // covers current AND future Cubes, so it's safe to collect even
+                // before a CRK exists. A user who explicitly has no recovery kit
+                // takes the Tier 2 path via StartEnrollmentWithoutCrk. Non-
+                // Connect users get the sovereign encouragement flow.
+                if entitled {
+                    self.open_enroll_wizard(EnrollTier::Tier1, DuressEnrollStep::SetDuressPin);
                 } else {
-                    (EnrollTier::Sovereign, DuressEnrollStep::Encourage)
-                };
-                self.duress_enroll = Some(DuressEnrollState {
-                    tier,
-                    step,
-                    regular_pin: String::new(),
-                    duress_pin: String::new(),
-                    all_clear: String::new(),
-                    crk_password: String::new(),
-                    delay: enroll::DuressDelay::default(),
-                    sovereign_confirm: String::new(),
-                    memorized: false,
-                    submitting: false,
-                    error: None,
-                });
+                    self.open_enroll_wizard(EnrollTier::Sovereign, DuressEnrollStep::Encourage);
+                }
+            }
+            DuressMessage::StartEnrollmentWithoutCrk => {
+                // Tier 2 — Connect, no recovery kit: same as Tier 1 minus the
+                // CRK-password step (see `enroll_steps`). The BIG "set up a
+                // recovery kit first" warning is shown on the eligibility gate.
+                self.open_enroll_wizard(EnrollTier::Tier2, DuressEnrollStep::SetDuressPin);
             }
             DuressMessage::SignUpForConnect => {
                 self.duress_enroll = None;

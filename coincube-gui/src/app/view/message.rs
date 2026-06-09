@@ -1115,7 +1115,14 @@ pub enum DuressMessage {
     FinishRecovery,
 
     // ── Enrollment wizard (Phases 2 & 8) ──
+    /// Begin enrollment. Entitled users start at Tier 1 (with the account-level
+    /// duress recovery-kit password); non-Connect users get the sovereign flow.
     StartEnrollment,
+    /// Begin enrollment WITHOUT a recovery kit (Tier 2 — the plan's Task 2.1
+    /// "Continue without recovery kit (advanced)"). Skips the CRK-password step.
+    /// Only offered to entitled users, since the panel can't see per-Cube CRK
+    /// state to auto-select the tier.
+    StartEnrollmentWithoutCrk,
     /// Sovereign "Sign up for Connect" CTA → the Register flow.
     SignUpForConnect,
     CancelEnrollment,
