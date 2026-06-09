@@ -50,6 +50,21 @@ pub enum RestoreError {
     /// caller needs (e.g. W14 wants a descriptor; the server-side
     /// kit is seed-only).
     HalfMissing,
+    /// Approach C (Phase 7): the server returned `423 DURESS_LOCKED` —
+    /// the account is in duress (typically because the user entered their
+    /// *duress* CRK password), so the kit is withheld until `unlock_at`.
+    /// From a legitimate user's perspective this reads like a normal
+    /// "can't download right now"; from an under-duress user's it's
+    /// plausibly deniable.
+    DuressLocked {
+        unlock_at: Option<chrono::DateTime<chrono::Utc>>,
+    },
+    /// Approach C (Phase 7): `423 TRUSTED_DEVICE_DELAY` — a fresh device
+    /// must wait until `available_at` before it can download the kit, even
+    /// with the correct password.
+    TrustedDeviceDelay {
+        available_at: Option<chrono::DateTime<chrono::Utc>>,
+    },
 }
 
 impl std::fmt::Display for RestoreError {
@@ -69,6 +84,14 @@ impl std::fmt::Display for RestoreError {
                 f,
                 "This Recovery Kit doesn't include the part you're trying to restore."
             ),
+            Self::DuressLocked { .. } => write!(
+                f,
+                "Recovery kit cannot be downloaded at this time. If this is \
+                 unexpected, contact support."
+            ),
+            Self::TrustedDeviceDelay { .. } => {
+                write!(f, "Recovery kit download is delayed on new devices.")
+            }
         }
     }
 }
@@ -80,6 +103,22 @@ impl From<CoincubeError> for RestoreError {
         match e {
             CoincubeError::NotFound => Self::NotFound,
             CoincubeError::RateLimited { retry_after } => Self::RateLimited { retry_after },
+            // Approach C (Phase 7): the recovery-kit endpoint may now answer a
+            // download with `423 Locked` carrying a discriminating body. Parse
+            // it into the typed duress variants so the UI can render the right
+            // cue; anything that doesn't parse stays a generic Api error.
+            CoincubeError::Unsuccessful(ref info) if info.status_code == 423 => {
+                match crate::services::coincube::DownloadError::from_locked_body(&info.text) {
+                    crate::services::coincube::DownloadError::TrustedDeviceDelay {
+                        available_at,
+                    } => Self::TrustedDeviceDelay { available_at },
+                    // DuressLocked is the safe default for an opaque 423.
+                    crate::services::coincube::DownloadError::DuressLocked { unlock_at } => {
+                        Self::DuressLocked { unlock_at }
+                    }
+                    _ => Self::Api(e.to_string()),
+                }
+            }
             other => Self::Api(other.to_string()),
         }
     }
@@ -228,6 +267,53 @@ mod tests {
 
     fn pw(s: &str) -> Zeroizing<String> {
         Zeroizing::new(s.to_string())
+    }
+
+    fn unsuccessful(status: u16, text: &str) -> CoincubeError {
+        CoincubeError::Unsuccessful(crate::services::http::NotSuccessResponseInfo {
+            status_code: status,
+            text: text.to_string(),
+        })
+    }
+
+    #[test]
+    fn http_423_duress_locked_maps_to_typed_variant() {
+        let err: RestoreError = unsuccessful(
+            423,
+            r#"{"error":{"code":"DURESS_LOCKED","unlockAt":"2026-06-10T00:00:00Z"}}"#,
+        )
+        .into();
+        match err {
+            RestoreError::DuressLocked { unlock_at } => {
+                assert_eq!(unlock_at.unwrap().to_rfc3339(), "2026-06-10T00:00:00+00:00")
+            }
+            other => panic!("expected DuressLocked, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn http_423_trusted_device_delay_maps_to_typed_variant() {
+        let err: RestoreError = unsuccessful(
+            423,
+            r#"{"error":{"code":"TRUSTED_DEVICE_DELAY","availableAt":"2026-06-11T00:00:00Z"}}"#,
+        )
+        .into();
+        assert!(matches!(err, RestoreError::TrustedDeviceDelay { .. }));
+    }
+
+    #[test]
+    fn opaque_423_defaults_to_duress_locked() {
+        let err: RestoreError = unsuccessful(423, "nope").into();
+        assert!(matches!(
+            err,
+            RestoreError::DuressLocked { unlock_at: None }
+        ));
+    }
+
+    #[test]
+    fn non_423_unsuccessful_stays_api_error() {
+        let err: RestoreError = unsuccessful(500, "server boom").into();
+        assert!(matches!(err, RestoreError::Api(_)));
     }
 
     fn sample_seed_blob() -> SeedBlob {
