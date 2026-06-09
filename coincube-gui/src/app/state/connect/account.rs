@@ -1290,7 +1290,23 @@ impl ConnectAccountPanel {
                         };
                     }
                     // Confirmed not in duress — NOW reveal the dashboard.
-                    Some(_) => self.step = ConnectFlowStep::Dashboard,
+                    Some(s) => {
+                        self.step = ConnectFlowStep::Dashboard;
+                        // Phase 0: a signed-in device on an already-enrolled
+                        // account that isn't yet registered server-side mints +
+                        // registers its OWN duress code (per-device, never
+                        // shared), so it can fire trigger-with-code on its own
+                        // activation. Fire-and-forget; idempotent (skips if this
+                        // device already holds a code).
+                        if s.enrolled && !s.this_device_registered {
+                            if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
+                                return register_device_duress_task(
+                                    self.client.clone(),
+                                    account_id,
+                                );
+                            }
+                        }
+                    }
                     // Failed / unreachable check — retry with backoff.
                     None if attempt + 1 < DURESS_CHECK_MAX_ATTEMPTS => {
                         return duress_state_check_task(self.client.clone(), gen, attempt + 1);
@@ -1314,6 +1330,9 @@ impl ConnectAccountPanel {
                 self.step = ConnectFlowStep::CheckingDuress { failed: false };
                 let gen = self.session_generation;
                 return duress_state_check_task(self.client.clone(), gen, 0);
+            }
+            ConnectAccountMessage::DuressDeviceRegistered => {
+                // Side-effect-only task completed (Phase 0 device-code register).
             }
             ConnectAccountMessage::Duress(m) => return self.update_duress(m),
         }
@@ -2490,6 +2509,79 @@ fn duress_state_check_task(client: CoincubeClient, gen: u64, attempt: u8) -> ice
         |(state, g, a)| {
             Message::View(view::Message::ConnectAccount(
                 ConnectAccountMessage::DuressStateChecked(state, g, a),
+            ))
+        },
+    )
+}
+
+/// Phase 0 device-code registration: for a signed-in desktop on an
+/// already-enrolled account that the server doesn't yet recognise, mint a fresh
+/// ~128-bit duress code, send only its argon2id hash via
+/// `register_device_duress_code`, and persist the raw code (encrypted) +
+/// account id into `DuressLocalState` so this device can fire
+/// `trigger-with-code` on its own activation. Per-device — codes are never
+/// shared. Best-effort and idempotent (skips when a code is already held).
+fn register_device_duress_task(client: CoincubeClient, account_id: String) -> iced::Task<Message> {
+    iced::Task::perform(
+        async move {
+            use crate::services::duress::{cipher::DeviceKey, enroll, DuressLocalState};
+            let Ok(datadir) = crate::dir::CoincubeDirectory::active() else {
+                log::warn!("[CONNECT] device duress register skipped: no data directory");
+                return;
+            };
+            let root = datadir.path();
+            let mut st = DuressLocalState::load(root).unwrap_or_default();
+            // Idempotent: this device already minted a code (enrollment or a
+            // prior registration). Nothing to do.
+            if st.duress_code.is_some() {
+                return;
+            }
+            let fingerprint = match crate::services::duress::device_fingerprint(root) {
+                Ok(f) => f,
+                Err(e) => {
+                    log::warn!("[CONNECT] device duress register: fingerprint error: {e}");
+                    return;
+                }
+            };
+            let code = enroll::generate_duress_code();
+            let code_hash = match enroll::hash_duress_secret(&code) {
+                Ok(h) => h,
+                Err(e) => {
+                    log::warn!("[CONNECT] device duress register: hash error: {e}");
+                    return;
+                }
+            };
+            if let Err(e) = client
+                .register_device_duress_code(&fingerprint, &code_hash)
+                .await
+            {
+                log::warn!("[CONNECT] register_device_duress_code failed: {e}");
+                return;
+            }
+            // Persist the plaintext code (encrypted at rest) + account id so
+            // local activation can address the right account offline.
+            let key = match DeviceKey::load_or_create(root) {
+                Ok(k) => k,
+                Err(e) => {
+                    log::warn!("[CONNECT] device duress register: key error: {e}");
+                    return;
+                }
+            };
+            match key.encrypt(&code) {
+                Ok(enc) => {
+                    st.enrolled = true;
+                    st.account_id = Some(account_id);
+                    st.duress_code = Some(enc);
+                    if let Err(e) = st.save(root) {
+                        log::warn!("[CONNECT] device duress register: save error: {e}");
+                    }
+                }
+                Err(e) => log::warn!("[CONNECT] device duress register: encrypt error: {e}"),
+            }
+        },
+        |_| {
+            Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::DuressDeviceRegistered,
             ))
         },
     )

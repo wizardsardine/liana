@@ -1107,6 +1107,9 @@ pub enum ConnectAccountMessage {
     /// User tapped Retry on the post-login duress verification gate after the
     /// check failed (retries exhausted).
     RetryDuressCheck,
+    /// Completion of the background "register this device's duress code" task
+    /// (Phase 0). No-op at the UI level — the work is a side effect.
+    DuressDeviceRegistered,
     /// Recovery flow + enrollment wizard messages (nested to keep this enum
     /// tidy).
     Duress(DuressMessage),
