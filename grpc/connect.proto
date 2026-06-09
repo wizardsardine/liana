@@ -194,7 +194,25 @@ message StreamEnvelope {
     ErrorEvent error = 4;
     Ping ping = 5;
     Pong pong = 6;
+    DuressActivatedEvent duress_activated = 7;
+    DuressClearedEvent duress_cleared = 8;
   }
+}
+
+// DuressActivatedEvent is broadcast on the existing Connect stream when an
+// account enters duress, so every connected desktop / Keychain client can
+// react in realtime. Offline clients reconcile via GET /connect/duress.
+// (Synced from coincube-api/grpc/connect.proto for Phase 7b.)
+message DuressActivatedEvent {
+  string account_id = 1;
+  google.protobuf.Timestamp duress_unlock_at = 2;
+  // "desktop_pin" | "auth_trigger" | "email_link" | "duress_crk_password"
+  string source = 3;
+}
+
+message DuressClearedEvent {
+  string account_id = 1;
+  google.protobuf.Timestamp cleared_at = 2;
 }
 
 message ClientHello {

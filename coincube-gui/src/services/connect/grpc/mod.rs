@@ -20,6 +20,16 @@ pub enum ConnectStreamMessage {
     SessionEvent(connect_v1::SessionEvent),
     Disconnected(String),
     Error(String),
+    /// Duress was activated elsewhere (Keychain Settings, email-link, Approach
+    /// C, another desktop's PIN). Phase 7b: the receiving desktop locks into the
+    /// cryptic screen but does **NOT** wipe — remote activation can be
+    /// accidental, and wiping then would be too destructive.
+    DuressActivated {
+        unlock_at: Option<chrono::DateTime<chrono::Utc>>,
+        source: String,
+    },
+    /// Duress was cleared server-side — exit the cryptic screen.
+    DuressCleared,
 }
 
 #[derive(Debug)]

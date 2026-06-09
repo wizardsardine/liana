@@ -1808,6 +1808,46 @@ impl App {
                 ));
                 Task::batch([persist_task, dispatch_task])
             }
+            M::DuressActivated { unlock_at, source } => {
+                // Phase 7b: remote duress activation. Persist active state to
+                // DuressLocalState (at the data-dir root) WITHOUT wiping —
+                // remote activation can be accidental, so local Cube data is
+                // left intact. The launch-time reconcile (and a future live
+                // bubble-up to the tab shell) routes into the cryptic screen.
+                log::warn!(
+                    "[CONNECT GRPC] Duress activated remotely (source={})",
+                    source
+                );
+                let root = self.datadir.path().to_path_buf();
+                Task::perform(
+                    async move {
+                        let mut st = crate::services::duress::DuressLocalState::load(&root)
+                            .unwrap_or_default();
+                        st.active = true;
+                        st.unlock_at = unlock_at;
+                        if let Err(e) = st.save(&root) {
+                            log::warn!("[CONNECT GRPC] Failed to persist remote duress state: {e}");
+                        }
+                    },
+                    |_| Message::CacheUpdated,
+                )
+            }
+            M::DuressCleared => {
+                log::info!("[CONNECT GRPC] Duress cleared remotely");
+                let root = self.datadir.path().to_path_buf();
+                Task::perform(
+                    async move {
+                        let mut st = crate::services::duress::DuressLocalState::load(&root)
+                            .unwrap_or_default();
+                        st.active = false;
+                        st.unlock_at = None;
+                        if let Err(e) = st.save(&root) {
+                            log::warn!("[CONNECT GRPC] Failed to clear remote duress state: {e}");
+                        }
+                    },
+                    |_| Message::CacheUpdated,
+                )
+            }
         }
     }
 
