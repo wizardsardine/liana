@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use iced::{Subscription, Task};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 extern crate serde;
 extern crate serde_json;
 
@@ -123,49 +123,116 @@ fn duress_state_check_task(datadir: CoincubeDirectory, network: bitcoin::Network
     )
 }
 
-/// Performs the on-device duress wipe and returns the cryptic screen to lock
-/// into. The wipe is the trust anchor (the plan's invariant): every byte of
-/// Cube data under `<root>/<network>/data` is obliterated atomically with
-/// respect to the wipe journal, and `DuressLocalState.active` is persisted so a
-/// relaunch routes straight back here. The duress stores at the data-dir root
-/// (`duress-state.json`, `duress-queue.json`, `duress.key`, the journal) are
-/// outside the wiped tree and survive by construction.
+/// Activates duress from the local PIN path and returns the cryptic screen to
+/// lock into. Follows the orchestrator's sacred ordering so the Connect account
+/// lock and offline retry are NOT bypassed on this — the primary — activation
+/// path:
+///
+///   1. journal marker (records the account id for relaunch completion),
+///   2. durable queue commit (Connect tiers) — the source of truth that the
+///      POST eventually fires, committed BEFORE the wipe,
+///   3. fire the unauthenticated `trigger-with-code` POST in the background,
+///   4. atomic wipe IN PARALLEL — never gated on the network,
+///   5. persist `active` for relaunch reconcile.
+///
+/// Sovereign devices (no `account_id`) skip steps 2–3 and wipe locally with no
+/// server signal. The duress stores at the data-dir root (`duress-state.json`,
+/// `duress-queue.json`, `duress.key`, the journal) are outside the wiped tree
+/// and survive by construction, so the queued code + key remain available for
+/// the POST (and the Phase 4 drain loop) after the wipe.
 fn activate_local_duress(
     datadir: CoincubeDirectory,
     network: bitcoin::Network,
 ) -> crate::app::view::duress::active_screen::DuressActiveScreen {
     use crate::app::view::duress::active_screen::DuressActiveScreen;
-    use crate::services::duress::{journal::WipeJournal, wipe::CubeWiper, DuressLocalState};
+    use crate::services::duress::{
+        cipher::DeviceKey, journal::WipeJournal, queue::DuressQueue, wipe::CubeWiper,
+        DuressLocalState, PendingActivation,
+    };
+    use std::time::Duration;
+    use tokio::runtime::Handle;
 
     let root = datadir.path().to_path_buf();
     let root = root.as_path();
+
+    // Load enrollment state up front: the encrypted duress code + Connect
+    // account id drive the server activation POST.
+    let mut st = DuressLocalState::load(root).unwrap_or_default();
+    let account_id = st.account_id.clone();
+    let encrypted_code = st.duress_code.clone();
+
+    // 1. Journal marker FIRST. The recorded account id lets the launch-time
+    //    reconcile finish an interrupted wipe.
     let journal = WipeJournal::new(root);
-    // Mark pending BEFORE enumeration so a crash mid-wipe is completed on the
-    // next launch. The account id is recorded by the orchestrator engine; the
-    // marker's existence is what drives completion.
-    if let Err(e) = journal.mark_pending_activation("") {
+    if let Err(e) = journal.mark_pending_activation(account_id.as_deref().unwrap_or("")) {
         error!("duress: failed to write wipe journal: {e}");
     }
 
+    // 2 + 3. Connect tiers: durably enqueue BEFORE the wipe, then fire the POST
+    //    in the background, in parallel with the wipe.
+    let queue = DuressQueue::new(root);
+    if let (Some(acct), Some(enc)) = (account_id.as_ref(), encrypted_code.as_ref()) {
+        if let Err(e) = queue.enqueue(PendingActivation {
+            account_id: acct.clone(),
+            // Stored encrypted, as everywhere else; the POST decrypts in-flight.
+            duress_code: enc.clone(),
+            enqueued_at: chrono::Utc::now(),
+            attempts: 0,
+        }) {
+            error!("duress: failed to enqueue activation: {e}");
+        }
+
+        let root_buf = root.to_path_buf();
+        let acct = acct.clone();
+        let enc = enc.clone();
+        let post = async move {
+            let code = match DeviceKey::load_or_create(&root_buf).and_then(|k| {
+                k.decrypt(&enc)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+            }) {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!("duress: cannot recover code for activation POST: {e}");
+                    return;
+                }
+            };
+            let client = crate::services::coincube::CoincubeClient::new();
+            let result = tokio::time::timeout(
+                Duration::from_secs(5),
+                client.trigger_duress_with_code(&acct, &code),
+            )
+            .await;
+            if let Ok(Ok(_)) = result {
+                let _ = DuressQueue::new(&root_buf).dequeue(&acct);
+            }
+            // else: leave in queue; the Phase 4 drain loop retries on next
+            // online launch.
+        };
+        match Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(post);
+            }
+            // No async runtime in this context — the durable queue entry
+            // remains and the drain loop fires it on next launch.
+            Err(_) => warn!("duress: no runtime for immediate activation POST; queued for drain"),
+        }
+    }
+
+    // 4. Wipe (anchor) — runs in parallel with the POST above.
     let targets = vec![root.join(network.to_string()).join("data")];
-    let wiper = CubeWiper::new(targets, journal);
-    if let Err(e) = wiper.execute_atomic() {
+    if let Err(e) = CubeWiper::new(targets, journal).execute_atomic() {
         error!("duress: wipe error (continuing to cryptic screen): {e}");
     }
 
-    // Persist active state so launch-time reconcile re-enters the cryptic
-    // screen. Load-or-default tolerates a never-enrolled sovereign device.
-    let mut st = DuressLocalState::load(root).unwrap_or_default();
+    // 5. Persist active state so launch-time reconcile re-enters the cryptic
+    //    screen.
     st.active = true;
     st.last_activation_attempt = Some(chrono::Utc::now());
     if let Err(e) = st.save(root) {
         error!("duress: failed to persist active state: {e}");
     }
 
-    let queue_pending = crate::services::duress::queue::DuressQueue::new(root)
-        .is_empty()
-        .map(|empty| !empty)
-        .unwrap_or(false);
+    let queue_pending = queue.is_empty().map(|empty| !empty).unwrap_or(false);
     let mut screen = DuressActiveScreen::with_context(datadir.clone(), Some(network));
     screen.queue_pending = queue_pending;
     screen

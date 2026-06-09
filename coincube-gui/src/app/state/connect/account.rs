@@ -1337,6 +1337,10 @@ impl ConnectAccountPanel {
                 }
             }
             DuressMessage::SubmitEnrollment => {
+                // Read the Connect account id before borrowing `duress_enroll`
+                // mutably (disjoint-field borrows don't extend across the `e`
+                // binding once we hold an owned copy).
+                let user_account_id = self.user.as_ref().map(|u| u.id.to_string());
                 let Some(e) = &mut self.duress_enroll else {
                     return iced::Task::none();
                 };
@@ -1349,6 +1353,11 @@ impl ConnectAccountPanel {
                 let tier = e.tier;
                 let gen = self.session_generation;
                 let duress_pin = e.duress_pin.clone();
+                let account_id = if tier == EnrollTier::Sovereign {
+                    None
+                } else {
+                    user_account_id
+                };
 
                 // Generate this device's duress code ONCE: its hash goes to the
                 // server, the same plaintext is persisted (encrypted) locally by
@@ -1359,6 +1368,7 @@ impl ConnectAccountPanel {
                     crate::app::message::DuressEnrollmentPayload {
                         duress_pin,
                         duress_code: code.clone(),
+                        account_id,
                         gen,
                     },
                 ));

@@ -214,6 +214,9 @@ pub enum Message {
 pub struct DuressEnrollmentPayload {
     pub duress_pin: String,
     pub duress_code: String,
+    /// Connect account id, persisted so the unauth activation POST can address
+    /// it later. `None` for sovereign (no-Connect) enrollment.
+    pub account_id: Option<String>,
     pub gen: u64,
 }
 

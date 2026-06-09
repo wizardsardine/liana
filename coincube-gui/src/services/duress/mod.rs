@@ -87,6 +87,12 @@ pub struct DuressLocalState {
     /// This desktop's own duress code (encrypted at rest in Phase 3).
     #[serde(default)]
     pub duress_code: Option<String>,
+    /// The Connect account id this device enrolled under, persisted so the
+    /// unauthenticated `trigger-with-code` POST can address the right account
+    /// at activation time even without a live session. `None` for sovereign
+    /// (no-Connect) enrollment — that path wipes locally with no server POST.
+    #[serde(default)]
+    pub account_id: Option<String>,
 }
 
 /// A durably-enqueued activation `POST` that must eventually reach Connect.
@@ -174,6 +180,7 @@ mod tests {
                 attempts: 2,
             }),
             duress_code: Some("enc:cafebabe".to_string()),
+            account_id: Some("acct_123".to_string()),
         }
     }
 

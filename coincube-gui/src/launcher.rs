@@ -1461,6 +1461,7 @@ impl Launcher {
                 let app::message::DuressEnrollmentPayload {
                     duress_pin,
                     duress_code,
+                    account_id,
                     ..
                 } = payload;
                 return Task::perform(
@@ -1469,6 +1470,7 @@ impl Launcher {
                         self.network,
                         duress_pin,
                         duress_code,
+                        account_id,
                     ),
                     |_| Message::View(ViewMessage::Check),
                 );

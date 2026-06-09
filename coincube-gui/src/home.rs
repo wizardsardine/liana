@@ -1470,6 +1470,7 @@ impl Home {
                 let app::message::DuressEnrollmentPayload {
                     duress_pin,
                     duress_code,
+                    account_id,
                     ..
                 } = payload;
                 Task::perform(
@@ -1478,6 +1479,7 @@ impl Home {
                         self.network,
                         duress_pin,
                         duress_code,
+                        account_id,
                     ),
                     |_| Message::View(ViewMessage::Check),
                 )

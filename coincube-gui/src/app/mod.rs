@@ -799,6 +799,7 @@ pub(crate) async fn persist_duress_enrollment(
     network: bitcoin::Network,
     duress_pin: String,
     duress_code: String,
+    account_id: Option<String>,
 ) {
     // 1. Duress PIN hash → every Cube in the network settings.
     if let Ok(hash) = crate::services::duress::enroll::hash_duress_secret(&duress_pin) {
@@ -811,20 +812,24 @@ pub(crate) async fn persist_duress_enrollment(
         })
         .await;
     }
-    // 2. Encrypted device code → DuressLocalState. Skipped when empty (the
-    //    server-enroll path re-enters with an empty code once already stored).
+    // 2. Encrypted device code + account id → DuressLocalState. The encrypted
+    //    code is skipped when empty (the server-enroll path re-enters with an
+    //    empty code once it's already stored), but the account id is always
+    //    recorded so the activation POST can address the right account.
+    let root = datadir.path().to_path_buf();
+    let mut st = crate::services::duress::DuressLocalState::load(&root).unwrap_or_default();
+    st.enrolled = true;
+    if account_id.is_some() {
+        st.account_id = account_id;
+    }
     if !duress_code.is_empty() {
-        let root = datadir.path().to_path_buf();
         if let Ok(key) = crate::services::duress::cipher::DeviceKey::load_or_create(&root) {
             if let Ok(enc) = key.encrypt(&duress_code) {
-                let mut st =
-                    crate::services::duress::DuressLocalState::load(&root).unwrap_or_default();
-                st.enrolled = true;
                 st.duress_code = Some(enc);
-                let _ = st.save(&root);
             }
         }
     }
+    let _ = st.save(&root);
 }
 
 /// Poll the local bitcoind's IBD progress via its JSON-RPC interface.
@@ -2464,12 +2469,19 @@ impl App {
                 let crate::app::message::DuressEnrollmentPayload {
                     duress_pin,
                     duress_code,
+                    account_id,
                     ..
                 } = payload;
                 let datadir = self.datadir.clone();
                 let network = self.cache.network;
                 return Task::perform(
-                    persist_duress_enrollment(datadir, network, duress_pin, duress_code),
+                    persist_duress_enrollment(
+                        datadir,
+                        network,
+                        duress_pin,
+                        duress_code,
+                        account_id,
+                    ),
                     |_| Message::CacheUpdated,
                 );
             }
