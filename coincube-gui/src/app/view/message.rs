@@ -1084,6 +1084,44 @@ pub enum ConnectAccountMessage {
     UserProfileLoaded(crate::services::coincube::User),
     /// User profile refresh failed (non-auth error)
     UserProfileFailed(String),
+    // --- Duress (Phases 6 & 8) ---
+    /// Result of the post-sign-in `get_duress_state` gate. When `active`,
+    /// the panel replaces the dashboard with the recovery flow.
+    DuressStateChecked(Option<crate::services::coincube::DuressState>, u64),
+    /// Recovery flow + enrollment wizard messages (nested to keep this enum
+    /// tidy).
+    Duress(DuressMessage),
+}
+
+/// Messages for the duress recovery flow (Phase 6) and enrollment wizard
+/// (Phases 2 & 8), nested under [`ConnectAccountMessage::Duress`].
+#[derive(Debug, Clone)]
+pub enum DuressMessage {
+    // ── Recovery (Phase 6) ──
+    RecoveryPassphraseChanged(String),
+    SubmitClear,
+    ClearResult(Result<(), String>, u64),
+    ForgotAllClear,
+    /// After a successful clear, leave recovery and enter the normal dashboard
+    /// (where restore-from-CRK is reachable).
+    FinishRecovery,
+
+    // ── Enrollment wizard (Phases 2 & 8) ──
+    StartEnrollment,
+    /// Sovereign "Sign up for Connect" CTA → the Register flow.
+    SignUpForConnect,
+    CancelEnrollment,
+    EnrollBack,
+    EnrollNext,
+    RegularPinChanged(String),
+    DuressPinChanged(String),
+    AllClearChanged(String),
+    CrkPasswordChanged(String),
+    DelaySelected(crate::services::duress::enroll::DuressDelay),
+    SovereignConfirmChanged(String),
+    MemorizedToggled(bool),
+    SubmitEnrollment,
+    EnrollResult(Result<(), String>, u64),
 }
 
 #[derive(Debug, Clone)]

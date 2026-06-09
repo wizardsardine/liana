@@ -2413,6 +2413,64 @@ impl App {
                     }
                 }
             },
+            Message::CompleteDuressEnrollment(payload) => {
+                // Phases 2 & 8: the Connect panel collected + validated the
+                // credentials and (for Connect tiers) enrolled on the server;
+                // persist the per-Cube duress PIN and this device's encrypted
+                // duress code here, where the Cube + datadir context lives.
+                let crate::app::message::DuressEnrollmentPayload {
+                    duress_pin,
+                    duress_code,
+                    ..
+                } = payload;
+                let pin_hash =
+                    crate::services::duress::enroll::hash_duress_secret(&duress_pin).ok();
+                // Reflect immediately in the in-memory cube so this session's
+                // unlock screen recognises the duress PIN without a reload.
+                if let Some(h) = &pin_hash {
+                    self.cube_settings.duress_pin_hash = Some(h.clone());
+                }
+                let datadir = self.datadir.clone();
+                let network = self.cache.network;
+                let cube_id = self.cube_settings.id.clone();
+                let root = self.datadir.path().to_path_buf();
+                return Task::perform(
+                    async move {
+                        // 1. Persist the duress PIN hash on the active Cube.
+                        if let Some(hash) = pin_hash {
+                            let network_dir = datadir.network_directory(network);
+                            let _ = crate::app::settings::update_settings_file(
+                                &network_dir,
+                                move |mut s| {
+                                    if let Some(cube) = s.cubes.iter_mut().find(|c| c.id == cube_id)
+                                    {
+                                        cube.duress_pin_hash = Some(hash.clone());
+                                    }
+                                    Some(s)
+                                },
+                            )
+                            .await;
+                        }
+                        // 2. Persist this device's encrypted duress code in
+                        //    DuressLocalState (data-dir root, survives the wipe).
+                        if !duress_code.is_empty() {
+                            if let Ok(key) =
+                                crate::services::duress::cipher::DeviceKey::load_or_create(&root)
+                            {
+                                if let Ok(enc) = key.encrypt(&duress_code) {
+                                    let mut st =
+                                        crate::services::duress::DuressLocalState::load(&root)
+                                            .unwrap_or_default();
+                                    st.enrolled = true;
+                                    st.duress_code = Some(enc);
+                                    let _ = st.save(&root);
+                                }
+                            }
+                        }
+                    },
+                    |_| Message::CacheUpdated,
+                );
+            }
             Message::CacheUpdated => {
                 // Cube (Home) Settings lives on every cube, vault or not,
                 // so its cache update must fire independently of the

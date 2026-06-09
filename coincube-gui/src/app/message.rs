@@ -198,6 +198,30 @@ pub enum Message {
         email: String,
         cube_uuid: Option<String>,
     },
+    /// Persist a completed duress enrollment (Phases 2 & 8). Emitted by the
+    /// Connect panel, which lacks Cube/datadir context; handled by the App,
+    /// which writes the active Cube's duress PIN hash and this device's
+    /// encrypted duress code into `DuressLocalState`.
+    CompleteDuressEnrollment(DuressEnrollmentPayload),
+}
+
+/// Sensitive payload for [`Message::CompleteDuressEnrollment`]. `Debug` is
+/// hand-written to redact the plaintext duress PIN and code so they never reach
+/// a tracing snapshot of the parent message.
+pub struct DuressEnrollmentPayload {
+    pub duress_pin: String,
+    pub duress_code: String,
+    pub gen: u64,
+}
+
+impl std::fmt::Debug for DuressEnrollmentPayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DuressEnrollmentPayload")
+            .field("duress_pin", &"<redacted>")
+            .field("duress_code", &"<redacted>")
+            .field("gen", &self.gen)
+            .finish()
+    }
 }
 
 #[derive(Debug)]

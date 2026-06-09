@@ -1,5 +1,6 @@
 mod contacts;
 pub mod cube_members;
+pub mod duress_enroll;
 pub mod sign_in_prompt;
 
 use coincube_ui::{
@@ -23,7 +24,7 @@ use crate::{
             AvatarFlowStep, CheckoutPhase, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep,
             ConnectPanel,
         },
-        view::{AvatarMessage, ConnectAccountMessage, ConnectCubeMessage},
+        view::{AvatarMessage, ConnectAccountMessage, ConnectCubeMessage, DuressMessage},
     },
     services::coincube::{
         AvatarAccentMotif, AvatarAgeFeel, AvatarArchetype, AvatarArmorStyle, AvatarDemeanor,
@@ -62,6 +63,14 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
             cooldown,
             ..
         } => otp_ux(email, otp, *sending, *cooldown).map(ViewMessage::ConnectAccount),
+
+        ConnectFlowStep::DuressRecovery {
+            unlock_at,
+            passphrase,
+            submitting,
+            cleared,
+        } => duress_enroll::recovery_ux(unlock_at.as_ref(), passphrase, *submitting, *cleared)
+            .map(ViewMessage::ConnectAccount),
 
         ConnectFlowStep::Dashboard => match &acct.active_sub {
             ConnectSubMenu::Overview => overview_ux(acct).map(ViewMessage::ConnectAccount),
@@ -131,6 +140,12 @@ pub fn connect_account_panel<'a>(
             cooldown,
             ..
         } => otp_ux(email, otp, *sending, *cooldown),
+        ConnectFlowStep::DuressRecovery {
+            unlock_at,
+            passphrase,
+            submitting,
+            cleared,
+        } => duress_enroll::recovery_ux(unlock_at.as_ref(), passphrase, *submitting, *cleared),
         ConnectFlowStep::Dashboard => match &acct.active_sub {
             ConnectSubMenu::Overview => overview_ux(acct),
             ConnectSubMenu::PlanBilling => plan_billing_ux(acct),
@@ -140,7 +155,10 @@ pub fn connect_account_panel<'a>(
         },
     };
 
-    let is_auth_step = !matches!(acct.step, ConnectFlowStep::Dashboard);
+    let is_auth_step = !matches!(
+        acct.step,
+        ConnectFlowStep::Dashboard | ConnectFlowStep::DuressRecovery { .. }
+    );
     let col_align = if is_auth_step {
         Alignment::Center
     } else {
@@ -1084,6 +1102,11 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
 fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
     use crate::services::duress::enroll::{DuressDelay, MIN_ALL_CLEAR_LEN};
 
+    // Wizard takes over the panel while enrollment is in progress.
+    if let Some(enroll) = &state.duress_enroll {
+        return duress_enroll::enroll_ux(enroll);
+    }
+
     let entitled = state
         .plan
         .as_ref()
@@ -1201,6 +1224,15 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
         )
         .style(card_style)
         .width(Length::Fill),
+    );
+
+    col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
+    col = col.push(
+        button::primary(None, "Set up Duress Mode")
+            .width(Length::Fixed(240.0))
+            .on_press(ConnectAccountMessage::Duress(
+                DuressMessage::StartEnrollment,
+            )),
     );
 
     col.width(Length::Fill).into()

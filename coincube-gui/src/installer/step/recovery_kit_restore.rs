@@ -653,18 +653,16 @@ impl Step for RecoveryKitRestoreStep {
                             // retry. DURESS_LOCKED acknowledges the activation
                             // landed; TRUSTED_DEVICE_DELAY shows the wait time.
                             let message = match &e {
-                                RestoreError::DuressLocked { .. } => e.to_string(),
-                                RestoreError::TrustedDeviceDelay { available_at } => {
-                                    match available_at {
-                                        Some(at) => format!(
-                                            "Recovery kit download is delayed on new devices. \
-                                             Available at {}.",
-                                            at.with_timezone(&chrono::Local)
-                                                .format("%b %d, %Y %H:%M %Z")
-                                        ),
-                                        None => e.to_string(),
-                                    }
-                                }
+                                RestoreError::TrustedDeviceDelay {
+                                    available_at: Some(at),
+                                } => format!(
+                                    "Recovery kit download is delayed on new devices. \
+                                     Available at {}.",
+                                    at.with_timezone(&chrono::Local)
+                                        .format("%b %d, %Y %H:%M %Z")
+                                ),
+                                // DURESS_LOCKED and a timeless delay use the
+                                // typed Display message.
                                 _ => e.to_string(),
                             };
                             self.set_phase(Phase::Error { message });
