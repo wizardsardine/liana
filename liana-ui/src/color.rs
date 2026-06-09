@@ -59,6 +59,7 @@ color!(AMBER, 0xF59F00);
 color!(BLACK_15, 0x000000, 0.15);
 color!(BLACK_25, 0x000000, 0.25);
 color!(BLACK_30, 0x000000, 0.3);
+color!(BLACK_60, 0x000000, 0.6);
 color!(BLACK_80, 0x000000, 0.80);
 
 color!(MINUS_RED, 0xE24F4F);

@@ -6,13 +6,14 @@ use iced::advanced::widget::{self, Tree, Widget};
 use iced::advanced::{self, Clipboard, Shell};
 use iced::alignment::Alignment;
 use iced::mouse;
-use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
+use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Vector};
 
 /// A widget that centers a modal element over some base element
 pub struct Modal<'a, Message, Theme, Renderer> {
     base: Element<'a, Message, Theme, Renderer>,
-    modal: Element<'a, Message, Theme, Renderer>,
+    modal: Option<Element<'a, Message, Theme, Renderer>>,
     on_blur: Option<Message>,
+    backdrop: Color,
 }
 
 impl<'a, Message, Theme, Renderer> Modal<'a, Message, Theme, Renderer> {
@@ -21,10 +22,19 @@ impl<'a, Message, Theme, Renderer> Modal<'a, Message, Theme, Renderer> {
         base: impl Into<Element<'a, Message, Theme, Renderer>>,
         modal: impl Into<Element<'a, Message, Theme, Renderer>>,
     ) -> Self {
+        Self::with_optional(base, Some(modal))
+    }
+
+    /// Returns a new [`Modal`] with an optional modal element.
+    pub fn with_optional(
+        base: impl Into<Element<'a, Message, Theme, Renderer>>,
+        modal: Option<impl Into<Element<'a, Message, Theme, Renderer>>>,
+    ) -> Self {
         Self {
             base: base.into(),
-            modal: modal.into(),
+            modal: modal.map(Into::into),
             on_blur: None,
+            backdrop: crate::color::BLACK_80,
         }
     }
 
@@ -32,6 +42,11 @@ impl<'a, Message, Theme, Renderer> Modal<'a, Message, Theme, Renderer> {
     /// of the [`Modal`] is pressed
     pub fn on_blur(self, on_blur: Option<Message>) -> Self {
         Self { on_blur, ..self }
+    }
+
+    /// Sets the color used to dim the base element behind the modal.
+    pub fn backdrop(self, backdrop: Color) -> Self {
+        Self { backdrop, ..self }
     }
 }
 
@@ -42,11 +57,19 @@ where
     Message: Clone,
 {
     fn children(&self) -> Vec<Tree> {
-        vec![Tree::new(&self.base), Tree::new(&self.modal)]
+        let mut children = vec![Tree::new(&self.base)];
+        if let Some(modal) = &self.modal {
+            children.push(Tree::new(modal));
+        }
+        children
     }
 
     fn diff(&self, tree: &mut Tree) {
-        tree.diff_children(&[&self.base, &self.modal]);
+        if let Some(modal) = &self.modal {
+            tree.diff_children(&[&self.base, modal]);
+        } else {
+            tree.diff_children(&[&self.base]);
+        }
     }
 
     fn size(&self) -> Size<Length> {
@@ -116,12 +139,15 @@ where
         _viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        let modal = self.modal.as_mut()?;
+
         Some(overlay::Element::new(Box::new(Overlay {
             position: layout.position() + translation,
-            content: &mut self.modal,
+            content: modal,
             tree: &mut state.children[1],
             size: layout.bounds().size(),
             on_blur: self.on_blur.clone(),
+            backdrop: self.backdrop,
         })))
     }
 
@@ -161,6 +187,7 @@ struct Overlay<'a, 'b, Message, Theme, Renderer> {
     tree: &'b mut Tree,
     size: Size,
     on_blur: Option<Message>,
+    backdrop: Color,
 }
 
 impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
@@ -237,7 +264,7 @@ where
                 bounds: layout.bounds(),
                 ..renderer::Quad::default()
             },
-            crate::color::BLACK_80,
+            self.backdrop,
         );
 
         self.content.as_widget().draw(

@@ -57,6 +57,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     .scale_factor(LianaGUI::scale_factor)
     .subscription(LianaGUI::subscription)
     .settings(settings)
+    // Required for the canvas spinner ring to render smoothly; iced has no
+    // per-widget antialiasing toggle, so it must be enabled application-wide.
+    .antialiasing(true)
     .window(window_settings)
     .run()
     {

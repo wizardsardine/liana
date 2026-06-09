@@ -648,6 +648,10 @@ impl Palette {
                     selected_background: MENU_BG_HOVER,
                 },
             },
+            spinner: Spinner {
+                track: color::LIGHT_BG_TERTIARY,
+                arc: color::BUSINESS_BLUE,
+            },
         }
     }
 }

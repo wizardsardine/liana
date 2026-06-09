@@ -675,6 +675,10 @@ impl Palette {
                     selected_background: color::GREEN,
                 },
             },
+            spinner: Spinner {
+                track: color::GREY_5,
+                arc: color::GREEN,
+            },
         }
     }
 }
