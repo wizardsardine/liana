@@ -993,6 +993,23 @@ impl Tab {
                     app::Message::View(app::view::Message::ToggleTheme) => {
                         Task::done(Message::ToggleTheme)
                     }
+                    app::Message::View(app::view::Message::DuressLockRemote) => {
+                        // Phase 7b: remote duress activation. Lock the running
+                        // app into the cryptic screen immediately — WITHOUT
+                        // wiping (remote activation can be accidental; only a
+                        // local duress PIN wipes). DuressLocalState.active was
+                        // already persisted by the App's gRPC handler, so a
+                        // relaunch stays locked too.
+                        let datadir = app.datadir().clone();
+                        let network = app.cache().network;
+                        let screen =
+                            crate::app::view::duress::active_screen::DuressActiveScreen::with_context(
+                                datadir,
+                                Some(network),
+                            );
+                        self.state = State::DuressActive(screen);
+                        Task::none()
+                    }
                     app::Message::View(app::view::Message::OpenConnectSignIn) => {
                         // Re-check this tab's ConnectAccountPanel against
                         // the keyring before deciding whether to bubble

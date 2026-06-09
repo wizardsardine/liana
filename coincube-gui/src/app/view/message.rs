@@ -179,6 +179,11 @@ pub enum Message {
     /// prompt. The Pane intercepts it and focuses the Home tab on its
     /// Connect section.
     OpenConnectSignIn,
+    /// Remote duress activation arrived over the gRPC stream (Phase 7b). The
+    /// tab shell intercepts this and locks the running app into the cryptic
+    /// "Duress Mode Activated" screen — WITHOUT wiping (remote activation can
+    /// be accidental; only a local duress PIN wipes).
+    DuressLockRemote,
     ToggleTheme,
     DismissReceivedCelebration,
     DismissBackupWarning,

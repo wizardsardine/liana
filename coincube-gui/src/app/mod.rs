@@ -1858,14 +1858,15 @@ impl App {
                 // Phase 7b: remote duress activation. Persist active state to
                 // DuressLocalState (at the data-dir root) WITHOUT wiping —
                 // remote activation can be accidental, so local Cube data is
-                // left intact. The launch-time reconcile (and a future live
-                // bubble-up to the tab shell) routes into the cryptic screen.
+                // left intact. Then bubble up to the tab shell to lock the
+                // RUNNING app into the cryptic screen immediately (not just on
+                // next launch).
                 log::warn!(
                     "[CONNECT GRPC] Duress activated remotely (source={})",
                     source
                 );
                 let root = self.datadir.path().to_path_buf();
-                Task::perform(
+                let persist = Task::perform(
                     async move {
                         let mut st = crate::services::duress::DuressLocalState::load(&root)
                             .unwrap_or_default();
@@ -1876,7 +1877,9 @@ impl App {
                         }
                     },
                     |_| Message::CacheUpdated,
-                )
+                );
+                let lock = Task::done(Message::View(view::Message::DuressLockRemote));
+                Task::batch([persist, lock])
             }
             M::DuressCleared => {
                 log::info!("[CONNECT GRPC] Duress cleared remotely");
