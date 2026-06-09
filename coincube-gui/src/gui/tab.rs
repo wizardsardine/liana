@@ -55,6 +55,10 @@ impl State {
         let root = directory.path().to_path_buf();
         let st = crate::services::duress::DuressLocalState::load(&root).unwrap_or_default();
         let journal = crate::services::duress::journal::WipeJournal::new(&root);
+        // Phase 4: resume draining any pending activation POSTs left by a prior
+        // session (the durable queue survives restarts). Started here so an
+        // offline-at-activation device eventually signals Connect.
+        let drain = duress_drain_task(&root);
         if st.active || journal.is_pending() {
             complete_pending_wipe(&root, &journal);
             let queue_pending = crate::services::duress::queue::DuressQueue::new(&root)
@@ -66,11 +70,14 @@ impl State {
                     directory, network,
                 );
             screen.queue_pending = queue_pending;
-            return (State::DuressActive(screen), Task::none());
+            return (State::DuressActive(screen), drain);
         }
 
         let (home, command) = Home::new(directory, network);
-        (State::Home(home), command.map(Message::Launch))
+        (
+            State::Home(home),
+            Task::batch([command.map(Message::Launch), drain]),
+        )
     }
 }
 
@@ -126,6 +133,54 @@ fn complete_pending_wipe(
     }
 }
 
+/// Builds the Phase 4 activation-queue drainer, or `None` when there's nothing
+/// to drain (empty queue) or the device key can't be loaded. The drainer fires
+/// queued `trigger-with-code` POSTs and retries them with backoff until they
+/// land.
+fn build_duress_drainer(
+    root: &std::path::Path,
+) -> Option<crate::services::duress::drain::DuressDrainer> {
+    use crate::services::duress::{
+        cipher::DeviceKey, drain::DuressDrainer, orchestrator::DuressTrigger, queue::DuressQueue,
+    };
+    let queue = DuressQueue::new(root);
+    if queue.is_empty().unwrap_or(true) {
+        return None;
+    }
+    let cipher = DeviceKey::load_or_create(root).ok()?;
+    let client: std::sync::Arc<dyn DuressTrigger> =
+        std::sync::Arc::new(crate::services::coincube::CoincubeClient::new());
+    Some(DuressDrainer::new(queue, cipher, client))
+}
+
+/// Spawns the activation drainer as a fire-and-forget background task (used from
+/// the update context, which has a Tokio runtime). No-op if the queue is empty
+/// or no runtime is available — the launch-time `duress_drain_task` then picks
+/// it up.
+fn spawn_duress_drainer(root: &std::path::Path) {
+    let Some(drainer) = build_duress_drainer(root) else {
+        return;
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn(async move { drainer.run_until_empty().await });
+        }
+        Err(_) => warn!("duress: no runtime to drain activation queue now; queued for next launch"),
+    }
+}
+
+/// Launch-time drainer as an Iced `Task` (runs in Iced's executor, where
+/// `Handle::try_current` may not be available yet). Resumes any pending
+/// activation POSTs left by a prior session.
+fn duress_drain_task(root: &std::path::Path) -> Task<Message> {
+    match build_duress_drainer(root) {
+        Some(drainer) => Task::perform(async move { drainer.run_until_empty().await }, |()| {
+            Message::DuressDrainComplete
+        }),
+        None => Task::none(),
+    }
+}
+
 /// Builds an authenticated `get_duress_state` check from the Connect auth
 /// cached at `<network>/connect.json` (preserved through the wipe). Returns a
 /// task whose message is `Some(active)` on a successful check, or `None` when
@@ -171,11 +226,9 @@ fn activate_local_duress(
 ) -> crate::app::view::duress::active_screen::DuressActiveScreen {
     use crate::app::view::duress::active_screen::DuressActiveScreen;
     use crate::services::duress::{
-        cipher::DeviceKey, journal::WipeJournal, queue::DuressQueue, wipe::CubeWiper,
-        DuressLocalState, PendingActivation,
+        journal::WipeJournal, queue::DuressQueue, wipe::CubeWiper, DuressLocalState,
+        PendingActivation,
     };
-    use std::time::Duration;
-    use tokio::runtime::Handle;
 
     let root = datadir.path().to_path_buf();
     let root = root.as_path();
@@ -193,8 +246,11 @@ fn activate_local_duress(
         error!("duress: failed to write wipe journal: {e}");
     }
 
-    // 2 + 3. Connect tiers: durably enqueue BEFORE the wipe, then fire the POST
-    //    in the background, in parallel with the wipe.
+    // 2 + 3. Connect tiers: durably enqueue BEFORE the wipe, then start the
+    //    activation drainer in the background, in parallel with the wipe. The
+    //    drainer fires the POST immediately and KEEPS retrying with backoff
+    //    until it lands (Phase 4), so a coerced account is still locked even if
+    //    the first attempt is offline and the user never leaves this screen.
     let queue = DuressQueue::new(root);
     if let (Some(acct), Some(enc)) = (account_id.as_ref(), encrypted_code.as_ref()) {
         if let Err(e) = queue.enqueue(PendingActivation {
@@ -206,41 +262,7 @@ fn activate_local_duress(
         }) {
             error!("duress: failed to enqueue activation: {e}");
         }
-
-        let root_buf = root.to_path_buf();
-        let acct = acct.clone();
-        let enc = enc.clone();
-        let post = async move {
-            let code = match DeviceKey::load_or_create(&root_buf).and_then(|k| {
-                k.decrypt(&enc)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-            }) {
-                Ok(c) => c,
-                Err(e) => {
-                    warn!("duress: cannot recover code for activation POST: {e}");
-                    return;
-                }
-            };
-            let client = crate::services::coincube::CoincubeClient::new();
-            let result = tokio::time::timeout(
-                Duration::from_secs(5),
-                client.trigger_duress_with_code(&acct, &code),
-            )
-            .await;
-            if let Ok(Ok(_)) = result {
-                let _ = DuressQueue::new(&root_buf).dequeue(&acct);
-            }
-            // else: leave in queue; the Phase 4 drain loop retries on next
-            // online launch.
-        };
-        match Handle::try_current() {
-            Ok(handle) => {
-                handle.spawn(post);
-            }
-            // No async runtime in this context — the durable queue entry
-            // remains and the drain loop fires it on next launch.
-            Err(_) => warn!("duress: no runtime for immediate activation POST; queued for drain"),
-        }
+        spawn_duress_drainer(root);
     }
 
     // 4. Wipe (anchor) — runs in parallel with the POST above. Targets EVERY
@@ -274,6 +296,9 @@ pub enum Message {
     PinEntry(crate::pin_entry::Message),
     /// Messages from the cryptic "Duress Mode Activated" screen.
     Duress(crate::app::view::duress::active_screen::Message),
+    /// The background activation-queue drainer finished (queue emptied). No-op
+    /// at the UI level — the drainer did its work as a side effect.
+    DuressDrainComplete,
     RemoteBackendBreezLoaded {
         wallet_settings: WalletSettings,
         backend_client: BackendWalletClient,
