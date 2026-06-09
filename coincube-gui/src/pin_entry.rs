@@ -50,6 +50,13 @@ pub enum Message {
     DuressDetected,
 }
 
+/// Classification of a submitted PIN at Cube unlock.
+enum PinOutcome {
+    Unlock,
+    Duress,
+    Wrong,
+}
+
 impl PinEntry {
     pub fn new(cube: CubeSettings, on_success: PinEntrySuccess) -> Self {
         let loading_quote = quote_display::random_quote("loading");
@@ -95,21 +102,44 @@ impl PinEntry {
 
                 let pin = self.pin_input.value();
 
-                if self.cube.verify_pin(&pin) {
-                    self.loading = true;
-                    Task::perform(async {}, |_| Message::PinVerified)
+                // A Cube without a regular PIN has a permissive `verify_pin`
+                // (returns true for ANY input), which would swallow the duress
+                // PIN before `verify_duress_pin` ran. So when there's no regular
+                // PIN, check duress FIRST. When there IS a regular PIN, check it
+                // first (the happy path is never shadowed, and duress vs. wrong
+                // both take two argon2 verifies so they're timing-indistinct).
+                let outcome = if self.cube.has_pin() {
+                    if self.cube.verify_pin(&pin) {
+                        PinOutcome::Unlock
+                    } else if self.cube.verify_duress_pin(&pin) {
+                        PinOutcome::Duress
+                    } else {
+                        PinOutcome::Wrong
+                    }
                 } else if self.cube.verify_duress_pin(&pin) {
-                    // Duress PIN match. Check regular FIRST (above) so the happy
-                    // path is never shadowed and the two argon2 verifies take
-                    // comparable time. Clear the buffer and bubble up — the
-                    // cryptic screen reveals the duress signal regardless, so a
-                    // fake-success delay buys nothing.
-                    self.pin_input.clear();
-                    Task::perform(async {}, |_| Message::DuressDetected)
+                    PinOutcome::Duress
                 } else {
-                    self.error = Some("Incorrect PIN. Please try again.".to_string());
-                    self.pin_input.clear();
-                    Task::none()
+                    // No regular PIN → any non-duress input unlocks.
+                    PinOutcome::Unlock
+                };
+
+                match outcome {
+                    PinOutcome::Unlock => {
+                        self.loading = true;
+                        Task::perform(async {}, |_| Message::PinVerified)
+                    }
+                    PinOutcome::Duress => {
+                        // Clear the buffer and bubble up — the cryptic screen
+                        // reveals the duress signal regardless, so a fake-success
+                        // delay buys nothing.
+                        self.pin_input.clear();
+                        Task::perform(async {}, |_| Message::DuressDetected)
+                    }
+                    PinOutcome::Wrong => {
+                        self.error = Some("Incorrect PIN. Please try again.".to_string());
+                        self.pin_input.clear();
+                        Task::none()
+                    }
                 }
             }
             // `DuressDetected` is intercepted by the parent (tab state machine);
