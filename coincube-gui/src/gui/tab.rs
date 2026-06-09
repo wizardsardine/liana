@@ -74,19 +74,36 @@ impl State {
     }
 }
 
-/// The set of Cube-data directories a duress wipe must obliterate: the `data`
-/// subdir of EVERY per-network directory under the data root. A duress wipe
-/// takes every Cube on the device regardless of which network's Cube triggered
-/// it, so activation and the launch-time reconcile must agree on this set —
-/// otherwise a PIN unlock on one network would leave other networks' Cube data
-/// on disk.
+/// The set of Cube material a duress wipe must obliterate, under EVERY
+/// per-network directory below the data root. A duress wipe takes every Cube on
+/// the device regardless of which network's Cube triggered it, so activation
+/// and the launch-time reconcile must agree on this set.
+///
+/// Per network directory:
+/// - `data/` — wallet databases (BDK, plus breez/spark per-Cube working data
+///   under `data/<wallet_id>/`),
+/// - `mnemonics/` — the master seed phrases (the crown jewels),
+/// - `settings.json` — `security_pin_hash`, `duress_pin_hash`, Cube metadata.
+///
+/// `connect.json` (the cached Connect auth the cryptic screen needs to check
+/// duress state) is deliberately NOT listed, so it survives — as do the
+/// root-level duress stores (`duress-*.json`, `duress.key`, the journal), which
+/// live outside any network directory. Re-checking existence each call makes
+/// this robust to an interrupted wipe: whatever remains is targeted again.
 fn duress_wipe_targets(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    const CUBE_MATERIAL: &[&str] = &["data", "mnemonics", "settings.json"];
     let mut targets = Vec::new();
     if let Ok(entries) = std::fs::read_dir(root) {
         for entry in entries.flatten() {
-            let data = entry.path().join("data");
-            if data.is_dir() {
-                targets.push(data);
+            let net_dir = entry.path();
+            if !net_dir.is_dir() {
+                continue;
+            }
+            for name in CUBE_MATERIAL {
+                let p = net_dir.join(name);
+                if p.exists() {
+                    targets.push(p);
+                }
             }
         }
     }
@@ -1825,4 +1842,67 @@ pub fn create_app_with_remote_backend(
         cube_settings,
         connect_auth,
     ))
+}
+
+#[cfg(test)]
+mod duress_wipe_target_tests {
+    use super::duress_wipe_targets;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn touch(path: &std::path::Path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, b"x").unwrap();
+    }
+
+    #[test]
+    fn wipes_all_cube_material_and_preserves_connect_auth() {
+        let seq = SEQ.fetch_add(1, Ordering::SeqCst);
+        let root = std::env::temp_dir().join(format!(
+            "coincube-wipe-targets-{}-{}",
+            std::process::id(),
+            seq
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+
+        let net = root.join("bitcoin");
+        touch(&net.join("data").join("cube_a").join("wallet.db"));
+        touch(&net.join("mnemonics").join("aabbccdd-master"));
+        touch(&net.join("settings.json"));
+        touch(&net.join("connect.json"));
+        // A second network is covered too.
+        touch(&root.join("testnet").join("mnemonics").join("seed"));
+        // bitcoind (root-level, not a network dir) carries no cube material.
+        touch(&root.join("bitcoind").join("blocks").join("blk0.dat"));
+
+        let targets = duress_wipe_targets(&root);
+
+        assert!(targets.contains(&net.join("data")), "data/ must be wiped");
+        assert!(
+            targets.contains(&net.join("mnemonics")),
+            "mnemonics/ (seeds) must be wiped"
+        );
+        assert!(
+            targets.contains(&net.join("settings.json")),
+            "settings.json (PIN hashes) must be wiped"
+        );
+        assert!(
+            targets.contains(&root.join("testnet").join("mnemonics")),
+            "every network's seeds must be wiped"
+        );
+        // Cached Connect auth and the bitcoind blockchain are preserved.
+        assert!(
+            !targets.iter().any(|t| t.ends_with("connect.json")),
+            "connect.json (cached auth) must survive"
+        );
+        assert!(
+            !targets.iter().any(|t| t.starts_with(root.join("bitcoind"))),
+            "bitcoind blockchain must not be wiped"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
