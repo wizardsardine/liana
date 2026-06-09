@@ -335,10 +335,15 @@ fn delay_step(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage> {
 }
 
 fn confirm_step(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage> {
+    // Every tier sets a duress PIN; only Connect tiers collect an all-clear
+    // passphrase, and only Tier 1 a recovery-kit password. Sovereign never
+    // creates an all-clear, so don't tell it to memorize one.
     let mut creds = Column::new()
         .spacing(4)
-        .push(text::p2_regular("• Duress PIN").color(color::GREY_3))
-        .push(text::p2_regular("• All-clear passphrase").color(color::GREY_3));
+        .push(text::p2_regular("• Duress PIN").color(color::GREY_3));
+    if state.tier != EnrollTier::Sovereign {
+        creds = creds.push(text::p2_regular("• All-clear passphrase").color(color::GREY_3));
+    }
     if state.tier == EnrollTier::Tier1 {
         creds = creds.push(text::p2_regular("• Duress recovery-kit password").color(color::GREY_3));
     }
