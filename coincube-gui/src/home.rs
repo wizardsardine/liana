@@ -2112,9 +2112,10 @@ fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
             ("Contacts", ConnectSubMenu::Contacts),
             ("Plan & Billing", ConnectSubMenu::PlanBilling),
             ("Security", ConnectSubMenu::Security),
-            // Duress is hidden until the backend endpoint (/connect/duress)
-            // is implemented — keep the ConnectSubMenu::Duress variant and
-            // duress_ux() so re-enabling is a one-line revert.
+            // Duress (Phase 9). The duress_ux() panel gates on the
+            // `duress_remote_lock` entitlement and shows an upgrade prompt for
+            // Free, so the entry is safe to show for any authenticated user.
+            ("Duress", ConnectSubMenu::Duress),
         ];
         for (label, sub) in items {
             let is_active = matches!(
