@@ -234,6 +234,19 @@ pub fn derive_master_signer_fingerprint(
     })
 }
 
+/// A Cube's relationship to Connect, rendered as a single tri-state cube icon
+/// on the Cubes list (Phase 1 of duress mode). The progression
+/// Sovereign → Registered → Backed up mirrors increasing recoverability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CubeConnectState {
+    /// Not registered with Connect — local-only, no server-side recovery.
+    Sovereign,
+    /// Registered with Connect but no Cube Recovery Kit uploaded yet.
+    Registered,
+    /// Registered with Connect and a Cube Recovery Kit is present.
+    BackedUp,
+}
+
 /// Cubes represent user accounts that can contain multiple features (Vault, Liquid wallet, etc.)
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CubeSettings {
@@ -352,6 +365,30 @@ impl CubeSettings {
     /// Whether this Cube uses a passkey-derived master key (no PIN, no stored seed).
     pub fn is_passkey_cube(&self) -> bool {
         self.passkey_metadata.is_some()
+    }
+
+    /// True when this Cube has a Cube Recovery Kit pushed to Connect. We treat
+    /// a recorded backed-up descriptor fingerprint as the CRK-presence signal
+    /// (`recovery_kit_last_backed_up_descriptor_fingerprint` is set on a
+    /// successful kit upload and cleared on delete). Distinct from
+    /// [`backed_up`](Self::backed_up), which tracks the *local* seed-phrase
+    /// backup, not the server-side recovery kit.
+    pub fn has_recovery_kit(&self) -> bool {
+        self.recovery_kit_last_backed_up_descriptor_fingerprint
+            .is_some()
+    }
+
+    /// Classifies this Cube's relationship to Connect for the card indicator
+    /// (Phase 1 of duress mode). Users must be able to tell at a glance whether
+    /// a Cube has a recovery kit before they're told what a duress wipe costs.
+    pub fn connect_state(&self) -> CubeConnectState {
+        if !self.remote_synced {
+            CubeConnectState::Sovereign
+        } else if self.has_recovery_kit() {
+            CubeConnectState::BackedUp
+        } else {
+            CubeConnectState::Registered
+        }
     }
 
     pub fn with_pin(mut self, pin: &str) -> Result<Self, Box<dyn std::error::Error>> {
@@ -1321,6 +1358,46 @@ mod test {
             cube.master_signer_fingerprint.map(|f| f.to_string()),
             Some("aabbccdd".to_string()),
             "serde alias should map old field name to master_signer_fingerprint"
+        );
+    }
+
+    #[test]
+    fn connect_state_classifies_three_tiers() {
+        use super::{CubeConnectState, CubeSettings};
+        use coincube_core::miniscript::bitcoin::Network;
+
+        // Sovereign: not registered with Connect.
+        let mut cube = CubeSettings::new("Sovereign".to_string(), Network::Bitcoin);
+        cube.remote_synced = false;
+        assert_eq!(cube.connect_state(), CubeConnectState::Sovereign);
+        assert!(!cube.has_recovery_kit());
+
+        // Registered: synced to Connect, no recovery kit yet.
+        cube.remote_synced = true;
+        assert_eq!(cube.connect_state(), CubeConnectState::Registered);
+
+        // Backed up: synced AND a recovery-kit descriptor has been pushed.
+        cube.recovery_kit_last_backed_up_descriptor_fingerprint = Some("abc123".to_string());
+        assert!(cube.has_recovery_kit());
+        assert_eq!(cube.connect_state(), CubeConnectState::BackedUp);
+
+        // A recovery kit on a Cube that somehow lost remote_synced still reads
+        // as Sovereign — registration is the gating signal.
+        cube.remote_synced = false;
+        assert_eq!(cube.connect_state(), CubeConnectState::Sovereign);
+    }
+
+    #[test]
+    fn backed_up_flag_is_not_recovery_kit() {
+        use super::CubeSettings;
+        use coincube_core::miniscript::bitcoin::Network;
+
+        // `backed_up` is the local seed-phrase backup, not the server CRK.
+        let mut cube = CubeSettings::new("Seed only".to_string(), Network::Bitcoin);
+        cube.backed_up = true;
+        assert!(
+            !cube.has_recovery_kit(),
+            "local seed backup must not be mistaken for a Connect recovery kit"
         );
     }
 }

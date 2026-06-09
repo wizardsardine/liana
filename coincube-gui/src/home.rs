@@ -27,7 +27,7 @@ use crate::{
         settings::{
             self,
             global::{AccountTier, GlobalSettings},
-            AuthConfig, CubeSettings, WalletSettings,
+            AuthConfig, CubeConnectState, CubeSettings, WalletSettings,
         },
         state::connect::ConnectAccountPanel,
         view::ConnectAccountMessage,
@@ -2382,29 +2382,33 @@ fn cubes_list_item<'a>(
     i: usize,
     signed_in: bool,
 ) -> Element<'a, ViewMessage> {
-    // Hover hint on the cloud icon explains the sync state. When the user
-    // is signed out, an unsynced Cube is local-only and the tooltip points
-    // them at sign-in; when signed in, an unsynced Cube is mid-sync (the
-    // catch-up sync registers it on reload) so the wording differs.
-    let (sync_icon, sync_hint): (Element<'a, ViewMessage>, &'static str) = if cube.remote_synced {
-        (
-            icon::cloud_check_icon().style(theme::text::success).into(),
-            "Synced to Connect and available on your other devices.",
-        )
-    } else if signed_in {
-        (
-            icon::cloud_slash_icon()
-                .style(theme::text::secondary)
-                .into(),
-            "Not yet synced to Connect. It will sync automatically in a moment.",
-        )
-    } else {
-        (
-            icon::cloud_slash_icon().style(theme::text::warning).into(),
-            "Saved on this device only. Sign in to Connect to sync this Cube to \
-             your other devices and the Keychain mobile app.",
-        )
-    };
+    // Single tri-state cube icon (Phase 1, duress mode): the Cube's
+    // relationship to Connect — Sovereign (outline) → Registered (filled,
+    // half-tone) → Backed up (filled, full colour) — so users can tell at a
+    // glance whether a Cube has a recovery kit before they're told what a
+    // duress wipe costs. The signed-in-but-not-yet-synced case keeps its
+    // distinct "mid-sync" wording (catch-up sync registers it on reload).
+    let (sync_icon, sync_hint): (Element<'a, ViewMessage>, &'static str) =
+        match cube.connect_state() {
+            CubeConnectState::BackedUp => (
+                icon::cube_icon().style(theme::text::success).into(),
+                "Backed up to Connect — recovery kit ready",
+            ),
+            CubeConnectState::Registered => (
+                icon::cube_icon().style(theme::text::secondary).into(),
+                "Registered to Connect — no recovery kit",
+            ),
+            CubeConnectState::Sovereign if signed_in => (
+                icon::cube_outline_icon()
+                    .style(theme::text::secondary)
+                    .into(),
+                "Not yet synced to Connect. It will sync automatically in a moment.",
+            ),
+            CubeConnectState::Sovereign => (
+                icon::cube_outline_icon().style(theme::text::warning).into(),
+                "Sovereign — local only",
+            ),
+        };
     let sync_indicator = iced_tooltip::Tooltip::new(
         sync_icon,
         Container::new(p2_regular(sync_hint))

@@ -284,6 +284,13 @@ pub fn cube_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F1C8}')
 }
 
+/// Outline (non-filled) cube — paired with [`cube_icon`] to distinguish a
+/// Sovereign (local-only) Cube from a Connect-registered one in the tri-state
+/// Cube indicator.
+pub fn cube_outline_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F1C7}')
+}
+
 pub fn receipt_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F50F}')
 }
