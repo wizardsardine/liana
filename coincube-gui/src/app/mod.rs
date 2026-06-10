@@ -1990,8 +1990,19 @@ impl App {
                             .unwrap_or_default();
                         st.active = true;
                         st.unlock_at = unlock_at;
-                        if let Err(e) = st.save(&root) {
-                            log::warn!("[CONNECT GRPC] Failed to persist remote duress state: {e}");
+                        // Retry: a failed persist would let a relaunch reconcile
+                        // (which keys off st.active) drop back to the normal Home
+                        // flow with Cube data intact while the server is still in
+                        // duress. The DuressLockRemote handler re-persists as a
+                        // final backstop tied to the UI lock.
+                        for attempt in 1..=3 {
+                            match st.save(&root) {
+                                Ok(()) => break,
+                                Err(e) => log::warn!(
+                                    "[CONNECT GRPC] persist remote duress state \
+                                     attempt {attempt}/3 failed: {e}"
+                                ),
+                            }
                         }
                     },
                     |_| Message::View(view::Message::DuressLockRemote),

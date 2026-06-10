@@ -1059,11 +1059,40 @@ impl Tab {
                         // Phase 7b: remote duress activation. Lock the running
                         // app into the cryptic screen immediately — WITHOUT
                         // wiping (remote activation can be accidental; only a
-                        // local duress PIN wipes). DuressLocalState.active was
-                        // already persisted by the App's gRPC handler, so a
-                        // relaunch stays locked too.
+                        // local duress PIN wipes). The App's gRPC handler already
+                        // attempts to persist DuressLocalState.active, but a
+                        // failed write there would let the relaunch reconcile
+                        // (which keys off st.active) drop back to the normal Home
+                        // flow with Cube data intact. So re-persist here as a
+                        // durable backstop tied to the UI lock, before showing
+                        // the cryptic screen.
                         let datadir = app.datadir().clone();
                         let network = app.cache().network;
+                        let root = datadir.path();
+                        let mut st = crate::services::duress::DuressLocalState::load(root)
+                            .unwrap_or_default();
+                        if !st.active {
+                            st.active = true;
+                            let mut saved = false;
+                            for attempt in 1..=3 {
+                                match st.save(root) {
+                                    Ok(()) => {
+                                        saved = true;
+                                        break;
+                                    }
+                                    Err(e) => error!(
+                                        "duress: persist remote active state on UI lock \
+                                         attempt {attempt}/3 failed: {e}"
+                                    ),
+                                }
+                            }
+                            if !saved {
+                                error!(
+                                    "duress: remote active state not persisted; a relaunch \
+                                     may not stay locked"
+                                );
+                            }
+                        }
                         let screen =
                             crate::app::view::duress::active_screen::DuressActiveScreen::with_context(
                                 datadir,
