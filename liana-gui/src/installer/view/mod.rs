@@ -10,6 +10,7 @@ use iced::{
 };
 
 use liana::miniscript::bitcoin::bip32::ChildNumber;
+use liana_ui::component::button::BtnWidth;
 use liana_ui::component::text::{self, p2_regular};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -1016,7 +1017,7 @@ pub fn define_bitcoin_node<'a>(
                         } else {
                             None
                         })
-                        .width(Length::Fixed(200.0)),
+                        .width(BtnWidth::XL),
                 ))
                 .push(if is_running.map(|res| res.is_ok()).unwrap_or(false) {
                     button::secondary(None, "Next")
