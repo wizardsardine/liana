@@ -53,13 +53,22 @@ impl State {
         // screen. The user clears from another trusted device; the Sign-in
         // button here only confirms whether that has happened.
         let root = directory.path().to_path_buf();
-        let st = crate::services::duress::DuressLocalState::load(&root).unwrap_or_default();
+        // Fail CLOSED: if duress-state.json can't be read (parse/IO error, not a
+        // missing file — load() maps that to Ok(default)), assume the device may
+        // be locked rather than skipping the lock and opening the normal flow.
+        let active = match crate::services::duress::DuressLocalState::load(&root) {
+            Ok(st) => st.active,
+            Err(e) => {
+                error!("duress: reading duress state failed at launch; locking to be safe: {e}");
+                true
+            }
+        };
         let journal = crate::services::duress::journal::WipeJournal::new(&root);
         // Phase 4: resume draining any pending activation POSTs left by a prior
         // session (the durable queue survives restarts). Started here so an
         // offline-at-activation device eventually signals Connect.
         let drain = duress_drain_task(&root);
-        if st.active || journal.is_pending() {
+        if active || journal.is_pending() {
             complete_pending_wipe(&root, &journal);
             let queue_pending = crate::services::duress::queue::DuressQueue::new(&root)
                 .is_empty()
@@ -234,8 +243,20 @@ fn activate_local_duress(
     let root = root.as_path();
 
     // Load enrollment state up front: the encrypted duress code + Connect
-    // account id drive the server activation POST.
-    let mut st = DuressLocalState::load(root).unwrap_or_default();
+    // account id drive the server activation POST. A real read error (vs a
+    // missing file) is surfaced, not silently defaulted: it means the server
+    // POST can't be addressed, but we still wipe + lock locally — the local
+    // lock takes priority over preserving an already-unreadable file.
+    let mut st = match DuressLocalState::load(root) {
+        Ok(st) => st,
+        Err(e) => {
+            error!(
+                "duress: reading duress state failed during activation; the server lock \
+                 may be skipped, but wiping and locking locally anyway: {e}"
+            );
+            DuressLocalState::default()
+        }
+    };
     let account_id = st.account_id.clone();
     let encrypted_code = st.duress_code.clone();
 
@@ -1087,28 +1108,36 @@ impl Tab {
                         let datadir = app.datadir().clone();
                         let network = app.cache().network;
                         let root = datadir.path();
-                        let mut st = crate::services::duress::DuressLocalState::load(root)
-                            .unwrap_or_default();
-                        if !st.active {
-                            st.active = true;
-                            let mut saved = false;
-                            for attempt in 1..=3 {
-                                match st.save(root) {
-                                    Ok(()) => {
-                                        saved = true;
-                                        break;
+                        // Skip the persist on a real read error (vs a missing
+                        // file) rather than clobbering valid state with a default.
+                        // The UI still locks below; the cryptic screen's own
+                        // server poll re-syncs durability.
+                        match crate::services::duress::DuressLocalState::load(root) {
+                            Ok(mut st) if !st.active => {
+                                st.active = true;
+                                let mut saved = false;
+                                for attempt in 1..=3 {
+                                    match st.save(root) {
+                                        Ok(()) => {
+                                            saved = true;
+                                            break;
+                                        }
+                                        Err(e) => error!(
+                                            "duress: persist remote active state on UI lock \
+                                             attempt {attempt}/3 failed: {e}"
+                                        ),
                                     }
-                                    Err(e) => error!(
-                                        "duress: persist remote active state on UI lock \
-                                         attempt {attempt}/3 failed: {e}"
-                                    ),
+                                }
+                                if !saved {
+                                    error!(
+                                        "duress: remote active state not persisted; a relaunch \
+                                         may not stay locked"
+                                    );
                                 }
                             }
-                            if !saved {
-                                error!(
-                                    "duress: remote active state not persisted; a relaunch \
-                                     may not stay locked"
-                                );
+                            Ok(_) => {}
+                            Err(e) => {
+                                error!("duress: reading duress state failed; not overwriting: {e}")
                             }
                         }
                         let screen =
@@ -1375,12 +1404,20 @@ impl Tab {
                             // Update local state and exit into the normal flow.
                             if let Some(datadir) = screen.datadir().cloned() {
                                 let root = datadir.path();
-                                let mut st = crate::services::duress::DuressLocalState::load(root)
-                                    .unwrap_or_default();
-                                st.active = false;
-                                st.unlock_at = None;
-                                if let Err(e) = st.save(root) {
-                                    error!("duress: failed to clear local state: {e}");
+                                // Skip the write on a real read error rather than
+                                // clobbering valid state with a default; the next
+                                // poll re-clears once the file is readable again.
+                                match crate::services::duress::DuressLocalState::load(root) {
+                                    Ok(mut st) => {
+                                        st.active = false;
+                                        st.unlock_at = None;
+                                        if let Err(e) = st.save(root) {
+                                            error!("duress: failed to clear local state: {e}");
+                                        }
+                                    }
+                                    Err(e) => error!(
+                                        "duress: reading duress state failed; not overwriting: {e}"
+                                    ),
                                 }
                                 let network = screen.network();
                                 let (home, command) = Home::new(datadir, network);

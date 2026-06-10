@@ -2617,7 +2617,19 @@ fn register_device_duress_task(client: CoincubeClient, account_id: String) -> ic
                 return;
             };
             let root = datadir.path();
-            let mut st = DuressLocalState::load(root).unwrap_or_default();
+            // Skip on a real read error (vs a missing file): registering off a
+            // default would overwrite valid state (enrolled / account_id /
+            // existing code) on the save below. Retry happens on the next check.
+            let mut st = match DuressLocalState::load(root) {
+                Ok(st) => st,
+                Err(e) => {
+                    log::warn!(
+                        "[CONNECT] device duress register: reading state failed; \
+                         not overwriting: {e}"
+                    );
+                    return;
+                }
+            };
             let fingerprint = match crate::services::duress::device_fingerprint(root) {
                 Ok(f) => f,
                 Err(e) => {
