@@ -138,6 +138,7 @@ ring = "0.17"
 subtle = "2"
 
 dotenvy = "0.15.7"
+pgp = "0.16"
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features = false, features = [

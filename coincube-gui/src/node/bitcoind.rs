@@ -82,10 +82,16 @@ pub const CORE_SHA256SUM: &str = "4c1780532031129fcacfc0e393c8430b3cea414c9f8c5e
 /// release key. Pinning the *fingerprint* lets us recognise the signing key;
 /// full cryptographic verification of the detached signature additionally
 /// requires vendoring the key's public material, tracked as an open item for
-/// this feature (see `plans/PLAN-knots-bip110-managed-node.md`). Until then,
-/// Knots downloads are anchored by their published `SHA256SUMS` manifest, which
-/// is enforced (a tampered archive fails install).
+/// this feature (see `plans/PLAN-knots-bip110-managed-node.md`).
 pub const KNOTS_SIGNING_KEY_FINGERPRINT: &str = "1A3E761F19D2CC7785C5502EA291A2C45D0C504A";
+
+/// Vendored armored OpenPGP public key for [`KNOTS_SIGNING_KEY_FINGERPRINT`]
+/// (Luke Dashjr's Knots codesigning key), used to verify `SHA256SUMS.asc`. It is
+/// a minimal export (primary key + self-sig only) so it is small and needs no
+/// keyserver/keyring at runtime. The fingerprint is re-derived from this key and
+/// checked against the pin at verification time, so a swapped-out file cannot
+/// silently change the trust anchor.
+pub const KNOTS_SIGNING_KEY_ASC: &str = include_str!("../../assets/knots_signing_key.asc");
 
 /// Operating system COINCUBE builds managed-node asset names for. Kept explicit
 /// (rather than only `cfg!`) so URL construction is unit-testable for every
@@ -615,6 +621,28 @@ pub struct Bitcoind {
     lock: LockFile,
 }
 
+/// Pick the managed `bitcoind` binary to launch for `configured_flavor`,
+/// preferring that flavour's versions (newest first) and falling back to the
+/// other flavour's only if none are installed. Returns the first existing
+/// `bitcoin-<version>/bin/bitcoind[.exe]` under the managed directory, or `None`
+/// when nothing is installed. Preferring the configured flavour keeps the binary
+/// consistent with the `bitcoin.conf` — critical because a Knots `bitcoin.conf`
+/// (with `consensusrules=rdts`) cannot be started by a Core binary.
+fn select_managed_bitcoind_exe(
+    coincube_datadir: &CoincubeDirectory,
+    configured_flavor: NodeFlavor,
+) -> Option<PathBuf> {
+    let (primary, secondary): (&[&str], &[&str]) = match configured_flavor {
+        NodeFlavor::Knots => (&KNOTS_VERSIONS, &CORE_VERSIONS),
+        NodeFlavor::Core => (&CORE_VERSIONS, &KNOTS_VERSIONS),
+    };
+    primary
+        .iter()
+        .chain(secondary.iter())
+        .map(|v| internal_bitcoind_exe_path(coincube_datadir, v))
+        .find(|path| path.exists())
+}
+
 impl Bitcoind {
     /// Start internal bitcoind for the given network.
     pub fn maybe_start(
@@ -631,22 +659,17 @@ impl Bitcoind {
             });
         }
         let bitcoind_datadir = internal_bitcoind_datadir(coincube_datadir);
-        // Find the most recent installed managed binary, across both flavours.
-        // The managed directory normally holds a single flavour; each version
-        // string (e.g. `29.0` vs `29.3.knots20260508`) maps to a distinct
-        // `bitcoin-<version>` directory, so searching both lists is unambiguous.
-        let bitcoind_exe_path = CORE_VERSIONS
-            .iter()
-            .chain(KNOTS_VERSIONS.iter())
-            .filter_map(|v| {
-                let path = internal_bitcoind_exe_path(coincube_datadir, v);
-                if path.exists() {
-                    Some(path)
-                } else {
-                    None
-                }
-            })
-            .next()
+        // Launch a binary consistent with the on-disk `bitcoin.conf`. A conf
+        // carrying `consensusrules=rdts` *requires* a Knots binary — starting
+        // Core against it makes Core reject the unknown option and exit — so we
+        // prefer the configured flavour's binary, not just the first one we find.
+        // A machine that still has Core installed after a Knots setup would
+        // otherwise launch Core against a Knots conf and fail to start.
+        let configured_flavor =
+            InternalBitcoindConfig::from_file(&internal_bitcoind_config_path(&bitcoind_datadir))
+                .map(|conf| conf.flavor)
+                .unwrap_or(NodeFlavor::Core);
+        let bitcoind_exe_path = select_managed_bitcoind_exe(coincube_datadir, configured_flavor)
             .ok_or(StartInternalBitcoindError::ExecutableNotFound)?;
         info!(
             "Found bitcoind executable at '{}'.",
@@ -1079,5 +1102,52 @@ mod tests {
                 .expect("parse non-rdts conf")
                 .enforce_rdts
         );
+    }
+
+    // When both flavours are installed, the launched binary must match the
+    // configured flavour — a Knots conf (`consensusrules=rdts`) cannot be
+    // started by a Core binary, so Core must never be preferred over Knots.
+    #[test]
+    fn managed_binary_prefers_configured_flavor() {
+        use std::fs;
+
+        let base =
+            std::env::temp_dir().join(format!("coincube-knots-bin-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let datadir = CoincubeDirectory::new(base.clone());
+
+        // Install BOTH a Core and a Knots binary (the dual-install case).
+        for v in [CORE_VERSION, KNOTS_VERSION] {
+            let exe = internal_bitcoind_exe_path(&datadir, v);
+            fs::create_dir_all(exe.parent().unwrap()).unwrap();
+            fs::write(&exe, b"fake bitcoind").unwrap();
+        }
+
+        // Knots conf -> Knots binary, even though Core is also installed.
+        assert_eq!(
+            select_managed_bitcoind_exe(&datadir, NodeFlavor::Knots),
+            Some(internal_bitcoind_exe_path(&datadir, KNOTS_VERSION))
+        );
+        // Core conf -> Core binary.
+        assert_eq!(
+            select_managed_bitcoind_exe(&datadir, NodeFlavor::Core),
+            Some(internal_bitcoind_exe_path(&datadir, CORE_VERSION))
+        );
+
+        // Fallback: with only Knots installed, a Core conf still finds the
+        // Knots binary rather than failing to locate any executable.
+        let core_install = internal_bitcoind_exe_path(&datadir, CORE_VERSION)
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        fs::remove_dir_all(&core_install).unwrap();
+        assert_eq!(
+            select_managed_bitcoind_exe(&datadir, NodeFlavor::Core),
+            Some(internal_bitcoind_exe_path(&datadir, KNOTS_VERSION))
+        );
+
+        let _ = fs::remove_dir_all(&base);
     }
 }

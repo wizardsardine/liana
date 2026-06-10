@@ -49,9 +49,16 @@ const MIN_BITCOIND_VERSION: u64 = 240000;
 const MIN_TAPROOT_BITCOIND_VERSION: u64 = 260000;
 
 /// Whether a node's numeric `getnetworkinfo.version` is supported, given whether
-/// a Taproot descriptor is in use. We gate on this number alone — Bitcoin Knots
-/// 29.x reports `290000` exactly like Core 29.x, so Knots (a Core superset) is
-/// accepted without special-casing its `(knots…)` subversion string.
+/// a Taproot descriptor is in use.
+///
+/// `version` is Bitcoin Core/Knots' integer `CLIENT_VERSION`, encoded as
+/// `MAJOR * 10_000 + MINOR * 100 + BUILD` (e.g. v29.0 → `290000`, v24.0.1 →
+/// `240001`). `MIN_BITCOIND_VERSION` and `MIN_TAPROOT_BITCOIND_VERSION` use that
+/// same encoding, and `get_bitcoind_version` returns the RPC value verbatim, so
+/// it is compared directly — there is no other scale to normalize from. We gate
+/// on this number alone: Bitcoin Knots 29.x reports `290000` exactly like Core
+/// 29.x, so Knots (a Core superset) is accepted without special-casing its
+/// `(knots…)` subversion string.
 fn is_supported_bitcoind_version(version: u64, is_taproot: bool) -> bool {
     version >= MIN_BITCOIND_VERSION && (!is_taproot || version >= MIN_TAPROOT_BITCOIND_VERSION)
 }

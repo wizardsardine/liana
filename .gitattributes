@@ -1,0 +1,3 @@
+# Knots BIP-110: byte-exact OpenPGP-signed fixtures/keys (no EOL translation).
+coincube-gui/assets/knots_signing_key.asc -text
+coincube-gui/src/installer/step/node/test_fixtures/** -text

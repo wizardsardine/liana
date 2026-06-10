@@ -10,6 +10,8 @@ use coincubed::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Esplora
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use flate2::read::GzDecoder;
 use iced::{Subscription, Task};
+use pgp::composed::{Deserializable, SignedPublicKey, StandaloneSignature};
+use pgp::types::KeyDetails;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use tar::Archive;
 use tracing::info;
@@ -132,6 +134,9 @@ pub enum InstallBitcoindError {
     /// A Bitcoin Knots release `SHA256SUMS` arrived without an accompanying
     /// detached PGP signature (`SHA256SUMS.asc`).
     MissingSignature,
+    /// The `SHA256SUMS.asc` did not cryptographically verify against the pinned
+    /// Bitcoin Knots signing key.
+    InvalidSignature,
     UnpackingError(String),
 }
 
@@ -148,6 +153,10 @@ impl std::fmt::Display for InstallBitcoindError {
             Self::MissingSignature => write!(
                 f,
                 "Release SHA256SUMS manifest is not accompanied by a PGP signature."
+            ),
+            Self::InvalidSignature => write!(
+                f,
+                "Release SHA256SUMS signature did not verify against the pinned Knots signing key."
             ),
             Self::UnpackingError(e) => {
                 write!(f, "Error unpacking: '{}'.", e)
@@ -275,16 +284,52 @@ fn hash_listed_in_manifest(bytes: &[u8], archive_filename: &str, sha256sums: &st
     })
 }
 
-/// Whether `asc` is a syntactically well-formed detached PGP signature block.
-///
-/// This anchors the `SHA256SUMS` manifest to *a* detached signature; full
-/// OpenPGP verification against [`bitcoind::KNOTS_SIGNING_KEY_FINGERPRINT`]
-/// (which needs the vendored public key) is a tracked open item for this
-/// feature. The manifest's own integrity — the archive's hash appearing in
-/// `SHA256SUMS` — is enforced regardless, so a tampered archive always fails.
-fn signature_present(asc: &str) -> bool {
-    let asc = asc.trim();
-    asc.starts_with("-----BEGIN PGP SIGNATURE-----") && asc.ends_with("-----END PGP SIGNATURE-----")
+/// Failure verifying a detached OpenPGP signature.
+#[derive(Debug, PartialEq, Eq)]
+enum SignatureError {
+    /// No PGP signature block was present.
+    Missing,
+    /// A signature was present but did not cryptographically verify against the
+    /// pinned key (bad signature, wrong/garbled key, or key-fingerprint
+    /// mismatch).
+    Invalid,
+}
+
+/// Verify the armored detached OpenPGP signature `asc` over `data` using the
+/// armored public key `pubkey_armored`, which must have fingerprint
+/// `expected_fingerprint`. The `.asc` may carry several signatures (the Knots
+/// manifest is multi-signed); verification succeeds iff **at least one** of them
+/// validates against the pinned key. Returns [`SignatureError::Missing`] when no
+/// signature block is present so callers can distinguish it from an invalid one.
+fn verify_detached_signature(
+    data: &[u8],
+    asc: &str,
+    pubkey_armored: &str,
+    expected_fingerprint: &str,
+) -> Result<(), SignatureError> {
+    if !asc
+        .trim_start()
+        .starts_with("-----BEGIN PGP SIGNATURE-----")
+    {
+        return Err(SignatureError::Missing);
+    }
+    let (pubkey, _) =
+        SignedPublicKey::from_string(pubkey_armored).map_err(|_| SignatureError::Invalid)?;
+    // Re-derive the fingerprint from the vendored key bytes and check it against
+    // the pin, so a swapped key file can never become the trust anchor.
+    if !hex::encode(pubkey.fingerprint().as_bytes()).eq_ignore_ascii_case(expected_fingerprint) {
+        return Err(SignatureError::Invalid);
+    }
+    let (signatures, _) =
+        StandaloneSignature::from_string_many(asc).map_err(|_| SignatureError::Invalid)?;
+    if signatures
+        .flatten()
+        .any(|sig| sig.verify(&pubkey, data).is_ok())
+    {
+        Ok(())
+    } else {
+        Err(SignatureError::Invalid)
+    }
 }
 
 /// Verify a downloaded archive against `verification`.
@@ -305,8 +350,17 @@ fn verify_download(
             sha256sums,
             sha256sums_asc,
         } => {
-            if !signature_present(sha256sums_asc) {
-                return Err(InstallBitcoindError::MissingSignature);
+            // The manifest's authenticity is anchored by its detached signature
+            // against the pinned Knots key; only then do we trust its checksums.
+            match verify_detached_signature(
+                sha256sums.as_bytes(),
+                sha256sums_asc,
+                bitcoind::KNOTS_SIGNING_KEY_ASC,
+                bitcoind::KNOTS_SIGNING_KEY_FINGERPRINT,
+            ) {
+                Ok(()) => {}
+                Err(SignatureError::Missing) => return Err(InstallBitcoindError::MissingSignature),
+                Err(SignatureError::Invalid) => return Err(InstallBitcoindError::InvalidSignature),
             }
             if !hash_listed_in_manifest(bytes, archive_filename, sha256sums) {
                 return Err(InstallBitcoindError::ChecksumNotInManifest);
@@ -1164,8 +1218,11 @@ mod tests {
         sha256::Hash::hash(bytes).to_string()
     }
 
-    const ASC: &str =
-        "-----BEGIN PGP SIGNATURE-----\n\niJEE...\n=abcd\n-----END PGP SIGNATURE-----";
+    // The real published release manifest and its detached signature. Used to
+    // prove the *vendored key actually verifies the real release* — the single
+    // most important correctness property for this feature.
+    const REAL_SUMS: &str = include_str!("test_fixtures/knots_sha256sums");
+    const REAL_ASC: &str = include_str!("test_fixtures/knots_sha256sums.asc");
 
     // Core path: a single pinned hash. Wrong bytes fail, matching bytes pass.
     #[test]
@@ -1180,10 +1237,56 @@ mod tests {
         );
     }
 
-    // Knots path: archive must be listed in the SHA256SUMS manifest under its
-    // exact filename, and the manifest must carry a detached signature.
+    // The vendored Knots key cryptographically verifies the real `SHA256SUMS.asc`
+    // over the real manifest; tampering, a wrong pin, or a missing block all fail.
     #[test]
-    fn manifest_verification() {
+    fn detached_signature_verification() {
+        let verify = |data: &[u8], asc: &str, fpr: &str| {
+            verify_detached_signature(data, asc, bitcoind::KNOTS_SIGNING_KEY_ASC, fpr)
+        };
+
+        // Real signature over the real manifest verifies against the pinned key.
+        assert_eq!(
+            verify(
+                REAL_SUMS.as_bytes(),
+                REAL_ASC,
+                bitcoind::KNOTS_SIGNING_KEY_FINGERPRINT
+            ),
+            Ok(())
+        );
+
+        // One flipped byte in the signed data invalidates the signature.
+        let mut tampered = REAL_SUMS.as_bytes().to_vec();
+        tampered[0] ^= 0x01;
+        assert_eq!(
+            verify(&tampered, REAL_ASC, bitcoind::KNOTS_SIGNING_KEY_FINGERPRINT),
+            Err(SignatureError::Invalid)
+        );
+
+        // A real, valid signature but pinned to the wrong fingerprint is rejected.
+        assert_eq!(
+            verify(
+                REAL_SUMS.as_bytes(),
+                REAL_ASC,
+                "0000000000000000000000000000000000000000"
+            ),
+            Err(SignatureError::Invalid)
+        );
+
+        // No signature block at all is Missing, not Invalid.
+        assert_eq!(
+            verify(
+                REAL_SUMS.as_bytes(),
+                "not a signature",
+                bitcoind::KNOTS_SIGNING_KEY_FINGERPRINT
+            ),
+            Err(SignatureError::Missing)
+        );
+    }
+
+    // Manifest listing logic: hash present under the exact filename.
+    #[test]
+    fn manifest_hash_listing() {
         let archive = b"the bitcoin knots archive".to_vec();
         let filename = "bitcoin-29.3.knots20260508-x86_64-linux-gnu.tar.gz";
         let sums = format!(
@@ -1192,40 +1295,55 @@ mod tests {
             sha256_hex(&archive),
             filename,
         );
-        let good = DownloadVerification::ReleaseManifest {
-            archive_filename: filename.to_string(),
-            sha256sums: sums.clone(),
-            sha256sums_asc: ASC.to_string(),
-        };
-        assert!(verify_download(&archive, &good).is_ok());
+        assert!(hash_listed_in_manifest(&archive, filename, &sums));
+        // Tampered archive: hash absent.
+        assert!(!hash_listed_in_manifest(b"tampered", filename, &sums));
+        // Right hash but a different filename: rejected.
+        assert!(!hash_listed_in_manifest(
+            &archive,
+            "bitcoin-29.3.knots20260508-arm64-apple-darwin.tar.gz",
+            &sums
+        ));
+    }
 
-        // Tampered archive: hash no longer in the manifest.
-        let tampered = b"tampered knots archive".to_vec();
+    // End-to-end ReleaseManifest paths: the real signature must verify first,
+    // then the archive's hash must be listed; the error variants are distinct.
+    #[test]
+    fn verify_download_release_manifest() {
+        // Signature valid, but our (arbitrary) archive isn't in the real
+        // manifest -> reaches and fails the checksum step.
+        let manifest = DownloadVerification::ReleaseManifest {
+            archive_filename: "bitcoin-29.3.knots20260508-x86_64-linux-gnu.tar.gz".to_string(),
+            sha256sums: REAL_SUMS.to_string(),
+            sha256sums_asc: REAL_ASC.to_string(),
+        };
         assert_eq!(
-            verify_download(&tampered, &good),
+            verify_download(b"not the real archive", &manifest),
             Err(InstallBitcoindError::ChecksumNotInManifest)
         );
 
-        // Right hash but listed under a different filename: rejected.
-        let wrong_name = DownloadVerification::ReleaseManifest {
-            archive_filename: "bitcoin-29.3.knots20260508-arm64-apple-darwin.tar.gz".to_string(),
-            sha256sums: sums.clone(),
-            sha256sums_asc: ASC.to_string(),
-        };
-        assert_eq!(
-            verify_download(&archive, &wrong_name),
-            Err(InstallBitcoindError::ChecksumNotInManifest)
-        );
-
-        // Manifest with no detached signature is rejected before hashing.
+        // Missing signature is distinguished from an invalid one.
         let unsigned = DownloadVerification::ReleaseManifest {
-            archive_filename: filename.to_string(),
-            sha256sums: sums,
-            sha256sums_asc: "not a signature".to_string(),
+            archive_filename: "x".to_string(),
+            sha256sums: REAL_SUMS.to_string(),
+            sha256sums_asc: String::new(),
         };
         assert_eq!(
-            verify_download(&archive, &unsigned),
+            verify_download(b"x", &unsigned),
             Err(InstallBitcoindError::MissingSignature)
+        );
+
+        // Tampered manifest body -> signature no longer covers it -> invalid.
+        let mut tampered_sums = REAL_SUMS.to_string();
+        tampered_sums.push_str("dead  evil.tar.gz\n");
+        let tampered = DownloadVerification::ReleaseManifest {
+            archive_filename: "x".to_string(),
+            sha256sums: tampered_sums,
+            sha256sums_asc: REAL_ASC.to_string(),
+        };
+        assert_eq!(
+            verify_download(b"x", &tampered),
+            Err(InstallBitcoindError::InvalidSignature)
         );
     }
 
