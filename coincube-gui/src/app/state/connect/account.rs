@@ -1503,14 +1503,21 @@ impl ConnectAccountPanel {
                 self.open_enroll_wizard(EnrollTier::Tier2, DuressEnrollStep::SetDuressPin);
             }
             DuressMessage::SignUpForConnect => {
-                self.duress_enroll = None;
+                // Scrub the wizard's secrets (PINs, passphrases, pending code)
+                // before dropping it, like logout does — leaving the flow must
+                // not leave them on the heap.
+                if let Some(mut wizard) = self.duress_enroll.take() {
+                    wizard.zeroize_secrets();
+                }
                 self.step = ConnectFlowStep::Register {
                     email: String::new(),
                     loading: false,
                 };
             }
             DuressMessage::CancelEnrollment => {
-                self.duress_enroll = None;
+                if let Some(mut wizard) = self.duress_enroll.take() {
+                    wizard.zeroize_secrets();
+                }
             }
             DuressMessage::RegularPinChanged(v) => {
                 if let Some(e) = &mut self.duress_enroll {
