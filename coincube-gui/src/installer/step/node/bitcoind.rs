@@ -825,6 +825,16 @@ impl InternalBitcoindStep {
 
 impl Step for InternalBitcoindStep {
     fn load_context(&mut self, ctx: &Context) {
+        // The installer has no Knots picker, so `self.flavor` defaults to Core.
+        // Adopt the flavour already configured on disk (if any) so we don't
+        // silently downgrade an existing Knots+RDTS node to Core or fetch the
+        // wrong binary. A brand-new install (no conf yet) keeps the step's own
+        // default flavour.
+        if let Ok(conf) = InternalBitcoindConfig::from_file(
+            &bitcoind::internal_bitcoind_config_path(&self.bitcoind_datadir),
+        ) {
+            self.flavor = conf.flavor;
+        }
         if self.exe_path.is_none() {
             // Check if current managed bitcoind version is already installed.
             // For new installations, we ignore any previous managed bitcoind versions that might be installed.
@@ -879,21 +889,25 @@ impl Step for InternalBitcoindStep {
                     let mut conf = match InternalBitcoindConfig::from_file(
                         &bitcoind::internal_bitcoind_config_path(&self.bitcoind_datadir),
                     ) {
+                        // Preserve an existing conf's flavour and RDTS setting:
+                        // the installer has no Knots picker, so it must not
+                        // rewrite an existing Knots `bitcoin.conf` and drop
+                        // `consensusrules=rdts`.
                         Ok(conf) => conf,
+                        // Fresh install: use the step's selected flavour (Core by
+                        // default); `for_flavor` enables RDTS only for Knots.
                         Err(InternalBitcoindConfigError::FileNotFound) => {
-                            InternalBitcoindConfig::new()
+                            InternalBitcoindConfig::for_flavor(self.flavor)
                         }
                         Err(e) => {
                             self.error = Some(e.to_string());
                             return Task::none();
                         }
                     };
-                    // The chosen flavour drives RDTS enforcement: Knots emits
-                    // `consensusrules=rdts`, Core never does. This overrides
-                    // whatever a pre-existing conf carried so the written file
-                    // matches the binary we're about to install.
-                    conf.flavor = self.flavor;
-                    conf.enforce_rdts = matches!(self.flavor, NodeFlavor::Knots);
+                    // Keep the step in sync with the flavour actually being
+                    // written, so the download / executable / verification paths
+                    // match the conf.
+                    self.flavor = conf.flavor;
                     let network_conf = conf.networks.get(&self.network);
                     // Use same ports again if there is an existing installation.
                     let (rpc_port, p2p_port) = if let Some(network_conf) = network_conf {
