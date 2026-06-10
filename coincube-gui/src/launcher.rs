@@ -1457,6 +1457,44 @@ impl Launcher {
                 Task::none()
             }
 
+            Message::PersistDuressEnrollment(payload) => {
+                // Drop a completion that outlived its Connect session: a logout
+                // or session reset bumps `session_generation`, and persisting
+                // now would arm the duress PIN + DuressLocalState for an account
+                // the user is no longer signed into.
+                if payload.gen != self.connect_account.session_generation() {
+                    log::warn!("duress: ignoring enrollment completion from a stale session");
+                    return Task::none();
+                }
+                let app::message::DuressEnrollmentPayload {
+                    regular_pin,
+                    duress_pin,
+                    duress_code,
+                    account_id,
+                    ..
+                } = payload;
+                return Task::perform(
+                    app::persist_duress_enrollment(
+                        self.datadir_path.clone(),
+                        regular_pin,
+                        duress_pin,
+                        duress_code,
+                        account_id,
+                    ),
+                    |res| match res {
+                        Ok(()) => Message::View(ViewMessage::Check),
+                        Err(e) => {
+                            log::error!("duress: failed to persist enrollment: {e}");
+                            // Surface via the Connect panel's error display.
+                            Message::View(ViewMessage::ConnectAccount(
+                                ConnectAccountMessage::Error(format!(
+                                    "Couldn't finish enabling duress mode: {e}. Please try again."
+                                )),
+                            ))
+                        }
+                    },
+                );
+            }
             Message::View(ViewMessage::ConnectAccount(msg)) => {
                 // The banner CTAs navigate the panel to Plan & Billing by
                 // setting its `active_sub`, but the sidebar highlight follows
@@ -2635,6 +2673,11 @@ fn map_connect_task(task: Task<app::message::Message>) -> Task<Message> {
         app::message::Message::View(app::view::Message::OpenUrl(url)) => {
             Message::View(ViewMessage::OpenUrl(url))
         }
+        // Duress enrollment persistence (Phases 2 & 8): relay to the launcher,
+        // which has the datadir + Cube settings to actually write it.
+        app::message::Message::CompleteDuressEnrollment(payload) => {
+            Message::PersistDuressEnrollment(payload)
+        }
         _ => {
             log::warn!("[LAUNCHER] Unexpected message from ConnectAccountPanel");
             Message::View(ViewMessage::Check)
@@ -2662,6 +2705,11 @@ pub enum Message {
     ),
     StartRecovery,
     CubeCreated(Result<CubeSettings, String>),
+    /// Relay of `app::Message::CompleteDuressEnrollment` from the Connect panel
+    /// hosted here. The launcher owns the datadir + Cube settings, so it
+    /// persists the duress PIN + device code (the panel itself can't). Without
+    /// this the enrollment would be silently dropped by `map_connect_task`.
+    PersistDuressEnrollment(app::message::DuressEnrollmentPayload),
     /// Window ID extracted for passkey webview.
     PasskeyWindowId(iced_wry::ExtractedWindowId),
     /// Passkey webview manager update.

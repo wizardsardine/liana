@@ -1,5 +1,6 @@
 mod contacts;
 pub mod cube_members;
+pub mod duress_enroll;
 pub mod sign_in_prompt;
 
 use coincube_ui::{
@@ -23,7 +24,7 @@ use crate::{
             AvatarFlowStep, CheckoutPhase, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep,
             ConnectPanel, PlanLifecycle,
         },
-        view::{AvatarMessage, ConnectAccountMessage, ConnectCubeMessage},
+        view::{AvatarMessage, ConnectAccountMessage, ConnectCubeMessage, DuressMessage},
     },
     services::coincube::{
         AvatarAccentMotif, AvatarAgeFeel, AvatarArchetype, AvatarArmorStyle, AvatarDemeanor,
@@ -63,11 +64,23 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
             ..
         } => otp_ux(email, otp, *sending, *cooldown).map(ViewMessage::ConnectAccount),
 
+        ConnectFlowStep::CheckingDuress { failed } => {
+            checking_duress_ux(*failed).map(ViewMessage::ConnectAccount)
+        }
+
+        ConnectFlowStep::DuressRecovery {
+            unlock_at,
+            passphrase,
+            submitting,
+            cleared,
+        } => duress_enroll::recovery_ux(unlock_at.as_ref(), passphrase, *submitting, *cleared)
+            .map(ViewMessage::ConnectAccount),
+
         ConnectFlowStep::Dashboard => match &acct.active_sub {
             ConnectSubMenu::Overview => overview_ux(acct).map(ViewMessage::ConnectAccount),
             ConnectSubMenu::PlanBilling => plan_billing_ux(acct).map(ViewMessage::ConnectAccount),
             ConnectSubMenu::Security => security_ux(acct).map(ViewMessage::ConnectAccount),
-            ConnectSubMenu::Duress => duress_ux().map(ViewMessage::ConnectAccount),
+            ConnectSubMenu::Duress => duress_ux(acct).map(ViewMessage::ConnectAccount),
             ConnectSubMenu::Contacts => {
                 contacts::contacts_ux(acct).map(ViewMessage::ConnectAccount)
             }
@@ -131,16 +144,26 @@ pub fn connect_account_panel<'a>(
             cooldown,
             ..
         } => otp_ux(email, otp, *sending, *cooldown),
+        ConnectFlowStep::CheckingDuress { failed } => checking_duress_ux(*failed),
+        ConnectFlowStep::DuressRecovery {
+            unlock_at,
+            passphrase,
+            submitting,
+            cleared,
+        } => duress_enroll::recovery_ux(unlock_at.as_ref(), passphrase, *submitting, *cleared),
         ConnectFlowStep::Dashboard => match &acct.active_sub {
             ConnectSubMenu::Overview => overview_ux(acct),
             ConnectSubMenu::PlanBilling => plan_billing_ux(acct),
             ConnectSubMenu::Security => security_ux(acct),
-            ConnectSubMenu::Duress => duress_ux(),
+            ConnectSubMenu::Duress => duress_ux(acct),
             ConnectSubMenu::Contacts => contacts::contacts_ux(acct),
         },
     };
 
-    let is_auth_step = !matches!(acct.step, ConnectFlowStep::Dashboard);
+    let is_auth_step = !matches!(
+        acct.step,
+        ConnectFlowStep::Dashboard | ConnectFlowStep::DuressRecovery { .. }
+    );
     let col_align = if is_auth_step {
         Alignment::Center
     } else {
@@ -1251,35 +1274,179 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
         .into()
 }
 
-fn duress_ux<'a>() -> Element<'a, ConnectAccountMessage> {
-    Column::new()
-        .push(text::h4_bold("Duress Settings").style(theme::text::primary))
-        .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
-        .push(
-            container(
-                Column::new()
-                    .push(
-                        text::p1_regular(
-                            "Duress protection allows you to lock signing and optionally wipe \
-                             local data under coercion. Configure trusted contacts and escalation \
-                             rules.",
-                        )
-                        .color(color::GREY_3),
-                    )
-                    .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
-                    .push(
-                        text::p2_regular("Coming Soon — requires backend endpoint /connect/duress")
-                            .color(color::GREY_3),
-                    )
-                    .padding(20)
-                    .spacing(2),
+/// Post-login duress verification gate (Phase 6). Shown after auth while
+/// `get_duress_state` is in flight, so the dashboard isn't revealed to a
+/// possibly-in-duress account. On terminal failure (`failed`) it offers a Retry
+/// rather than falling through to the dashboard.
+fn checking_duress_ux<'a>(failed: bool) -> Element<'a, ConnectAccountMessage> {
+    let mut col = Column::new().spacing(16).align_x(Alignment::Center);
+    if failed {
+        col = col
+            .push(text::p1_regular("Couldn't verify your account status.").color(color::GREY_3))
+            .push(
+                button::primary(None, "Retry")
+                    .width(Length::Fixed(160.0))
+                    .on_press(ConnectAccountMessage::RetryDuressCheck),
+            );
+    } else {
+        col = col.push(text::p1_regular("Checking your account…").color(color::GREY_3));
+    }
+    col.width(Length::Fill).into()
+}
+
+/// Duress enrollment eligibility gate (Phase 2, Task 2.1).
+///
+/// Inside the Connect dashboard the user is already signed in, so the tiers
+/// reduce to Tier 1 (Connect + CRK) and Tier 2 (Connect, no CRK). The sovereign
+/// Tier 3 flow lives behind a separate entry (Phase 8). The interactive
+/// multi-step wizard (`duress_enroll.rs`) builds on the credential rules in
+/// `services::duress::enroll`; this surface explains eligibility and the
+/// credentials the user will set, and surfaces the Tier 2 BIG warning.
+fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
+    use crate::services::duress::enroll::{DuressDelay, MIN_ALL_CLEAR_LEN};
+
+    // Wizard takes over the panel while enrollment is in progress.
+    if let Some(enroll) = &state.duress_enroll {
+        return duress_enroll::enroll_ux(enroll);
+    }
+
+    let entitled = state
+        .plan
+        .as_ref()
+        .map(|p| p.entitlements.duress_remote_lock)
+        .unwrap_or(false);
+
+    let mut col = Column::new()
+        .push(text::h4_bold("Duress Mode").style(theme::text::primary))
+        .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+
+    if !entitled {
+        return col
+            .push(
+                container(
+                    Column::new()
+                        .push(text::p1_regular(
+                            "Duress mode is available on Pro and Estate plans. Upgrade your \
+                             Connect plan to enable it.",
+                        ))
+                        .padding(20),
+                )
+                .style(card_style)
+                .width(Length::Fill),
             )
-            .style(card_style)
-            .width(Length::Fill),
+            .width(Length::Fill)
+            .into();
+    }
+
+    let delays: String = DuressDelay::ALL
+        .iter()
+        .map(|d| d.label())
+        .collect::<Vec<_>>()
+        .join(" · ");
+
+    // What duress activation does — stated plainly, no fine print.
+    col = col.push(
+        container(
+            Column::new()
+                .push(text::p1_bold("What duress mode does").style(theme::text::primary))
+                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                .push(
+                    text::p2_regular(
+                        "When you unlock a Cube with your duress PIN, this device erases every \
+                     Cube on it and signals Connect to lock your account. The device then \
+                     shows a dead-end screen until you clear duress from another trusted device.",
+                    )
+                    .color(color::GREY_3),
+                )
+                .padding(20)
+                .spacing(2),
         )
-        .spacing(0)
-        .width(Length::Fill)
-        .into()
+        .style(card_style)
+        .width(Length::Fill),
+    );
+
+    col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+
+    // Credentials the user will set during enrollment.
+    col = col.push(
+        container(
+            Column::new()
+                .push(text::p1_bold("You'll set").style(theme::text::primary))
+                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                .push(
+                    text::p2_regular(
+                        "• A duress PIN — at least 2 character changes from your regular PIN.",
+                    )
+                    .color(color::GREY_3),
+                )
+                .push(
+                    text::p2_regular(format!(
+                        "• An all-clear passphrase — at least {} characters, used to unlock your \
+                     account from a trusted device.",
+                        MIN_ALL_CLEAR_LEN
+                    ))
+                    .color(color::GREY_3),
+                )
+                .push(
+                    text::p2_regular(
+                        "• A duress recovery-kit password (Tier 1) — covers all your Cubes.",
+                    )
+                    .color(color::GREY_3),
+                )
+                .push(
+                    text::p2_regular(format!("• An unlock delay: {}.", delays))
+                        .color(color::GREY_3),
+                )
+                .padding(20)
+                .spacing(4),
+        )
+        .style(card_style)
+        .width(Length::Fill),
+    );
+
+    col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+
+    // Tier 2 BIG warning — shown whenever the account has no recovery kit yet.
+    // We can't see per-Cube CRK state from this panel, so we surface the
+    // warning unconditionally; the wizard refines it per tier.
+    col = col.push(
+        container(
+            Column::new()
+                .push(
+                    text::p1_bold("Set up a Cube Recovery Kit first")
+                        .style(theme::text::warning),
+                )
+                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                .push(text::p2_regular(
+                    "Without a Cube Recovery Kit, a duress wipe is irreversible from Connect — \
+                     you would need your seed-phrase backup to restore. We strongly recommend \
+                     setting up a Cube Recovery Kit before enabling duress mode.",
+                ).color(color::GREY_3))
+                .padding(20)
+                .spacing(2),
+        )
+        .style(card_style)
+        .width(Length::Fill),
+    );
+
+    col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
+    col = col.push(
+        button::primary(None, "Set up Duress Mode")
+            .width(Length::Fixed(240.0))
+            .on_press(ConnectAccountMessage::Duress(
+                DuressMessage::StartEnrollment,
+            )),
+    );
+    // Tier 2 (Connect, no recovery kit) — the plan's Task 2.1 secondary path.
+    // The panel can't see per-Cube CRK state, so the user picks: this skips the
+    // duress recovery-kit password step.
+    col = col.push(
+        button::transparent(None, "Continue without a recovery kit (advanced)").on_press(
+            ConnectAccountMessage::Duress(DuressMessage::StartEnrollmentWithoutCrk),
+        ),
+    );
+
+    col.width(Length::Fill).into()
 }
 
 pub fn avatar_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage> {

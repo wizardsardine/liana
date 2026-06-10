@@ -145,6 +145,41 @@ pub fn connect_stream(
                                                     );
                                                 }
                                             }
+                                            Some(Body::DuressActivated(event)) => {
+                                                // Phase 7b: remote duress activation. Convert the
+                                                // protobuf timestamp and forward; the app locks the
+                                                // cryptic screen WITHOUT wiping.
+                                                let unlock_at =
+                                                    event.duress_unlock_at.and_then(|ts| {
+                                                        chrono::DateTime::from_timestamp(
+                                                            ts.seconds,
+                                                            ts.nanos as u32,
+                                                        )
+                                                    });
+                                                if let Err(e) = channel
+                                                    .send(ConnectStreamMessage::DuressActivated {
+                                                        unlock_at,
+                                                        source: event.source,
+                                                    })
+                                                    .await
+                                                {
+                                                    log::warn!(
+                                                        "[CONNECT GRPC] Failed to forward DuressActivated: {}",
+                                                        e
+                                                    );
+                                                }
+                                            }
+                                            Some(Body::DuressCleared(_)) => {
+                                                if let Err(e) = channel
+                                                    .send(ConnectStreamMessage::DuressCleared)
+                                                    .await
+                                                {
+                                                    log::warn!(
+                                                        "[CONNECT GRPC] Failed to forward DuressCleared: {}",
+                                                        e
+                                                    );
+                                                }
+                                            }
                                             _ => {}
                                         },
                                         Ok(None) => {

@@ -120,6 +120,10 @@ impl GUI {
 
     pub fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Task<Message>) {
         let log_level = log_level.unwrap_or(LevelFilter::INFO);
+        // Record the resolved (possibly `--datadir`-overridden) data directory
+        // process-wide so helpers without a datadir in hand — e.g. the Connect
+        // panel's duress fingerprint — use the real path, not the OS default.
+        CoincubeDirectory::set_active(config.coincube_directory.clone());
         if let Err(e) = setup_logger(log_level, config.coincube_directory.clone()) {
             tracing::warn!("Error while setting error: {}", e);
         }

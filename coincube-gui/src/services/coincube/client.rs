@@ -1132,6 +1132,152 @@ impl CoincubeClient {
     }
 }
 
+// =============================================================================
+// Duress (desktop) — Phase 0 client plumbing
+// =============================================================================
+//
+// See the DTO block in `mod.rs` for the trust-posture rationale behind these
+// shapes (per-device codes, hash-only on the wire, unauth `trigger-with-code`).
+
+impl CoincubeClient {
+    /// `POST /api/v1/connect/duress/enroll` (authenticated). The desktop has
+    /// already generated and hashed its own duress code; only the hash is in
+    /// `req`. Enables duress for the whole account.
+    pub async fn enroll_duress(
+        &self,
+        req: super::EnrollDuressRequest,
+    ) -> Result<(), CoincubeError> {
+        let url = format!("{}/api/v1/connect/duress/enroll", self.base_url);
+        let res = self.client.post(&url).json(&req).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// `POST /api/v1/connect/duress/register-device-code` (authenticated).
+    /// Called by a non-enrolling desktop on its first sign-in after the account
+    /// already has duress enrolled — it generates its own code, hashes it, and
+    /// registers the hash under its device fingerprint.
+    pub async fn register_device_duress_code(
+        &self,
+        device_fingerprint: &str,
+        duress_code_hash: &str,
+    ) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/duress/register-device-code",
+            self.base_url
+        );
+        let req = super::RegisterDeviceDuressCodeRequest {
+            device_fingerprint: device_fingerprint.to_string(),
+            duress_code_hash: duress_code_hash.to_string(),
+        };
+        let res = self.client.post(&url).json(&req).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// `POST /api/v1/connect/duress/trigger-with-code` (UNAUTHENTICATED).
+    ///
+    /// The desktop's primary activation path: the Cube-unlock surface may be
+    /// reached without a live Connect session, and we don't want activation to
+    /// depend on session validity at the moment of coercion. The server matches
+    /// the submitted code against all of the account's active per-device hashes.
+    pub async fn trigger_duress_with_code(
+        &self,
+        account_id: &str,
+        duress_code: &str,
+    ) -> Result<super::DuressUnlockAt, CoincubeError> {
+        let url = format!("{}/api/v1/connect/duress/trigger-with-code", self.base_url);
+        let req = super::TriggerWithCodeRequest {
+            account_id: account_id.to_string(),
+            duress_code: duress_code.to_string(),
+        };
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<super::DuressUnlockAt> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// `POST /api/v1/connect/duress/trigger` (authenticated). Used by
+    /// activation paths where the user is already signed in (e.g. an in-app
+    /// "Activate Duress Mode" button), parallel to the Keychain fallback.
+    pub async fn trigger_duress_authed(&self) -> Result<super::DuressUnlockAt, CoincubeError> {
+        let url = format!("{}/api/v1/connect/duress/trigger", self.base_url);
+        let res = self.client.post(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<super::DuressUnlockAt> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// `POST /api/v1/connect/duress/clear` (authenticated). Submits the
+    /// all-clear passphrase hash after the lockout window expires.
+    pub async fn clear_duress(&self, all_clear_passphrase_hash: &str) -> Result<(), CoincubeError> {
+        let url = format!("{}/api/v1/connect/duress/clear", self.base_url);
+        let req = super::ClearDuressRequest {
+            all_clear_passphrase_hash: all_clear_passphrase_hash.to_string(),
+        };
+        let res = self.client.post(&url).json(&req).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// `GET /api/v1/connect/duress` (authenticated). Returns the account's
+    /// duress state plus whether THIS device is already registered.
+    pub async fn get_duress_state(&self) -> Result<super::DuressState, CoincubeError> {
+        let url = format!("{}/api/v1/connect/duress", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<super::DuressState> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// `GET /api/v1/cubes/{cube_id}/recovery-kit` (Approach C, dual-password).
+    ///
+    /// Distinct from [`get_recovery_kit`](Self::get_recovery_kit): the password
+    /// hash gates which envelope (regular vs. duress) the server returns, and a
+    /// duress password yields `423 DURESS_LOCKED` rather than a kit. The hash is
+    /// sent in the `X-CRK-Password-Hash` header rather than the query string so
+    /// it never lands in access logs.
+    ///
+    /// NOTE: the exact transport is pinned by Connect API Phase 4; the header
+    /// name here is provisional and revisited in Phase 7.
+    pub async fn download_recovery_kit(
+        &self,
+        cube_id: u64,
+        crk_password_hash: &str,
+    ) -> Result<RecoveryKit, super::DownloadError> {
+        use super::DownloadError;
+        let url = format!("{}/api/v1/cubes/{}/recovery-kit", self.base_url, cube_id);
+        let res = self
+            .client
+            .get(&url)
+            .header("X-CRK-Password-Hash", crk_password_hash)
+            .send()
+            .await
+            .map_err(|e| DownloadError::Other(e.into()))?;
+        let status = res.status();
+        if status.is_success() {
+            let resp: ApiResponse<RecoveryKit> = res
+                .json()
+                .await
+                .map_err(|e| DownloadError::Other(e.into()))?;
+            return Ok(resp.data);
+        }
+        match status.as_u16() {
+            423 => {
+                let body = res.text().await.unwrap_or_default();
+                Err(DownloadError::from_locked_body(&body))
+            }
+            400 | 401 | 403 | 404 | 422 => Err(DownloadError::Invalid),
+            other => Err(DownloadError::Other(CoincubeError::Unsuccessful(
+                crate::services::http::NotSuccessResponseInfo {
+                    status_code: other,
+                    text: res.text().await.unwrap_or_default(),
+                },
+            ))),
+        }
+    }
+}
+
 /// Parses a response's `Retry-After` header per RFC 7231 §7.1.3.
 ///
 /// Accepts both documented forms:
@@ -2455,5 +2601,292 @@ mod cube_member_tests {
             "expected 400 Unsuccessful; got {:?}",
             err
         );
+    }
+}
+
+#[cfg(test)]
+mod duress_tests {
+    use super::*;
+    use crate::services::coincube::{DownloadError, EnrollDuressRequest};
+    use httpmock::{Method as MockMethod, MockServer};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn enroll_duress_200_ok() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::POST)
+                .path("/api/v1/connect/duress/enroll");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({ "success": true, "data": {} }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        client
+            .enroll_duress(EnrollDuressRequest {
+                all_clear_hash: "ac-hash".into(),
+                duress_crk_password_hash: Some("crk-hash".into()),
+                unlock_delay_minutes: 1440,
+                device_fingerprint: "fp-1".into(),
+                duress_code_hash: "code-hash".into(),
+            })
+            .await
+            .expect("enroll should succeed");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn register_device_code_200_ok() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::POST)
+                .path("/api/v1/connect/duress/register-device-code");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({ "success": true, "data": {} }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        client
+            .register_device_duress_code("fp-2", "code-hash-2")
+            .await
+            .expect("register should succeed");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn trigger_with_code_200_decodes_unlock_at() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::POST)
+                .path("/api/v1/connect/duress/trigger-with-code");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": { "unlockAt": "2026-06-09T12:00:00Z" }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let out = client
+            .trigger_duress_with_code("acct_1", "raw-code")
+            .await
+            .expect("trigger should succeed");
+        mock.assert();
+        assert_eq!(out.unlock_at.to_rfc3339(), "2026-06-09T12:00:00+00:00");
+    }
+
+    #[tokio::test]
+    async fn trigger_authed_200_decodes_unlock_at() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::POST)
+                .path("/api/v1/connect/duress/trigger");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": { "unlockAt": "2026-07-01T00:00:00Z" }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let out = client
+            .trigger_duress_authed()
+            .await
+            .expect("trigger should succeed");
+        mock.assert();
+        assert_eq!(out.unlock_at.to_rfc3339(), "2026-07-01T00:00:00+00:00");
+    }
+
+    #[tokio::test]
+    async fn clear_duress_200_ok() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::POST)
+                .path("/api/v1/connect/duress/clear");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({ "success": true, "data": {} }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        client
+            .clear_duress("ac-hash")
+            .await
+            .expect("clear should succeed");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn get_duress_state_200_decodes() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET).path("/api/v1/connect/duress");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "active": true,
+                        "unlockAt": "2026-06-09T12:00:00Z",
+                        "enrolled": true,
+                        "thisDeviceRegistered": false
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let state = client
+            .get_duress_state()
+            .await
+            .expect("state should decode");
+        mock.assert();
+        assert!(state.active);
+        assert!(state.enrolled);
+        assert!(!state.this_device_registered);
+        assert!(state.unlock_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn get_duress_state_tolerates_missing_optionals() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET).path("/api/v1/connect/duress");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": { "active": false, "enrolled": false }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let state = client
+            .get_duress_state()
+            .await
+            .expect("state should decode");
+        assert!(!state.active);
+        assert!(!state.enrolled);
+        assert!(!state.this_device_registered);
+        assert!(state.unlock_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn download_kit_200_returns_kit() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/cubes/42/recovery-kit")
+                .header("X-CRK-Password-Hash", "regular-hash");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "id": 1,
+                        "cubeId": 42,
+                        "encryptedCubeSeed": "seed-envelope",
+                        "encryptedWalletDescriptor": "",
+                        "encryptionScheme": "aes-256-gcm",
+                        "createdAt": "2026-04-23T00:00:00Z",
+                        "updatedAt": "2026-04-23T00:00:00Z"
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let kit = client
+            .download_recovery_kit(42, "regular-hash")
+            .await
+            .expect("kit should download");
+        mock.assert();
+        assert_eq!(kit.cube_id, 42);
+        assert_eq!(kit.encrypted_cube_seed, "seed-envelope");
+    }
+
+    #[tokio::test]
+    async fn download_kit_423_duress_locked() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/cubes/42/recovery-kit");
+            then.status(423)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "error": {
+                        "code": "DURESS_LOCKED",
+                        "unlockAt": "2026-06-10T00:00:00Z"
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .download_recovery_kit(42, "duress-hash")
+            .await
+            .expect_err("expected duress lock");
+        match err {
+            DownloadError::DuressLocked { unlock_at } => {
+                assert_eq!(
+                    unlock_at.expect("unlock_at present").to_rfc3339(),
+                    "2026-06-10T00:00:00+00:00"
+                );
+            }
+            other => panic!("expected DuressLocked, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn download_kit_423_trusted_device_delay() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/cubes/42/recovery-kit");
+            then.status(423)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "error": {
+                        "code": "TRUSTED_DEVICE_DELAY",
+                        "availableAt": "2026-06-11T00:00:00Z"
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .download_recovery_kit(42, "regular-hash")
+            .await
+            .expect_err("expected trusted-device delay");
+        match err {
+            DownloadError::TrustedDeviceDelay { available_at } => {
+                assert_eq!(
+                    available_at.expect("available_at present").to_rfc3339(),
+                    "2026-06-11T00:00:00+00:00"
+                );
+            }
+            other => panic!("expected TrustedDeviceDelay, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn download_kit_403_is_invalid() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/cubes/42/recovery-kit");
+            then.status(403)
+                .header("content-type", "application/json")
+                .json_body(json!({ "error": { "code": "WRONG_PASSWORD" } }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .download_recovery_kit(42, "bad-hash")
+            .await
+            .expect_err("expected invalid");
+        assert!(matches!(err, DownloadError::Invalid), "got {:?}", err);
     }
 }

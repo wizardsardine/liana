@@ -179,6 +179,11 @@ pub enum Message {
     /// prompt. The Pane intercepts it and focuses the Home tab on its
     /// Connect section.
     OpenConnectSignIn,
+    /// Remote duress activation arrived over the gRPC stream (Phase 7b). The
+    /// tab shell intercepts this and locks the running app into the cryptic
+    /// "Duress Mode Activated" screen — WITHOUT wiping (remote activation can
+    /// be accidental; only a local duress PIN wipes).
+    DuressLockRemote,
     ToggleTheme,
     DismissReceivedCelebration,
     DismissBackupWarning,
@@ -1092,6 +1097,97 @@ pub enum ConnectAccountMessage {
     UserProfileLoaded(crate::services::coincube::User),
     /// User profile refresh failed (non-auth error)
     UserProfileFailed(String),
+    // --- Duress (Phases 6 & 8) ---
+    /// Result of the post-sign-in `get_duress_state` gate. `Some` switches to
+    /// the recovery flow when `active`; `None` is a failed/unreachable check
+    /// and triggers a bounded retry (the `u8` is the attempt count) so a
+    /// transient error doesn't silently leave the user on the dashboard while
+    /// the account is in duress.
+    DuressStateChecked(Option<crate::services::coincube::DuressState>, u64, u8),
+    /// User tapped Retry on the post-login duress verification gate after the
+    /// check failed (retries exhausted).
+    RetryDuressCheck,
+    /// Completion of the background "register this device's duress code" task
+    /// (Phase 0). No-op at the UI level — the work is a side effect.
+    DuressDeviceRegistered,
+    /// Recovery flow + enrollment wizard messages (nested to keep this enum
+    /// tidy).
+    Duress(DuressMessage),
+}
+
+/// Messages for the duress recovery flow (Phase 6) and enrollment wizard
+/// (Phases 2 & 8), nested under [`ConnectAccountMessage::Duress`].
+///
+/// `Debug` is hand-written (not derived) because the `*Changed` variants carry
+/// secret keystrokes — duress/regular PINs, the all-clear and CRK passwords —
+/// that would otherwise leak into any tracing snapshot of a parent message
+/// (this enum bubbles up through `ConnectAccountMessage` → `view::Message` →
+/// top-level `Message`, all of which derive `Debug`).
+#[derive(Clone)]
+pub enum DuressMessage {
+    // ── Recovery (Phase 6) ──
+    RecoveryPassphraseChanged(String),
+    SubmitClear,
+    ClearResult(Result<(), String>, u64),
+    ForgotAllClear,
+    /// After a successful clear, leave recovery and enter the normal dashboard
+    /// (where restore-from-CRK is reachable).
+    FinishRecovery,
+
+    // ── Enrollment wizard (Phases 2 & 8) ──
+    /// Begin enrollment. Entitled users start at Tier 1 (with the account-level
+    /// duress recovery-kit password); non-Connect users get the sovereign flow.
+    StartEnrollment,
+    /// Begin enrollment WITHOUT a recovery kit (Tier 2 — the plan's Task 2.1
+    /// "Continue without recovery kit (advanced)"). Skips the CRK-password step.
+    /// Only offered to entitled users, since the panel can't see per-Cube CRK
+    /// state to auto-select the tier.
+    StartEnrollmentWithoutCrk,
+    /// Sovereign "Sign up for Connect" CTA → the Register flow.
+    SignUpForConnect,
+    CancelEnrollment,
+    EnrollBack,
+    EnrollNext,
+    RegularPinChanged(String),
+    DuressPinChanged(String),
+    AllClearChanged(String),
+    CrkPasswordChanged(String),
+    DelaySelected(crate::services::duress::enroll::DuressDelay),
+    SovereignConfirmChanged(String),
+    MemorizedToggled(bool),
+    SubmitEnrollment,
+    EnrollResult(Result<(), String>, u64),
+}
+
+impl std::fmt::Debug for DuressMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use DuressMessage::*;
+        match self {
+            // Sensitive — never print the typed secret.
+            RecoveryPassphraseChanged(_) => write!(f, "RecoveryPassphraseChanged(<redacted>)"),
+            RegularPinChanged(_) => write!(f, "RegularPinChanged(<redacted>)"),
+            DuressPinChanged(_) => write!(f, "DuressPinChanged(<redacted>)"),
+            AllClearChanged(_) => write!(f, "AllClearChanged(<redacted>)"),
+            CrkPasswordChanged(_) => write!(f, "CrkPasswordChanged(<redacted>)"),
+            SovereignConfirmChanged(_) => write!(f, "SovereignConfirmChanged(<redacted>)"),
+            // Non-sensitive — `ClearResult`/`EnrollResult` carry only an error
+            // string (no secret), so they format normally.
+            SubmitClear => write!(f, "SubmitClear"),
+            ClearResult(res, gen) => write!(f, "ClearResult({:?}, {})", res, gen),
+            ForgotAllClear => write!(f, "ForgotAllClear"),
+            FinishRecovery => write!(f, "FinishRecovery"),
+            StartEnrollment => write!(f, "StartEnrollment"),
+            StartEnrollmentWithoutCrk => write!(f, "StartEnrollmentWithoutCrk"),
+            SignUpForConnect => write!(f, "SignUpForConnect"),
+            CancelEnrollment => write!(f, "CancelEnrollment"),
+            EnrollBack => write!(f, "EnrollBack"),
+            EnrollNext => write!(f, "EnrollNext"),
+            DelaySelected(d) => write!(f, "DelaySelected({:?})", d),
+            MemorizedToggled(b) => write!(f, "MemorizedToggled({})", b),
+            SubmitEnrollment => write!(f, "SubmitEnrollment"),
+            EnrollResult(res, gen) => write!(f, "EnrollResult({:?}, {})", res, gen),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1724,5 +1820,47 @@ mod recovery_kit_upload_outcome_debug_tests {
             rendered
         );
         assert!(rendered.contains("<redacted>"));
+    }
+}
+
+#[cfg(test)]
+mod duress_message_debug_tests {
+    use super::DuressMessage;
+
+    /// Canary string; if it ever shows up in a Debug render the redaction has
+    /// regressed and a typed PIN/passphrase would leak into logs.
+    const CANARY: &str = "canary-secret-XYZZY-do-not-leak";
+
+    #[test]
+    fn sensitive_variants_are_redacted() {
+        let sensitive = [
+            DuressMessage::RecoveryPassphraseChanged(CANARY.to_string()),
+            DuressMessage::RegularPinChanged(CANARY.to_string()),
+            DuressMessage::DuressPinChanged(CANARY.to_string()),
+            DuressMessage::AllClearChanged(CANARY.to_string()),
+            DuressMessage::CrkPasswordChanged(CANARY.to_string()),
+            DuressMessage::SovereignConfirmChanged(CANARY.to_string()),
+        ];
+        for msg in &sensitive {
+            let rendered = format!("{:?}", msg);
+            assert!(
+                !rendered.contains(CANARY),
+                "Debug({:?}) leaked the secret payload",
+                rendered
+            );
+            assert!(rendered.contains("<redacted>"), "got {}", rendered);
+        }
+    }
+
+    #[test]
+    fn non_sensitive_variants_format_normally() {
+        assert_eq!(
+            format!("{:?}", DuressMessage::SubmitEnrollment),
+            "SubmitEnrollment"
+        );
+        assert_eq!(
+            format!("{:?}", DuressMessage::MemorizedToggled(true)),
+            "MemorizedToggled(true)"
+        );
     }
 }

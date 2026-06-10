@@ -43,3 +43,5 @@ audit-report.json
 audit-sonar.json
 clippy-sonar.json
 wildcard-cleanup-plan.md
+# Understand-Anything: keep architecture graph local (public repo)
+.understand-anything/

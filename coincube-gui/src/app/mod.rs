@@ -786,6 +786,190 @@ fn is_daemon_unreachable(e: &Error) -> bool {
     )
 }
 
+/// Persist a completed duress enrollment locally (Phases 2 & 8). Writes the
+/// duress PIN hash onto **every** Cube in `network` — a duress wipe takes all
+/// Cubes on the device, so the duress PIN must trip from any Cube's unlock —
+/// and stores this device's ChaCha20-encrypted duress code in
+/// `DuressLocalState` (data-dir root, outside the wiped tree). Shared by the
+/// App, Home, and Launcher surfaces, all of which can host the Connect Duress
+/// panel. Hashing happens inside this async task so the UI thread never blocks
+/// on argon2.
+/// Every per-network directory under the datadir root that holds a
+/// `settings.json` (i.e. has Cubes). A duress enrollment verifies + writes the
+/// duress PIN across all of these, matching the all-networks scope of the wipe.
+fn duress_enroll_network_dirs(root: &std::path::Path) -> Vec<crate::dir::NetworkDirectory> {
+    let mut dirs = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() && p.join(crate::app::settings::SETTINGS_FILE_NAME).is_file() {
+                dirs.push(crate::dir::NetworkDirectory::new(p));
+            }
+        }
+    }
+    dirs
+}
+
+/// Best-effort restore of the first `count` networks' settings to their
+/// pre-enrollment snapshot, undoing the duress PIN hashes written in step 1.
+/// Used when a later step (another network, or the local-state save) fails, so
+/// the device never ends up with Cubes armed but the matching enrollment state
+/// missing.
+async fn rollback_duress_pin_writes(
+    network_dirs: &[crate::dir::NetworkDirectory],
+    prior_settings: &[crate::app::settings::Settings],
+    count: usize,
+) {
+    for j in 0..count {
+        let restore = prior_settings[j].clone();
+        if let Err(re) =
+            crate::app::settings::update_settings_file(&network_dirs[j], move |_| Some(restore))
+                .await
+        {
+            log::error!("duress: rollback of network {j} settings failed: {re}");
+        }
+    }
+}
+
+pub(crate) async fn persist_duress_enrollment(
+    datadir: CoincubeDirectory,
+    regular_pin: zeroize::Zeroizing<String>,
+    duress_pin: zeroize::Zeroizing<String>,
+    duress_code: zeroize::Zeroizing<String>,
+    account_id: Option<String>,
+) -> Result<(), String> {
+    // A duress wipe takes every Cube on EVERY network under the datadir, so the
+    // duress PIN must trip from any of them — set it (and verify against it) on
+    // all per-network settings, not just the active one.
+    let root = datadir.path().to_path_buf();
+    let network_dirs = duress_enroll_network_dirs(&root);
+    // No per-network settings.json found — there are no Cubes to arm (or the
+    // data directory couldn't be read). Fail loud instead of marking duress
+    // "enabled" with no duress PIN written anywhere.
+    if network_dirs.is_empty() {
+        return Err(
+            "Couldn't find any Cubes on this device to protect with duress mode.".to_string(),
+        );
+    }
+
+    // 0. Guard against arming a near-miss duress PIN, across ALL networks,
+    //    BEFORE writing anything. The wizard could only check the duress PIN
+    //    against the *re-typed* regular PIN; verify that re-typed value against
+    //    each Cube's ACTUAL stored PIN and re-check distinctness against the
+    //    real one. If the user mistyped their PIN (so the wizard's check was
+    //    meaningless) or the duress PIN is within one edit of a real unlock
+    //    PIN, refuse — otherwise a fat-fingered unlock could trip a wipe.
+    let mut prior_settings: Vec<crate::app::settings::Settings> =
+        Vec::with_capacity(network_dirs.len());
+    let mut total_cubes = 0usize;
+    for network_dir in &network_dirs {
+        // We enumerated this dir because it HAS a settings.json. If it now
+        // can't be read (corrupt/parse/IO, or a race), fail loud rather than
+        // skip the safety check and arm an unverified duress PIN anyway.
+        let settings = crate::app::settings::Settings::from_file(network_dir)
+            .map_err(|e| format!("Couldn't read your Cube settings to verify your PIN: {e}"))?;
+        for cube in &settings.cubes {
+            total_cubes += 1;
+            if cube.has_pin() {
+                if !cube.verify_pin(&regular_pin) {
+                    return Err(
+                        "That PIN doesn't match your Cube PIN. Enter your real PIN so the \
+                         duress PIN can be safely checked against it. (All your Cubes must \
+                         share the same PIN to enable duress.)"
+                            .to_string(),
+                    );
+                }
+                crate::services::duress::enroll::validate_duress_pin(&regular_pin, &duress_pin)?;
+            }
+        }
+        // Snapshot the pre-write state so a later failure can roll back.
+        prior_settings.push(settings);
+    }
+    // Settings files exist but hold no Cubes — the write below would set
+    // duress_pin_hash on nothing. Don't mark duress "enabled" when no Cube is
+    // actually armed and no PIN path can trip a wipe.
+    if total_cubes == 0 {
+        return Err(
+            "Couldn't find any Cubes on this device to protect with duress mode.".to_string(),
+        );
+    }
+
+    // 1. Duress PIN hash → every Cube on every network. Sequential file writes
+    //    have no cross-file transaction, so if a later network fails, roll back
+    //    the networks already written to their snapshot — the device must never
+    //    end up with some networks armed and others not.
+    let hash = crate::services::duress::enroll::hash_duress_secret(&duress_pin)?;
+    let mut written = 0usize;
+    // Count the Cubes that actually had a duress_pin_hash written, at write
+    // time. update_settings_file re-reads each settings file under its lock, so
+    // this is authoritative even if the on-disk Cube set changed since the
+    // step-0 snapshot — we never mark enrolled when zero hashes were written.
+    let armed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    for (i, network_dir) in network_dirs.iter().enumerate() {
+        let h = hash.clone();
+        let armed = armed.clone();
+        let write = crate::app::settings::update_settings_file(network_dir, move |mut s| {
+            let mut n = 0usize;
+            for cube in s.cubes.iter_mut() {
+                cube.duress_pin_hash = Some(h.clone());
+                n += 1;
+            }
+            armed.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+            Some(s)
+        })
+        .await;
+        match write {
+            Ok(()) => written = i + 1,
+            Err(e) => {
+                rollback_duress_pin_writes(&network_dirs, &prior_settings, written).await;
+                return Err(format!(
+                    "Couldn't arm the duress PIN on all your Cubes ({e}); no changes were kept."
+                ));
+            }
+        }
+    }
+    // Settings files were present but held no Cubes at write time — no
+    // duress_pin_hash was set anywhere. Roll the (content-unchanged) writes back
+    // and abort rather than mark duress enabled with no PIN that can trip a wipe.
+    if armed.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        rollback_duress_pin_writes(&network_dirs, &prior_settings, written).await;
+        return Err(
+            "Couldn't find any Cubes on this device to protect with duress mode.".to_string(),
+        );
+    }
+
+    // 2. Encrypted device code + account id → DuressLocalState. The encrypted
+    //    code is skipped when empty (the server-enroll path re-enters with an
+    //    empty code once it's already stored). The account id is set
+    //    unconditionally — including to `None` for a sovereign enrollment — so
+    //    re-enrolling sovereign clears any previously stored Connect account id
+    //    and local activation can't trigger-with-code against a stale account.
+    //    `load` is resilient (missing → default); only `save` and the
+    //    encryption are fail-loud. If this fails AFTER step 1 armed the PIN
+    //    hashes, roll those back too — otherwise Cubes stay armed (and would
+    //    wipe on the duress PIN) while the matching enrollment state is missing.
+    let local: Result<(), String> = (|| {
+        // load() already maps a missing file to Ok(default); a real parse/IO
+        // error must NOT be papered over with a default that save() then writes
+        // back, clobbering valid state. Propagate it (rolling back step 1).
+        let mut st = crate::services::duress::DuressLocalState::load(&root)
+            .map_err(|e| format!("Couldn't read existing duress state: {e}"))?;
+        st.enrolled = true;
+        st.account_id = account_id;
+        if !duress_code.is_empty() {
+            let key = crate::services::duress::cipher::DeviceKey::load_or_create(&root)
+                .map_err(|e| e.to_string())?;
+            st.duress_code = Some(key.encrypt(&duress_code)?);
+        }
+        st.save(&root).map_err(|e| e.to_string())
+    })();
+    if let Err(e) = local {
+        rollback_duress_pin_writes(&network_dirs, &prior_settings, network_dirs.len()).await;
+        return Err(e);
+    }
+    Ok(())
+}
+
 /// Poll the local bitcoind's IBD progress via its JSON-RPC interface.
 /// Returns `(verificationprogress, initialblockdownload)` or an error string.
 async fn check_bitcoind_sync_progress(
@@ -1808,6 +1992,87 @@ impl App {
                 ));
                 Task::batch([persist_task, dispatch_task])
             }
+            M::DuressActivated { unlock_at, source } => {
+                // Phase 7b: remote duress activation. Persist active state to
+                // DuressLocalState (at the data-dir root) WITHOUT wiping —
+                // remote activation can be accidental, so local Cube data is
+                // left intact. The UI lock is sequenced AFTER the persist (it's
+                // the task's completion message, not a parallel batch) so the
+                // cryptic screen never appears before `active` is durable; if
+                // the app exits right after seeing the lock, the relaunch
+                // reconcile still routes back into duress.
+                log::warn!(
+                    "[CONNECT GRPC] Duress activated remotely (source={})",
+                    source
+                );
+                let root = self.datadir.path().to_path_buf();
+                Task::perform(
+                    async move {
+                        // load() already maps a missing file to Ok(default); a
+                        // real parse/IO error must NOT be papered over with a
+                        // default that save() then writes back, clobbering valid
+                        // state (enrolled / account_id / encrypted code). Skip
+                        // the persist on a real read error — the UI still locks
+                        // below, and the DuressLockRemote backstop / session-check
+                        // re-sync handle durability.
+                        let mut st = match crate::services::duress::DuressLocalState::load(&root) {
+                            Ok(st) => st,
+                            Err(e) => {
+                                log::warn!(
+                                    "[CONNECT GRPC] reading duress state failed; \
+                                     not overwriting: {e}"
+                                );
+                                return;
+                            }
+                        };
+                        st.active = true;
+                        st.unlock_at = unlock_at;
+                        // Retry: a failed persist would let a relaunch reconcile
+                        // (which keys off st.active) drop back to the normal Home
+                        // flow with Cube data intact while the server is still in
+                        // duress. The DuressLockRemote handler re-persists as a
+                        // final backstop tied to the UI lock.
+                        for attempt in 1..=3 {
+                            match st.save(&root) {
+                                Ok(()) => break,
+                                Err(e) => log::warn!(
+                                    "[CONNECT GRPC] persist remote duress state \
+                                     attempt {attempt}/3 failed: {e}"
+                                ),
+                            }
+                        }
+                    },
+                    |_| Message::View(view::Message::DuressLockRemote),
+                )
+            }
+            M::DuressCleared => {
+                log::info!("[CONNECT GRPC] Duress cleared remotely");
+                let root = self.datadir.path().to_path_buf();
+                Task::perform(
+                    async move {
+                        // As above: skip on a real read error so a transient
+                        // failure can't clobber valid state with a default. The
+                        // cryptic screen's own server poll re-syncs the cleared
+                        // state on the next check.
+                        let mut st = match crate::services::duress::DuressLocalState::load(&root) {
+                            Ok(st) => st,
+                            Err(e) => {
+                                log::warn!(
+                                    "[CONNECT GRPC] reading duress state failed; \
+                                     not overwriting: {e}"
+                                );
+                                return;
+                            }
+                        };
+                        st.active = false;
+                        st.unlock_at = None;
+                        if let Err(e) = st.save(&root) {
+                            log::warn!("[CONNECT GRPC] Failed to clear remote duress state: {e}");
+                        }
+                    },
+                    |_| Message::CacheUpdated,
+                )
+            }
         }
     }
 
@@ -2373,6 +2638,48 @@ impl App {
                     }
                 }
             },
+            Message::CompleteDuressEnrollment(payload) => {
+                // Drop a completion that outlived its Connect session: a logout
+                // or session reset bumps `session_generation`, and persisting
+                // now would arm the duress PIN + DuressLocalState for an account
+                // the user is no longer signed into.
+                if payload.gen != self.panels.connect.account.session_generation() {
+                    log::warn!("duress: ignoring enrollment completion from a stale session");
+                    return Task::none();
+                }
+                // Phases 2 & 8: the Connect panel collected + validated the
+                // credentials and (for Connect tiers) enrolled on the server;
+                // persist the duress PIN + this device's encrypted code here,
+                // where the Cube + datadir context lives. Shared with the Home
+                // and Launcher surfaces, which also host the Connect Duress
+                // panel (see `persist_duress_enrollment`).
+                let crate::app::message::DuressEnrollmentPayload {
+                    regular_pin,
+                    duress_pin,
+                    duress_code,
+                    account_id,
+                    ..
+                } = payload;
+                let datadir = self.datadir.clone();
+                return Task::perform(
+                    persist_duress_enrollment(
+                        datadir,
+                        regular_pin,
+                        duress_pin,
+                        duress_code,
+                        account_id,
+                    ),
+                    |res| match res {
+                        Ok(()) => Message::CacheUpdated,
+                        Err(e) => {
+                            log::error!("duress: failed to persist enrollment: {e}");
+                            Message::View(view::Message::ShowError(format!(
+                                "Couldn't finish enabling duress mode: {e}. Please try again."
+                            )))
+                        }
+                    },
+                );
+            }
             Message::CacheUpdated => {
                 // Cube (Home) Settings lives on every cube, vault or not,
                 // so its cache update must fire independently of the

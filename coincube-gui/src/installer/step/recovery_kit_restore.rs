@@ -648,9 +648,24 @@ impl Step for RecoveryKitRestoreStep {
                             });
                             self.error = Some(e.to_string());
                         } else {
-                            self.set_phase(Phase::Error {
-                                message: e.to_string(),
-                            });
+                            // Approach C (Phase 7): a 423 from the download is a
+                            // terminal, plausibly-deniable cue — not a password
+                            // retry. DURESS_LOCKED acknowledges the activation
+                            // landed; TRUSTED_DEVICE_DELAY shows the wait time.
+                            let message = match &e {
+                                RestoreError::TrustedDeviceDelay {
+                                    available_at: Some(at),
+                                } => format!(
+                                    "Recovery kit download is delayed on new devices. \
+                                     Available at {}.",
+                                    at.with_timezone(&chrono::Local)
+                                        .format("%b %d, %Y %H:%M %Z")
+                                ),
+                                // DURESS_LOCKED and a timeless delay use the
+                                // typed Display message.
+                                _ => e.to_string(),
+                            };
+                            self.set_phase(Phase::Error { message });
                         }
                         Task::none()
                     }

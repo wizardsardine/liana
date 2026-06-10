@@ -27,7 +27,7 @@ use crate::{
         settings::{
             self,
             global::{AccountTier, GlobalSettings},
-            AuthConfig, CubeSettings, WalletSettings,
+            AuthConfig, CubeConnectState, CubeSettings, WalletSettings,
         },
         state::connect::ConnectAccountPanel,
         view::ConnectAccountMessage,
@@ -1466,6 +1466,44 @@ impl Home {
                 Task::none()
             }
 
+            Message::PersistDuressEnrollment(payload) => {
+                // Drop a completion that outlived its Connect session: a logout
+                // or session reset bumps `session_generation`, and persisting
+                // now would arm the duress PIN + DuressLocalState for an account
+                // the user is no longer signed into.
+                if payload.gen != self.connect_account.session_generation() {
+                    log::warn!("duress: ignoring enrollment completion from a stale session");
+                    return Task::none();
+                }
+                let app::message::DuressEnrollmentPayload {
+                    regular_pin,
+                    duress_pin,
+                    duress_code,
+                    account_id,
+                    ..
+                } = payload;
+                Task::perform(
+                    app::persist_duress_enrollment(
+                        self.datadir_path.clone(),
+                        regular_pin,
+                        duress_pin,
+                        duress_code,
+                        account_id,
+                    ),
+                    |res| match res {
+                        Ok(()) => Message::View(ViewMessage::Check),
+                        Err(e) => {
+                            log::error!("duress: failed to persist enrollment: {e}");
+                            // Surface via the Connect panel's error display.
+                            Message::View(ViewMessage::ConnectAccount(
+                                ConnectAccountMessage::Error(format!(
+                                    "Couldn't finish enabling duress mode: {e}. Please try again."
+                                )),
+                            ))
+                        }
+                    },
+                )
+            }
             Message::View(ViewMessage::ConnectAccount(msg)) => {
                 // The banner CTAs navigate the panel to Plan & Billing by
                 // setting its `active_sub`, but the sidebar highlight follows
@@ -2126,9 +2164,10 @@ fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
             ("Contacts", ConnectSubMenu::Contacts),
             ("Plan & Billing", ConnectSubMenu::PlanBilling),
             ("Security", ConnectSubMenu::Security),
-            // Duress is hidden until the backend endpoint (/connect/duress)
-            // is implemented — keep the ConnectSubMenu::Duress variant and
-            // duress_ux() so re-enabling is a one-line revert.
+            // Duress (Phase 9). The duress_ux() panel gates on the
+            // `duress_remote_lock` entitlement and shows an upgrade prompt for
+            // Free, so the entry is safe to show for any authenticated user.
+            ("Duress", ConnectSubMenu::Duress),
         ];
         for (label, sub) in items {
             let is_active = matches!(
@@ -2396,29 +2435,33 @@ fn cubes_list_item<'a>(
     i: usize,
     signed_in: bool,
 ) -> Element<'a, ViewMessage> {
-    // Hover hint on the cloud icon explains the sync state. When the user
-    // is signed out, an unsynced Cube is local-only and the tooltip points
-    // them at sign-in; when signed in, an unsynced Cube is mid-sync (the
-    // catch-up sync registers it on reload) so the wording differs.
-    let (sync_icon, sync_hint): (Element<'a, ViewMessage>, &'static str) = if cube.remote_synced {
-        (
-            icon::cloud_check_icon().style(theme::text::success).into(),
-            "Synced to Connect and available on your other devices.",
-        )
-    } else if signed_in {
-        (
-            icon::cloud_slash_icon()
-                .style(theme::text::secondary)
-                .into(),
-            "Not yet synced to Connect. It will sync automatically in a moment.",
-        )
-    } else {
-        (
-            icon::cloud_slash_icon().style(theme::text::warning).into(),
-            "Saved on this device only. Sign in to Connect to sync this Cube to \
-             your other devices and the Keychain mobile app.",
-        )
-    };
+    // Single tri-state cube icon (Phase 1, duress mode): the Cube's
+    // relationship to Connect — Sovereign (outline) → Registered (filled,
+    // half-tone) → Backed up (filled, full colour) — so users can tell at a
+    // glance whether a Cube has a recovery kit before they're told what a
+    // duress wipe costs. The signed-in-but-not-yet-synced case keeps its
+    // distinct "mid-sync" wording (catch-up sync registers it on reload).
+    let (sync_icon, sync_hint): (Element<'a, ViewMessage>, &'static str) =
+        match cube.connect_state() {
+            CubeConnectState::BackedUp => (
+                icon::cube_icon().style(theme::text::success).into(),
+                "Backed up to Connect — recovery kit ready",
+            ),
+            CubeConnectState::Registered => (
+                icon::cube_icon().style(theme::text::secondary).into(),
+                "Registered to Connect — no recovery kit",
+            ),
+            CubeConnectState::Sovereign if signed_in => (
+                icon::cube_outline_icon()
+                    .style(theme::text::secondary)
+                    .into(),
+                "Not yet synced to Connect. It will sync automatically in a moment.",
+            ),
+            CubeConnectState::Sovereign => (
+                icon::cube_outline_icon().style(theme::text::warning).into(),
+                "Sovereign — local only",
+            ),
+        };
     let sync_indicator = iced_tooltip::Tooltip::new(
         sync_icon,
         Container::new(p2_regular(sync_hint))
@@ -2731,6 +2774,11 @@ fn map_connect_task(task: Task<app::message::Message>) -> Task<Message> {
         app::message::Message::View(app::view::Message::OpenUrl(url)) => {
             Message::View(ViewMessage::OpenUrl(url))
         }
+        // Duress enrollment persistence (Phases 2 & 8): relay to Home, which
+        // has the datadir + Cube settings to actually write it.
+        app::message::Message::CompleteDuressEnrollment(payload) => {
+            Message::PersistDuressEnrollment(payload)
+        }
         _ => {
             log::warn!("[LAUNCHER] Unexpected message from ConnectAccountPanel");
             Message::View(ViewMessage::Check)
@@ -2762,6 +2810,11 @@ pub enum Message {
     ),
     StartRecovery,
     CubeCreated(Result<CubeSettings, String>),
+    /// Relay of `app::Message::CompleteDuressEnrollment` from the Connect panel
+    /// hosted here. Home owns the datadir + Cube settings, so it persists the
+    /// duress PIN + device code (the panel itself can't). Without this the
+    /// enrollment would be silently dropped by `map_connect_task`.
+    PersistDuressEnrollment(app::message::DuressEnrollmentPayload),
     /// Window ID extracted for passkey webview.
     PasskeyWindowId(iced_wry::ExtractedWindowId),
     /// Passkey webview manager update.

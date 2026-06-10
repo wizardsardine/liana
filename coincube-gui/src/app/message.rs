@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use zeroize::Zeroizing;
+
 use coincube_core::miniscript::bitcoin::{
     address::NetworkUnchecked,
     bip32::{ChildNumber, Fingerprint},
@@ -198,6 +200,42 @@ pub enum Message {
         email: String,
         cube_uuid: Option<String>,
     },
+    /// Persist a completed duress enrollment (Phases 2 & 8). Emitted by the
+    /// Connect panel, which lacks Cube/datadir context; handled by the App,
+    /// which writes the active Cube's duress PIN hash and this device's
+    /// encrypted duress code into `DuressLocalState`.
+    CompleteDuressEnrollment(DuressEnrollmentPayload),
+}
+
+/// Sensitive payload for [`Message::CompleteDuressEnrollment`]. The duress PIN
+/// and code are wrapped in `Zeroizing` so their heap bytes are scrubbed on
+/// drop (the message is cloned/relayed across the App/Home/Launcher surfaces).
+/// `Debug` is also hand-written to redact them so they never reach a tracing
+/// snapshot of the parent message. `Clone` is required because the Home/Launcher
+/// `Message` enums (which relay this from their Connect panels) derive `Clone`.
+#[derive(Clone)]
+pub struct DuressEnrollmentPayload {
+    /// The user's re-typed regular PIN. Carried so the persist step can verify
+    /// it against each Cube's ACTUAL stored PIN (the wizard can only check the
+    /// re-typed value) before arming the duress PIN.
+    pub regular_pin: Zeroizing<String>,
+    pub duress_pin: Zeroizing<String>,
+    pub duress_code: Zeroizing<String>,
+    /// Connect account id, persisted so the unauth activation POST can address
+    /// it later. `None` for sovereign (no-Connect) enrollment.
+    pub account_id: Option<String>,
+    pub gen: u64,
+}
+
+impl std::fmt::Debug for DuressEnrollmentPayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DuressEnrollmentPayload")
+            .field("regular_pin", &"<redacted>")
+            .field("duress_pin", &"<redacted>")
+            .field("duress_code", &"<redacted>")
+            .field("gen", &self.gen)
+            .finish()
+    }
 }
 
 #[derive(Debug)]

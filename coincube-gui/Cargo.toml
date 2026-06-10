@@ -77,7 +77,7 @@ log = "0.4"
 dirs = "6"
 toml = "0.9"
 rand = "0.8"
-chrono = "0.4.38"
+chrono = { version = "0.4.38", features = ["serde"] }
 mostro-core = "0.7"
 nostr-sdk = { version = "0.43.0", features = ["nip06", "nip59"] }
 bip39 = { version = "2.1.0", features = ["rand"] }

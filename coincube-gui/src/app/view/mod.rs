@@ -2,6 +2,7 @@ mod message;
 
 pub mod buysell;
 pub mod connect;
+pub mod duress;
 pub mod global_home;
 pub mod liquid;
 pub mod nav;

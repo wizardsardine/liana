@@ -234,6 +234,19 @@ pub fn derive_master_signer_fingerprint(
     })
 }
 
+/// A Cube's relationship to Connect, rendered as a single tri-state cube icon
+/// on the Cubes list (Phase 1 of duress mode). The progression
+/// Sovereign → Registered → Backed up mirrors increasing recoverability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CubeConnectState {
+    /// Not registered with Connect — local-only, no server-side recovery.
+    Sovereign,
+    /// Registered with Connect but no Cube Recovery Kit uploaded yet.
+    Registered,
+    /// Registered with Connect and a Cube Recovery Kit is present.
+    BackedUp,
+}
+
 /// Cubes represent user accounts that can contain multiple features (Vault, Liquid wallet, etc.)
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CubeSettings {
@@ -255,6 +268,12 @@ pub struct CubeSettings {
     /// Optional security PIN (stored as Argon2id hash with salt in PHC format)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security_pin_hash: Option<String>,
+    /// Optional duress PIN (Argon2id PHC hash). Entering this PIN at Cube
+    /// unlock activates duress mode (Phase 3) instead of unlocking. Distinct
+    /// from `security_pin_hash`; enrollment enforces a Levenshtein distance of
+    /// at least 2 between them so it can't be triggered by accident.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duress_pin_hash: Option<String>,
     /// Fingerprint of this Cube's master seed MasterSigner.
     /// All wallets (Vault, Liquid, Spark) derive from this single seed.
     /// The serde aliases keep existing settings.json files readable without migration.
@@ -316,6 +335,7 @@ impl CubeSettings {
             created_at: chrono::Utc::now().timestamp(),
             vault_wallet_id: None,
             security_pin_hash: None,
+            duress_pin_hash: None,
             master_signer_fingerprint: None,
             backed_up: false,
             mfa_done: false,
@@ -354,6 +374,30 @@ impl CubeSettings {
         self.passkey_metadata.is_some()
     }
 
+    /// True when this Cube has a Cube Recovery Kit pushed to Connect. We treat
+    /// a recorded backed-up descriptor fingerprint as the CRK-presence signal
+    /// (`recovery_kit_last_backed_up_descriptor_fingerprint` is set on a
+    /// successful kit upload and cleared on delete). Distinct from
+    /// [`backed_up`](Self::backed_up), which tracks the *local* seed-phrase
+    /// backup, not the server-side recovery kit.
+    pub fn has_recovery_kit(&self) -> bool {
+        self.recovery_kit_last_backed_up_descriptor_fingerprint
+            .is_some()
+    }
+
+    /// Classifies this Cube's relationship to Connect for the card indicator
+    /// (Phase 1 of duress mode). Users must be able to tell at a glance whether
+    /// a Cube has a recovery kit before they're told what a duress wipe costs.
+    pub fn connect_state(&self) -> CubeConnectState {
+        if !self.remote_synced {
+            CubeConnectState::Sovereign
+        } else if self.has_recovery_kit() {
+            CubeConnectState::BackedUp
+        } else {
+            CubeConnectState::Registered
+        }
+    }
+
     pub fn with_pin(mut self, pin: &str) -> Result<Self, Box<dyn std::error::Error>> {
         self.security_pin_hash = Some(Self::hash_pin(pin)?);
         Ok(self)
@@ -369,6 +413,33 @@ impl CubeSettings {
         } else {
             // No PIN set, allow access
             true
+        }
+    }
+
+    /// Sets this Cube's duress PIN (Argon2id PHC hash). Callers must have
+    /// already validated distinctness from the regular PIN via
+    /// [`services::duress::enroll::validate_duress_pin`].
+    pub fn with_duress_pin(mut self, pin: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        self.duress_pin_hash = Some(Self::hash_pin(pin)?);
+        Ok(self)
+    }
+
+    pub fn has_duress_pin(&self) -> bool {
+        self.duress_pin_hash.is_some()
+    }
+
+    /// Verifies a candidate PIN against the stored duress-PIN hash.
+    ///
+    /// Returns `false` when no duress PIN is configured — the opposite default
+    /// from [`verify_pin`](Self::verify_pin), which *allows* access when unset.
+    /// A duress match must only ever happen on an explicit, deliberate
+    /// configuration. Callers MUST run [`verify_pin`](Self::verify_pin) first
+    /// and only consult this on a regular-PIN miss, so the regular unlock path
+    /// is never shadowed and the two argon2 verifies take comparable time.
+    pub fn verify_duress_pin(&self, pin: &str) -> bool {
+        match &self.duress_pin_hash {
+            Some(stored_hash) => Self::verify_argon2_pin(pin, stored_hash),
+            None => false,
         }
     }
 
@@ -1321,6 +1392,72 @@ mod test {
             cube.master_signer_fingerprint.map(|f| f.to_string()),
             Some("aabbccdd".to_string()),
             "serde alias should map old field name to master_signer_fingerprint"
+        );
+    }
+
+    #[test]
+    fn connect_state_classifies_three_tiers() {
+        use super::{CubeConnectState, CubeSettings};
+        use coincube_core::miniscript::bitcoin::Network;
+
+        // Sovereign: not registered with Connect.
+        let mut cube = CubeSettings::new("Sovereign".to_string(), Network::Bitcoin);
+        cube.remote_synced = false;
+        assert_eq!(cube.connect_state(), CubeConnectState::Sovereign);
+        assert!(!cube.has_recovery_kit());
+
+        // Registered: synced to Connect, no recovery kit yet.
+        cube.remote_synced = true;
+        assert_eq!(cube.connect_state(), CubeConnectState::Registered);
+
+        // Backed up: synced AND a recovery-kit descriptor has been pushed.
+        cube.recovery_kit_last_backed_up_descriptor_fingerprint = Some("abc123".to_string());
+        assert!(cube.has_recovery_kit());
+        assert_eq!(cube.connect_state(), CubeConnectState::BackedUp);
+
+        // A recovery kit on a Cube that somehow lost remote_synced still reads
+        // as Sovereign — registration is the gating signal.
+        cube.remote_synced = false;
+        assert_eq!(cube.connect_state(), CubeConnectState::Sovereign);
+    }
+
+    #[test]
+    fn duress_pin_verify_is_independent_of_regular_pin() {
+        use super::CubeSettings;
+        use coincube_core::miniscript::bitcoin::Network;
+
+        // No duress PIN set → never matches (opposite default from verify_pin).
+        let plain = CubeSettings::new("No duress".to_string(), Network::Bitcoin)
+            .with_pin("1234")
+            .unwrap();
+        assert!(!plain.has_duress_pin());
+        assert!(!plain.verify_duress_pin("1234"));
+        assert!(!plain.verify_duress_pin("0000"));
+
+        // With a duress PIN: only the duress PIN matches verify_duress_pin, and
+        // only the regular PIN matches verify_pin.
+        let cube = CubeSettings::new("Both".to_string(), Network::Bitcoin)
+            .with_pin("1234")
+            .unwrap()
+            .with_duress_pin("8765")
+            .unwrap();
+        assert!(cube.verify_pin("1234"));
+        assert!(!cube.verify_pin("8765"));
+        assert!(cube.verify_duress_pin("8765"));
+        assert!(!cube.verify_duress_pin("1234"));
+    }
+
+    #[test]
+    fn backed_up_flag_is_not_recovery_kit() {
+        use super::CubeSettings;
+        use coincube_core::miniscript::bitcoin::Network;
+
+        // `backed_up` is the local seed-phrase backup, not the server CRK.
+        let mut cube = CubeSettings::new("Seed only".to_string(), Network::Bitcoin);
+        cube.backed_up = true;
+        assert!(
+            !cube.has_recovery_kit(),
+            "local seed backup must not be mistaken for a Connect recovery kit"
         );
     }
 }
