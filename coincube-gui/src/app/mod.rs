@@ -861,6 +861,7 @@ pub(crate) async fn persist_duress_enrollment(
     //    PIN, refuse — otherwise a fat-fingered unlock could trip a wipe.
     let mut prior_settings: Vec<crate::app::settings::Settings> =
         Vec::with_capacity(network_dirs.len());
+    let mut total_cubes = 0usize;
     for network_dir in &network_dirs {
         // We enumerated this dir because it HAS a settings.json. If it now
         // can't be read (corrupt/parse/IO, or a race), fail loud rather than
@@ -868,6 +869,7 @@ pub(crate) async fn persist_duress_enrollment(
         let settings = crate::app::settings::Settings::from_file(network_dir)
             .map_err(|e| format!("Couldn't read your Cube settings to verify your PIN: {e}"))?;
         for cube in &settings.cubes {
+            total_cubes += 1;
             if cube.has_pin() {
                 if !cube.verify_pin(&regular_pin) {
                     return Err(
@@ -882,6 +884,14 @@ pub(crate) async fn persist_duress_enrollment(
         }
         // Snapshot the pre-write state so a later failure can roll back.
         prior_settings.push(settings);
+    }
+    // Settings files exist but hold no Cubes — the write below would set
+    // duress_pin_hash on nothing. Don't mark duress "enabled" when no Cube is
+    // actually armed and no PIN path can trip a wipe.
+    if total_cubes == 0 {
+        return Err(
+            "Couldn't find any Cubes on this device to protect with duress mode.".to_string(),
+        );
     }
 
     // 1. Duress PIN hash → every Cube on every network. Sequential file writes
