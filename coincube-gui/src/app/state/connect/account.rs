@@ -682,9 +682,7 @@ impl ConnectAccountPanel {
                 // passphrases, generated code) and the recovery all-clear
                 // passphrase before dropping them, so they don't survive the
                 // session reset.
-                if let Some(mut wizard) = self.duress_enroll.take() {
-                    wizard.zeroize_secrets();
-                }
+                self.clear_duress_enroll();
                 self.scrub_recovery_passphrase();
                 self.clear_keyring_session();
                 self.client = CoincubeClient::new();
@@ -1382,6 +1380,9 @@ impl ConnectAccountPanel {
     /// Opens the duress enrollment wizard at `step` for `tier`, resetting all
     /// inputs. Shared by the Tier 1 / Tier 2 / Sovereign entry points.
     fn open_enroll_wizard(&mut self, tier: EnrollTier, step: DuressEnrollStep) {
+        // Scrub any wizard already in flight before replacing it, so re-opening
+        // never drops its secrets unzeroized.
+        self.clear_duress_enroll();
         self.duress_enroll = Some(DuressEnrollState {
             tier,
             step,
@@ -1405,6 +1406,17 @@ impl ConnectAccountPanel {
     fn scrub_recovery_passphrase(&mut self) {
         if let ConnectFlowStep::DuressRecovery { passphrase, .. } = &mut self.step {
             zeroize::Zeroize::zeroize(passphrase);
+        }
+    }
+
+    /// The single teardown path for the enrollment wizard: zeroize its secrets
+    /// (PINs, passphrases, pending code) before dropping it, so no branch that
+    /// cancels, completes, or replaces `duress_enroll` leaves them on the heap.
+    /// Completion paths clone the few values they forward into a `Zeroizing`
+    /// payload first, then call this to scrub the originals.
+    fn clear_duress_enroll(&mut self) {
+        if let Some(mut wizard) = self.duress_enroll.take() {
+            wizard.zeroize_secrets();
         }
     }
 
@@ -1503,21 +1515,14 @@ impl ConnectAccountPanel {
                 self.open_enroll_wizard(EnrollTier::Tier2, DuressEnrollStep::SetDuressPin);
             }
             DuressMessage::SignUpForConnect => {
-                // Scrub the wizard's secrets (PINs, passphrases, pending code)
-                // before dropping it, like logout does — leaving the flow must
-                // not leave them on the heap.
-                if let Some(mut wizard) = self.duress_enroll.take() {
-                    wizard.zeroize_secrets();
-                }
+                self.clear_duress_enroll();
                 self.step = ConnectFlowStep::Register {
                     email: String::new(),
                     loading: false,
                 };
             }
             DuressMessage::CancelEnrollment => {
-                if let Some(mut wizard) = self.duress_enroll.take() {
-                    wizard.zeroize_secrets();
-                }
+                self.clear_duress_enroll();
             }
             DuressMessage::RegularPinChanged(v) => {
                 if let Some(e) = &mut self.duress_enroll {
@@ -1591,7 +1596,7 @@ impl ConnectAccountPanel {
                     // No Connect call — local wipe + cryptic only. Persist now.
                     let regular_pin = e.regular_pin.clone();
                     let duress_pin = e.duress_pin.clone();
-                    self.duress_enroll = None;
+                    self.clear_duress_enroll();
                     return iced::Task::done(Message::CompleteDuressEnrollment(
                         crate::app::message::DuressEnrollmentPayload {
                             regular_pin: zeroize::Zeroizing::new(regular_pin),
@@ -1607,7 +1612,11 @@ impl ConnectAccountPanel {
                 // code are persisted locally only after a successful
                 // EnrollResult, so a server failure can't leave a half-armed
                 // duress PIN on disk. Stash the code for that success handler.
-                e.pending_code = Some(code.clone());
+                // Zeroize any code stashed by a prior submit (retry) before
+                // replacing it, so the superseded plaintext doesn't linger.
+                if let Some(mut old) = e.pending_code.replace(code.clone()) {
+                    zeroize::Zeroize::zeroize(&mut old);
+                }
                 let all_clear_hash = enroll::hash_duress_secret(&e.all_clear);
                 let crk_hash = if tier == EnrollTier::Tier1 {
                     Some(enroll::hash_duress_secret(&e.crk_password))
@@ -1676,18 +1685,24 @@ impl ConnectAccountPanel {
                         // Doing this only on success means a server failure
                         // never leaves a half-armed duress PIN on disk.
                         let account_id = self.user.as_ref().map(|u| u.id.to_string());
-                        if let Some(e) = self.duress_enroll.take() {
-                            return iced::Task::done(Message::CompleteDuressEnrollment(
-                                crate::app::message::DuressEnrollmentPayload {
-                                    regular_pin: zeroize::Zeroizing::new(e.regular_pin),
-                                    duress_pin: zeroize::Zeroizing::new(e.duress_pin),
-                                    duress_code: zeroize::Zeroizing::new(
-                                        e.pending_code.unwrap_or_default(),
-                                    ),
-                                    account_id,
-                                    gen,
-                                },
-                            ));
+                        // Clone the forwarded secrets into the Zeroizing payload,
+                        // then scrub the wizard via the shared helper — this path
+                        // must not drop the leftover fields (all_clear, CRK
+                        // password, sovereign_confirm) unzeroized.
+                        let payload = self.duress_enroll.as_ref().map(|e| {
+                            crate::app::message::DuressEnrollmentPayload {
+                                regular_pin: zeroize::Zeroizing::new(e.regular_pin.clone()),
+                                duress_pin: zeroize::Zeroizing::new(e.duress_pin.clone()),
+                                duress_code: zeroize::Zeroizing::new(
+                                    e.pending_code.clone().unwrap_or_default(),
+                                ),
+                                account_id,
+                                gen,
+                            }
+                        });
+                        if let Some(payload) = payload {
+                            self.clear_duress_enroll();
+                            return iced::Task::done(Message::CompleteDuressEnrollment(payload));
                         }
                     }
                     Err(msg) => {
