@@ -371,9 +371,15 @@ impl std::fmt::Debug for RestorePinSetupMsg {
 pub enum InternalBitcoindMsg {
     Previous,
     Reload,
+    /// Pick the managed node flavour (Bitcoin Core or Bitcoin Knots + RDTS)
+    /// before the download starts.
+    SelectFlavor(crate::node::bitcoind::NodeFlavor),
     DefineConfig,
     Download,
     DownloadProgressed(super::step::DownloadUpdate),
+    /// Result of fetching the release `SHA256SUMS`/`.asc` (Knots) the archive is
+    /// verified against; `Ok(None)` for Core.
+    ManifestFetched(Result<Option<(String, String)>, String>),
     Install,
     Start,
 }

@@ -42,6 +42,11 @@ IS_NOT_BITCOIND_24 = bool(int(os.getenv("IS_NOT_BITCOIND_24", True)))
 USE_TAPROOT = bool(
     int(os.getenv("USE_TAPROOT", False))
 )  # TODO: switch to True in a couple releases.
+# When set, the managed bitcoind is started with `consensusrules=rdts`, enforcing
+# BIP-110 (RDTS). Only valid on Bitcoin Knots — Core rejects the key — so this is
+# set exclusively for the Knots CI leg. `... or "0"` tolerates the empty string
+# GitHub Actions passes for matrix keys absent on a given leg.
+ENFORCE_RDTS = bool(int(os.getenv("ENFORCE_RDTS") or "0"))
 
 
 COIN = 10**8

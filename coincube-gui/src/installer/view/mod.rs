@@ -1531,13 +1531,15 @@ pub fn select_bitcoind_type<'a>(
 
 pub fn start_internal_bitcoind<'a>(
     progress: (usize, usize),
+    flavor: crate::node::bitcoind::NodeFlavor,
     exe_path: Option<&PathBuf>,
     started: Option<&Result<(), StartInternalBitcoindError>>,
     error: Option<&'a String>,
     download_state: Option<&DownloadState>,
     install_state: Option<&InstallState>,
 ) -> Element<'a, Message> {
-    let version = crate::node::bitcoind::VERSION;
+    let version = flavor.version();
+    let flavor_name = flavor.display_name();
     layout(
         progress,
         None,
@@ -1554,7 +1556,7 @@ pub fn start_internal_bitcoind<'a>(
                         .spacing(10)
                         .align_y(Alignment::Center)
                         .push(text(format!(
-                            "Downloading Bitcoin Core {version}... {progress:.2}%"
+                            "Downloading {flavor_name} {version}... {progress:.2}%"
                         ))),
                     DownloadState::Errored(e) => Row::new()
                         .spacing(10)

@@ -8,7 +8,7 @@ use crate::{
         },
     },
     export::ImportExportMessage,
-    node::bitcoind::{Bitcoind, RpcAuthType},
+    node::bitcoind::{Bitcoind, NodeFlavor, RpcAuthType},
     services::{
         fiat::{Currency, PriceSource},
         sideshift::{ShiftQuote, ShiftResponse, ShiftStatus, SideshiftNetwork},
@@ -416,6 +416,9 @@ pub enum NodeSettingsMessage {
     SetupLocalNodeConfirm,
     // Mode picker: false = self-managed external, true = COINCUBE-managed internal
     SetupLocalNodeModeSelected(bool),
+    // COINCUBE-managed picker: choose the node flavour (Core or Knots + RDTS)
+    // and begin the managed download/install in one step.
+    SetupLocalNodeManagedFlavor(NodeFlavor),
     // Internal (COINCUBE-managed) node setup progress
     SetupLocalNodeDownloadProgress(f32),
     SetupLocalNodeDownloadComplete(Result<Vec<u8>, String>),

@@ -48,6 +48,14 @@ const MIN_BITCOIND_VERSION: u64 = 240000;
 // The minimum bitcoind version that can be used with coincubed and a Taproot descriptor.
 const MIN_TAPROOT_BITCOIND_VERSION: u64 = 260000;
 
+/// Whether a node's numeric `getnetworkinfo.version` is supported, given whether
+/// a Taproot descriptor is in use. We gate on this number alone — Bitcoin Knots
+/// 29.x reports `290000` exactly like Core 29.x, so Knots (a Core superset) is
+/// accepted without special-casing its `(knots…)` subversion string.
+fn is_supported_bitcoind_version(version: u64, is_taproot: bool) -> bool {
+    version >= MIN_BITCOIND_VERSION && (!is_taproot || version >= MIN_TAPROOT_BITCOIND_VERSION)
+}
+
 /// An error in the bitcoind interface.
 #[derive(Debug)]
 pub enum BitcoindError {
@@ -480,6 +488,18 @@ impl BitcoinD {
             .expect("Missing or invalid 'version' in 'getnetworkinfo' result?")
     }
 
+    /// The node's self-reported build string, e.g. `/Satoshi:29.0.0/` for
+    /// Bitcoin Core or `/Satoshi:29.3.0(knots20260508)/` for Bitcoin Knots.
+    /// Informational only — we gate compatibility on the numeric `version`, not
+    /// this string, so Knots (a Core superset) is accepted like any other build.
+    fn get_bitcoind_subversion(&self) -> String {
+        self.make_node_request("getnetworkinfo", None)
+            .get("subversion")
+            .and_then(Json::as_str)
+            .unwrap_or("unknown")
+            .to_string()
+    }
+
     fn get_network_bip70(&self) -> String {
         self.make_node_request("getblockchaininfo", None)
             .get("chain")
@@ -705,12 +725,17 @@ impl BitcoinD {
         config_network: bitcoin::Network,
         is_taproot: bool,
     ) -> Result<(), BitcoindError> {
-        // Check the minimum supported bitcoind version
+        // Check the minimum supported bitcoind version. We gate on the numeric
+        // `version` (Knots' 29.x base reports 290000, clearing both thresholds),
+        // and log the subversion so the detected build — Core or Knots — is
+        // visible without affecting compatibility.
         let version = self.get_bitcoind_version();
-        if version < MIN_BITCOIND_VERSION {
-            return Err(BitcoindError::InvalidVersion(version));
-        }
-        if is_taproot && version < MIN_TAPROOT_BITCOIND_VERSION {
+        log::info!(
+            "Connected to bitcoind: subversion '{}', version {}.",
+            self.get_bitcoind_subversion(),
+            version
+        );
+        if !is_supported_bitcoind_version(version, is_taproot) {
             return Err(BitcoindError::InvalidVersion(version));
         }
 
@@ -1582,6 +1607,20 @@ impl From<&&Json> for MempoolEntryFees {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Bitcoin Knots 29.x shares Core's numeric `getnetworkinfo.version` scheme:
+    // the 29.x base reports 290000. Compatibility is gated on that number, not
+    // on the `(knots…)` subversion string, so a Knots node clears both the
+    // baseline and the Taproot-descriptor minimums exactly like Core 29.x.
+    #[test]
+    fn knots_numeric_version_is_supported() {
+        let knots_29x: u64 = 290000;
+        assert!(is_supported_bitcoind_version(knots_29x, false));
+        assert!(is_supported_bitcoind_version(knots_29x, true));
+        // The gate still rejects nodes below the baseline / Taproot minimums.
+        assert!(!is_supported_bitcoind_version(230000, false));
+        assert!(!is_supported_bitcoind_version(250000, true));
+    }
 
     #[test]
     fn test_rounded_up_progress() {

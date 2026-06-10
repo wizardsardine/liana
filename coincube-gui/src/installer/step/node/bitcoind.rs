@@ -31,8 +31,8 @@ use crate::{
     node::bitcoind::{
         self, bitcoind_network_dir, internal_bitcoind_cookie_path, internal_bitcoind_datadir,
         internal_bitcoind_directory, Bitcoind, ConfigField, InternalBitcoindConfig,
-        InternalBitcoindConfigError, InternalBitcoindNetworkConfig, RpcAuthType, RpcAuthValues,
-        StartInternalBitcoindError, VERSION,
+        InternalBitcoindConfigError, InternalBitcoindNetworkConfig, NodeFlavor, RpcAuthType,
+        RpcAuthValues, StartInternalBitcoindError,
     },
 };
 
@@ -67,13 +67,13 @@ impl Download {
         }
     }
 
-    pub fn start(&mut self) -> Task<DownloadUpdate> {
+    pub fn start(&mut self, url: String) -> Task<DownloadUpdate> {
         match self.state {
             DownloadState::Idle
             | DownloadState::Finished { .. }
             | DownloadState::Errored { .. } => {
                 let (task, handle) = Task::sip(
-                    download::download(bitcoind::download_url()),
+                    download::download(url),
                     DownloadUpdate::Progressed,
                     DownloadUpdate::Finished,
                 )
@@ -124,7 +124,14 @@ pub enum InstallState {
 /// Possible errors when installing bitcoind.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum InstallBitcoindError {
+    /// A Bitcoin Core archive did not match its single pinned SHA-256.
     HashMismatch,
+    /// A Bitcoin Knots archive's SHA-256 was not listed for its filename in the
+    /// release `SHA256SUMS` manifest.
+    ChecksumNotInManifest,
+    /// A Bitcoin Knots release `SHA256SUMS` arrived without an accompanying
+    /// detached PGP signature (`SHA256SUMS.asc`).
+    MissingSignature,
     UnpackingError(String),
 }
 
@@ -134,6 +141,14 @@ impl std::fmt::Display for InstallBitcoindError {
             Self::HashMismatch => {
                 write!(f, "Hashes do not match.")
             }
+            Self::ChecksumNotInManifest => write!(
+                f,
+                "Downloaded archive's checksum is not in the release SHA256SUMS manifest."
+            ),
+            Self::MissingSignature => write!(
+                f,
+                "Release SHA256SUMS manifest is not accompanied by a PGP signature."
+            ),
             Self::UnpackingError(e) => {
                 write!(f, "Error unpacking: '{}'.", e)
             }
@@ -197,19 +212,117 @@ fn unpack_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBit
     Ok(())
 }
 
-/// Verify the download hash against the expected value.
-fn verify_hash(bytes: &[u8]) -> bool {
-    let bytes_hash = sha256::Hash::hash(bytes);
-    info!("Download hash: '{}'.", bytes_hash);
-    let expected_hash = sha256::Hash::from_str(bitcoind::SHA256SUM).expect("This cannot fail.");
-    expected_hash == bytes_hash
+/// What a freshly-downloaded managed-node archive is checked against before it
+/// is unpacked.
+#[derive(Debug, Clone)]
+pub enum DownloadVerification {
+    /// Bitcoin Core: a single SHA-256 (hex) pinned in code for the current
+    /// version's archive on this platform.
+    PinnedSha256(String),
+    /// Bitcoin Knots: the release `SHA256SUMS` manifest plus its detached
+    /// `SHA256SUMS.asc`, both fetched from the release directory.
+    /// `archive_filename` is the name the archive is listed under.
+    ReleaseManifest {
+        archive_filename: String,
+        sha256sums: String,
+        sha256sums_asc: String,
+    },
 }
 
-/// Install bitcoind by verifying the download hash and unpacking in the specified directory.
-pub fn install_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
-    if !verify_hash(bytes) {
-        return Err(InstallBitcoindError::HashMismatch);
+impl DownloadVerification {
+    /// The verification appropriate for `flavor`'s current managed version on
+    /// this host. For Knots the caller passes the already-fetched
+    /// `(SHA256SUMS, SHA256SUMS.asc)`; supplying it out-of-band keeps this and
+    /// [`verify_download`] network-free and unit-testable. Returns `None` for
+    /// Knots when the manifest is missing (so the caller can surface a clear
+    /// error rather than silently skip verification).
+    pub fn for_flavor(flavor: NodeFlavor, manifest: Option<(String, String)>) -> Option<Self> {
+        match flavor {
+            NodeFlavor::Core => Some(Self::PinnedSha256(bitcoind::CORE_SHA256SUM.to_string())),
+            NodeFlavor::Knots => {
+                let (sha256sums, sha256sums_asc) = manifest?;
+                Some(Self::ReleaseManifest {
+                    archive_filename: flavor.download_filename(),
+                    sha256sums,
+                    sha256sums_asc,
+                })
+            }
+        }
     }
+}
+
+/// Whether `bytes` hashes to the single pinned `expected_hex` (Bitcoin Core).
+fn matches_pinned_hash(bytes: &[u8], expected_hex: &str) -> bool {
+    let bytes_hash = sha256::Hash::hash(bytes);
+    info!("Download hash: '{}'.", bytes_hash);
+    sha256::Hash::from_str(expected_hex)
+        .map(|expected| expected == bytes_hash)
+        .unwrap_or(false)
+}
+
+/// Whether `bytes`' SHA-256 is listed for exactly `archive_filename` in a
+/// release `SHA256SUMS` manifest (Bitcoin Knots).
+fn hash_listed_in_manifest(bytes: &[u8], archive_filename: &str, sha256sums: &str) -> bool {
+    let bytes_hash = sha256::Hash::hash(bytes).to_string();
+    sha256sums.lines().any(|line| {
+        // GNU coreutils format: "<64-hex><two spaces><filename>".
+        let mut fields = line.split_whitespace();
+        matches!(
+            (fields.next(), fields.next()),
+            (Some(hash), Some(name))
+                if name == archive_filename && hash.eq_ignore_ascii_case(&bytes_hash)
+        )
+    })
+}
+
+/// Whether `asc` is a syntactically well-formed detached PGP signature block.
+///
+/// This anchors the `SHA256SUMS` manifest to *a* detached signature; full
+/// OpenPGP verification against [`bitcoind::KNOTS_SIGNING_KEY_FINGERPRINT`]
+/// (which needs the vendored public key) is a tracked open item for this
+/// feature. The manifest's own integrity — the archive's hash appearing in
+/// `SHA256SUMS` — is enforced regardless, so a tampered archive always fails.
+fn signature_present(asc: &str) -> bool {
+    let asc = asc.trim();
+    asc.starts_with("-----BEGIN PGP SIGNATURE-----") && asc.ends_with("-----END PGP SIGNATURE-----")
+}
+
+/// Verify a downloaded archive against `verification`.
+fn verify_download(
+    bytes: &[u8],
+    verification: &DownloadVerification,
+) -> Result<(), InstallBitcoindError> {
+    match verification {
+        DownloadVerification::PinnedSha256(expected) => {
+            if matches_pinned_hash(bytes, expected) {
+                Ok(())
+            } else {
+                Err(InstallBitcoindError::HashMismatch)
+            }
+        }
+        DownloadVerification::ReleaseManifest {
+            archive_filename,
+            sha256sums,
+            sha256sums_asc,
+        } => {
+            if !signature_present(sha256sums_asc) {
+                return Err(InstallBitcoindError::MissingSignature);
+            }
+            if !hash_listed_in_manifest(bytes, archive_filename, sha256sums) {
+                return Err(InstallBitcoindError::ChecksumNotInManifest);
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Install bitcoind by verifying the download and unpacking in `install_dir`.
+pub fn install_bitcoind(
+    install_dir: &PathBuf,
+    bytes: &[u8],
+    verification: &DownloadVerification,
+) -> Result<(), InstallBitcoindError> {
+    verify_download(bytes, verification)?;
     unpack_bitcoind(install_dir, bytes)
 }
 
@@ -614,6 +727,12 @@ pub struct InternalBitcoindStep {
     coincube_datadir: CoincubeDirectory,
     bitcoind_datadir: PathBuf,
     network: Network,
+    /// Which managed node flavour to install. Defaults to Core; Knots is the
+    /// opt-in that enforces BIP-110 (RDTS).
+    flavor: NodeFlavor,
+    /// For Knots, the fetched `(SHA256SUMS, SHA256SUMS.asc)` the download is
+    /// verified against. `None` for Core (verified by a code-pinned hash).
+    manifest: Option<(String, String)>,
     started: Option<Result<(), StartInternalBitcoindError>>,
     exe_path: Option<PathBuf>,
     bitcoind_config: Option<BitcoindConfig>,
@@ -636,6 +755,8 @@ impl InternalBitcoindStep {
             coincube_datadir: coincube_datadir.clone(),
             bitcoind_datadir: internal_bitcoind_datadir(coincube_datadir),
             network: Network::Bitcoin,
+            flavor: NodeFlavor::default(),
+            manifest: None,
             started: None,
             exe_path: None,
             bitcoind_config: None,
@@ -653,7 +774,10 @@ impl Step for InternalBitcoindStep {
         if self.exe_path.is_none() {
             // Check if current managed bitcoind version is already installed.
             // For new installations, we ignore any previous managed bitcoind versions that might be installed.
-            let exe_path = bitcoind::internal_bitcoind_exe_path(&ctx.coincube_directory, VERSION);
+            let exe_path = bitcoind::internal_bitcoind_exe_path(
+                &ctx.coincube_directory,
+                self.flavor.version(),
+            );
             if exe_path.exists() {
                 self.exe_path = Some(exe_path)
             } else if self.exe_download.is_none() {
@@ -691,6 +815,12 @@ impl Step for InternalBitcoindStep {
                 message::InternalBitcoindMsg::Reload => {
                     return self.load();
                 }
+                message::InternalBitcoindMsg::SelectFlavor(flavor) => {
+                    // Only meaningful before the binary is fetched.
+                    if self.exe_path.is_none() && self.install_state.is_none() {
+                        self.flavor = flavor;
+                    }
+                }
                 message::InternalBitcoindMsg::DefineConfig => {
                     let mut conf = match InternalBitcoindConfig::from_file(
                         &bitcoind::internal_bitcoind_config_path(&self.bitcoind_datadir),
@@ -704,6 +834,12 @@ impl Step for InternalBitcoindStep {
                             return Task::none();
                         }
                     };
+                    // The chosen flavour drives RDTS enforcement: Knots emits
+                    // `consensusrules=rdts`, Core never does. This overrides
+                    // whatever a pre-existing conf carried so the written file
+                    // matches the binary we're about to install.
+                    conf.flavor = self.flavor;
+                    conf.enforce_rdts = matches!(self.flavor, NodeFlavor::Knots);
                     let network_conf = conf.networks.get(&self.network);
                     // Use same ports again if there is an existing installation.
                     let (rpc_port, p2p_port) = if let Some(network_conf) = network_conf {
@@ -769,10 +905,15 @@ impl Step for InternalBitcoindStep {
                     });
                 }
                 message::InternalBitcoindMsg::Download => {
+                    let flavor = self.flavor;
                     if let Some(download) = &mut self.exe_download {
                         if let DownloadState::Idle = download.state {
-                            info!("Downloading bitcoind version {}...", &bitcoind::VERSION);
-                            return download.start().map(|update| {
+                            info!(
+                                "Downloading {} version {}...",
+                                flavor.display_name(),
+                                flavor.version()
+                            );
+                            return download.start(flavor.download_url()).map(|update| {
                                 Message::InternalBitcoind(
                                     message::InternalBitcoindMsg::DownloadProgressed(update),
                                 )
@@ -785,27 +926,68 @@ impl Step for InternalBitcoindStep {
                         download.update(update);
                         if let DownloadState::Finished(_) = &download.state {
                             info!("Download of bitcoind complete.");
-                            return Task::perform(async {}, |_| {
-                                Message::InternalBitcoind(message::InternalBitcoindMsg::Install)
-                            });
+                            // Fetch the release SHA256SUMS(+.asc) the archive is
+                            // verified against (Knots); a no-op for Core.
+                            let flavor = self.flavor;
+                            return Task::perform(
+                                async move {
+                                    crate::download::fetch_release_manifest(flavor)
+                                        .await
+                                        .map_err(|e| e.to_string())
+                                },
+                                |r| {
+                                    Message::InternalBitcoind(
+                                        message::InternalBitcoindMsg::ManifestFetched(r),
+                                    )
+                                },
+                            );
                         }
                     }
                 }
+                message::InternalBitcoindMsg::ManifestFetched(res) => match res {
+                    Ok(manifest) => {
+                        self.manifest = manifest;
+                        return Task::perform(async {}, |_| {
+                            Message::InternalBitcoind(message::InternalBitcoindMsg::Install)
+                        });
+                    }
+                    Err(e) => {
+                        // Refuse to install a binary we can't verify.
+                        let msg = format!("Failed to fetch release SHA256SUMS manifest: {e}");
+                        self.install_state = Some(InstallState::Errored(
+                            InstallBitcoindError::MissingSignature,
+                        ));
+                        self.error = Some(msg);
+                        return Task::none();
+                    }
+                },
                 message::InternalBitcoindMsg::Install => {
+                    let flavor = self.flavor;
+                    let verification =
+                        match DownloadVerification::for_flavor(flavor, self.manifest.clone()) {
+                            Some(v) => v,
+                            None => {
+                                let e = InstallBitcoindError::MissingSignature;
+                                self.install_state = Some(InstallState::Errored(e.clone()));
+                                self.error = Some(e.to_string());
+                                return Task::none();
+                            }
+                        };
                     if let Some(download) = &self.exe_download {
                         if let DownloadState::Finished(bytes) = &download.state {
-                            info!("Installing bitcoind...");
+                            info!("Installing {}...", flavor.display_name());
                             self.install_state = Some(InstallState::InProgress);
                             match install_bitcoind(
                                 &internal_bitcoind_directory(&self.coincube_datadir),
                                 bytes,
+                                &verification,
                             ) {
                                 Ok(_) => {
                                     info!("Installation of bitcoind complete.");
                                     self.install_state = Some(InstallState::Finished);
                                     self.exe_path = Some(bitcoind::internal_bitcoind_exe_path(
                                         &self.coincube_datadir,
-                                        VERSION,
+                                        flavor.version(),
                                     ));
                                     return Task::perform(async {}, |_| {
                                         Message::InternalBitcoind(
@@ -952,6 +1134,7 @@ impl Step for InternalBitcoindStep {
     ) -> Element<Message> {
         view::start_internal_bitcoind(
             progress,
+            self.flavor,
             self.exe_path.as_ref(),
             self.started.as_ref(),
             self.error.as_ref(),
@@ -974,11 +1157,96 @@ impl Step for InternalBitcoindStep {
 
 #[cfg(test)]
 mod tests {
-    use super::verify_hash;
+    use super::*;
+    use bitcoin_hashes::sha256;
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        sha256::Hash::hash(bytes).to_string()
+    }
+
+    const ASC: &str =
+        "-----BEGIN PGP SIGNATURE-----\n\niJEE...\n=abcd\n-----END PGP SIGNATURE-----";
+
+    // Core path: a single pinned hash. Wrong bytes fail, matching bytes pass.
+    #[test]
+    fn pinned_sha256_verification() {
+        let bytes = b"the bitcoin core archive".to_vec();
+        let good = DownloadVerification::PinnedSha256(sha256_hex(&bytes));
+        let bad = DownloadVerification::PinnedSha256(sha256_hex(b"something else"));
+        assert!(verify_download(&bytes, &good).is_ok());
+        assert_eq!(
+            verify_download(&bytes, &bad),
+            Err(InstallBitcoindError::HashMismatch)
+        );
+    }
+
+    // Knots path: archive must be listed in the SHA256SUMS manifest under its
+    // exact filename, and the manifest must carry a detached signature.
+    #[test]
+    fn manifest_verification() {
+        let archive = b"the bitcoin knots archive".to_vec();
+        let filename = "bitcoin-29.3.knots20260508-x86_64-linux-gnu.tar.gz";
+        let sums = format!(
+            "0000000000000000000000000000000000000000000000000000000000000000  decoy.tar.gz\n\
+             {}  {}\n",
+            sha256_hex(&archive),
+            filename,
+        );
+        let good = DownloadVerification::ReleaseManifest {
+            archive_filename: filename.to_string(),
+            sha256sums: sums.clone(),
+            sha256sums_asc: ASC.to_string(),
+        };
+        assert!(verify_download(&archive, &good).is_ok());
+
+        // Tampered archive: hash no longer in the manifest.
+        let tampered = b"tampered knots archive".to_vec();
+        assert_eq!(
+            verify_download(&tampered, &good),
+            Err(InstallBitcoindError::ChecksumNotInManifest)
+        );
+
+        // Right hash but listed under a different filename: rejected.
+        let wrong_name = DownloadVerification::ReleaseManifest {
+            archive_filename: "bitcoin-29.3.knots20260508-arm64-apple-darwin.tar.gz".to_string(),
+            sha256sums: sums.clone(),
+            sha256sums_asc: ASC.to_string(),
+        };
+        assert_eq!(
+            verify_download(&archive, &wrong_name),
+            Err(InstallBitcoindError::ChecksumNotInManifest)
+        );
+
+        // Manifest with no detached signature is rejected before hashing.
+        let unsigned = DownloadVerification::ReleaseManifest {
+            archive_filename: filename.to_string(),
+            sha256sums: sums,
+            sha256sums_asc: "not a signature".to_string(),
+        };
+        assert_eq!(
+            verify_download(&archive, &unsigned),
+            Err(InstallBitcoindError::MissingSignature)
+        );
+    }
 
     #[test]
-    fn hash() {
-        let bytes = "this is not bitcoin".as_bytes().to_vec();
-        assert!(!verify_hash(&bytes));
+    fn verification_for_flavor() {
+        // Core never needs a manifest.
+        assert!(matches!(
+            DownloadVerification::for_flavor(NodeFlavor::Core, None),
+            Some(DownloadVerification::PinnedSha256(_))
+        ));
+        // Knots without a fetched manifest cannot be verified.
+        assert!(DownloadVerification::for_flavor(NodeFlavor::Knots, None).is_none());
+        // Knots with a manifest produces a ReleaseManifest keyed to the host
+        // archive name.
+        let v = DownloadVerification::for_flavor(
+            NodeFlavor::Knots,
+            Some((String::from("sums"), String::from("asc"))),
+        );
+        assert!(matches!(
+            v,
+            Some(DownloadVerification::ReleaseManifest { .. })
+        ));
     }
 }
