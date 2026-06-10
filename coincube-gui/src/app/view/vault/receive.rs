@@ -108,6 +108,7 @@ pub fn receive<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
     is_last_page: bool,
     processing: bool,
+    generating: bool,
 ) -> Element<'a, Message> {
     // Number of start and end address characters to show in collapsed view.
     const NUM_ADDR_CHARS: usize = 16;
@@ -121,11 +122,20 @@ pub fn receive<'a>(
                 .push({
                     let (icon, label) = (Some(icon::plus_icon()), "Generate address");
                     if addresses.is_empty() {
-                        button::primary(icon, label)
+                        button::primary_loading(
+                            icon,
+                            label,
+                            generating,
+                            Some(Message::NextReceiveAddress),
+                        )
                     } else {
-                        button::secondary(icon, label)
+                        button::secondary_loading(
+                            icon,
+                            label,
+                            generating,
+                            Some(Message::NextReceiveAddress),
+                        )
                     }
-                    .on_press(Message::NextReceiveAddress)
                 }),
         )
         .push((prev_addresses.is_empty() && addresses.is_empty()).then(|| {

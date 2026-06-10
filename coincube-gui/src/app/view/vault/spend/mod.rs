@@ -163,6 +163,7 @@ pub fn create_spend_tx<'a>(
     sync_status: &SyncStatus,
     is_first_step: bool,
     loading_fee_estimate: Option<usize>,
+    generating: bool,
     bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let is_self_send = recipients.is_empty();
@@ -508,10 +509,14 @@ pub fn create_spend_tx<'a>(
                             .on_press(Message::CreateSpend(CreateSpendMessage::Clear))
                             .width(Length::Fixed(100.0)),
                     )
-                    .push(if can_proceed {
-                        button::primary(None, "Next")
-                            .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
-                            .width(Length::Fixed(100.0))
+                    .push(if can_proceed || generating {
+                        button::primary_loading(
+                            None,
+                            "Next",
+                            generating,
+                            Some(Message::CreateSpend(CreateSpendMessage::Generate)),
+                        )
+                        .width(Length::Fixed(100.0))
                     } else {
                         button::secondary(None, "Next").width(Length::Fixed(100.0))
                     }),

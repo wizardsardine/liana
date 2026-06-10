@@ -1,4 +1,7 @@
+use std::time::Duration;
+
 use super::text::text;
+use crate::component::spinner;
 use crate::font::MEDIUM;
 use crate::theme;
 use crate::widget::{Button, Container, Text};
@@ -119,6 +122,58 @@ pub fn orange_outline<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> But
 
 pub fn link<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
     Button::new(content_left_aligned(icon, text(t))).style(theme::button::link)
+}
+
+/// Primary button that reflects an in-flight async action: while `loading`
+/// is `true` it shows the label with an animated typing ellipsis and is
+/// inert, so a single press can't be repeated. Otherwise it behaves like
+/// `primary(icon, t).on_press_maybe(on_press)` — pass `None` to keep the
+/// button disabled (e.g. invalid input) without showing the spinner.
+pub fn primary_loading<'a, T: Clone + 'a>(
+    icon: Option<Text<'a>>,
+    t: &'static str,
+    loading: bool,
+    on_press: Option<T>,
+) -> Button<'a, T> {
+    if loading {
+        Button::new(content_loading(t)).style(theme::button::primary)
+    } else {
+        primary(icon, t).on_press_maybe(on_press)
+    }
+}
+
+/// Secondary variant of [`primary_loading`].
+pub fn secondary_loading<'a, T: Clone + 'a>(
+    icon: Option<Text<'a>>,
+    t: &'static str,
+    loading: bool,
+    on_press: Option<T>,
+) -> Button<'a, T> {
+    if loading {
+        Button::new(content_loading(t)).style(theme::button::secondary)
+    } else {
+        secondary(icon, t).on_press_maybe(on_press)
+    }
+}
+
+// Content for a loading button: centered label followed by an animated
+// typing ellipsis. Requires `T: Clone` because the spinner Carousel widget
+// clones its message type.
+fn content_loading<'a, T: Clone + 'a>(t: &'static str) -> Container<'a, T> {
+    container(
+        row![
+            text(t).font(MEDIUM).align_y(Vertical::Center),
+            spinner::typing_text_carousel("...", true, Duration::from_millis(400), |c| {
+                text(c).font(MEDIUM).align_y(Vertical::Center)
+            }),
+        ]
+        .spacing(2)
+        .align_y(Vertical::Center)
+        .width(iced::Length::Shrink),
+    )
+    .align_x(Horizontal::Center)
+    .width(iced::Length::Fill)
+    .padding(5)
 }
 
 // Content function for centered buttons (primary, secondary, transparent)
