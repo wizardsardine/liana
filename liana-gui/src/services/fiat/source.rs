@@ -8,9 +8,12 @@ pub enum PriceSource {
     CoinGecko,
     #[default]
     MempoolSpace,
+    // liana-business only
+    Wizardsardine,
 }
 
-/// All variants of `PriceSource`.
+/// User-selectable price sources. `Wizardsardine` is excluded: it is liana-business only
+/// and never offered in the source picker.
 pub const ALL_PRICE_SOURCES: [PriceSource; 2] = [PriceSource::MempoolSpace, PriceSource::CoinGecko];
 
 impl std::fmt::Display for PriceSource {
@@ -18,6 +21,7 @@ impl std::fmt::Display for PriceSource {
         match self {
             Self::CoinGecko => write!(f, "coingecko"),
             Self::MempoolSpace => write!(f, "mempool.space"),
+            Self::Wizardsardine => write!(f, "wizardsardine"),
         }
     }
 }
@@ -29,6 +33,7 @@ impl FromStr for PriceSource {
         match s.to_lowercase().as_str() {
             "coingecko" => Ok(Self::CoinGecko),
             "mempool.space" => Ok(Self::MempoolSpace),
+            "wizardsardine" => Ok(Self::Wizardsardine),
             _ => Err("Invalid price source".to_string()),
         }
     }
@@ -41,6 +46,7 @@ impl PriceSource {
             // See https://www.coingecko.com/en/api_terms
             Self::CoinGecko => Some("Powered by CoinGecko"),
             Self::MempoolSpace => None,
+            Self::Wizardsardine => None,
         }
         .map(|s| s.to_string())
     }
@@ -50,6 +56,9 @@ impl PriceSource {
         match self {
             Self::CoinGecko => "https://api.coingecko.com/api/v3/exchange_rates".to_string(),
             Self::MempoolSpace => "https://mempool.space/api/v1/prices".to_string(),
+            Self::Wizardsardine => {
+                unreachable!("Wizardsardine prices come from the backend, not PriceClient")
+            }
         }
     }
 
@@ -58,6 +67,9 @@ impl PriceSource {
         match self {
             Self::CoinGecko => "https://api.coingecko.com/api/v3/exchange_rates".to_string(),
             Self::MempoolSpace => "https://mempool.space/api/v1/prices".to_string(),
+            Self::Wizardsardine => {
+                unreachable!("Wizardsardine prices come from the backend, not PriceClient")
+            }
         }
     }
 
@@ -86,6 +98,7 @@ impl PriceSource {
                 let updated_at = data.get("time").and_then(|t| t.as_u64());
                 (value, updated_at)
             }
+            Self::Wizardsardine => return Err(PriceApiError::UnsupportedSource(*self)),
         };
         Ok(GetPriceResult { value, updated_at })
     }
@@ -113,6 +126,7 @@ impl PriceSource {
                 .keys()
                 .filter_map(|s| s.parse::<Currency>().ok())
                 .collect(),
+            Self::Wizardsardine => return Err(PriceApiError::UnsupportedSource(*self)),
         };
         Ok(ListCurrenciesResult { currencies })
     }
@@ -122,6 +136,7 @@ impl PriceSource {
         match self {
             Self::CoinGecko => Some(format!("liana-gui/{}", crate::VERSION)),
             Self::MempoolSpace => None,
+            Self::Wizardsardine => None,
         }
     }
 }

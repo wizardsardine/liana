@@ -1,4 +1,5 @@
 use super::currency::Currency;
+use super::source::PriceSource;
 
 use async_trait::async_trait;
 
@@ -21,6 +22,7 @@ pub enum PriceApiError {
     NotSuccessResponse(NotSuccessResponseInfo),
     CannotParseResponse(String),
     CannotParseData(String),
+    UnsupportedSource(PriceSource),
 }
 
 impl std::fmt::Display for PriceApiError {
@@ -30,6 +32,7 @@ impl std::fmt::Display for PriceApiError {
             Self::NotSuccessResponse(info) => write!(f, "Not success response: {info:?}"),
             Self::CannotParseResponse(e) => write!(f, "Cannot parse response: {e}"),
             Self::CannotParseData(e) => write!(f, "Cannot parse data: {e}"),
+            Self::UnsupportedSource(source) => write!(f, "Unsupported price source: {source}"),
         }
     }
 }
