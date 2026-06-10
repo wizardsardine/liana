@@ -949,7 +949,11 @@ pub(crate) async fn persist_duress_enrollment(
     //    hashes, roll those back too — otherwise Cubes stay armed (and would
     //    wipe on the duress PIN) while the matching enrollment state is missing.
     let local: Result<(), String> = (|| {
-        let mut st = crate::services::duress::DuressLocalState::load(&root).unwrap_or_default();
+        // load() already maps a missing file to Ok(default); a real parse/IO
+        // error must NOT be papered over with a default that save() then writes
+        // back, clobbering valid state. Propagate it (rolling back step 1).
+        let mut st = crate::services::duress::DuressLocalState::load(&root)
+            .map_err(|e| format!("Couldn't read existing duress state: {e}"))?;
         st.enrolled = true;
         st.account_id = account_id;
         if !duress_code.is_empty() {
@@ -2004,8 +2008,23 @@ impl App {
                 let root = self.datadir.path().to_path_buf();
                 Task::perform(
                     async move {
-                        let mut st = crate::services::duress::DuressLocalState::load(&root)
-                            .unwrap_or_default();
+                        // load() already maps a missing file to Ok(default); a
+                        // real parse/IO error must NOT be papered over with a
+                        // default that save() then writes back, clobbering valid
+                        // state (enrolled / account_id / encrypted code). Skip
+                        // the persist on a real read error — the UI still locks
+                        // below, and the DuressLockRemote backstop / session-check
+                        // re-sync handle durability.
+                        let mut st = match crate::services::duress::DuressLocalState::load(&root) {
+                            Ok(st) => st,
+                            Err(e) => {
+                                log::warn!(
+                                    "[CONNECT GRPC] reading duress state failed; \
+                                     not overwriting: {e}"
+                                );
+                                return;
+                            }
+                        };
                         st.active = true;
                         st.unlock_at = unlock_at;
                         // Retry: a failed persist would let a relaunch reconcile
@@ -2031,8 +2050,20 @@ impl App {
                 let root = self.datadir.path().to_path_buf();
                 Task::perform(
                     async move {
-                        let mut st = crate::services::duress::DuressLocalState::load(&root)
-                            .unwrap_or_default();
+                        // As above: skip on a real read error so a transient
+                        // failure can't clobber valid state with a default. The
+                        // cryptic screen's own server poll re-syncs the cleared
+                        // state on the next check.
+                        let mut st = match crate::services::duress::DuressLocalState::load(&root) {
+                            Ok(st) => st,
+                            Err(e) => {
+                                log::warn!(
+                                    "[CONNECT GRPC] reading duress state failed; \
+                                     not overwriting: {e}"
+                                );
+                                return;
+                            }
+                        };
                         st.active = false;
                         st.unlock_at = None;
                         if let Err(e) = st.save(&root) {
