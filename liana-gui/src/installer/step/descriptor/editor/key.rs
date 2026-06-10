@@ -24,7 +24,7 @@ use liana_ui::{
     color,
     component::{
         button, card, form,
-        modal::{self, collapsible_input_button, legacy},
+        modal::{self, collapsible_input_button, legacy, modal_no_devices_placeholder},
         pick_list,
         text::{p1_bold, p1_regular},
         tooltip,
@@ -48,7 +48,6 @@ use crate::{
 use liana_connect::keys::{self, api::KeyKind};
 
 const MAX_ALIAS_LEN: usize = 24;
-pub type FnMsg = fn() -> Message;
 
 pub fn new_multixkey_from_xpub(
     xpub: DescriptorXKey<Xpub>,
@@ -912,8 +911,8 @@ impl SelectKeySource {
 
         let header = modal::header(
             Some("Select key source".to_string()),
-            None::<FnMsg>,
-            Some(|| Message::Close),
+            None,
+            Some(Message::Close),
         );
 
         let column = Column::new()
@@ -947,9 +946,9 @@ impl SelectKeySource {
             },
         };
         let header = modal::header(
-            None,
-            Some(|| Self::route(SelectKeySourceMessage::Previous)),
-            Some(|| Message::Close),
+            None::<String>,
+            Some(Self::route(SelectKeySourceMessage::Previous)),
+            Some(Message::Close),
         );
 
         let accounts: Vec<_> = (0..10)
@@ -992,13 +991,7 @@ impl SelectKeySource {
         )
     }
     fn view_no_devices(&self) -> Element<'_, Message> {
-        column![
-            icon::usb_icon().size(100),
-            p1_regular("Plug in a hardware device ...")
-        ]
-        .align_x(Horizontal::Center)
-        .spacing(20)
-        .into()
+        modal_no_devices_placeholder()
     }
     fn view_signing_devices(
         &self,
@@ -1128,7 +1121,7 @@ impl SelectKeySource {
         let mut msg = None;
         if enabled {
             if let Some(fg) = fg {
-                msg = Some(move || Self::route(SelectKeySourceMessage::SelectDevice(fg)));
+                msg = Some(Self::route(SelectKeySourceMessage::SelectDevice(fg)));
             }
         }
         let fingerprint = fg.map(|fg| format!("#{fg}"));
@@ -1170,7 +1163,7 @@ impl SelectKeySource {
         let fg_str = format!("#{fg}");
         let on_press = message
             .is_none()
-            .then_some(move || Self::route(SelectKeySourceMessage::SelectKey(fg)));
+            .then_some(Self::route(SelectKeySourceMessage::SelectKey(fg)));
         modal::key_entry(
             Some(icon),
             alias,
@@ -1501,7 +1494,7 @@ impl super::DescriptorEditModal for EditKeyAlias {
     }
 
     fn view<'a>(&'a self, _hws: &'a HardwareWallets) -> Element<'a, Message> {
-        let header = modal::header(None, None::<FnMsg>, Some(|| Message::Close));
+        let header = modal::header(None::<String>, None, Some(Message::Close));
         details_view(
             header,
             None,

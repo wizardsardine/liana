@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use iced::{widget::Space, Alignment, Length};
 
 use liana_ui::{
-    component::{amount::*, badge, button, form, pill, text::*},
+    component::{address::address as address_view, amount::*, badge, button, form, pill, text::*},
     icon, theme,
     widget::*,
 };
@@ -199,10 +199,7 @@ fn coin_list_view<'a>(
                                         .push(
                                             Row::new()
                                                 .align_y(Alignment::Center)
-                                                .push(
-                                                    p2_regular(address.clone())
-                                                        .style(theme::text::secondary),
-                                                )
+                                                .push(address_view(address.clone()))
                                                 .push(
                                                     Button::new(icon::clipboard_icon())
                                                         .on_press(Message::Clipboard(

@@ -1,11 +1,11 @@
 use iced::widget::{tooltip, Column, Row, Space, Toggler};
 use iced::{Alignment, Length};
-use liana_ui::component::setting::SectionKind;
 
 use super::{header, SETTING_MSG};
 
 use liana_ui::color;
 use liana_ui::component::card;
+use liana_ui::component::panels::setting::SectionKind;
 use liana_ui::component::pick_list;
 use liana_ui::component::text::*;
 use liana_ui::component::tooltip_custom;

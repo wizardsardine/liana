@@ -8,7 +8,7 @@ use liana_ui::{
     component::{
         button::{btn_cancel, btn_save},
         form,
-        modal::{modal_view, none_fn, ModalWidth},
+        modal::{modal_view, ModalWidth},
         pick_list, text, tooltip,
     },
     theme,
@@ -179,8 +179,8 @@ pub fn edit_key_modal_view<'a>(
 
     modal_view(
         Some(title.to_string()),
-        none_fn(),
-        Some(|| Message::KeyCancelModal),
+        None::<Message>,
+        Some(Message::KeyCancelModal),
         ModalWidth::M,
         body,
     )

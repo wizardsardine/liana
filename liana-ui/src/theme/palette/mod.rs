@@ -36,6 +36,10 @@ pub struct Text {
     pub error: iced::Color,
     pub accent: iced::Color,
     pub card_secondary: iced::Color,
+    /// Even chunks of a chunked address display.
+    pub address: iced::Color,
+    /// Odd chunks of a chunked address display, dimmed so the eye can group them.
+    pub address_dimmed: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

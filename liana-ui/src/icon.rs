@@ -1,5 +1,6 @@
 use crate::{component::text::P1_SIZE, widget::*};
 use iced::{alignment, Font, Length};
+use iced_core::text::LineHeight;
 
 pub const ICON_SIZE_L: u16 = 32;
 pub const ICON_SIZE_M: u16 = 24;
@@ -15,6 +16,13 @@ fn bootstrap_icon<'a>(unicode: char) -> Text<'a> {
         .size(P1_SIZE)
 }
 
+fn bootstrap_icon_no_padding<'a>(unicode: char) -> Text<'a> {
+    Text::new(unicode.to_string())
+        .font(BOOTSTRAP_ICONS)
+        .size(P1_SIZE)
+        .line_height(LineHeight::Relative(1.0))
+}
+
 pub fn cross_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F62A}')
 }
@@ -27,7 +35,7 @@ pub fn arrow_down() -> Text<'static> {
     bootstrap_icon('\u{F128}')
 }
 
-pub fn arrow_back() -> Text<'static> {
+pub fn arrow_back<'a>() -> Text<'a> {
     bootstrap_icon('\u{F12E}')
 }
 
@@ -163,7 +171,7 @@ pub fn paste_icon() -> Text<'static> {
     bootstrap_icon('\u{F290}')
 }
 
-pub fn usb_icon() -> Text<'static> {
+pub fn usb_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F6DC}')
 }
 
@@ -207,6 +215,18 @@ pub fn clock_fill_icon() -> Text<'static> {
     bootstrap_icon('\u{F291}')
 }
 
+pub fn edit_icon<'a>() -> Text<'a> {
+    bootstrap_icon_no_padding('\u{F4CA}')
+}
+
+pub fn qr_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F6AD}')
+}
+
+pub fn copy_icon<'a>() -> Text<'a> {
+    bootstrap_icon_no_padding('\u{F759}')
+}
+
 const ICONEX_ICONS: Font = Font::with_name("Untitled1");
 
 fn iconex_icon<'a>(unicode: char) -> Text<'a> {
@@ -233,7 +253,7 @@ pub fn history_icon() -> Text<'static> {
     iconex_icon('\u{BEBA}')
 }
 
-pub fn clipboard_icon() -> Text<'static> {
+pub fn clipboard_icon<'a>() -> Text<'a> {
     iconex_icon('\u{F8D3}')
 }
 

@@ -1,5 +1,7 @@
 pub mod legacy;
 
+use std::fmt::Display;
+
 use iced::{
     alignment::{Horizontal, Vertical},
     widget::{
@@ -33,12 +35,10 @@ const MODAL_SPACING: u32 = 15;
 /// Modal width presets.
 #[derive(Debug, Clone, Copy)]
 pub enum ModalWidth {
-    /// Small modals (confirmations, simple dialogs)
     S = 400,
-    /// Medium modals (forms, editors)
     M = 550,
-    /// Large modals (device selection, complex forms)
     L = 650,
+    XL = 800,
 }
 
 impl From<ModalWidth> for Length {
@@ -50,28 +50,20 @@ impl From<ModalWidth> for Length {
 /// Keep backward compat for code referencing MODAL_WIDTH.
 pub const MODAL_WIDTH: u16 = ModalWidth::L as u16;
 
-/// Shorthand for `None::<fn() -> T>` used in modal_view back/close params.
-pub fn none_fn<T>() -> Option<fn() -> T> {
-    None
-}
-
 /// Type alias for the container style function used by modal views.
 pub type ContainerStyle = fn(&Theme) -> iced::widget::container::Style;
 
 /// Standard modal wrapper: card theme + header + content with consistent
 /// padding, spacing, and width.
-pub fn modal_view<'a, Message, Back, Close, C>(
-    title: Option<String>,
-    back_message: Option<Back>,
-    close_message: Option<Close>,
+pub fn modal_view<'a, M: 'a + Clone, C>(
+    title: Option<impl Display>,
+    back_message: Option<M>,
+    close_message: Option<M>,
     width: ModalWidth,
     content: C,
-) -> Element<'a, Message>
+) -> Element<'a, M>
 where
-    Back: 'static + Fn() -> Message,
-    Close: 'static + Fn() -> Message,
-    Message: Clone + 'static,
-    C: Into<Element<'a, Message>>,
+    C: Into<Element<'a, M>>,
 {
     modal_view_with_theme(
         title,
@@ -84,19 +76,16 @@ where
 }
 
 /// Like [`modal_view`] but accepts a custom container style.
-pub fn modal_view_with_theme<'a, Message, Back, Close, C>(
-    title: Option<String>,
-    back_message: Option<Back>,
-    close_message: Option<Close>,
+pub fn modal_view_with_theme<'a, M: 'a + Clone, C>(
+    title: Option<impl Display>,
+    back_message: Option<M>,
+    close_message: Option<M>,
     width: ModalWidth,
     content: C,
     style: ContainerStyle,
-) -> Element<'a, Message>
+) -> Element<'a, M>
 where
-    Back: 'static + Fn() -> Message,
-    Close: 'static + Fn() -> Message,
-    Message: Clone + 'static,
-    C: Into<Element<'a, Message>>,
+    C: Into<Element<'a, M>>,
 {
     let col = Column::new()
         .push(header(title, back_message, close_message))
@@ -118,24 +107,19 @@ pub fn widget_style(theme: &Theme, status: Status) -> Style {
     theme::button::secondary(theme, status)
 }
 
-pub fn header<'a, Message, Back, Close>(
-    label: Option<String>,
-    back_message: Option<Back>,
-    close_message: Option<Close>,
-) -> Element<'a, Message>
-where
-    Back: 'static + Fn() -> Message,
-    Close: 'static + Fn() -> Message,
-    Message: Clone + 'static,
-{
+pub fn header<'a, M: 'a + Clone>(
+    label: Option<impl Display>,
+    back_message: Option<M>,
+    close_message: Option<M>,
+) -> Element<'a, M> {
     let back = back_message
-        .map(|m| button::transparent(Some(icon::arrow_back().size(25)), "").on_press(m()));
+        .map(|m| button::transparent(Some(icon::arrow_back().size(25)), "").on_press(m));
     let title = label.map(text::h3);
     let close = close_message.map(|m| {
         Button::new(icon::cross_icon().size(40))
             .padding(0)
             .style(theme::button::transparent)
-            .on_press(m())
+            .on_press(m)
     });
     Row::new()
         .push_maybe(back)
@@ -307,19 +291,15 @@ where
     collapsible_button(collapsed, closed, expanded, collapse_message)
 }
 
-pub fn key_entry<'a, Message, M>(
-    icon: Option<Text<'static>>,
+pub fn key_entry<'a, M: 'a + Clone>(
+    icon: Option<Text<'a>>,
     name: String,
     fingerprint: Option<String>,
-    tooltip_str: Option<&'static str>,
+    tooltip_str: Option<&'a str>,
     error: Option<String>,
     mut message: Option<String>,
     on_press: Option<M>,
-) -> Element<'a, Message>
-where
-    M: 'static + Fn() -> Message,
-    Message: Clone + 'static,
-{
+) -> Element<'a, M> {
     if error.is_some() {
         message = None;
     }
@@ -344,8 +324,7 @@ where
         .push_maybe(tt)
         .align_y(Vertical::Center)
         .spacing(V_SPACING);
-    let msg = on_press.map(|f| f());
-    button::device(row, msg)
+    button::device(row, on_press)
 }
 
 /// Row entry for an expected key in a registration-style flow.
@@ -430,4 +409,13 @@ where
 
     let msg = on_press.map(|f| f());
     button::device(col, msg)
+}
+
+pub fn modal_no_devices_placeholder<'a, M: 'a>() -> Element<'a, M> {
+    Column::new()
+        .push(icon::usb_icon().size(100))
+        .push(text::p1_regular("Plug in a hardware device ..."))
+        .align_x(Horizontal::Center)
+        .spacing(20)
+        .into()
 }

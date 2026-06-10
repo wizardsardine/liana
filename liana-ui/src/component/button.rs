@@ -4,7 +4,7 @@ use super::{
     modal::BTN_W,
     text::{
         new::{button_text, button_text_compact, BUTTON_TEXT_COMPACT_SPEC},
-        panel_title, text,
+        p1_regular, panel_title, text,
     },
     tooltip,
 };
@@ -255,6 +255,28 @@ impl From<BtnWidth> for Length {
     }
 }
 
+pub fn icon_btn<'a, T: 'a + Clone>(icon: Text<'a>, message: Option<T>) -> Button<'a, T> {
+    let inner = ICON_BTN_SIZE - 2.0 * ICON_BTN_PADDING;
+    Button::new(
+        Container::new(icon)
+            .center_x(Length::Fixed(inner))
+            .center_y(Length::Fixed(inner)),
+    )
+    .padding(ICON_BTN_PADDING)
+    .on_press_maybe(message)
+    .style(|t, s| round_icon_btn(t, s, ICON_BTN_SIZE / 2.0))
+}
+
+pub fn clickable_icon_with_size<'a, T: 'a + Clone>(
+    icon: Text<'a>,
+    message: Option<T>,
+    size: u32,
+) -> Button<'a, T> {
+    Button::new(icon.size(size))
+        .on_press_maybe(message)
+        .style(theme::button::transparent)
+}
+
 /// Primary button with preset width.
 pub fn btn_primary<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
@@ -272,7 +294,7 @@ pub fn btn_primary<'a, T: Clone + 'a>(
 /// Secondary button with preset width.
 pub fn btn_secondary<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
-    label: &'static str,
+    label: &'a str,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
@@ -359,6 +381,10 @@ pub fn btn_ok<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, "OK", BtnWidth::M, msg)
 }
 
+pub fn btn_generate<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "Generate", BtnWidth::M, msg)
+}
+
 /// Clear button: secondary. Width M.
 pub fn btn_clear<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_secondary(None, "Clear", BtnWidth::M, msg)
@@ -443,6 +469,13 @@ pub fn btn_manage_keys<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Butt
     }
 }
 
+/// Generate-address button: a plus icon and "Generate address" label.
+pub fn btn_generate_address<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    let icon = Some(icon::plus_icon());
+    let label = "Generate address";
+    btn_primary(icon, label, BtnWidth::Auto, msg)
+}
+
 pub fn btn_skip<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_secondary(None, "Skip", BtnWidth::XL, msg)
 }
@@ -464,14 +497,65 @@ pub fn btn_connect_another_email<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a
     btn_tertiary(None, "Connect with another email", BtnWidth::XXL, msg)
 }
 
-pub fn icon_btn<'a, T: 'a + Clone>(icon: Text<'a>, message: Option<T>) -> Button<'a, T> {
-    let inner = ICON_BTN_SIZE - 2.0 * ICON_BTN_PADDING;
-    Button::new(
-        Container::new(icon)
-            .center_x(Length::Fixed(inner))
-            .center_y(Length::Fixed(inner)),
+pub fn btn_verify_compact<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
+    button_compact(
+        "Verify on hardware device",
+        theme::button::secondary,
+        Some(msg),
     )
-    .padding(ICON_BTN_PADDING)
-    .on_press_maybe(message)
-    .style(|t, s| round_icon_btn(t, s, ICON_BTN_SIZE / 2.0))
+}
+
+pub fn btn_show_qr_compact<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
+    button_compact("Show QR Code", theme::button::secondary, Some(msg))
+}
+
+pub fn btn_show_qr<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
+    btn_secondary(
+        Some(icon::qr_icon()),
+        "Show QR Code",
+        BtnWidth::XL,
+        Some(msg),
+    )
+}
+
+pub fn btn_verify<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
+    btn_secondary(
+        Some(icon::usb_icon()),
+        "Verify on hardware device",
+        BtnWidth::XXL,
+        Some(msg),
+    )
+}
+
+/// Full-width "Show QR Code" button for an optional modal section, with an
+/// optional tooltip.
+pub fn btn_show_qr_section<'a, M: 'a + 'static>(
+    tt: Option<&'static str>,
+    msg: Option<M>,
+) -> Button<'a, M> {
+    let mut btn = Button::new(
+        Row::new()
+            .push(icon::qr_icon().size(30))
+            .push(p1_regular("Show QR Code"))
+            .push_maybe(tt.map(tooltip))
+            .spacing(20)
+            .align_y(Vertical::Center)
+            .padding(15),
+    )
+    .style(theme::button::secondary)
+    .width(Length::Fill);
+    if let Some(msg) = msg {
+        btn = btn.on_press(msg);
+    }
+    btn
+}
+
+const CLICKABLE_ICON_SIZE: u32 = 26;
+
+pub fn btn_copy<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    clickable_icon_with_size(icon::copy_icon(), msg, CLICKABLE_ICON_SIZE)
+}
+
+pub fn btn_edit<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    clickable_icon_with_size(icon::edit_icon(), msg, CLICKABLE_ICON_SIZE)
 }

@@ -61,13 +61,15 @@ impl Palette {
                 accent: color::BUSINESS_BLUE,
             },
             text: Text {
-                primary: color::DARK_TEXT_PRIMARY,
+                primary: color::BUSINESS_BLACK,
                 secondary: color::DARK_TEXT_SECONDARY,
                 warning: color::ORANGE,
                 success: color::DARK_GREEN,
                 error: color::RED,
                 accent: color::BUSINESS_BLUE_DARK,
                 card_secondary: color::CARD_TEXT_SECONDARY,
+                address: color::DARK_TEXT_SECONDARY,
+                address_dimmed: color::BUSINESS_BLUE_DARK,
             },
             price: Price {
                 zeroes: color::BUSINESS_PRICE_ZEROES,
@@ -167,7 +169,7 @@ impl Palette {
                 transparent: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLACK,
                         border: None,
                         shadow: Default::default(),
                     },
@@ -188,7 +190,7 @@ impl Palette {
                 transparent_border: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLACK,
                         border: color::TRANSPARENT.into(),
                         shadow: Default::default(),
                     },
@@ -209,7 +211,7 @@ impl Palette {
                 clickable_section: Button {
                     active: ButtonPalette {
                         background: BTN_TERTIARY_BG,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLACK,
                         border: color::TRANSPARENT.into(),
                         shadow: Default::default(),
                     },
@@ -252,13 +254,13 @@ impl Palette {
                     },
                     hovered: ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLACK,
                         border: None,
                         shadow: BTN_SHADOW,
                     },
                     pressed: Some(ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLACK,
                         border: None,
                         shadow: BTN_SHADOW,
                     }),
@@ -267,7 +269,7 @@ impl Palette {
                 container_border: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLACK,
                         border: color::TRANSPARENT.into(),
                         shadow: Default::default(),
                     },
@@ -288,13 +290,13 @@ impl Palette {
                 menu: Button {
                     active: ButtonPalette {
                         background: color::WHITE,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLACK,
                         border: color::WHITE.into(),
                         shadow: Default::default(),
                     },
                     hovered: ButtonPalette {
                         background: color::WHITE,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLACK,
                         border: color::WHITE.into(),
                         shadow: BTN_SHADOW,
                     },
@@ -330,7 +332,7 @@ impl Palette {
                 tab: Button {
                     active: ButtonPalette {
                         background: color::LIGHT_BG_SECONDARY,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLACK,
                         border: color::LIGHT_BORDER.into(),
                         shadow: Default::default(),
                     },
@@ -351,7 +353,7 @@ impl Palette {
                 link: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLACK,
                         border: color::TRANSPARENT.into(),
                         shadow: Default::default(),
                     },
@@ -372,19 +374,19 @@ impl Palette {
                 pick_list: Button {
                     active: ButtonPalette {
                         background: INPUT_BG,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLACK,
                         border: Some(INPUT_BORDER),
                         shadow: Default::default(),
                     },
                     hovered: ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLACK,
                         border: Some(BTN_PRIMARY_BG),
                         shadow: Default::default(),
                     },
                     pressed: Some(ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLACK,
                         border: Some(BTN_PRIMARY_BG),
                         shadow: Default::default(),
                     }),
@@ -563,7 +565,7 @@ impl Palette {
                         background: INPUT_BG,
                         icon: color::DARK_TEXT_TERTIARY,
                         placeholder: color::DARK_TEXT_TERTIARY,
-                        value: color::DARK_TEXT_PRIMARY,
+                        value: color::BUSINESS_BLACK,
                         selection: color::BUSINESS_BLUE,
                         border: Some(INPUT_BORDER),
                     },
@@ -581,7 +583,7 @@ impl Palette {
                         background: color::LIGHT_BG,
                         icon: color::DARK_TEXT_TERTIARY,
                         placeholder: color::DARK_TEXT_TERTIARY,
-                        value: color::DARK_TEXT_PRIMARY,
+                        value: color::BUSINESS_BLACK,
                         selection: color::BUSINESS_BLUE,
                         border: Some(color::RED),
                     },
@@ -597,13 +599,13 @@ impl Palette {
             },
             checkboxes: Checkboxes {
                 icon: color::BUSINESS_BLUE,
-                text: color::DARK_TEXT_PRIMARY,
+                text: color::BUSINESS_BLACK,
                 background: color::LIGHT_BG_SECONDARY,
                 border: Some(color::LIGHT_BORDER),
             },
             radio_buttons: RadioButtons {
                 dot: color::BUSINESS_BLUE,
-                text: color::DARK_TEXT_PRIMARY,
+                text: color::BUSINESS_BLACK,
                 border: color::LIGHT_BORDER,
             },
             sliders: Sliders {

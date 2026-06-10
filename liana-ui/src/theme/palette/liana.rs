@@ -55,6 +55,8 @@ impl Palette {
                 error: color::RED,
                 accent: color::BLUE,
                 card_secondary: color::CARD_TEXT_SECONDARY,
+                address: color::GREY_2,
+                address_dimmed: color::GREEN,
             },
             price: Price {
                 zeroes: color::GREY_3,

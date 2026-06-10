@@ -5,8 +5,12 @@ pub use payment_details::payment_details_view;
 use liana::miniscript::bitcoin;
 use liana_ui::{
     component::{
-        home::{self, rescan_warning, SyncProgress},
-        payment::{self, payment_card, PaymentKind, UIPayment},
+        self,
+        panels::home::{
+            self,
+            payment::{payment_card, PaymentKind, UIPayment},
+            rescan_warning, SyncProgress,
+        },
         text::new,
     },
     widget::{Column, ColumnExt, Element},
@@ -95,8 +99,8 @@ pub fn home_view<'a>(
         }
     });
 
-    let see_more =
-        (!is_last_page && !events.is_empty()).then(|| payment::see_more(processing, Message::Next));
+    let see_more = (!is_last_page && !events.is_empty())
+        .then(|| component::list::see_more(processing, Message::Next));
 
     #[rustfmt::skip]
     let payment_list = column![
