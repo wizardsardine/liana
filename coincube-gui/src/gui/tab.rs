@@ -253,14 +253,32 @@ fn activate_local_duress(
     //    the first attempt is offline and the user never leaves this screen.
     let queue = DuressQueue::new(root);
     if let (Some(acct), Some(enc)) = (account_id.as_ref(), encrypted_code.as_ref()) {
-        if let Err(e) = queue.enqueue(PendingActivation {
+        let pending = PendingActivation {
             account_id: acct.clone(),
             // Stored encrypted, as everywhere else; the POST decrypts in-flight.
             duress_code: enc.clone(),
             enqueued_at: chrono::Utc::now(),
             attempts: 0,
-        }) {
-            error!("duress: failed to enqueue activation: {e}");
+        };
+        // This queue entry is the ONLY thing that drives the server-side lock —
+        // the drainer fires trigger-with-code from it and the launch reconcile
+        // re-drains it. A dropped enqueue means the account is never locked
+        // server-side, so retry the durable commit on a transient IO error.
+        // enqueue is atomic and idempotent per account (it replaces any existing
+        // entry), so retrying can't duplicate. We never gate the wipe/lock on
+        // this: the device locks into the cryptic screen regardless.
+        let mut enqueued = false;
+        for attempt in 1..=3 {
+            match queue.enqueue(pending.clone()) {
+                Ok(()) => {
+                    enqueued = true;
+                    break;
+                }
+                Err(e) => error!("duress: enqueue activation attempt {attempt}/3 failed: {e}"),
+            }
+        }
+        if !enqueued {
+            error!("duress: activation not durably queued; server-side lock may not fire");
         }
         spawn_duress_drainer(root);
     }
