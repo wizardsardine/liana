@@ -900,12 +900,21 @@ pub(crate) async fn persist_duress_enrollment(
     //    end up with some networks armed and others not.
     let hash = crate::services::duress::enroll::hash_duress_secret(&duress_pin)?;
     let mut written = 0usize;
+    // Count the Cubes that actually had a duress_pin_hash written, at write
+    // time. update_settings_file re-reads each settings file under its lock, so
+    // this is authoritative even if the on-disk Cube set changed since the
+    // step-0 snapshot — we never mark enrolled when zero hashes were written.
+    let armed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for (i, network_dir) in network_dirs.iter().enumerate() {
         let h = hash.clone();
+        let armed = armed.clone();
         let write = crate::app::settings::update_settings_file(network_dir, move |mut s| {
+            let mut n = 0usize;
             for cube in s.cubes.iter_mut() {
                 cube.duress_pin_hash = Some(h.clone());
+                n += 1;
             }
+            armed.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
             Some(s)
         })
         .await;
@@ -918,6 +927,15 @@ pub(crate) async fn persist_duress_enrollment(
                 ));
             }
         }
+    }
+    // Settings files were present but held no Cubes at write time — no
+    // duress_pin_hash was set anywhere. Roll the (content-unchanged) writes back
+    // and abort rather than mark duress enabled with no PIN that can trip a wipe.
+    if armed.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        rollback_duress_pin_writes(&network_dirs, &prior_settings, written).await;
+        return Err(
+            "Couldn't find any Cubes on this device to protect with duress mode.".to_string(),
+        );
     }
 
     // 2. Encrypted device code + account id → DuressLocalState. The encrypted
