@@ -2569,6 +2569,14 @@ impl App {
                 }
             },
             Message::CompleteDuressEnrollment(payload) => {
+                // Drop a completion that outlived its Connect session: a logout
+                // or session reset bumps `session_generation`, and persisting
+                // now would arm the duress PIN + DuressLocalState for an account
+                // the user is no longer signed into.
+                if payload.gen != self.panels.connect.account.session_generation() {
+                    log::warn!("duress: ignoring enrollment completion from a stale session");
+                    return Task::none();
+                }
                 // Phases 2 & 8: the Connect panel collected + validated the
                 // credentials and (for Connect tiers) enrolled on the server;
                 // persist the duress PIN + this device's encrypted code here,

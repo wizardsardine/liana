@@ -1458,6 +1458,14 @@ impl Launcher {
             }
 
             Message::PersistDuressEnrollment(payload) => {
+                // Drop a completion that outlived its Connect session: a logout
+                // or session reset bumps `session_generation`, and persisting
+                // now would arm the duress PIN + DuressLocalState for an account
+                // the user is no longer signed into.
+                if payload.gen != self.connect_account.session_generation() {
+                    log::warn!("duress: ignoring enrollment completion from a stale session");
+                    return Task::none();
+                }
                 let app::message::DuressEnrollmentPayload {
                     regular_pin,
                     duress_pin,
