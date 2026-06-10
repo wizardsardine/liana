@@ -29,9 +29,10 @@ pub fn copyable_address<'a, M: Clone + 'a>(
         .into()
 }
 
-/// Renderings the address cycles through on each click; `None` is a single run.
-/// Signing devices vary: some group the address by 4 characters, some by 6.
-const CHUNK_SIZES: [Option<usize>; 3] = [Some(4), Some(6), None];
+const ADDRESS_CHUNK_SIZE: usize = 4;
+
+/// Renderings toggled on each click; `None` is a single run.
+const CHUNK_SIZES: [Option<usize>; 2] = [Some(ADDRESS_CHUNK_SIZE), None];
 
 #[derive(Debug, Clone)]
 struct AddressState {
@@ -46,7 +47,7 @@ pub struct Address<'a, Message> {
     children: Vec<Element<'a, Message, theme::Theme, iced::Renderer>>,
 }
 
-/// Address display; clicking cycles through 4-char chunks, 6-char chunks, and a single run.
+/// Address display; clicking toggles between 4-char chunks and a single run.
 pub fn address<'a, Message: 'a>(addr: impl Into<String>) -> Address<'a, Message> {
     Address::new(addr)
 }
