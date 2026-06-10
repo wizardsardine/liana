@@ -1283,47 +1283,20 @@ impl ConnectAccountPanel {
                 }
                 match state {
                     Some(s) if s.active => {
-                        let unlock_at = s.unlock_at;
+                        // This signed-in device is the trusted recovery vehicle:
+                        // show the all-clear entry. Do NOT persist
+                        // DuressLocalState.active here — the launch reconcile
+                        // keys off that flag and would route this device into the
+                        // cryptic dead-end (which has no all-clear entry) on the
+                        // next restart, making recovery impossible. The flag is
+                        // owned by the paths that actually lock this device: the
+                        // local duress PIN and the in-Cube gRPC remote handler.
                         self.step = ConnectFlowStep::DuressRecovery {
-                            unlock_at,
+                            unlock_at: s.unlock_at,
                             passphrase: String::new(),
                             submitting: false,
                             cleared: false,
                         };
-                        // The gRPC stream that persists a remote activation only
-                        // runs inside the in-Cube App. On Home/Launcher (and on
-                        // any sign-in) this check IS the source of truth, so
-                        // mirror an active duress into DuressLocalState — no
-                        // wipe, matching the remote handler, since a remote
-                        // trigger can be accidental — so the Cube-launch
-                        // reconcile locks into the cryptic screen instead of
-                        // opening an unlocked Cube. That screen re-polls the
-                        // server and self-clears once duress is lifted.
-                        return iced::Task::perform(
-                            async move {
-                                if let Ok(dir) = crate::dir::CoincubeDirectory::active() {
-                                    let root = dir.path();
-                                    let mut st =
-                                        crate::services::duress::DuressLocalState::load(root)
-                                            .unwrap_or_default();
-                                    if !st.active {
-                                        st.active = true;
-                                        st.unlock_at = unlock_at;
-                                        if let Err(e) = st.save(root) {
-                                            log::warn!(
-                                                "[CONNECT] failed to persist remote duress \
-                                                 active state: {e}"
-                                            );
-                                        }
-                                    }
-                                }
-                            },
-                            |_| {
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::DuressDeviceRegistered,
-                                ))
-                            },
-                        );
                     }
                     // Confirmed not in duress — NOW reveal the dashboard.
                     Some(s) => {
