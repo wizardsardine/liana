@@ -1369,7 +1369,8 @@ impl ConnectAccountPanel {
             }
             ConnectAccountMessage::DuressDeviceRegistered => {
                 // Side-effect-only task completed (Phase 0 device-code register,
-                // or mirroring a remote-active duress into DuressLocalState).
+                // or syncing DuressLocalState.active to the server's duress
+                // state — set on the post-sign-in mirror, reset on recovery).
             }
             ConnectAccountMessage::Duress(m) => return self.update_duress(m),
         }
@@ -1465,6 +1466,7 @@ impl ConnectAccountPanel {
                 if gen != self.session_generation {
                     return iced::Task::none();
                 }
+                let mut cleared_ok = false;
                 if let ConnectFlowStep::DuressRecovery {
                     submitting,
                     cleared,
@@ -1473,9 +1475,49 @@ impl ConnectAccountPanel {
                 {
                     *submitting = false;
                     match res {
-                        Ok(()) => *cleared = true,
+                        Ok(()) => {
+                            *cleared = true;
+                            cleared_ok = true;
+                        }
                         Err(e) => self.error = Some(e),
                     }
+                }
+                if cleared_ok {
+                    // The server confirmed the all-clear. The post-sign-in mirror
+                    // may have set DuressLocalState.active = true on this device,
+                    // so reset it durably — otherwise the next launch reconcile
+                    // routes back into the cryptic screen for an account that's
+                    // already been cleared. Mirrors the gRPC DuressCleared and
+                    // cryptic-screen poll resets.
+                    return iced::Task::perform(
+                        async move {
+                            if let Ok(dir) = crate::dir::CoincubeDirectory::active() {
+                                let root = dir.path();
+                                match crate::services::duress::DuressLocalState::load(root) {
+                                    Ok(mut st) if st.active => {
+                                        st.active = false;
+                                        st.unlock_at = None;
+                                        if let Err(e) = st.save(root) {
+                                            log::warn!(
+                                                "[CONNECT] failed to clear local duress \
+                                                 active state: {e}"
+                                            );
+                                        }
+                                    }
+                                    Ok(_) => {}
+                                    Err(e) => log::warn!(
+                                        "[CONNECT] reading duress state failed; \
+                                         not overwriting: {e}"
+                                    ),
+                                }
+                            }
+                        },
+                        |_| {
+                            Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::DuressDeviceRegistered,
+                            ))
+                        },
+                    );
                 }
             }
             DuressMessage::ForgotAllClear => {
