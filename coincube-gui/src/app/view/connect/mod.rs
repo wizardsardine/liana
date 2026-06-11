@@ -514,7 +514,12 @@ fn renewal_banner<'a>(
         bool,
     ) = match state.plan_lifecycle() {
         PlanLifecycle::RenewalDue { .. } => {
-            if state.renewal_banner_dismissed {
+            // Folds in per-session dismissal plus the promo / purchasing-
+            // disabled suppression (PLAN-estate-promo PR1/PR2) — when there's
+            // no purchase path, the pre-expiry "Renew" reminder is hidden so
+            // it never becomes a dead-end CTA. The Expired arm below is
+            // navigation-only ("View plans"), so it stays unsuppressed.
+            if !state.show_renewal_banner() {
                 return None;
             }
             let plan = state.plan.as_ref()?;
@@ -628,16 +633,124 @@ fn schema_update_note<'a>() -> Element<'a, ConnectAccountMessage> {
     .into()
 }
 
+/// Informational note shown atop the plan picker when self-service
+/// purchasing is closed (the July-4 promo window — PLAN-estate-promo PR2).
+/// The plans/prices still render so the user can see what each tier offers;
+/// this just explains why there's no purchase button behind them.
+fn purchasing_unavailable_note<'a>() -> Element<'a, ConnectAccountMessage> {
+    container(
+        text::p2_regular(
+            "Purchasing is currently unavailable. New accounts include Estate \
+             free for their first year — there's nothing to buy right now.",
+        )
+        .color(color::GREY_3),
+    )
+    .padding(12)
+    .width(Length::Fill)
+    .style(|t| container::Style {
+        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+        border: iced::Border {
+            color: color::ORANGE,
+            width: 0.5,
+            radius: 10.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
+}
+
 // ── Plan & Billing — top-level router ───────────────────────────────────────
 
 fn plan_billing_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
     if let Some(checkout_state) = &state.checkout {
         return checkout_ux(checkout_state);
     }
+    // Promo accounts (Estate free for year one) get an informational
+    // manage-plan variant instead of the picker — they already have
+    // everything Estate unlocks and there's no purchase to make
+    // (PLAN-estate-promo PR1).
+    if state.is_promo_plan() {
+        return promo_plan_ux(state);
+    }
     if state.show_billing_history {
         return billing_history_ux(state);
     }
     plan_selection_ux(state)
+}
+
+/// Provenance label on the promo manage-plan card. Working name from
+/// PLAN-estate-promo PR1 ("Founding member"); final display name is pending
+/// sign-off — change here when confirmed.
+const PROMO_PROVENANCE_LABEL: &str = "Founding member";
+
+// ── Promo manage-plan variant (PLAN-estate-promo PR1) ───────────────────────
+
+/// Informational manage-plan view for an account holding the July-4 launch
+/// grant of Estate free for its first year. The picker collapses to a single
+/// card — no Renew / Change / checkout actions, since the user already has
+/// everything Estate unlocks and purchasing is closed during the promo.
+fn promo_plan_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
+    let headline = match state
+        .plan
+        .as_ref()
+        .and_then(|p| p.renewal_at.as_deref())
+        .map(format_date)
+    {
+        Some(date) => format!("Free for your first year — expires {}", date),
+        None => "Free for your first year".to_string(),
+    };
+
+    let badge_color = plan_tier_color(&PlanTier::Estate);
+
+    let card = container(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(text::p1_bold("Estate").color(badge_color))
+                    .push(iced::widget::Space::new().width(Length::Fill))
+                    .push(text::p2_regular(PROMO_PROVENANCE_LABEL).color(color::ORANGE))
+                    .align_y(Alignment::Center),
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
+            .push(
+                Row::new()
+                    .push(text::p2_regular("Status").color(color::GREY_3))
+                    .push(iced::widget::Space::new().width(Length::Fill))
+                    .push(text::p2_bold("Active").color(color::ORANGE))
+                    .align_y(Alignment::Center),
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+            .push(text::p1_medium(headline).style(theme::text::primary))
+            .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+            .push(
+                text::p2_regular(
+                    "You have full access to every Estate feature. No payment \
+                     is needed during your first year — we'll email you before \
+                     it ends.",
+                )
+                .color(color::GREY_3),
+            )
+            .padding(16)
+            .spacing(2),
+    )
+    .style(move |t| container::Style {
+        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+        border: iced::Border {
+            color: badge_color,
+            width: 1.0,
+            radius: 16.0.into(),
+        },
+        ..Default::default()
+    })
+    .width(Length::Fill);
+
+    Column::new()
+        .push(text::h4_bold("Plan & Billing").style(theme::text::primary))
+        .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
+        .push(card)
+        .spacing(0)
+        .width(Length::Fill)
+        .into()
 }
 
 // ── Plan selection view ─────────────────────────────────────────────────────
@@ -651,6 +764,12 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
     let current_cycle = state.plan.as_ref().and_then(|p| p.billing_cycle);
 
     let cycle = state.selected_billing_cycle;
+
+    // Whether to render checkout CTAs at all. Disabled while the promo
+    // window has purchasing closed server-side (PLAN-estate-promo PR2); the
+    // picker still shows plans/prices, just with no purchase path behind
+    // them so we never route to a checkout the API would reject.
+    let purchasing_enabled = state.purchasing_enabled();
 
     // Billing cycle toggle
     let monthly_btn = if cycle == BillingCycle::Monthly {
@@ -778,6 +897,15 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
             .push(iced::widget::Space::new().height(Length::Fixed(12.0)));
     }
 
+    // "Purchasing closed" note while the promo window has checkout disabled
+    // (PLAN-estate-promo PR2). The upgrade CTAs below render non-pressable in
+    // that state; this explains why.
+    if !purchasing_enabled {
+        col = col
+            .push(purchasing_unavailable_note())
+            .push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+    }
+
     col = col
         .push(cycle_toggle)
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
@@ -827,7 +955,7 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
             .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
             .push(if is_current {
                 button::secondary(None, "Current Plan").width(Length::Fill)
-            } else if is_upgrade {
+            } else if is_upgrade && purchasing_enabled {
                 let label = match &card.tier {
                     PlanTier::Pro => "Upgrade to Pro",
                     PlanTier::Estate => "Upgrade to Estate",
@@ -836,6 +964,11 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                 button::primary(None, label)
                     .on_press(ConnectAccountMessage::StartCheckout(card.tier))
                     .width(Length::Fill)
+            } else if is_upgrade {
+                // Purchasing closed (promo window) — show the tier without a
+                // checkout CTA (PLAN-estate-promo PR2). Non-pressable, like
+                // the other informational buttons here.
+                button::secondary(None, "Unavailable").width(Length::Fill)
             } else {
                 // Downgrade or Free — no action
                 button::secondary(None, "—").width(Length::Fill)
@@ -1962,7 +2095,7 @@ mod renewal_banner_tests {
     //! `Option<Element>` and its `style`/`on_press` closures are deferred,
     //! so we can construct it headless and assert only Some/None.
     use super::*;
-    use crate::services::coincube::{ConnectPlan, PlanEntitlements, PlanStatus};
+    use crate::services::coincube::{ConnectPlan, PlanEntitlements, PlanSource, PlanStatus};
 
     fn plan(tier: PlanTier, status: PlanStatus, renewal_at: Option<&str>) -> ConnectPlan {
         ConnectPlan {
@@ -1978,6 +2111,7 @@ mod renewal_banner_tests {
                 business_orgs: false,
             },
             billing_cycle: Some(BillingCycle::Monthly),
+            plan_source: None,
         }
     }
 
@@ -2006,5 +2140,71 @@ mod renewal_banner_tests {
         let mut panel = ConnectAccountPanel::new();
         panel.plan = Some(plan(PlanTier::Free, PlanStatus::Active, None));
         assert!(renewal_banner(&panel).is_none());
+    }
+
+    // ── Estate promo (PLAN-estate-promo PR1/PR2) ──────────────────────
+    fn promo_estate(renewal_at: Option<&str>) -> ConnectPlan {
+        let mut p = plan(PlanTier::Estate, PlanStatus::Active, renewal_at);
+        p.plan_source = Some(PlanSource::PromoEstateY1);
+        p
+    }
+
+    fn features_purchasing(enabled: Option<bool>) -> crate::services::coincube::FeaturesResponse {
+        crate::services::coincube::FeaturesResponse {
+            plans: vec![crate::services::coincube::PlanFeatureInfo {
+                name: "pro".to_string(),
+                price: None,
+                features: Vec::new(),
+                included_linked_participants: None,
+            }],
+            pricing_schema_version: None,
+            purchasing_enabled: enabled,
+        }
+    }
+
+    /// PR1: a promo account in its renewal window still shows no pre-expiry
+    /// banner (suppressed at launch).
+    #[test]
+    fn no_renewal_banner_for_active_promo() {
+        let mut panel = ConnectAccountPanel::new();
+        // Renewal in the past so `plan_lifecycle()` (wall clock) is RenewalDue.
+        panel.plan = Some(promo_estate(Some("2020-01-01T00:00:00Z")));
+        assert!(matches!(
+            panel.plan_lifecycle(),
+            PlanLifecycle::RenewalDue { .. }
+        ));
+        assert!(
+            renewal_banner(&panel).is_none(),
+            "promo accounts suppress the pre-expiry banner"
+        );
+    }
+
+    /// PR2: with purchasing disabled, the pre-expiry "Renew" banner is hidden
+    /// for an ordinary paid account too — no dead-end CTA.
+    #[test]
+    fn no_renewal_banner_when_purchasing_disabled() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.plan = Some(plan(PlanTier::Pro, PlanStatus::Active, Some("2020-01-01T00:00:00Z")));
+        panel.features = Some(features_purchasing(Some(false)));
+        assert!(matches!(
+            panel.plan_lifecycle(),
+            PlanLifecycle::RenewalDue { .. }
+        ));
+        assert!(renewal_banner(&panel).is_none());
+    }
+
+    /// Smoke: the promo manage-plan variant and the purchasing-disabled
+    /// picker both construct without panicking. Element internals are
+    /// opaque, so this just exercises the render paths.
+    #[test]
+    fn promo_and_disabled_picker_render() {
+        let mut promo = ConnectAccountPanel::new();
+        promo.plan = Some(promo_estate(Some("2027-07-04T00:00:00Z")));
+        let _ = plan_billing_ux(&promo);
+
+        let mut disabled = ConnectAccountPanel::new();
+        disabled.plan = Some(plan(PlanTier::Free, PlanStatus::Active, None));
+        disabled.features = Some(features_purchasing(Some(false)));
+        let _ = plan_billing_ux(&disabled);
     }
 }

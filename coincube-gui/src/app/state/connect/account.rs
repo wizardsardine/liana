@@ -62,6 +62,13 @@ pub const PLAN_RENEWAL_BANNER_DAYS: i64 = 7;
 /// soft "update available" note in the plan picker (D4).
 pub const SUPPORTED_PRICING_SCHEMA_VERSION: u32 = 1;
 
+/// At launch the July-4 Estate promo suppresses the pre-expiry renewal
+/// banner for promo accounts (PLAN-estate-promo PR1) — the API likewise
+/// suppresses reminder emails, and the year-one cliff (Jul 2027) is too far
+/// out to nag about now. Flip to `false` for year-two GA to re-enable the
+/// banner with year-two renewal copy.
+pub const PROMO_SUPPRESS_RENEWAL_BANNER: bool = true;
+
 /// Where the user's plan sits in its lifecycle, derived from the
 /// `/connect/plan` response plus the current time. Drives the renewal
 /// banner (D1) and the expired-state UX (D3); kept as a pure projection
@@ -971,6 +978,15 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::StartCheckout(tier) => {
+                // Defense-in-depth (PLAN-estate-promo PR2): the picker hides
+                // upgrade CTAs and the renewal banner is suppressed while
+                // purchasing is disabled, but this is the single chokepoint
+                // every checkout flows through — never open one the API would
+                // reject even if a stale message slips through.
+                if !self.purchasing_enabled() {
+                    log::warn!("[CONNECT] StartCheckout ignored — purchasing disabled");
+                    return iced::Task::none();
+                }
                 self.checkout = Some(CheckoutState {
                     phase: CheckoutPhase::Creating,
                     checkout: None,
@@ -2349,11 +2365,43 @@ impl ConnectAccountPanel {
         self.plan_lifecycle_at(chrono::Utc::now())
     }
 
+    /// True when the authenticated account currently holds the July-4 promo
+    /// grant (Estate free for year one). Drives the promo manage-plan
+    /// variant, the collapsed picker, and renewal-banner suppression
+    /// (PLAN-estate-promo PR1).
+    pub fn is_promo_plan(&self) -> bool {
+        self.plan
+            .as_ref()
+            .map(|p| p.is_active_promo())
+            .unwrap_or(false)
+    }
+
+    /// Whether self-service purchasing is currently available. Sourced from
+    /// `GET /connect/features` (`purchasing_enabled`); absent → enabled, so
+    /// the existing checkout flow stays intact for backends that don't send
+    /// the flag (and for fall GA once the promo ends). The July-4 promo sets
+    /// it `false`, which hides every purchase surface (PLAN-estate-promo
+    /// PR2).
+    pub fn purchasing_enabled(&self) -> bool {
+        self.features
+            .as_ref()
+            .and_then(|f| f.purchasing_enabled)
+            .unwrap_or(true)
+    }
+
     /// Whether the pre-expiry renewal banner should render: the plan is
     /// within its renewal window AND the user hasn't dismissed it this
     /// session. The expired state has its own dedicated UX (D3), so the
     /// banner intentionally does not cover `Expired`.
+    ///
+    /// Suppressed entirely for promo accounts at launch (config-flagged via
+    /// [`PROMO_SUPPRESS_RENEWAL_BANNER`]) and whenever purchasing is
+    /// disabled — in both cases there is no purchase path, so a "Renew now"
+    /// nag would be a dead end (PLAN-estate-promo PR1/PR2).
     pub fn show_renewal_banner(&self) -> bool {
+        if (PROMO_SUPPRESS_RENEWAL_BANNER && self.is_promo_plan()) || !self.purchasing_enabled() {
+            return false;
+        }
         !self.renewal_banner_dismissed
             && matches!(self.plan_lifecycle(), PlanLifecycle::RenewalDue { .. })
     }
@@ -3513,7 +3561,7 @@ mod add_to_cube_tests {
 #[cfg(test)]
 mod plan_lifecycle_tests {
     use super::*;
-    use crate::services::coincube::{PlanEntitlements, PlanFeatureInfo};
+    use crate::services::coincube::{PlanEntitlements, PlanFeatureInfo, PlanSource};
 
     /// Parse a fixed RFC-3339 instant for deterministic `now`/renewal math.
     fn at(iso: &str) -> chrono::DateTime<chrono::Utc> {
@@ -3541,7 +3589,20 @@ mod plan_lifecycle_tests {
                 business_orgs: false,
             },
             billing_cycle: cycle,
+            plan_source: None,
         }
+    }
+
+    /// A `ConnectPlan` carrying explicit promo provenance, for the
+    /// estate-promo cases.
+    fn promo_plan(
+        status: PlanStatus,
+        renewal_at: Option<&str>,
+        source: PlanSource,
+    ) -> ConnectPlan {
+        let mut p = plan(PlanTier::Estate, status, renewal_at, Some(BillingCycle::Annual));
+        p.plan_source = Some(source);
+        p
     }
 
     fn panel_with_plan(plan: ConnectPlan) -> ConnectAccountPanel {
@@ -3701,6 +3762,13 @@ mod plan_lifecycle_tests {
 
     // ── Pricing schema soft-update note (D4) ──────────────────────────
     fn features(version: Option<u32>) -> FeaturesResponse {
+        features_with_purchasing(version, None)
+    }
+
+    fn features_with_purchasing(
+        version: Option<u32>,
+        purchasing_enabled: Option<bool>,
+    ) -> FeaturesResponse {
         FeaturesResponse {
             plans: vec![PlanFeatureInfo {
                 name: "pro".to_string(),
@@ -3709,6 +3777,7 @@ mod plan_lifecycle_tests {
                 included_linked_participants: None,
             }],
             pricing_schema_version: version,
+            purchasing_enabled,
         }
     }
 
@@ -3732,5 +3801,152 @@ mod plan_lifecycle_tests {
         let mut panel = ConnectAccountPanel::new();
         panel.features = Some(features(Some(SUPPORTED_PRICING_SCHEMA_VERSION + 1)));
         assert!(panel.pricing_schema_outdated());
+    }
+
+    // ── Estate promo: provenance detection (PR1) ──────────────────────
+    #[test]
+    fn active_promo_is_detected() {
+        let panel = panel_with_plan(promo_plan(
+            PlanStatus::Active,
+            Some("2027-07-04T00:00:00Z"),
+            PlanSource::PromoEstateY1,
+        ));
+        assert!(panel.plan.as_ref().unwrap().is_promo());
+        assert!(panel.plan.as_ref().unwrap().is_active_promo());
+        assert!(panel.is_promo_plan());
+    }
+
+    #[test]
+    fn paid_plan_is_not_promo() {
+        // Explicit `paid` provenance must never read as promo.
+        let panel = panel_with_plan(promo_plan(
+            PlanStatus::Active,
+            Some("2027-07-04T00:00:00Z"),
+            PlanSource::Paid,
+        ));
+        assert!(!panel.plan.as_ref().unwrap().is_promo());
+        assert!(!panel.is_promo_plan());
+    }
+
+    #[test]
+    fn missing_plan_source_is_not_promo() {
+        // Backward compatibility: older API omits `plan_source` → `None` →
+        // ordinary (non-promo) UX.
+        let panel = panel_with_plan(plan(
+            PlanTier::Estate,
+            PlanStatus::Active,
+            Some("2027-07-04T00:00:00Z"),
+            Some(BillingCycle::Annual),
+        ));
+        assert!(panel.plan.as_ref().unwrap().plan_source.is_none());
+        assert!(!panel.plan.as_ref().unwrap().is_promo());
+        assert!(!panel.is_promo_plan());
+    }
+
+    #[test]
+    fn unknown_plan_source_is_not_promo() {
+        // A future/unrecognized provenance value must not hide purchasing.
+        let panel = panel_with_plan(promo_plan(
+            PlanStatus::Active,
+            Some("2027-07-04T00:00:00Z"),
+            PlanSource::Unknown,
+        ));
+        assert!(!panel.is_promo_plan());
+    }
+
+    #[test]
+    fn lapsed_promo_is_not_active_promo_and_reads_expired() {
+        // At the year-one cliff the backend demotes the promo to `past_due`;
+        // it must fall through to the ordinary expired UX, not the promo card.
+        let panel = panel_with_plan(promo_plan(
+            PlanStatus::PastDue,
+            Some("2026-06-01T00:00:00Z"),
+            PlanSource::PromoEstateY1,
+        ));
+        assert!(panel.plan.as_ref().unwrap().is_promo());
+        assert!(!panel.plan.as_ref().unwrap().is_active_promo());
+        assert!(!panel.is_promo_plan());
+        assert_eq!(panel.plan_lifecycle_at(at(NOW)), PlanLifecycle::Expired);
+    }
+
+    #[test]
+    fn promo_account_suppresses_renewal_banner() {
+        // Even inside the renewal window, a promo account suppresses the
+        // pre-expiry banner at launch (config-flagged).
+        assert!(
+            PROMO_SUPPRESS_RENEWAL_BANNER,
+            "test assumes launch config; update if flipped for GA"
+        );
+        let panel = panel_with_plan(promo_plan(
+            PlanStatus::Active,
+            Some("2026-06-13T00:00:00Z"), // 5 days out → RenewalDue
+            PlanSource::PromoEstateY1,
+        ));
+        assert_eq!(
+            panel.plan_lifecycle_at(at(NOW)),
+            PlanLifecycle::RenewalDue { days_remaining: 5 }
+        );
+        assert!(!panel.show_renewal_banner());
+    }
+
+    // ── Estate promo: purchasing gate (PR2) ───────────────────────────
+    #[test]
+    fn purchasing_enabled_defaults_true() {
+        // Absent features, and a features payload without the field, both
+        // read as enabled — the existing flow stays intact for fall GA.
+        let mut panel = ConnectAccountPanel::new();
+        assert!(panel.purchasing_enabled());
+        panel.features = Some(features_with_purchasing(None, None));
+        assert!(panel.purchasing_enabled());
+        panel.features = Some(features_with_purchasing(None, Some(true)));
+        assert!(panel.purchasing_enabled());
+    }
+
+    #[test]
+    fn purchasing_disabled_when_flag_false() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.features = Some(features_with_purchasing(None, Some(false)));
+        assert!(!panel.purchasing_enabled());
+    }
+
+    #[test]
+    fn purchasing_disabled_suppresses_renewal_banner() {
+        // A paid account in its renewal window, but purchasing is closed —
+        // suppress the "Renew" nag rather than dangle a dead-end CTA.
+        let mut panel = panel_with_plan(plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2026-06-13T00:00:00Z"),
+            Some(BillingCycle::Monthly),
+        ));
+        panel.features = Some(features_with_purchasing(None, Some(false)));
+        assert_eq!(
+            panel.plan_lifecycle_at(at(NOW)),
+            PlanLifecycle::RenewalDue { days_remaining: 5 }
+        );
+        assert!(!panel.show_renewal_banner());
+    }
+
+    #[test]
+    fn start_checkout_ignored_when_purchasing_disabled() {
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.features = Some(features_with_purchasing(None, Some(false)));
+        let _ = panel.update_message(ConnectAccountMessage::StartCheckout(PlanTier::Pro));
+        assert!(
+            panel.checkout.is_none(),
+            "checkout must not open while purchasing is disabled"
+        );
+    }
+
+    #[test]
+    fn start_checkout_proceeds_when_purchasing_enabled() {
+        // Default (no features / flag absent) keeps the existing checkout
+        // path working — regression guard for fall GA.
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        let _ = panel.update_message(ConnectAccountMessage::StartCheckout(PlanTier::Pro));
+        assert!(matches!(
+            panel.checkout.as_ref().map(|c| &c.phase),
+            Some(CheckoutPhase::Creating)
+        ));
     }
 }

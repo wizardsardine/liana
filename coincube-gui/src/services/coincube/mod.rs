@@ -279,6 +279,29 @@ pub enum PlanStatus {
     Canceled,
 }
 
+/// Provenance of the current plan grant, from `GET /connect/plan`
+/// (`plan_source`: `paid | promo_estate_y1 | admin`). The July-4 launch
+/// promo grants Estate free for a year and tags those accounts
+/// `promo_estate_y1`; the desktop reads this to render the promo
+/// manage-plan variant and hide purchase paths. Additive field — older
+/// backends omit it (deserialized as `None`), and any source string this
+/// build doesn't recognize maps to `Unknown` and is treated as non-promo,
+/// so a future grant type never accidentally hides purchasing.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanSource {
+    /// Ordinary self-service purchase.
+    Paid,
+    /// July-4 launch promo: Estate free for year one.
+    PromoEstateY1,
+    /// Granted by an administrator or the retro-grant tool.
+    Admin,
+    /// Any source string this build doesn't recognize — treated as
+    /// non-promo so purchasing is never hidden by an unknown grant type.
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanEntitlements {
@@ -300,6 +323,11 @@ pub struct ConnectPlan {
     /// Billing cycle of the current plan. `None` for free tier (no charge).
     #[serde(default)]
     pub billing_cycle: Option<BillingCycle>,
+    /// Provenance of the grant (`paid | promo_estate_y1 | admin`). Absent on
+    /// older backends and deserialized as `None` — never promo, so the
+    /// existing paid UX stays the backward-compatible default.
+    #[serde(default)]
+    pub plan_source: Option<PlanSource>,
 }
 
 impl ConnectPlan {
@@ -307,6 +335,21 @@ impl ConnectPlan {
     /// that used the old `tier` field can migrate with minimal churn.
     pub fn tier(&self) -> &PlanTier {
         &self.plan
+    }
+
+    /// True when this plan was granted by the July-4 launch promo (Estate
+    /// free for year one). Drives the promo manage-plan variant, the
+    /// collapsed picker, and renewal-banner suppression.
+    pub fn is_promo(&self) -> bool {
+        matches!(self.plan_source, Some(PlanSource::PromoEstateY1))
+    }
+
+    /// True for a *currently held* promo grant — promo provenance and an
+    /// active status. A lapsed promo (demoted to `past_due` at the year-one
+    /// cliff) is intentionally excluded so it falls through to the ordinary
+    /// expired UX instead of the promo card.
+    pub fn is_active_promo(&self) -> bool {
+        self.is_promo() && matches!(self.status, PlanStatus::Active)
     }
 }
 
@@ -344,6 +387,15 @@ pub struct FeaturesResponse {
         alias = "pricing_schema_version"
     )]
     pub pricing_schema_version: Option<u32>,
+    /// Whether self-service purchasing is currently available. The July-4
+    /// Estate promo disables checkout server-side; when this is
+    /// `Some(false)` the desktop hides every purchase path so it never
+    /// routes anyone to a `POST /connect/checkout` the API will reject.
+    /// Absent/`None` (older backends, or purchasing simply on) is treated
+    /// as enabled — keeps the existing flow intact for fall GA. See
+    /// `ConnectAccountPanel::purchasing_enabled`.
+    #[serde(default, alias = "purchasingEnabled", alias = "purchasing_enabled")]
+    pub purchasing_enabled: Option<bool>,
 }
 
 // ── Checkout / Billing ──────────────────────────────────────────────────────
