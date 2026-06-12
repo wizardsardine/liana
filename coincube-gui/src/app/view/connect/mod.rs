@@ -1,5 +1,6 @@
 mod contacts;
 pub mod cube_members;
+pub mod duress_contacts;
 pub mod duress_enroll;
 pub mod sign_in_prompt;
 
@@ -22,7 +23,7 @@ use crate::{
         settings::global::AccountTier,
         state::connect::{
             AvatarFlowStep, CheckoutPhase, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep,
-            ConnectPanel, PlanLifecycle,
+            ConnectPanel, DuressContactsStep, PlanLifecycle,
         },
         view::{AvatarMessage, ConnectAccountMessage, ConnectCubeMessage, DuressMessage},
     },
@@ -1310,6 +1311,15 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
         return duress_enroll::enroll_ux(enroll);
     }
 
+    // The Emergency-contacts add/edit form takes over the panel too (only
+    // reachable from the Estate-entitled list, so the guard is belt-and-
+    // suspenders against a mid-session downgrade).
+    if matches!(state.duress_contacts.step, DuressContactsStep::Form)
+        && state.is_duress_alerts_entitled()
+    {
+        return duress_contacts::form_ux(state);
+    }
+
     let entitled = state
         .plan
         .as_ref()
@@ -1446,7 +1456,25 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
         ),
     );
 
+    // Emergency contacts (Estate Notifications — PR 1). Rendered below the
+    // enrollment surface as its own section; Estate-gated inside `section`.
+    col = col.push(iced::widget::Space::new().height(Length::Fixed(28.0)));
+    col = col.push(divider_line());
+    col = col.push(iced::widget::Space::new().height(Length::Fixed(20.0)));
+    col = col.push(duress_contacts::section(state));
+
     col.width(Length::Fill).into()
+}
+
+/// A thin full-width horizontal rule used to separate panel sections.
+fn divider_line<'a>() -> Element<'a, ConnectAccountMessage> {
+    container(iced::widget::Space::new().height(Length::Fixed(1.0)))
+        .width(Length::Fill)
+        .style(|_t| container::Style {
+            background: Some(iced::Background::Color(color::GREY_5)),
+            ..Default::default()
+        })
+        .into()
 }
 
 pub fn avatar_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage> {
@@ -1976,6 +2004,8 @@ mod renewal_banner_tests {
                 linked_keychains: false,
                 duress_remote_lock: false,
                 business_orgs: false,
+                duress_alerts: false,
+                recovery_alerts: false,
             },
             billing_cycle: Some(BillingCycle::Monthly),
         }

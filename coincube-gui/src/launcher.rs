@@ -1380,6 +1380,15 @@ impl Launcher {
                 {
                     return map_connect_task(self.connect_account.reload_contacts());
                 }
+                // Load duress Emergency-contacts on demand (Estate Notifications).
+                // `reload_duress_contacts` no-ops for non-Estate accounts.
+                if matches!(
+                    self.active_section,
+                    LauncherSection::Connect(app::menu::ConnectSubMenu::Duress)
+                ) && self.connect_account.is_authenticated()
+                {
+                    return map_connect_task(self.connect_account.reload_duress_contacts());
+                }
                 Task::none()
             }
 

@@ -288,6 +288,21 @@ pub struct PlanEntitlements {
     pub linked_keychains: bool,
     pub duress_remote_lock: bool,
     pub business_orgs: bool,
+    /// Estate-only: duress-activation alert contacts (SMS/WhatsApp/email
+    /// fan-out when duress fires). See `PLAN-estate-notifications.md` PR 1.
+    ///
+    /// `#[serde(default)]` so a pre-estate-notifications API that doesn't
+    /// emit this field deserialises to `false` rather than failing the
+    /// whole `ConnectPlan` parse — the desktop treats an absent
+    /// entitlement as "not entitled", which is the safe default.
+    #[serde(default)]
+    pub duress_alerts: bool,
+    /// Estate-only: vault recovery-path monitoring (descriptor escrow or
+    /// timelock heartbeat → keyholder emails). See
+    /// `PLAN-estate-notifications.md` PR 2. Same forward-compat tolerance
+    /// as [`Self::duress_alerts`].
+    #[serde(default)]
+    pub recovery_alerts: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1518,6 +1533,423 @@ impl DownloadError {
             },
             Err(_) => DownloadError::DuressLocked { unlock_at: None },
         }
+    }
+}
+
+// =============================================================================
+// Duress alert contacts (Estate Notifications — PR 1)
+// =============================================================================
+//
+// Account-scoped contacts who receive a one-time intro message on
+// enrollment and a single alert if duress activates. Estate-gated
+// (`duress_alerts` entitlement). Backs the "Emergency contacts" panel in
+// the duress settings surface. See `plans/PLAN-estate-notifications.md`
+// PR 1 (desktop) and the coincube-api counterpart PR 1.
+//
+// Trust-posture notes:
+//   * The contacts list is account-scoped PII (names, phones, emails) and
+//     is ONLY ever rendered in normal-mode settings — never on the duress
+//     activation/cryptic screen, where it would leak who gets alerted to a
+//     coercer. The view layer enforces this; the data simply isn't fetched
+//     while the panel is in a duress-active flow.
+//   * `intro_sent_at` / `opted_out_at` are server-managed; the desktop
+//     reads them to render delivery state but never sets them. A contact
+//     with `opted_out_at` set has replied STOP and is never messaged again.
+
+/// Channel bitmask bits for [`DuressAlertContact::channels`]. Matches the
+/// coincube-api "channels mask" wire field. SMS/WhatsApp require a phone;
+/// Email requires an email — the UI enforces that pairing before letting a
+/// bit be set.
+pub const DURESS_CHANNEL_SMS: u8 = 1 << 0;
+pub const DURESS_CHANNEL_WHATSAPP: u8 = 1 << 1;
+pub const DURESS_CHANNEL_EMAIL: u8 = 1 << 2;
+
+/// A duress alert contact as returned by
+/// `GET /api/v1/connect/duress/contacts`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuressAlertContact {
+    pub id: u64,
+    pub display_name: String,
+    /// E.164 phone (e.g. `+15551234567`). `None` when the contact is
+    /// email-only. At least one of `phone`/`email` is always set
+    /// (enforced server-side and in the desktop add/edit form).
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    /// Bitmask of [`DURESS_CHANNEL_SMS`] / `_WHATSAPP` / `_EMAIL`.
+    #[serde(default)]
+    pub channels: u8,
+    /// RFC 3339 timestamp of when the one-time intro message was sent,
+    /// or `None` if it hasn't gone out yet (just-created contact).
+    #[serde(default)]
+    pub intro_sent_at: Option<String>,
+    /// RFC 3339 timestamp of when the contact replied STOP. When set, the
+    /// contact is permanently opted out and never messaged again.
+    #[serde(default)]
+    pub opted_out_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl DuressAlertContact {
+    /// True when the contact has replied STOP and will not be messaged.
+    pub fn is_opted_out(&self) -> bool {
+        self.opted_out_at.is_some()
+    }
+
+    pub fn has_channel(&self, bit: u8) -> bool {
+        self.channels & bit != 0
+    }
+}
+
+/// Body for `POST /api/v1/connect/duress/contacts` (Estate-gated). At
+/// least one of `phone`/`email` must be `Some`; `channels` must reference
+/// only contact methods that are present. Both are validated client-side
+/// before the call and re-checked server-side.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateDuressAlertContactRequest {
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phone: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    pub channels: u8,
+}
+
+/// Body for `PATCH /api/v1/connect/duress/contacts/{id}`. Every field is
+/// optional — only the ones the user changed are sent. The API plan scopes
+/// PATCH to "channel prefs", but the desktop edit form can also amend the
+/// name / phone / email, so all four are partial-update fields. Fields left
+/// `None` are omitted from the JSON body and untouched server-side.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateDuressAlertContactRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phone: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channels: Option<u8>,
+}
+
+/// Maximum duress alert contacts per account. Cost + abuse bound, mirrored
+/// from the coincube-api cap (`PLAN-estate-notifications.md` PR 1).
+pub const MAX_DURESS_ALERT_CONTACTS: usize = 5;
+
+/// Validates a phone number as loosely-E.164: a leading `+`, a non-zero
+/// first digit, and 1–15 digits total (ITU-T E.164 max). This is a
+/// format gate for the input field, not a line-reachability check — the
+/// server / sent.dm does the authoritative validation. Returns `true` for
+/// the empty string so an email-only contact (no phone) passes; callers
+/// separately enforce "at least one of phone/email".
+pub fn is_valid_e164(phone: &str) -> bool {
+    let p = phone.trim();
+    if p.is_empty() {
+        return true;
+    }
+    let Some(rest) = p.strip_prefix('+') else {
+        return false;
+    };
+    let digits: Vec<char> = rest.chars().collect();
+    if digits.len() < 1 || digits.len() > 15 {
+        return false;
+    }
+    if !digits.iter().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    // E.164 country codes never start with 0.
+    digits[0] != '0'
+}
+
+#[cfg(test)]
+mod duress_alert_contact_tests {
+    use super::*;
+
+    #[test]
+    fn e164_accepts_well_formed_numbers() {
+        assert!(is_valid_e164("+15551234567"));
+        assert!(is_valid_e164("+447911123456"));
+        assert!(is_valid_e164("+5491123456789"));
+        // Empty = "no phone provided", which is allowed (email-only contact).
+        assert!(is_valid_e164(""));
+        assert!(is_valid_e164("  +15551234567 "));
+    }
+
+    #[test]
+    fn e164_rejects_malformed_numbers() {
+        assert!(!is_valid_e164("5551234567")); // no leading +
+        assert!(!is_valid_e164("+0123456789")); // leading 0 after +
+        assert!(!is_valid_e164("+1 555 123 4567")); // spaces
+        assert!(!is_valid_e164("+1555123456789012")); // 16 digits, too long
+        assert!(!is_valid_e164("+")); // no digits
+        assert!(!is_valid_e164("+1-555-1234")); // dashes
+    }
+
+    #[test]
+    fn channel_bits_are_distinct() {
+        assert_eq!(DURESS_CHANNEL_SMS, 1);
+        assert_eq!(DURESS_CHANNEL_WHATSAPP, 2);
+        assert_eq!(DURESS_CHANNEL_EMAIL, 4);
+        let c = DuressAlertContact {
+            id: 1,
+            display_name: "Jane".into(),
+            phone: Some("+15551234567".into()),
+            email: None,
+            channels: DURESS_CHANNEL_SMS | DURESS_CHANNEL_WHATSAPP,
+            intro_sent_at: None,
+            opted_out_at: None,
+            created_at: "2026-06-11T00:00:00Z".into(),
+            updated_at: "2026-06-11T00:00:00Z".into(),
+        };
+        assert!(c.has_channel(DURESS_CHANNEL_SMS));
+        assert!(c.has_channel(DURESS_CHANNEL_WHATSAPP));
+        assert!(!c.has_channel(DURESS_CHANNEL_EMAIL));
+        assert!(!c.is_opted_out());
+    }
+
+    #[test]
+    fn deserialises_minimal_and_tolerates_missing_optionals() {
+        // Server may omit nullable fields entirely.
+        let v = serde_json::json!({
+            "id": 7,
+            "displayName": "Sam",
+            "email": "sam@example.com",
+            "channels": 4,
+            "createdAt": "2026-06-11T00:00:00Z",
+            "updatedAt": "2026-06-11T00:00:00Z"
+        });
+        let c: DuressAlertContact = serde_json::from_value(v).unwrap();
+        assert_eq!(c.display_name, "Sam");
+        assert!(c.phone.is_none());
+        assert_eq!(c.email.as_deref(), Some("sam@example.com"));
+        assert!(c.has_channel(DURESS_CHANNEL_EMAIL));
+        assert!(c.intro_sent_at.is_none());
+    }
+}
+
+// =============================================================================
+// Vault recovery monitoring (Estate Notifications — PR 2)
+// =============================================================================
+//
+// Three-tier, per-vault opt-in for recovery-path monitoring. Keyed by the
+// Connect vault numeric id (`ConnectVaultResponse::id`). Estate-gated
+// (`recovery_alerts` entitlement). See `plans/PLAN-estate-notifications.md`
+// PR 2 (desktop) and the coincube-api counterpart PRs 3–5.
+//
+// Trust-posture: "Full" uploads a service-encrypted copy of the vault
+// descriptor so COINCUBE can watch the chain (it can see this vault's
+// addresses + balances, never spend). "Alerts only" sends only a periodic
+// timelock heartbeat (`earliest_recovery_height`), never the descriptor.
+// "Off" is a true delete of any stored descriptor record. The opt-in copy
+// in the UI states this trade plainly — no euphemisms.
+
+/// Per-vault monitoring tier. Wire values `off` / `heartbeat` / `full`
+/// match the coincube-api `monitoring_level` column (PR 5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum VaultMonitoringLevel {
+    /// No monitoring. Any stored descriptor record is true-deleted.
+    #[default]
+    Off,
+    /// "Alerts only" — periodic timelock heartbeat. The server learns only
+    /// the block height at which the recovery window opens, never the
+    /// vault's addresses or balances. Keyholders still need the recovery
+    /// password.
+    Heartbeat,
+    /// "Full" — a service-encrypted copy of the descriptor is escrowed so
+    /// COINCUBE watches the chain and keyholders can recover without the
+    /// owner's password.
+    Full,
+}
+
+impl VaultMonitoringLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Heartbeat => "heartbeat",
+            Self::Full => "full",
+        }
+    }
+}
+
+/// Per-vault owner policy for when keyholders may download the encrypted
+/// recovery kit. Wire values `anytime` / `at_approaching` match the
+/// coincube-api `crk_keyholder_download` column (PR 3). Default is the
+/// privacy-preserving `at_approaching`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyholderDownloadPolicy {
+    /// Keyholders can download anytime — lets family prepare/verify early,
+    /// but with the pre-shared password that also means balance visibility.
+    Anytime,
+    /// Keyholders can only download once recovery is approaching/open —
+    /// keeps balances private until the recovery window nears.
+    #[default]
+    AtApproaching,
+}
+
+impl KeyholderDownloadPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Anytime => "anytime",
+            Self::AtApproaching => "at_approaching",
+        }
+    }
+}
+
+/// Status returned by `GET /api/v1/connect/vaults/{id}/monitoring`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultMonitoringStatus {
+    #[serde(default)]
+    pub level: VaultMonitoringLevel,
+    #[serde(default)]
+    pub crk_keyholder_download: KeyholderDownloadPolicy,
+    /// Server's per-vault recovery state machine value, when the sweep has
+    /// run: `none` / `approaching` / `available` / `reminding`. `None` when
+    /// the API doesn't expose it (nice-to-have; the UI degrades silently).
+    #[serde(default)]
+    pub last_notified_state: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+impl Default for VaultMonitoringStatus {
+    fn default() -> Self {
+        Self {
+            level: VaultMonitoringLevel::Off,
+            crk_keyholder_download: KeyholderDownloadPolicy::AtApproaching,
+            last_notified_state: None,
+            updated_at: None,
+        }
+    }
+}
+
+/// Body for `POST /api/v1/connect/vaults/{id}/monitoring` (Estate-gated).
+/// Sets the monitoring tier. `descriptor` is required for
+/// [`VaultMonitoringLevel::Full`] (the escrowed copy) and omitted for
+/// `Heartbeat`. `crk_keyholder_download` is included when the owner changes
+/// the download policy alongside the level.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetVaultMonitoringRequest {
+    pub level: VaultMonitoringLevel,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub descriptor: Option<String>,
+    /// Gap-limit hint so the server's sweep derives enough addresses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gap_limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crk_keyholder_download: Option<KeyholderDownloadPolicy>,
+}
+
+/// Body for `PUT /api/v1/connect/vaults/{id}/keyholder-download-policy`
+/// (Estate-gated). Sets the keyholder recovery-kit download policy
+/// independently of the monitoring level — the policy governs the existing
+/// recovery-kit GET for keyholder callers, so it's meaningful even when
+/// chain monitoring is off.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetKeyholderDownloadPolicyRequest {
+    pub crk_keyholder_download: KeyholderDownloadPolicy,
+}
+
+/// Body for `POST /api/v1/connect/vaults/{id}/heartbeat` (Estate-gated,
+/// PR 5). Fire-and-forget after each vault sync for Heartbeat-tier (and
+/// Full, as a cross-check) vaults. `earliest_recovery_height` is the block
+/// height at which this vault's earliest recovery branch opens; a newer
+/// report always wins server-side (monotonic-staleness rule).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultHeartbeatRequest {
+    pub earliest_recovery_height: u32,
+    pub computed_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[cfg(test)]
+mod vault_monitoring_tests {
+    use super::*;
+
+    #[test]
+    fn level_wire_values() {
+        assert_eq!(
+            serde_json::to_string(&VaultMonitoringLevel::Full).unwrap(),
+            "\"full\""
+        );
+        assert_eq!(
+            serde_json::to_string(&VaultMonitoringLevel::Heartbeat).unwrap(),
+            "\"heartbeat\""
+        );
+        assert_eq!(
+            serde_json::to_string(&VaultMonitoringLevel::Off).unwrap(),
+            "\"off\""
+        );
+        assert_eq!(VaultMonitoringLevel::default(), VaultMonitoringLevel::Off);
+    }
+
+    #[test]
+    fn download_policy_wire_values() {
+        assert_eq!(
+            serde_json::to_string(&KeyholderDownloadPolicy::AtApproaching).unwrap(),
+            "\"at_approaching\""
+        );
+        assert_eq!(
+            serde_json::to_string(&KeyholderDownloadPolicy::Anytime).unwrap(),
+            "\"anytime\""
+        );
+        // Default is the privacy-preserving option.
+        assert_eq!(
+            KeyholderDownloadPolicy::default(),
+            KeyholderDownloadPolicy::AtApproaching
+        );
+    }
+
+    #[test]
+    fn monitoring_status_tolerates_minimal_body() {
+        // A vault with no monitoring record: server may send just the level.
+        let v = serde_json::json!({ "level": "off" });
+        let s: VaultMonitoringStatus = serde_json::from_value(v).unwrap();
+        assert_eq!(s.level, VaultMonitoringLevel::Off);
+        // Absent download policy defaults to at_approaching.
+        assert_eq!(
+            s.crk_keyholder_download,
+            KeyholderDownloadPolicy::AtApproaching
+        );
+        assert!(s.last_notified_state.is_none());
+    }
+
+    #[test]
+    fn set_request_omits_descriptor_for_heartbeat() {
+        let req = SetVaultMonitoringRequest {
+            level: VaultMonitoringLevel::Heartbeat,
+            descriptor: None,
+            gap_limit: Some(20),
+            crk_keyholder_download: None,
+        };
+        let body = serde_json::to_value(&req).unwrap();
+        assert_eq!(body["level"], "heartbeat");
+        assert!(body.get("descriptor").is_none());
+        assert_eq!(body["gapLimit"], 20);
+        assert!(body.get("crkKeyholderDownload").is_none());
+    }
+
+    #[test]
+    fn set_request_includes_descriptor_for_full() {
+        let req = SetVaultMonitoringRequest {
+            level: VaultMonitoringLevel::Full,
+            descriptor: Some("wsh(...)".into()),
+            gap_limit: None,
+            crk_keyholder_download: Some(KeyholderDownloadPolicy::Anytime),
+        };
+        let body = serde_json::to_value(&req).unwrap();
+        assert_eq!(body["level"], "full");
+        assert_eq!(body["descriptor"], "wsh(...)");
+        assert_eq!(body["crkKeyholderDownload"], "anytime");
     }
 }
 

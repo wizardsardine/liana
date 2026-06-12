@@ -37,6 +37,11 @@ pub enum Message {
     Tick,
     UpdateDaemonCache(Result<DaemonCache, Error>),
     CacheUpdated,
+    /// Terminal no-op for the fire-and-forget vault recovery heartbeat
+    /// (Estate Notifications — PR 2). The heartbeat POST must never block
+    /// or affect sync, so its result is discarded here. Carries the result
+    /// only so transient failures can be logged.
+    RecoveryHeartbeatSent(Result<(), String>),
     Fiat(FiatMessage),
     UpdatePanelCache(/* is current panel */ bool),
     View(view::Message),

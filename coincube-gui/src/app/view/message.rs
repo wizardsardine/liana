@@ -341,11 +341,35 @@ pub enum SettingsMessage {
     /// Coexists with `BackupMasterSeed` above (the local paper-phrase
     /// backup), it does not replace it.
     RecoveryKit(RecoveryKitMessage),
+    /// Vault Recovery Alerts — Estate-only chain monitoring opt-in
+    /// (descriptor escrow / timelock heartbeat) + keyholder download
+    /// policy. See `PLAN-estate-notifications.md` PR 2.
+    RecoveryAlerts(RecoveryAlertsMessage),
     /// Local LAN signer ("Paired phones") section — pairs a Keychain
     /// phone over the local network so it shows up in the signer
     /// list. See `PLAN-local-signer-lan-desktop.md`.
     LocalSigningSection,
     LocalSigning(LocalSigningMessage),
+}
+
+/// Messages for the Vault Recovery Alerts settings card (Estate
+/// Notifications — PR 2). Carries no secrets; the descriptor is built
+/// inside the App-level handler from the live wallet, never on the wire of
+/// these messages. `Debug` is derived.
+#[derive(Debug, Clone)]
+pub enum RecoveryAlertsMessage {
+    /// Fetch the vault's monitoring status (resolves the Connect vault id,
+    /// then GETs `/vaults/{id}/monitoring`). Fired on entering General
+    /// settings and after a successful change.
+    LoadStatus,
+    /// Async result of `LoadStatus`: `(connectVaultId, status)`.
+    StatusLoaded(Result<(u64, crate::services::coincube::VaultMonitoringStatus), String>),
+    /// User picked a monitoring level (Off / Alerts-only / Full).
+    SelectLevel(crate::services::coincube::VaultMonitoringLevel),
+    /// User changed the keyholder recovery-kit download policy.
+    SetDownloadPolicy(crate::services::coincube::KeyholderDownloadPolicy),
+    /// Async result of a level / policy change — the updated status.
+    ChangeResult(Result<crate::services::coincube::VaultMonitoringStatus, String>),
 }
 
 #[derive(Debug, Clone)]
@@ -1113,6 +1137,43 @@ pub enum ConnectAccountMessage {
     /// Recovery flow + enrollment wizard messages (nested to keep this enum
     /// tidy).
     Duress(DuressMessage),
+    /// Duress "Emergency contacts" management (Estate Notifications — PR 1).
+    DuressContacts(DuressContactsMessage),
+}
+
+/// Messages for the duress "Emergency contacts" section (Estate
+/// Notifications — PR 1), nested under
+/// [`ConnectAccountMessage::DuressContacts`]. Carries account-scoped PII
+/// (names, phones, emails) but no secrets, so `Debug` is derived — the
+/// same posture as `ContactsMessage`, which already prints contact emails.
+#[derive(Debug, Clone)]
+pub enum DuressContactsMessage {
+    /// Async result of the contacts load. Carries `session_generation` for
+    /// stale-response guarding.
+    Loaded(
+        Result<Vec<crate::services::coincube::DuressAlertContact>, String>,
+        u64,
+    ),
+    /// Open the add form (empty fields).
+    ShowAddForm,
+    /// Open the edit form for an existing contact id.
+    EditContact(u64),
+    /// Leave the form, return to the list.
+    BackToList,
+    NameChanged(String),
+    PhoneChanged(String),
+    EmailChanged(String),
+    ToggleSms(bool),
+    ToggleWhatsapp(bool),
+    ToggleEmailChannel(bool),
+    /// Submit the add/edit form (POST or PATCH depending on `editing_id`).
+    Submit,
+    /// Async result of a create/update. Carries `session_generation`.
+    SubmitResult(Result<(), String>, u64),
+    /// Delete a contact by id.
+    Delete(u64),
+    /// Async result of a delete. `(contact_id, result, session_generation)`.
+    DeleteResult(u64, Result<(), String>, u64),
 }
 
 /// Messages for the duress recovery flow (Phase 6) and enrollment wizard

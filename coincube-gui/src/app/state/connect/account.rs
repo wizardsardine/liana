@@ -4,13 +4,16 @@ use crate::{
     app::{
         menu::ConnectSubMenu,
         message::Message,
-        view::{self, ConnectAccountMessage, ContactsMessage, DuressMessage},
+        view::{self, ConnectAccountMessage, ContactsMessage, DuressContactsMessage, DuressMessage},
     },
     services::coincube::{
         BillingCycle, BillingHistoryEntry, ChargeStatus, CheckoutRequest, CheckoutResponse,
-        CoincubeClient, ConnectPlan, Contact, ContactCube, ContactRole, CreateInviteRequest,
-        FeaturesResponse, Invite, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
-        PlanStatus, PlanTier, ReceivedInvite, User, VerifiedDevice,
+        CoincubeClient, ConnectPlan, Contact, ContactCube, ContactRole,
+        CreateDuressAlertContactRequest, CreateInviteRequest, DuressAlertContact, FeaturesResponse,
+        Invite, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest, PlanStatus, PlanTier,
+        ReceivedInvite, UpdateDuressAlertContactRequest, User, VerifiedDevice,
+        DURESS_CHANNEL_EMAIL, DURESS_CHANNEL_SMS, DURESS_CHANNEL_WHATSAPP,
+        MAX_DURESS_ALERT_CONTACTS,
     },
 };
 
@@ -361,6 +364,82 @@ impl DuressEnrollState {
     }
 }
 
+/// Which sub-view of the duress "Emergency contacts" section is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DuressContactsStep {
+    /// The list of configured alert contacts (and the add affordance).
+    #[default]
+    List,
+    /// The add/edit form. `editing_id` on [`DuressContactsState`]
+    /// distinguishes add (`None`) from edit (`Some`).
+    Form,
+}
+
+/// State for the duress "Emergency contacts" section within
+/// `ConnectAccountPanel` (Estate Notifications — PR 1). Holds the loaded
+/// contacts and the transient add/edit form. Estate-gated: the data is
+/// only fetched when the account carries the `duress_alerts` entitlement,
+/// and the section is only ever rendered in normal-mode settings — never
+/// on the duress activation/cryptic screen.
+#[derive(Debug, Default)]
+pub struct DuressContactsState {
+    pub step: DuressContactsStep,
+    /// `None` until the first load lands; `Some(vec)` afterwards (possibly
+    /// empty).
+    pub contacts: Option<Vec<DuressAlertContact>>,
+    pub loading: bool,
+    pub error: Option<String>,
+    /// `Some(id)` when the form is editing an existing contact, `None`
+    /// when adding a new one.
+    pub editing_id: Option<u64>,
+    pub form_name: String,
+    pub form_phone: String,
+    pub form_email: String,
+    pub form_ch_sms: bool,
+    pub form_ch_whatsapp: bool,
+    pub form_ch_email: bool,
+    pub submitting: bool,
+    /// Contact ids with an in-flight delete (disables the row's button).
+    pub deleting_ids: std::collections::HashSet<u64>,
+}
+
+impl DuressContactsState {
+    /// Reset the form fields to empty and switch to "add" mode.
+    fn reset_form_for_add(&mut self) {
+        self.editing_id = None;
+        self.form_name.clear();
+        self.form_phone.clear();
+        self.form_email.clear();
+        self.form_ch_sms = false;
+        self.form_ch_whatsapp = false;
+        self.form_ch_email = false;
+        self.error = None;
+    }
+
+    /// Populate the form from an existing contact for "edit" mode.
+    fn load_form_from(&mut self, c: &DuressAlertContact) {
+        self.editing_id = Some(c.id);
+        self.form_name = c.display_name.clone();
+        self.form_phone = c.phone.clone().unwrap_or_default();
+        self.form_email = c.email.clone().unwrap_or_default();
+        self.form_ch_sms = c.has_channel(DURESS_CHANNEL_SMS);
+        self.form_ch_whatsapp = c.has_channel(DURESS_CHANNEL_WHATSAPP);
+        self.form_ch_email = c.has_channel(DURESS_CHANNEL_EMAIL);
+        self.error = None;
+    }
+
+    /// Number of configured contacts (0 while unloaded).
+    pub fn count(&self) -> usize {
+        self.contacts.as_ref().map(|c| c.len()).unwrap_or(0)
+    }
+
+    /// True when the per-account cap is reached — the view hides the add
+    /// affordance and the update handler refuses a create.
+    pub fn at_cap(&self) -> bool {
+        self.count() >= MAX_DURESS_ALERT_CONTACTS
+    }
+}
+
 pub struct ConnectAccountPanel {
     pub step: ConnectFlowStep,
     pub active_sub: ConnectSubMenu,
@@ -386,6 +465,8 @@ pub struct ConnectAccountPanel {
     pub show_billing_history: bool,
     /// Active duress enrollment wizard (Phases 2 & 8); `None` when closed.
     pub duress_enroll: Option<DuressEnrollState>,
+    /// Duress "Emergency contacts" section (Estate Notifications — PR 1).
+    pub duress_contacts: DuressContactsState,
     /// Whether the user dismissed the pre-expiry renewal banner this
     /// session (D1). Not persisted — re-shows on next launch while the
     /// plan is still within its renewal window.
@@ -411,8 +492,42 @@ impl ConnectAccountPanel {
             billing_history: None,
             show_billing_history: false,
             duress_enroll: None,
+            duress_contacts: DuressContactsState::default(),
             renewal_banner_dismissed: false,
         }
+    }
+
+    /// True when the account carries the Estate-only `duress_alerts`
+    /// entitlement. Gates both the Emergency-contacts data load and the
+    /// management UI (non-entitled accounts get the locked affordance).
+    pub fn is_duress_alerts_entitled(&self) -> bool {
+        self.plan
+            .as_ref()
+            .map(|p| p.entitlements.duress_alerts)
+            .unwrap_or(false)
+    }
+
+    /// True when the account carries the Estate-only `recovery_alerts`
+    /// entitlement. Gates the Vault Recovery Alerts settings card (Estate
+    /// Notifications — PR 2).
+    pub fn is_recovery_alerts_entitled(&self) -> bool {
+        self.plan
+            .as_ref()
+            .map(|p| p.entitlements.recovery_alerts)
+            .unwrap_or(false)
+    }
+
+    /// Reset the Emergency-contacts section to its list view and reload
+    /// from the API. No-op (returns an empty task) when the account isn't
+    /// Estate-entitled, so we never fire a request that would just 403.
+    pub fn reload_duress_contacts(&mut self) -> iced::Task<Message> {
+        if !self.is_duress_alerts_entitled() {
+            return iced::Task::none();
+        }
+        self.duress_contacts.step = DuressContactsStep::List;
+        self.duress_contacts.error = None;
+        self.duress_contacts.loading = true;
+        load_duress_alert_contacts(&self.client, self.session_generation)
     }
 
     /// Returns a clone of the authenticated client (with JWT set).
@@ -1346,6 +1461,9 @@ impl ConnectAccountPanel {
                 // state — set on the post-sign-in mirror, reset on recovery).
             }
             ConnectAccountMessage::Duress(m) => return self.update_duress(m),
+            ConnectAccountMessage::DuressContacts(m) => {
+                return self.update_duress_contacts(m)
+            }
         }
 
         iced::Task::none()
@@ -1392,6 +1510,244 @@ impl ConnectAccountPanel {
         if let Some(mut wizard) = self.duress_enroll.take() {
             wizard.zeroize_secrets();
         }
+    }
+
+    /// Duress "Emergency contacts" dispatcher (Estate Notifications — PR 1).
+    ///
+    /// Every mutating path re-asserts the `duress_alerts` entitlement before
+    /// hitting the network, so a plan downgrade mid-session can't drive a
+    /// create/update/delete that would only 403. The list view is harmless
+    /// for a downgraded account (it just shows the locked affordance), so
+    /// reads aren't re-gated here beyond `reload_duress_contacts`.
+    fn update_duress_contacts(&mut self, msg: DuressContactsMessage) -> iced::Task<Message> {
+        use crate::services::coincube::is_valid_e164;
+        match msg {
+            DuressContactsMessage::Loaded(res, gen) => {
+                if gen != self.session_generation {
+                    return iced::Task::none();
+                }
+                self.duress_contacts.loading = false;
+                match res {
+                    Ok(list) => {
+                        self.duress_contacts.contacts = Some(list);
+                        self.duress_contacts.error = None;
+                    }
+                    Err(e) => self.duress_contacts.error = Some(e),
+                }
+            }
+            DuressContactsMessage::ShowAddForm => {
+                let dc = &mut self.duress_contacts;
+                if dc.at_cap() {
+                    dc.error = Some(format!(
+                        "You can configure up to {} emergency contacts.",
+                        MAX_DURESS_ALERT_CONTACTS
+                    ));
+                    return iced::Task::none();
+                }
+                dc.reset_form_for_add();
+                dc.step = DuressContactsStep::Form;
+            }
+            DuressContactsMessage::EditContact(id) => {
+                let dc = &mut self.duress_contacts;
+                let found = dc
+                    .contacts
+                    .as_ref()
+                    .and_then(|cs| cs.iter().find(|c| c.id == id))
+                    .cloned();
+                if let Some(c) = found {
+                    dc.load_form_from(&c);
+                    dc.step = DuressContactsStep::Form;
+                }
+            }
+            DuressContactsMessage::BackToList => {
+                let dc = &mut self.duress_contacts;
+                dc.step = DuressContactsStep::List;
+                dc.error = None;
+            }
+            DuressContactsMessage::NameChanged(v) => self.duress_contacts.form_name = v,
+            DuressContactsMessage::PhoneChanged(v) => {
+                let dc = &mut self.duress_contacts;
+                dc.form_phone = v;
+                // A phone-dependent channel can't outlive its phone.
+                if dc.form_phone.trim().is_empty() {
+                    dc.form_ch_sms = false;
+                    dc.form_ch_whatsapp = false;
+                }
+            }
+            DuressContactsMessage::EmailChanged(v) => {
+                let dc = &mut self.duress_contacts;
+                dc.form_email = v;
+                if dc.form_email.trim().is_empty() {
+                    dc.form_ch_email = false;
+                }
+            }
+            DuressContactsMessage::ToggleSms(b) => self.duress_contacts.form_ch_sms = b,
+            DuressContactsMessage::ToggleWhatsapp(b) => self.duress_contacts.form_ch_whatsapp = b,
+            DuressContactsMessage::ToggleEmailChannel(b) => self.duress_contacts.form_ch_email = b,
+            DuressContactsMessage::Submit => {
+                if !self.is_duress_alerts_entitled() {
+                    self.duress_contacts.error =
+                        Some("Emergency contacts require an Estate plan.".to_string());
+                    return iced::Task::none();
+                }
+                // Validate the form. `validate_duress_contact_form` returns
+                // the normalised (name, phone, email, channels) tuple or a
+                // user-facing error.
+                let dc = &mut self.duress_contacts;
+                let name = dc.form_name.trim().to_string();
+                let phone = dc.form_phone.trim().to_string();
+                let email = dc.form_email.trim().to_string();
+                if name.is_empty() {
+                    dc.error = Some("Add a name for this contact.".to_string());
+                    return iced::Task::none();
+                }
+                if phone.is_empty() && email.is_empty() {
+                    dc.error =
+                        Some("Add a phone number or an email so we can reach them.".to_string());
+                    return iced::Task::none();
+                }
+                if !phone.is_empty() && !is_valid_e164(&phone) {
+                    dc.error = Some(
+                        "Enter the phone in international format, e.g. +15551234567.".to_string(),
+                    );
+                    return iced::Task::none();
+                }
+                if !email.is_empty()
+                    && email_address::EmailAddress::parse_with_options(
+                        &email,
+                        email_address::Options::default().with_required_tld(),
+                    )
+                    .is_err()
+                {
+                    dc.error = Some("That email doesn't look right.".to_string());
+                    return iced::Task::none();
+                }
+                let mut channels: u8 = 0;
+                if dc.form_ch_sms && !phone.is_empty() {
+                    channels |= DURESS_CHANNEL_SMS;
+                }
+                if dc.form_ch_whatsapp && !phone.is_empty() {
+                    channels |= DURESS_CHANNEL_WHATSAPP;
+                }
+                if dc.form_ch_email && !email.is_empty() {
+                    channels |= DURESS_CHANNEL_EMAIL;
+                }
+                if channels == 0 {
+                    dc.error = Some(
+                        "Pick at least one way to reach them (SMS, WhatsApp, or email)."
+                            .to_string(),
+                    );
+                    return iced::Task::none();
+                }
+                let editing_id = dc.editing_id;
+                // Cap is only enforced on create — an edit of an existing
+                // contact is always allowed even at the cap.
+                if editing_id.is_none() && dc.at_cap() {
+                    dc.error = Some(format!(
+                        "You can configure up to {} emergency contacts.",
+                        MAX_DURESS_ALERT_CONTACTS
+                    ));
+                    return iced::Task::none();
+                }
+                dc.submitting = true;
+                dc.error = None;
+                let phone_opt = (!phone.is_empty()).then_some(phone);
+                let email_opt = (!email.is_empty()).then_some(email);
+                let client = self.client.clone();
+                let gen = self.session_generation;
+                return match editing_id {
+                    None => {
+                        let req = CreateDuressAlertContactRequest {
+                            display_name: name,
+                            phone: phone_opt,
+                            email: email_opt,
+                            channels,
+                        };
+                        iced::Task::perform(
+                            async move { client.create_duress_alert_contact(req).await },
+                            move |res| {
+                                duress_contacts_msg(DuressContactsMessage::SubmitResult(
+                                    res.map(|_| ()).map_err(|e| e.to_string()),
+                                    gen,
+                                ))
+                            },
+                        )
+                    }
+                    Some(id) => {
+                        let req = UpdateDuressAlertContactRequest {
+                            display_name: Some(name),
+                            // Send explicit phone/email so clearing one in the
+                            // edit form persists. A `None` here would mean
+                            // "untouched"; we always send the current field
+                            // values (empty string maps to null server-side).
+                            phone: Some(phone_opt.unwrap_or_default()),
+                            email: Some(email_opt.unwrap_or_default()),
+                            channels: Some(channels),
+                        };
+                        iced::Task::perform(
+                            async move { client.update_duress_alert_contact(id, req).await },
+                            move |res| {
+                                duress_contacts_msg(DuressContactsMessage::SubmitResult(
+                                    res.map(|_| ()).map_err(|e| e.to_string()),
+                                    gen,
+                                ))
+                            },
+                        )
+                    }
+                };
+            }
+            DuressContactsMessage::SubmitResult(res, gen) => {
+                if gen != self.session_generation {
+                    return iced::Task::none();
+                }
+                self.duress_contacts.submitting = false;
+                match res {
+                    Ok(()) => {
+                        // Back to the list and refetch the authoritative set
+                        // (the create response's `intro_sent_at` may lag the
+                        // async send, so a refetch is the source of truth).
+                        return self.reload_duress_contacts();
+                    }
+                    Err(e) => self.duress_contacts.error = Some(e),
+                }
+            }
+            DuressContactsMessage::Delete(id) => {
+                if !self.is_duress_alerts_entitled() {
+                    return iced::Task::none();
+                }
+                self.duress_contacts.deleting_ids.insert(id);
+                self.duress_contacts.error = None;
+                let client = self.client.clone();
+                let gen = self.session_generation;
+                return iced::Task::perform(
+                    async move { client.delete_duress_alert_contact(id).await },
+                    move |res| {
+                        duress_contacts_msg(DuressContactsMessage::DeleteResult(
+                            id,
+                            res.map_err(|e| e.to_string()),
+                            gen,
+                        ))
+                    },
+                );
+            }
+            DuressContactsMessage::DeleteResult(id, res, gen) => {
+                if gen != self.session_generation {
+                    return iced::Task::none();
+                }
+                self.duress_contacts.deleting_ids.remove(&id);
+                match res {
+                    Ok(()) => {
+                        // Optimistically drop the row, then refetch.
+                        if let Some(cs) = self.duress_contacts.contacts.as_mut() {
+                            cs.retain(|c| c.id != id);
+                        }
+                        return self.reload_duress_contacts();
+                    }
+                    Err(e) => self.duress_contacts.error = Some(e),
+                }
+            }
+        }
+        iced::Task::none()
     }
 
     /// Recovery flow (Phase 6) + enrollment wizard (Phases 2 & 8) dispatcher.
@@ -2416,6 +2772,32 @@ pub fn load_contacts_data(client: &CoincubeClient, generation: u64) -> iced::Tas
             },
         ),
     ])
+}
+
+/// Wraps a [`DuressContactsMessage`] in the full
+/// `Message::View(ConnectAccount(DuressContacts(..)))` envelope. Keeps the
+/// async task closures in `update_duress_contacts` terse.
+fn duress_contacts_msg(m: DuressContactsMessage) -> Message {
+    Message::View(view::Message::ConnectAccount(
+        ConnectAccountMessage::DuressContacts(m),
+    ))
+}
+
+/// Fire a `get_duress_alert_contacts` fetch and wire the result into
+/// `DuressContactsMessage::Loaded`. Estate-gating is the caller's
+/// responsibility (`reload_duress_contacts` and the nav trigger both
+/// check `is_duress_alerts_entitled` first) so this never spuriously 403s.
+pub fn load_duress_alert_contacts(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
+    let client = client.clone();
+    iced::Task::perform(
+        async move { client.get_duress_alert_contacts().await },
+        move |res| {
+            duress_contacts_msg(DuressContactsMessage::Loaded(
+                res.map_err(|e| e.to_string()),
+                generation,
+            ))
+        },
+    )
 }
 
 /// Load the user's cubes for the W12 invite-form multi-select, mapping
@@ -3539,6 +3921,8 @@ mod plan_lifecycle_tests {
                 linked_keychains: false,
                 duress_remote_lock: false,
                 business_orgs: false,
+                duress_alerts: false,
+                recovery_alerts: false,
             },
             billing_cycle: cycle,
         }
@@ -3732,5 +4116,248 @@ mod plan_lifecycle_tests {
         let mut panel = ConnectAccountPanel::new();
         panel.features = Some(features(Some(SUPPORTED_PRICING_SCHEMA_VERSION + 1)));
         assert!(panel.pricing_schema_outdated());
+    }
+}
+
+#[cfg(test)]
+mod duress_contacts_tests {
+    //! State-machine tests for the duress "Emergency contacts" section
+    //! (Estate Notifications — PR 1): gating, cap enforcement, form
+    //! validation, and the duress-active hiding invariant.
+    use super::*;
+    use crate::services::coincube::{
+        DuressAlertContact, PlanEntitlements, DURESS_CHANNEL_EMAIL, DURESS_CHANNEL_SMS,
+    };
+
+    fn entitlements(duress_alerts: bool) -> PlanEntitlements {
+        PlanEntitlements {
+            free_signing_key_count: 0,
+            policy_editing: false,
+            legacy_invites: false,
+            linked_keychains: false,
+            duress_remote_lock: true,
+            business_orgs: false,
+            duress_alerts,
+            recovery_alerts: false,
+        }
+    }
+
+    fn plan(duress_alerts: bool) -> ConnectPlan {
+        ConnectPlan {
+            plan: if duress_alerts {
+                PlanTier::Estate
+            } else {
+                PlanTier::Pro
+            },
+            status: PlanStatus::Active,
+            renewal_at: None,
+            entitlements: entitlements(duress_alerts),
+            billing_cycle: Some(BillingCycle::Monthly),
+        }
+    }
+
+    /// Estate-entitled, authenticated panel ready to drive the section.
+    fn estate_panel() -> ConnectAccountPanel {
+        let mut panel = ConnectAccountPanel::new();
+        panel.plan = Some(plan(true));
+        panel.step = ConnectFlowStep::Dashboard;
+        panel
+    }
+
+    fn contact(id: u64) -> DuressAlertContact {
+        DuressAlertContact {
+            id,
+            display_name: format!("Contact {id}"),
+            phone: Some("+15551234567".into()),
+            email: None,
+            channels: DURESS_CHANNEL_SMS,
+            intro_sent_at: None,
+            opted_out_at: None,
+            created_at: "2026-06-11T00:00:00Z".into(),
+            updated_at: "2026-06-11T00:00:00Z".into(),
+        }
+    }
+
+    fn dispatch(panel: &mut ConnectAccountPanel, m: DuressContactsMessage) {
+        let _ = panel.update_duress_contacts(m);
+    }
+
+    #[test]
+    fn reload_is_noop_when_not_estate_entitled() {
+        // Gating: a Pro account (duress_alerts=false) must never fire the
+        // contacts fetch — `reload` leaves `loading` false so the UI shows
+        // the locked affordance, not a spinner.
+        let mut panel = ConnectAccountPanel::new();
+        panel.plan = Some(plan(false));
+        panel.step = ConnectFlowStep::Dashboard;
+        assert!(!panel.is_duress_alerts_entitled());
+        let _ = panel.reload_duress_contacts();
+        assert!(!panel.duress_contacts.loading);
+    }
+
+    #[test]
+    fn reload_starts_loading_when_estate_entitled() {
+        let mut panel = estate_panel();
+        assert!(panel.is_duress_alerts_entitled());
+        let _ = panel.reload_duress_contacts();
+        assert!(panel.duress_contacts.loading);
+        assert_eq!(panel.duress_contacts.step, DuressContactsStep::List);
+    }
+
+    #[test]
+    fn cap_blocks_add_form_at_five_contacts() {
+        let mut panel = estate_panel();
+        let five = (1..=5).map(contact).collect::<Vec<_>>();
+        panel.duress_contacts.contacts = Some(five);
+        assert!(panel.duress_contacts.at_cap());
+        dispatch(&mut panel, DuressContactsMessage::ShowAddForm);
+        // Stayed on the list with a cap message rather than opening the form.
+        assert_eq!(panel.duress_contacts.step, DuressContactsStep::List);
+        assert!(panel.duress_contacts.error.is_some());
+    }
+
+    #[test]
+    fn add_form_opens_below_cap() {
+        let mut panel = estate_panel();
+        panel.duress_contacts.contacts = Some(vec![contact(1)]);
+        dispatch(&mut panel, DuressContactsMessage::ShowAddForm);
+        assert_eq!(panel.duress_contacts.step, DuressContactsStep::Form);
+        assert!(panel.duress_contacts.editing_id.is_none());
+    }
+
+    #[test]
+    fn submit_requires_a_name() {
+        let mut panel = estate_panel();
+        panel.duress_contacts.contacts = Some(vec![]);
+        dispatch(&mut panel, DuressContactsMessage::ShowAddForm);
+        dispatch(
+            &mut panel,
+            DuressContactsMessage::PhoneChanged("+15551234567".into()),
+        );
+        dispatch(&mut panel, DuressContactsMessage::ToggleSms(true));
+        dispatch(&mut panel, DuressContactsMessage::Submit);
+        assert!(!panel.duress_contacts.submitting);
+        assert!(panel.duress_contacts.error.as_deref().unwrap().contains("name"));
+    }
+
+    #[test]
+    fn submit_requires_a_reachable_method() {
+        let mut panel = estate_panel();
+        panel.duress_contacts.contacts = Some(vec![]);
+        dispatch(&mut panel, DuressContactsMessage::ShowAddForm);
+        dispatch(
+            &mut panel,
+            DuressContactsMessage::NameChanged("Jane".into()),
+        );
+        dispatch(&mut panel, DuressContactsMessage::Submit);
+        assert!(!panel.duress_contacts.submitting);
+        assert!(panel.duress_contacts.error.is_some());
+    }
+
+    #[test]
+    fn submit_rejects_bad_phone() {
+        let mut panel = estate_panel();
+        panel.duress_contacts.contacts = Some(vec![]);
+        dispatch(&mut panel, DuressContactsMessage::ShowAddForm);
+        dispatch(
+            &mut panel,
+            DuressContactsMessage::NameChanged("Jane".into()),
+        );
+        dispatch(
+            &mut panel,
+            DuressContactsMessage::PhoneChanged("5551234567".into()), // no +
+        );
+        dispatch(&mut panel, DuressContactsMessage::ToggleSms(true));
+        dispatch(&mut panel, DuressContactsMessage::Submit);
+        assert!(!panel.duress_contacts.submitting);
+        assert!(panel
+            .duress_contacts
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("international"));
+    }
+
+    #[test]
+    fn submit_requires_at_least_one_channel() {
+        let mut panel = estate_panel();
+        panel.duress_contacts.contacts = Some(vec![]);
+        dispatch(&mut panel, DuressContactsMessage::ShowAddForm);
+        dispatch(
+            &mut panel,
+            DuressContactsMessage::NameChanged("Jane".into()),
+        );
+        dispatch(
+            &mut panel,
+            DuressContactsMessage::EmailChanged("jane@example.com".into()),
+        );
+        // No channel toggled.
+        dispatch(&mut panel, DuressContactsMessage::Submit);
+        assert!(!panel.duress_contacts.submitting);
+        assert!(panel.duress_contacts.error.is_some());
+    }
+
+    #[test]
+    fn valid_submit_starts_submitting() {
+        let mut panel = estate_panel();
+        panel.duress_contacts.contacts = Some(vec![]);
+        dispatch(&mut panel, DuressContactsMessage::ShowAddForm);
+        dispatch(
+            &mut panel,
+            DuressContactsMessage::NameChanged("Jane".into()),
+        );
+        dispatch(
+            &mut panel,
+            DuressContactsMessage::EmailChanged("jane@example.com".into()),
+        );
+        dispatch(&mut panel, DuressContactsMessage::ToggleEmailChannel(true));
+        // A valid submit transitions to the in-flight state and clears the
+        // error (the returned Task is the network call, ignored here).
+        dispatch(&mut panel, DuressContactsMessage::Submit);
+        assert!(panel.duress_contacts.submitting);
+        assert!(panel.duress_contacts.error.is_none());
+        let _ = DURESS_CHANNEL_EMAIL; // silence unused in some cfgs
+    }
+
+    #[test]
+    fn submit_refused_when_entitlement_lost_midsession() {
+        // Estate user opened the form, then the plan downgraded (e.g. a
+        // /connect/plan refresh). Submit must refuse rather than 403.
+        let mut panel = estate_panel();
+        panel.duress_contacts.contacts = Some(vec![]);
+        dispatch(&mut panel, DuressContactsMessage::ShowAddForm);
+        dispatch(
+            &mut panel,
+            DuressContactsMessage::NameChanged("Jane".into()),
+        );
+        dispatch(
+            &mut panel,
+            DuressContactsMessage::EmailChanged("jane@example.com".into()),
+        );
+        dispatch(&mut panel, DuressContactsMessage::ToggleEmailChannel(true));
+        panel.plan = Some(plan(false)); // downgrade
+        dispatch(&mut panel, DuressContactsMessage::Submit);
+        assert!(!panel.duress_contacts.submitting);
+        assert!(panel.duress_contacts.error.is_some());
+    }
+
+    #[test]
+    fn contacts_surface_hidden_while_duress_active() {
+        // The Emergency-contacts surface (and its on-demand load) gate on
+        // `is_authenticated()` == Dashboard. While duress is active the
+        // panel sits in DuressRecovery / a non-Dashboard step, so the
+        // surface is never reachable and the load never fires — a coercer
+        // can't see who would be alerted.
+        let mut panel = estate_panel();
+        panel.step = ConnectFlowStep::DuressRecovery {
+            unlock_at: None,
+            passphrase: String::new(),
+            submitting: false,
+            cleared: false,
+        };
+        assert!(!panel.is_authenticated());
+        // Even though the account is Estate-entitled, the nav guard keys on
+        // `is_authenticated()`, so the section is not rendered/loaded.
+        assert!(panel.is_duress_alerts_entitled());
     }
 }
