@@ -279,6 +279,28 @@ pub enum PlanStatus {
     Canceled,
 }
 
+/// Server-authored display metadata for how the current plan was granted,
+/// from `GET /connect/plan`'s `plan_provenance` (campaign engine, v2). The
+/// desktop renders these strings verbatim and knows nothing about specific
+/// campaigns — a campaign's label/badge/expiry are authored server-side, so
+/// display never requires an app release. Absent (`None`) for ordinary
+/// purchased/free plans and older backends → existing paid/free UX.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanProvenance {
+    /// Primary descriptive line, e.g. "Free for your first year". Required
+    /// when provenance is present.
+    pub label: String,
+    /// RFC-3339 instant the grant lapses, if it expires. Rendered as an
+    /// "Expires {date}" line; `None`/absent → no expiry line.
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    /// Short tag shown beside the plan tier, e.g. "Founding member".
+    /// `None`/absent → no badge.
+    #[serde(default)]
+    pub badge: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanEntitlements {
@@ -300,6 +322,13 @@ pub struct ConnectPlan {
     /// Billing cycle of the current plan. `None` for free tier (no charge).
     #[serde(default)]
     pub billing_cycle: Option<BillingCycle>,
+    /// Server-authored display metadata for a campaign-granted plan (v2).
+    /// `None`/absent for purchased/free plans and older backends — the
+    /// desktop renders this verbatim and never special-cases campaigns.
+    /// (`ConnectPlan` is camelCase, so the wire key is `planProvenance`; the
+    /// alias also accepts a snake_case `plan_provenance`.)
+    #[serde(default, alias = "plan_provenance")]
+    pub plan_provenance: Option<PlanProvenance>,
 }
 
 impl ConnectPlan {
@@ -344,6 +373,15 @@ pub struct FeaturesResponse {
         alias = "pricing_schema_version"
     )]
     pub pricing_schema_version: Option<u32>,
+    /// Whether self-service purchasing is currently available. The July-4
+    /// Estate promo disables checkout server-side; when this is
+    /// `Some(false)` the desktop hides every purchase path so it never
+    /// routes anyone to a `POST /connect/checkout` the API will reject.
+    /// Absent/`None` (older backends, or purchasing simply on) is treated
+    /// as enabled — keeps the existing flow intact for fall GA. See
+    /// `ConnectAccountPanel::purchasing_enabled`.
+    #[serde(default, alias = "purchasingEnabled", alias = "purchasing_enabled")]
+    pub purchasing_enabled: Option<bool>,
 }
 
 // ── Checkout / Billing ──────────────────────────────────────────────────────
@@ -415,6 +453,30 @@ pub struct BillingHistoryEntry {
     pub status: ChargeStatus,
     pub created_at: String,
     pub paid_at: Option<String>,
+}
+
+// ── Campaign code redemption (v2 campaign engine) ───────────────────────────
+
+/// Request body for `POST /api/v1/connect/campaigns/redeem`. The desktop
+/// surface is campaign-agnostic — it just forwards whatever code the user
+/// typed; the server validates window/limits/enabled and applies the
+/// benefit.
+#[derive(Debug, Clone, Serialize)]
+pub struct RedeemCampaignRequest {
+    pub code: String,
+}
+
+/// Success response for a redeemed campaign code. `message` is an optional
+/// server-authored confirmation line (rendered verbatim); the desktop
+/// refreshes `GET /connect/plan` afterwards to pick up the granted tier and
+/// provenance, so no other fields are needed here. Failures arrive as the
+/// usual typed error (`invalid | expired | exhausted | already-redeemed`)
+/// and surface through `CoincubeError`'s message, rendered generically.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RedeemCampaignResponse {
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 /// Request body for POST /api/v1/connect/cubes

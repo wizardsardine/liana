@@ -1100,6 +1100,17 @@ pub enum ConnectAccountMessage {
     UserProfileLoaded(crate::services::coincube::User),
     /// User profile refresh failed (non-auth error)
     UserProfileFailed(String),
+    // --- Campaign code redemption (v2 campaign engine) ---
+    /// Settings → Plan code field edited.
+    CampaignCodeChanged(String),
+    /// Submit the settings → Plan code to `POST /connect/campaigns/redeem`.
+    RedeemCampaignCode,
+    /// Redeem result: `Ok(server message)` / `Err(server message)`. The
+    /// `u64` is the session generation guarding stale completions.
+    CampaignRedeemed(Result<String, String>, u64),
+    /// Optional code field on the account-creation screen edited. Stashed at
+    /// registration and redeemed once the new session authenticates.
+    RegisterCampaignCodeChanged(String),
     // --- Duress (Phases 6 & 8) ---
     /// Result of the post-sign-in `get_duress_state` gate. `Some` switches to
     /// the recovery flow when `active`; `None` is a failed/unreachable check
