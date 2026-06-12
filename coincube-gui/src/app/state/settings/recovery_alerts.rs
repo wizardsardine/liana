@@ -120,7 +120,13 @@ pub fn update(
             let (Some(client), Some(cube_id)) = (client, server_cube_id) else {
                 // No Connect session or no registered cube → nothing to
                 // monitor. Mark `no_vault` so the card shows the right copy.
+                // Clear any cached vault id/status too: the cube-deregistered
+                // case lands here (not the not-found arm, which only runs
+                // after a fetch), and a stale id + non-Off level would keep
+                // `recovery_heartbeat_task` POSTing to a vault that's gone.
                 ra.no_vault = server_cube_id.is_none();
+                ra.vault_id = None;
+                ra.status = None;
                 ra.loaded_once = true;
                 return Task::none();
             };

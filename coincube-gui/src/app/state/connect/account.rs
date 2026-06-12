@@ -1594,6 +1594,14 @@ impl ConnectAccountPanel {
             DuressContactsMessage::ToggleWhatsapp(b) => self.duress_contacts.form_ch_whatsapp = b,
             DuressContactsMessage::ToggleEmailChannel(b) => self.duress_contacts.form_ch_email = b,
             DuressContactsMessage::Submit => {
+                // A submit is already in flight — drop the duplicate before it
+                // spawns a second request. The button is view-disabled while
+                // `submitting`, but iced can enqueue two presses in one frame
+                // before the re-render lands, and create isn't idempotent (a
+                // double would make two contacts).
+                if self.duress_contacts.submitting {
+                    return iced::Task::none();
+                }
                 if !self.is_duress_alerts_entitled() {
                     self.duress_contacts.error =
                         Some("Emergency contacts require an Estate plan.".to_string());
@@ -1722,6 +1730,11 @@ impl ConnectAccountPanel {
             }
             DuressContactsMessage::Delete(id) => {
                 if !self.is_duress_alerts_entitled() {
+                    return iced::Task::none();
+                }
+                // Same-row delete already in flight — drop the duplicate
+                // before issuing a second DELETE (see the Submit guard above).
+                if self.duress_contacts.deleting_ids.contains(&id) {
                     return iced::Task::none();
                 }
                 self.duress_contacts.deleting_ids.insert(id);

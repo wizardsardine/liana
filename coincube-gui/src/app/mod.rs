@@ -1410,7 +1410,34 @@ impl App {
             return Task::none();
         }
         let ra = &self.panels.global_settings.recovery_alerts;
-        if matches!(ra.level(), VaultMonitoringLevel::Off) {
+        // The heartbeat must fire after every vault sync while authenticated
+        // (Estate Notifications plan P2) — it can't depend on the user having
+        // opened Settings, which is otherwise the only thing that hydrates the
+        // monitoring config. If we're entitled and a Connect cube is resolved
+        // but the config hasn't been fetched from any path yet, kick a
+        // one-shot `LoadStatus` now (the same hydrator the settings card uses);
+        // the next sync's heartbeat then sees the resolved level/vault_id. The
+        // `loaded_once`/`loading` flags — shared with the settings card and
+        // reset on logout — keep this to a single fetch, and gating on
+        // cube + entitlement avoids prematurely marking an un-loadable config
+        // as loaded before those prerequisites arrive.
+        if !ra.loaded_once
+            && !ra.loading
+            && self.panels.connect.account.is_recovery_alerts_entitled()
+            && self.panels.connect.cube.server_cube_id.is_some()
+        {
+            return Task::done(Message::View(view::Message::Settings(
+                view::SettingsMessage::RecoveryAlerts(view::RecoveryAlertsMessage::LoadStatus),
+            )));
+        }
+        // Defense in depth: never POST heartbeats for an account that isn't
+        // Estate-entitled. The cached monitoring level/vault_id can outlive a
+        // plan downgrade or Connect account switch — `ra.status` only reloads
+        // on settings-open or logout — so re-check the *live* entitlement here,
+        // the same gate the mutating monitoring APIs apply.
+        if !self.panels.connect.account.is_recovery_alerts_entitled()
+            || matches!(ra.level(), VaultMonitoringLevel::Off)
+        {
             return Task::none();
         }
         let (Some(vault_id), Some(wallet), Some(client)) = (
@@ -3003,6 +3030,14 @@ impl App {
                     self.cache.connect_device_id = None;
                     self.cache.connect_email = None;
                     self.cache.connect_stream_status = ConnectionStatus::Inactive;
+                    // Drop the previous session's vault-monitoring config so
+                    // it can't leak into the next account and so the
+                    // heartbeat's lazy `loaded_once` re-hydration re-fetches
+                    // for whoever signs in next (the card itself lives here on
+                    // `global_settings`, not on the connect panel that handles
+                    // the rest of the logout scrub).
+                    self.panels.global_settings.recovery_alerts =
+                        crate::app::state::settings::recovery_alerts::RecoveryAlerts::new();
                     // Logout breaks the "Switch to Connect" trip the
                     // user started; firing the auto-return on a fresh
                     // unrelated login later would be surprising.
