@@ -682,20 +682,11 @@ impl ConnectAccountPanel {
                 // dashboard until we've confirmed the account isn't in duress.
                 self.step = ConnectFlowStep::CheckingDuress { failed: false };
                 self.error = None;
-                // Fetch plan + features in background (non-blocking)
+                // Fetch features + gate on duress in background (non-blocking).
                 let gen = self.session_generation;
-                let c1 = self.client.clone();
                 let c2 = self.client.clone();
                 let c3 = self.client.clone();
                 let mut tasks = vec![
-                    iced::Task::perform(
-                        async move { (c1.get_connect_plan().await.ok(), gen) },
-                        |(plan, g)| {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::PlanLoaded(plan, g),
-                            ))
-                        },
-                    ),
                     iced::Task::perform(
                         async move { (c2.get_connect_features().await.ok(), gen) },
                         |(features, g)| {
@@ -712,11 +703,25 @@ impl ConnectAccountPanel {
                 ];
                 // Redeem an account-creation promo/referral code now that the
                 // session is authenticated. Best-effort: a bad code never
-                // blocks sign-in — the outcome surfaces in Settings → Plan,
-                // and `CampaignRedeemed` refreshes the plan on success.
+                // blocks sign-in — the outcome surfaces in Settings → Plan.
                 if let Some(code) = self.pending_campaign_code.take() {
+                    // Defer the plan fetch to the redeem (which fetches on
+                    // either outcome). Firing get_connect_plan here *and* again
+                    // after redemption races two PlanLoaded responses at the
+                    // same generation, and a slow pre-redeem fetch could
+                    // overwrite the granted tier/provenance.
                     self.campaign_redeem.submitting = true;
                     tasks.push(self.redeem_campaign_task(code));
+                } else {
+                    let c1 = self.client.clone();
+                    tasks.push(iced::Task::perform(
+                        async move { (c1.get_connect_plan().await.ok(), gen) },
+                        |(plan, g)| {
+                            Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::PlanLoaded(plan, g),
+                            ))
+                        },
+                    ));
                 }
                 return iced::Task::batch(tasks);
             }
@@ -1406,24 +1411,29 @@ impl ConnectAccountPanel {
                 match result {
                     Ok(msg) => {
                         self.campaign_redeem.result = Some(Ok(msg));
-                        // Clear the field and refresh the plan so the granted
-                        // tier / provenance appear.
+                        // Clear the field on success.
                         self.campaign_redeem.code = String::new();
-                        let g = self.session_generation;
-                        let c = self.client.clone();
-                        return iced::Task::perform(
-                            async move { (c.get_connect_plan().await.ok(), g) },
-                            |(plan, g)| {
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::PlanLoaded(plan, g),
-                                ))
-                            },
-                        );
                     }
                     Err(e) => {
                         self.campaign_redeem.result = Some(Err(e));
                     }
                 }
+                // Refresh the plan after every redeem — on success to pick up
+                // the granted tier/provenance, and on failure because the
+                // account-creation path (SessionLoaded) defers its post-signup
+                // plan fetch to here, so the real plan (including any
+                // server-side auto-applied grant) still loads. This is the only
+                // plan fetch on that path, so there's no racing PlanLoaded.
+                let g = self.session_generation;
+                let c = self.client.clone();
+                return iced::Task::perform(
+                    async move { (c.get_connect_plan().await.ok(), g) },
+                    |(plan, g)| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::PlanLoaded(plan, g),
+                        ))
+                    },
+                );
             }
             ConnectAccountMessage::DuressStateChecked(state, gen, attempt) => {
                 // Phase 6: post-sign-in gate. We sit in `CheckingDuress` until
