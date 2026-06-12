@@ -51,6 +51,23 @@ pub struct CheckoutState {
     pub poll_errors: u8,
 }
 
+// ── Campaign code redemption (v2 campaign engine) ───────────────────────────
+
+/// State for the generic "promo or referral code" field in Settings → Plan.
+/// Campaign-agnostic — the desktop forwards the typed code and renders the
+/// server's success/error message verbatim.
+#[derive(Debug, Default)]
+pub struct CampaignRedeemState {
+    /// Current text in the code field.
+    pub code: String,
+    /// A redeem request is in flight.
+    pub submitting: bool,
+    /// Last outcome: `Ok(server message)` on success, `Err(server message)`
+    /// on a typed failure (invalid / expired / exhausted / already-redeemed).
+    /// `None` before any attempt.
+    pub result: Option<Result<String, String>>,
+}
+
 // ── Plan lifecycle (renewal banner / expired state) ─────────────────────────
 
 /// Number of days before `renewal_at` at which the pre-expiry renewal
@@ -61,13 +78,6 @@ pub const PLAN_RENEWAL_BANNER_DAYS: i64 = 7;
 /// `/connect/features` payload advertising a higher version triggers the
 /// soft "update available" note in the plan picker (D4).
 pub const SUPPORTED_PRICING_SCHEMA_VERSION: u32 = 1;
-
-/// At launch the July-4 Estate promo suppresses the pre-expiry renewal
-/// banner for promo accounts (PLAN-estate-promo PR1) — the API likewise
-/// suppresses reminder emails, and the year-one cliff (Jul 2027) is too far
-/// out to nag about now. Flip to `false` for year-two GA to re-enable the
-/// banner with year-two renewal copy.
-pub const PROMO_SUPPRESS_RENEWAL_BANNER: bool = true;
 
 /// Where the user's plan sits in its lifecycle, derived from the
 /// `/connect/plan` response plus the current time. Drives the renewal
@@ -397,6 +407,14 @@ pub struct ConnectAccountPanel {
     /// session (D1). Not persisted — re-shows on next launch while the
     /// plan is still within its renewal window.
     pub renewal_banner_dismissed: bool,
+    /// Settings → Plan promo/referral code field (v2 campaign engine).
+    pub campaign_redeem: CampaignRedeemState,
+    /// Optional promo/referral code typed on the account-creation screen.
+    pub register_campaign_code: String,
+    /// Code captured at registration, redeemed once the new session
+    /// authenticates (the redeem endpoint requires a token). Consumed in
+    /// `SessionLoaded`.
+    pub pending_campaign_code: Option<String>,
 }
 
 impl ConnectAccountPanel {
@@ -419,6 +437,9 @@ impl ConnectAccountPanel {
             show_billing_history: false,
             duress_enroll: None,
             renewal_banner_dismissed: false,
+            campaign_redeem: CampaignRedeemState::default(),
+            register_campaign_code: String::new(),
+            pending_campaign_code: None,
         }
     }
 
@@ -465,6 +486,30 @@ impl ConnectAccountPanel {
     /// Cube" one-click action.
     pub fn set_active_cube_server_id(&mut self, cube_id: Option<u64>) {
         self.contacts_state.active_cube_server_id = cube_id;
+    }
+
+    /// Fire `POST /connect/campaigns/redeem` for `code` and route the
+    /// outcome to `CampaignRedeemed`. Shared by the Settings → Plan field
+    /// and the deferred post-auth redeem of an account-creation code. The
+    /// success message is server-authored; a failure carries the server's
+    /// typed error message, rendered verbatim (no campaign knowledge).
+    fn redeem_campaign_task(&self, code: String) -> iced::Task<Message> {
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                client
+                    .redeem_campaign(&code)
+                    .await
+                    .map(|resp| resp.message.unwrap_or_else(|| "Code applied.".to_string()))
+                    .map_err(|e| e.to_string())
+            },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::CampaignRedeemed(result, gen),
+                ))
+            },
+        )
     }
 
     /// Kick off a `get_cubes_by_contact(contact_id)` fetch and wire
@@ -637,7 +682,7 @@ impl ConnectAccountPanel {
                 let c1 = self.client.clone();
                 let c2 = self.client.clone();
                 let c3 = self.client.clone();
-                return iced::Task::batch([
+                let mut tasks = vec![
                     iced::Task::perform(
                         async move { (c1.get_connect_plan().await.ok(), gen) },
                         |(plan, g)| {
@@ -659,7 +704,16 @@ impl ConnectAccountPanel {
                     // failed check retries (see the handler) so a transient
                     // error doesn't leave a duress account on the dashboard.
                     duress_state_check_task(c3, gen, 0),
-                ]);
+                ];
+                // Redeem an account-creation promo/referral code now that the
+                // session is authenticated. Best-effort: a bad code never
+                // blocks sign-in — the outcome surfaces in Settings → Plan,
+                // and `CampaignRedeemed` refreshes the plan on success.
+                if let Some(code) = self.pending_campaign_code.take() {
+                    self.campaign_redeem.submitting = true;
+                    tasks.push(self.redeem_campaign_task(code));
+                }
+                return iced::Task::batch(tasks);
             }
 
             ConnectAccountMessage::PlanLoaded(plan, gen) => {
@@ -683,6 +737,9 @@ impl ConnectAccountPanel {
                 self.billing_history = None;
                 self.show_billing_history = false;
                 self.renewal_banner_dismissed = false;
+                self.campaign_redeem = CampaignRedeemState::default();
+                self.register_campaign_code = String::new();
+                self.pending_campaign_code = None;
                 self.selected_billing_cycle = BillingCycle::Monthly;
                 self.contacts_state.clear();
                 // Scrub any in-flight enrollment wizard secrets (PINs,
@@ -762,6 +819,13 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::SubmitRegistration => {
+                // Stash any account-creation promo/referral code now; it's
+                // redeemed once the new session authenticates (the redeem
+                // endpoint requires a token). Empty → nothing to redeem.
+                self.pending_campaign_code = {
+                    let trimmed = self.register_campaign_code.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                };
                 let ConnectFlowStep::Register { email, loading } = &mut self.step else {
                     return iced::Task::none();
                 };
@@ -1289,6 +1353,56 @@ impl ConnectAccountPanel {
             ConnectAccountMessage::UserProfileFailed(error) => {
                 // Non-auth error - just show error, don't redirect to login
                 self.error = Some(error);
+            }
+
+            // ── Campaign code redemption (v2 campaign engine) ─────────────
+            ConnectAccountMessage::CampaignCodeChanged(code) => {
+                self.campaign_redeem.code = code;
+                // Editing past a prior outcome clears it so the field reads as
+                // a fresh attempt.
+                self.campaign_redeem.result = None;
+            }
+
+            ConnectAccountMessage::RegisterCampaignCodeChanged(code) => {
+                self.register_campaign_code = code;
+            }
+
+            ConnectAccountMessage::RedeemCampaignCode => {
+                let code = self.campaign_redeem.code.trim().to_string();
+                if code.is_empty() || self.campaign_redeem.submitting {
+                    return iced::Task::none();
+                }
+                self.campaign_redeem.submitting = true;
+                self.campaign_redeem.result = None;
+                return self.redeem_campaign_task(code);
+            }
+
+            ConnectAccountMessage::CampaignRedeemed(result, gen) => {
+                if gen != self.session_generation {
+                    return iced::Task::none();
+                }
+                self.campaign_redeem.submitting = false;
+                match result {
+                    Ok(msg) => {
+                        self.campaign_redeem.result = Some(Ok(msg));
+                        // Clear the field and refresh the plan so the granted
+                        // tier / provenance appear.
+                        self.campaign_redeem.code = String::new();
+                        let g = self.session_generation;
+                        let c = self.client.clone();
+                        return iced::Task::perform(
+                            async move { (c.get_connect_plan().await.ok(), g) },
+                            |(plan, g)| {
+                                Message::View(view::Message::ConnectAccount(
+                                    ConnectAccountMessage::PlanLoaded(plan, g),
+                                ))
+                            },
+                        );
+                    }
+                    Err(e) => {
+                        self.campaign_redeem.result = Some(Err(e));
+                    }
+                }
             }
             ConnectAccountMessage::DuressStateChecked(state, gen, attempt) => {
                 // Phase 6: post-sign-in gate. We sit in `CheckingDuress` until
@@ -2365,23 +2479,12 @@ impl ConnectAccountPanel {
         self.plan_lifecycle_at(chrono::Utc::now())
     }
 
-    /// True when the authenticated account currently holds the July-4 promo
-    /// grant (Estate free for year one). Drives the promo manage-plan
-    /// variant, the collapsed picker, and renewal-banner suppression
-    /// (PLAN-estate-promo PR1).
-    pub fn is_promo_plan(&self) -> bool {
-        self.plan
-            .as_ref()
-            .map(|p| p.is_active_promo())
-            .unwrap_or(false)
-    }
-
     /// Whether self-service purchasing is currently available. Sourced from
     /// `GET /connect/features` (`purchasing_enabled`); absent → enabled, so
     /// the existing checkout flow stays intact for backends that don't send
-    /// the flag (and for fall GA once the promo ends). The July-4 promo sets
-    /// it `false`, which hides every purchase surface (PLAN-estate-promo
-    /// PR2).
+    /// the flag (and for fall GA once a campaign closes). A campaign that
+    /// disables purchasing sets it `false`, which hides every purchase
+    /// surface (PLAN-estate-promo PR2).
     pub fn purchasing_enabled(&self) -> bool {
         self.features
             .as_ref()
@@ -2394,12 +2497,13 @@ impl ConnectAccountPanel {
     /// session. The expired state has its own dedicated UX (D3), so the
     /// banner intentionally does not cover `Expired`.
     ///
-    /// Suppressed entirely for promo accounts at launch (config-flagged via
-    /// [`PROMO_SUPPRESS_RENEWAL_BANNER`]) and whenever purchasing is
-    /// disabled — in both cases there is no purchase path, so a "Renew now"
-    /// nag would be a dead end (PLAN-estate-promo PR1/PR2).
+    /// Suppressed whenever purchasing is disabled — there is no purchase
+    /// path then, so a "Renew now" nag would be a dead end. This is the
+    /// generic, campaign-agnostic gate (a campaign that grants a plan also
+    /// closes purchasing, so its grantees never see the banner during the
+    /// window).
     pub fn show_renewal_banner(&self) -> bool {
-        if (PROMO_SUPPRESS_RENEWAL_BANNER && self.is_promo_plan()) || !self.purchasing_enabled() {
+        if !self.purchasing_enabled() {
             return false;
         }
         !self.renewal_banner_dismissed
@@ -3561,7 +3665,7 @@ mod add_to_cube_tests {
 #[cfg(test)]
 mod plan_lifecycle_tests {
     use super::*;
-    use crate::services::coincube::{PlanEntitlements, PlanFeatureInfo, PlanSource};
+    use crate::services::coincube::{PlanEntitlements, PlanFeatureInfo};
 
     /// Parse a fixed RFC-3339 instant for deterministic `now`/renewal math.
     fn at(iso: &str) -> chrono::DateTime<chrono::Utc> {
@@ -3589,20 +3693,8 @@ mod plan_lifecycle_tests {
                 business_orgs: false,
             },
             billing_cycle: cycle,
-            plan_source: None,
+            plan_provenance: None,
         }
-    }
-
-    /// A `ConnectPlan` carrying explicit promo provenance, for the
-    /// estate-promo cases.
-    fn promo_plan(
-        status: PlanStatus,
-        renewal_at: Option<&str>,
-        source: PlanSource,
-    ) -> ConnectPlan {
-        let mut p = plan(PlanTier::Estate, status, renewal_at, Some(BillingCycle::Annual));
-        p.plan_source = Some(source);
-        p
     }
 
     fn panel_with_plan(plan: ConnectPlan) -> ConnectAccountPanel {
@@ -3803,93 +3895,166 @@ mod plan_lifecycle_tests {
         assert!(panel.pricing_schema_outdated());
     }
 
-    // ── Estate promo: provenance detection (PR1) ──────────────────────
+    // ── Plan provenance: server-driven display contract (v2) ──────────
     #[test]
-    fn active_promo_is_detected() {
-        let panel = panel_with_plan(promo_plan(
-            PlanStatus::Active,
-            Some("2027-07-04T00:00:00Z"),
-            PlanSource::PromoEstateY1,
-        ));
-        assert!(panel.plan.as_ref().unwrap().is_promo());
-        assert!(panel.plan.as_ref().unwrap().is_active_promo());
-        assert!(panel.is_promo_plan());
+    fn plan_provenance_deserializes_from_wire() {
+        // Pure display passthrough — the only thing to verify is that the
+        // `{label, expires_at, badge}` contract parses. `ConnectPlan` is
+        // camelCase; `expiresAt` exercises `PlanProvenance`'s camelCase too.
+        let json = r#"{
+            "plan": "estate",
+            "status": "active",
+            "renewalAt": "2027-07-04T00:00:00Z",
+            "entitlements": {
+                "freeSigningKeyCount": 0, "policyEditing": true, "legacyInvites": true,
+                "linkedKeychains": true, "duressRemoteLock": true, "businessOrgs": true
+            },
+            "planProvenance": {
+                "label": "Free for your first year",
+                "expiresAt": "2027-07-04T00:00:00Z",
+                "badge": "Founding member"
+            }
+        }"#;
+        let p: ConnectPlan = serde_json::from_str(json).unwrap();
+        let prov = p.plan_provenance.expect("provenance present");
+        assert_eq!(prov.label, "Free for your first year");
+        assert_eq!(prov.badge.as_deref(), Some("Founding member"));
+        assert_eq!(prov.expires_at.as_deref(), Some("2027-07-04T00:00:00Z"));
     }
 
     #[test]
-    fn paid_plan_is_not_promo() {
-        // Explicit `paid` provenance must never read as promo.
-        let panel = panel_with_plan(promo_plan(
-            PlanStatus::Active,
-            Some("2027-07-04T00:00:00Z"),
-            PlanSource::Paid,
-        ));
-        assert!(!panel.plan.as_ref().unwrap().is_promo());
-        assert!(!panel.is_promo_plan());
+    fn plan_without_provenance_is_backward_compatible() {
+        // Older API omits `plan_provenance` → `None` → existing paid/free UX.
+        let json = r#"{
+            "plan": "pro",
+            "status": "active",
+            "renewalAt": null,
+            "entitlements": {
+                "freeSigningKeyCount": 0, "policyEditing": false, "legacyInvites": false,
+                "linkedKeychains": false, "duressRemoteLock": false, "businessOrgs": false
+            }
+        }"#;
+        let p: ConnectPlan = serde_json::from_str(json).unwrap();
+        assert!(p.plan_provenance.is_none());
+    }
+
+    // ── Campaign code redemption (server-driven, v2) ──────────────────
+    #[test]
+    fn campaign_code_change_clears_prior_result() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.campaign_redeem.result = Some(Err("invalid".into()));
+        let _ = panel.update_message(ConnectAccountMessage::CampaignCodeChanged("ABC".into()));
+        assert_eq!(panel.campaign_redeem.code, "ABC");
+        assert!(panel.campaign_redeem.result.is_none());
     }
 
     #[test]
-    fn missing_plan_source_is_not_promo() {
-        // Backward compatibility: older API omits `plan_source` → `None` →
-        // ordinary (non-promo) UX.
-        let panel = panel_with_plan(plan(
-            PlanTier::Estate,
-            PlanStatus::Active,
-            Some("2027-07-04T00:00:00Z"),
-            Some(BillingCycle::Annual),
-        ));
-        assert!(panel.plan.as_ref().unwrap().plan_source.is_none());
-        assert!(!panel.plan.as_ref().unwrap().is_promo());
-        assert!(!panel.is_promo_plan());
+    fn redeem_empty_code_is_noop() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.campaign_redeem.code = "   ".into();
+        let _ = panel.update_message(ConnectAccountMessage::RedeemCampaignCode);
+        assert!(!panel.campaign_redeem.submitting);
     }
 
     #[test]
-    fn unknown_plan_source_is_not_promo() {
-        // A future/unrecognized provenance value must not hide purchasing.
-        let panel = panel_with_plan(promo_plan(
-            PlanStatus::Active,
-            Some("2027-07-04T00:00:00Z"),
-            PlanSource::Unknown,
-        ));
-        assert!(!panel.is_promo_plan());
+    fn redeem_nonempty_marks_submitting_and_clears_result() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.campaign_redeem.code = "FOUNDER".into();
+        panel.campaign_redeem.result = Some(Err("old".into()));
+        let _ = panel.update_message(ConnectAccountMessage::RedeemCampaignCode);
+        assert!(panel.campaign_redeem.submitting);
+        assert!(panel.campaign_redeem.result.is_none());
     }
 
     #[test]
-    fn lapsed_promo_is_not_active_promo_and_reads_expired() {
-        // At the year-one cliff the backend demotes the promo to `past_due`;
-        // it must fall through to the ordinary expired UX, not the promo card.
-        let panel = panel_with_plan(promo_plan(
-            PlanStatus::PastDue,
-            Some("2026-06-01T00:00:00Z"),
-            PlanSource::PromoEstateY1,
+    fn redeem_success_records_message_and_clears_code() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.campaign_redeem.code = "FOUNDER".into();
+        panel.campaign_redeem.submitting = true;
+        let gen = panel.session_generation();
+        let _ = panel.update_message(ConnectAccountMessage::CampaignRedeemed(
+            Ok("Estate unlocked".into()),
+            gen,
         ));
-        assert!(panel.plan.as_ref().unwrap().is_promo());
-        assert!(!panel.plan.as_ref().unwrap().is_active_promo());
-        assert!(!panel.is_promo_plan());
-        assert_eq!(panel.plan_lifecycle_at(at(NOW)), PlanLifecycle::Expired);
-    }
-
-    #[test]
-    fn promo_account_suppresses_renewal_banner() {
-        // Even inside the renewal window, a promo account suppresses the
-        // pre-expiry banner at launch (config-flagged).
-        assert!(
-            PROMO_SUPPRESS_RENEWAL_BANNER,
-            "test assumes launch config; update if flipped for GA"
-        );
-        let panel = panel_with_plan(promo_plan(
-            PlanStatus::Active,
-            Some("2026-06-13T00:00:00Z"), // 5 days out → RenewalDue
-            PlanSource::PromoEstateY1,
-        ));
+        assert!(!panel.campaign_redeem.submitting);
         assert_eq!(
-            panel.plan_lifecycle_at(at(NOW)),
-            PlanLifecycle::RenewalDue { days_remaining: 5 }
+            panel.campaign_redeem.result,
+            Some(Ok("Estate unlocked".to_string()))
         );
-        assert!(!panel.show_renewal_banner());
+        assert!(panel.campaign_redeem.code.is_empty());
     }
 
-    // ── Estate promo: purchasing gate (PR2) ───────────────────────────
+    #[test]
+    fn redeem_failure_records_error_and_keeps_code() {
+        // The error message is the server's typed taxonomy string, rendered
+        // verbatim; the code stays so the user can correct and retry.
+        let mut panel = ConnectAccountPanel::new();
+        panel.campaign_redeem.code = "BADCODE".into();
+        panel.campaign_redeem.submitting = true;
+        let gen = panel.session_generation();
+        let _ = panel.update_message(ConnectAccountMessage::CampaignRedeemed(
+            Err("This code has already been redeemed.".into()),
+            gen,
+        ));
+        assert!(!panel.campaign_redeem.submitting);
+        assert_eq!(
+            panel.campaign_redeem.result,
+            Some(Err("This code has already been redeemed.".to_string()))
+        );
+        assert_eq!(panel.campaign_redeem.code, "BADCODE");
+    }
+
+    #[test]
+    fn redeem_result_from_stale_generation_ignored() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.campaign_redeem.submitting = true;
+        let _ = panel.update_message(ConnectAccountMessage::CampaignRedeemed(
+            Ok("late".into()),
+            999, // not the current session generation
+        ));
+        assert!(panel.campaign_redeem.submitting);
+        assert!(panel.campaign_redeem.result.is_none());
+    }
+
+    #[test]
+    fn register_code_is_stashed_trimmed_on_submit() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.step = ConnectFlowStep::Register {
+            email: "founder@example.com".into(),
+            loading: false,
+        };
+        panel.register_campaign_code = "  FOUNDER  ".into();
+        let _ = panel.update_message(ConnectAccountMessage::SubmitRegistration);
+        assert_eq!(panel.pending_campaign_code.as_deref(), Some("FOUNDER"));
+    }
+
+    #[test]
+    fn empty_register_code_stashes_nothing() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.step = ConnectFlowStep::Register {
+            email: "founder@example.com".into(),
+            loading: false,
+        };
+        panel.register_campaign_code = "   ".into();
+        let _ = panel.update_message(ConnectAccountMessage::SubmitRegistration);
+        assert!(panel.pending_campaign_code.is_none());
+    }
+
+    #[test]
+    fn logout_clears_campaign_state() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.campaign_redeem.code = "X".into();
+        panel.campaign_redeem.result = Some(Ok("y".into()));
+        panel.register_campaign_code = "Z".into();
+        panel.pending_campaign_code = Some("W".into());
+        let _ = panel.update_message(ConnectAccountMessage::LogOut);
+        assert!(panel.campaign_redeem.code.is_empty());
+        assert!(panel.campaign_redeem.result.is_none());
+        assert!(panel.register_campaign_code.is_empty());
+        assert!(panel.pending_campaign_code.is_none());
+    }
+
+    // ── Purchasing gate (PR2 — unchanged in v2) ───────────────────────
     #[test]
     fn purchasing_enabled_defaults_true() {
         // Absent features, and a features payload without the field, both

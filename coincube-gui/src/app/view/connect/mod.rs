@@ -28,7 +28,7 @@ use crate::{
     },
     services::coincube::{
         AvatarAccentMotif, AvatarAgeFeel, AvatarArchetype, AvatarArmorStyle, AvatarDemeanor,
-        AvatarGender, BillingCycle, PlanTier,
+        AvatarGender, BillingCycle, ConnectPlan, PlanTier,
     },
 };
 
@@ -53,7 +53,8 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
         }
 
         ConnectFlowStep::Register { email, loading } => {
-            register_ux(email, *loading).map(ViewMessage::ConnectAccount)
+            register_ux(email, &acct.register_campaign_code, *loading)
+                .map(ViewMessage::ConnectAccount)
         }
 
         ConnectFlowStep::OtpVerification {
@@ -136,7 +137,9 @@ pub fn connect_account_panel<'a>(
             .align_x(Alignment::Center)
             .into(),
         ConnectFlowStep::Login { email, loading } => login_ux(email, *loading),
-        ConnectFlowStep::Register { email, loading } => register_ux(email, *loading),
+        ConnectFlowStep::Register { email, loading } => {
+            register_ux(email, &acct.register_campaign_code, *loading)
+        }
         ConnectFlowStep::OtpVerification {
             email,
             otp,
@@ -278,7 +281,11 @@ fn login_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectAccountMess
         .into()
 }
 
-fn register_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectAccountMessage> {
+fn register_ux<'a>(
+    email: &'a str,
+    code: &'a str,
+    loading: bool,
+) -> Element<'a, ConnectAccountMessage> {
     let valid = email.contains('.') && email.contains('@') && email.len() >= 5;
 
     let submit: Element<ConnectAccountMessage> = if loading {
@@ -314,6 +321,18 @@ fn register_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectAccountM
         .push(
             TextInput::new("Email", email)
                 .on_input(ConnectAccountMessage::EmailChanged)
+                .on_submit_maybe(
+                    (!loading && valid).then_some(ConnectAccountMessage::SubmitRegistration),
+                )
+                .size(16)
+                .padding(15),
+        )
+        .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
+        // Optional promo/referral code (server-driven campaign engine, v2).
+        // Redeemed automatically once the new account authenticates.
+        .push(
+            TextInput::new("Promo or referral code (optional)", code)
+                .on_input(ConnectAccountMessage::RegisterCampaignCodeChanged)
                 .on_submit_maybe(
                     (!loading && valid).then_some(ConnectAccountMessage::SubmitRegistration),
                 )
@@ -514,11 +533,11 @@ fn renewal_banner<'a>(
         bool,
     ) = match state.plan_lifecycle() {
         PlanLifecycle::RenewalDue { .. } => {
-            // Folds in per-session dismissal plus the promo / purchasing-
-            // disabled suppression (PLAN-estate-promo PR1/PR2) — when there's
-            // no purchase path, the pre-expiry "Renew" reminder is hidden so
-            // it never becomes a dead-end CTA. The Expired arm below is
-            // navigation-only ("View plans"), so it stays unsuppressed.
+            // Folds in per-session dismissal plus the purchasing-disabled
+            // suppression (PLAN-estate-promo PR2) — when there's no purchase
+            // path, the pre-expiry "Renew" reminder is hidden so it never
+            // becomes a dead-end CTA. The Expired arm below is navigation-only
+            // ("View plans"), so it stays unsuppressed.
             if !state.show_renewal_banner() {
                 return None;
             }
@@ -634,14 +653,15 @@ fn schema_update_note<'a>() -> Element<'a, ConnectAccountMessage> {
 }
 
 /// Informational note shown atop the plan picker when self-service
-/// purchasing is closed (the July-4 promo window — PLAN-estate-promo PR2).
-/// The plans/prices still render so the user can see what each tier offers;
-/// this just explains why there's no purchase button behind them.
+/// purchasing is closed (`purchasing_enabled = false` — PLAN-estate-promo
+/// PR2). The plans/prices still render so the user can see what each tier
+/// offers; this just explains why there's no purchase button behind them.
+/// Copy is campaign-agnostic.
 fn purchasing_unavailable_note<'a>() -> Element<'a, ConnectAccountMessage> {
     container(
         text::p2_regular(
-            "Purchasing is currently unavailable. New accounts include Estate \
-             free for their first year — there's nothing to buy right now.",
+            "Purchasing is currently unavailable, so plans can't be bought \
+             right now. You can still review what each tier includes below.",
         )
         .color(color::GREY_3),
     )
@@ -665,90 +685,107 @@ fn plan_billing_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcc
     if let Some(checkout_state) = &state.checkout {
         return checkout_ux(checkout_state);
     }
-    // Promo accounts (Estate free for year one) get an informational
-    // manage-plan variant instead of the picker — they already have
-    // everything Estate unlocks and there's no purchase to make
-    // (PLAN-estate-promo PR1).
-    if state.is_promo_plan() {
-        return promo_plan_ux(state);
-    }
     if state.show_billing_history {
         return billing_history_ux(state);
     }
     plan_selection_ux(state)
 }
 
-/// Provenance label on the promo manage-plan card. Working name from
-/// PLAN-estate-promo PR1 ("Founding member"); final display name is pending
-/// sign-off — change here when confirmed.
-const PROMO_PROVENANCE_LABEL: &str = "Founding member";
+// ── Plan provenance card (server-driven, v2) ────────────────────────────────
 
-// ── Promo manage-plan variant (PLAN-estate-promo PR1) ───────────────────────
+/// Renders the current plan's `plan_provenance` (`{label, expires_at,
+/// badge}`) verbatim — the desktop knows nothing about which campaign
+/// granted it. Returns `None` for purchased/free plans (no provenance),
+/// which keeps the existing paid/free UX. Display strings are entirely
+/// server-authored so a campaign's copy never needs an app release.
+fn plan_provenance_card<'a>(plan: &'a ConnectPlan) -> Option<Element<'a, ConnectAccountMessage>> {
+    let prov = plan.plan_provenance.as_ref()?;
+    let badge_color = plan_tier_color(plan.tier());
 
-/// Informational manage-plan view for an account holding the July-4 launch
-/// grant of Estate free for its first year. The picker collapses to a single
-/// card — no Renew / Change / checkout actions, since the user already has
-/// everything Estate unlocks and purchasing is closed during the promo.
-fn promo_plan_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
-    let headline = match state
-        .plan
-        .as_ref()
-        .and_then(|p| p.renewal_at.as_deref())
-        .map(format_date)
-    {
-        Some(date) => format!("Free for your first year — expires {}", date),
-        None => "Free for your first year".to_string(),
+    let mut header = Row::new()
+        .push(text::p1_bold(plan.tier().to_string()).color(badge_color))
+        .push(iced::widget::Space::new().width(Length::Fill));
+    if let Some(badge) = prov.badge.as_deref().filter(|b| !b.is_empty()) {
+        header = header.push(text::p2_bold(badge).color(color::ORANGE));
+    }
+
+    let mut card_col = Column::new()
+        .push(header.align_y(Alignment::Center))
+        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+        .push(text::p1_medium(prov.label.clone()).style(theme::text::primary));
+    if let Some(exp) = prov.expires_at.as_deref().filter(|e| !e.is_empty()) {
+        card_col = card_col
+            .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+            .push(text::p2_regular(format!("Expires {}", format_date(exp))).color(color::GREY_3));
+    }
+
+    Some(
+        container(card_col.padding(16).spacing(2))
+            .style(move |t| container::Style {
+                background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+                border: iced::Border {
+                    color: badge_color,
+                    width: 1.0,
+                    radius: 16.0.into(),
+                },
+                ..Default::default()
+            })
+            .width(Length::Fill)
+            .into(),
+    )
+}
+
+// ── Campaign code redemption field (server-driven, v2) ──────────────────────
+
+/// The generic "promo or referral code" field for Settings → Plan. Campaign-
+/// agnostic: forwards the typed code to `POST /connect/campaigns/redeem` and
+/// renders the server's success/error message verbatim.
+fn campaign_redeem_field<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
+    let rs = &state.campaign_redeem;
+    let valid = !rs.code.trim().is_empty();
+
+    let submit: Element<ConnectAccountMessage> = if rs.submitting {
+        button::secondary(None, "Redeeming…")
+            .width(Length::Fixed(130.0))
+            .into()
+    } else {
+        button::primary(None, "Redeem")
+            .on_press_maybe(valid.then_some(ConnectAccountMessage::RedeemCampaignCode))
+            .width(Length::Fixed(130.0))
+            .into()
     };
 
-    let badge_color = plan_tier_color(&PlanTier::Estate);
+    let input = TextInput::new("Promo or referral code", &rs.code)
+        .on_input(ConnectAccountMessage::CampaignCodeChanged)
+        .on_submit_maybe(
+            (valid && !rs.submitting).then_some(ConnectAccountMessage::RedeemCampaignCode),
+        )
+        .size(15)
+        .padding(12);
 
-    let card = container(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(text::p1_bold("Estate").color(badge_color))
-                    .push(iced::widget::Space::new().width(Length::Fill))
-                    .push(text::p2_regular(PROMO_PROVENANCE_LABEL).color(color::ORANGE))
-                    .align_y(Alignment::Center),
-            )
-            .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
-            .push(
-                Row::new()
-                    .push(text::p2_regular("Status").color(color::GREY_3))
-                    .push(iced::widget::Space::new().width(Length::Fill))
-                    .push(text::p2_bold("Active").color(color::ORANGE))
-                    .align_y(Alignment::Center),
-            )
-            .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-            .push(text::p1_medium(headline).style(theme::text::primary))
-            .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
-            .push(
-                text::p2_regular(
-                    "You have full access to every Estate feature. No payment \
-                     is needed during your first year — we'll email you before \
-                     it ends.",
-                )
-                .color(color::GREY_3),
-            )
-            .padding(16)
-            .spacing(2),
-    )
-    .style(move |t| container::Style {
-        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-        border: iced::Border {
-            color: badge_color,
-            width: 1.0,
-            radius: 16.0.into(),
-        },
-        ..Default::default()
-    })
-    .width(Length::Fill);
+    let mut col = Column::new()
+        .push(text::p2_bold("Have a promo or referral code?").style(theme::text::primary))
+        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+        .push(
+            Row::new()
+                .push(input)
+                .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+                .push(submit)
+                .align_y(Alignment::Center),
+        );
 
-    Column::new()
-        .push(text::h4_bold("Plan & Billing").style(theme::text::primary))
-        .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
-        .push(card)
-        .spacing(0)
+    if let Some(result) = &rs.result {
+        let (msg, accent) = match result {
+            Ok(m) => (m.clone(), color::GREEN),
+            Err(e) => (e.clone(), color::RED),
+        };
+        col = col
+            .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+            .push(text::p2_regular(msg).color(accent));
+    }
+
+    container(col.padding(16).spacing(2))
+        .style(card_style)
         .width(Length::Fill)
         .into()
 }
@@ -859,6 +896,14 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                 .push(banner)
                 .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
         }
+        // Plan provenance is driven by `/connect/plan`, not features, so
+        // render the grant card here too (it shows even while pricing is
+        // unavailable, e.g. offline).
+        if let Some(prov) = state.plan.as_ref().and_then(plan_provenance_card) {
+            col = col
+                .push(prov)
+                .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+        }
         // A newer schema can rename tiers so every card is filtered out,
         // landing here — exactly when the "update available" note is most
         // relevant, so surface it on this path too (D4).
@@ -867,13 +912,17 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                 .push(schema_update_note())
                 .push(iced::widget::Space::new().height(Length::Fixed(12.0)));
         }
-        col = col.push(
-            text::p1_regular(
-                "Pricing temporarily unavailable.\n\
-                 Reconnect to the internet to view current plans and features.",
+        col = col
+            .push(
+                text::p1_regular(
+                    "Pricing temporarily unavailable.\n\
+                     Reconnect to the internet to view current plans and features.",
+                )
+                .color(color::GREY_3),
             )
-            .color(color::GREY_3),
-        );
+            // The redeem field doesn't depend on the pricing fetch.
+            .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
+            .push(campaign_redeem_field(state));
         return container(col).padding(16).into();
     }
 
@@ -886,6 +935,14 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
     if let Some(banner) = renewal_banner(state) {
         col = col
             .push(banner)
+            .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
+    }
+
+    // Server-driven provenance card for a campaign-granted plan (v2) — sits
+    // above the picker so the grant reads as the headline state.
+    if let Some(prov) = state.plan.as_ref().and_then(plan_provenance_card) {
+        col = col
+            .push(prov)
             .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
     }
 
@@ -995,6 +1052,12 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
         );
         col = col.push(iced::widget::Space::new().height(Length::Fixed(10.0)));
     }
+
+    // Promo / referral code field (server-driven redemption, v2).
+    col = col
+        .push(iced::widget::Space::new().height(Length::Fixed(5.0)))
+        .push(campaign_redeem_field(state))
+        .push(iced::widget::Space::new().height(Length::Fixed(10.0)));
 
     // Billing history link
     col = col
@@ -2095,7 +2158,7 @@ mod renewal_banner_tests {
     //! `Option<Element>` and its `style`/`on_press` closures are deferred,
     //! so we can construct it headless and assert only Some/None.
     use super::*;
-    use crate::services::coincube::{ConnectPlan, PlanEntitlements, PlanSource, PlanStatus};
+    use crate::services::coincube::{ConnectPlan, PlanEntitlements, PlanProvenance, PlanStatus};
 
     fn plan(tier: PlanTier, status: PlanStatus, renewal_at: Option<&str>) -> ConnectPlan {
         ConnectPlan {
@@ -2111,7 +2174,7 @@ mod renewal_banner_tests {
                 business_orgs: false,
             },
             billing_cycle: Some(BillingCycle::Monthly),
-            plan_source: None,
+            plan_provenance: None,
         }
     }
 
@@ -2142,10 +2205,14 @@ mod renewal_banner_tests {
         assert!(renewal_banner(&panel).is_none());
     }
 
-    // ── Estate promo (PLAN-estate-promo PR1/PR2) ──────────────────────
-    fn promo_estate(renewal_at: Option<&str>) -> ConnectPlan {
+    // ── Estate promo: server-driven provenance + purchasing (v2) ──────
+    fn granted_estate(renewal_at: Option<&str>, badge: Option<&str>) -> ConnectPlan {
         let mut p = plan(PlanTier::Estate, PlanStatus::Active, renewal_at);
-        p.plan_source = Some(PlanSource::PromoEstateY1);
+        p.plan_provenance = Some(PlanProvenance {
+            label: "Free for your first year".to_string(),
+            expires_at: renewal_at.map(|s| s.to_string()),
+            badge: badge.map(|s| s.to_string()),
+        });
         p
     }
 
@@ -2162,21 +2229,43 @@ mod renewal_banner_tests {
         }
     }
 
-    /// PR1: a promo account in its renewal window still shows no pre-expiry
-    /// banner (suppressed at launch).
+    /// The provenance card renders only when the API sends `plan_provenance`
+    /// — a purchased/free plan (no provenance) shows nothing extra.
     #[test]
-    fn no_renewal_banner_for_active_promo() {
+    fn provenance_card_present_only_with_provenance() {
+        let granted = granted_estate(Some("2027-07-04T00:00:00Z"), Some("Founding member"));
+        assert!(plan_provenance_card(&granted).is_some());
+
+        let paid = plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2027-01-01T00:00:00Z"),
+        );
+        assert!(plan_provenance_card(&paid).is_none());
+    }
+
+    /// A granted account still gets a renewal banner gated only by the
+    /// generic purchasing signal — promo provenance no longer suppresses it
+    /// by itself (v2 removes campaign conditionals). With purchasing closed
+    /// (the campaign window), it's suppressed.
+    #[test]
+    fn granted_account_banner_follows_purchasing_signal() {
         let mut panel = ConnectAccountPanel::new();
-        // Renewal in the past so `plan_lifecycle()` (wall clock) is RenewalDue.
-        panel.plan = Some(promo_estate(Some("2020-01-01T00:00:00Z")));
+        // Renewal in the past so `plan_lifecycle()` is RenewalDue.
+        panel.plan = Some(granted_estate(
+            Some("2020-01-01T00:00:00Z"),
+            Some("Founding member"),
+        ));
         assert!(matches!(
             panel.plan_lifecycle(),
             PlanLifecycle::RenewalDue { .. }
         ));
-        assert!(
-            renewal_banner(&panel).is_none(),
-            "promo accounts suppress the pre-expiry banner"
-        );
+        // Purchasing closed → suppressed (no dead-end CTA).
+        panel.features = Some(features_purchasing(Some(false)));
+        assert!(renewal_banner(&panel).is_none());
+        // Purchasing open → the generic reminder shows.
+        panel.features = Some(features_purchasing(Some(true)));
+        assert!(renewal_banner(&panel).is_some());
     }
 
     /// PR2: with purchasing disabled, the pre-expiry "Renew" banner is hidden
@@ -2184,7 +2273,11 @@ mod renewal_banner_tests {
     #[test]
     fn no_renewal_banner_when_purchasing_disabled() {
         let mut panel = ConnectAccountPanel::new();
-        panel.plan = Some(plan(PlanTier::Pro, PlanStatus::Active, Some("2020-01-01T00:00:00Z")));
+        panel.plan = Some(plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2020-01-01T00:00:00Z"),
+        ));
         panel.features = Some(features_purchasing(Some(false)));
         assert!(matches!(
             panel.plan_lifecycle(),
@@ -2193,18 +2286,25 @@ mod renewal_banner_tests {
         assert!(renewal_banner(&panel).is_none());
     }
 
-    /// Smoke: the promo manage-plan variant and the purchasing-disabled
-    /// picker both construct without panicking. Element internals are
-    /// opaque, so this just exercises the render paths.
+    /// Smoke: the manage-plan view (with a provenance card + redeem field),
+    /// the purchasing-disabled picker, and the account-creation screen all
+    /// construct without panicking. Element internals are opaque, so this
+    /// just exercises the render paths.
     #[test]
-    fn promo_and_disabled_picker_render() {
-        let mut promo = ConnectAccountPanel::new();
-        promo.plan = Some(promo_estate(Some("2027-07-04T00:00:00Z")));
-        let _ = plan_billing_ux(&promo);
+    fn provenance_picker_and_register_render() {
+        let mut granted = ConnectAccountPanel::new();
+        granted.plan = Some(granted_estate(
+            Some("2027-07-04T00:00:00Z"),
+            Some("Founding member"),
+        ));
+        granted.features = Some(features_purchasing(Some(false)));
+        let _ = plan_billing_ux(&granted);
 
-        let mut disabled = ConnectAccountPanel::new();
-        disabled.plan = Some(plan(PlanTier::Free, PlanStatus::Active, None));
-        disabled.features = Some(features_purchasing(Some(false)));
-        let _ = plan_billing_ux(&disabled);
+        let mut paid = ConnectAccountPanel::new();
+        paid.plan = Some(plan(PlanTier::Free, PlanStatus::Active, None));
+        paid.campaign_redeem.result = Some(Err("This code has expired.".into()));
+        let _ = plan_billing_ux(&paid);
+
+        let _ = register_ux("founder@example.com", "FOUNDER", false);
     }
 }

@@ -5,11 +5,11 @@ use super::{
     ContactCube, Country, CreateConnectVaultRequest, CreateInviteRequest, CubeInviteOrAddResult,
     CubeKeyRaw, CubeLimitsResponse, CubeResponse, DownloadStats, FeaturesResponse, GetAvatarData,
     Invite, LightningAddress, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
-    PublicAvatarData, ReceivedInvite, RecoveryKit, RecoveryKitStatus, RefreshTokenRequest,
-    RegenerationData, RegisterCubeRequest, ReserveLightningAddressRequest, SaveQuoteRequest,
-    SaveQuoteResponse, StatsPeriod, TimeseriesResponse, TodayStats, UpdateCubeRequest,
-    UpdateLightningAddressRequest, UpsertRecoveryKitRequest, User, VaultMemberResponse,
-    VerifiedDevice,
+    PublicAvatarData, ReceivedInvite, RecoveryKit, RecoveryKitStatus, RedeemCampaignRequest,
+    RedeemCampaignResponse, RefreshTokenRequest, RegenerationData, RegisterCubeRequest,
+    ReserveLightningAddressRequest, SaveQuoteRequest, SaveQuoteResponse, StatsPeriod,
+    TimeseriesResponse, TodayStats, UpdateCubeRequest, UpdateLightningAddressRequest,
+    UpsertRecoveryKitRequest, User, VaultMemberResponse, VerifiedDevice,
 };
 use reqwest::{Client, Method};
 use serde::Deserialize;
@@ -338,6 +338,25 @@ impl CoincubeClient {
         let res = self.client.get(&url).send().await?;
         let res = res.check_success().await?;
         let resp: ApiResponse<Vec<BillingHistoryEntry>> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// POST /api/v1/connect/campaigns/redeem (authenticated). Redeems a
+    /// promo/referral code; the server applies the benefit and records the
+    /// redemption. A bad code returns a typed 4xx whose message the caller
+    /// surfaces verbatim (generic error taxonomy — the desktop has no
+    /// campaign-specific handling).
+    pub async fn redeem_campaign(
+        &self,
+        code: &str,
+    ) -> Result<RedeemCampaignResponse, CoincubeError> {
+        let url = format!("{}/api/v1/connect/campaigns/redeem", self.base_url);
+        let req = RedeemCampaignRequest {
+            code: code.to_string(),
+        };
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<RedeemCampaignResponse> = res.json().await?;
         Ok(resp.data)
     }
 
