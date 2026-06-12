@@ -138,13 +138,21 @@ pub fn update(
             };
             if !entitled {
                 // Non-Estate: don't hit the network; the card shows the
-                // locked affordance. Deliberately leave `loaded_once` false:
-                // nothing was resolved here, and the heartbeat's lazy
-                // hydration is gated on `!loaded_once && entitled`. If we
-                // marked it loaded, a later upgrade to Estate would never
-                // re-fire that hydration and background heartbeats would
-                // never start until Settings is reopened. The entitlement
-                // gate keeps this from dispatching spuriously while unentitled.
+                // locked affordance. Clear any in-flight `loading`: a prior
+                // entitled fetch can still be marked loading here — e.g. after
+                // an in-place account switch to a non-Estate account, where the
+                // session bump drops the old fetch's `StatusLoaded` without
+                // resetting this state — and a stuck `loading` would keep the
+                // card on "Loading…" and block the heartbeat's `!loading`
+                // hydration gate.
+                ra.loading = false;
+                // Deliberately leave `loaded_once` false: nothing was resolved
+                // here, and the heartbeat's lazy hydration is gated on
+                // `!loaded_once && entitled`. If we marked it loaded, a later
+                // upgrade to Estate would never re-fire that hydration and
+                // background heartbeats would never start until Settings is
+                // reopened. The entitlement gate keeps this from dispatching
+                // spuriously while unentitled.
                 return Task::none();
             }
             ra.loading = true;
