@@ -2523,16 +2523,21 @@ impl ConnectAccountPanel {
     }
 
     /// Whether self-service purchasing is currently available. Sourced from
-    /// `GET /connect/features` (`purchasing_enabled`); absent → enabled, so
-    /// the existing checkout flow stays intact for backends that don't send
-    /// the flag (and for fall GA once a campaign closes). A campaign that
-    /// disables purchasing sets it `false`, which hides every purchase
-    /// surface (PLAN-estate-promo PR2).
+    /// `GET /connect/features` (`purchasing_enabled`).
+    ///
+    /// Fails closed until features are known: while the fetch is in flight
+    /// (right after sign-in) or failed, this is `false`, so a promo window
+    /// never momentarily offers checkout before the server's stance loads.
+    /// Once features *are* loaded, an absent flag means an older backend with
+    /// purchasing on — enabled, so the existing flow stays intact for
+    /// backends that don't send it (and for fall GA once a campaign closes).
+    /// A campaign that disables purchasing sets it `false`, hiding every
+    /// purchase surface (PLAN-estate-promo PR2).
     pub fn purchasing_enabled(&self) -> bool {
-        self.features
-            .as_ref()
-            .and_then(|f| f.purchasing_enabled)
-            .unwrap_or(true)
+        match &self.features {
+            None => false,
+            Some(f) => f.purchasing_enabled.unwrap_or(true),
+        }
     }
 
     /// Whether the pre-expiry renewal banner should render: the plan is
@@ -4194,13 +4199,16 @@ mod plan_lifecycle_tests {
 
     // ── Purchasing gate (PR2 — unchanged in v2) ───────────────────────
     #[test]
-    fn purchasing_enabled_defaults_true() {
-        // Absent features, and a features payload without the field, both
-        // read as enabled — the existing flow stays intact for fall GA.
+    fn purchasing_enabled_requires_loaded_features() {
         let mut panel = ConnectAccountPanel::new();
-        assert!(panel.purchasing_enabled());
+        // Features not loaded yet (fetch in flight / failed) → fail closed so
+        // we never offer checkout before the server's stance is known.
+        assert!(!panel.purchasing_enabled());
+        // Loaded but flag absent → older backend with purchasing on (the
+        // existing flow stays intact for fall GA).
         panel.features = Some(features_with_purchasing(None, None));
         assert!(panel.purchasing_enabled());
+        // Loaded with the flag on.
         panel.features = Some(features_with_purchasing(None, Some(true)));
         assert!(panel.purchasing_enabled());
     }
@@ -4242,10 +4250,21 @@ mod plan_lifecycle_tests {
     }
 
     #[test]
-    fn start_checkout_proceeds_when_purchasing_enabled() {
-        // Default (no features / flag absent) keeps the existing checkout
-        // path working — regression guard for fall GA.
+    fn start_checkout_blocked_before_features_load() {
+        // Right after sign-in, features are still loading — don't open a
+        // checkout until the server's purchasing stance is known.
         let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        assert!(panel.features.is_none());
+        let _ = panel.update_message(ConnectAccountMessage::StartCheckout(PlanTier::Pro));
+        assert!(panel.checkout.is_none());
+    }
+
+    #[test]
+    fn start_checkout_proceeds_when_purchasing_enabled() {
+        // Features loaded with purchasing on (flag absent = older backend)
+        // keeps the existing checkout path working — regression for fall GA.
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.features = Some(features_with_purchasing(None, None));
         let _ = panel.update_message(ConnectAccountMessage::StartCheckout(PlanTier::Pro));
         assert!(matches!(
             panel.checkout.as_ref().map(|c| &c.phase),
