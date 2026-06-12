@@ -1387,6 +1387,12 @@ impl ConnectAccountPanel {
 
             ConnectAccountMessage::CampaignRedeemed(result, gen) => {
                 if gen != self.session_generation {
+                    // Stale: the session changed since this redeem was fired
+                    // (e.g. a second SessionLoaded bumped the generation while
+                    // a registration redeem was in flight). Drop the result,
+                    // but still clear the in-flight flag so the field can't get
+                    // stuck on "Redeeming…".
+                    self.campaign_redeem.submitting = false;
                     return iced::Task::none();
                 }
                 self.campaign_redeem.submitting = false;
@@ -4020,8 +4026,11 @@ mod plan_lifecycle_tests {
             Ok("late".into()),
             999, // not the current session generation
         ));
-        assert!(panel.campaign_redeem.submitting);
+        // The result is dropped (wrong session)...
         assert!(panel.campaign_redeem.result.is_none());
+        // ...but the in-flight flag is cleared so the field doesn't stick on
+        // "Redeeming…" after a session change.
+        assert!(!panel.campaign_redeem.submitting);
     }
 
     #[test]
