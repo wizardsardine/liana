@@ -1384,6 +1384,13 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::RegisterCampaignCodeChanged(code) => {
+                // Once signup is in flight the code is already stashed in
+                // `pending_campaign_code`; ignore further edits so the visible
+                // field can't diverge from what gets redeemed. The view also
+                // locks the field while loading.
+                if matches!(self.step, ConnectFlowStep::Register { loading: true, .. }) {
+                    return iced::Task::none();
+                }
                 self.register_campaign_code = code;
             }
 
@@ -4071,6 +4078,32 @@ mod plan_lifecycle_tests {
         panel.register_campaign_code = "  FOUNDER  ".into();
         let _ = panel.update_message(ConnectAccountMessage::SubmitRegistration);
         assert_eq!(panel.pending_campaign_code.as_deref(), Some("FOUNDER"));
+    }
+
+    #[test]
+    fn register_code_edit_ignored_while_signup_in_flight() {
+        // After SubmitRegistration (loading=true), the code is already stashed
+        // in pending_campaign_code; editing the visible field must not change
+        // what gets redeemed.
+        let mut panel = ConnectAccountPanel::new();
+        panel.register_campaign_code = "OLD".into();
+        panel.step = ConnectFlowStep::Register {
+            email: "founder@example.com".into(),
+            loading: true,
+        };
+        let _ = panel.update_message(ConnectAccountMessage::RegisterCampaignCodeChanged(
+            "NEW".into(),
+        ));
+        assert_eq!(panel.register_campaign_code, "OLD");
+        // Still editable before submit (loading=false).
+        panel.step = ConnectFlowStep::Register {
+            email: "founder@example.com".into(),
+            loading: false,
+        };
+        let _ = panel.update_message(ConnectAccountMessage::RegisterCampaignCodeChanged(
+            "NEW".into(),
+        ));
+        assert_eq!(panel.register_campaign_code, "NEW");
     }
 
     #[test]

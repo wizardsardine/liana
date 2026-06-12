@@ -329,10 +329,14 @@ fn register_ux<'a>(
         )
         .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
         // Optional promo/referral code (server-driven campaign engine, v2).
-        // Redeemed automatically once the new account authenticates.
+        // Redeemed automatically once the new account authenticates. Locked
+        // while signup is in flight — the code is already stashed at submit,
+        // so editing the visible field would diverge from what's redeemed.
         .push(
             TextInput::new("Promo or referral code (optional)", code)
-                .on_input(ConnectAccountMessage::RegisterCampaignCodeChanged)
+                .on_input_maybe(
+                    (!loading).then_some(ConnectAccountMessage::RegisterCampaignCodeChanged),
+                )
                 .on_submit_maybe(
                     (!loading && valid).then_some(ConnectAccountMessage::SubmitRegistration),
                 )
