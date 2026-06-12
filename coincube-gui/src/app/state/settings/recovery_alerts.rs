@@ -98,7 +98,12 @@ fn ra_msg(m: RecoveryAlertsMessage) -> Message {
 
 /// App-level dispatcher. `client` / `server_cube_id` / `wallet` / `members`
 /// are injected by `App::update`; `entitled` is the account's
-/// `recovery_alerts` entitlement.
+/// `recovery_alerts` entitlement. `session_generation` is the connect
+/// account's current session counter (bumped on login / logout / reset):
+/// it's stamped into spawned async results so a load / change that lands
+/// after the session changed is dropped instead of writing a prior account's
+/// vault id + status into the reset state — the same guard the duress-contacts
+/// handlers use.
 #[allow(clippy::too_many_arguments)]
 pub fn update(
     ra: &mut RecoveryAlerts,
@@ -108,6 +113,7 @@ pub fn update(
     wallet: Option<Arc<Wallet>>,
     entitled: bool,
     members: &[CubeMember],
+    session_generation: u64,
 ) -> Task<Message> {
     ra.entitled = entitled;
     match msg {
@@ -154,10 +160,16 @@ pub fn update(
                         .map_err(|e| e.to_string())?;
                     Ok((vault.id, status))
                 },
-                |res| ra_msg(RecoveryAlertsMessage::StatusLoaded(res)),
+                move |res| ra_msg(RecoveryAlertsMessage::StatusLoaded(res, session_generation)),
             )
         }
-        RecoveryAlertsMessage::StatusLoaded(res) => {
+        RecoveryAlertsMessage::StatusLoaded(res, gen) => {
+            // Drop a load that resolved after the session changed (logout /
+            // account switch) so we never write the prior account's vault id +
+            // status into the freshly-reset state.
+            if gen != session_generation {
+                return Task::none();
+            }
             ra.loading = false;
             ra.loaded_once = true;
             match res {
@@ -219,7 +231,7 @@ pub fn update(
                             })
                             .map_err(|e| e.to_string())
                     },
-                    |res| ra_msg(RecoveryAlertsMessage::ChangeResult(res)),
+                    move |res| ra_msg(RecoveryAlertsMessage::ChangeResult(res, session_generation)),
                 ),
                 VaultMonitoringLevel::Heartbeat => {
                     let req = SetVaultMonitoringRequest {
@@ -235,7 +247,9 @@ pub fn update(
                                 .await
                                 .map_err(|e| e.to_string())
                         },
-                        |res| ra_msg(RecoveryAlertsMessage::ChangeResult(res)),
+                        move |res| {
+                            ra_msg(RecoveryAlertsMessage::ChangeResult(res, session_generation))
+                        },
                     )
                 }
                 VaultMonitoringLevel::Full => {
@@ -264,7 +278,9 @@ pub fn update(
                                 .await
                                 .map_err(|e| e.to_string())
                         },
-                        |res| ra_msg(RecoveryAlertsMessage::ChangeResult(res)),
+                        move |res| {
+                            ra_msg(RecoveryAlertsMessage::ChangeResult(res, session_generation))
+                        },
                     )
                 }
             }
@@ -291,10 +307,15 @@ pub fn update(
                         .await
                         .map_err(|e| e.to_string())
                 },
-                |res| ra_msg(RecoveryAlertsMessage::ChangeResult(res)),
+                move |res| ra_msg(RecoveryAlertsMessage::ChangeResult(res, session_generation)),
             )
         }
-        RecoveryAlertsMessage::ChangeResult(res) => {
+        RecoveryAlertsMessage::ChangeResult(res, gen) => {
+            // Drop a change that resolved after the session changed so a stale
+            // result can't clobber a newer session's state.
+            if gen != session_generation {
+                return Task::none();
+            }
             ra.submitting = false;
             match res {
                 Ok(status) => {

@@ -362,14 +362,27 @@ pub enum RecoveryAlertsMessage {
     /// then GETs `/vaults/{id}/monitoring`). Fired on entering General
     /// settings and after a successful change.
     LoadStatus,
-    /// Async result of `LoadStatus`: `(connectVaultId, status)`.
-    StatusLoaded(Result<(u64, crate::services::coincube::VaultMonitoringStatus), String>),
+    /// Async result of `LoadStatus`: `(connectVaultId, status)`. The trailing
+    /// `u64` is the `session_generation` captured when the load was spawned;
+    /// the handler drops the result if the session has since changed (logout /
+    /// account switch) so a prior account's vault id + status can't be written
+    /// into the reset state.
+    StatusLoaded(
+        Result<(u64, crate::services::coincube::VaultMonitoringStatus), String>,
+        u64,
+    ),
     /// User picked a monitoring level (Off / Alerts-only / Full).
     SelectLevel(crate::services::coincube::VaultMonitoringLevel),
     /// User changed the keyholder recovery-kit download policy.
     SetDownloadPolicy(crate::services::coincube::KeyholderDownloadPolicy),
-    /// Async result of a level / policy change — the updated status.
-    ChangeResult(Result<crate::services::coincube::VaultMonitoringStatus, String>),
+    /// Async result of a level / policy change — the updated status. The
+    /// trailing `u64` is the spawn-time `session_generation` (see
+    /// `StatusLoaded`); a stale result is dropped rather than clobbering a
+    /// newer session's state.
+    ChangeResult(
+        Result<crate::services::coincube::VaultMonitoringStatus, String>,
+        u64,
+    ),
 }
 
 #[derive(Debug, Clone)]
