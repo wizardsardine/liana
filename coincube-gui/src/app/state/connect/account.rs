@@ -1365,6 +1365,13 @@ impl ConnectAccountPanel {
 
             // ── Campaign code redemption (v2 campaign engine) ─────────────
             ConnectAccountMessage::CampaignCodeChanged(code) => {
+                // Ignore edits while a redeem is in flight — otherwise the
+                // response for the submitted code could land against
+                // newly-typed text (and a success would clear it). The view
+                // also disables the input while submitting.
+                if self.campaign_redeem.submitting {
+                    return iced::Task::none();
+                }
                 self.campaign_redeem.code = code;
                 // Editing past a prior outcome clears it so the field reads as
                 // a fresh attempt.
@@ -3960,6 +3967,17 @@ mod plan_lifecycle_tests {
         let _ = panel.update_message(ConnectAccountMessage::CampaignCodeChanged("ABC".into()));
         assert_eq!(panel.campaign_redeem.code, "ABC");
         assert!(panel.campaign_redeem.result.is_none());
+    }
+
+    #[test]
+    fn code_edits_ignored_while_redeem_in_flight() {
+        // While a redeem is submitting, edits are dropped so the result that
+        // comes back can't land against newly-typed text.
+        let mut panel = ConnectAccountPanel::new();
+        panel.campaign_redeem.code = "ABC".into();
+        panel.campaign_redeem.submitting = true;
+        let _ = panel.update_message(ConnectAccountMessage::CampaignCodeChanged("XYZ".into()));
+        assert_eq!(panel.campaign_redeem.code, "ABC");
     }
 
     #[test]

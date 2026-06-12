@@ -756,7 +756,9 @@ fn campaign_redeem_field<'a>(state: &'a ConnectAccountPanel) -> Element<'a, Conn
     };
 
     let input = TextInput::new("Promo or referral code", &rs.code)
-        .on_input(ConnectAccountMessage::CampaignCodeChanged)
+        // Locked while a redeem is in flight so the in-flight code can't drift
+        // out of sync with the result that comes back.
+        .on_input_maybe((!rs.submitting).then_some(ConnectAccountMessage::CampaignCodeChanged))
         .on_submit_maybe(
             (valid && !rs.submitting).then_some(ConnectAccountMessage::RedeemCampaignCode),
         )
