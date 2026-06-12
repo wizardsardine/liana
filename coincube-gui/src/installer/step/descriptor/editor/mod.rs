@@ -245,10 +245,14 @@ impl Step for DefineDescriptor {
             Message::Close => {
                 self.modal = None;
             }
-            Message::CreateTaprootDescriptor(use_taproot) => {
-                self.use_taproot = use_taproot;
-                self.check_setup();
-            }
+            // VAULT is P2WSH-only at launch (BIP-110/RDTS rule 7 freezes
+            // Taproot tapleaves that execute OP_IF/OP_NOTIF, which our
+            // recovery policies do). The descriptor-type selector that
+            // emitted this has been removed from the UI; the handler is kept
+            // as a no-op so a stray message can never flip `use_taproot` and
+            // produce a `tr(...)` descriptor. `use_taproot` therefore stays
+            // `false` for the lifetime of the editor.
+            Message::CreateTaprootDescriptor(_) => {}
             Message::DefineDescriptor(message::DefineDescriptor::ChangeTemplate(template)) => {
                 self.descriptor_template = template;
             }
@@ -676,11 +680,13 @@ impl Step for DefineDescriptor {
             PathInfo::Multi(self.paths[0].threshold, spending_keys)
         };
 
-        let policy = match if self.use_taproot {
-            CoincubePolicy::new(spending_keys, recovery_paths)
-        } else {
-            CoincubePolicy::new_legacy(spending_keys, recovery_paths)
-        } {
+        // VAULT is P2WSH-only at launch: always compile to `wsh(...)` via
+        // `new_legacy`. BIP-110/RDTS rule 7 would temporarily freeze Taproot
+        // tapleaves that execute OP_IF/OP_NOTIF — which VAULT's Miniscript
+        // recovery policies do — so we never compile creation output to
+        // `tr(...)`. The Taproot constructor (`CoincubePolicy::new`) is kept
+        // in coincube-core for restoring/spending imported `tr(...)` wallets.
+        let policy = match CoincubePolicy::new_legacy(spending_keys, recovery_paths) {
             Ok(policy) => policy,
             Err(e) => {
                 self.error = Some(e.to_string());
@@ -1107,6 +1113,100 @@ mod tests {
         sandbox.check(|step| {
             assert!((step).apply(&mut ctx));
             assert!(ctx.hw_is_used);
+        });
+    }
+
+    /// VAULT is P2WSH-only at launch (BIP-110/RDTS rule 7 safety). Even if a
+    /// stray `CreateTaprootDescriptor(true)` arrives — the UI selector that
+    /// used to emit it has been removed — the created descriptor must still be
+    /// `wsh(...)` and never `tr(...)`.
+    #[tokio::test]
+    async fn test_define_descriptor_is_p2wsh_only() {
+        let mut ctx = Context::new(
+            Network::Signet,
+            CoincubeDirectory::new(PathBuf::from_str("/").unwrap()),
+            crate::installer::context::RemoteBackend::None,
+            None,
+            None,
+        );
+        let sandbox: Sandbox<DefineDescriptor> = Sandbox::new(DefineDescriptor::new(
+            Network::Signet,
+            Arc::new(Mutex::new(Signer::generate(Network::Signet).unwrap())),
+        ));
+        sandbox.load(&ctx).await;
+
+        // Attempt to force Taproot — must be ignored (no-op handler).
+        sandbox.update(Message::CreateTaprootDescriptor(true)).await;
+        sandbox.check(|step| assert!(!step.use_taproot));
+
+        // Primary key: generated master key.
+        sandbox
+            .update(Message::DefineDescriptor(message::DefineDescriptor::Path(
+                0,
+                message::DefinePath::Key(0, message::DefineKey::Edit),
+            )))
+            .await;
+        sandbox
+            .update(SelectKeySource::route(
+                key::SelectKeySourceMessage::SelectGenerateMasterKey,
+            ))
+            .await;
+        sandbox
+            .update(SelectKeySource::route(key::SelectKeySourceMessage::Alias(
+                "master_signer_key".to_string(),
+            )))
+            .await;
+        sandbox
+            .update(SelectKeySource::route(key::SelectKeySourceMessage::Next))
+            .await;
+
+        // Recovery path: timelock sequence + external xpub.
+        sandbox
+            .update(Message::DefineDescriptor(message::DefineDescriptor::Path(
+                1,
+                message::DefinePath::SequenceEdited(1000),
+            )))
+            .await;
+        sandbox
+            .update(Message::DefineDescriptor(message::DefineDescriptor::Path(
+                1,
+                message::DefinePath::Key(0, message::DefineKey::Edit),
+            )))
+            .await;
+        sandbox
+            .update(SelectKeySource::route(
+                key::SelectKeySourceMessage::SelectEnterXpub,
+            ))
+            .await;
+        sandbox
+            .update(SelectKeySource::route(
+                key::SelectKeySourceMessage::Xpub("[f5acc2fd/48'/1'/0'/2']tpubDFAqEGNyad35aBCKUAXbQGDjdVhNueno5ZZVEn3sQbW5ci457gLR7HyTmHBg93oourBssgUxuWz1jX5uhc1qaqFo9VsybY1J5FuedLfm4dK".to_string())
+            ))
+            .await;
+        sandbox
+            .update(SelectKeySource::route(key::SelectKeySourceMessage::Alias(
+                "External recovery key".to_string(),
+            )))
+            .await;
+        sandbox
+            .update(SelectKeySource::route(key::SelectKeySourceMessage::Next))
+            .await;
+
+        sandbox.check(|step| {
+            assert!(step.modal.is_none());
+            assert!(!step.use_taproot);
+            assert!((step).apply(&mut ctx));
+            let desc = ctx.descriptor.as_ref().unwrap().to_string();
+            assert!(
+                desc.starts_with("wsh("),
+                "VAULT creation must produce a P2WSH descriptor, got: {}",
+                desc
+            );
+            assert!(
+                !desc.starts_with("tr("),
+                "VAULT must never create a Taproot descriptor: {}",
+                desc
+            );
         });
     }
 }
