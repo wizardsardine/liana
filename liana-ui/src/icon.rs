@@ -143,8 +143,12 @@ pub fn previous_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F284}')
 }
 
-pub fn check_icon() -> Text<'static> {
+pub fn check_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F633}')
+}
+
+pub fn check_mark_icon<'a>() -> Text<'a> {
+    bootstrap_icon_no_padding('\u{F633}')
 }
 
 pub fn round_key_icon() -> Text<'static> {
