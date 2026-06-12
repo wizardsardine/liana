@@ -157,12 +157,19 @@ pub fn update(
                     ra.error = None;
                 }
                 Err(e) => {
-                    // A missing Connect vault (the cube has no vault yet)
-                    // surfaces as a not-found error; treat it as "nothing to
-                    // monitor" rather than a hard error so the card degrades
-                    // gracefully.
+                    // A missing Connect vault (the cube has no vault yet, or a
+                    // previously-resolved vault was removed) surfaces as a
+                    // not-found error; treat it as "nothing to monitor" rather
+                    // than a hard error so the card degrades gracefully. Clear
+                    // any cached vault id and status too: otherwise
+                    // `recovery_heartbeat_task` would keep POSTing heartbeats
+                    // (level != Off && vault_id set) to a vault Connect no
+                    // longer has, even though the card now shows nothing to
+                    // monitor. A later successful load re-resolves both.
                     if e.to_lowercase().contains("not found") {
                         ra.no_vault = true;
+                        ra.vault_id = None;
+                        ra.status = None;
                     } else {
                         ra.error = Some(e);
                     }

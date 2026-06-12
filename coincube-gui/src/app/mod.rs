@@ -1425,11 +1425,32 @@ impl App {
             // Not synced enough to compute a meaningful recovery height yet.
             return Task::none();
         }
-        // earliest_recovery_height = chain tip + the earliest recovery-path
-        // relative timelock (Liana CSV semantics). The server's monotonic-
-        // staleness rule means a slightly-stale value only ever errs early.
+        // earliest_recovery_height = the absolute height at which this vault's
+        // EARLIEST recovery branch opens. Under Liana CSV semantics a coin's
+        // recovery path opens `timelock` blocks after the coin confirmed
+        // (`remaining_sequence`), so the binding constraint is the OLDEST
+        // confirmed coin — `min(block_height) + timelock` — NOT `tip +
+        // timelock`. The latter (the open height of a coin confirming right
+        // now) recedes one block per block as the tip advances, so under the
+        // server's monotonic "newest report wins" rule the recovery height
+        // would forever outrun the chain and the keyholder alert would fire
+        // late or never. Mirror `coins_summary`'s coin filter: confirmed,
+        // owned, unspent. With no such coins there are no funds at recovery
+        // risk yet, so fall back to the tip-based estimate — harmless and
+        // still monotonic.
         let timelock = wallet.main_descriptor.first_timelock_value() as i64;
-        let earliest = (tip as i64 + timelock).max(0) as u32;
+        let oldest_confirmed = self
+            .cache
+            .coins()
+            .iter()
+            .filter(|c| c.spend_info.is_none() && crate::daemon::model::coin_is_owned(c))
+            .filter_map(|c| c.block_height)
+            .min();
+        let earliest = match oldest_confirmed {
+            Some(h) => h as i64 + timelock,
+            None => tip as i64 + timelock,
+        };
+        let earliest = earliest.max(0) as u32;
         let req = VaultHeartbeatRequest {
             earliest_recovery_height: earliest,
             computed_at: chrono::Utc::now(),

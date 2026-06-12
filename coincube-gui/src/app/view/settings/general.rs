@@ -15,9 +15,7 @@ use crate::app::state::settings::recovery_alerts::RecoveryAlerts;
 use crate::app::state::settings::recovery_kit::RecoveryKit;
 use crate::app::view::dashboard;
 use crate::app::view::message::*;
-use crate::services::coincube::{
-    KeyholderDownloadPolicy, RecoveryKitStatus, VaultMonitoringLevel,
-};
+use crate::services::coincube::{KeyholderDownloadPolicy, RecoveryKitStatus, VaultMonitoringLevel};
 use crate::services::fiat::{Currency, ALL_PRICE_SOURCES};
 
 #[allow(clippy::too_many_arguments)]
@@ -132,10 +130,7 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
     // No Connect vault to monitor yet.
     if ra.no_vault {
         body = body.push(
-            text(
-                "Create a Vault and register it with Connect to enable recovery alerts.",
-            )
-            .size(13),
+            text("Create a Vault and register it with Connect to enable recovery alerts.").size(13),
         );
         return card::simple(body).width(Length::Fill).into();
     }
@@ -151,12 +146,7 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
     // Three-tier selector row.
     let level_row = Row::new()
         .spacing(8)
-        .push(level_button(
-            "Off",
-            VaultMonitoringLevel::Off,
-            level,
-            busy,
-        ))
+        .push(level_button("Off", VaultMonitoringLevel::Off, level, busy))
         .push(level_button(
             "Alerts only",
             VaultMonitoringLevel::Heartbeat,
@@ -181,10 +171,8 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
         body = body.push(text("Keyholders who'd be notified").bold().size(14));
         if ra.keyholders.is_empty() {
             body = body.push(
-                text(
-                    "No keyholders on this Cube yet — add keyholders so someone is alerted.",
-                )
-                .size(13),
+                text("No keyholders on this Cube yet — add keyholders so someone is alerted.")
+                    .size(13),
             );
         } else {
             let mut who = Column::new().spacing(2);
@@ -196,7 +184,11 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
 
         // Keyholder download policy.
         body = body.push(Space::new().height(Length::Fixed(6.0)));
-        body = body.push(text("When can keyholders download your recovery kit?").bold().size(14));
+        body = body.push(
+            text("When can keyholders download your recovery kit?")
+                .bold()
+                .size(14),
+        );
         let policy = ra.download_policy();
         body = body.push(
             Row::new()
@@ -232,8 +224,9 @@ fn level_button<'a>(
     active: VaultMonitoringLevel,
     busy: bool,
 ) -> Element<'a, Message> {
-    let on_press = (!busy && this != active)
-        .then_some(SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::SelectLevel(this)).into());
+    let on_press = (!busy && this != active).then_some(
+        SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::SelectLevel(this)).into(),
+    );
     if this == active {
         button::primary(None, label)
             .padding([8, 14])

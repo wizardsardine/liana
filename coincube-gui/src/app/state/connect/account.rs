@@ -4,7 +4,9 @@ use crate::{
     app::{
         menu::ConnectSubMenu,
         message::Message,
-        view::{self, ConnectAccountMessage, ContactsMessage, DuressContactsMessage, DuressMessage},
+        view::{
+            self, ConnectAccountMessage, ContactsMessage, DuressContactsMessage, DuressMessage,
+        },
     },
     services::coincube::{
         BillingCycle, BillingHistoryEntry, ChargeStatus, CheckoutRequest, CheckoutResponse,
@@ -404,6 +406,14 @@ pub struct DuressContactsState {
 }
 
 impl DuressContactsState {
+    /// Drop all session state — the loaded contacts (names, phones, emails)
+    /// and any in-flight add/edit form. Called on logout so one Connect
+    /// session's duress contacts can't linger in memory or flash into the
+    /// next user's Duress section before its reload lands.
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
     /// Reset the form fields to empty and switch to "add" mode.
     fn reset_form_for_add(&mut self) {
         self.editing_id = None;
@@ -793,6 +803,7 @@ impl ConnectAccountPanel {
                 self.renewal_banner_dismissed = false;
                 self.selected_billing_cycle = BillingCycle::Monthly;
                 self.contacts_state.clear();
+                self.duress_contacts.clear();
                 // Scrub any in-flight enrollment wizard secrets (PINs,
                 // passphrases, generated code) and the recovery all-clear
                 // passphrase before dropping them, so they don't survive the
@@ -1461,9 +1472,7 @@ impl ConnectAccountPanel {
                 // state — set on the post-sign-in mirror, reset on recovery).
             }
             ConnectAccountMessage::Duress(m) => return self.update_duress(m),
-            ConnectAccountMessage::DuressContacts(m) => {
-                return self.update_duress_contacts(m)
-            }
+            ConnectAccountMessage::DuressContacts(m) => return self.update_duress_contacts(m),
         }
 
         iced::Task::none()
@@ -4237,7 +4246,12 @@ mod duress_contacts_tests {
         dispatch(&mut panel, DuressContactsMessage::ToggleSms(true));
         dispatch(&mut panel, DuressContactsMessage::Submit);
         assert!(!panel.duress_contacts.submitting);
-        assert!(panel.duress_contacts.error.as_deref().unwrap().contains("name"));
+        assert!(panel
+            .duress_contacts
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("name"));
     }
 
     #[test]

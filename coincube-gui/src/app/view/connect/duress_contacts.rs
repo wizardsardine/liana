@@ -88,10 +88,7 @@ pub fn section<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
         .width(Length::Fill);
 
     if !state.is_duress_alerts_entitled() {
-        return col
-            .push(locked_card())
-            .width(Length::Fill)
-            .into();
+        return col.push(locked_card()).width(Length::Fill).into();
     }
 
     col = col.push(explainer_cards(state));
@@ -105,9 +102,7 @@ pub fn section<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
 fn locked_card<'a>() -> Element<'a, ConnectAccountMessage> {
     container(
         Column::new()
-            .push(
-                text::p1_bold("Available on the Estate plan").style(theme::text::primary),
-            )
+            .push(text::p1_bold("Available on the Estate plan").style(theme::text::primary))
             .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
             .push(
                 text::p2_regular(
@@ -137,9 +132,7 @@ fn explainer_cards<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcc
                     .padding(12)
                     .width(Length::Fill)
                     .style(|t| container::Style {
-                        background: Some(iced::Background::Color(
-                            t.colors.cards.simple.background,
-                        )),
+                        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
                         border: iced::Border {
                             color: color::GREY_5,
                             width: 0.5,
@@ -166,9 +159,7 @@ fn explainer_cards<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcc
         Column::new()
             .push(text::p1_bold("The one-time intro message").style(theme::text::primary))
             .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-            .push(
-                text::p2_regular(intro_template_preview(&owner)).color(color::GREY_2),
-            )
+            .push(text::p2_regular(intro_template_preview(&owner)).color(color::GREY_2))
             .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
             .push(
                 text::p2_regular(
@@ -207,8 +198,11 @@ fn list_body<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
     let count = dc.count();
     let header = Row::new()
         .push(
-            text::p1_bold(format!("Contacts ({}/{})", count, MAX_DURESS_ALERT_CONTACTS))
-                .style(theme::text::primary),
+            text::p1_bold(format!(
+                "Contacts ({}/{})",
+                count, MAX_DURESS_ALERT_CONTACTS
+            ))
+            .style(theme::text::primary),
         )
         .push(iced::widget::Space::new().width(Length::Fill))
         .push(if dc.at_cap() {
@@ -233,8 +227,7 @@ fn list_body<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
                 container(
                     Column::new()
                         .push(
-                            text::p1_bold("No emergency contacts yet")
-                                .style(theme::text::primary),
+                            text::p1_bold("No emergency contacts yet").style(theme::text::primary),
                         )
                         .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
                         .push(
@@ -245,9 +238,10 @@ fn list_body<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
                             .color(color::GREY_3),
                         )
                         .push(iced::widget::Space::new().height(Length::Fixed(14.0)))
-                        .push(button::primary(None, "Add a contact").on_press(msg(
-                            DuressContactsMessage::ShowAddForm,
-                        )))
+                        .push(
+                            button::primary(None, "Add a contact")
+                                .on_press(msg(DuressContactsMessage::ShowAddForm)),
+                        )
                         .align_x(Alignment::Center)
                         .padding(24)
                         .spacing(0),
@@ -325,10 +319,7 @@ fn contact_card<'a>(
     };
 
     let actions = Row::new()
-        .push(
-            button::secondary(None, "Edit")
-                .on_press(msg(DuressContactsMessage::EditContact(id))),
-        )
+        .push(button::secondary(None, "Edit").on_press(msg(DuressContactsMessage::EditContact(id))))
         .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
         .push(remove_btn)
         .align_y(Alignment::Center);
@@ -501,12 +492,7 @@ pub fn form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
     let any_channel = (dc.form_ch_sms && phone_present)
         || (dc.form_ch_whatsapp && phone_present)
         || (dc.form_ch_email && email_present);
-    let can_submit = !dc.submitting
-        && name_ok
-        && reachable
-        && phone_ok
-        && email_ok
-        && any_channel;
+    let can_submit = !dc.submitting && name_ok && reachable && phone_ok && email_ok && any_channel;
 
     let submit_label = if dc.submitting {
         "Saving\u{2026}"
