@@ -489,8 +489,7 @@ pub fn form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
     // Submit button. Enabled only when the form is minimally valid.
     let name_ok = !dc.form_name.trim().is_empty();
     let reachable = phone_present || email_present;
-    let any_channel = (dc.form_ch_sms && phone_present)
-        || (dc.form_ch_whatsapp && phone_present)
+    let any_channel = ((dc.form_ch_sms || dc.form_ch_whatsapp) && phone_present)
         || (dc.form_ch_email && email_present);
     let can_submit = !dc.submitting && name_ok && reachable && phone_ok && email_ok && any_channel;
 

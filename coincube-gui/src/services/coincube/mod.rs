@@ -1656,7 +1656,7 @@ pub fn is_valid_e164(phone: &str) -> bool {
         return false;
     };
     let digits: Vec<char> = rest.chars().collect();
-    if digits.len() < 1 || digits.len() > 15 {
+    if digits.is_empty() || digits.len() > 15 {
         return false;
     }
     if !digits.iter().all(|c| c.is_ascii_digit()) {
