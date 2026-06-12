@@ -612,6 +612,11 @@ impl ConnectAccountPanel {
                 if matches!(self.step, ConnectFlowStep::Login { loading: true, .. }) {
                     return iced::Task::none();
                 }
+                // A code stashed during an abandoned signup must not ride into
+                // a restored or next session — it belongs to that signup only.
+                // Clearing here (and in SubmitLogin) confines redemption to the
+                // uninterrupted signup → verify → SessionLoaded path.
+                self.pending_campaign_code = None;
                 if let Some(session) = self.load_session_from_keyring() {
                     let refresh_token = session.login.refresh_token.clone();
                     // Transition out of CheckingSession so re-navigation
@@ -774,6 +779,9 @@ impl ConnectAccountPanel {
 
             ConnectAccountMessage::SubmitLogin => {
                 self.error = None;
+                // A login must never redeem a code stashed for a (different)
+                // new account during an abandoned signup. See `Init`.
+                self.pending_campaign_code = None;
 
                 let ConnectFlowStep::Login { email, loading } = &mut self.step else {
                     return iced::Task::none();
@@ -4051,6 +4059,40 @@ mod plan_lifecycle_tests {
         assert!(panel.campaign_redeem.code.is_empty());
         assert!(panel.campaign_redeem.result.is_none());
         assert!(panel.register_campaign_code.is_empty());
+        assert!(panel.pending_campaign_code.is_none());
+    }
+
+    #[test]
+    fn init_drops_pending_code_from_abandoned_signup() {
+        // Regression: a code stashed by SubmitRegistration must not survive a
+        // re-init (navigate away & back) — otherwise a restored or next
+        // session would redeem it against the wrong account. Both Init
+        // branches (keyring restore / show-login) clear it, so the assertion
+        // holds regardless of stored-session state.
+        let mut panel = ConnectAccountPanel::new();
+        panel.step = ConnectFlowStep::OtpVerification {
+            email: "founder@example.com".into(),
+            otp: String::new(),
+            sending: false,
+            is_signup: true,
+            cooldown: 0,
+        };
+        panel.pending_campaign_code = Some("FOUNDER".into());
+        let _ = panel.update_message(ConnectAccountMessage::Init);
+        assert!(panel.pending_campaign_code.is_none());
+    }
+
+    #[test]
+    fn submit_login_drops_pending_code_from_abandoned_signup() {
+        // Regression: starting a login must drop a signup-stashed code so it
+        // never redeems against the account being signed into.
+        let mut panel = ConnectAccountPanel::new();
+        panel.step = ConnectFlowStep::Login {
+            email: "someone@example.com".into(),
+            loading: false,
+        };
+        panel.pending_campaign_code = Some("FOUNDER".into());
+        let _ = panel.update_message(ConnectAccountMessage::SubmitLogin);
         assert!(panel.pending_campaign_code.is_none());
     }
 
