@@ -1396,6 +1396,103 @@ impl App {
         self.panels.connect.account.authenticated_client()
     }
 
+    /// Fire-and-forget vault recovery heartbeat (Estate Notifications —
+    /// PR 2). Returns a detached task that POSTs
+    /// `{earliest_recovery_height, computed_at}` after a sync when this
+    /// account has a Heartbeat- or Full-tier monitored vault and a live
+    /// descriptor on hand. The heartbeat NEVER blocks or affects sync — its
+    /// result is discarded via `RecoveryHeartbeatSent`. Returns
+    /// `Task::none()` whenever no heartbeat applies (not authenticated,
+    /// monitoring off, vault id not yet resolved, or no live wallet).
+    fn recovery_heartbeat_task(&self) -> Task<Message> {
+        use crate::services::coincube::{VaultHeartbeatRequest, VaultMonitoringLevel};
+        if !self.panels.connect.account.is_authenticated() {
+            return Task::none();
+        }
+        let ra = &self.panels.global_settings.recovery_alerts;
+        // The heartbeat must fire after every vault sync while authenticated
+        // (Estate Notifications plan P2) — it can't depend on the user having
+        // opened Settings, which is otherwise the only thing that hydrates the
+        // monitoring config. If we're entitled and a Connect cube is resolved
+        // but the config hasn't been fetched from any path yet, kick a
+        // one-shot `LoadStatus` now (the same hydrator the settings card uses);
+        // the next sync's heartbeat then sees the resolved level/vault_id. The
+        // `loaded_once`/`loading` flags — shared with the settings card and
+        // reset on logout — keep this to a single fetch, and gating on
+        // cube + entitlement avoids prematurely marking an un-loadable config
+        // as loaded before those prerequisites arrive.
+        if !ra.loaded_once
+            && !ra.loading
+            && self.panels.connect.account.is_recovery_alerts_entitled()
+            && self.panels.connect.cube.server_cube_id.is_some()
+        {
+            return Task::done(Message::View(view::Message::Settings(
+                view::SettingsMessage::RecoveryAlerts(view::RecoveryAlertsMessage::LoadStatus),
+            )));
+        }
+        // Defense in depth: never POST heartbeats for an account that isn't
+        // Estate-entitled. The cached monitoring level/vault_id can outlive a
+        // plan downgrade or Connect account switch — `ra.status` only reloads
+        // on settings-open or logout — so re-check the *live* entitlement here,
+        // the same gate the mutating monitoring APIs apply.
+        if !self.panels.connect.account.is_recovery_alerts_entitled()
+            || matches!(ra.level(), VaultMonitoringLevel::Off)
+        {
+            return Task::none();
+        }
+        let (Some(vault_id), Some(wallet), Some(client)) = (
+            ra.vault_id,
+            self.wallet.as_ref(),
+            self.authenticated_coincube_client(),
+        ) else {
+            return Task::none();
+        };
+        let tip = self.cache.blockheight();
+        if tip <= 0 {
+            // Not synced enough to compute a meaningful recovery height yet.
+            return Task::none();
+        }
+        // earliest_recovery_height = the absolute height at which this vault's
+        // EARLIEST recovery branch opens. Under Liana CSV semantics a coin's
+        // recovery path opens `timelock` blocks after the coin confirmed
+        // (`remaining_sequence`), so the binding constraint is the OLDEST
+        // confirmed coin — `min(block_height) + timelock` — NOT `tip +
+        // timelock`. The latter (the open height of a coin confirming right
+        // now) recedes one block per block as the tip advances, so under the
+        // server's monotonic "newest report wins" rule the recovery height
+        // would forever outrun the chain and the keyholder alert would fire
+        // late or never. Mirror `coins_summary`'s coin filter: confirmed,
+        // owned, unspent. With no such coins there are no funds at recovery
+        // risk yet, so fall back to the tip-based estimate — harmless and
+        // still monotonic.
+        let timelock = wallet.main_descriptor.first_timelock_value() as i64;
+        let oldest_confirmed = self
+            .cache
+            .coins()
+            .iter()
+            .filter(|c| c.spend_info.is_none() && crate::daemon::model::coin_is_owned(c))
+            .filter_map(|c| c.block_height)
+            .min();
+        let earliest = match oldest_confirmed {
+            Some(h) => h as i64 + timelock,
+            None => tip as i64 + timelock,
+        };
+        let earliest = earliest.max(0) as u32;
+        let req = VaultHeartbeatRequest {
+            earliest_recovery_height: earliest,
+            computed_at: chrono::Utc::now(),
+        };
+        Task::perform(
+            async move {
+                client
+                    .post_vault_heartbeat(vault_id, req)
+                    .await
+                    .map_err(|e| e.to_string())
+            },
+            Message::RecoveryHeartbeatSent,
+        )
+    }
+
     /// True when this tab's ConnectAccountPanel either already holds an
     /// authenticated session or can pull one out of the shared keyring
     /// entry. Lets the tab-level OpenConnectSignIn handler short-circuit
@@ -2576,7 +2673,12 @@ impl App {
                         wallet.apply_coin_overrides(&mut daemon_cache.coins);
                     }
                     self.cache.daemon_cache = daemon_cache;
-                    return Task::done(Message::CacheUpdated);
+                    // Fire-and-forget recovery heartbeat after the sync's
+                    // fresh tip lands (Estate Notifications — PR 2). Batched
+                    // alongside the normal cache cascade so it never delays
+                    // or blocks it.
+                    let heartbeat = self.recovery_heartbeat_task();
+                    return Task::batch([heartbeat, Task::done(Message::CacheUpdated)]);
                 }
                 Err(e) => {
                     tracing::error!("Failed to update daemon cache: {}", e);
@@ -2679,6 +2781,16 @@ impl App {
                         }
                     },
                 );
+            }
+            Message::RecoveryHeartbeatSent(res) => {
+                // Fire-and-forget: the heartbeat must never affect app state
+                // or sync. Log a transient failure at debug and move on (a
+                // newer report always wins server-side, so a dropped one is
+                // harmless).
+                if let Err(e) = res {
+                    log::debug!("[RECOVERY] heartbeat post failed (ignored): {e}");
+                }
+                return Task::none();
             }
             Message::CacheUpdated => {
                 // Cube (Home) Settings lives on every cube, vault or not,
@@ -2918,6 +3030,14 @@ impl App {
                     self.cache.connect_device_id = None;
                     self.cache.connect_email = None;
                     self.cache.connect_stream_status = ConnectionStatus::Inactive;
+                    // Drop the previous session's vault-monitoring config so
+                    // it can't leak into the next account and so the
+                    // heartbeat's lazy `loaded_once` re-hydration re-fetches
+                    // for whoever signs in next (the card itself lives here on
+                    // `global_settings`, not on the connect panel that handles
+                    // the rest of the logout scrub).
+                    self.panels.global_settings.recovery_alerts =
+                        crate::app::state::settings::recovery_alerts::RecoveryAlerts::new();
                     // Logout breaks the "Switch to Connect" trip the
                     // user started; firing the auto-return on a fresh
                     // unrelated login later would be surprising.
@@ -3485,6 +3605,30 @@ impl App {
                     client,
                     server_cube_id,
                     wallet,
+                );
+            }
+
+            // Vault Recovery Alerts dispatch (Estate Notifications — PR 2).
+            // Like the Recovery Kit above, the handler needs the
+            // authenticated client, the Connect cube id, the live wallet
+            // descriptor, the keyholder list, and the `recovery_alerts`
+            // entitlement — none plumbed through `State::update`.
+            Message::View(view::Message::Settings(view::SettingsMessage::RecoveryAlerts(msg))) => {
+                let client = self.authenticated_coincube_client();
+                let server_cube_id = self.panels.connect.cube.server_cube_id;
+                let wallet = self.wallet.clone();
+                let entitled = self.panels.connect.account.is_recovery_alerts_entitled();
+                let members = self.panels.connect.cube.members.members.clone();
+                let session_generation = self.panels.connect.account.session_generation();
+                return crate::app::state::settings::recovery_alerts::update(
+                    &mut self.panels.global_settings.recovery_alerts,
+                    msg,
+                    client,
+                    server_cube_id,
+                    wallet,
+                    entitled,
+                    &members,
+                    session_generation,
                 );
             }
 

@@ -2,6 +2,7 @@ pub mod about;
 pub mod general;
 mod install_stats;
 pub mod local_signing;
+pub mod recovery_alerts;
 pub mod recovery_kit;
 
 use std::sync::Arc;
@@ -38,6 +39,10 @@ pub struct SettingsState {
     /// Recovery-Kit card is rendered inside the General section's
     /// view, which reads this field through a parameter.
     pub recovery_kit: recovery_kit::RecoveryKit,
+    /// Vault Recovery Alerts card (Estate Notifications — PR 2). Held here
+    /// for the same reason as `recovery_kit`: the App-level handler injects
+    /// the authenticated client, cube id, wallet, and keyholders.
+    pub recovery_alerts: recovery_alerts::RecoveryAlerts,
 }
 
 impl SettingsState {
@@ -52,6 +57,7 @@ impl SettingsState {
             current_price_setting: price_setting,
             current_unit_setting: unit_setting,
             recovery_kit: recovery_kit::RecoveryKit::new(),
+            recovery_alerts: recovery_alerts::RecoveryAlerts::new(),
         }
     }
 }
@@ -86,7 +92,12 @@ impl State for SettingsState {
                 let load_status = Task::done(Message::View(view::Message::Settings(
                     view::SettingsMessage::RecoveryKit(view::RecoveryKitMessage::LoadStatus),
                 )));
-                Task::batch([reload_task, load_status])
+                // Same pattern for the Recovery Alerts card — kick its status
+                // fetch so the three-tier selector reflects the server.
+                let load_alerts = Task::done(Message::View(view::Message::Settings(
+                    view::SettingsMessage::RecoveryAlerts(view::RecoveryAlertsMessage::LoadStatus),
+                )));
+                Task::batch([reload_task, load_status, load_alerts])
             }
             Message::View(view::Message::Settings(view::SettingsMessage::AboutSection)) => {
                 self.setting = Some(AboutSettingsState::default().into());
@@ -161,7 +172,12 @@ impl State for SettingsState {
                 .as_any()
                 .and_then(|a| a.downcast_ref::<GeneralSettingsState>())
             {
-                return general.view_with_recovery_kit(menu, cache, &self.recovery_kit);
+                return general.view_with_recovery_kit(
+                    menu,
+                    cache,
+                    &self.recovery_kit,
+                    &self.recovery_alerts,
+                );
             }
             setting.view(menu, cache)
         } else {

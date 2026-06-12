@@ -1297,6 +1297,187 @@ impl CoincubeClient {
     }
 }
 
+// =============================================================================
+// Vault recovery monitoring (Estate Notifications — PR 2)
+// =============================================================================
+//
+// Per-vault, three-tier monitoring opt-in keyed by the Connect vault id.
+// Estate-gated server-side (`recovery_alerts` entitlement). See the DTO
+// block in `mod.rs`.
+
+impl CoincubeClient {
+    /// `GET /api/v1/connect/vaults/{id}/monitoring` (authenticated). A vault
+    /// with no monitoring record yet (404) resolves to a default
+    /// "off / at_approaching" status so the settings panel renders cleanly
+    /// for a brand-new vault rather than erroring.
+    pub async fn get_vault_monitoring(
+        &self,
+        vault_id: u64,
+    ) -> Result<super::VaultMonitoringStatus, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/vaults/{}/monitoring",
+            self.base_url, vault_id
+        );
+        let res = self.client.get(&url).send().await?;
+        let status = res.status();
+        if status.as_u16() == 404 {
+            return Ok(super::VaultMonitoringStatus::default());
+        }
+        let res = res.check_success().await?;
+        let resp: ApiResponse<super::VaultMonitoringStatus> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// `POST /api/v1/connect/vaults/{id}/monitoring` (authenticated,
+    /// Estate-gated). Sets the monitoring tier (and optionally the keyholder
+    /// download policy). For `Full`, `req.descriptor` carries the descriptor
+    /// to escrow; for `Heartbeat` it's omitted and any previously-escrowed
+    /// descriptor is true-deleted server-side.
+    pub async fn set_vault_monitoring(
+        &self,
+        vault_id: u64,
+        req: super::SetVaultMonitoringRequest,
+    ) -> Result<super::VaultMonitoringStatus, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/vaults/{}/monitoring",
+            self.base_url, vault_id
+        );
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<super::VaultMonitoringStatus> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// `DELETE /api/v1/connect/vaults/{id}/monitoring` (authenticated).
+    /// Turns monitoring off with a true delete of any escrowed descriptor
+    /// record. Idempotent: a 404 (nothing to delete) is treated as success.
+    pub async fn delete_vault_monitoring(&self, vault_id: u64) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/vaults/{}/monitoring",
+            self.base_url, vault_id
+        );
+        let res = self.client.delete(&url).send().await?;
+        if res.status().as_u16() == 404 {
+            return Ok(());
+        }
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// `PUT /api/v1/connect/vaults/{id}/keyholder-download-policy`
+    /// (authenticated, Estate-gated). Sets the keyholder recovery-kit
+    /// download policy independently of the monitoring level.
+    pub async fn set_keyholder_download_policy(
+        &self,
+        vault_id: u64,
+        policy: super::KeyholderDownloadPolicy,
+    ) -> Result<super::VaultMonitoringStatus, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/vaults/{}/keyholder-download-policy",
+            self.base_url, vault_id
+        );
+        let req = super::SetKeyholderDownloadPolicyRequest {
+            crk_keyholder_download: policy,
+        };
+        let res = self.client.put(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<super::VaultMonitoringStatus> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// `POST /api/v1/connect/vaults/{id}/heartbeat` (authenticated, PR 5).
+    /// Fire-and-forget timelock heartbeat sent after a vault sync for
+    /// Heartbeat-tier (and Full, as a cross-check) vaults. Callers MUST NOT
+    /// block sync on this — wrap it in a detached task and ignore the
+    /// result (a newer report always wins server-side, so a dropped one is
+    /// harmless).
+    pub async fn post_vault_heartbeat(
+        &self,
+        vault_id: u64,
+        req: super::VaultHeartbeatRequest,
+    ) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/vaults/{}/heartbeat",
+            self.base_url, vault_id
+        );
+        let res = self.client.post(&url).json(&req).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+}
+
+// =============================================================================
+// Duress alert contacts (Estate Notifications — PR 1)
+// =============================================================================
+//
+// CRUD under the duress prefix. Estate-gated server-side (`duress_alerts`
+// entitlement); a non-Estate caller gets 403, which surfaces through the
+// usual `Unsuccessful` path and is mapped to a locked-feature affordance
+// in the UI rather than these methods. See the DTO block in `mod.rs`.
+
+impl CoincubeClient {
+    /// `GET /api/v1/connect/duress/contacts` (authenticated, Estate-gated).
+    pub async fn get_duress_alert_contacts(
+        &self,
+    ) -> Result<Vec<super::DuressAlertContact>, CoincubeError> {
+        let url = format!("{}/api/v1/connect/duress/contacts", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<Vec<super::DuressAlertContact>> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// `POST /api/v1/connect/duress/contacts` (authenticated, Estate-gated).
+    /// Creating a contact enqueues the one-time intro message server-side;
+    /// the returned record's `intro_sent_at` may still be `None` until the
+    /// async send lands.
+    pub async fn create_duress_alert_contact(
+        &self,
+        req: super::CreateDuressAlertContactRequest,
+    ) -> Result<super::DuressAlertContact, CoincubeError> {
+        let url = format!("{}/api/v1/connect/duress/contacts", self.base_url);
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<super::DuressAlertContact> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// `PATCH /api/v1/connect/duress/contacts/{id}` (authenticated,
+    /// Estate-gated). Partial update — only the `Some` fields in `req` are
+    /// sent and changed.
+    pub async fn update_duress_alert_contact(
+        &self,
+        contact_id: u64,
+        req: super::UpdateDuressAlertContactRequest,
+    ) -> Result<super::DuressAlertContact, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/duress/contacts/{}",
+            self.base_url, contact_id
+        );
+        let res = self
+            .client
+            .request(Method::PATCH, &url)
+            .json(&req)
+            .send()
+            .await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<super::DuressAlertContact> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// `DELETE /api/v1/connect/duress/contacts/{id}` (authenticated,
+    /// Estate-gated). Removes the contact permanently.
+    pub async fn delete_duress_alert_contact(&self, contact_id: u64) -> Result<(), CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/duress/contacts/{}",
+            self.base_url, contact_id
+        );
+        let res = self.client.delete(&url).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+}
+
 /// Parses a response's `Retry-After` header per RFC 7231 §7.1.3.
 ///
 /// Accepts both documented forms:

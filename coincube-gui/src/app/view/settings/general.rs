@@ -11,10 +11,11 @@ use crate::app::menu::Menu;
 use crate::app::settings::display::DisplayMode;
 use crate::app::settings::fiat::PriceSetting;
 use crate::app::settings::unit::{BitcoinDisplayUnit, UnitSetting};
+use crate::app::state::settings::recovery_alerts::RecoveryAlerts;
 use crate::app::state::settings::recovery_kit::RecoveryKit;
 use crate::app::view::dashboard;
 use crate::app::view::message::*;
-use crate::services::coincube::RecoveryKitStatus;
+use crate::services::coincube::{KeyholderDownloadPolicy, RecoveryKitStatus, VaultMonitoringLevel};
 use crate::services::fiat::{Currency, ALL_PRICE_SOURCES};
 
 #[allow(clippy::too_many_arguments)]
@@ -30,6 +31,7 @@ pub fn general_section<'a>(
     backup_pin: &'a crate::pin_input::PinInput,
     backup_mnemonic: Option<&'a [String]>,
     recovery_kit: Option<&'a RecoveryKit>,
+    recovery_alerts: Option<&'a RecoveryAlerts>,
 ) -> Element<'a, Message> {
     use crate::app::state::settings::general::BackupSeedState;
 
@@ -85,11 +87,216 @@ pub fn general_section<'a>(
         ));
     }
 
+    // Vault Recovery Alerts card (Estate Notifications — PR 2). Same
+    // threading discipline as the Recovery Kit card above.
+    if let Some(ra) = recovery_alerts {
+        col = col.push(recovery_alerts_card(ra));
+    }
+
     if developer_mode {
         col = col.push(toast_testing());
     }
 
     dashboard(menu, cache, col)
+}
+
+/// Vault Recovery Alerts card: three-tier monitoring selector + keyholder
+/// download policy + the keyholder list, with honest opt-in copy. Estate-
+/// gated; shows the locked affordance for non-Estate accounts.
+fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
+    let mut body = Column::new()
+        .spacing(10)
+        .push(text("Vault Recovery Alerts").bold())
+        .push(
+            text(
+                "Let COINCUBE watch the chain and alert your keyholders when a recovery path \
+                 for this Vault opens.",
+            )
+            .size(13),
+        );
+
+    // Locked affordance for non-Estate accounts.
+    if !ra.entitled {
+        body = body.push(
+            text(
+                "Recovery alerts are part of the Estate plan. Upgrade your Connect plan to \
+                 enable chain monitoring and keyholder alerts.",
+            )
+            .size(13),
+        );
+        return card::simple(body).width(Length::Fill).into();
+    }
+
+    // No Connect vault to monitor yet.
+    if ra.no_vault {
+        body = body.push(
+            text("Create a Vault and register it with Connect to enable recovery alerts.").size(13),
+        );
+        return card::simple(body).width(Length::Fill).into();
+    }
+
+    if ra.loading && ra.status.is_none() {
+        body = body.push(text("Loading\u{2026}").size(13));
+        return card::simple(body).width(Length::Fill).into();
+    }
+
+    let level = ra.level();
+    let busy = ra.submitting;
+
+    // Three-tier selector row.
+    let level_row = Row::new()
+        .spacing(8)
+        .push(level_button("Off", VaultMonitoringLevel::Off, level, busy))
+        .push(level_button(
+            "Alerts only",
+            VaultMonitoringLevel::Heartbeat,
+            level,
+            busy,
+        ))
+        .push(level_button(
+            "Full",
+            VaultMonitoringLevel::Full,
+            level,
+            busy,
+        ));
+    body = body.push(level_row);
+
+    // The honest trade-off copy for the selected tier.
+    body = body.push(text(level_copy(level)).size(13));
+
+    // Keyholder list + download policy only make sense when monitoring is on.
+    if !matches!(level, VaultMonitoringLevel::Off) {
+        // Who would be notified.
+        body = body.push(Space::new().height(Length::Fixed(4.0)));
+        body = body.push(text("Keyholders who'd be notified").bold().size(14));
+        if ra.keyholders.is_empty() {
+            body = body.push(
+                text("No keyholders on this Cube yet — add keyholders so someone is alerted.")
+                    .size(13),
+            );
+        } else {
+            let mut who = Column::new().spacing(2);
+            for email in &ra.keyholders {
+                who = who.push(text(email.as_str()).size(13));
+            }
+            body = body.push(who);
+        }
+
+        // Keyholder download policy.
+        body = body.push(Space::new().height(Length::Fixed(6.0)));
+        body = body.push(
+            text("When can keyholders download your recovery kit?")
+                .bold()
+                .size(14),
+        );
+        let policy = ra.download_policy();
+        body = body.push(
+            Row::new()
+                .spacing(8)
+                .push(policy_button(
+                    "Only when recovery nears",
+                    KeyholderDownloadPolicy::AtApproaching,
+                    policy,
+                    busy,
+                ))
+                .push(policy_button(
+                    "Anytime",
+                    KeyholderDownloadPolicy::Anytime,
+                    policy,
+                    busy,
+                )),
+        );
+        body = body.push(text(policy_copy(policy)).size(12));
+    }
+
+    if let Some(err) = ra.error.as_deref() {
+        body = body.push(text(err).size(13).style(theme::text::error));
+    }
+
+    card::simple(body).width(Length::Fill).into()
+}
+
+/// A monitoring-level option button. Highlighted (primary) when it's the
+/// active level; disabled while a change is in flight.
+fn level_button<'a>(
+    label: &'static str,
+    this: VaultMonitoringLevel,
+    active: VaultMonitoringLevel,
+    busy: bool,
+) -> Element<'a, Message> {
+    let on_press = (!busy && this != active).then_some(
+        SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::SelectLevel(this)).into(),
+    );
+    if this == active {
+        button::primary(None, label)
+            .padding([8, 14])
+            .on_press_maybe(None)
+            .into()
+    } else {
+        button::secondary(None, label)
+            .padding([8, 14])
+            .on_press_maybe(on_press)
+            .into()
+    }
+}
+
+/// A download-policy option button.
+fn policy_button<'a>(
+    label: &'static str,
+    this: KeyholderDownloadPolicy,
+    active: KeyholderDownloadPolicy,
+    busy: bool,
+) -> Element<'a, Message> {
+    let on_press = (!busy && this != active).then_some(
+        SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::SetDownloadPolicy(this)).into(),
+    );
+    if this == active {
+        button::primary(None, label)
+            .padding([8, 14])
+            .on_press_maybe(None)
+            .into()
+    } else {
+        button::secondary(None, label)
+            .padding([8, 14])
+            .on_press_maybe(on_press)
+            .into()
+    }
+}
+
+/// Plain-language trade-off for each monitoring tier (no euphemisms — the
+/// self-custody trust model demands it; see `PLAN-estate-notifications.md`).
+fn level_copy(level: VaultMonitoringLevel) -> &'static str {
+    match level {
+        VaultMonitoringLevel::Off => {
+            "Off: COINCUBE doesn't watch this Vault. No keyholder alerts, and no copy of your \
+             descriptor is kept."
+        }
+        VaultMonitoringLevel::Heartbeat => {
+            "Alerts only: your device tells COINCUBE just the date this Vault's recovery window \
+             opens — never its addresses or balances. Keyholders get an email when that date \
+             nears, and will still need the recovery password you shared with them."
+        }
+        VaultMonitoringLevel::Full => {
+            "Full: COINCUBE keeps an encrypted copy of this Vault's descriptor to watch the chain \
+             for you — it can see this Vault's addresses and balances, never spend. Keyholders \
+             get an email when a recovery path opens and can recover this Vault WITHOUT your \
+             password. Your Cube master-seed backup still needs your recovery password — that's \
+             the one to share carefully."
+        }
+    }
+}
+
+fn policy_copy(policy: KeyholderDownloadPolicy) -> &'static str {
+    match policy {
+        KeyholderDownloadPolicy::AtApproaching => {
+            "Keeps your balances private until the recovery window nears. You're notified \
+             whenever a keyholder downloads."
+        }
+        KeyholderDownloadPolicy::Anytime => {
+            "Lets family prepare and verify early — but if they have your recovery password, \
+             they'll also be able to see balances. You're notified whenever a keyholder downloads."
+        }
+    }
 }
 
 /// The "Backup Master Seed Phrase" card shown on the normal General

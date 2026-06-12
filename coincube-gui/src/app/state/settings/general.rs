@@ -538,6 +538,7 @@ impl GeneralSettingsState {
         menu: &'a Menu,
         cache: &'a Cache,
         rk: &'a super::recovery_kit::RecoveryKit,
+        ra: &'a super::recovery_alerts::RecoveryAlerts,
     ) -> Element<'a, view::Message> {
         crate::app::view::settings::general::general_section(
             menu,
@@ -551,6 +552,7 @@ impl GeneralSettingsState {
             &self.backup_pin,
             self.backup_mnemonic.as_deref().map(|v| v.as_slice()),
             Some(rk),
+            Some(ra),
         )
     }
 }
@@ -572,6 +574,7 @@ impl State for GeneralSettingsState {
             &self.backup_state,
             &self.backup_pin,
             self.backup_mnemonic.as_deref().map(|v| v.as_slice()),
+            None,
             None,
         )
     }
