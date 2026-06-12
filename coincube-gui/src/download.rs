@@ -72,3 +72,29 @@ impl From<reqwest::Error> for DownloadError {
         DownloadError::RequestFailed(Arc::new(error))
     }
 }
+
+/// Fetch a small text file in one shot (e.g. a release `SHA256SUMS` manifest or
+/// its detached `.asc` signature). Unlike [`download`], it reports no progress.
+pub async fn fetch_text(url: impl AsRef<str>) -> Result<String, DownloadError> {
+    let body = reqwest::get(url.as_ref())
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    Ok(body)
+}
+
+/// Fetch the release `SHA256SUMS` and `SHA256SUMS.asc` a managed-node flavour
+/// verifies against, when it uses a published manifest (Knots). Returns
+/// `Ok(None)` for flavours pinned by a code hash (Core), so callers can treat
+/// both uniformly.
+pub async fn fetch_release_manifest(
+    flavor: crate::node::bitcoind::NodeFlavor,
+) -> Result<Option<(String, String)>, DownloadError> {
+    let Some((sums_url, asc_url)) = flavor.manifest_urls() else {
+        return Ok(None);
+    };
+    let sums = fetch_text(sums_url).await?;
+    let asc = fetch_text(asc_url).await?;
+    Ok(Some((sums, asc)))
+}

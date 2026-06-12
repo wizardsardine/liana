@@ -19,6 +19,13 @@ jobs:
             BITCOIN_BACKEND_TYPE: "bitcoind"
           - USE_TAPROOT: 1
             BITCOIN_BACKEND_TYPE: "bitcoind"
+          # Bitcoin Knots with BIP-110 (RDTS) enforced on regtest. Exercises the
+          # managed-Knots backend and the broadcast-path regression test under
+          # Knots policy (USE_TAPROOT=1 covers the P2TR send).
+          - USE_TAPROOT: 1
+            BITCOIN_BACKEND_TYPE: "bitcoind"
+            USE_KNOTS: "TRUE"
+            ENFORCE_RDTS: "1"
           - USE_TAPROOT: 0
             BITCOIN_BACKEND_TYPE: "electrs"
             USE_MIN_BITCOIN_VERSION: "TRUE"
@@ -36,6 +43,8 @@ jobs:
       USE_MIN_BITCOIN_VERSION: ${{ matrix.USE_MIN_BITCOIN_VERSION }}
       USE_TAPROOT: ${{ matrix.USE_TAPROOT }}
       BITCOIN_BACKEND_TYPE: ${{ matrix.BITCOIN_BACKEND_TYPE }}
+      USE_KNOTS: ${{ matrix.USE_KNOTS }}
+      ENFORCE_RDTS: ${{ matrix.ENFORCE_RDTS }}
 
     steps:
       - uses: actions/checkout@v4
@@ -74,7 +83,23 @@ jobs:
       - name: Prepare and run functional tests
         run: |
           set -xe
-          if [ "$USE_MIN_BITCOIN_VERSION" = "TRUE" ]; then
+          if [ "$USE_KNOTS" = "TRUE" ]; then
+            # Bitcoin Knots, verified the way the desktop installer does: the
+            # archive's checksum must appear in the release SHA256SUMS, and
+            # SHA256SUMS.asc must verify against the pinned Knots signing key.
+            KNOTS_VERSION=29.3.knots20260508
+            KNOTS_DIR=https://bitcoinknots.org/files/29.x/$KNOTS_VERSION
+            KNOTS_ARCHIVE=bitcoin-$KNOTS_VERSION-x86_64-linux-gnu.tar.gz
+            KNOTS_KEY=1A3E761F19D2CC7785C5502EA291A2C45D0C504A
+            curl -O $KNOTS_DIR/$KNOTS_ARCHIVE
+            curl -O $KNOTS_DIR/SHA256SUMS
+            curl -O $KNOTS_DIR/SHA256SUMS.asc
+            gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys $KNOTS_KEY
+            gpg --verify SHA256SUMS.asc SHA256SUMS
+            sha256sum --ignore-missing -c SHA256SUMS
+            tar -xzf $KNOTS_ARCHIVE
+            export BITCOIND_PATH=bitcoin-$KNOTS_VERSION/bin/bitcoind
+          elif [ "$USE_MIN_BITCOIN_VERSION" = "TRUE" ]; then
             curl -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
             echo "49df6e444515d457ea0b885d66f521f2a26ca92ccf73d5296082e633544253bf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
             tar -xzf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz

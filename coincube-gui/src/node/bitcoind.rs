@@ -27,50 +27,204 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(target_os = "windows")]
 const DETACHED_PROCESS: u32 = 0x00000008;
 
-/// Current and previous managed bitcoind versions, in order of descending version.
-pub const VERSIONS: [&str; 7] = ["29.0", "28.0", "27.1", "26.1", "26.0", "25.1", "25.0"];
+/// The flavour of managed Bitcoin node COINCUBE downloads, configures, and runs.
+///
+/// Only affects the managed local-node backend; the Esplora and Electrum
+/// backends never touch a local binary. `Core` is the historical default;
+/// `Knots` is opt-in and is the flavour that can enforce BIP-110 (RDTS) — see
+/// [`InternalBitcoindConfig::enforce_rdts`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum NodeFlavor {
+    /// Bitcoin Core, fetched from bitcoincore.org.
+    #[default]
+    Core,
+    /// Bitcoin Knots, fetched from bitcoinknots.org. Ships RDTS (BIP-110)
+    /// enforcement in mainline from `29.3.knots20260508`.
+    Knots,
+}
 
-/// Current managed bitcoind version for new installations.
-pub const VERSION: &str = VERSIONS[0];
+/// Current and previous managed Bitcoin Core versions, in order of descending version.
+pub const CORE_VERSIONS: [&str; 7] = ["29.0", "28.0", "27.1", "26.1", "26.0", "25.1", "25.0"];
 
+/// Current managed Bitcoin Core version for new installations.
+pub const CORE_VERSION: &str = CORE_VERSIONS[0];
+
+/// Current and previous managed Bitcoin Knots versions, in order of descending version.
+///
+/// RDTS (BIP-110) enforcement ships in mainline Knots from `29.3.knots20260508`;
+/// older Knots builds are intentionally not offered. Pinned — bumping is a
+/// deliberate follow-up (the `SHA256SUMS`-based verification in the installer
+/// means a bump is not checksum-locked in code).
+pub const KNOTS_VERSIONS: [&str; 1] = ["29.3.knots20260508"];
+
+/// Current managed Bitcoin Knots version for new installations.
+pub const KNOTS_VERSION: &str = KNOTS_VERSIONS[0];
+
+// Pinned SHA-256 of the Bitcoin Core archive for the current `CORE_VERSION`, per
+// platform. Knots is verified against its published `SHA256SUMS` manifest instead
+// (see `installer::step::node::bitcoind`), so it needs no pinned hash here.
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "5bb824fc86a15318d6a83a1b821ff4cd4b3d3d0e1ec3d162b805ccf7cae6fca8";
+pub const CORE_SHA256SUM: &str = "5bb824fc86a15318d6a83a1b821ff4cd4b3d3d0e1ec3d162b805ccf7cae6fca8";
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-pub const SHA256SUM: &str = "34431c582a0399dd42e1276d87d25306cbdde0217f6744bd55a2945986645dda";
+pub const CORE_SHA256SUM: &str = "34431c582a0399dd42e1276d87d25306cbdde0217f6744bd55a2945986645dda";
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "a681e4f6ce524c338a105f214613605bac6c33d58c31dc5135bbc02bc458bb6c";
+pub const CORE_SHA256SUM: &str = "a681e4f6ce524c338a105f214613605bac6c33d58c31dc5135bbc02bc458bb6c";
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "4c1780532031129fcacfc0e393c8430b3cea414c9f8c5e0c0c87ebe59a5ada1b";
+pub const CORE_SHA256SUM: &str = "4c1780532031129fcacfc0e393c8430b3cea414c9f8c5e0c0c87ebe59a5ada1b";
 
-#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-pub fn download_filename() -> String {
-    format!("bitcoin-{}-x86_64-apple-darwin.tar.gz", &VERSION)
+/// PGP key fingerprint that signs Bitcoin Knots' `SHA256SUMS.asc`.
+///
+/// Confirmed from the issuer-fingerprint subpacket of the live
+/// `…/29.3.knots20260508/SHA256SUMS.asc` — Luke Dashjr's canonical Knots
+/// release key. Pinning the *fingerprint* lets us recognise the signing key;
+/// full cryptographic verification of the detached signature additionally
+/// requires vendoring the key's public material, tracked as an open item for
+/// this feature (see `plans/PLAN-knots-bip110-managed-node.md`).
+pub const KNOTS_SIGNING_KEY_FINGERPRINT: &str = "1A3E761F19D2CC7785C5502EA291A2C45D0C504A";
+
+/// Vendored armored OpenPGP public key for [`KNOTS_SIGNING_KEY_FINGERPRINT`]
+/// (Luke Dashjr's Knots codesigning key), used to verify `SHA256SUMS.asc`. It is
+/// a minimal export (primary key + self-sig only) so it is small and needs no
+/// keyserver/keyring at runtime. The fingerprint is re-derived from this key and
+/// checked against the pin at verification time, so a swapped-out file cannot
+/// silently change the trust anchor.
+pub const KNOTS_SIGNING_KEY_ASC: &str = include_str!("../../assets/knots_signing_key.asc");
+
+/// Operating system COINCUBE builds managed-node asset names for. Kept explicit
+/// (rather than only `cfg!`) so URL construction is unit-testable for every
+/// `(flavor, platform)` regardless of the host running the test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeOs {
+    MacOs,
+    Linux,
+    Windows,
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-pub fn download_filename() -> String {
-    format!("bitcoin-{}-arm64-apple-darwin.tar.gz", &VERSION)
+/// CPU architecture COINCUBE builds managed-node asset names for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeArch {
+    X86_64,
+    Aarch64,
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn download_filename() -> String {
-    format!("bitcoin-{}-x86_64-linux-gnu.tar.gz", &VERSION)
-}
+#[cfg(target_os = "macos")]
+pub const HOST_OS: NodeOs = NodeOs::MacOs;
+#[cfg(target_os = "linux")]
+pub const HOST_OS: NodeOs = NodeOs::Linux;
+#[cfg(target_os = "windows")]
+pub const HOST_OS: NodeOs = NodeOs::Windows;
 
-#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-fn download_filename() -> String {
-    format!("bitcoin-{}-win64.zip", &VERSION)
-}
+#[cfg(target_arch = "x86_64")]
+pub const HOST_ARCH: NodeArch = NodeArch::X86_64;
+#[cfg(target_arch = "aarch64")]
+pub const HOST_ARCH: NodeArch = NodeArch::Aarch64;
 
-pub fn download_url() -> String {
-    format!(
-        "https://bitcoincore.org/bin/bitcoin-core-{}/{}",
-        &VERSION,
-        download_filename()
-    )
+impl NodeFlavor {
+    /// Current managed version for new installations of this flavour.
+    pub fn version(self) -> &'static str {
+        match self {
+            NodeFlavor::Core => CORE_VERSION,
+            NodeFlavor::Knots => KNOTS_VERSION,
+        }
+    }
+
+    /// All known managed versions for this flavour, newest first. Used to find
+    /// an already-installed binary on disk.
+    pub fn versions(self) -> &'static [&'static str] {
+        match self {
+            NodeFlavor::Core => &CORE_VERSIONS,
+            NodeFlavor::Knots => &KNOTS_VERSIONS,
+        }
+    }
+
+    /// Infer the flavour from a managed-binary directory `version` string.
+    /// Knots version strings embed `knots`; Core's never do.
+    pub fn from_version(version: &str) -> Self {
+        if version.contains("knots") {
+            NodeFlavor::Knots
+        } else {
+            NodeFlavor::Core
+        }
+    }
+
+    /// Human-readable name for UI copy and logs.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            NodeFlavor::Core => "Bitcoin Core",
+            NodeFlavor::Knots => "Bitcoin Knots",
+        }
+    }
+
+    /// Download archive filename for `(self, version)` on the given platform.
+    ///
+    /// Knots reuses Core's `{arch}-{os}` suffixes on macOS/Linux, but its
+    /// Windows asset carries a `-pgpverifiable` suffix Core does not.
+    pub fn asset_filename(self, version: &str, os: NodeOs, arch: NodeArch) -> String {
+        match (os, arch) {
+            (NodeOs::MacOs, NodeArch::X86_64) => {
+                format!("bitcoin-{version}-x86_64-apple-darwin.tar.gz")
+            }
+            (NodeOs::MacOs, NodeArch::Aarch64) => {
+                format!("bitcoin-{version}-arm64-apple-darwin.tar.gz")
+            }
+            (NodeOs::Linux, NodeArch::X86_64) => {
+                format!("bitcoin-{version}-x86_64-linux-gnu.tar.gz")
+            }
+            (NodeOs::Linux, NodeArch::Aarch64) => {
+                format!("bitcoin-{version}-aarch64-linux-gnu.tar.gz")
+            }
+            (NodeOs::Windows, _) => match self {
+                NodeFlavor::Core => format!("bitcoin-{version}-win64.zip"),
+                NodeFlavor::Knots => format!("bitcoin-{version}-win64-pgpverifiable.zip"),
+            },
+        }
+    }
+
+    /// Download URL for `(self, version)` on the given platform.
+    pub fn asset_url(self, version: &str, os: NodeOs, arch: NodeArch) -> String {
+        let filename = self.asset_filename(version, os, arch);
+        match self {
+            NodeFlavor::Core => {
+                format!("https://bitcoincore.org/bin/bitcoin-core-{version}/{filename}")
+            }
+            NodeFlavor::Knots => {
+                // e.g. "29.3.knots20260508" -> major "29" -> ".../29.x/29.3.knots20260508/".
+                let major = version.split('.').next().unwrap_or(version);
+                format!("https://bitcoinknots.org/files/{major}.x/{version}/{filename}")
+            }
+        }
+    }
+
+    /// Download archive filename for this flavour's current version on the host.
+    pub fn download_filename(self) -> String {
+        self.asset_filename(self.version(), HOST_OS, HOST_ARCH)
+    }
+
+    /// Download URL for this flavour's current version on the host.
+    pub fn download_url(self) -> String {
+        self.asset_url(self.version(), HOST_OS, HOST_ARCH)
+    }
+
+    /// URLs of the release `SHA256SUMS` and `SHA256SUMS.asc` for this flavour's
+    /// current version. `None` for flavours verified by a code-pinned hash
+    /// (Core); `Some` for those verified against a published manifest (Knots).
+    pub fn manifest_urls(self) -> Option<(String, String)> {
+        match self {
+            NodeFlavor::Core => None,
+            NodeFlavor::Knots => {
+                let version = self.version();
+                let major = version.split('.').next().unwrap_or(version);
+                let base = format!("https://bitcoinknots.org/files/{major}.x/{version}");
+                Some((
+                    format!("{base}/SHA256SUMS"),
+                    format!("{base}/SHA256SUMS.asc"),
+                ))
+            }
+        }
+    }
 }
 
 pub fn internal_bitcoind_directory(coincube_datadir: &CoincubeDirectory) -> PathBuf {
@@ -232,6 +386,15 @@ pub struct InternalBitcoindNetworkConfig {
 #[derive(Debug, Clone)]
 pub struct InternalBitcoindConfig {
     pub networks: BTreeMap<Network, InternalBitcoindNetworkConfig>,
+    /// Which managed node flavour this config is for. Recovered on load from
+    /// `enforce_rdts` (and, at runtime, from the binary's subversion); it is
+    /// not written as its own key because bitcoind rejects unknown options.
+    pub flavor: NodeFlavor,
+    /// When true (Knots only), [`Self::to_ini`] emits `consensusrules=rdts`,
+    /// making the node enforce BIP-110. This is the only persisted marker of
+    /// RDTS enforcement. Never emitted for Core, which rejects the key and
+    /// refuses to start.
+    pub enforce_rdts: bool,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -273,11 +436,26 @@ impl InternalBitcoindConfig {
     pub fn new() -> Self {
         Self {
             networks: BTreeMap::new(),
+            flavor: NodeFlavor::Core,
+            enforce_rdts: false,
+        }
+    }
+
+    /// A config for the given managed-node flavour. For Knots, RDTS (BIP-110)
+    /// enforcement defaults on — that is the reason a user opts into Knots —
+    /// while staying a distinct field so "Knots without RDTS" remains
+    /// expressible. For Core, RDTS is never enforced.
+    pub fn for_flavor(flavor: NodeFlavor) -> Self {
+        Self {
+            networks: BTreeMap::new(),
+            flavor,
+            enforce_rdts: matches!(flavor, NodeFlavor::Knots),
         }
     }
 
     pub fn from_ini(ini: &ini::Ini) -> Result<Self, InternalBitcoindConfigError> {
         let mut networks = BTreeMap::new();
+        let mut enforce_rdts = false;
         for (maybe_sec, prop) in ini {
             if let Some(sec) = maybe_sec {
                 let network = Network::from_core_arg(sec)
@@ -320,13 +498,34 @@ impl InternalBitcoindConfig {
                         rpc_auth,
                     },
                 );
-            } else if !prop.is_empty() {
-                return Err(InternalBitcoindConfigError::UnexpectedSection(
-                    "General section should be empty".to_string(),
-                ));
+            } else {
+                // The general (section-less) part of the file. We only ever
+                // write `consensusrules=rdts` here (Knots RDTS enforcement);
+                // anything else is unexpected.
+                for (key, value) in prop.iter() {
+                    if key == "consensusrules" {
+                        enforce_rdts = value.split(',').any(|rule| rule.trim() == "rdts");
+                    } else {
+                        return Err(InternalBitcoindConfigError::UnexpectedSection(format!(
+                            "Unexpected key in general section: {key}"
+                        )));
+                    }
+                }
             }
         }
-        Ok(Self { networks })
+        // A persisted `consensusrules=rdts` is the marker that this is a Knots
+        // RDTS node; absent it, we assume Core. The runtime subversion is the
+        // authoritative source once the node is up (see settings UI).
+        let flavor = if enforce_rdts {
+            NodeFlavor::Knots
+        } else {
+            NodeFlavor::Core
+        };
+        Ok(Self {
+            networks,
+            flavor,
+            enforce_rdts,
+        })
     }
 
     pub fn from_file(path: &PathBuf) -> Result<Self, InternalBitcoindConfigError> {
@@ -341,6 +540,19 @@ impl InternalBitcoindConfig {
 
     pub fn to_ini(&self) -> ini::Ini {
         let mut conf_ini = ini::Ini::new();
+
+        // RDTS (BIP-110) enforcement is a global, non-network-scoped option and
+        // is only valid on Knots — Core rejects the key and refuses to start, so
+        // gating on `enforce_rdts` (only ever true for Knots) keeps Core safe.
+        // We run bitcoind headless, so Knots' native GUI confirmation prompt
+        // never fires; writing this line is both necessary and sufficient to
+        // enforce. Written before the network sections so it lands in the
+        // section-less general part of the file.
+        if self.enforce_rdts {
+            conf_ini
+                .with_general_section()
+                .set("consensusrules", "rdts");
+        }
 
         for (network, network_conf) in &self.networks {
             conf_ini
@@ -409,6 +621,28 @@ pub struct Bitcoind {
     lock: LockFile,
 }
 
+/// Pick the managed `bitcoind` binary to launch for `configured_flavor`,
+/// preferring that flavour's versions (newest first) and falling back to the
+/// other flavour's only if none are installed. Returns the first existing
+/// `bitcoin-<version>/bin/bitcoind[.exe]` under the managed directory, or `None`
+/// when nothing is installed. Preferring the configured flavour keeps the binary
+/// consistent with the `bitcoin.conf` — critical because a Knots `bitcoin.conf`
+/// (with `consensusrules=rdts`) cannot be started by a Core binary.
+fn select_managed_bitcoind_exe(
+    coincube_datadir: &CoincubeDirectory,
+    configured_flavor: NodeFlavor,
+) -> Option<PathBuf> {
+    let (primary, secondary): (&[&str], &[&str]) = match configured_flavor {
+        NodeFlavor::Knots => (&KNOTS_VERSIONS, &CORE_VERSIONS),
+        NodeFlavor::Core => (&CORE_VERSIONS, &KNOTS_VERSIONS),
+    };
+    primary
+        .iter()
+        .chain(secondary.iter())
+        .map(|v| internal_bitcoind_exe_path(coincube_datadir, v))
+        .find(|path| path.exists())
+}
+
 impl Bitcoind {
     /// Start internal bitcoind for the given network.
     pub fn maybe_start(
@@ -425,18 +659,17 @@ impl Bitcoind {
             });
         }
         let bitcoind_datadir = internal_bitcoind_datadir(coincube_datadir);
-        // Find most recent bitcoind version available.
-        let bitcoind_exe_path = VERSIONS
-            .iter()
-            .filter_map(|v| {
-                let path = internal_bitcoind_exe_path(coincube_datadir, v);
-                if path.exists() {
-                    Some(path)
-                } else {
-                    None
-                }
-            })
-            .next()
+        // Launch a binary consistent with the on-disk `bitcoin.conf`. A conf
+        // carrying `consensusrules=rdts` *requires* a Knots binary — starting
+        // Core against it makes Core reject the unknown option and exit — so we
+        // prefer the configured flavour's binary, not just the first one we find.
+        // A machine that still has Core installed after a Knots setup would
+        // otherwise launch Core against a Knots conf and fail to start.
+        let configured_flavor =
+            InternalBitcoindConfig::from_file(&internal_bitcoind_config_path(&bitcoind_datadir))
+                .map(|conf| conf.flavor)
+                .unwrap_or(NodeFlavor::Core);
+        let bitcoind_exe_path = select_managed_bitcoind_exe(coincube_datadir, configured_flavor)
             .ok_or(StartInternalBitcoindError::ExecutableNotFound)?;
         info!(
             "Found bitcoind executable at '{}'.",
@@ -776,5 +1009,145 @@ mod tests {
                 assert!(prop.is_empty())
             }
         }
+    }
+
+    // Exact download URLs per (flavour, platform). Runs the same on any host
+    // because `asset_url` takes the platform explicitly rather than via `cfg!`.
+    #[test]
+    fn node_flavor_asset_urls() {
+        // Knots, arm64 macOS.
+        assert_eq!(
+            NodeFlavor::Knots.asset_url(KNOTS_VERSION, NodeOs::MacOs, NodeArch::Aarch64),
+            "https://bitcoinknots.org/files/29.x/29.3.knots20260508/\
+             bitcoin-29.3.knots20260508-arm64-apple-darwin.tar.gz"
+        );
+        // Knots, x86_64 Linux.
+        assert_eq!(
+            NodeFlavor::Knots.asset_url(KNOTS_VERSION, NodeOs::Linux, NodeArch::X86_64),
+            "https://bitcoinknots.org/files/29.x/29.3.knots20260508/\
+             bitcoin-29.3.knots20260508-x86_64-linux-gnu.tar.gz"
+        );
+        // Knots, Windows — note the `-pgpverifiable` suffix that Core lacks.
+        assert_eq!(
+            NodeFlavor::Knots.asset_url(KNOTS_VERSION, NodeOs::Windows, NodeArch::X86_64),
+            "https://bitcoinknots.org/files/29.x/29.3.knots20260508/\
+             bitcoin-29.3.knots20260508-win64-pgpverifiable.zip"
+        );
+        // Core path is byte-for-byte the historical shape.
+        assert_eq!(
+            NodeFlavor::Core.asset_url(CORE_VERSION, NodeOs::MacOs, NodeArch::Aarch64),
+            format!(
+                "https://bitcoincore.org/bin/bitcoin-core-{CORE_VERSION}/\
+                 bitcoin-{CORE_VERSION}-arm64-apple-darwin.tar.gz"
+            )
+        );
+        assert_eq!(
+            NodeFlavor::Core.asset_url(CORE_VERSION, NodeOs::Windows, NodeArch::X86_64),
+            format!(
+                "https://bitcoincore.org/bin/bitcoin-core-{CORE_VERSION}/\
+                 bitcoin-{CORE_VERSION}-win64.zip"
+            )
+        );
+        // Flavour is recoverable from a managed-binary directory name.
+        assert_eq!(
+            NodeFlavor::from_version("29.3.knots20260508"),
+            NodeFlavor::Knots
+        );
+        assert_eq!(NodeFlavor::from_version("29.0"), NodeFlavor::Core);
+    }
+
+    // `consensusrules=rdts` is emitted for Knots-with-enforcement only, and
+    // round-trips through `to_ini`/`from_ini`.
+    #[test]
+    fn rdts_consensusrules_emission() {
+        let net = InternalBitcoindNetworkConfig {
+            rpc_port: 12345,
+            p2p_port: 12346,
+            prune: 15000,
+            rpc_auth: None,
+        };
+
+        // Core: never emits consensusrules.
+        let mut core = InternalBitcoindConfig::for_flavor(NodeFlavor::Core);
+        core.networks.insert(Network::Bitcoin, net.clone());
+        assert!(core
+            .to_ini()
+            .general_section()
+            .get("consensusrules")
+            .is_none());
+
+        // Knots with enforcement (the default for the flavour): emits the line.
+        let mut knots = InternalBitcoindConfig::for_flavor(NodeFlavor::Knots);
+        assert!(knots.enforce_rdts);
+        knots.networks.insert(Network::Bitcoin, net.clone());
+        let knots_ini = knots.to_ini();
+        assert_eq!(
+            knots_ini.general_section().get("consensusrules"),
+            Some("rdts")
+        );
+
+        // Round-trip preserves the flag and recovers the flavour.
+        let parsed = InternalBitcoindConfig::from_ini(&knots_ini).expect("parse rdts conf");
+        assert!(parsed.enforce_rdts);
+        assert_eq!(parsed.flavor, NodeFlavor::Knots);
+
+        // "Knots without RDTS" stays expressible and emits nothing.
+        let mut knots_off = InternalBitcoindConfig::for_flavor(NodeFlavor::Knots);
+        knots_off.enforce_rdts = false;
+        knots_off.networks.insert(Network::Bitcoin, net);
+        let off_ini = knots_off.to_ini();
+        assert!(off_ini.general_section().get("consensusrules").is_none());
+        assert!(
+            !InternalBitcoindConfig::from_ini(&off_ini)
+                .expect("parse non-rdts conf")
+                .enforce_rdts
+        );
+    }
+
+    // When both flavours are installed, the launched binary must match the
+    // configured flavour — a Knots conf (`consensusrules=rdts`) cannot be
+    // started by a Core binary, so Core must never be preferred over Knots.
+    #[test]
+    fn managed_binary_prefers_configured_flavor() {
+        use std::fs;
+
+        let base =
+            std::env::temp_dir().join(format!("coincube-knots-bin-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let datadir = CoincubeDirectory::new(base.clone());
+
+        // Install BOTH a Core and a Knots binary (the dual-install case).
+        for v in [CORE_VERSION, KNOTS_VERSION] {
+            let exe = internal_bitcoind_exe_path(&datadir, v);
+            fs::create_dir_all(exe.parent().unwrap()).unwrap();
+            fs::write(&exe, b"fake bitcoind").unwrap();
+        }
+
+        // Knots conf -> Knots binary, even though Core is also installed.
+        assert_eq!(
+            select_managed_bitcoind_exe(&datadir, NodeFlavor::Knots),
+            Some(internal_bitcoind_exe_path(&datadir, KNOTS_VERSION))
+        );
+        // Core conf -> Core binary.
+        assert_eq!(
+            select_managed_bitcoind_exe(&datadir, NodeFlavor::Core),
+            Some(internal_bitcoind_exe_path(&datadir, CORE_VERSION))
+        );
+
+        // Fallback: with only Knots installed, a Core conf still finds the
+        // Knots binary rather than failing to locate any executable.
+        let core_install = internal_bitcoind_exe_path(&datadir, CORE_VERSION)
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        fs::remove_dir_all(&core_install).unwrap();
+        assert_eq!(
+            select_managed_bitcoind_exe(&datadir, NodeFlavor::Core),
+            Some(internal_bitcoind_exe_path(&datadir, KNOTS_VERSION))
+        );
+
+        let _ = fs::remove_dir_all(&base);
     }
 }

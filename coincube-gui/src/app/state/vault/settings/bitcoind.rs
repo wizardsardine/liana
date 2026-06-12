@@ -24,14 +24,15 @@ use crate::{
     dir::CoincubeDirectory,
     download,
     installer::step::node::bitcoind::{
-        get_available_port, install_bitcoind, internal_bitcoind_address, PRUNE_DEFAULT,
+        get_available_port, install_bitcoind, internal_bitcoind_address, DownloadVerification,
+        PRUNE_DEFAULT,
     },
     node::{
         bitcoind::{
             internal_bitcoind_config_path, internal_bitcoind_cookie_path,
             internal_bitcoind_datadir, internal_bitcoind_directory, internal_bitcoind_exe_path,
             Bitcoind, InternalBitcoindConfig, InternalBitcoindConfigError,
-            InternalBitcoindNetworkConfig, RpcAuthType, RpcAuthValues, VERSION,
+            InternalBitcoindNetworkConfig, NodeFlavor, RpcAuthType, RpcAuthValues,
         },
         NodeType,
     },
@@ -55,6 +56,8 @@ struct PendingNodeSetup {
     selected_auth_type: RpcAuthType,
     processing: bool,
     // Internal (COINCUBE-managed) setup fields
+    /// Which managed node flavour to install (Core or Knots + RDTS).
+    flavor: NodeFlavor,
     internal_stage: InternalSetupStage,
     internal_error: Option<String>,
     download_progress: f32,
@@ -195,6 +198,68 @@ impl BitcoindSettingsState {
         self.warning = None;
         Task::done(Message::LoadDaemonConfig(Box::new(new_cfg)))
     }
+
+    /// Begin (or retry) the COINCUBE-managed local-node setup for the flavour
+    /// stored on `pending_node_setup`. Reuses an installed binary if present,
+    /// otherwise kicks off the download. Shared by the managed-flavour picker
+    /// and the retry button.
+    fn start_internal_node_setup(&mut self, cache: &Cache) -> Task<Message> {
+        let Some(setup) = self.pending_node_setup.as_mut() else {
+            return Task::none();
+        };
+        setup.mode = Some(true);
+        setup.internal_error = None;
+        let flavor = setup.flavor;
+        let coincube_datadir = cache.datadir_path.clone();
+        let network = cache.network;
+        let exe_exists = internal_bitcoind_exe_path(&coincube_datadir, flavor.version()).exists();
+        if exe_exists {
+            setup.internal_stage = InternalSetupStage::Installing;
+            Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        configure_and_start_internal_bitcoind(
+                            coincube_datadir,
+                            network,
+                            flavor,
+                            None,
+                        )
+                    })
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+                },
+                |r| {
+                    Message::View(view::Message::Settings(
+                        view::SettingsMessage::NodeSettings(
+                            view::NodeSettingsMessage::SetupLocalNodeStartResult(r),
+                        ),
+                    ))
+                },
+            )
+        } else {
+            setup.internal_stage = InternalSetupStage::Downloading;
+            let url = flavor.download_url();
+            Task::sip(
+                download::download(url),
+                |p| {
+                    Message::View(view::Message::Settings(
+                        view::SettingsMessage::NodeSettings(
+                            view::NodeSettingsMessage::SetupLocalNodeDownloadProgress(p.percent),
+                        ),
+                    ))
+                },
+                |r| {
+                    Message::View(view::Message::Settings(
+                        view::SettingsMessage::NodeSettings(
+                            view::NodeSettingsMessage::SetupLocalNodeDownloadComplete(
+                                r.map_err(|e| e.to_string()),
+                            ),
+                        ),
+                    ))
+                },
+            )
+        }
+    }
 }
 
 impl State for BitcoindSettingsState {
@@ -331,70 +396,28 @@ impl State for BitcoindSettingsState {
                             },
                             selected_auth_type: RpcAuthType::CookieFile,
                             processing: false,
+                            flavor: NodeFlavor::default(),
                             internal_stage: InternalSetupStage::Idle,
                             internal_error: None,
                             download_progress: 0.0,
                         });
                     }
-                    NodeSettingsMessage::SetupLocalNodeModeSelected(use_internal) => {
+                    NodeSettingsMessage::SetupLocalNodeManagedFlavor(flavor) => {
+                        // Pick the managed flavour (Core or Knots + RDTS) and
+                        // begin the download/install in one step. This is where
+                        // the user consents to RDTS enforcement: the headless
+                        // node can't show Knots' own confirmation prompt.
                         if let Some(ref mut setup) = self.pending_node_setup {
-                            if use_internal {
-                                setup.mode = Some(true);
-                                setup.internal_error = None;
-                                let coincube_datadir = cache.datadir_path.clone();
-                                let network = cache.network;
-                                let exe_exists =
-                                    internal_bitcoind_exe_path(&coincube_datadir, VERSION).exists();
-                                if exe_exists {
-                                    setup.internal_stage = InternalSetupStage::Installing;
-                                    return Task::perform(
-                                        async move {
-                                            tokio::task::spawn_blocking(move || {
-                                                configure_and_start_internal_bitcoind(
-                                                    coincube_datadir,
-                                                    network,
-                                                    None,
-                                                )
-                                            })
-                                            .await
-                                            .unwrap_or_else(|e| Err(e.to_string()))
-                                        },
-                                        |r| {
-                                            Message::View(view::Message::Settings(
-                                                view::SettingsMessage::NodeSettings(
-                                                    view::NodeSettingsMessage::SetupLocalNodeStartResult(
-                                                        r,
-                                                    ),
-                                                ),
-                                            ))
-                                        },
-                                    );
-                                } else {
-                                    setup.internal_stage = InternalSetupStage::Downloading;
-                                    let url = crate::node::bitcoind::download_url();
-                                    return Task::sip(
-                                        download::download(url),
-                                        |p| {
-                                            Message::View(view::Message::Settings(
-                                                view::SettingsMessage::NodeSettings(
-                                                    view::NodeSettingsMessage::SetupLocalNodeDownloadProgress(p.percent),
-                                                ),
-                                            ))
-                                        },
-                                        |r| {
-                                            Message::View(view::Message::Settings(
-                                                view::SettingsMessage::NodeSettings(
-                                                    view::NodeSettingsMessage::SetupLocalNodeDownloadComplete(
-                                                        r.map_err(|e| e.to_string()),
-                                                    ),
-                                                ),
-                                            ))
-                                        },
-                                    );
-                                }
-                            } else {
-                                setup.mode = Some(false);
-                            }
+                            setup.flavor = flavor;
+                        }
+                        return self.start_internal_node_setup(cache);
+                    }
+                    NodeSettingsMessage::SetupLocalNodeModeSelected(use_internal) => {
+                        if use_internal {
+                            // Retry path: re-run with the already-chosen flavour.
+                            return self.start_internal_node_setup(cache);
+                        } else if let Some(ref mut setup) = self.pending_node_setup {
+                            setup.mode = Some(false);
                         }
                     }
                     NodeSettingsMessage::SetupLocalNodeDownloadProgress(p) => {
@@ -410,13 +433,21 @@ impl State for BitcoindSettingsState {
                                     setup.download_progress = 100.0;
                                     let coincube_datadir = cache.datadir_path.clone();
                                     let network = cache.network;
+                                    let flavor = setup.flavor;
                                     return Task::perform(
                                         async move {
+                                            // Fetch the release SHA256SUMS(+.asc)
+                                            // the archive is verified against
+                                            // (Knots); a no-op for Core.
+                                            let manifest = download::fetch_release_manifest(flavor)
+                                                .await
+                                                .map_err(|e| e.to_string())?;
                                             tokio::task::spawn_blocking(move || {
                                                 configure_and_start_internal_bitcoind(
                                                     coincube_datadir,
                                                     network,
-                                                    Some(bytes),
+                                                    flavor,
+                                                    Some((bytes, manifest)),
                                                 )
                                             })
                                             .await
@@ -641,6 +672,7 @@ impl State for BitcoindSettingsState {
                     Some(true) => {
                         setting_panels.push(
                             view::vault::settings::internal_node_setup_panel(
+                                setup.flavor,
                                 setup.internal_stage == InternalSetupStage::Downloading,
                                 setup.internal_stage == InternalSetupStage::Installing,
                                 setup.internal_stage == InternalSetupStage::Done,
@@ -664,7 +696,10 @@ impl State for BitcoindSettingsState {
                             ("COINCUBE | Connect", icon::network_icon())
                         }
                         Some(BitcoinBackend::Bitcoind(_)) => {
-                            ("Local Node (Bitcoin Core)", icon::bitcoin_icon())
+                            // Flavour-neutral: the exact build (Core vs Knots)
+                            // and RDTS status come from the node's runtime
+                            // subversion, surfaced separately below.
+                            ("Local Node", icon::bitcoin_icon())
                         }
                         Some(BitcoinBackend::Electrum(_)) => ("Electrum", icon::network_icon()),
                         None => ("None", icon::network_icon()),
@@ -764,18 +799,27 @@ impl From<BitcoindSettingsState> for Box<dyn State> {
     }
 }
 
-/// Configure and start an internally-managed pruned Bitcoin Core node.
-/// If `bytes_to_install` is Some, the binary is first installed from those bytes.
-/// Returns the `BitcoindConfig` and the live `Bitcoind` handle (which keeps the
-/// lock file alive) to be stored by the caller.
+/// A managed-node install payload: `(archive bytes, optional fetched
+/// (SHA256SUMS, SHA256SUMS.asc) manifest)`. The manifest is `Some` for Knots
+/// (verified against the manifest) and `None` for Core (verified by code hash).
+type ManagedNodeInstall = (Vec<u8>, Option<(String, String)>);
+
+/// Configure and start an internally-managed pruned node of `flavor`.
+/// If `install` is `Some((bytes, manifest))`, the binary is first verified and
+/// installed from those bytes. Returns the `BitcoindConfig` and the live
+/// `Bitcoind` handle (which keeps the lock file alive) to be stored by the
+/// caller.
 fn configure_and_start_internal_bitcoind(
     coincube_datadir: CoincubeDirectory,
     network: Network,
-    bytes_to_install: Option<Vec<u8>>,
+    flavor: NodeFlavor,
+    install: Option<ManagedNodeInstall>,
 ) -> Result<(BitcoindConfig, Bitcoind), String> {
-    if let Some(ref bytes) = bytes_to_install {
+    if let Some((bytes, manifest)) = install {
+        let verification = DownloadVerification::for_flavor(flavor, manifest)
+            .ok_or_else(|| "Missing release SHA256SUMS manifest for verification.".to_string())?;
         let install_dir = internal_bitcoind_directory(&coincube_datadir);
-        install_bitcoind(&install_dir, bytes).map_err(|e| format!("{:?}", e))?;
+        install_bitcoind(&install_dir, &bytes, &verification).map_err(|e| format!("{:?}", e))?;
     }
 
     let bitcoind_datadir = internal_bitcoind_datadir(&coincube_datadir);
@@ -786,6 +830,10 @@ fn configure_and_start_internal_bitcoind(
         Err(InternalBitcoindConfigError::FileNotFound) => InternalBitcoindConfig::new(),
         Err(e) => return Err(e.to_string()),
     };
+    // The chosen flavour drives RDTS enforcement: Knots emits
+    // `consensusrules=rdts`, Core never does.
+    conf.flavor = flavor;
+    conf.enforce_rdts = matches!(flavor, NodeFlavor::Knots);
 
     let existing = conf.networks.get(&network).cloned();
     let (rpc_port, p2p_port) = if let Some(ref nc) = existing {

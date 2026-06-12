@@ -36,7 +36,7 @@ use crate::{
     help,
     hw::HardwareWallet,
     node::{
-        bitcoind::{RpcAuthType, RpcAuthValues},
+        bitcoind::{NodeFlavor, RpcAuthType, RpcAuthValues},
         electrum::{self, validate_domain_checkbox},
     },
 };
@@ -1593,14 +1593,35 @@ pub fn node_setup_mode_picker_panel<'a>() -> Element<'a, NodeSettingsMessage> {
                         .align_y(Alignment::Center),
                 )
                 .push(
-                    text("COINCUBE downloads Bitcoin Core and runs a pruned node (~15 GB) automatically. No configuration needed.")
+                    text("COINCUBE downloads and runs a pruned node (~15 GB) automatically. No configuration needed.")
                         .size(13)
                         .style(theme::text::secondary),
                 )
                 .push(
-                    button::primary(None, "Set up automatically →")
-                        .padding([8, 14])
-                        .on_press(NodeSettingsMessage::SetupLocalNodeModeSelected(true)),
+                    Row::new()
+                        .spacing(10)
+                        .push(
+                            button::primary(None, "Bitcoin Core →")
+                                .padding([8, 14])
+                                .on_press(NodeSettingsMessage::SetupLocalNodeManagedFlavor(
+                                    NodeFlavor::Core,
+                                )),
+                        )
+                        .push(
+                            button::secondary(None, "Bitcoin Knots + RDTS →")
+                                .padding([8, 14])
+                                .on_press(NodeSettingsMessage::SetupLocalNodeManagedFlavor(
+                                    NodeFlavor::Knots,
+                                )),
+                        ),
+                )
+                .push(
+                    text(
+                        "Knots enforces BIP-110 (Reduced Data Temporary Softfork): it rejects \
+                         oversized data-carrier transactions. Standard sends are unaffected.",
+                    )
+                    .size(12)
+                    .style(theme::text::secondary),
                 ),
         )
         .padding(15)
@@ -1614,12 +1635,15 @@ pub fn node_setup_mode_picker_panel<'a>() -> Element<'a, NodeSettingsMessage> {
 }
 
 pub fn internal_node_setup_panel<'a>(
+    flavor: NodeFlavor,
     downloading: bool,
     installing: bool,
     done: bool,
     error: Option<&'a str>,
     download_progress: f32,
 ) -> Element<'a, NodeSettingsMessage> {
+    let name = flavor.display_name();
+    let rdts = matches!(flavor, NodeFlavor::Knots);
     let mut col = Column::new().spacing(15);
 
     col = col.push(
@@ -1664,25 +1688,29 @@ pub fn internal_node_setup_panel<'a>(
                 ),
         );
     } else if done {
-        col = col.push(
-            Column::new()
-                .spacing(6)
-                .push(text("Bitcoin Core is running and syncing in the background.").bold())
-                .push(
-                    text(
-                        "COINCUBE will automatically switch to this node once syncing is complete.",
-                    )
+        let mut done_col = Column::new()
+            .spacing(6)
+            .push(text(format!("{name} is running and syncing in the background.")).bold())
+            .push(
+                text("COINCUBE will automatically switch to this node once syncing is complete.")
                     .size(13)
                     .style(theme::text::secondary),
-                ),
-        );
+            );
+        if rdts {
+            done_col = done_col.push(
+                text("RDTS: enforced (BIP-110).")
+                    .size(13)
+                    .style(theme::text::secondary),
+            );
+        }
+        col = col.push(done_col);
     } else if downloading {
         col = col.push(
             Column::new()
                 .spacing(10)
                 .push(
                     text(format!(
-                        "Downloading Bitcoin Core… {:.0}%",
+                        "Downloading {name}… {:.0}%",
                         download_progress.min(99.9)
                     ))
                     .size(14),
@@ -1694,7 +1722,7 @@ pub fn internal_node_setup_panel<'a>(
         );
     } else if installing {
         col = col.push(
-            text("Installing and starting Bitcoin Core…")
+            text(format!("Installing and starting {name}…"))
                 .size(14)
                 .style(theme::text::secondary),
         );

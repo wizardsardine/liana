@@ -14,6 +14,7 @@ from test_framework.utils import (
     TIMEOUT,
     BITCOIND_PATH,
     COIN,
+    ENFORCE_RDTS,
 )
 
 
@@ -82,6 +83,11 @@ class Bitcoind(BitcoinBackend):
         self.conf_file = os.path.join(bitcoin_dir, "bitcoin.conf")
         with open(self.conf_file, "w") as f:
             f.write("chain=regtest\n")
+            # RDTS (BIP-110) enforcement is a global, non-network-scoped option
+            # and is only valid on Bitcoin Knots; it is gated behind ENFORCE_RDTS
+            # so the Core legs (which reject the key) are unaffected.
+            if ENFORCE_RDTS:
+                f.write("consensusrules=rdts\n")
             f.write("[regtest]\n")
             for k, v in bitcoind_conf.items():
                 f.write(f"{k}={v}\n")
