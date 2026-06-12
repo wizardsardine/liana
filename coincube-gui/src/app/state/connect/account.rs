@@ -711,6 +711,11 @@ impl ConnectAccountPanel {
                     // same generation, and a slow pre-redeem fetch could
                     // overwrite the granted tier/provenance.
                     self.campaign_redeem.submitting = true;
+                    // Surface the code in the Settings → Plan field so that, if
+                    // the redeem fails, the error reads against the code and
+                    // the user can edit/retry without retyping. Cleared on
+                    // success by `CampaignRedeemed`.
+                    self.campaign_redeem.code = code.clone();
                     tasks.push(self.redeem_campaign_task(code));
                 } else {
                     let c1 = self.client.clone();
@@ -4116,6 +4121,27 @@ mod plan_lifecycle_tests {
         panel.register_campaign_code = "   ".into();
         let _ = panel.update_message(ConnectAccountMessage::SubmitRegistration);
         assert!(panel.pending_campaign_code.is_none());
+    }
+
+    #[test]
+    fn signup_redeem_surfaces_code_for_retry() {
+        // The deferred (account-creation) redeem must populate the
+        // Settings → Plan field so a failure shows the error against the code
+        // and the user can retry/edit without retyping.
+        let mut panel = ConnectAccountPanel::new();
+        panel.pending_campaign_code = Some("FOUNDER".into());
+        let user = User {
+            id: 1,
+            email: "founder@example.com".into(),
+            email_verified: Some(true),
+        };
+        let _ = panel.update_message(ConnectAccountMessage::SessionLoaded { user, plan: None });
+        assert!(panel.pending_campaign_code.is_none(), "code consumed");
+        assert!(panel.campaign_redeem.submitting, "redeem in flight");
+        assert_eq!(
+            panel.campaign_redeem.code, "FOUNDER",
+            "code surfaced for retry/edit"
+        );
     }
 
     #[test]
