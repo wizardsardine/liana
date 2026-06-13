@@ -2818,6 +2818,97 @@ mod cube_member_tests {
 }
 
 #[cfg(test)]
+mod plan_tests {
+    use super::*;
+    use crate::services::coincube::PlanTier;
+    use httpmock::{Method as MockMethod, MockServer};
+    use serde_json::json;
+
+    /// Regression guard: decode a `GET /connect/plan` body shaped like the real
+    /// API (numeric `Entitlements` from documentation/PRICING_AND_TIERS.md +
+    /// campaign `planProvenance`). The previous boolean-feature `PlanEntitlements`
+    /// required six fields the API had stopped sending, so this body failed to
+    /// parse and every account silently rendered as Free. The tier and the one
+    /// consumed entitlement (`duress`) must survive the parse.
+    #[tokio::test]
+    async fn get_connect_plan_decodes_api_contract() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET).path("/api/v1/connect/plan");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "plan": "estate",
+                        "status": "active",
+                        "renewalAt": null,
+                        "planProvenance": {
+                            "label": "Free for your first year",
+                            "badge": "",
+                            "expiresAt": null
+                        },
+                        "entitlements": {
+                            "personalKeyLimit": 7,
+                            "cubeLimit": 7,
+                            "recoveryKitLimit": 7,
+                            "avatarRegenerationLimit": null,
+                            "duress": true,
+                            "attachPolicies": true,
+                            "collaborativeInvitations": true,
+                            "duressAlerts": true,
+                            "recoveryAlerts": true
+                        }
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let plan = client
+            .get_connect_plan()
+            .await
+            .expect("API-shaped plan body should decode");
+        mock.assert();
+        assert_eq!(*plan.tier(), PlanTier::Estate);
+        assert_eq!(plan.entitlements.cube_limit, 7);
+        assert!(plan.entitlements.duress);
+        assert!(plan.entitlements.avatar_regeneration_limit.is_none()); // unlimited
+        assert!(plan.plan_provenance.is_some());
+    }
+
+    /// A future entitlement field the desktop doesn't know about must not fail
+    /// the parse and drop the account to Free — every field is `#[serde(default)]`
+    /// and unknown fields are ignored.
+    #[tokio::test]
+    async fn get_connect_plan_tolerates_unknown_and_missing_entitlements() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET).path("/api/v1/connect/plan");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "success": true,
+                    "data": {
+                        "plan": "pro",
+                        "status": "active",
+                        "renewalAt": null,
+                        "entitlements": { "cubeLimit": 4, "someFutureFlag": true }
+                    }
+                }));
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let plan = client
+            .get_connect_plan()
+            .await
+            .expect("partial/forward-compat entitlements should still decode");
+        assert_eq!(*plan.tier(), PlanTier::Pro);
+        assert_eq!(plan.entitlements.cube_limit, 4);
+        assert!(!plan.entitlements.duress); // absent → safe default
+    }
+}
+
+#[cfg(test)]
 mod duress_tests {
     use super::*;
     use crate::services::coincube::{DownloadError, EnrollDuressRequest};

@@ -1557,7 +1557,7 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
     let entitled = state
         .plan
         .as_ref()
-        .map(|p| p.entitlements.duress_remote_lock)
+        .map(|p| p.entitlements.duress)
         .unwrap_or(false);
 
     let mut col = Column::new()
@@ -2231,16 +2231,7 @@ mod renewal_banner_tests {
             plan: tier,
             status,
             renewal_at: renewal_at.map(|s| s.to_string()),
-            entitlements: PlanEntitlements {
-                free_signing_key_count: 0,
-                policy_editing: false,
-                legacy_invites: false,
-                linked_keychains: false,
-                duress_remote_lock: false,
-                business_orgs: false,
-                duress_alerts: false,
-                recovery_alerts: false,
-            },
+            entitlements: PlanEntitlements::default(),
             billing_cycle: Some(BillingCycle::Monthly),
             plan_provenance: None,
         }

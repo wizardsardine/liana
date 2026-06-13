@@ -2112,7 +2112,7 @@ impl ConnectAccountPanel {
                 let entitled = self
                     .plan
                     .as_ref()
-                    .map(|p| p.entitlements.duress_remote_lock)
+                    .map(|p| p.entitlements.duress)
                     .unwrap_or(false);
                 // Entitled (signed-in) users default to Tier 1, which collects
                 // the account-level duress recovery-kit password — that password
@@ -4200,16 +4200,7 @@ mod plan_lifecycle_tests {
             plan: tier,
             status,
             renewal_at: renewal_at.map(|s| s.to_string()),
-            entitlements: PlanEntitlements {
-                free_signing_key_count: 0,
-                policy_editing: false,
-                legacy_invites: false,
-                linked_keychains: false,
-                duress_remote_lock: false,
-                business_orgs: false,
-                duress_alerts: false,
-                recovery_alerts: false,
-            },
+            entitlements: PlanEntitlements::default(),
             billing_cycle: cycle,
             plan_provenance: None,
         }
@@ -4755,14 +4746,9 @@ mod duress_contacts_tests {
 
     fn entitlements(duress_alerts: bool) -> PlanEntitlements {
         PlanEntitlements {
-            free_signing_key_count: 0,
-            policy_editing: false,
-            legacy_invites: false,
-            linked_keychains: false,
-            duress_remote_lock: true,
-            business_orgs: false,
+            duress: true,
             duress_alerts,
-            recovery_alerts: false,
+            ..PlanEntitlements::default()
         }
     }
 

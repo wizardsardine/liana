@@ -2174,9 +2174,9 @@ fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
             ("Contacts", ConnectSubMenu::Contacts),
             ("Plan & Billing", ConnectSubMenu::PlanBilling),
             ("Security", ConnectSubMenu::Security),
-            // Duress (Phase 9). The duress_ux() panel gates on the
-            // `duress_remote_lock` entitlement and shows an upgrade prompt for
-            // Free, so the entry is safe to show for any authenticated user.
+            // Duress (Phase 9). The duress_ux() panel gates on the `duress`
+            // entitlement and shows an upgrade prompt for Free, so the entry is
+            // safe to show for any authenticated user.
             ("Duress", ConnectSubMenu::Duress),
         ];
         for (label, sub) in items {
