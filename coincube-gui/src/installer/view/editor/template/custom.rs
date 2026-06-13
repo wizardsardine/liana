@@ -7,8 +7,8 @@ use iced::{
 use coincube_ui::{
     color,
     component::{
-        button, collapse,
-        text::{h3, p1_regular, text, Text},
+        button,
+        text::{h3, p1_regular, text},
     },
     icon, image, theme,
     widget::*,
@@ -18,7 +18,7 @@ use crate::installer::{
     descriptor::Path,
     message::{self, Message},
     view::{
-        editor::{define_descriptor_advanced_settings, defined_key, path, undefined_key},
+        editor::{defined_key, path, undefined_key},
         layout,
     },
 };
@@ -70,29 +70,6 @@ pub fn custom_template<'a>(
         Column::new()
             .align_x(Alignment::Start)
             .max_width(1000.0)
-            .push(collapse::Collapse::new(
-                || {
-                    Button::new(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .spacing(10)
-                            .push(text("Advanced settings").small().bold())
-                            .push(icon::collapse_icon()),
-                    )
-                    .style(theme::button::transparent)
-                },
-                || {
-                    Button::new(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .spacing(10)
-                            .push(text("Advanced settings").small().bold())
-                            .push(icon::collapsed_icon()),
-                    )
-                    .style(theme::button::transparent)
-                },
-                move || define_descriptor_advanced_settings(use_taproot),
-            ))
             .push(
                 path(
                     color::ORANGE,

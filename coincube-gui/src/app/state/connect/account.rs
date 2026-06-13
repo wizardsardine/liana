@@ -4713,6 +4713,7 @@ mod duress_contacts_tests {
             renewal_at: None,
             entitlements: entitlements(duress_alerts),
             billing_cycle: Some(BillingCycle::Monthly),
+            plan_provenance: None,
         }
     }
 
