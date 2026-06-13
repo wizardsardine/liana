@@ -1520,6 +1520,43 @@ pub struct DuressState {
     pub this_device_registered: bool,
 }
 
+/// Classified result of the post-sign-in duress gate check (Phase 6).
+///
+/// Carried in a `Message`, so it must be `Clone` — `CoincubeError` wraps a
+/// non-`Clone` `reqwest::Error` and can't be. Collapsing every failure to a
+/// bare `None` (as the gate previously did) conflated "the server returned a
+/// body I can't decode" (permanent — retrying is futile) with "the network is
+/// down" (transient — retry) and "my token was rejected" (re-auth), so a
+/// one-field contract typo became a silent, un-retryable lockout. This keeps
+/// just enough to branch correctly.
+#[derive(Debug, Clone)]
+pub enum DuressCheckOutcome {
+    /// Decoded the server's duress state.
+    Ok(DuressState),
+    /// Network / timeout / 5xx / rate-limit — transient; a bounded retry may
+    /// succeed.
+    Unreachable,
+    /// A 200 whose body didn't match the contract (decode error) — the body is
+    /// logged at the call site. Auto-retrying in a tight loop is futile, but a
+    /// manual retry can still recover if the server is hotfixed.
+    Incompatible,
+    /// 401 — the session was rejected; bounce to login rather than hold the
+    /// gate closed forever.
+    Unauthorized,
+}
+
+impl DuressCheckOutcome {
+    /// Classify a failed `get_duress_state` call. (Success is constructed
+    /// directly as [`DuressCheckOutcome::Ok`].)
+    pub fn from_err(e: &CoincubeError) -> Self {
+        match e {
+            CoincubeError::Parse(_) => Self::Incompatible,
+            CoincubeError::Unsuccessful(info) if info.status_code == 401 => Self::Unauthorized,
+            _ => Self::Unreachable,
+        }
+    }
+}
+
 /// Typed failure modes for the password-gated recovery-kit download
 /// (Approach C, Phase 7). The server returns `423 Locked` with a
 /// discriminating `error.code` for both the duress-lock and

@@ -1245,7 +1245,20 @@ impl CoincubeClient {
         let url = format!("{}/api/v1/connect/duress", self.base_url);
         let res = self.client.get(&url).send().await?;
         let res = res.check_success().await?;
-        let resp: ApiResponse<super::DuressState> = res.json().await?;
+        // Decode via text + serde rather than `res.json()` so a 200 that doesn't
+        // match the contract surfaces as a distinct `Parse` error (reqwest folds
+        // decode failures into an opaque `Network` error) AND so we can log the
+        // offending body. The post-login duress gate fails closed on any error;
+        // without this a single mismatched field is indistinguishable from a
+        // network blip and locks every user out with no diagnostic trail.
+        let body = res.text().await?;
+        let resp: ApiResponse<super::DuressState> = serde_json::from_str(&body).map_err(|e| {
+            log::error!(
+                "[CONNECT] duress state decode failed: {e}; body: {}",
+                body.chars().take(512).collect::<String>()
+            );
+            CoincubeError::Parse(e)
+        })?;
         Ok(resp.data)
     }
 
@@ -2948,6 +2961,35 @@ mod duress_tests {
         assert!(state.enrolled);
         assert!(!state.this_device_registered);
         assert!(state.unlock_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn get_duress_state_decodes_contract_golden() {
+        // Golden body capturing the live API's GET /connect/duress contract. The
+        // matching coincube-api test (TestGetDuressReconciliationPayload) asserts
+        // the handler emits these exact camelCase keys, so the two ends are
+        // pinned to one contract. Unlike the hand-written mock in
+        // `get_duress_state_200_decodes` — which proved nothing when the real API
+        // diverged to snake_case — this guards the desktop side against drift.
+        let server = MockServer::start();
+        let golden = include_str!("testdata/duress_get_response.json");
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET).path("/api/v1/connect/duress");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(golden);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let state = client
+            .get_duress_state()
+            .await
+            .expect("golden contract body should decode");
+        mock.assert();
+        assert!(state.active);
+        assert!(state.enrolled);
+        assert!(state.unlock_at.is_some());
+        assert!(state.this_device_registered);
     }
 
     #[tokio::test]

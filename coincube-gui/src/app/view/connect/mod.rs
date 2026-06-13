@@ -23,7 +23,7 @@ use crate::{
         settings::global::AccountTier,
         state::connect::{
             AvatarFlowStep, CheckoutPhase, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep,
-            ConnectPanel, DuressContactsStep, PlanLifecycle,
+            ConnectPanel, DuressContactsStep, DuressGateStatus, PlanLifecycle,
         },
         view::{AvatarMessage, ConnectAccountMessage, ConnectCubeMessage, DuressMessage},
     },
@@ -66,8 +66,8 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
             ..
         } => otp_ux(email, otp, *sending, *cooldown).map(ViewMessage::ConnectAccount),
 
-        ConnectFlowStep::CheckingDuress { failed } => {
-            checking_duress_ux(*failed).map(ViewMessage::ConnectAccount)
+        ConnectFlowStep::CheckingDuress { status } => {
+            checking_duress_ux(*status).map(ViewMessage::ConnectAccount)
         }
 
         ConnectFlowStep::DuressRecovery {
@@ -148,7 +148,7 @@ pub fn connect_account_panel<'a>(
             cooldown,
             ..
         } => otp_ux(email, otp, *sending, *cooldown),
-        ConnectFlowStep::CheckingDuress { failed } => checking_duress_ux(*failed),
+        ConnectFlowStep::CheckingDuress { status } => checking_duress_ux(*status),
         ConnectFlowStep::DuressRecovery {
             unlock_at,
             passphrase,
@@ -1479,20 +1479,52 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
 
 /// Post-login duress verification gate (Phase 6). Shown after auth while
 /// `get_duress_state` is in flight, so the dashboard isn't revealed to a
-/// possibly-in-duress account. On terminal failure (`failed`) it offers a Retry
-/// rather than falling through to the dashboard.
-fn checking_duress_ux<'a>(failed: bool) -> Element<'a, ConnectAccountMessage> {
+/// possibly-in-duress account. Both terminal failure modes fail CLOSED (no
+/// dashboard) but show distinct copy: `Unreachable` reads as a transient
+/// connectivity problem, `Incompatible` (a body we couldn't decode) hints at an
+/// out-of-date app. Both offer a Sign Out escape hatch so the user is never
+/// fully trapped.
+fn checking_duress_ux<'a>(status: DuressGateStatus) -> Element<'a, ConnectAccountMessage> {
     let mut col = Column::new().spacing(16).align_x(Alignment::Center);
-    if failed {
-        col = col
-            .push(text::p1_regular("Couldn't verify your account status.").color(color::GREY_3))
-            .push(
-                button::primary(None, "Retry")
-                    .width(Length::Fixed(160.0))
-                    .on_press(ConnectAccountMessage::RetryDuressCheck),
-            );
-    } else {
-        col = col.push(text::p1_regular("Checking your account…").color(color::GREY_3));
+    match status {
+        DuressGateStatus::Checking => {
+            col = col.push(text::p1_regular("Checking your account…").color(color::GREY_3));
+        }
+        DuressGateStatus::Unreachable => {
+            col = col
+                .push(text::p1_regular("Couldn't verify your account status.").color(color::GREY_3))
+                .push(
+                    button::primary(None, "Retry")
+                        .width(Length::Fixed(160.0))
+                        .on_press(ConnectAccountMessage::RetryDuressCheck),
+                )
+                .push(
+                    button::secondary(None, "Sign Out")
+                        .width(Length::Fixed(160.0))
+                        .on_press(ConnectAccountMessage::LogOut),
+                );
+        }
+        DuressGateStatus::Incompatible => {
+            col = col
+                .push(
+                    text::p1_regular("We couldn't read your account status.")
+                        .color(color::GREY_3),
+                )
+                .push(
+                    text::caption("Make sure COINCUBE is up to date, then try again.")
+                        .color(color::GREY_3),
+                )
+                .push(
+                    button::primary(None, "Retry")
+                        .width(Length::Fixed(160.0))
+                        .on_press(ConnectAccountMessage::RetryDuressCheck),
+                )
+                .push(
+                    button::secondary(None, "Sign Out")
+                        .width(Length::Fixed(160.0))
+                        .on_press(ConnectAccountMessage::LogOut),
+                );
+        }
     }
     col.width(Length::Fill).into()
 }

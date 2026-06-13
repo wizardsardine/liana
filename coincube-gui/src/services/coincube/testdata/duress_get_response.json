@@ -1,0 +1,13 @@
+{
+  "success": true,
+  "data": {
+    "active": true,
+    "unlockAt": "2026-06-09T12:00:00Z",
+    "last_activated_at": "2026-06-09T11:00:00Z",
+    "last_cleared_at": null,
+    "enrolled": true,
+    "thisDeviceRegistered": true,
+    "lastTriggeredAt": null,
+    "settings": {}
+  }
+}
