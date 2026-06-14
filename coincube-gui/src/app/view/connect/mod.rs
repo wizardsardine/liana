@@ -1507,8 +1507,7 @@ fn checking_duress_ux<'a>(status: DuressGateStatus) -> Element<'a, ConnectAccoun
         DuressGateStatus::Incompatible => {
             col = col
                 .push(
-                    text::p1_regular("We couldn't read your account status.")
-                        .color(color::GREY_3),
+                    text::p1_regular("We couldn't read your account status.").color(color::GREY_3),
                 )
                 .push(
                     text::caption("Make sure COINCUBE is up to date, then try again.")

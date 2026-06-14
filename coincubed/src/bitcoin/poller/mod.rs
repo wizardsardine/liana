@@ -33,6 +33,10 @@ pub struct Poller {
     secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     // The receive and change descriptors (in this order).
     descs: [descriptors::SinglePathCoincubeDesc; 2],
+    // Lock-free mirror of the latest sync progress, so `get_info` can read it
+    // without contending for the `BitcoinInterface` mutex this poller holds
+    // across a full wallet scan.
+    sync_cache: sync::Arc<crate::bitcoin::SyncProgressCache>,
 }
 
 impl Poller {
@@ -40,6 +44,7 @@ impl Poller {
         bit: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
         db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         desc: descriptors::CoincubeDescriptor,
+        sync_cache: sync::Arc<crate::bitcoin::SyncProgressCache>,
     ) -> Poller {
         let secp = secp256k1::Secp256k1::verification_only();
         let descs = [
@@ -50,11 +55,19 @@ impl Poller {
         // On first startup the tip may be NULL. Make sure it's set as the poller relies on it.
         looper::maybe_initialize_tip(&bit, &db);
 
+        // NB: we deliberately do NOT read `sync_progress` here to seed the
+        // cache. That would add a backend RPC during construction (which the
+        // scripted `daemon_startup` test doesn't expect, and which would
+        // re-introduce a startup round-trip). The cache's zero default reads as
+        // "still syncing", and the poll loop — whose first tick has no initial
+        // delay — publishes the real value immediately.
+
         Poller {
             bit,
             db,
             secp,
             descs,
+            sync_cache,
         }
     }
 
@@ -72,6 +85,7 @@ impl Poller {
         // committing to a poll.
         if !*synced {
             let progress = self.bit.sync_progress();
+            self.sync_cache.store(&progress);
             log::info!(
                 "Block chain synchronization progress: {:.2}% ({} blocks / {} headers)",
                 progress.rounded_up_progress() * 100.0,
@@ -155,6 +169,7 @@ impl Poller {
             // Don't poll until the Bitcoin backend is fully synced.
             if !synced {
                 let progress = self.bit.sync_progress();
+                self.sync_cache.store(&progress);
                 log::info!(
                     "Block chain synchronization progress: {:.2}% ({} blocks / {} headers)",
                     progress.rounded_up_progress() * 100.0,

@@ -459,6 +459,15 @@ pub struct SelectBitcoindTypeStep {
     show_advanced: bool,
     network: Network,
     connect_authenticated: bool,
+    /// Managed-node flavour to install when a node is installed. Defaults to
+    /// Knots (BIP-110 / RDTS); the user can switch to Core. Carried into
+    /// `Context::node_flavor` by `apply`.
+    node_flavor: NodeFlavor,
+    /// The flavour of the managed node already configured on disk, if any. The
+    /// node is shared by every Vault, so its flavour is global: when one exists
+    /// we reflect it as the current selection and warn that changing it switches
+    /// every Vault.
+    existing_flavor: Option<NodeFlavor>,
 }
 
 impl Default for SelectBitcoindTypeStep {
@@ -482,6 +491,8 @@ impl SelectBitcoindTypeStep {
             show_advanced: false,
             network: Network::Bitcoin,
             connect_authenticated: false,
+            node_flavor: NodeFlavor::Knots,
+            existing_flavor: None,
         }
     }
 }
@@ -493,6 +504,19 @@ impl Step for SelectBitcoindTypeStep {
         // Expand advanced section by default on non-mainnet networks.
         if ctx.network != Network::Bitcoin {
             self.show_advanced = true;
+        }
+        // The managed node is shared by every Vault, so its flavour is global.
+        // If one already exists, reflect its flavour as the current selection —
+        // so creating a Vault doesn't silently switch it — and remember it so the
+        // picker can warn that changing the choice switches every Vault.
+        let bitcoind_datadir = internal_bitcoind_datadir(&ctx.coincube_directory);
+        self.existing_flavor = InternalBitcoindConfig::from_file(
+            &bitcoind::internal_bitcoind_config_path(&bitcoind_datadir),
+        )
+        .ok()
+        .map(|conf| conf.flavor);
+        if let Some(flavor) = self.existing_flavor {
+            self.node_flavor = flavor;
         }
     }
 
@@ -514,6 +538,9 @@ impl Step for SelectBitcoindTypeStep {
                 message::SelectBitcoindTypeMsg::ToggleAdvanced => {
                     self.show_advanced = !self.show_advanced;
                 }
+                message::SelectBitcoindTypeMsg::SelectNodeFlavor(flavor) => {
+                    self.node_flavor = flavor;
+                }
                 message::SelectBitcoindTypeMsg::UseExternal(selected) => {
                     self.use_external = selected;
                     self.use_connect = false;
@@ -531,6 +558,9 @@ impl Step for SelectBitcoindTypeStep {
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
+        // Carry the chosen managed-node flavour to the InternalBitcoindStep.
+        // Harmless on the non-install paths (that step is skipped then).
+        ctx.node_flavor = self.node_flavor;
         if self.use_connect {
             let install_node = self.install_node && !self.use_external;
             ctx.use_coincube_connect = true;
@@ -621,6 +651,8 @@ impl Step for SelectBitcoindTypeStep {
             self.show_advanced,
             PRUNE_DEFAULT,
             self.connect_authenticated,
+            self.node_flavor,
+            self.existing_flavor,
         )
     }
 }
@@ -825,16 +857,15 @@ impl InternalBitcoindStep {
 
 impl Step for InternalBitcoindStep {
     fn load_context(&mut self, ctx: &Context) {
-        // The installer has no Knots picker, so `self.flavor` defaults to Core.
-        // Adopt the flavour already configured on disk (if any) so we don't
-        // silently downgrade an existing Knots+RDTS node to Core or fetch the
-        // wrong binary. A brand-new install (no conf yet) keeps the step's own
-        // default flavour.
-        if let Ok(conf) = InternalBitcoindConfig::from_file(
-            &bitcoind::internal_bitcoind_config_path(&self.bitcoind_datadir),
-        ) {
-            self.flavor = conf.flavor;
-        }
+        // The flavour the user picked on the node-management step
+        // (`Context::node_flavor`, default Knots) is authoritative. We must NOT
+        // adopt a leftover on-disk `InternalBitcoindConfig`'s flavour here: the
+        // managed-node directory is shared and survives a cube delete, so a
+        // config written by an earlier (pre-picker) Core install would silently
+        // override an explicit Knots pick — installing Core for a user who asked
+        // for Knots. `DefineConfig` reuses a matching on-disk config (ports /
+        // RDTS) and rebuilds it on a flavour change.
+        self.flavor = ctx.node_flavor;
         if self.exe_path.is_none() {
             // Check if current managed bitcoind version is already installed.
             // For new installations, we ignore any previous managed bitcoind versions that might be installed.
@@ -889,13 +920,20 @@ impl Step for InternalBitcoindStep {
                     let mut conf = match InternalBitcoindConfig::from_file(
                         &bitcoind::internal_bitcoind_config_path(&self.bitcoind_datadir),
                     ) {
-                        // Preserve an existing conf's flavour and RDTS setting:
-                        // the installer has no Knots picker, so it must not
-                        // rewrite an existing Knots `bitcoin.conf` and drop
-                        // `consensusrules=rdts`.
-                        Ok(conf) => conf,
-                        // Fresh install: use the step's selected flavour (Core by
-                        // default); `for_flavor` enables RDTS only for Knots.
+                        // An existing managed node is shared by every Vault, so
+                        // flavour is global. Keep its ports/datadir (so every
+                        // Vault keeps connecting to the same RPC endpoint) and
+                        // apply the chosen flavour in place — a Core→Knots switch
+                        // just flips the binary and toggles `consensusrules=rdts`,
+                        // and `maybe_start` stops the old-flavour node so the
+                        // configured binary takes over the same port.
+                        Ok(mut conf) => {
+                            conf.flavor = self.flavor;
+                            conf.enforce_rdts = matches!(self.flavor, NodeFlavor::Knots);
+                            conf
+                        }
+                        // Fresh install: build for the chosen flavour (ports are
+                        // allocated below); `for_flavor` enables RDTS only for Knots.
                         Err(InternalBitcoindConfigError::FileNotFound) => {
                             InternalBitcoindConfig::for_flavor(self.flavor)
                         }
@@ -1230,6 +1268,13 @@ mod tests {
 
     fn sha256_hex(bytes: &[u8]) -> String {
         sha256::Hash::hash(bytes).to_string()
+    }
+
+    /// The managed-node install must default to Knots (BIP-110 / RDTS); Core is
+    /// the opt-out. Guards against the default silently reverting to Core.
+    #[test]
+    fn installer_defaults_to_knots() {
+        assert_eq!(SelectBitcoindTypeStep::new().node_flavor, NodeFlavor::Knots);
     }
 
     // The real published release manifest and its detached signature. Used to

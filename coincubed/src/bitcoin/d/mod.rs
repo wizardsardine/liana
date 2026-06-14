@@ -1267,6 +1267,22 @@ impl BitcoinD {
     pub fn stop(&self) {
         self.make_node_request("stop", None);
     }
+
+    /// The running node's `getnetworkinfo.subversion` (e.g.
+    /// `/Satoshi:29.3.0(knots20260508)/`), or `None` if the request fails.
+    /// Fallible (never panics) because the desktop calls it to decide whether a
+    /// reachable managed node is Core or Knots, possibly while it is shutting
+    /// down. Distinct from the internal [`Self::get_bitcoind_subversion`], which
+    /// is informational and may panic on a failed request.
+    pub fn subversion(&self) -> Option<String> {
+        self.make_fallible_node_request("getnetworkinfo", None)
+            .ok()
+            .and_then(|info| {
+                info.get("subversion")
+                    .and_then(Json::as_str)
+                    .map(String::from)
+            })
+    }
 }
 
 /// Information about the block chain verification progress.
@@ -1287,6 +1303,13 @@ impl SyncProgress {
             headers,
             blocks,
         }
+    }
+
+    /// The raw verification percentage (0..=1), un-rounded. Read-only accessor
+    /// so the lock-free [`crate::bitcoin::SyncProgressCache`] can round-trip a
+    /// `SyncProgress` through atomics.
+    pub fn percentage(&self) -> f64 {
+        self.percentage
     }
 
     /// Get the verification progress, roundup up to four decimal places. This will not return

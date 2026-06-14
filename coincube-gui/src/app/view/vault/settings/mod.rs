@@ -1601,17 +1601,17 @@ pub fn node_setup_mode_picker_panel<'a>() -> Element<'a, NodeSettingsMessage> {
                     Row::new()
                         .spacing(10)
                         .push(
-                            button::primary(None, "Bitcoin Core →")
-                                .padding([8, 14])
-                                .on_press(NodeSettingsMessage::SetupLocalNodeManagedFlavor(
-                                    NodeFlavor::Core,
-                                )),
-                        )
-                        .push(
-                            button::secondary(None, "Bitcoin Knots + RDTS →")
+                            button::primary(None, "Bitcoin Knots + RDTS →")
                                 .padding([8, 14])
                                 .on_press(NodeSettingsMessage::SetupLocalNodeManagedFlavor(
                                     NodeFlavor::Knots,
+                                )),
+                        )
+                        .push(
+                            button::secondary(None, "Bitcoin Core →")
+                                .padding([8, 14])
+                                .on_press(NodeSettingsMessage::SetupLocalNodeManagedFlavor(
+                                    NodeFlavor::Core,
                                 )),
                         ),
                 )
@@ -1619,6 +1619,14 @@ pub fn node_setup_mode_picker_panel<'a>() -> Element<'a, NodeSettingsMessage> {
                     text(
                         "Knots enforces BIP-110 (Reduced Data Temporary Softfork): it rejects \
                          oversized data-carrier transactions. Standard sends are unaffected.",
+                    )
+                    .size(12)
+                    .style(theme::text::secondary),
+                )
+                .push(
+                    text(
+                        "Your Vaults share one Bitcoin node, so this applies to every Vault — \
+                         switching restarts the node and moves them all to the chosen build.",
                     )
                     .size(12)
                     .style(theme::text::secondary),

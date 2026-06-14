@@ -41,6 +41,49 @@ impl fmt::Display for BlockChainTip {
     }
 }
 
+/// Lock-free cache of the latest [`SyncProgress`], published by the poller and
+/// read by `get_info` WITHOUT taking the `BitcoinInterface` mutex.
+///
+/// The poller holds that mutex across a full wallet scan — over Esplora that's
+/// a long sequence of HTTP requests — and `get_info` → `sync_progress` needs
+/// the same lock, so a fresh vault's first scan left `get_info` (and the GUI's
+/// "Starting daemon…" gate, which awaits it) blocked for the entire scan.
+/// Routing the read through these atomics decouples it from that lock. The
+/// three fields are stored independently, so a concurrent reader can briefly
+/// observe a mix of two updates — harmless for a progress indicator, which is
+/// re-read every poll.
+#[derive(Debug, Default)]
+pub struct SyncProgressCache {
+    percentage_bits: sync::atomic::AtomicU64,
+    headers: sync::atomic::AtomicU64,
+    blocks: sync::atomic::AtomicU64,
+}
+
+impl SyncProgressCache {
+    /// Publish the latest progress. Called by the poller right after it reads
+    /// `sync_progress` from the backend (with the backend lock already
+    /// released), so this never runs while the `BitcoinInterface` mutex is held.
+    pub fn store(&self, progress: &SyncProgress) {
+        use sync::atomic::Ordering::Relaxed;
+        self.percentage_bits
+            .store(progress.percentage().to_bits(), Relaxed);
+        self.headers.store(progress.headers, Relaxed);
+        self.blocks.store(progress.blocks, Relaxed);
+    }
+
+    /// Read the latest published progress without locking. Before the poller's
+    /// first publish this returns the zero default (0%), which reads as
+    /// "still syncing" — exactly the right answer during startup.
+    pub fn load(&self) -> SyncProgress {
+        use sync::atomic::Ordering::Relaxed;
+        SyncProgress::new(
+            f64::from_bits(self.percentage_bits.load(Relaxed)),
+            self.headers.load(Relaxed),
+            self.blocks.load(Relaxed),
+        )
+    }
+}
+
 /// Our Bitcoin backend.
 pub trait BitcoinInterface: Send {
     fn genesis_block_timestamp(&self) -> u32;

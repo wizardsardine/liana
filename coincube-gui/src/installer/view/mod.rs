@@ -1167,6 +1167,64 @@ pub fn define_coincube_connect<'a>(
     )
 }
 
+/// Knots / Core picker shown on the node-management step when the user opts to
+/// install a managed node. Knots is the default (enforces BIP-110 / RDTS); the
+/// selected flavour is primary-styled. Because the headless node never shows
+/// Knots' own confirmation prompt, this one-line blurb is where the user
+/// consents to RDTS enforcement.
+fn node_flavor_selector<'a>(
+    selected: crate::node::bitcoind::NodeFlavor,
+    existing: Option<crate::node::bitcoind::NodeFlavor>,
+) -> Element<'a, Message> {
+    use crate::node::bitcoind::NodeFlavor;
+    let option = |flavor: NodeFlavor| {
+        let label = flavor.display_name();
+        let btn = if selected == flavor {
+            button::primary(None, label)
+        } else {
+            button::secondary(None, label)
+        };
+        btn.width(Length::Fixed(260.0))
+            .on_press(Message::SelectBitcoindType(
+                message::SelectBitcoindTypeMsg::SelectNodeFlavor(flavor),
+            ))
+    };
+    let blurb = match selected {
+        NodeFlavor::Knots => {
+            "Bitcoin Knots enforces BIP-110 (Reduced Data Temporary Softfork). Recommended."
+        }
+        NodeFlavor::Core => "Bitcoin Core — the reference implementation; no RDTS enforcement.",
+    };
+    let mut col = Column::new()
+        .spacing(10)
+        .push(text("Node software").bold())
+        .push(
+            Row::new()
+                .spacing(15)
+                .push(option(NodeFlavor::Knots))
+                .push(option(NodeFlavor::Core)),
+        )
+        .push(text(blurb))
+        // The managed node is shared across every Vault, so the choice is global.
+        .push(text(
+            "All your Vaults share one Bitcoin node, so this choice applies to every Vault.",
+        ));
+    // When a node already exists and this would change its flavour, make the
+    // global impact explicit: switching restarts the node for ALL Vaults.
+    if let Some(existing) = existing {
+        if existing != selected {
+            col = col.push(
+                text(format!(
+                    "Changing this will restart your node and switch all existing Vaults to {}.",
+                    selected.display_name()
+                ))
+                .bold(),
+            );
+        }
+    }
+    col.into()
+}
+
 pub fn select_bitcoind_type<'a>(
     progress: (usize, usize),
     network: bitcoin::Network,
@@ -1174,6 +1232,8 @@ pub fn select_bitcoind_type<'a>(
     show_advanced: bool,
     prune_default_mb: u32,
     connect_authenticated: bool,
+    node_flavor: crate::node::bitcoind::NodeFlavor,
+    existing_flavor: Option<crate::node::bitcoind::NodeFlavor>,
 ) -> Element<'a, Message> {
     let content: Column<'a, Message> =
         if network == bitcoin::Network::Regtest {
@@ -1348,40 +1408,45 @@ pub fn select_bitcoind_type<'a>(
             let node_description = if install_node {
                 let disk_gb = (prune_default_mb as f64 / 1024.0).round() as u32;
                 format!(
-                    "Coincube will download and configure a pruned Bitcoin node \
+                    "Coincube will download and configure a pruned {} node \
                 (~{} GB of disk space required). \
                 Once synced, your Vault will automatically switch to your local node.",
+                    node_flavor.display_name(),
                     disk_gb
                 )
             } else {
                 "Your Vault will use COINCUBE | Connect as its only Bitcoin backend.".to_string()
             };
 
-            let default_card = Container::new(
-                Column::new()
-                    .spacing(20)
-                    .max_width(620)
-                    .push(text("Start with COINCUBE | Connect").bold())
-                    .push(text(
-                        "Your Vault will use our hosted Esplora server immediately. \
+            let mut default_col = Column::new()
+                .spacing(20)
+                .max_width(620)
+                .push(text("Start with COINCUBE | Connect").bold())
+                .push(text(
+                    "Your Vault will use our hosted Esplora server immediately. \
                     No setup required.",
-                    ))
-                    .push(
-                        checkbox(install_node)
-                            .label("Also install a Bitcoin node on my device")
-                            .on_toggle(|_| {
-                                Message::SelectBitcoindType(
-                                    message::SelectBitcoindTypeMsg::ToggleInstallNode,
-                                )
-                            }),
-                    )
-                    .push(text(node_description))
-                    .push(
-                        button::primary(None, "Continue").on_press(Message::SelectBitcoindType(
-                            message::SelectBitcoindTypeMsg::ContinueWithConnect,
-                        )),
-                    ),
-            )
+                ))
+                .push(
+                    checkbox(install_node)
+                        .label("Also install a Bitcoin node on my device")
+                        .on_toggle(|_| {
+                            Message::SelectBitcoindType(
+                                message::SelectBitcoindTypeMsg::ToggleInstallNode,
+                            )
+                        }),
+                );
+
+            // When installing a managed node, let the user pick the flavour.
+            // Defaults to Knots (enforces BIP-110 / RDTS); Core is the opt-out.
+            if install_node {
+                default_col = default_col.push(node_flavor_selector(node_flavor, existing_flavor));
+            }
+
+            let default_card = Container::new(default_col.push(text(node_description)).push(
+                button::primary(None, "Continue").on_press(Message::SelectBitcoindType(
+                    message::SelectBitcoindTypeMsg::ContinueWithConnect,
+                )),
+            ))
             .padding(30);
 
             let toggle_label = if show_advanced {

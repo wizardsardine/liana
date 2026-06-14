@@ -47,6 +47,10 @@ pub enum Message {
     View(view::Message),
     LoadDaemonConfig(Box<DaemonConfig>),
     DaemonConfigLoaded(Result<(), Error>),
+    /// Result of an off-UI-thread daemon restart (a backend switch). Carries the
+    /// new daemon — or a recovered previous one on failure — so the App can swap
+    /// it in without freezing the UI on `daemon.stop()` / `EmbeddedDaemon::start`.
+    DaemonRestarted(super::DaemonRestart),
     LoadWallet(Wallet),
     Info(Result<GetInfoResult, Error>),
     ReceiveAddress(Result<(Address, ChildNumber), Error>),

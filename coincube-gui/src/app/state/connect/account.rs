@@ -11,11 +11,10 @@ use crate::{
     services::coincube::{
         BillingCycle, BillingHistoryEntry, ChargeStatus, CheckoutRequest, CheckoutResponse,
         CoincubeClient, ConnectPlan, Contact, ContactCube, ContactRole,
-        CreateDuressAlertContactRequest, CreateInviteRequest, DuressAlertContact, DuressCheckOutcome,
-        FeaturesResponse,
-        Invite, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest, PlanStatus, PlanTier,
-        ReceivedInvite, UpdateDuressAlertContactRequest, User, VerifiedDevice,
-        DURESS_CHANNEL_EMAIL, DURESS_CHANNEL_SMS, DURESS_CHANNEL_WHATSAPP,
+        CreateDuressAlertContactRequest, CreateInviteRequest, DuressAlertContact,
+        DuressCheckOutcome, FeaturesResponse, Invite, LoginActivity, LoginResponse, OtpRequest,
+        OtpVerifyRequest, PlanStatus, PlanTier, ReceivedInvite, UpdateDuressAlertContactRequest,
+        User, VerifiedDevice, DURESS_CHANNEL_EMAIL, DURESS_CHANNEL_SMS, DURESS_CHANNEL_WHATSAPP,
         MAX_DURESS_ALERT_CONTACTS,
     },
 };
@@ -1674,7 +1673,8 @@ impl ConnectAccountPanel {
                         log::warn!(
                             "[CONNECT] duress gate: session rejected (401); returning to login"
                         );
-                        self.error = Some("Your session expired. Please sign in again.".to_string());
+                        self.error =
+                            Some("Your session expired. Please sign in again.".to_string());
                         self.scrub_recovery_passphrase();
                         self.step = ConnectFlowStep::Login {
                             email: String::new(),

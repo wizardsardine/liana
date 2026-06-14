@@ -150,6 +150,18 @@ impl NodeFlavor {
         }
     }
 
+    /// Infer the flavour from a running node's `getnetworkinfo.subversion`
+    /// (e.g. `/Satoshi:29.3.0(knots20260508)/`). Knots embeds `knots`; Core
+    /// never does. Used to decide whether a reachable managed node already
+    /// matches the configured flavour or must be replaced.
+    pub fn from_subversion(subversion: &str) -> Self {
+        if subversion.to_lowercase().contains("knots") {
+            NodeFlavor::Knots
+        } else {
+            NodeFlavor::Core
+        }
+    }
+
     /// Human-readable name for UI copy and logs.
     pub fn display_name(self) -> &'static str {
         match self {
@@ -643,6 +655,27 @@ fn select_managed_bitcoind_exe(
         .find(|path| path.exists())
 }
 
+/// Block until a managed bitcoind we just asked to `stop` is no longer reachable
+/// (it has shut down and released the datadir lock), so a replacement can start
+/// on the same datadir without a lock conflict. Bounded, so a node that refuses
+/// to exit can't hang startup forever; the brief grace after the RPC closes
+/// covers the gap before the `.lock` file is actually released.
+fn wait_for_internal_bitcoind_shutdown(config: &BitcoindConfig) {
+    let deadline = time::Instant::now() + time::Duration::from_secs(90);
+    while time::Instant::now() < deadline {
+        if coincubed::BitcoinD::new(config, "internal_bitcoind_stop_wait".to_string()).is_err() {
+            // RPC is down; give the OS a moment to release the datadir `.lock`.
+            thread::sleep(time::Duration::from_millis(750));
+            return;
+        }
+        thread::sleep(time::Duration::from_millis(500));
+    }
+    log::warn!(
+        "Timed out waiting for the previous managed node to stop; \
+         the replacement may fail to acquire the datadir lock"
+    );
+}
+
 impl Bitcoind {
     /// Start internal bitcoind for the given network.
     pub fn maybe_start(
@@ -650,14 +683,6 @@ impl Bitcoind {
         config: BitcoindConfig,
         coincube_datadir: &CoincubeDirectory,
     ) -> Result<Self, StartInternalBitcoindError> {
-        if coincubed::BitcoinD::new(&config, "internal_bitcoind_start".to_string()).is_ok() {
-            info!("Internal bitcoind is already running");
-            return Ok(Bitcoind {
-                config,
-                lock: LockFile::create(coincube_datadir.bitcoind_directory(), network)
-                    .map_err(|e| StartInternalBitcoindError::Lock(format!("{:?}", e)))?,
-            });
-        }
         let bitcoind_datadir = internal_bitcoind_datadir(coincube_datadir);
         // Launch a binary consistent with the on-disk `bitcoin.conf`. A conf
         // carrying `consensusrules=rdts` *requires* a Knots binary — starting
@@ -669,6 +694,36 @@ impl Bitcoind {
             InternalBitcoindConfig::from_file(&internal_bitcoind_config_path(&bitcoind_datadir))
                 .map(|conf| conf.flavor)
                 .unwrap_or(NodeFlavor::Core);
+
+        // Is a managed node already running on this RPC endpoint?
+        if let Ok(running) =
+            coincubed::BitcoinD::new(&config, "internal_bitcoind_start".to_string())
+        {
+            // The managed node is shared by every Vault, so flavour is global.
+            // If the running node already matches the configured flavour, reuse
+            // it. If it doesn't (a global flavour switch — e.g. Core is up for
+            // existing Vaults and the user just picked Knots), stop it so we can
+            // relaunch the configured binary on the same datadir/port; every
+            // Vault then reconnects to the new flavour on the same RPC port.
+            let running_flavor = running
+                .subversion()
+                .map(|sv| NodeFlavor::from_subversion(&sv))
+                .unwrap_or(configured_flavor);
+            if running_flavor == configured_flavor {
+                info!("Internal bitcoind is already running ({running_flavor:?})");
+                return Ok(Bitcoind {
+                    config,
+                    lock: LockFile::create(coincube_datadir.bitcoind_directory(), network)
+                        .map_err(|e| StartInternalBitcoindError::Lock(format!("{:?}", e)))?,
+                });
+            }
+            info!(
+                "Managed node flavour switch {running_flavor:?} → {configured_flavor:?}; \
+                 stopping the running node so the configured binary can take over"
+            );
+            running.stop();
+            wait_for_internal_bitcoind_shutdown(&config);
+        }
         let bitcoind_exe_path = select_managed_bitcoind_exe(coincube_datadir, configured_flavor)
             .ok_or(StartInternalBitcoindError::ExecutableNotFound)?;
         info!(

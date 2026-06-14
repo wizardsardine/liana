@@ -306,6 +306,16 @@ pub struct Config {
     /// is true (Connect is primary until then); cleared after the switch.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub pending_bitcoind: Option<BitcoindConfig>,
+    /// Whether the app should auto-switch to [`Self::pending_bitcoind`] as soon
+    /// as it is synced. True when the user adopted a node (installed alongside
+    /// Connect, or set one up in Settings) — they want it once ready, even if it
+    /// reused an existing chainstate and was never observed in IBD. False when a
+    /// synced node is merely *parked* (the user switched to Connect, or a
+    /// Bitcoind failure fell back to Esplora), so we don't auto-revert their
+    /// choice. Defaults false for backward compatibility; only written when true
+    /// so existing `daemon.toml` files (and the common parked case) stay clean.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto_switch_to_pending: bool,
 }
 
 impl Config {
@@ -325,6 +335,7 @@ impl Config {
             data_dir: None,
             fallback_esplora: None,
             pending_bitcoind: None,
+            auto_switch_to_pending: false,
         }
     }
 

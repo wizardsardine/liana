@@ -331,6 +331,7 @@ fn setup_electrum(
 fn setup_esplora(
     config: &Config,
     db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
+    scan_abort: sync::Arc<sync::atomic::AtomicBool>,
 ) -> Result<Esplora, StartupError> {
     let esplora_config = match config.bitcoin_backend.as_ref() {
         Some(config::BitcoinBackend::Esplora(esplora_config)) => esplora_config,
@@ -340,7 +341,7 @@ fn setup_esplora(
         let chain_hash = ChainHash::using_genesis_block(config.bitcoin_config.network);
         BlockHash::from_byte_array(*chain_hash.as_bytes())
     };
-    let client = crate::bitcoin::esplora::client::Client::new(esplora_config)
+    let client = crate::bitcoin::esplora::client::Client::new(esplora_config, scan_abort)
         .map_err(|e| StartupError::Esplora(EsploraError::Client(e)))?;
     let mut db_conn = db.connection();
     let tip = db_conn.chain_tip();
@@ -396,6 +397,10 @@ pub struct DaemonControl {
     // FIXME: Should we require Sync on DatabaseInterface rather than using a Mutex?
     db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    // Lock-free mirror of the poller's latest sync progress. `get_info` reads
+    // this instead of locking `bitcoin`, so it never blocks behind the poller's
+    // full wallet scan (the "Starting daemon…" stall).
+    sync_progress_cache: sync::Arc<crate::bitcoin::SyncProgressCache>,
 }
 
 impl DaemonControl {
@@ -405,6 +410,7 @@ impl DaemonControl {
         poller_sender: mpsc::SyncSender<poller::PollerMessage>,
         db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+        sync_progress_cache: sync::Arc<crate::bitcoin::SyncProgressCache>,
     ) -> DaemonControl {
         DaemonControl {
             config,
@@ -412,6 +418,7 @@ impl DaemonControl {
             poller_sender,
             db,
             secp,
+            sync_progress_cache,
         }
     }
 
@@ -430,12 +437,18 @@ pub enum DaemonHandle {
         poller_sender: mpsc::SyncSender<poller::PollerMessage>,
         poller_handle: thread::JoinHandle<()>,
         control: DaemonControl,
+        /// Set on `stop` so an in-flight Esplora scan aborts promptly instead of
+        /// blocking the poller join on requests to dead/throttled providers.
+        /// Unused (but harmless) for the bitcoind/electrum backends.
+        scan_abort: sync::Arc<sync::atomic::AtomicBool>,
     },
     Server {
         poller_sender: mpsc::SyncSender<poller::PollerMessage>,
         poller_handle: thread::JoinHandle<()>,
         rpcserver_shutdown: sync::Arc<sync::atomic::AtomicBool>,
         rpcserver_handle: thread::JoinHandle<Result<(), io::Error>>,
+        /// See [`DaemonHandle::Controller::scan_abort`].
+        scan_abort: sync::Arc<sync::atomic::AtomicBool>,
     },
 }
 
@@ -497,6 +510,11 @@ impl DaemonHandle {
             )?)) as sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         };
 
+        // Shared abort flag: `stop` flips it so an in-flight Esplora scan stops
+        // walking the provider chain and returns promptly, instead of the poller
+        // (and the `stop` that joins it) blocking on dead/throttled providers.
+        let scan_abort = sync::Arc::new(sync::atomic::AtomicBool::new(false));
+
         // Finally set up the Bitcoin backend.
         let bit = match (bitcoin, &config.bitcoin_backend) {
             (Some(bit), _) => sync::Arc::from(sync::Mutex::from(bit)),
@@ -507,16 +525,25 @@ impl DaemonHandle {
             (None, Some(config::BitcoinBackend::Electrum(..))) => {
                 sync::Arc::from(sync::Mutex::from(setup_electrum(&config, db.clone())?))
             }
-            (None, Some(config::BitcoinBackend::Esplora(..))) => {
-                sync::Arc::from(sync::Mutex::from(setup_esplora(&config, db.clone())?))
-            }
+            (None, Some(config::BitcoinBackend::Esplora(..))) => sync::Arc::from(
+                sync::Mutex::from(setup_esplora(&config, db.clone(), scan_abort.clone())?),
+            ),
             (None, None) => Err(StartupError::MissingBitcoinBackendConfig)?,
         };
 
+        // Shared, lock-free sync-progress mirror: the poller publishes into it,
+        // `get_info` reads from it — so `get_info` (and the GUI's startup gate
+        // that awaits it) never blocks behind the poller's full wallet scan.
+        let sync_progress_cache = sync::Arc::new(crate::bitcoin::SyncProgressCache::default());
+
         // Start the poller thread. Keep the thread handle to be able to check if it crashed. Store
         // an atomic to be able to stop it.
-        let mut bitcoin_poller =
-            poller::Poller::new(bit.clone(), db.clone(), config.main_descriptor.clone());
+        let mut bitcoin_poller = poller::Poller::new(
+            bit.clone(),
+            db.clone(),
+            config.main_descriptor.clone(),
+            sync_progress_cache.clone(),
+        );
         let (poller_sender, poller_receiver) = mpsc::sync_channel(1);
         let poller_handle = thread::Builder::new()
             .name("Bitcoin Network poller".to_string())
@@ -532,7 +559,14 @@ impl DaemonHandle {
 
         // Create the API the external world will use to talk to us, either directly through the Rust
         // structure or through the JSONRPC server we may setup below.
-        let control = DaemonControl::new(config, bit, poller_sender.clone(), db, secp);
+        let control = DaemonControl::new(
+            config,
+            bit,
+            poller_sender.clone(),
+            db,
+            secp,
+            sync_progress_cache,
+        );
 
         if with_rpc_server {
             let rpcserver_shutdown = sync::Arc::from(sync::atomic::AtomicBool::from(false));
@@ -552,6 +586,7 @@ impl DaemonHandle {
                 poller_handle,
                 rpcserver_shutdown,
                 rpcserver_handle,
+                scan_abort,
             });
         }
 
@@ -559,6 +594,7 @@ impl DaemonHandle {
             poller_sender,
             poller_handle,
             control,
+            scan_abort,
         })
     }
 
@@ -598,8 +634,12 @@ impl DaemonHandle {
             Self::Controller {
                 poller_sender,
                 poller_handle,
+                scan_abort,
                 ..
             } => {
+                // Abort any in-flight Esplora scan FIRST, then signal shutdown,
+                // so the poller can't be stuck mid-scan when we join it below.
+                scan_abort.store(true, sync::atomic::Ordering::Relaxed);
                 poller_sender
                     .send(poller::PollerMessage::Shutdown)
                     .expect("The other end should never have hung up before this.");
@@ -611,7 +651,9 @@ impl DaemonHandle {
                 poller_handle,
                 rpcserver_shutdown,
                 rpcserver_handle,
+                scan_abort,
             } => {
+                scan_abort.store(true, sync::atomic::Ordering::Relaxed);
                 poller_sender
                     .send(poller::PollerMessage::Shutdown)
                     .expect("The other end should never have hung up before this.");
@@ -809,7 +851,25 @@ mod tests {
     // framework.
     #[test]
     fn daemon_startup() {
-        // TODO: startup might stall, in that scenario the test should fail after a set amount of time
+        // This exercises a startup path with a known thread race: the poller can
+        // begin polling (making an unscripted RPC) before it observes the
+        // `Shutdown` this test sends, which stalls startup. Run the body under a
+        // watchdog so a stall FAILS the test promptly instead of hanging CI
+        // forever (resolving the long-standing TODO this replaced). A panic
+        // inside the body (e.g. the ~1-minute RPC-retry timeout) is surfaced too.
+        let worker = thread::spawn(daemon_startup_inner);
+        let deadline = time::Instant::now() + time::Duration::from_secs(120);
+        while !worker.is_finished() {
+            assert!(
+                time::Instant::now() < deadline,
+                "daemon_startup stalled for >120s (startup race lost) — failing instead of hanging",
+            );
+            thread::sleep(time::Duration::from_millis(50));
+        }
+        worker.join().expect("daemon_startup body panicked");
+    }
+
+    fn daemon_startup_inner() {
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
         let data_dir: path::PathBuf = [tmp_dir.as_path(), path::Path::new("datadir")]
