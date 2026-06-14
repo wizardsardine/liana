@@ -1274,8 +1274,13 @@ impl BitcoinD {
     /// reachable managed node is Core or Knots, possibly while it is shutting
     /// down. Distinct from the internal [`Self::get_bitcoind_subversion`], which
     /// is informational and may panic on a failed request.
+    ///
+    /// Probes with `retry = false`: this is a fail-fast liveness/flavour check,
+    /// so a transient error (or a node mid-shutdown) must return `None` at once
+    /// rather than block the caller for up to `BITCOIND_RETRY_LIMIT` seconds in
+    /// the retry loop.
     pub fn subversion(&self) -> Option<String> {
-        self.make_fallible_node_request("getnetworkinfo", None)
+        self.make_request_inner(&self.node_client, "getnetworkinfo", None, false)
             .ok()
             .and_then(|info| {
                 info.get("subversion")

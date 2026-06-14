@@ -886,30 +886,7 @@ impl ConnectAccountPanel {
 
             ConnectAccountMessage::LogOut => {
                 let was_logged_in = self.user.is_some();
-                self.session_generation += 1;
-                self.user = None;
-                self.plan = None;
-                self.verified_devices = None;
-                self.login_activity = None;
-                self.features = None;
-                self.checkout = None;
-                self.billing_history = None;
-                self.show_billing_history = false;
-                self.renewal_banner_dismissed = false;
-                self.campaign_redeem = CampaignRedeemState::default();
-                self.register_campaign_code = String::new();
-                self.pending_campaign_code = None;
-                self.selected_billing_cycle = BillingCycle::Monthly;
-                self.contacts_state.clear();
-                self.duress_contacts.clear();
-                // Scrub any in-flight enrollment wizard secrets (PINs,
-                // passphrases, generated code) and the recovery all-clear
-                // passphrase before dropping them, so they don't survive the
-                // session reset.
-                self.clear_duress_enroll();
-                self.scrub_recovery_passphrase();
-                self.clear_keyring_session();
-                self.client = CoincubeClient::new();
+                self.clear_session();
                 self.step = ConnectFlowStep::Login {
                     email: String::new(),
                     loading: false,
@@ -1673,9 +1650,13 @@ impl ConnectAccountPanel {
                         log::warn!(
                             "[CONNECT] duress gate: session rejected (401); returning to login"
                         );
+                        // The session is dead — tear it all down (bumps
+                        // session_generation so stale async results are ignored,
+                        // drops the JWT client, keyring session, and cached
+                        // user/plan) so the next Init doesn't restore it.
+                        self.clear_session();
                         self.error =
                             Some("Your session expired. Please sign in again.".to_string());
-                        self.scrub_recovery_passphrase();
                         self.step = ConnectFlowStep::Login {
                             email: String::new(),
                             loading: false,
@@ -1723,6 +1704,39 @@ impl ConnectAccountPanel {
             error: None,
             pending_code: None,
         });
+    }
+
+    /// Tears down all session state: bumps `session_generation` (so any
+    /// in-flight async results keyed to the old generation are ignored),
+    /// clears cached user/plan/feature data, scrubs secrets, drops the keyring
+    /// session, and replaces the JWT-bearing client with a fresh anonymous one.
+    /// Does NOT set `self.step` — the caller picks the destination (Login, an
+    /// error screen, etc.). Shared by `LogOut` and the duress-gate 401 path so
+    /// a rejected session can't leave stale state behind for the next `Init`.
+    fn clear_session(&mut self) {
+        self.session_generation += 1;
+        self.user = None;
+        self.plan = None;
+        self.verified_devices = None;
+        self.login_activity = None;
+        self.features = None;
+        self.checkout = None;
+        self.billing_history = None;
+        self.show_billing_history = false;
+        self.renewal_banner_dismissed = false;
+        self.campaign_redeem = CampaignRedeemState::default();
+        self.register_campaign_code = String::new();
+        self.pending_campaign_code = None;
+        self.selected_billing_cycle = BillingCycle::Monthly;
+        self.contacts_state.clear();
+        self.duress_contacts.clear();
+        // Scrub any in-flight enrollment wizard secrets (PINs, passphrases,
+        // generated code) and the recovery all-clear passphrase before
+        // dropping them, so they don't survive the session reset.
+        self.clear_duress_enroll();
+        self.scrub_recovery_passphrase();
+        self.clear_keyring_session();
+        self.client = CoincubeClient::new();
     }
 
     /// Zeroizes the in-memory all-clear passphrase when the panel is in the

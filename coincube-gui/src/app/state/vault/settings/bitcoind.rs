@@ -289,6 +289,10 @@ impl State for BitcoindSettingsState {
                         if let Some(cfg) = daemon.config() {
                             let mut rollback_cfg = cfg.clone();
                             rollback_cfg.pending_bitcoind = None;
+                            // Keep the invariant: no pending node ⇒ nothing to
+                            // auto-switch to. Leaving the flag set would strand a
+                            // stale "auto-switch enabled" state with no target.
+                            rollback_cfg.auto_switch_to_pending = false;
                             return Task::done(Message::LoadDaemonConfig(Box::new(rollback_cfg)));
                         }
                     }
@@ -625,6 +629,10 @@ impl State for BitcoindSettingsState {
                                 let mut new_cfg = cfg.clone();
                                 new_cfg.bitcoin_backend = Some(BitcoinBackend::Bitcoind(pending));
                                 new_cfg.pending_bitcoind = None;
+                                // The pending node is now the active backend, so
+                                // clear the auto-switch flag too — keeping it set
+                                // with no pending target violates the invariant.
+                                new_cfg.auto_switch_to_pending = false;
                                 new_cfg.fallback_esplora = old_esplora;
                                 // Drop the poll cadence back to the
                                 // snappy local-node interval. The

@@ -1557,8 +1557,9 @@ pub enum DuressCheckOutcome {
     /// logged at the call site. Auto-retrying in a tight loop is futile, but a
     /// manual retry can still recover if the server is hotfixed.
     Incompatible,
-    /// 401 — the session was rejected; bounce to login rather than hold the
-    /// gate closed forever.
+    /// 401/403 — the session/token was definitively rejected; bounce to login
+    /// rather than hold the gate closed forever or retry a credential the
+    /// server won't accept.
     Unauthorized,
 }
 
@@ -1568,9 +1569,61 @@ impl DuressCheckOutcome {
     pub fn from_err(e: &CoincubeError) -> Self {
         match e {
             CoincubeError::Parse(_) => Self::Incompatible,
-            CoincubeError::Unsuccessful(info) if info.status_code == 401 => Self::Unauthorized,
+            // Mirror `CoincubeError::is_auth_error` (401/403): a rejected token
+            // won't recover by retrying, so re-auth instead of backing off as if
+            // the network were down. Keep these in sync to avoid 403 silently
+            // falling through to a futile retry loop.
+            _ if e.is_auth_error() => Self::Unauthorized,
             _ => Self::Unreachable,
         }
+    }
+}
+
+#[cfg(test)]
+mod duress_check_outcome_tests {
+    use super::*;
+    use crate::services::http::NotSuccessResponseInfo;
+
+    fn unsuccessful(status_code: u16) -> CoincubeError {
+        CoincubeError::Unsuccessful(NotSuccessResponseInfo {
+            status_code,
+            text: String::new(),
+        })
+    }
+
+    #[test]
+    fn auth_errors_map_to_unauthorized() {
+        // Both 401 and 403 are "token definitively rejected" (see
+        // is_auth_error) and must re-auth, not retry-with-backoff.
+        assert!(matches!(
+            DuressCheckOutcome::from_err(&unsuccessful(401)),
+            DuressCheckOutcome::Unauthorized
+        ));
+        assert!(matches!(
+            DuressCheckOutcome::from_err(&unsuccessful(403)),
+            DuressCheckOutcome::Unauthorized
+        ));
+    }
+
+    #[test]
+    fn transient_and_decode_errors_classify_distinctly() {
+        // 5xx / rate-limit / other non-auth statuses are transient.
+        assert!(matches!(
+            DuressCheckOutcome::from_err(&unsuccessful(503)),
+            DuressCheckOutcome::Unreachable
+        ));
+        assert!(matches!(
+            DuressCheckOutcome::from_err(&unsuccessful(429)),
+            DuressCheckOutcome::Unreachable
+        ));
+        // A decode failure is a contract mismatch, not transient.
+        let parse_err: CoincubeError = serde_json::from_str::<DuressState>("not json")
+            .unwrap_err()
+            .into();
+        assert!(matches!(
+            DuressCheckOutcome::from_err(&parse_err),
+            DuressCheckOutcome::Incompatible
+        ));
     }
 }
 

@@ -1910,6 +1910,13 @@ impl App {
             tracing::debug!("Skipping tick - no vault configured");
             return Task::none();
         }
+        // Skip while a backend switch is in flight: `self.daemon` still points at
+        // the daemon the off-thread switch is stopping, so polling it here would
+        // hit a stopped poller/RPC. The next tick after `DaemonRestarted` swaps in
+        // the new daemon resumes normally.
+        if self.daemon_switch_in_progress {
+            return Task::none();
+        }
 
         let tick = std::time::Instant::now();
         let mut tasks = if let Some(daemon) = &self.daemon {
@@ -2864,14 +2871,36 @@ impl App {
             }
             Message::DaemonRestarted(outcome) => {
                 self.daemon_switch_in_progress = false;
+                // Non-blocking toast emitted on top of the normal result (e.g. a
+                // switch that succeeded but couldn't be persisted to disk).
+                let mut extra = Task::none();
                 let result = match outcome {
                     DaemonRestart::Started(daemon) => {
                         self.daemon = Some(daemon);
                         Ok(())
                     }
+                    DaemonRestart::StartedNotPersisted(daemon) => {
+                        // The switch succeeded (wallet is on the new backend); the
+                        // only problem is the config wasn't saved. Report success
+                        // but warn that it may not survive a restart.
+                        self.daemon = Some(daemon);
+                        extra = Task::done(Message::View(view::Message::ShowToast(
+                            log::Level::Warn,
+                            "Switched Bitcoin backend, but couldn't save the change to disk — \
+                             it may revert if you restart Coincube."
+                                .to_string(),
+                        )));
+                        Ok(())
+                    }
                     DaemonRestart::Failed { error, recovered } => {
                         if let Some(daemon) = recovered {
                             self.daemon = Some(daemon);
+                        } else {
+                            // The old daemon was already stopped during the switch
+                            // and recovery couldn't bring one back. Drop it rather
+                            // than keep referencing a dead daemon that ticks and
+                            // config loads would keep poking.
+                            self.daemon = None;
                         }
                         error!("Daemon backend switch failed: {}", error);
                         Err(error)
@@ -2884,7 +2913,7 @@ impl App {
                     self.cache.node_bitcoind_last_log = None;
                 }
                 let cfg_task = self.update_dispatch(Message::DaemonConfigLoaded(result));
-                return Task::batch([cfg_task, Task::done(Message::CacheUpdated)]);
+                return Task::batch([cfg_task, extra, Task::done(Message::CacheUpdated)]);
             }
             Message::WalletUpdated(Ok(wallet)) => {
                 // Check if we're transitioning from no-vault to has-vault state
@@ -3731,11 +3760,27 @@ impl App {
         daemon_config_path.push("daemon.toml");
         Task::perform(
             async move {
-                tokio::task::spawn_blocking(move || {
+                match tokio::task::spawn_blocking(move || {
                     restart_daemon_blocking(old_daemon, cfg, daemon_config_path)
                 })
                 .await
-                .expect("daemon restart task panicked")
+                {
+                    Ok(outcome) => outcome,
+                    // The blocking switch panicked. Still deliver a DaemonRestarted
+                    // message so its handler clears `daemon_switch_in_progress` —
+                    // otherwise the guard sticks `true` and blocks every later
+                    // LoadDaemonConfig / auto-switch indefinitely. `old_daemon` was
+                    // moved into the (now-dead) task, so there's nothing to recover.
+                    Err(join_err) => {
+                        error!("daemon restart task panicked: {join_err}");
+                        DaemonRestart::Failed {
+                            error: Error::Config(format!(
+                                "daemon restart task panicked: {join_err}"
+                            )),
+                            recovered: None,
+                        }
+                    }
+                }
             },
             Message::DaemonRestarted,
         )
@@ -3883,9 +3928,13 @@ fn new_recovery_panel(
 pub enum DaemonRestart {
     /// The new daemon started; swap it in.
     Started(Arc<dyn Daemon + Sync + Send>),
-    /// The switch failed. `recovered` is a daemon to install so the app stays
-    /// usable — either the previous daemon brought back up, or (on a
-    /// persist-only failure) the freshly started one.
+    /// The new daemon started and should be installed (the switch SUCCEEDED),
+    /// but persisting `daemon.toml` failed. Not a switch failure — the wallet is
+    /// on the new backend — but the change may not survive a restart, so the app
+    /// installs the daemon AND shows a non-blocking warning.
+    StartedNotPersisted(Arc<dyn Daemon + Sync + Send>),
+    /// The switch failed. `recovered` is the previous daemon brought back up (if
+    /// any) so the app stays usable.
     Failed {
         error: Error,
         recovered: Option<Arc<dyn Daemon + Sync + Send>>,
@@ -3945,8 +3994,12 @@ fn restart_daemon_blocking(
         }
     };
 
-    // Persist the new backend. A write failure doesn't invalidate the running
-    // daemon, so keep it and surface the error.
+    // Persist the new backend. The switch ALREADY succeeded — the new daemon is
+    // running and about to be installed — so a failed `daemon.toml` write is NOT
+    // a switch failure: reporting one would show an error in Settings while the
+    // wallet is actually on the new backend. Treat it as success and just log
+    // the persistence problem loudly; its only consequence is that the change
+    // may not survive a restart (the stale on-disk config would reload).
     let persisted = (|| -> Result<(), Error> {
         let content =
             toml::to_string(&daemon.config()).map_err(|e| Error::Config(e.to_string()))?;
@@ -3959,14 +4012,13 @@ fn restart_daemon_blocking(
             .map_err(|e| Error::Config(e.to_string()))
     })();
 
-    match persisted {
-        Ok(()) => DaemonRestart::Started(daemon),
-        Err(e) => {
-            warn!("failed to persist daemon.toml after switch: {:?}", e);
-            DaemonRestart::Failed {
-                error: e,
-                recovered: Some(daemon),
-            }
-        }
+    if let Err(e) = persisted {
+        error!(
+            "Backend switch succeeded but persisting daemon.toml failed; the wallet is on the \
+             new backend now, but the change may not survive a restart: {:?}",
+            e
+        );
+        return DaemonRestart::StartedNotPersisted(daemon);
     }
+    DaemonRestart::Started(daemon)
 }

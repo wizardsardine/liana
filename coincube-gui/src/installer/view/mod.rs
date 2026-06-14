@@ -1225,6 +1225,7 @@ fn node_flavor_selector<'a>(
     col.into()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn select_bitcoind_type<'a>(
     progress: (usize, usize),
     network: bitcoin::Network,
