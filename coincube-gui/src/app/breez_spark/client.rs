@@ -17,7 +17,9 @@
 //!   [`Frame`]s, and routes [`Response`]s through a shared pending map
 //!   (`id -> oneshot::Sender`). [`Event`] frames go to a future event
 //!   channel (not wired in Phase 3 — just logged for now).
-//! - **stderr pump**: logs each stderr line from the bridge at warn level.
+//! - **stderr pump**: relays each stderr line from the bridge into tracing
+//!   at the severity the bridge itself emitted (see `relay_bridge_log`),
+//!   stripping ANSI and demoting the SDK's empty-event keepalive.
 //!
 //! A request goes like: allocate id, insert `oneshot::Sender` into pending
 //! map, send `Request` over the writer channel, await the oneshot. The
@@ -54,7 +56,7 @@ use coincube_spark_protocol::{
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, trace, warn, Level};
 
 use super::config::SparkConfig;
 
@@ -876,9 +878,82 @@ fn spawn_stderr_task(stderr: tokio::process::ChildStderr) {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            warn!(target: "spark_bridge", "{}", line);
+            relay_bridge_log(&line);
         }
     });
+}
+
+/// Relays one stderr line from the Spark bridge subprocess into our tracing at
+/// the severity the bridge ITSELF emitted, instead of blanket-`warn!`. Blanket
+/// warn made the bridge's own `INFO`/`DEBUG` show up as warnings and — together
+/// with the Spark SDK's keepalive chatter — flooded `coincube.log` with a WARN
+/// every few seconds. ANSI colour codes the bridge writes are stripped, and the
+/// benign empty-event heartbeat (the Spark server stream's ~5s keepalive, which
+/// carries no signal) is demoted to TRACE so it can't drown the log.
+fn relay_bridge_log(raw: &str) {
+    let line = strip_ansi(raw);
+    let line = line.trim();
+    if line.is_empty() {
+        return;
+    }
+    // High-frequency, zero-signal keepalive from the SDK's event stream.
+    if line.contains("Received empty event") {
+        trace!(target: "spark_bridge", "{line}");
+        return;
+    }
+    match embedded_level(line) {
+        Some(Level::ERROR) => error!(target: "spark_bridge", "{line}"),
+        Some(Level::WARN) => warn!(target: "spark_bridge", "{line}"),
+        Some(Level::INFO) => info!(target: "spark_bridge", "{line}"),
+        Some(Level::DEBUG) => debug!(target: "spark_bridge", "{line}"),
+        Some(Level::TRACE) => trace!(target: "spark_bridge", "{line}"),
+        // Unstructured output (e.g. a panic or raw stderr) — keep it visible.
+        None => warn!(target: "spark_bridge", "{line}"),
+    }
+}
+
+/// Detects the tracing level token the bridge embedded in its formatted line
+/// (e.g. `<timestamp>  INFO spark::…: …`). The level is a whitespace-delimited
+/// field that always precedes the `target: message` separator, so we only scan
+/// the prefix before the first `": "` and require an *exact* token match. This
+/// avoids false positives when the message payload itself contains a word like
+/// `INFO` or ` ERROR ` (which a plain `contains()` over the whole line would
+/// mis-detect, especially as ERROR is checked first).
+fn embedded_level(line: &str) -> Option<Level> {
+    // Everything up to the `target: message` delimiter. The message (which may
+    // contain incidental level words) lives after it and is excluded.
+    let prefix = match line.find(": ") {
+        Some(i) => &line[..i],
+        None => line,
+    };
+    prefix.split_whitespace().find_map(|tok| match tok {
+        "ERROR" => Some(Level::ERROR),
+        "WARN" => Some(Level::WARN),
+        "INFO" => Some(Level::INFO),
+        "DEBUG" => Some(Level::DEBUG),
+        "TRACE" => Some(Level::TRACE),
+        _ => None,
+    })
+}
+
+/// Strips ANSI SGR escape sequences (the bridge colourises its tracing output,
+/// which would otherwise land as raw escape codes in our log file).
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Consume up to and including the sequence's terminating letter.
+            for c2 in chars.by_ref() {
+                if c2.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -982,4 +1057,52 @@ fn make_spark_event_stream(
             std::future::pending::<()>().await;
         },
     )
+}
+
+#[cfg(test)]
+mod stderr_relay_tests {
+    use super::{embedded_level, strip_ansi};
+    use tracing::Level;
+
+    #[test]
+    fn parses_embedded_level() {
+        assert_eq!(
+            embedded_level("2026-06-13T07:08:38Z  INFO spark::services::tokens: ok"),
+            Some(Level::INFO)
+        );
+        assert_eq!(
+            embedded_level("ts  WARN spark::events::server_stream: x"),
+            Some(Level::WARN)
+        );
+        assert_eq!(embedded_level("ts ERROR foo: boom"), Some(Level::ERROR));
+        // Unstructured line (e.g. a panic) has no level token.
+        assert_eq!(embedded_level("thread 'main' panicked at ..."), None);
+    }
+
+    #[test]
+    fn ignores_level_words_in_message_payload() {
+        // A real INFO line whose message mentions ERROR/WARN must stay INFO —
+        // the payload (after `target: `) is not scanned.
+        assert_eq!(
+            embedded_level("ts  INFO spark::x: retrying after ERROR response"),
+            Some(Level::INFO)
+        );
+        // No structured level field, only an incidental word in the message.
+        assert_eq!(
+            embedded_level("ts spark::x: user tapped the INFO button"),
+            None
+        );
+    }
+
+    #[test]
+    fn strips_ansi_colour_codes() {
+        let raw =
+            "\x1b[2m2026-06-13T07:08:38Z\x1b[0m \x1b[32m INFO\x1b[0m \x1b[2mspark::x\x1b[0m: ok";
+        let clean = strip_ansi(raw);
+        assert!(!clean.contains('\x1b'));
+        assert!(clean.contains(" INFO "));
+        assert!(clean.contains("spark::x"));
+        // Level is still detectable post-strip.
+        assert_eq!(embedded_level(&clean), Some(Level::INFO));
+    }
 }

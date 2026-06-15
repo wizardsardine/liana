@@ -7,7 +7,7 @@ use crate::{
     backup::Backup,
     dir::CoincubeDirectory,
     installer::descriptor::PathKind,
-    node::bitcoind::{Bitcoind, InternalBitcoindConfig},
+    node::bitcoind::{Bitcoind, InternalBitcoindConfig, NodeFlavor},
     services::{
         coincube::CoincubeClient,
         connect::client::backend::{BackendClient, BackendWalletClient},
@@ -104,6 +104,12 @@ pub struct Context {
     /// downstream step that copies it into `EsploraConfig.token`.
     pub connect_jwt: Option<zeroize::Zeroizing<String>>,
     pub install_node_alongside_connect: bool,
+    /// Managed-node flavour chosen on the node-management step, carried to the
+    /// `InternalBitcoindStep` that actually downloads/configures it. Defaults to
+    /// Knots (BIP-110 / RDTS); the user can switch to Core on that step. Only
+    /// consulted for a *fresh* install — an existing on-disk `bitcoin.conf`'s
+    /// flavour is always preserved so we never silently swap a running node.
+    pub node_flavor: NodeFlavor,
     pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
     pub internal_bitcoind: Option<Bitcoind>,
     /// Set when `install_node_alongside_connect` is true; holds the Bitcoind
@@ -182,6 +188,7 @@ impl Context {
             use_coincube_connect: false,
             connect_jwt: None,
             install_node_alongside_connect: false,
+            node_flavor: NodeFlavor::Knots,
             internal_bitcoind_config: None,
             internal_bitcoind: None,
             pending_bitcoind_config: None,

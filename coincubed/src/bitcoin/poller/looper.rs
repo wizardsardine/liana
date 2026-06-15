@@ -302,6 +302,15 @@ fn updates(
             // typed `client::Error::AllCooling` variant from here.
             // A regression test in `bitcoin::esplora::client`
             // guards the marker.
+            // A scan aborted by `DaemonHandle::stop` must NOT retry: return so
+            // `poll_forever` regains control and processes the Shutdown message.
+            // Recursing the 2s retry below would re-issue the (now instantly
+            // aborting) scan forever and never let the poller exit — leaving
+            // `stop()` blocked on the join.
+            if e.contains(crate::bitcoin::esplora::client::SCAN_ABORTED_DISPLAY_MARKER) {
+                log::debug!("Esplora poll aborted — daemon shutting down");
+                return;
+            }
             if e.contains(crate::bitcoin::esplora::client::ALL_COOLING_DISPLAY_MARKER) {
                 log::debug!("Esplora poll skipped: {}", e);
                 thread::sleep(time::Duration::from_secs(30));

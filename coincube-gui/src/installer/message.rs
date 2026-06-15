@@ -209,6 +209,9 @@ pub enum SelectBitcoindTypeMsg {
     ContinueWithConnect,
     ToggleInstallNode,
     ToggleAdvanced,
+    /// Pick which managed-node flavour to install (Bitcoin Knots / Core) when
+    /// installing a node alongside Connect. Defaults to Knots.
+    SelectNodeFlavor(crate::node::bitcoind::NodeFlavor),
     // Advanced options
     UseExternal(bool),
     UseConnect,

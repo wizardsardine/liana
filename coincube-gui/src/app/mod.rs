@@ -679,6 +679,19 @@ pub struct App {
     /// True while a check_bitcoind_sync_progress probe is in flight; prevents
     /// multiple concurrent RPC calls from piling up across subscription ticks.
     bitcoind_sync_probe_in_progress: bool,
+    /// True while an off-thread daemon backend switch ([`Self::spawn_daemon_switch`])
+    /// is in flight. The config isn't updated until the switch completes, so
+    /// without this guard the next sync probe would keep re-firing the switch
+    /// every tick — spawning concurrent daemon starts that race to load the same
+    /// watchonly wallet and corrupt it. Cleared by `Message::DaemonRestarted`.
+    daemon_switch_in_progress: bool,
+    /// Set when an auto-promotion to the pending local node fails and the
+    /// previous daemon is recovered. The recovered daemon still carries
+    /// `auto_switch_to_pending = true` + `pending_bitcoind`, so without this the
+    /// periodic sync probe would re-fire the same failing switch every poll,
+    /// churning the daemon. Suppresses auto-switch until the next *successful*
+    /// switch (a fresh adopt / manual switch re-arms it by clearing this).
+    auto_switch_suppressed: bool,
     /// Global "payment received" celebration overlay — shown for incoming
     /// Liquid payments (e.g. LNURL) regardless of which panel is active.
     show_received_celebration: bool,
@@ -1241,6 +1254,8 @@ impl App {
                 errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
+                daemon_switch_in_progress: false,
+                auto_switch_suppressed: false,
                 show_received_celebration: false,
                 received_celebration_amount: String::new(),
                 received_celebration_context: "transaction-received".to_string(),
@@ -1342,6 +1357,8 @@ impl App {
                 errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
+                daemon_switch_in_progress: false,
+                auto_switch_suppressed: false,
                 show_received_celebration: false,
                 received_celebration_amount: String::new(),
                 received_celebration_context: "transaction-received".to_string(),
@@ -1900,6 +1917,13 @@ impl App {
         // Skip tick processing if no vault is configured
         if self.daemon.is_none() {
             tracing::debug!("Skipping tick - no vault configured");
+            return Task::none();
+        }
+        // Skip while a backend switch is in flight: `self.daemon` still points at
+        // the daemon the off-thread switch is stopping, so polling it here would
+        // hit a stopped poller/RPC. The next tick after `DaemonRestarted` swaps in
+        // the new daemon resumes normally.
+        if self.daemon_switch_in_progress {
             return Task::none();
         }
 
@@ -2510,18 +2534,27 @@ impl App {
                 match res {
                     Err(e) => tracing::warn!("Bitcoind sync check failed: {}", e),
                     Ok((progress, ibd)) => {
-                        let was_in_ibd = self.cache.node_bitcoind_ibd == Some(true);
                         self.cache.node_bitcoind_sync_progress = Some(progress);
                         self.cache.node_bitcoind_ibd = Some(ibd);
-                        // Only auto-switch when we have observed the node transition
-                        // OUT of IBD (was_in_ibd=true → ibd=false).  This prevents
-                        // the immediate reversal that occurs when the
-                        // SwitchToConnect flow saves an already-synced Bitcoind
-                        // into pending_bitcoind: the first poll would otherwise
-                        // see ibd=false and switch back.
-                        if !ibd && was_in_ibd {
+                        // Auto-switch to the pending node once it's synced, but
+                        // only if the user *adopted* it (`auto_switch_to_pending`).
+                        // This fires even for a node that reused an existing
+                        // chainstate and was therefore never observed in IBD —
+                        // while never reverting a node merely parked by a
+                        // switch-to-Connect or a Bitcoind-failure fallback (those
+                        // clear the flag). Skip while a switch is already in
+                        // flight, so we don't spawn overlapping switches every
+                        // tick (which raced to load — and corrupted — the wallet).
+                        if !ibd && !self.daemon_switch_in_progress && !self.auto_switch_suppressed {
                             let switch =
                                 self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
+                                    // Promote unless the node was explicitly parked
+                                    // (`Some(false)`). An absent flag (`None`) is a
+                                    // legacy adopted node — the old build promoted it
+                                    // on sync with no flag — so it must promote too.
+                                    if c.auto_switch_to_pending == Some(false) {
+                                        return None;
+                                    }
                                     let pending = c.pending_bitcoind.clone()?;
                                     // Preserve the current Connect config as the new fallback.
                                     let old_esplora = match &c.bitcoin_backend {
@@ -2534,26 +2567,13 @@ impl App {
                                     new_cfg.bitcoin_backend =
                                         Some(coincubed::config::BitcoinBackend::Bitcoind(pending));
                                     new_cfg.pending_bitcoind = None;
+                                    new_cfg.auto_switch_to_pending = Some(false);
                                     new_cfg.fallback_esplora = old_esplora;
                                     Some(new_cfg)
                                 });
                             if let Some(new_cfg) = switch {
-                                let datadir = self.cache.datadir_path.clone();
-                                match self.load_daemon_config(datadir, new_cfg) {
-                                    Ok(()) => {
-                                        info!("Switched to local Bitcoind — IBD complete");
-                                        self.cache.node_bitcoind_sync_progress = None;
-                                        self.cache.node_bitcoind_ibd = None;
-                                        self.cache.node_bitcoind_last_log = None;
-                                        let cfg_task = self
-                                            .update_dispatch(Message::DaemonConfigLoaded(Ok(())));
-                                        return Task::batch([
-                                            cfg_task,
-                                            Task::done(Message::CacheUpdated),
-                                        ]);
-                                    }
-                                    Err(e) => error!("Failed to switch to Bitcoind: {}", e),
-                                }
+                                info!("Switching to local Bitcoind — node synced");
+                                return self.spawn_daemon_switch(new_cfg);
                             }
                         }
                     }
@@ -2659,87 +2679,84 @@ impl App {
                     return Task::done(Message::CacheUpdated);
                 }
             }
-            Message::UpdateDaemonCache(res) => match res {
-                Ok(mut daemon_cache) => {
-                    // Apply optimistic-broadcast overrides before the
-                    // cache is published: reconcile drops entries the
-                    // daemon now reflects on its own, then any still-
-                    // pending broadcasts get synthetic `spend_info` so
-                    // `coins_summary` (Vault balance) and every other
-                    // `cache.coins()` consumer treats the inputs as
-                    // already spent.
-                    if let Some(wallet) = &self.wallet {
-                        wallet.reconcile_with_coins(&daemon_cache.coins);
-                        wallet.apply_coin_overrides(&mut daemon_cache.coins);
+            Message::UpdateDaemonCache(res) => {
+                match res {
+                    Ok(mut daemon_cache) => {
+                        // Apply optimistic-broadcast overrides before the
+                        // cache is published: reconcile drops entries the
+                        // daemon now reflects on its own, then any still-
+                        // pending broadcasts get synthetic `spend_info` so
+                        // `coins_summary` (Vault balance) and every other
+                        // `cache.coins()` consumer treats the inputs as
+                        // already spent.
+                        if let Some(wallet) = &self.wallet {
+                            wallet.reconcile_with_coins(&daemon_cache.coins);
+                            wallet.apply_coin_overrides(&mut daemon_cache.coins);
+                        }
+                        self.cache.daemon_cache = daemon_cache;
+                        // Fire-and-forget recovery heartbeat after the sync's
+                        // fresh tip lands (Estate Notifications — PR 2). Batched
+                        // alongside the normal cache cascade so it never delays
+                        // or blocks it.
+                        let heartbeat = self.recovery_heartbeat_task();
+                        return Task::batch([heartbeat, Task::done(Message::CacheUpdated)]);
                     }
-                    self.cache.daemon_cache = daemon_cache;
-                    // Fire-and-forget recovery heartbeat after the sync's
-                    // fresh tip lands (Estate Notifications — PR 2). Batched
-                    // alongside the normal cache cascade so it never delays
-                    // or blocks it.
-                    let heartbeat = self.recovery_heartbeat_task();
-                    return Task::batch([heartbeat, Task::done(Message::CacheUpdated)]);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to update daemon cache: {}", e);
-                    // If the active Bitcoind daemon has failed and a Connect
-                    // Esplora fallback is configured (set when IBD completed),
-                    // restart using Connect — but only on transport/stopped
-                    // errors, not transient RPC application-level responses.
-                    if is_daemon_unreachable(&e) {
-                        let fallback = self
-                            .daemon
-                            .as_ref()
-                            .filter(|d| {
-                                matches!(
-                                    d.backend(),
-                                    DaemonBackend::EmbeddedCoincubed(Some(NodeType::Bitcoind))
-                                )
-                            })
-                            .and_then(|d| d.config())
-                            .and_then(|c| {
-                                c.fallback_esplora.as_ref().map(|fb| {
-                                    let mut new_cfg = c.clone();
-                                    // Demote the current Bitcoind to
-                                    // `pending_bitcoind` so the syncing card
-                                    // reappears and the user can retry once
-                                    // the node is healthy. Without this the
-                                    // fallback strands the user on Connect
-                                    // with an empty pending slot, which
-                                    // surfaces the "Set up local node" prompt
-                                    // and forces a full re-install.
-                                    let preserved_bitcoind = match &c.bitcoin_backend {
-                                        Some(coincubed::config::BitcoinBackend::Bitcoind(bc)) => {
-                                            Some(bc.clone())
-                                        }
-                                        _ => None,
-                                    };
-                                    new_cfg.bitcoin_backend = Some(
-                                        coincubed::config::BitcoinBackend::Esplora(fb.clone()),
-                                    );
-                                    new_cfg.pending_bitcoind = preserved_bitcoind;
-                                    new_cfg.fallback_esplora = None;
-                                    new_cfg
+                    Err(e) => {
+                        tracing::error!("Failed to update daemon cache: {}", e);
+                        // If the active Bitcoind daemon has failed and a Connect
+                        // Esplora fallback is configured (set when IBD completed),
+                        // restart using Connect — but only on transport/stopped
+                        // errors, not transient RPC application-level responses.
+                        if is_daemon_unreachable(&e) {
+                            let fallback = self
+                                .daemon
+                                .as_ref()
+                                .filter(|d| {
+                                    matches!(
+                                        d.backend(),
+                                        DaemonBackend::EmbeddedCoincubed(Some(NodeType::Bitcoind))
+                                    )
                                 })
-                            });
-                        if let Some(new_cfg) = fallback {
-                            let datadir = self.cache.datadir_path.clone();
-                            match self.load_daemon_config(datadir, new_cfg) {
-                                Ok(()) => {
-                                    info!("Switched to COINCUBE | Connect fallback after Bitcoind failure");
-                                    let cfg_task =
-                                        self.update_dispatch(Message::DaemonConfigLoaded(Ok(())));
-                                    return Task::batch([
-                                        cfg_task,
-                                        Task::done(Message::CacheUpdated),
-                                    ]);
+                                .and_then(|d| d.config())
+                                .and_then(|c| {
+                                    c.fallback_esplora.as_ref().map(|fb| {
+                                        let mut new_cfg = c.clone();
+                                        // Demote the current Bitcoind to
+                                        // `pending_bitcoind` so the syncing card
+                                        // reappears and the user can retry once
+                                        // the node is healthy. Without this the
+                                        // fallback strands the user on Connect
+                                        // with an empty pending slot, which
+                                        // surfaces the "Set up local node" prompt
+                                        // and forces a full re-install.
+                                        let preserved_bitcoind = match &c.bitcoin_backend {
+                                            Some(coincubed::config::BitcoinBackend::Bitcoind(
+                                                bc,
+                                            )) => Some(bc.clone()),
+                                            _ => None,
+                                        };
+                                        new_cfg.bitcoin_backend = Some(
+                                            coincubed::config::BitcoinBackend::Esplora(fb.clone()),
+                                        );
+                                        new_cfg.pending_bitcoind = preserved_bitcoind;
+                                        // Fell back to Connect after a Bitcoind
+                                        // failure — park the node but don't
+                                        // auto-revert to it on the next probe.
+                                        new_cfg.auto_switch_to_pending = Some(false);
+                                        new_cfg.fallback_esplora = None;
+                                        new_cfg
+                                    })
+                                });
+                            if let Some(new_cfg) = fallback {
+                                if !self.daemon_switch_in_progress {
+                                    info!("Switching to COINCUBE | Connect fallback after Bitcoind failure");
+                                    return self.spawn_daemon_switch(new_cfg);
                                 }
-                                Err(e) => error!("Failed to activate Connect fallback: {}", e),
                             }
                         }
                     }
                 }
-            },
+            }
             Message::CompleteDuressEnrollment(payload) => {
                 // Drop a completion that outlived its Connect session: a logout
                 // or session reset bumps `session_generation`, and persisting
@@ -2853,28 +2870,97 @@ impl App {
                 return Task::batch(commands);
             }
             Message::LoadDaemonConfig(cfg) => {
-                // Only load daemon config if we have a vault (daemon and wallet exist)
-                if self.daemon.is_some() && self.wallet.is_some() {
-                    // If pending_bitcoind is being cleared (e.g. manual SwitchToBitcoind),
-                    // clear the associated sync progress fields so the vault overview
-                    // stops showing a stale "syncing" card.
-                    let pending_cleared = self
-                        .daemon
-                        .as_ref()
-                        .and_then(|d| d.config())
-                        .map(|c| c.pending_bitcoind.is_some())
-                        .unwrap_or(false)
-                        && cfg.pending_bitcoind.is_none();
-                    if pending_cleared {
-                        self.cache.node_bitcoind_sync_progress = None;
-                        self.cache.node_bitcoind_ibd = None;
-                        self.cache.node_bitcoind_last_log = None;
-                    }
-                    let res = self.load_daemon_config(self.cache.datadir_path.clone(), *cfg);
-                    return self.update_dispatch(Message::DaemonConfigLoaded(res));
+                // Only switch if we have a vault (daemon and wallet exist). The
+                // stop-old/start-new runs off the UI thread; the pending "syncing"
+                // card is cleared in the `DaemonRestarted` success path.
+                if self.daemon.is_some() && self.wallet.is_some() && !self.daemon_switch_in_progress
+                {
+                    return self.spawn_daemon_switch(*cfg);
+                } else if self.daemon_switch_in_progress {
+                    tracing::warn!("Ignoring backend switch — one is already in progress");
+                    // Every LoadDaemonConfig originates in the node-settings panel,
+                    // which has already flipped its local `processing` flags and is
+                    // awaiting a DaemonConfigLoaded reply. Dropping the request
+                    // silently would leave those flags to be cleared by an
+                    // *unrelated* switch's later success — masquerading as this
+                    // one and losing its config. Route an explicit error back so
+                    // the panel resets and the user can retry once the in-flight
+                    // switch finishes.
+                    return self.update_dispatch(Message::DaemonConfigLoaded(Err(Error::Config(
+                        "A Bitcoin backend switch is already in progress. \
+                         Please wait for it to finish, then try again."
+                            .to_string(),
+                    ))));
                 } else {
                     tracing::warn!("Attempted to load daemon config without vault");
                 }
+            }
+            Message::DaemonRestarted(outcome) => {
+                self.daemon_switch_in_progress = false;
+                // Non-blocking toast emitted on top of the normal result (e.g. a
+                // switch that succeeded but couldn't be persisted to disk).
+                let mut extra = Task::none();
+                let result = match outcome {
+                    DaemonRestart::Started(daemon) => {
+                        self.daemon = Some(daemon);
+                        // A fresh successful switch (adopt / manual) re-arms
+                        // auto-promotion that a prior failure had suppressed.
+                        self.auto_switch_suppressed = false;
+                        Ok(())
+                    }
+                    DaemonRestart::StartedNotPersisted(daemon) => {
+                        // The switch succeeded (wallet is on the new backend); the
+                        // only problem is the config wasn't saved. Report success
+                        // but warn that it may not survive a restart.
+                        self.daemon = Some(daemon);
+                        self.auto_switch_suppressed = false;
+                        extra = Task::done(Message::View(view::Message::ShowToast(
+                            log::Level::Warn,
+                            "Switched Bitcoin backend, but couldn't save the change to disk — \
+                             it may revert if you restart Coincube."
+                                .to_string(),
+                        )));
+                        Ok(())
+                    }
+                    DaemonRestart::Failed { error, recovered } => {
+                        if let Some(daemon) = recovered {
+                            self.daemon = Some(daemon);
+                            // The recovered daemon still carries the armed
+                            // `auto_switch_to_pending` + `pending_bitcoind`, so
+                            // suppress auto-promotion to stop the same failing
+                            // switch re-firing every poll. A later user-initiated
+                            // switch re-arms it (see the Started arms).
+                            self.auto_switch_suppressed = true;
+                        } else {
+                            // The old daemon was already stopped during the switch
+                            // and recovery couldn't bring one back. Drop it rather
+                            // than keep referencing a dead daemon that ticks and
+                            // config loads would keep poking.
+                            self.daemon = None;
+                        }
+                        error!("Daemon backend switch failed: {}", error);
+                        Err(error)
+                    }
+                    DaemonRestart::Panicked(error) => {
+                        // Unknown post-panic state. self.daemon still holds the
+                        // pre-switch daemon (cloned, not taken), so leave it in
+                        // place — a possibly-stopped backend the user can re-switch
+                        // beats no backend on an open vault. Suppress auto-promotion
+                        // so a still-armed config can't re-trigger the same panic
+                        // every poll; a manual switch re-arms it.
+                        self.auto_switch_suppressed = true;
+                        error!("Daemon backend switch panicked; keeping previous daemon: {error}");
+                        Err(error)
+                    }
+                };
+                // A successful switch clears the pending local-node sync card.
+                if result.is_ok() {
+                    self.cache.node_bitcoind_sync_progress = None;
+                    self.cache.node_bitcoind_ibd = None;
+                    self.cache.node_bitcoind_last_log = None;
+                }
+                let cfg_task = self.update_dispatch(Message::DaemonConfigLoaded(result));
+                return Task::batch([cfg_task, extra, Task::done(Message::CacheUpdated)]);
             }
             Message::WalletUpdated(Ok(wallet)) => {
                 // Check if we're transitioning from no-vault to has-vault state
@@ -3696,68 +3782,54 @@ impl App {
         Task::none()
     }
 
-    pub fn load_daemon_config(
-        &mut self,
-        datadir_path: CoincubeDirectory,
-        cfg: DaemonConfig,
-    ) -> Result<(), Error> {
-        // Keep a copy of the running config so we can recover if the new
-        // daemon fails to start and the user would otherwise be stuck with
-        // no daemon at all.
-        let recovery_cfg = self.daemon.as_ref().and_then(|d| d.config().cloned());
-
-        if let Some(daemon) = &self.daemon {
-            Handle::current().block_on(async { daemon.stop().await })?;
-        }
+    /// Switch the daemon to `cfg` OFF the UI thread.
+    ///
+    /// Stopping the old daemon blocks until its poller finishes the work in
+    /// flight — which over Esplora can be a slow wallet scan — and starting the
+    /// new one is synchronous, so doing this inline (the previous
+    /// `load_daemon_config`) froze the whole app on every backend switch. The
+    /// blocking work now runs on a `spawn_blocking` task; the new daemon arrives
+    /// via [`Message::DaemonRestarted`], which swaps it in on the UI thread.
+    pub fn spawn_daemon_switch(&mut self, cfg: DaemonConfig) -> Task<Message> {
+        // Mark a switch in flight so subsequent sync probes / triggers don't
+        // re-fire it before it completes (the config only changes on success).
+        self.daemon_switch_in_progress = true;
+        let old_daemon = self.daemon.clone();
         let network = cfg.bitcoin_config.network;
-        let daemon = match EmbeddedDaemon::start(cfg) {
-            Ok(d) => d,
-            Err(start_err) => {
-                // New daemon failed to start.  Try to bring the old one back
-                // so the app is left in a usable state rather than dead.
-                if let Some(old_cfg) = recovery_cfg {
-                    match EmbeddedDaemon::start(old_cfg) {
-                        Ok(old_daemon) => {
-                            self.daemon = Some(Arc::new(old_daemon));
-                            warn!(
-                                "New daemon failed to start; recovered previous daemon. \
-                                 Start error: {}",
-                                start_err
-                            );
-                        }
-                        Err(recovery_err) => {
-                            error!(
-                                "New daemon failed to start and recovery also failed: \
-                                 start={} recovery={}",
-                                start_err, recovery_err
-                            );
-                        }
-                    }
-                }
-                return Err(start_err.into());
-            }
-        };
-        self.daemon = Some(Arc::new(daemon));
-        let mut daemon_config_path = datadir_path
+        let wallet_id = self.wallet.as_ref().expect("wallet should exist").id();
+        let mut daemon_config_path = self
+            .cache
+            .datadir_path
             .network_directory(network)
-            .coincubed_data_directory(&self.wallet.as_ref().expect("wallet should exist").id())
+            .coincubed_data_directory(&wallet_id)
             .path()
             .to_path_buf();
         daemon_config_path.push("daemon.toml");
-
-        let content = toml::to_string(&self.daemon.as_ref().expect("daemon should exist").config())
-            .map_err(|e| Error::Config(e.to_string()))?;
-
-        OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(daemon_config_path)
-            .map_err(|e| Error::Config(e.to_string()))?
-            .write_all(content.as_bytes())
-            .map_err(|e| {
-                warn!("failed to write to file: {:?}", e);
-                Error::Config(e.to_string())
-            })
+        Task::perform(
+            async move {
+                match tokio::task::spawn_blocking(move || {
+                    restart_daemon_blocking(old_daemon, cfg, daemon_config_path)
+                })
+                .await
+                {
+                    Ok(outcome) => outcome,
+                    // The blocking switch panicked. Still deliver a DaemonRestarted
+                    // message so its handler clears `daemon_switch_in_progress` —
+                    // otherwise the guard sticks `true` and blocks every later
+                    // LoadDaemonConfig / auto-switch indefinitely. Report it as
+                    // `Panicked` (not `Failed`) so the handler KEEPS the App's
+                    // existing daemon (still held, since `old_daemon` was cloned)
+                    // rather than nulling it and leaving the vault backend-less.
+                    Err(join_err) => {
+                        error!("daemon restart task panicked: {join_err}");
+                        DaemonRestart::Panicked(Error::Config(format!(
+                            "daemon restart task panicked: {join_err}"
+                        )))
+                    }
+                }
+            },
+            Message::DaemonRestarted,
+        )
     }
 
     /// Render content for a settings sub-page that needs both its
@@ -3895,4 +3967,110 @@ fn new_recovery_panel(
         sync_status,
         cache.bitcoin_unit,
     )
+}
+
+/// Outcome of an off-UI-thread daemon restart (see [`restart_daemon_blocking`]).
+#[derive(Debug)]
+pub enum DaemonRestart {
+    /// The new daemon started; swap it in.
+    Started(Arc<dyn Daemon + Sync + Send>),
+    /// The new daemon started and should be installed (the switch SUCCEEDED),
+    /// but persisting `daemon.toml` failed. Not a switch failure — the wallet is
+    /// on the new backend — but the change may not survive a restart, so the app
+    /// installs the daemon AND shows a non-blocking warning.
+    StartedNotPersisted(Arc<dyn Daemon + Sync + Send>),
+    /// The switch failed. `recovered` is the previous daemon brought back up (if
+    /// any) so the app stays usable.
+    Failed {
+        error: Error,
+        recovered: Option<Arc<dyn Daemon + Sync + Send>>,
+    },
+    /// The blocking restart task itself panicked, so its outcome (and whether the
+    /// old daemon was stopped) is unknown. Distinct from `Failed` because the App
+    /// still holds the pre-switch daemon (`spawn_daemon_switch` clones it rather
+    /// than taking it): the handler keeps that reference so an open vault isn't
+    /// left with no backend, instead of nulling it like the clean-failure path.
+    Panicked(Error),
+}
+
+/// Stop `old_daemon`, start a new one for `cfg`, then persist `daemon.toml`.
+///
+/// This is the blocking half of a backend switch, factored out of the App so it
+/// can run on a `spawn_blocking` task rather than the UI thread (see
+/// [`App::spawn_daemon_switch`]). `daemon.stop()` can block until a poller
+/// finishes a slow scan, and `EmbeddedDaemon::start` is synchronous, so running
+/// this inline froze the app. On a start failure the previous daemon is brought
+/// back so the app is never left without one.
+fn restart_daemon_blocking(
+    old_daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+    cfg: DaemonConfig,
+    daemon_config_path: std::path::PathBuf,
+) -> DaemonRestart {
+    let recovery_cfg = old_daemon.as_ref().and_then(|d| d.config().cloned());
+
+    if let Some(daemon) = &old_daemon {
+        if let Err(e) = Handle::current().block_on(async { daemon.stop().await }) {
+            // Couldn't stop the old daemon — keep it rather than leave none.
+            return DaemonRestart::Failed {
+                error: e.into(),
+                recovered: old_daemon.clone(),
+            };
+        }
+    }
+
+    let daemon: Arc<dyn Daemon + Sync + Send> = match EmbeddedDaemon::start(cfg) {
+        Ok(d) => Arc::new(d),
+        Err(start_err) => {
+            // New daemon failed to start. Bring the old one back so the app is
+            // left usable rather than dead.
+            let recovered = recovery_cfg.and_then(|old_cfg| match EmbeddedDaemon::start(old_cfg) {
+                Ok(old_daemon) => {
+                    warn!(
+                        "New daemon failed to start; recovered previous daemon. Start error: {}",
+                        start_err
+                    );
+                    Some(Arc::new(old_daemon) as Arc<dyn Daemon + Sync + Send>)
+                }
+                Err(recovery_err) => {
+                    error!(
+                        "New daemon failed to start and recovery also failed: start={} recovery={}",
+                        start_err, recovery_err
+                    );
+                    None
+                }
+            });
+            return DaemonRestart::Failed {
+                error: start_err.into(),
+                recovered,
+            };
+        }
+    };
+
+    // Persist the new backend. The switch ALREADY succeeded — the new daemon is
+    // running and about to be installed — so a failed `daemon.toml` write is NOT
+    // a switch failure: reporting one would show an error in Settings while the
+    // wallet is actually on the new backend. Treat it as success and just log
+    // the persistence problem loudly; its only consequence is that the change
+    // may not survive a restart (the stale on-disk config would reload).
+    let persisted = (|| -> Result<(), Error> {
+        let content =
+            toml::to_string(&daemon.config()).map_err(|e| Error::Config(e.to_string()))?;
+        OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&daemon_config_path)
+            .map_err(|e| Error::Config(e.to_string()))?
+            .write_all(content.as_bytes())
+            .map_err(|e| Error::Config(e.to_string()))
+    })();
+
+    if let Err(e) = persisted {
+        error!(
+            "Backend switch succeeded but persisting daemon.toml failed; the wallet is on the \
+             new backend now, but the change may not survive a restart: {:?}",
+            e
+        );
+        return DaemonRestart::StartedNotPersisted(daemon);
+    }
+    DaemonRestart::Started(daemon)
 }

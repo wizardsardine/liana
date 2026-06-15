@@ -11,10 +11,10 @@ use crate::{
     services::coincube::{
         BillingCycle, BillingHistoryEntry, ChargeStatus, CheckoutRequest, CheckoutResponse,
         CoincubeClient, ConnectPlan, Contact, ContactCube, ContactRole,
-        CreateDuressAlertContactRequest, CreateInviteRequest, DuressAlertContact, FeaturesResponse,
-        Invite, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest, PlanStatus, PlanTier,
-        ReceivedInvite, UpdateDuressAlertContactRequest, User, VerifiedDevice,
-        DURESS_CHANNEL_EMAIL, DURESS_CHANNEL_SMS, DURESS_CHANNEL_WHATSAPP,
+        CreateDuressAlertContactRequest, CreateInviteRequest, DuressAlertContact,
+        DuressCheckOutcome, FeaturesResponse, Invite, LoginActivity, LoginResponse, OtpRequest,
+        OtpVerifyRequest, PlanStatus, PlanTier, ReceivedInvite, UpdateDuressAlertContactRequest,
+        User, VerifiedDevice, DURESS_CHANNEL_EMAIL, DURESS_CHANNEL_SMS, DURESS_CHANNEL_WHATSAPP,
         MAX_DURESS_ALERT_CONTACTS,
     },
 };
@@ -269,6 +269,21 @@ impl Default for ContactsState {
     }
 }
 
+/// Terminal/in-flight state of the post-login duress gate ([`ConnectFlowStep::CheckingDuress`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DuressGateStatus {
+    /// `get_duress_state` is in flight (or retrying).
+    Checking,
+    /// Transient failure after exhausting retries (network / 5xx / rate-limit).
+    /// The view offers Retry.
+    Unreachable,
+    /// The server returned a body this build can't decode. Auto-retry is
+    /// suppressed (futile in the common case), but the view still offers a
+    /// manual Retry — the mismatch may be a server bug that gets hotfixed while
+    /// the app is open — plus an update hint and a Sign Out escape hatch.
+    Incompatible,
+}
+
 #[derive(Debug)]
 pub enum ConnectFlowStep {
     CheckingSession,
@@ -288,13 +303,15 @@ pub enum ConnectFlowStep {
         cooldown: u8,
     },
     /// Post-auth, pre-dashboard gate (Phase 6): block on `get_duress_state` so
-    /// the dashboard is never shown to a possibly-in-duress account. `failed`
-    /// is set once retries are exhausted, switching the view to an error +
-    /// Retry affordance. We fail CLOSED here (no dashboard) rather than open —
-    /// the whole Connect dashboard is server-backed, so if this check is
-    /// unreachable the dashboard is non-functional anyway.
+    /// the dashboard is never shown to a possibly-in-duress account. `status`
+    /// distinguishes in-flight from the two terminal failure modes so the view
+    /// can show the right copy and the handler can stop retrying a futile
+    /// (contract-mismatch) check. We fail CLOSED here (no dashboard) on every
+    /// failure — the whole Connect dashboard is server-backed, so if this check
+    /// is unreachable the dashboard is non-functional anyway, and a body we
+    /// can't decode must never be read as "not in duress".
     CheckingDuress {
-        failed: bool,
+        status: DuressGateStatus,
     },
     Dashboard,
     /// Post-lockout recovery (Phase 6). Shown as the FIRST thing after sign-in
@@ -805,7 +822,9 @@ impl ConnectAccountPanel {
                 self.plan = plan;
                 // Phase 6: gate on the duress check FIRST — don't reveal the
                 // dashboard until we've confirmed the account isn't in duress.
-                self.step = ConnectFlowStep::CheckingDuress { failed: false };
+                self.step = ConnectFlowStep::CheckingDuress {
+                    status: DuressGateStatus::Checking,
+                };
                 self.error = None;
                 // Fetch features + gate on duress in background (non-blocking).
                 let gen = self.session_generation;
@@ -867,30 +886,7 @@ impl ConnectAccountPanel {
 
             ConnectAccountMessage::LogOut => {
                 let was_logged_in = self.user.is_some();
-                self.session_generation += 1;
-                self.user = None;
-                self.plan = None;
-                self.verified_devices = None;
-                self.login_activity = None;
-                self.features = None;
-                self.checkout = None;
-                self.billing_history = None;
-                self.show_billing_history = false;
-                self.renewal_banner_dismissed = false;
-                self.campaign_redeem = CampaignRedeemState::default();
-                self.register_campaign_code = String::new();
-                self.pending_campaign_code = None;
-                self.selected_billing_cycle = BillingCycle::Monthly;
-                self.contacts_state.clear();
-                self.duress_contacts.clear();
-                // Scrub any in-flight enrollment wizard secrets (PINs,
-                // passphrases, generated code) and the recovery all-clear
-                // passphrase before dropping them, so they don't survive the
-                // session reset.
-                self.clear_duress_enroll();
-                self.scrub_recovery_passphrase();
-                self.clear_keyring_session();
-                self.client = CoincubeClient::new();
+                self.clear_session();
                 self.step = ConnectFlowStep::Login {
                     email: String::new(),
                     loading: false,
@@ -1573,15 +1569,15 @@ impl ConnectAccountPanel {
                     },
                 );
             }
-            ConnectAccountMessage::DuressStateChecked(state, gen, attempt) => {
+            ConnectAccountMessage::DuressStateChecked(outcome, gen, attempt) => {
                 // Phase 6: post-sign-in gate. We sit in `CheckingDuress` until
                 // this resolves, so the dashboard is never shown to a possibly-
                 // in-duress account.
                 if gen != self.session_generation {
                     return iced::Task::none();
                 }
-                match state {
-                    Some(s) if s.active => {
+                match outcome {
+                    DuressCheckOutcome::Ok(s) if s.active => {
                         // This signed-in device is the trusted recovery vehicle:
                         // show the all-clear entry. Do NOT persist
                         // DuressLocalState.active here — the launch reconcile
@@ -1598,7 +1594,7 @@ impl ConnectAccountPanel {
                         };
                     }
                     // Confirmed not in duress — NOW reveal the dashboard.
-                    Some(s) => {
+                    DuressCheckOutcome::Ok(s) => {
                         self.step = ConnectFlowStep::Dashboard;
                         // Phase 0: a signed-in device on an already-enrolled
                         // account that isn't yet registered server-side mints +
@@ -1615,27 +1611,73 @@ impl ConnectAccountPanel {
                             }
                         }
                     }
-                    // Failed / unreachable check — retry with backoff.
-                    None if attempt + 1 < DURESS_CHECK_MAX_ATTEMPTS => {
+                    // Transient (network / 5xx / rate-limit) — retry with
+                    // backoff while attempts remain.
+                    DuressCheckOutcome::Unreachable if attempt + 1 < DURESS_CHECK_MAX_ATTEMPTS => {
                         return duress_state_check_task(self.client.clone(), gen, attempt + 1);
                     }
                     // Retries exhausted. Fail CLOSED: do not reveal the
                     // dashboard. Show an error + Retry on the checking screen.
                     // (The dashboard is server-backed anyway, so it would be
                     // non-functional during this outage.)
-                    None => {
+                    DuressCheckOutcome::Unreachable => {
                         log::warn!(
-                            "[CONNECT] duress state check failed after {} attempts; \
+                            "[CONNECT] duress state check unreachable after {} attempts; \
                              holding at the verification gate",
                             attempt + 1
                         );
-                        self.step = ConnectFlowStep::CheckingDuress { failed: true };
+                        self.step = ConnectFlowStep::CheckingDuress {
+                            status: DuressGateStatus::Unreachable,
+                        };
+                    }
+                    // The server returned a body we can't decode. Auto-retrying
+                    // is futile (it'll mismatch every time), so DON'T loop —
+                    // hold closed with distinct copy + an update hint. The body
+                    // was already logged in `get_duress_state`. A manual Retry
+                    // is still offered in case it's a server bug being hotfixed.
+                    DuressCheckOutcome::Incompatible => {
+                        log::error!(
+                            "[CONNECT] duress state response is undecodable (contract \
+                             mismatch); holding the gate closed — app may need updating"
+                        );
+                        self.step = ConnectFlowStep::CheckingDuress {
+                            status: DuressGateStatus::Incompatible,
+                        };
+                    }
+                    // The session was rejected mid-gate. Sitting on the duress
+                    // gate would loop forever; drop to login instead.
+                    DuressCheckOutcome::Unauthorized => {
+                        log::warn!(
+                            "[CONNECT] duress gate: session rejected (401); returning to login"
+                        );
+                        let was_logged_in = self.user.is_some();
+                        // The session is dead — tear it all down (bumps
+                        // session_generation so stale async results are ignored,
+                        // drops the JWT client, keyring session, and cached
+                        // user/plan) so the next Init doesn't restore it.
+                        self.clear_session();
+                        self.error =
+                            Some("Your session expired. Please sign in again.".to_string());
+                        self.step = ConnectFlowStep::Login {
+                            email: String::new(),
+                            loading: false,
+                        };
+                        // Mirror the normal LogOut path: Buy/Sell shares this
+                        // session, so it must drop its stale in-memory token too
+                        // rather than keep showing a logged-in state.
+                        if was_logged_in {
+                            return iced::Task::done(Message::View(view::Message::BuySell(
+                                view::BuySellMessage::LogOut,
+                            )));
+                        }
                     }
                 }
             }
             ConnectAccountMessage::RetryDuressCheck => {
-                // From the CheckingDuress error screen.
-                self.step = ConnectFlowStep::CheckingDuress { failed: false };
+                // From the CheckingDuress error screen (either failure mode).
+                self.step = ConnectFlowStep::CheckingDuress {
+                    status: DuressGateStatus::Checking,
+                };
                 let gen = self.session_generation;
                 return duress_state_check_task(self.client.clone(), gen, 0);
             }
@@ -1671,6 +1713,39 @@ impl ConnectAccountPanel {
             error: None,
             pending_code: None,
         });
+    }
+
+    /// Tears down all session state: bumps `session_generation` (so any
+    /// in-flight async results keyed to the old generation are ignored),
+    /// clears cached user/plan/feature data, scrubs secrets, drops the keyring
+    /// session, and replaces the JWT-bearing client with a fresh anonymous one.
+    /// Does NOT set `self.step` — the caller picks the destination (Login, an
+    /// error screen, etc.). Shared by `LogOut` and the duress-gate 401 path so
+    /// a rejected session can't leave stale state behind for the next `Init`.
+    fn clear_session(&mut self) {
+        self.session_generation += 1;
+        self.user = None;
+        self.plan = None;
+        self.verified_devices = None;
+        self.login_activity = None;
+        self.features = None;
+        self.checkout = None;
+        self.billing_history = None;
+        self.show_billing_history = false;
+        self.renewal_banner_dismissed = false;
+        self.campaign_redeem = CampaignRedeemState::default();
+        self.register_campaign_code = String::new();
+        self.pending_campaign_code = None;
+        self.selected_billing_cycle = BillingCycle::Monthly;
+        self.contacts_state.clear();
+        self.duress_contacts.clear();
+        // Scrub any in-flight enrollment wizard secrets (PINs, passphrases,
+        // generated code) and the recovery all-clear passphrase before
+        // dropping them, so they don't survive the session reset.
+        self.clear_duress_enroll();
+        self.scrub_recovery_passphrase();
+        self.clear_keyring_session();
+        self.client = CoincubeClient::new();
     }
 
     /// Zeroizes the in-memory all-clear passphrase when the panel is in the
@@ -2060,7 +2135,7 @@ impl ConnectAccountPanel {
                 let entitled = self
                     .plan
                     .as_ref()
-                    .map(|p| p.entitlements.duress_remote_lock)
+                    .map(|p| p.entitlements.duress)
                     .unwrap_or(false);
                 // Entitled (signed-in) users default to Tier 1, which collects
                 // the account-level duress recovery-kit password — that password
@@ -3187,19 +3262,31 @@ const DURESS_CHECK_MAX_ATTEMPTS: u8 = 3;
 const DURESS_CHECK_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Issues a post-sign-in `get_duress_state` check (Phase 6). `attempt > 0`
-/// sleeps first so a transient failure backs off before retrying. A failed
-/// request collapses to `None`, which the handler turns into a bounded retry.
+/// sleeps first so a transient failure backs off before retrying. The result is
+/// classified into a [`DuressCheckOutcome`] (rather than collapsed to `None`) so
+/// the handler can retry only what's retryable and surface the right copy.
 fn duress_state_check_task(client: CoincubeClient, gen: u64, attempt: u8) -> iced::Task<Message> {
     iced::Task::perform(
         async move {
             if attempt > 0 {
                 tokio::time::sleep(DURESS_CHECK_RETRY_DELAY).await;
             }
-            (client.get_duress_state().await.ok(), gen, attempt)
+            let outcome = match client.get_duress_state().await {
+                Ok(state) => DuressCheckOutcome::Ok(state),
+                Err(e) => {
+                    let outcome = DuressCheckOutcome::from_err(&e);
+                    log::warn!(
+                        "[CONNECT] duress state check failed (attempt {}): {e} → {outcome:?}",
+                        attempt + 1
+                    );
+                    outcome
+                }
+            };
+            (outcome, gen, attempt)
         },
-        |(state, g, a)| {
+        |(outcome, g, a)| {
             Message::View(view::Message::ConnectAccount(
-                ConnectAccountMessage::DuressStateChecked(state, g, a),
+                ConnectAccountMessage::DuressStateChecked(outcome, g, a),
             ))
         },
     )
@@ -4136,16 +4223,7 @@ mod plan_lifecycle_tests {
             plan: tier,
             status,
             renewal_at: renewal_at.map(|s| s.to_string()),
-            entitlements: PlanEntitlements {
-                free_signing_key_count: 0,
-                policy_editing: false,
-                legacy_invites: false,
-                linked_keychains: false,
-                duress_remote_lock: false,
-                business_orgs: false,
-                duress_alerts: false,
-                recovery_alerts: false,
-            },
+            entitlements: PlanEntitlements::default(),
             billing_cycle: cycle,
             plan_provenance: None,
         }
@@ -4691,14 +4769,9 @@ mod duress_contacts_tests {
 
     fn entitlements(duress_alerts: bool) -> PlanEntitlements {
         PlanEntitlements {
-            free_signing_key_count: 0,
-            policy_editing: false,
-            legacy_invites: false,
-            linked_keychains: false,
-            duress_remote_lock: true,
-            business_orgs: false,
+            duress: true,
             duress_alerts,
-            recovery_alerts: false,
+            ..PlanEntitlements::default()
         }
     }
 

@@ -1149,12 +1149,12 @@ pub enum ConnectAccountMessage {
     /// registration and redeemed once the new session authenticates.
     RegisterCampaignCodeChanged(String),
     // --- Duress (Phases 6 & 8) ---
-    /// Result of the post-sign-in `get_duress_state` gate. `Some` switches to
-    /// the recovery flow when `active`; `None` is a failed/unreachable check
-    /// and triggers a bounded retry (the `u8` is the attempt count) so a
-    /// transient error doesn't silently leave the user on the dashboard while
-    /// the account is in duress.
-    DuressStateChecked(Option<crate::services::coincube::DuressState>, u64, u8),
+    /// Result of the post-sign-in `get_duress_state` gate, classified so the
+    /// handler can tell a transient failure (retry) from a contract mismatch
+    /// (stop retrying — futile) from a rejected session (re-auth). `Ok(active)`
+    /// switches to the recovery flow; `Ok(!active)` reveals the dashboard. The
+    /// `u64` is the session generation and the `u8` the attempt count.
+    DuressStateChecked(crate::services::coincube::DuressCheckOutcome, u64, u8),
     /// User tapped Retry on the post-login duress verification gate after the
     /// check failed (retries exhausted).
     RetryDuressCheck,

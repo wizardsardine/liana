@@ -1,4 +1,5 @@
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bdk_electrum::bdk_chain::{
@@ -29,6 +30,12 @@ pub enum Error {
     /// real failure to log at ERROR level. The next tick after any
     /// provider's cooldown expires will see a normal result.
     AllCooling,
+    /// The shared abort flag was set (the daemon is shutting down), so we
+    /// stopped walking the provider chain instead of waiting out requests to
+    /// unreachable providers. Lets `DaemonHandle::stop` return promptly even
+    /// while a scan is in flight against a dead/throttled Esplora — otherwise
+    /// `stop()` joins a poller stuck for the full request/timeout cycle.
+    Aborted,
 }
 
 impl Error {
@@ -50,6 +57,13 @@ impl Error {
 /// poller's special-case branch.
 pub const ALL_COOLING_DISPLAY_MARKER: &str = "All Esplora providers are temporarily backing off";
 
+/// Marker substring in [`Error::Aborted`]'s `Display`. Same rationale as
+/// [`ALL_COOLING_DISPLAY_MARKER`]: the `sync_wallet` trait boundary stringifies
+/// the error, so the poller detects a shutdown-abort by this marker and STOPS
+/// retrying (returns) rather than recursing its 2s retry loop — which would
+/// never return to check for the Shutdown message, leaving `stop()` blocked.
+pub const SCAN_ABORTED_DISPLAY_MARKER: &str = "Esplora scan aborted";
+
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
@@ -59,6 +73,13 @@ impl std::fmt::Display for Error {
                 "{} after recent rate limits; the poller will retry once a cooldown expires.",
                 ALL_COOLING_DISPLAY_MARKER,
             ),
+            Error::Aborted => {
+                write!(
+                    f,
+                    "{}: the daemon is shutting down.",
+                    SCAN_ABORTED_DISPLAY_MARKER
+                )
+            }
         }
     }
 }
@@ -76,6 +97,12 @@ impl std::fmt::Display for Error {
 /// `SyncRequest` is consumed by the call and isn't trivially clonable.
 pub struct Client {
     providers: Vec<Provider>,
+    /// Set by `DaemonHandle::stop` so an in-flight scan stops walking the
+    /// provider chain and returns [`Error::Aborted`] promptly, instead of the
+    /// poller (and the `stop()` that joins it) blocking on requests to dead or
+    /// throttled providers. Shared so the stopping thread can flip it while the
+    /// poller is mid-scan.
+    abort: Arc<AtomicBool>,
 }
 
 /// One endpoint in the provider chain, plus the state needed to skip
@@ -176,7 +203,10 @@ impl Client {
     /// Errors from the actual sync calls still surface in the usual
     /// places, so a permanently broken config doesn't get silently
     /// swallowed — it just doesn't block launch.
-    pub fn new(config: &crate::config::EsploraConfig) -> Result<Self, Error> {
+    pub fn new(
+        config: &crate::config::EsploraConfig,
+        abort: Arc<AtomicBool>,
+    ) -> Result<Self, Error> {
         let mut providers = Vec::new();
         providers.push(Provider {
             name: format!("primary {}", config.addr),
@@ -252,7 +282,7 @@ impl Client {
                  the poller will retry on its next tick"
             );
         }
-        Ok(Client { providers })
+        Ok(Client { providers, abort })
     }
 
     /// Run `op` against each provider in order, skipping any that's in a
@@ -264,6 +294,13 @@ impl Client {
     {
         let mut last_result: Option<Result<T, esplora_client::Error>> = None;
         for provider in &self.providers {
+            // Bail out between providers if the daemon is shutting down, so a
+            // dead/throttled provider chain can't keep `stop()` blocked. The
+            // in-flight `op` (one provider) still runs to its timeout; this stops
+            // us from then dialling the rest.
+            if self.abort.load(Ordering::Relaxed) {
+                return Err(Error::Aborted);
+            }
             if provider.is_cooling() {
                 log::debug!(
                     "Esplora skipping {} (cooling down after recent 402/429)",
@@ -467,7 +504,10 @@ mod tests {
     /// real `Builder` / network. Lets us drive `try_in_order` without
     /// hitting an actual Esplora server.
     fn client_with(providers: Vec<Provider>) -> Client {
-        Client { providers }
+        Client {
+            providers,
+            abort: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     /// Provider whose `client` we never use — `op` closures in the
@@ -478,6 +518,24 @@ mod tests {
             client: build_blocking_client("http://127.0.0.1:1", None),
             cooldown_until: Mutex::new(None),
         }
+    }
+
+    /// `try_in_order` must bail with [`Error::Aborted`] — without running `op` —
+    /// once the shared abort flag is set, so `DaemonHandle::stop` doesn't block
+    /// on a poller stuck dialling dead/throttled providers.
+    #[test]
+    fn try_in_order_aborts_when_flag_set() {
+        let client = client_with(vec![fake_provider("p1"), fake_provider("p2")]);
+        client.abort.store(true, Ordering::Relaxed);
+
+        let mut called = false;
+        let result: Result<u32, Error> = client.try_in_order(|_| {
+            called = true;
+            Ok(7)
+        });
+
+        assert!(!called, "op must not run once aborting");
+        assert!(matches!(result, Err(Error::Aborted)));
     }
 
     /// Regression: when the primary returns 429, the cooldown must be

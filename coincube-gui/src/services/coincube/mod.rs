@@ -301,28 +301,45 @@ pub struct PlanProvenance {
     pub badge: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+/// Per-plan entitlements from `GET /connect/plan`, mirroring the API's
+/// `Entitlements` (the canonical model in `documentation/PRICING_AND_TIERS.md`).
+///
+/// EVERY field is `#[serde(default)]` on purpose: an entitlements object that
+/// adds or renames a field must never fail the whole `ConnectPlan` parse and
+/// silently drop the account to the Free tier. That is exactly the regression
+/// this struct replaced — the previous (boolean-feature) model required six
+/// fields the API had stopped sending, so every account rendered as Free. An
+/// absent entitlement defaulting to "off"/0 is the safe direction.
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanEntitlements {
-    pub free_signing_key_count: i32,
-    pub policy_editing: bool,
-    pub legacy_invites: bool,
-    pub linked_keychains: bool,
-    pub duress_remote_lock: bool,
-    pub business_orgs: bool,
+    /// Personal (free) signing keys allowed on the tier.
+    #[serde(default)]
+    pub personal_key_limit: u32,
+    /// Cubes allowed on the tier. (The home screen's live limit comes from
+    /// `get_cube_limits`; this is the plan-catalog value.)
+    #[serde(default)]
+    pub cube_limit: u32,
+    #[serde(default)]
+    pub recovery_kit_limit: u32,
+    /// Avatar regenerations allowed: `None` = unlimited (Estate), `Some(0)` =
+    /// disabled (Free).
+    #[serde(default)]
+    pub avatar_regeneration_limit: Option<u32>,
+    /// Whether the tier includes duress — gates the duress enrollment UI.
+    #[serde(default)]
+    pub duress: bool,
+    #[serde(default)]
+    pub attach_policies: bool,
+    #[serde(default)]
+    pub collaborative_invitations: bool,
     /// Estate-only: duress-activation alert contacts (SMS/WhatsApp/email
     /// fan-out when duress fires). See `PLAN-estate-notifications.md` PR 1.
-    ///
-    /// `#[serde(default)]` so a pre-estate-notifications API that doesn't
-    /// emit this field deserialises to `false` rather than failing the
-    /// whole `ConnectPlan` parse — the desktop treats an absent
-    /// entitlement as "not entitled", which is the safe default.
     #[serde(default)]
     pub duress_alerts: bool,
     /// Estate-only: vault recovery-path monitoring (descriptor escrow or
     /// timelock heartbeat → keyholder emails). See
-    /// `PLAN-estate-notifications.md` PR 2. Same forward-compat tolerance
-    /// as [`Self::duress_alerts`].
+    /// `PLAN-estate-notifications.md` PR 2.
     #[serde(default)]
     pub recovery_alerts: bool,
 }
@@ -1518,6 +1535,96 @@ pub struct DuressState {
     /// "new device on an enrolled account" → generate + register a code.
     #[serde(default)]
     pub this_device_registered: bool,
+}
+
+/// Classified result of the post-sign-in duress gate check (Phase 6).
+///
+/// Carried in a `Message`, so it must be `Clone` — `CoincubeError` wraps a
+/// non-`Clone` `reqwest::Error` and can't be. Collapsing every failure to a
+/// bare `None` (as the gate previously did) conflated "the server returned a
+/// body I can't decode" (permanent — retrying is futile) with "the network is
+/// down" (transient — retry) and "my token was rejected" (re-auth), so a
+/// one-field contract typo became a silent, un-retryable lockout. This keeps
+/// just enough to branch correctly.
+#[derive(Debug, Clone)]
+pub enum DuressCheckOutcome {
+    /// Decoded the server's duress state.
+    Ok(DuressState),
+    /// Network / timeout / 5xx / rate-limit — transient; a bounded retry may
+    /// succeed.
+    Unreachable,
+    /// A 200 whose body didn't match the contract (decode error) — the body is
+    /// logged at the call site. Auto-retrying in a tight loop is futile, but a
+    /// manual retry can still recover if the server is hotfixed.
+    Incompatible,
+    /// 401/403 — the session/token was definitively rejected; bounce to login
+    /// rather than hold the gate closed forever or retry a credential the
+    /// server won't accept.
+    Unauthorized,
+}
+
+impl DuressCheckOutcome {
+    /// Classify a failed `get_duress_state` call. (Success is constructed
+    /// directly as [`DuressCheckOutcome::Ok`].)
+    pub fn from_err(e: &CoincubeError) -> Self {
+        match e {
+            CoincubeError::Parse(_) => Self::Incompatible,
+            // Mirror `CoincubeError::is_auth_error` (401/403): a rejected token
+            // won't recover by retrying, so re-auth instead of backing off as if
+            // the network were down. Keep these in sync to avoid 403 silently
+            // falling through to a futile retry loop.
+            _ if e.is_auth_error() => Self::Unauthorized,
+            _ => Self::Unreachable,
+        }
+    }
+}
+
+#[cfg(test)]
+mod duress_check_outcome_tests {
+    use super::*;
+    use crate::services::http::NotSuccessResponseInfo;
+
+    fn unsuccessful(status_code: u16) -> CoincubeError {
+        CoincubeError::Unsuccessful(NotSuccessResponseInfo {
+            status_code,
+            text: String::new(),
+        })
+    }
+
+    #[test]
+    fn auth_errors_map_to_unauthorized() {
+        // Both 401 and 403 are "token definitively rejected" (see
+        // is_auth_error) and must re-auth, not retry-with-backoff.
+        assert!(matches!(
+            DuressCheckOutcome::from_err(&unsuccessful(401)),
+            DuressCheckOutcome::Unauthorized
+        ));
+        assert!(matches!(
+            DuressCheckOutcome::from_err(&unsuccessful(403)),
+            DuressCheckOutcome::Unauthorized
+        ));
+    }
+
+    #[test]
+    fn transient_and_decode_errors_classify_distinctly() {
+        // 5xx / rate-limit / other non-auth statuses are transient.
+        assert!(matches!(
+            DuressCheckOutcome::from_err(&unsuccessful(503)),
+            DuressCheckOutcome::Unreachable
+        ));
+        assert!(matches!(
+            DuressCheckOutcome::from_err(&unsuccessful(429)),
+            DuressCheckOutcome::Unreachable
+        ));
+        // A decode failure is a contract mismatch, not transient.
+        let parse_err: CoincubeError = serde_json::from_str::<DuressState>("not json")
+            .unwrap_err()
+            .into();
+        assert!(matches!(
+            DuressCheckOutcome::from_err(&parse_err),
+            DuressCheckOutcome::Incompatible
+        ));
+    }
 }
 
 /// Typed failure modes for the password-gated recovery-kit download

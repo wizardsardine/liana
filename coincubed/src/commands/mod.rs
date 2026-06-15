@@ -386,7 +386,11 @@ impl DaemonControl {
             version: VERSION.to_string(),
             network: self.config.bitcoin_config.network,
             block_height,
-            sync: self.bitcoin.sync_progress().rounded_up_progress(),
+            // Read the poller's lock-free mirror rather than
+            // `self.bitcoin.sync_progress()`, which would block on the
+            // `BitcoinInterface` mutex the poller holds across a full wallet
+            // scan — the cause of the GUI's "Starting daemon…" stall.
+            sync: self.sync_progress_cache.load().rounded_up_progress(),
             descriptors: GetInfoDescriptors {
                 main: self.config.main_descriptor.clone(),
             },

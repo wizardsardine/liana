@@ -185,6 +185,9 @@ impl BitcoindSettingsState {
         if let Some(BitcoinBackend::Bitcoind(current)) = cfg.bitcoin_backend.clone() {
             new_cfg.pending_bitcoind = Some(current);
         }
+        // The user deliberately switched to Connect — park the node, but don't
+        // auto-revert to it on the next sync probe.
+        new_cfg.auto_switch_to_pending = Some(false);
         new_cfg.bitcoin_backend = Some(BitcoinBackend::Esplora(esplora));
         // Bump the poll cadence to the Esplora-safe interval so
         // we don't carry a snappy localhost cadence into a path
@@ -286,6 +289,10 @@ impl State for BitcoindSettingsState {
                         if let Some(cfg) = daemon.config() {
                             let mut rollback_cfg = cfg.clone();
                             rollback_cfg.pending_bitcoind = None;
+                            // Keep the invariant: no pending node ⇒ nothing to
+                            // auto-switch to. Leaving the flag set would strand a
+                            // stale "auto-switch enabled" state with no target.
+                            rollback_cfg.auto_switch_to_pending = Some(false);
                             return Task::done(Message::LoadDaemonConfig(Box::new(rollback_cfg)));
                         }
                     }
@@ -396,7 +403,18 @@ impl State for BitcoindSettingsState {
                             },
                             selected_auth_type: RpcAuthType::CookieFile,
                             processing: false,
-                            flavor: NodeFlavor::default(),
+                            // The managed node is shared by every Vault, so its
+                            // flavour is global: default the picker to whatever is
+                            // already configured, else Knots (matching the
+                            // installer). Switching it restarts the node for all
+                            // Vaults (handled by `maybe_start`).
+                            flavor: InternalBitcoindConfig::from_file(
+                                &internal_bitcoind_config_path(&internal_bitcoind_datadir(
+                                    &cache.datadir_path,
+                                )),
+                            )
+                            .map(|c| c.flavor)
+                            .unwrap_or(NodeFlavor::Knots),
                             internal_stage: InternalSetupStage::Idle,
                             internal_error: None,
                             download_progress: 0.0,
@@ -478,6 +496,9 @@ impl State for BitcoindSettingsState {
                                     if let Some(cfg) = daemon.config() {
                                         let mut new_cfg = cfg.clone();
                                         new_cfg.pending_bitcoind = Some(bitcoind_cfg);
+                                        // Adopted a freshly set-up node — switch to
+                                        // it once synced.
+                                        new_cfg.auto_switch_to_pending = Some(true);
                                         setup.internal_stage = InternalSetupStage::Done;
                                         setup.processing = true;
                                         return Task::batch([
@@ -568,6 +589,9 @@ impl State for BitcoindSettingsState {
                                     let mut new_cfg = cfg.clone();
                                     new_cfg.pending_bitcoind =
                                         Some(BitcoindConfig { rpc_auth, addr });
+                                    // Adopted an existing/external node — switch to
+                                    // it once it's reachable and synced.
+                                    new_cfg.auto_switch_to_pending = Some(true);
                                     setup.processing = true;
                                     return Task::done(Message::LoadDaemonConfig(Box::new(
                                         new_cfg,
@@ -605,6 +629,10 @@ impl State for BitcoindSettingsState {
                                 let mut new_cfg = cfg.clone();
                                 new_cfg.bitcoin_backend = Some(BitcoinBackend::Bitcoind(pending));
                                 new_cfg.pending_bitcoind = None;
+                                // The pending node is now the active backend, so
+                                // clear the auto-switch flag too — keeping it set
+                                // with no pending target violates the invariant.
+                                new_cfg.auto_switch_to_pending = Some(false);
                                 new_cfg.fallback_esplora = old_esplora;
                                 // Drop the poll cadence back to the
                                 // snappy local-node interval. The
