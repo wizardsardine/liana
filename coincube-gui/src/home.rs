@@ -2225,6 +2225,7 @@ fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
             Container::new(
                 txt::caption(&user.email)
                     .color(color::GREY_3)
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
                     .align_x(Alignment::Center),
             )
             .padding(10)
