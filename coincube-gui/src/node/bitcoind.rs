@@ -72,6 +72,9 @@ pub const CORE_SHA256SUM: &str = "34431c582a0399dd42e1276d87d25306cbdde0217f6744
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub const CORE_SHA256SUM: &str = "a681e4f6ce524c338a105f214613605bac6c33d58c31dc5135bbc02bc458bb6c";
 
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+pub const CORE_SHA256SUM: &str = "7922ac99363dd28f79e57ef7098581fd48ebd1119b412b07e73b1fd19fd0443f";
+
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
 pub const CORE_SHA256SUM: &str = "4c1780532031129fcacfc0e393c8430b3cea414c9f8c5e0c0c87ebe59a5ada1b";
 

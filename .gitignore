@@ -4,6 +4,7 @@ target/
 
 __pycache__
 dummy_config.toml
+contrib/coincubed_config_local.toml
 regtest/
 venv/
 pytest.log
