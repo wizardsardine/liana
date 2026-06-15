@@ -24,6 +24,7 @@ text_roles! {
     b2,                     B2_SPEC,                    font::REGULAR,          22;
     b2_medium,              B2_MEDIUM_SPEC,             font::MEDIUM,           22;
     b3,                     B3_SPEC,                    font::REGULAR,          20;
+    b3_medium,              B3_MEDIUM_SPEC,             font::MEDIUM,           20;
     b4_medium,              B4_MEDIUM_SPEC,             font::MEDIUM,           18;
     b4_bold,                B4_BOLD_SPEC,               font::BOLD,             18;
     b5_medium,              B5_MEDIUM_SPEC,             font::MEDIUM,           16;
