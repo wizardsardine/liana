@@ -8,7 +8,7 @@ use crate::{
 };
 
 use bitcoin::Denomination;
-use iced::Length;
+use iced::{Length, Padding};
 
 #[derive(Debug, Clone)]
 pub struct Value<T> {
@@ -27,10 +27,47 @@ impl std::default::Default for Value<String> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum FormSize {
+    Normal,
+    Compact,
+}
+
+impl FormSize {
+    const TEXT_SIZE: f32 = 16.0;
+    const LINE_HEIGHT: f32 = 1.3;
+
+    fn height(self) -> f32 {
+        match self {
+            FormSize::Normal => 40.0,
+            FormSize::Compact => 32.0,
+        }
+    }
+
+    fn padding(self) -> Padding {
+        let v = (self.height() - Self::TEXT_SIZE * Self::LINE_HEIGHT) / 2.0;
+        Padding {
+            top: v,
+            bottom: v,
+            left: 16.0,
+            right: 16.0,
+        }
+    }
+}
+
+fn default_styled<'a, M: 'a + Clone>(input: TextInput<'a, M>) -> TextInput<'a, M> {
+    input
+        .size(FormSize::TEXT_SIZE as u32)
+        .padding(FormSize::Normal.padding())
+        .style(theme::text_input::form)
+}
+
 pub struct Form<'a, Message> {
     input: TextInput<'a, Message>,
     warning: Option<&'a str>,
     valid: bool,
+    label: Option<Element<'a, Message>>,
+    fee: bool,
 }
 
 impl<'a, Message: 'a> Form<'a, Message>
@@ -48,9 +85,13 @@ where
         F: 'static + Fn(String) -> Message,
     {
         Self {
-            input: text_input::TextInput::new(placeholder, &value.value).on_input(on_change),
+            input: default_styled(
+                text_input::TextInput::new(placeholder, &value.value).on_input(on_change),
+            ),
             warning: value.warning,
             valid: value.valid,
+            label: None,
+            fee: false,
         }
     }
 
@@ -61,9 +102,11 @@ where
     /// - the current value
     pub fn new_disabled(placeholder: &str, value: &Value<String>) -> Self {
         Self {
-            input: text_input::TextInput::new(placeholder, &value.value),
+            input: default_styled(text_input::TextInput::new(placeholder, &value.value)),
             warning: None, // no warning for disabled form
             valid: value.valid,
+            label: None,
+            fee: false,
         }
     }
 
@@ -78,10 +121,14 @@ where
         F: 'static + Fn(String) -> Message,
     {
         Self {
-            input: text_input::TextInput::new(placeholder, &value.value)
-                .on_input(move |s| on_change(s.trim().to_string())),
+            input: default_styled(
+                text_input::TextInput::new(placeholder, &value.value)
+                    .on_input(move |s| on_change(s.trim().to_string())),
+            ),
             warning: value.warning,
             valid: value.valid,
+            label: None,
+            fee: false,
         }
     }
 
@@ -97,29 +144,43 @@ where
     {
         let on_change_clone = on_change.clone();
         Self {
-            input: text_input::TextInput::new(placeholder, &value.value)
-                .on_input(move |s| {
-                    if bitcoin::Amount::from_str_in(&s, Denomination::Bitcoin).is_ok()
+            input: default_styled(
+                text_input::TextInput::new(placeholder, &value.value)
+                    .on_input(move |s| {
+                        if bitcoin::Amount::from_str_in(&s, Denomination::Bitcoin).is_ok()
                         || s.is_empty()
                         // In order to allow the user to fix an invalid pasted value, we allow deletion
                         // even if the result is still invalid.
                         // Note that all invalid characters must be deleted before the user can enter
                         // new valid values.
                         || s.chars().count() < value.value.chars().count()
-                    {
-                        on_change(s)
-                    } else {
-                        on_change(value.value.clone())
-                    }
-                })
-                .on_paste(move |pasted| {
-                    // Keep the entire pasted content and perform any required checks or modifications
-                    // in the on_change message handler.
-                    on_change_clone(pasted)
-                }),
+                        {
+                            on_change(s)
+                        } else {
+                            on_change(value.value.clone())
+                        }
+                    })
+                    .on_paste(move |pasted| {
+                        // Keep the entire pasted content and perform any required checks or modifications
+                        // in the on_change message handler.
+                        on_change_clone(pasted)
+                    }),
+            ),
             warning: value.warning,
             valid: value.valid,
+            label: None,
+            fee: false,
         }
+    }
+
+    pub fn label(mut self, label: impl Display) -> Self {
+        self.label = Some(text::new::b3(label).into());
+        self
+    }
+
+    pub fn component_label(mut self, component: impl Into<Element<'a, Message>>) -> Self {
+        self.label = Some(component.into());
+        self
     }
 
     /// Sets the [`Form`] with a warning message
@@ -143,6 +204,21 @@ where
     /// Sets the [`Form`] with a text size
     pub fn size(mut self, size: u32) -> Self {
         self.input = self.input.size(size);
+        self
+    }
+
+    /// Switch this form from the default [`FormSize::Normal`] to
+    /// [`FormSize::Compact`].
+    pub fn compact(mut self) -> Self {
+        self.input = self.input.padding(FormSize::Compact.padding());
+        self
+    }
+
+    /// Apply the fee look: a transparent input wrapped in a tinted, shadowed box.
+    /// Combine with [`compact`](Self::compact) for the fee input.
+    pub fn fee(mut self) -> Self {
+        self.input = self.input.style(theme::text_input::fee);
+        self.fee = true;
         self
     }
 
@@ -176,13 +252,23 @@ impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {
 impl<'a, Message: 'a + Clone> Form<'a, Message> {
     /// Converts the [`Form`] into a [`Container`].
     pub fn into_container(self) -> Container<'a, Message> {
+        let styled_input = if !self.valid {
+            self.input.style(theme::text_input::invalid)
+        } else {
+            self.input
+        };
+        let input: Element<'a, Message> = if self.fee {
+            Container::new(styled_input)
+                .style(theme::container::form_field)
+                .width(Length::Fill)
+                .into()
+        } else {
+            styled_input.into()
+        };
         Container::new(
             Column::new()
-                .push(if !self.valid {
-                    self.input.style(theme::text_input::invalid)
-                } else {
-                    self.input
-                })
+                .push_maybe(self.label)
+                .push(input)
                 .push_maybe(if !self.valid {
                     self.warning
                         .map(|message| text::caption(message).color(color::RED))
