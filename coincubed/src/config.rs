@@ -307,15 +307,22 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub pending_bitcoind: Option<BitcoindConfig>,
     /// Whether the app should auto-switch to [`Self::pending_bitcoind`] as soon
-    /// as it is synced. True when the user adopted a node (installed alongside
-    /// Connect, or set one up in Settings) — they want it once ready, even if it
-    /// reused an existing chainstate and was never observed in IBD. False when a
-    /// synced node is merely *parked* (the user switched to Connect, or a
-    /// Bitcoind failure fell back to Esplora), so we don't auto-revert their
-    /// choice. Defaults false for backward compatibility; only written when true
-    /// so existing `daemon.toml` files (and the common parked case) stay clean.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub auto_switch_to_pending: bool,
+    /// as it is synced.
+    ///
+    /// - `Some(true)` — the user adopted a node (installed alongside Connect, or
+    ///   set one up in Settings); promote it once ready, even if it reused an
+    ///   existing chainstate and was never observed in IBD.
+    /// - `Some(false)` — a synced node is merely *parked* (the user switched to
+    ///   Connect, or a Bitcoind failure fell back to Esplora); do NOT auto-revert.
+    /// - `None` — key absent. Either a fresh config with no pending node, or a
+    ///   *legacy* `daemon.toml` written before this flag existed, where any
+    ///   `pending_bitcoind` was an adopted install-alongside node that the old
+    ///   build promoted on IBD-completion with no flag. So an absent key is
+    ///   treated as "promote" (see the auto-switch check), preserving that
+    ///   behaviour across upgrades. Only the two explicit states are serialized,
+    ///   keeping unaffected `daemon.toml` files clean.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_switch_to_pending: Option<bool>,
 }
 
 impl Config {
@@ -335,7 +342,7 @@ impl Config {
             data_dir: None,
             fallback_esplora: None,
             pending_bitcoind: None,
-            auto_switch_to_pending: false,
+            auto_switch_to_pending: None,
         }
     }
 
@@ -667,6 +674,62 @@ mod tests {
         "#;
         let config_res: Result<Config, toml::de::Error> = toml::from_str(toml_str);
         config_res.expect_err("Deserializing an invalid toml_str");
+    }
+
+    // A legacy `daemon.toml` (written before `auto_switch_to_pending` existed)
+    // carries a `pending_bitcoind` but no flag. It must deserialize to `None`
+    // (interpreted as "promote", preserving the old IBD-completion behaviour),
+    // and the three states must round-trip without polluting clean configs.
+    #[test]
+    fn auto_switch_to_pending_legacy_and_states() {
+        let legacy = r#"
+            data_dir = "/home/user/folder/"
+            log_level = "INFO"
+            main_descriptor = "wsh(andor(pk([aabbccdd]tpubDEN9WSToTyy9ZQfaYqSKfmVqmq1VVLNtYfj3Vkqh67et57eJ5sTKZQBkHqSwPUsoSskJeaYnPttHe2VrkCsKA27kUaN9SDc5zhqeLzKa1rr/<0;1>/*),older(10000),pk([aabbccdd]tpubD8LYfn6njiA2inCoxwM7EuN3cuLVcaHAwLYeups13dpevd3nHLRdK9NdQksWXrhLQVxcUZRpnp5CkJ1FhE61WRAsHxDNAkvGkoQkAeWDYjV/<0;1>/*)))#dw4ulnrs"
+
+            [bitcoin_config]
+            network = "bitcoin"
+            poll_interval_secs = 18
+
+            [bitcoind_config]
+            cookie_path = "/home/user/.bitcoin/.cookie"
+            addr = "127.0.0.1:8332"
+
+            [pending_bitcoind]
+            cookie_path = "/home/user/.bitcoin/.cookie"
+            addr = "127.0.0.1:8332"
+            "#
+        .trim_start()
+        .replace("            ", "");
+        let parsed = toml::from_str::<Config>(&legacy).expect("Deserializing legacy config");
+        // Absent key => None => legacy adopted node => promoted by the GUI.
+        assert_eq!(parsed.auto_switch_to_pending, None);
+        // A None flag is never serialized, so a clean config stays clean.
+        let serialized = toml::to_string_pretty(&parsed).expect("Serializing");
+        assert!(!serialized.contains("auto_switch_to_pending"));
+
+        // The two explicit states are persisted and round-trip.
+        let mut adopted = parsed.clone();
+        adopted.auto_switch_to_pending = Some(true);
+        let s = toml::to_string_pretty(&adopted).expect("Serializing adopted");
+        assert!(s.contains("auto_switch_to_pending = true"));
+        assert_eq!(
+            toml::from_str::<Config>(&s)
+                .expect("re-parse adopted")
+                .auto_switch_to_pending,
+            Some(true)
+        );
+
+        let mut parked = parsed;
+        parked.auto_switch_to_pending = Some(false);
+        let s = toml::to_string_pretty(&parked).expect("Serializing parked");
+        assert!(s.contains("auto_switch_to_pending = false"));
+        assert_eq!(
+            toml::from_str::<Config>(&s)
+                .expect("re-parse parked")
+                .auto_switch_to_pending,
+            Some(false)
+        );
     }
 
     // Test the format of the bitcoind_config section

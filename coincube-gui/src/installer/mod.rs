@@ -1057,7 +1057,7 @@ pub fn extract_daemon_config(ctx: &Context, settings: &WalletSettings) -> Result
     cfg.pending_bitcoind = ctx.pending_bitcoind_config.clone();
     // The user installed a node alongside Connect: adopt it (auto-switch) once
     // it's synced, even if it reused a chainstate and never entered IBD.
-    cfg.auto_switch_to_pending = ctx.install_node_alongside_connect;
+    cfg.auto_switch_to_pending = Some(ctx.install_node_alongside_connect);
     Ok(cfg)
 }
 

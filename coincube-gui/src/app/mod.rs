@@ -2548,7 +2548,11 @@ impl App {
                         if !ibd && !self.daemon_switch_in_progress && !self.auto_switch_suppressed {
                             let switch =
                                 self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
-                                    if !c.auto_switch_to_pending {
+                                    // Promote unless the node was explicitly parked
+                                    // (`Some(false)`). An absent flag (`None`) is a
+                                    // legacy adopted node — the old build promoted it
+                                    // on sync with no flag — so it must promote too.
+                                    if c.auto_switch_to_pending == Some(false) {
                                         return None;
                                     }
                                     let pending = c.pending_bitcoind.clone()?;
@@ -2563,7 +2567,7 @@ impl App {
                                     new_cfg.bitcoin_backend =
                                         Some(coincubed::config::BitcoinBackend::Bitcoind(pending));
                                     new_cfg.pending_bitcoind = None;
-                                    new_cfg.auto_switch_to_pending = false;
+                                    new_cfg.auto_switch_to_pending = Some(false);
                                     new_cfg.fallback_esplora = old_esplora;
                                     Some(new_cfg)
                                 });
@@ -2738,7 +2742,7 @@ impl App {
                                         // Fell back to Connect after a Bitcoind
                                         // failure — park the node but don't
                                         // auto-revert to it on the next probe.
-                                        new_cfg.auto_switch_to_pending = false;
+                                        new_cfg.auto_switch_to_pending = Some(false);
                                         new_cfg.fallback_esplora = None;
                                         new_cfg
                                     })
@@ -2935,6 +2939,17 @@ impl App {
                             self.daemon = None;
                         }
                         error!("Daemon backend switch failed: {}", error);
+                        Err(error)
+                    }
+                    DaemonRestart::Panicked(error) => {
+                        // Unknown post-panic state. self.daemon still holds the
+                        // pre-switch daemon (cloned, not taken), so leave it in
+                        // place — a possibly-stopped backend the user can re-switch
+                        // beats no backend on an open vault. Suppress auto-promotion
+                        // so a still-armed config can't re-trigger the same panic
+                        // every poll; a manual switch re-arms it.
+                        self.auto_switch_suppressed = true;
+                        error!("Daemon backend switch panicked; keeping previous daemon: {error}");
                         Err(error)
                     }
                 };
@@ -3801,16 +3816,15 @@ impl App {
                     // The blocking switch panicked. Still deliver a DaemonRestarted
                     // message so its handler clears `daemon_switch_in_progress` —
                     // otherwise the guard sticks `true` and blocks every later
-                    // LoadDaemonConfig / auto-switch indefinitely. `old_daemon` was
-                    // moved into the (now-dead) task, so there's nothing to recover.
+                    // LoadDaemonConfig / auto-switch indefinitely. Report it as
+                    // `Panicked` (not `Failed`) so the handler KEEPS the App's
+                    // existing daemon (still held, since `old_daemon` was cloned)
+                    // rather than nulling it and leaving the vault backend-less.
                     Err(join_err) => {
                         error!("daemon restart task panicked: {join_err}");
-                        DaemonRestart::Failed {
-                            error: Error::Config(format!(
-                                "daemon restart task panicked: {join_err}"
-                            )),
-                            recovered: None,
-                        }
+                        DaemonRestart::Panicked(Error::Config(format!(
+                            "daemon restart task panicked: {join_err}"
+                        )))
                     }
                 }
             },
@@ -3971,6 +3985,12 @@ pub enum DaemonRestart {
         error: Error,
         recovered: Option<Arc<dyn Daemon + Sync + Send>>,
     },
+    /// The blocking restart task itself panicked, so its outcome (and whether the
+    /// old daemon was stopped) is unknown. Distinct from `Failed` because the App
+    /// still holds the pre-switch daemon (`spawn_daemon_switch` clones it rather
+    /// than taking it): the handler keeps that reference so an open vault isn't
+    /// left with no backend, instead of nulling it like the clean-failure path.
+    Panicked(Error),
 }
 
 /// Stop `old_daemon`, start a new one for `cfg`, then persist `daemon.toml`.

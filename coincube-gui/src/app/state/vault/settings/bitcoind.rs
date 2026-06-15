@@ -187,7 +187,7 @@ impl BitcoindSettingsState {
         }
         // The user deliberately switched to Connect — park the node, but don't
         // auto-revert to it on the next sync probe.
-        new_cfg.auto_switch_to_pending = false;
+        new_cfg.auto_switch_to_pending = Some(false);
         new_cfg.bitcoin_backend = Some(BitcoinBackend::Esplora(esplora));
         // Bump the poll cadence to the Esplora-safe interval so
         // we don't carry a snappy localhost cadence into a path
@@ -292,7 +292,7 @@ impl State for BitcoindSettingsState {
                             // Keep the invariant: no pending node ⇒ nothing to
                             // auto-switch to. Leaving the flag set would strand a
                             // stale "auto-switch enabled" state with no target.
-                            rollback_cfg.auto_switch_to_pending = false;
+                            rollback_cfg.auto_switch_to_pending = Some(false);
                             return Task::done(Message::LoadDaemonConfig(Box::new(rollback_cfg)));
                         }
                     }
@@ -498,7 +498,7 @@ impl State for BitcoindSettingsState {
                                         new_cfg.pending_bitcoind = Some(bitcoind_cfg);
                                         // Adopted a freshly set-up node — switch to
                                         // it once synced.
-                                        new_cfg.auto_switch_to_pending = true;
+                                        new_cfg.auto_switch_to_pending = Some(true);
                                         setup.internal_stage = InternalSetupStage::Done;
                                         setup.processing = true;
                                         return Task::batch([
@@ -591,7 +591,7 @@ impl State for BitcoindSettingsState {
                                         Some(BitcoindConfig { rpc_auth, addr });
                                     // Adopted an existing/external node — switch to
                                     // it once it's reachable and synced.
-                                    new_cfg.auto_switch_to_pending = true;
+                                    new_cfg.auto_switch_to_pending = Some(true);
                                     setup.processing = true;
                                     return Task::done(Message::LoadDaemonConfig(Box::new(
                                         new_cfg,
@@ -632,7 +632,7 @@ impl State for BitcoindSettingsState {
                                 // The pending node is now the active backend, so
                                 // clear the auto-switch flag too — keeping it set
                                 // with no pending target violates the invariant.
-                                new_cfg.auto_switch_to_pending = false;
+                                new_cfg.auto_switch_to_pending = Some(false);
                                 new_cfg.fallback_esplora = old_esplora;
                                 // Drop the poll cadence back to the
                                 // snappy local-node interval. The
