@@ -82,6 +82,8 @@ pub struct NetworkInfo {
 #[derive(Deserialize)]
 pub struct Feerate {
     pub low: Option<i32>,
+    #[serde(default)]
+    pub medium: Option<i32>,
     pub high: Option<i32>,
 }
 
@@ -542,5 +544,35 @@ pub mod payload {
     #[derive(Serialize)]
     pub struct UpdateSettings {
         pub fiat_currency: super::FiatCurrency,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn network_info_feerate_medium_defaults_to_none() {
+        // Current backends omit `medium`; it must parse to None.
+        let info: NetworkInfo = serde_json::from_str(
+            r#"{"feerate":{"low":1,"high":null},"rates":{"BTCEUR":34033.98}}"#,
+        )
+        .unwrap();
+        assert_eq!(info.feerate.low, Some(1));
+        assert_eq!(info.feerate.medium, None);
+        assert_eq!(info.feerate.high, None);
+        assert_eq!(info.rates.get("BTCEUR"), Some(&34033.98));
+
+        // A null `medium` also parses to None.
+        let info: NetworkInfo =
+            serde_json::from_str(r#"{"feerate":{"low":1,"medium":null,"high":9},"rates":{}}"#)
+                .unwrap();
+        assert_eq!(info.feerate.medium, None);
+
+        // A present `medium` parses to Some.
+        let info: NetworkInfo =
+            serde_json::from_str(r#"{"feerate":{"low":1,"medium":5,"high":9},"rates":{}}"#)
+                .unwrap();
+        assert_eq!(info.feerate.medium, Some(5));
     }
 }

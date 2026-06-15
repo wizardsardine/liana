@@ -23,7 +23,7 @@ use reqwest::{Error, IntoUrl, Method, RequestBuilder};
 use tokio::sync::RwLock;
 
 use crate::{
-    daemon::{model::*, Daemon, DaemonBackend, DaemonError},
+    daemon::{model::*, Daemon, DaemonBackend, DaemonError, FeerateEstimate},
     dir::LianaDirectory,
     hw::HardwareWalletConfig,
     services::connect::client::cache::ConnectCacheError,
@@ -1104,12 +1104,22 @@ impl Daemon for BackendWalletClient {
             .await
     }
 
-    async fn get_fiat_rates(&self) -> Result<HashMap<String, f64>, DaemonError> {
+    async fn get_fiat_rates(
+        &self,
+    ) -> Result<(HashMap<String, f64>, Option<FeerateEstimate>), DaemonError> {
         let res: api::NetworkInfo = self
             .inner
             .request(Method::GET, "/v1/network", |r| r)
             .await?;
-        Ok(res.rates.into_iter().map(|(k, v)| (k, v as f64)).collect())
+        // Smart fee is available when the backend supplied both bounds. The
+        // constructor floors and orders the presets (see FeerateEstimate::new).
+        let feerate = res
+            .feerate
+            .low
+            .zip(res.feerate.high)
+            .map(|(low, high)| FeerateEstimate::new(low, res.feerate.medium, high));
+        let rates = res.rates.into_iter().map(|(k, v)| (k, v as f64)).collect();
+        Ok((rates, feerate))
     }
 
     async fn update_wallet_settings(

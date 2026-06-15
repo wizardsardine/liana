@@ -2,6 +2,7 @@ pub mod payment;
 
 use std::time::Duration;
 
+use bitcoin::Amount;
 use iced::{
     widget::{column, row, Space},
     Alignment, Length,
@@ -9,7 +10,9 @@ use iced::{
 
 use crate::{
     component::{
-        amount::{amount_with_font, amount_with_font_blink, DisplayAmount},
+        amount::{
+            amount_with_fiat, amount_with_font, amount_with_font_blink, AmountSize, FiatAmount,
+        },
         button::{btn_dismiss, btn_go_to_rescan, btn_reset_timelock},
         card::{self, info, warning},
         spinner,
@@ -19,7 +22,7 @@ use crate::{
         },
     },
     icon, theme,
-    widget::{Element, RowExt, SpaceExt},
+    widget::{Element, SpaceExt},
 };
 
 const RESCAN_WARNING: &str = "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions.";
@@ -60,7 +63,7 @@ pub fn unconfirmed_balance<'a, M: 'a>(
 
     row![
         new::h3("+").style(|t| theme::amount::sats(t, false)),
-        new::h3(amount.to_formatted_string()).style(|t| theme::amount::zeroes(t, false)),
+        amount_with_font(amount, new::H3_SPEC),
         new::h3("unconfirmed").style(|t| theme::amount::sats(t, false)),
         fiat
     ]
@@ -80,9 +83,9 @@ pub enum SyncProgress {
 /// Wallet balance amount, with optional fiat value. While `syncing` the amount
 /// blinks (the fiat value is hidden); pair it with [`syncing`] for the progress
 /// line.
-pub fn balance<'a, M: Clone + 'a>(
+pub fn balance<'a, M: Clone + 'a, F: Fn(Amount) -> FiatAmount>(
     amount: &'a bitcoin::Amount,
-    fiat: Option<String>,
+    to_fiat: Option<F>,
     syncing: bool,
 ) -> Element<'a, M> {
     const BALANCE_FONT: TextSpec = D2_SPEC;
@@ -96,19 +99,7 @@ pub fn balance<'a, M: Clone + 'a>(
         );
         row![blinking].wrap().into()
     } else {
-        let fiat = fiat.map(|fiat| {
-            row![
-                Space::with_width(20),
-                new::h1(fiat).style(|t| theme::amount::zeroes(t, false))
-            ]
-            .align_y(Alignment::Center)
-        });
-
-        row![amount_with_font(amount, BALANCE_FONT)]
-            .align_y(Alignment::Center)
-            .push_maybe(fiat)
-            .wrap()
-            .into()
+        amount_with_fiat(amount, to_fiat, AmountSize::L)
     }
 }
 

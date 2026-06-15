@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use super::api::{GetPriceResult, ListCurrenciesResult, PriceApiError};
-use super::currency::Currency;
+use super::Currency;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum PriceSource {

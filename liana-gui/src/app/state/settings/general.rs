@@ -4,17 +4,20 @@ use iced::Task;
 use liana::miniscript::bitcoin::Network;
 use liana_ui::widget::Element;
 
-use crate::app::cache::Cache;
-use crate::app::error::Error;
-use crate::app::message::{FiatMessage, Message};
-use crate::app::settings::fiat::PriceSetting;
-use crate::app::settings::{update_settings_file, LianaSettings};
-use crate::app::state::State;
-use crate::app::view;
-use crate::app::wallet::Wallet;
-use crate::daemon::Daemon;
-use crate::dir::LianaDirectory;
-use crate::services::fiat::currency::Currency;
+use crate::{
+    app::{
+        cache::Cache,
+        error::Error,
+        message::{FiatMessage, Message},
+        settings::{fiat::PriceSetting, update_settings_file, LianaSettings},
+        state::State,
+        view,
+        wallet::Wallet,
+    },
+    daemon::Daemon,
+    dir::LianaDirectory,
+    services::fiat::Currency,
+};
 
 async fn update_price_setting(
     data_dir: LianaDirectory,

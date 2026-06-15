@@ -211,6 +211,7 @@ impl SettingsTrait for BusinessSettings {
                     last_tick: Instant::now(),
                 },
                 fiat_price: None,
+                feerate_estimate: None,
                 pane_size: Cell::new(iced::window::Settings::default().size),
             };
 

@@ -1,5 +1,7 @@
 mod step;
 
+pub use step::{FeeMode, Recipient};
+
 use std::collections::HashSet;
 use std::convert::TryInto;
 use std::sync::Arc;

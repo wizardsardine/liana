@@ -1,7 +1,7 @@
 use crate::{
     daemon::{
         model::{Coin, ListCoinsResult},
-        Daemon, DaemonError,
+        Daemon, DaemonError, FeerateEstimate,
     },
     dir::LianaDirectory,
     services::fiat::{
@@ -24,6 +24,7 @@ pub struct Cache {
     pub last_poll_at_startup: Option<u32>,
     pub daemon_cache: DaemonCache,
     pub fiat_price: Option<FiatPrice>,
+    pub feerate_estimate: Option<FeerateEstimate>,
     /// Last observed pane size
     pub pane_size: Cell<Size>,
 }
@@ -38,6 +39,7 @@ impl std::default::Default for Cache {
             last_poll_at_startup: None,
             daemon_cache: DaemonCache::default(),
             fiat_price: None,
+            feerate_estimate: None,
             pane_size: Cell::new(iced::window::Settings::default().size),
         }
     }

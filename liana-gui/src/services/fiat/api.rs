@@ -1,5 +1,5 @@
-use super::currency::Currency;
 use super::source::PriceSource;
+use super::Currency;
 
 use async_trait::async_trait;
 
