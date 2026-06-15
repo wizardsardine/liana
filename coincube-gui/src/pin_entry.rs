@@ -21,6 +21,11 @@ pub struct PinEntry {
     loading: bool,
     // Store what to do after successful PIN entry
     pub on_success: PinEntrySuccess,
+    /// This device's enrolled Connect duress account id, captured at
+    /// construction so it can be carried explicitly through `DuressDetected`
+    /// (Task A.1) rather than re-derived deep inside activation. `None` for a
+    /// sovereign (no-Connect) enrollment.
+    duress_account_id: Option<String>,
     loading_quote: Quote,
     loading_image_handle: image::Handle,
 }
@@ -44,10 +49,16 @@ pub enum Message {
     Back,
     PinVerified,
     /// The submitted PIN matched this Cube's **duress** PIN. Bubbles up to the
-    /// tab state machine, which wipes Cube data and locks into the cryptic
-    /// "Duress Mode Activated" screen. The parent intercepts this; it is never
-    /// handled inside `PinEntry::update`.
-    DuressDetected,
+    /// tab state machine, which delegates to the duress orchestrator (wipe Cube
+    /// data + server POST) and locks into the cryptic "Duress Mode Activated"
+    /// screen. The parent intercepts this; it is never handled inside
+    /// `PinEntry::update`.
+    ///
+    /// Carries this device's enrolled Connect duress `account_id` (`None` for
+    /// sovereign) so the orchestrator receives it explicitly — see Task A.1.
+    DuressDetected {
+        account_id: Option<String>,
+    },
 }
 
 /// Classification of a submitted PIN at Cube unlock.
@@ -58,7 +69,11 @@ enum PinOutcome {
 }
 
 impl PinEntry {
-    pub fn new(cube: CubeSettings, on_success: PinEntrySuccess) -> Self {
+    pub fn new(
+        cube: CubeSettings,
+        on_success: PinEntrySuccess,
+        duress_account_id: Option<String>,
+    ) -> Self {
         let loading_quote = quote_display::random_quote("loading");
         let loading_image_handle = quote_display::image_handle_for_context("loading");
         Self {
@@ -67,6 +82,7 @@ impl PinEntry {
             error: None,
             loading: false,
             on_success,
+            duress_account_id,
             loading_quote,
             loading_image_handle,
         }
@@ -129,11 +145,16 @@ impl PinEntry {
                         Task::perform(async {}, |_| Message::PinVerified)
                     }
                     PinOutcome::Duress => {
-                        // Clear the buffer and bubble up — the cryptic screen
-                        // reveals the duress signal regardless, so a fake-success
-                        // delay buys nothing.
+                        // Clear the buffer and bubble up the enrolled account id
+                        // so the parent can drive the orchestrator. Show the
+                        // neutral loading screen during the brief async
+                        // activation gap: it's identical to a normal unlock (so
+                        // it reveals nothing to an onlooker) and blocks further
+                        // input until we lock into the cryptic screen.
                         self.pin_input.clear();
-                        Task::perform(async {}, |_| Message::DuressDetected)
+                        self.loading = true;
+                        let account_id = self.duress_account_id.clone();
+                        Task::done(Message::DuressDetected { account_id })
                     }
                     PinOutcome::Wrong => {
                         self.error = Some("Incorrect PIN. Please try again.".to_string());
@@ -144,7 +165,7 @@ impl PinEntry {
             }
             // `DuressDetected` is intercepted by the parent (tab state machine);
             // if it ever reaches here it's a no-op.
-            Message::Back | Message::PinVerified | Message::DuressDetected => Task::none(),
+            Message::Back | Message::PinVerified | Message::DuressDetected { .. } => Task::none(),
         }
     }
 

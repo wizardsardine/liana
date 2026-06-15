@@ -65,11 +65,11 @@ async fn full_local_duress_cycle() {
         journal.clone(),
         queue.clone(),
         wipe,
-        cipher,
+        Some(cipher),
         Arc::new(OkTrigger),
         Some(tx),
     );
-    orch.activate("acct_e2e".to_string()).await.unwrap();
+    orch.activate(Some("acct_e2e".to_string())).await.unwrap();
 
     // Cube data is gone; the cryptic-screen event fired; state is durable.
     assert!(!dir.join("bitcoin").join("data").exists());
