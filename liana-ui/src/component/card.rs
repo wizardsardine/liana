@@ -14,6 +14,15 @@ pub fn simple<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T
         .style(theme::card::simple)
 }
 
+pub fn flat<'a, T: 'a, C: Into<Element<'a, T>>>(
+    content: C,
+    padding: impl Into<Padding>,
+) -> Container<'a, T> {
+    Container::new(content)
+        .padding(padding)
+        .style(theme::card::flat)
+}
+
 pub fn invalid<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T> {
     Container::new(content)
         .padding(15)

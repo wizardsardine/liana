@@ -22,7 +22,7 @@ pub mod tooltip;
 use bitcoin::Network;
 pub use tooltip::{tooltip, tooltip_custom};
 
-use iced::Length;
+use iced::{widget::row, Alignment, Length, Padding};
 
 use crate::{theme, widget::*};
 
@@ -56,4 +56,26 @@ pub fn network_banner<'a, T: 'a>(network: Network) -> Container<'a, T> {
     .padding(5)
     .center_x(Length::Fill)
     .style(theme::banner::network)
+}
+
+pub fn section<'a, T: 'a>(title: impl std::fmt::Display) -> Row<'a, T> {
+    let title = Container::new(text::new::d4(title))
+        .padding(Padding {
+            top: 10.0,
+            right: 24.0,
+            bottom: 10.0,
+            left: 18.0,
+        })
+        .align_y(Alignment::Center)
+        .style(theme::card::section);
+    row![title, separator()]
+        .align_y(Alignment::Center)
+        .spacing(10)
+        .width(Length::Fill)
+}
+
+pub fn separator<'a, T: 'a>() -> Element<'a, T> {
+    iced::widget::rule::horizontal(4)
+        .style(theme::rule::separator)
+        .into()
 }
