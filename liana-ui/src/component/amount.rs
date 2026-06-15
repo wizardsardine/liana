@@ -1,5 +1,10 @@
+use std::num::ParseFloatError;
+
 pub use bitcoin::Amount;
-use iced::widget::{row, Space};
+use iced::{
+    widget::{row, Space},
+    Alignment,
+};
 
 use crate::{component::text::*, theme::amount, widget::*};
 
@@ -120,9 +125,265 @@ fn render_amount<'a, T: 'a>(amount: String, font: TextSpec, blink: bool) -> Row<
     row![zeroes, sats, Space::with_width(spacing), btc].align_y(iced::Alignment::Center)
 }
 
+macro_rules! currency_enum {
+    ($name:ident { $($variant:ident),* $(,)? }) => {
+        #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Default)]
+        pub enum $name {
+            #[default]
+            $($variant,)*
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    $(Self::$variant => write!(f, stringify!($variant)),)*
+                }
+            }
+        }
+
+        impl std::str::FromStr for $name {
+            type Err = String;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                match s.to_uppercase().as_str() {
+                    $(stringify!($variant) => Ok(Self::$variant),)*
+                    _ => Err("Invalid currency".to_string()),
+                }
+            }
+        }
+
+    };
+}
+
+currency_enum!(Currency {
+    USD, // macro sets first variant as the default
+    AED,
+    AMD,
+    ARS,
+    AUD,
+    BAM,
+    BDT,
+    BHD,
+    BMD,
+    BRL,
+    CAD,
+    CHF,
+    CLP,
+    CNY,
+    COP,
+    CRC,
+    CZK,
+    DKK,
+    DOP,
+    EUR,
+    GBP,
+    GEL,
+    GTQ,
+    HKD,
+    HNL,
+    HUF,
+    IDR,
+    ILS,
+    INR,
+    JPY,
+    KES,
+    KRW,
+    KWD,
+    LKR,
+    LBP,
+    MMK,
+    MXN,
+    MYR,
+    NGN,
+    NOK,
+    NZD,
+    PEN,
+    PHP,
+    PKR,
+    PLN,
+    RON,
+    RUB,
+    SAR,
+    SEK,
+    SGD,
+    SVC,
+    THB,
+    TRY,
+    TWD,
+    UAH,
+    VEF,
+    VND,
+    ZAR,
+    ZMW,
+});
+
+impl Currency {
+    /// Returns the number of decimals required for the minor unit.
+    pub fn decimals(&self) -> usize {
+        match self {
+            Currency::CLP | Currency::JPY | Currency::KRW | Currency::VND => 0,
+            Currency::BHD | Currency::KWD => 3,
+            _ => 2,
+        }
+    }
+}
+
+/// A non-negative fiat amount with a specific currency.
+#[derive(Debug, Clone, Copy)]
+pub struct FiatAmount {
+    amount: f64,
+    currency: Currency,
+}
+
+#[derive(Debug, Clone)]
+pub enum AmountError {
+    Negative,
+    ParseError(String),
+}
+
+impl std::fmt::Display for AmountError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Negative => write!(f, "Amount must be non-negative"),
+            Self::ParseError(e) => write!(f, "Parse error: {e}"),
+        }
+    }
+}
+
+impl FiatAmount {
+    pub fn new(amount: f64, currency: Currency) -> Result<Self, AmountError> {
+        if amount < 0.0 {
+            return Err(AmountError::Negative);
+        }
+        Ok(Self { amount, currency })
+    }
+
+    /// Parse a fiat amount from a string in the given currency.
+    pub fn from_str_in(s: &str, currency: Currency) -> Result<Self, AmountError> {
+        let amount: f64 = s
+            .trim()
+            .parse()
+            .map_err(|e: ParseFloatError| AmountError::ParseError(e.to_string()))?;
+        Self::new(amount, currency)
+    }
+
+    pub fn amount(&self) -> f64 {
+        self.amount
+    }
+
+    pub fn currency(&self) -> Currency {
+        self.currency
+    }
+
+    /// Format a fiat amount as a string with required decimal places for currency and no thousands separator.
+    pub fn to_rounded_string(&self) -> String {
+        format_f64_as_string(self.amount, "", self.currency().decimals(), false)
+    }
+
+    /// Format a fiat amount as a string with a tilde (~) prefix to indicate approximation.
+    pub fn to_display_string(&self) -> String {
+        self.to_display_string_approx(true)
+    }
+
+    /// Format a fiat amount as a string, with a tilde (~) prefix only when
+    /// `approximate` (an exact, user-known price shows no `~`).
+    pub fn to_display_string_approx(&self, approximate: bool) -> String {
+        let prefix = if approximate { "~" } else { "" };
+        format!("{prefix}{} {}", self.to_formatted_string(), self.currency())
+    }
+}
+
+// Format a fiat amount as a string with required decimal places for currency and a comma as the thousands separator.
+impl DisplayAmount for FiatAmount {
+    fn to_formatted_string(&self) -> String {
+        format_f64_as_string(self.amount, ",", self.currency().decimals(), false)
+    }
+}
+
+/// Size preset for [`amount_with_fiat`]: picks the BTC-amount and fiat text specs.
+#[derive(Debug, Clone, Copy)]
+pub enum AmountSize {
+    S,
+    M,
+    L,
+}
+
+impl AmountSize {
+    fn amount_spec(self) -> TextSpec {
+        match self {
+            AmountSize::S => new::CAPTION_SPEC,
+            AmountSize::M => new::H2_SEMI_SPEC,
+            AmountSize::L => new::D2_SPEC,
+        }
+    }
+
+    fn fiat_spec(self) -> TextSpec {
+        match self {
+            AmountSize::S => new::CAPTION_SPEC,
+            AmountSize::M => new::H3_SPEC,
+            AmountSize::L => new::H1_SPEC,
+        }
+    }
+}
+
+/// A BTC amount with an optional fiat value beside it and an optional trailing
+/// element after the fiat (e.g. a price-source tooltip), in a consistent format.
+///
+/// `to_fiat` converts the amount to fiat (typically `|a| converter.convert(a)`);
+/// when `None`, only the BTC amount is shown. The fiat value is rendered in the
+/// amount colors with a `~` approximation prefix, to match the BTC amount.
+pub fn amount_with_fiat_tooltip<'a, M: 'a, F: Fn(Amount) -> FiatAmount>(
+    a: &Amount,
+    to_fiat: Option<F>,
+    size: AmountSize,
+    approximate: bool,
+    tooltip: Option<Element<'a, M>>,
+) -> Element<'a, M> {
+    let btc = amount_with_font(a, size.amount_spec());
+    let fiat = to_fiat.map(|to_fiat| {
+        apply(
+            to_fiat(*a).to_display_string_approx(approximate),
+            size.fiat_spec(),
+        )
+        .style(|t| amount::zeroes(t, false))
+    });
+    row![btc, fiat, tooltip]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .wrap()
+        .into()
+}
+
+/// A BTC amount with an optional fiat value beside it, in a consistent format.
+/// The fiat is shown as an approximation (`~`). See [`amount_with_fiat_tooltip`]
+/// for the variant with an exact/approximate flag and a trailing tooltip.
+pub fn amount_with_fiat<'a, M: 'a, F: Fn(Amount) -> FiatAmount>(
+    a: &Amount,
+    to_fiat: Option<F>,
+    size: AmountSize,
+) -> Element<'a, M> {
+    amount_with_fiat_tooltip(a, to_fiat, size, true, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_new_fiat_amount() {
+        // Try with negative amounts.
+        for amt in &[-1000.0, -10.5, -0.1] {
+            let result = FiatAmount::new(*amt, Currency::USD);
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), AmountError::Negative));
+        }
+
+        // Check non-negative amounts work.
+        for amt in &[-0.0, 0.0, 0.1, 27.12] {
+            let result = FiatAmount::new(*amt, Currency::USD);
+            assert!(result.is_ok());
+        }
+    }
 
     #[test]
     fn test_amount_as_str() {
