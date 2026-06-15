@@ -67,21 +67,35 @@ pub fn pill_with_icon<'a, T: 'a, L: Display, TT: Display>(
     tooltip: TT,
     width: PillWidth,
     style: fn(&Theme) -> Style,
+    compact: bool,
 ) -> Container<'a, T> {
+    let size = if compact {
+        PILL_FONT_SIZE_COMPACT
+    } else {
+        PILL_FONT_SIZE
+    };
     let label = iced::widget::text!("{label}")
         .shaping(Shaping::Advanced)
         .font(PILL_FONT)
         .center()
-        .size(PILL_FONT_SIZE);
-    let content = if let Some(icon) = icon {
-        row![icon, Space::with_width(15), label, Space::fill_width()]
-    } else {
-        row![label]
+        .size(size);
+    let content = match (icon, compact) {
+        (Some(icon), true) => row![icon, Space::with_width(6), label],
+        (Some(icon), false) => row![icon, Space::with_width(15), label, Space::fill_width()],
+        (None, _) => row![label],
     };
-    let pill = Container::new(content)
-        .padding(PILL_PADDING)
-        .style(style)
-        .center_x(width);
+    // Compact pills shrink to content; full pills center within a fixed width.
+    let pill = if compact {
+        Container::new(content)
+            .padding(PILL_PADDING_COMPACT)
+            .align_y(Alignment::Center)
+            .style(style)
+    } else {
+        Container::new(content)
+            .padding(PILL_PADDING)
+            .style(style)
+            .center_x(width)
+    };
     pill_with_tooltip(pill, Some(tooltip))
 }
 
@@ -250,71 +264,99 @@ pub fn fingerprint<'a, T: 'a>(fg: impl Into<String>, alias: Option<&str>) -> Con
     .center_y(height)
 }
 
-pub fn coin_sequence<'a, T: 'a>(sequence: u32) -> Container<'a, T> {
-    let caption = "First recovery option available ";
-    fn clock() -> widget::Text<'static> {
-        crate::icon::clock_icon()
-    }
-    fn clock_fill() -> widget::Text<'static> {
-        crate::icon::clock_fill_icon()
-    }
-    #[allow(clippy::type_complexity)]
-    let (label, tooltip, width, style, icon): (
-        String,
-        String,
-        PillWidth,
-        fn(&Theme) -> Style,
-        widget::Text<'static>,
-    ) = if sequence == 0 {
-        (
-            "Available".to_string(),
-            "Recovery option(s) already available".to_string(),
-            PillWidth::M,
-            theme::pill::warning,
-            clock_fill(),
-        )
-    } else if sequence <= 144 {
-        (
-            "Today".to_string(),
-            format!("{caption} today"),
-            PillWidth::M,
-            theme::pill::soft_warning,
-            clock(),
-        )
-    } else if sequence <= 2 * 144 {
-        let units = "~2 days";
-        (
-            units.to_string(),
-            format!("{caption}in {units}"),
-            PillWidth::M,
-            theme::pill::soft_warning,
-            clock(),
-        )
-    } else {
-        let mut units = expire_message_units(sequence);
-        if units.len() > 2 {
-            units = units[0..1].to_vec();
-        }
-        let width = if units.len() > 1 {
-            PillWidth::XL
-        } else {
-            PillWidth::M
-        };
-        let units = format!("~{}", units.join(", "));
-        (
-            units.to_string(),
-            format!("{caption}in {units}"),
-            width,
-            theme::pill::simple,
-            clock(),
-        )
-    };
+const BLOCKS_PER_DAY: u32 = 144;
 
-    pill_with_icon(Some(icon.size(18)), &label, tooltip, width, style)
+#[derive(Debug, Clone, Copy)]
+enum RecoveryEta {
+    Available,
+    Today,
+    TwoDays,
+    Longer,
 }
 
-/// returns y,m,d
-fn expire_message_units(sequence: u32) -> Vec<String> {
+fn recovery_eta(sequence: u32) -> RecoveryEta {
+    if sequence == 0 {
+        RecoveryEta::Available
+    } else if sequence <= BLOCKS_PER_DAY {
+        RecoveryEta::Today
+    } else if sequence <= 2 * BLOCKS_PER_DAY {
+        RecoveryEta::TwoDays
+    } else {
+        RecoveryEta::Longer
+    }
+}
+
+impl RecoveryEta {
+    fn style(self) -> fn(&Theme) -> Style {
+        match self {
+            Self::Available => theme::pill::warning,
+            Self::Today | Self::TwoDays => theme::pill::soft_warning,
+            Self::Longer => theme::pill::simple,
+        }
+    }
+
+    fn clock(self) -> widget::Text<'static> {
+        match self {
+            Self::Available => crate::icon::clock_fill_icon(),
+            _ => crate::icon::clock_icon(),
+        }
+    }
+}
+
+pub fn coin_sequence<'a, T: 'a>(sequence: u32) -> Container<'a, T> {
+    coin_sequence_pill(sequence, false)
+}
+
+pub fn coin_sequence_compact<'a, T: 'a>(sequence: u32) -> Container<'a, T> {
+    coin_sequence_pill(sequence, true)
+}
+
+fn coin_sequence_pill<'a, T: 'a>(sequence: u32, compact: bool) -> Container<'a, T> {
+    let caption = "First recovery option available ";
+    let eta = recovery_eta(sequence);
+    let (label, tooltip, width): (String, String, PillWidth) = match eta {
+        RecoveryEta::Available => (
+            if compact { "Avail." } else { "Available" }.to_string(),
+            "Recovery option(s) already available".to_string(),
+            PillWidth::M,
+        ),
+        RecoveryEta::Today => ("Today".to_string(), format!("{caption}today"), PillWidth::M),
+        RecoveryEta::TwoDays => (
+            if compact { "~2d" } else { "~2 days" }.to_string(),
+            format!("{caption}in ~2 days"),
+            PillWidth::M,
+        ),
+        RecoveryEta::Longer if compact => {
+            let units = expire_compact_units(sequence);
+            (units.clone(), format!("{caption}in {units}"), PillWidth::M)
+        }
+        RecoveryEta::Longer => {
+            let mut units = expire_message_units(sequence);
+            if units.len() > 2 {
+                units = units[0..1].to_vec();
+            }
+            let width = if units.len() > 1 {
+                PillWidth::XL
+            } else {
+                PillWidth::M
+            };
+            let units = format!("~{}", units.join(", "));
+            (units.clone(), format!("{caption}in {units}"), width)
+        }
+    };
+
+    let icon_size = if compact { 14 } else { 18 };
+    pill_with_icon(
+        Some(eta.clock().size(icon_size)),
+        &label,
+        tooltip,
+        width,
+        eta.style(),
+        compact,
+    )
+}
+
+fn expire_units(sequence: u32) -> Vec<(u32, ExpireUnit)> {
     const HOUR: u32 = 60/*minutes*/;
     const DAY: u32 = 60/*minutes*/ * 24/* hours */; // 1440
     const YEAR: u32 = ((365/*days*/ * 4 + 1) * DAY) / 4; // 525960
@@ -326,32 +368,65 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
     n_minutes -= n_months * MONTH;
     let n_days = n_minutes / DAY;
 
-    if n_years != 0 || n_months != 0 || n_days != 0 {
-        [(n_years, "year"), (n_months, "month"), (n_days, "day")]
-            .iter()
-            .filter_map(|(n, u)| {
-                if *n != 0 {
-                    Some(format!("{} {}{}", n, u, if *n > 1 { "s" } else { "" }))
-                } else {
-                    None
-                }
-            })
-            .collect()
+    let units = if n_years != 0 || n_months != 0 || n_days != 0 {
+        vec![
+            (n_years, ExpireUnit::Year),
+            (n_months, ExpireUnit::Month),
+            (n_days, ExpireUnit::Day),
+        ]
     } else {
         n_minutes -= n_days * DAY;
         let n_hours = n_minutes / HOUR;
         n_minutes -= n_hours * HOUR;
-        [(n_hours, "hour"), (n_minutes, "minute")]
-            .iter()
-            .filter_map(|(n, u)| {
-                if *n != 0 {
-                    Some(format!("{} {}{}", n, u, if *n > 1 { "s" } else { "" }))
-                } else {
-                    None
-                }
-            })
-            .collect()
+        vec![(n_hours, ExpireUnit::Hour), (n_minutes, ExpireUnit::Minute)]
+    };
+    units.into_iter().filter(|(n, _)| *n != 0).collect()
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ExpireUnit {
+    Year,
+    Month,
+    Day,
+    Hour,
+    Minute,
+}
+
+impl ExpireUnit {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Year => "year",
+            Self::Month => "month",
+            Self::Day => "day",
+            Self::Hour => "hour",
+            Self::Minute => "minute",
+        }
     }
+
+    fn abbr(self) -> &'static str {
+        match self {
+            Self::Year => "y",
+            Self::Month => "m",
+            Self::Day => "d",
+            Self::Hour => "h",
+            Self::Minute => "min",
+        }
+    }
+}
+
+fn expire_message_units(sequence: u32) -> Vec<String> {
+    expire_units(sequence)
+        .into_iter()
+        .map(|(n, u)| format!("{} {}{}", n, u.name(), if n > 1 { "s" } else { "" }))
+        .collect()
+}
+
+fn expire_compact_units(sequence: u32) -> String {
+    let parts: Vec<String> = expire_units(sequence)
+        .into_iter()
+        .map(|(n, u)| format!("{}{}", n, u.abbr()))
+        .collect();
+    format!("~{}", parts.join(","))
 }
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ fn bootstrap_icon_no_padding<'a>(unicode: char) -> Text<'a> {
 }
 
 pub fn cross_icon<'a>() -> Text<'a> {
-    bootstrap_icon('\u{F62A}')
+    bootstrap_icon_no_padding('\u{F62A}')
 }
 
 pub fn big_cross_icon<'a>() -> Text<'a> {
