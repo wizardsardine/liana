@@ -685,6 +685,13 @@ pub struct App {
     /// every tick — spawning concurrent daemon starts that race to load the same
     /// watchonly wallet and corrupt it. Cleared by `Message::DaemonRestarted`.
     daemon_switch_in_progress: bool,
+    /// Set when an auto-promotion to the pending local node fails and the
+    /// previous daemon is recovered. The recovered daemon still carries
+    /// `auto_switch_to_pending = true` + `pending_bitcoind`, so without this the
+    /// periodic sync probe would re-fire the same failing switch every poll,
+    /// churning the daemon. Suppresses auto-switch until the next *successful*
+    /// switch (a fresh adopt / manual switch re-arms it by clearing this).
+    auto_switch_suppressed: bool,
     /// Global "payment received" celebration overlay — shown for incoming
     /// Liquid payments (e.g. LNURL) regardless of which panel is active.
     show_received_celebration: bool,
@@ -1248,6 +1255,7 @@ impl App {
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
                 daemon_switch_in_progress: false,
+                auto_switch_suppressed: false,
                 show_received_celebration: false,
                 received_celebration_amount: String::new(),
                 received_celebration_context: "transaction-received".to_string(),
@@ -1350,6 +1358,7 @@ impl App {
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
                 daemon_switch_in_progress: false,
+                auto_switch_suppressed: false,
                 show_received_celebration: false,
                 received_celebration_amount: String::new(),
                 received_celebration_context: "transaction-received".to_string(),
@@ -2536,7 +2545,7 @@ impl App {
                         // clear the flag). Skip while a switch is already in
                         // flight, so we don't spawn overlapping switches every
                         // tick (which raced to load — and corrupted — the wallet).
-                        if !ibd && !self.daemon_switch_in_progress {
+                        if !ibd && !self.daemon_switch_in_progress && !self.auto_switch_suppressed {
                             let switch =
                                 self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
                                     if !c.auto_switch_to_pending {
@@ -2865,6 +2874,19 @@ impl App {
                     return self.spawn_daemon_switch(*cfg);
                 } else if self.daemon_switch_in_progress {
                     tracing::warn!("Ignoring backend switch — one is already in progress");
+                    // Every LoadDaemonConfig originates in the node-settings panel,
+                    // which has already flipped its local `processing` flags and is
+                    // awaiting a DaemonConfigLoaded reply. Dropping the request
+                    // silently would leave those flags to be cleared by an
+                    // *unrelated* switch's later success — masquerading as this
+                    // one and losing its config. Route an explicit error back so
+                    // the panel resets and the user can retry once the in-flight
+                    // switch finishes.
+                    return self.update_dispatch(Message::DaemonConfigLoaded(Err(Error::Config(
+                        "A Bitcoin backend switch is already in progress. \
+                         Please wait for it to finish, then try again."
+                            .to_string(),
+                    ))));
                 } else {
                     tracing::warn!("Attempted to load daemon config without vault");
                 }
@@ -2877,6 +2899,9 @@ impl App {
                 let result = match outcome {
                     DaemonRestart::Started(daemon) => {
                         self.daemon = Some(daemon);
+                        // A fresh successful switch (adopt / manual) re-arms
+                        // auto-promotion that a prior failure had suppressed.
+                        self.auto_switch_suppressed = false;
                         Ok(())
                     }
                     DaemonRestart::StartedNotPersisted(daemon) => {
@@ -2884,6 +2909,7 @@ impl App {
                         // only problem is the config wasn't saved. Report success
                         // but warn that it may not survive a restart.
                         self.daemon = Some(daemon);
+                        self.auto_switch_suppressed = false;
                         extra = Task::done(Message::View(view::Message::ShowToast(
                             log::Level::Warn,
                             "Switched Bitcoin backend, but couldn't save the change to disk — \
@@ -2895,6 +2921,12 @@ impl App {
                     DaemonRestart::Failed { error, recovered } => {
                         if let Some(daemon) = recovered {
                             self.daemon = Some(daemon);
+                            // The recovered daemon still carries the armed
+                            // `auto_switch_to_pending` + `pending_bitcoind`, so
+                            // suppress auto-promotion to stop the same failing
+                            // switch re-firing every poll. A later user-initiated
+                            // switch re-arms it (see the Started arms).
+                            self.auto_switch_suppressed = true;
                         } else {
                             // The old daemon was already stopped during the switch
                             // and recovery couldn't bring one back. Drop it rather

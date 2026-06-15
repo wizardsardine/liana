@@ -1650,6 +1650,7 @@ impl ConnectAccountPanel {
                         log::warn!(
                             "[CONNECT] duress gate: session rejected (401); returning to login"
                         );
+                        let was_logged_in = self.user.is_some();
                         // The session is dead — tear it all down (bumps
                         // session_generation so stale async results are ignored,
                         // drops the JWT client, keyring session, and cached
@@ -1661,6 +1662,14 @@ impl ConnectAccountPanel {
                             email: String::new(),
                             loading: false,
                         };
+                        // Mirror the normal LogOut path: Buy/Sell shares this
+                        // session, so it must drop its stale in-memory token too
+                        // rather than keep showing a logged-in state.
+                        if was_logged_in {
+                            return iced::Task::done(Message::View(view::Message::BuySell(
+                                view::BuySellMessage::LogOut,
+                            )));
+                        }
                     }
                 }
             }
