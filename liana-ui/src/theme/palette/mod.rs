@@ -1,4 +1,4 @@
-use crate::color;
+use crate::{color, theme::card::CARD_SHADOW};
 use iced::Shadow;
 
 pub mod liana;
@@ -60,6 +60,7 @@ pub struct General {
     pub foreground: iced::Color,
     pub scrollable: iced::Color,
     pub accent: iced::Color,
+    pub form_field_background: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -71,6 +72,8 @@ pub struct Buttons {
     pub clickable_section: Button,
     pub primary: Button,
     pub secondary: Button,
+    pub feerate: Button,
+    pub feerate_unselected: Button,
     pub tertiary: Button,
     pub destructive: Button,
     pub container: Button,
@@ -100,6 +103,43 @@ pub struct ButtonPalette {
     pub shadow: Shadow,
 }
 
+fn feerate_button(background: iced::Color, text: iced::Color) -> Button {
+    let face = ButtonPalette {
+        background,
+        text,
+        border: background.into(),
+        shadow: Default::default(),
+    };
+    Button {
+        active: face,
+        hovered: face,
+        pressed: Some(face),
+        disabled: None,
+    }
+}
+
+fn feerate_unselected_button(
+    background: iced::Color,
+    text: iced::Color,
+    border: iced::Color,
+) -> Button {
+    let face = ButtonPalette {
+        background,
+        text,
+        border: border.into(),
+        shadow: Default::default(),
+    };
+    Button {
+        active: face,
+        hovered: ButtonPalette {
+            shadow: CARD_SHADOW,
+            ..face
+        },
+        pressed: Some(face),
+        disabled: None,
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Containers {
     pub border: ContainerPalette,
@@ -124,6 +164,10 @@ pub struct Cards {
     pub soft_warning: ContainerPalette,
     pub info: ContainerPalette,
     pub error: ContainerPalette,
+    /// Section header card: no shadow, accent background.
+    pub section: ContainerPalette,
+    /// Flat card: no shadow.
+    pub flat: ContainerPalette,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

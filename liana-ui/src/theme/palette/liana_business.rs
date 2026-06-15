@@ -59,6 +59,7 @@ impl Palette {
                 foreground: color::LIGHT_BG_SECONDARY,
                 scrollable: color::LIGHT_BORDER,
                 accent: color::BUSINESS_BLUE,
+                form_field_background: color::BUSINESS_LIGHT_BLUE,
             },
             text: Text {
                 primary: color::BUSINESS_BLACK,
@@ -124,6 +125,12 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                feerate: feerate_button(color::BUSINESS_LIGHT_BLUE, color::BUSINESS_BLACK),
+                feerate_unselected: feerate_unselected_button(
+                    color::WHITE,
+                    color::BUSINESS_BLACK,
+                    color::BUSINESS_LIGHT_BLUE,
+                ),
                 tertiary: Button {
                     active: ButtonPalette {
                         background: BTN_TERTIARY_BG,
@@ -470,6 +477,16 @@ impl Palette {
                     text: color::RED.into(),
                     border: color::RED.into(),
                 },
+                section: ContainerPalette {
+                    background: color::BUSINESS_BLUE_SECTION,
+                    text: None,
+                    border: Some(color::TRANSPARENT),
+                },
+                flat: ContainerPalette {
+                    background: BTN_TERTIARY_BG,
+                    text: None,
+                    border: Some(color::TRANSPARENT),
+                },
             },
             banners: Banners {
                 network: ContainerPalette {
@@ -600,8 +617,8 @@ impl Palette {
             checkboxes: Checkboxes {
                 icon: color::BUSINESS_BLUE,
                 text: color::BUSINESS_BLACK,
-                background: color::LIGHT_BG_SECONDARY,
-                border: Some(color::LIGHT_BORDER),
+                background: color::TRANSPARENT,
+                border: Some(color::CHECKBOX_BORDER),
             },
             radio_buttons: RadioButtons {
                 dot: color::BUSINESS_BLUE,

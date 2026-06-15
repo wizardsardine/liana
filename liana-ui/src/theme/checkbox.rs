@@ -24,8 +24,8 @@ pub fn primary(theme: &Theme, _status: Status) -> Style {
         background: theme.colors.checkboxes.background.into(),
         border: if let Some(color) = theme.colors.checkboxes.border {
             Border {
-                radius: 4.0.into(),
-                width: 1.0,
+                radius: 2.0.into(),
+                width: 2.0,
                 color,
             }
         } else {

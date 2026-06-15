@@ -46,6 +46,7 @@ impl Palette {
                 foreground: color::BLACK,
                 scrollable: color::GREY_7,
                 accent: color::GREEN,
+                form_field_background: color::GREY_5,
             },
             text: Text {
                 primary: color::WHITE,
@@ -111,6 +112,12 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
+                feerate: feerate_button(color::GREEN, BTN_PRIMARY_TEXT),
+                feerate_unselected: feerate_unselected_button(
+                    color::GREY_5,
+                    color::WHITE,
+                    color::GREEN,
+                ),
                 tertiary: Button {
                     active: ButtonPalette {
                         background: BTN_TERTIARY_BGD,
@@ -497,6 +504,16 @@ impl Palette {
                     text: color::RED.into(),
                     border: color::RED.into(),
                 },
+                section: ContainerPalette {
+                    background: color::GREY_3,
+                    text: None,
+                    border: Some(color::TRANSPARENT),
+                },
+                flat: ContainerPalette {
+                    background: color::GREY_6,
+                    text: None,
+                    border: Some(color::TRANSPARENT),
+                },
             },
             banners: Banners {
                 network: ContainerPalette {
@@ -627,8 +644,8 @@ impl Palette {
             checkboxes: Checkboxes {
                 icon: color::GREEN,
                 text: color::GREY_2,
-                background: color::GREY_4,
-                border: Some(color::GREY_4),
+                background: color::TRANSPARENT,
+                border: Some(color::CHECKBOX_BORDER),
             },
             radio_buttons: RadioButtons {
                 dot: color::GREEN,

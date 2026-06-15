@@ -27,6 +27,22 @@ pub fn invalid(theme: &Theme, status: Status) -> Style {
     text_input(&theme.colors.text_inputs.invalid, status)
 }
 
+pub fn form(theme: &Theme, status: Status) -> Style {
+    Style {
+        placeholder: crate::color::FORM_PLACEHOLDER,
+        ..primary(theme, status)
+    }
+}
+
+pub fn fee(theme: &Theme, status: Status) -> Style {
+    Style {
+        background: Background::Color(crate::color::TRANSPARENT),
+        border: Border::default(),
+        placeholder: crate::color::FORM_PLACEHOLDER,
+        ..primary(theme, status)
+    }
+}
+
 fn text_input(c: &TextInput, status: Status) -> Style {
     let active = Style {
         background: Background::Color(c.active.background),
