@@ -28,7 +28,7 @@ use crate::{
     theme::{self, Theme},
 };
 
-use crate::widget::{Button, CheckBox, Column, ColumnExt, Element, Row, RowExt, SpaceExt, Text};
+use crate::widget::{Button, CheckBox, Column, Element, SpaceExt, Text};
 
 pub const BTN_W: u32 = 500;
 pub const V_SPACING: u32 = 10;
@@ -125,11 +125,7 @@ pub fn header<'a, M: 'a + Clone>(
             .style(theme::button::transparent)
             .on_press(m)
     });
-    Row::new()
-        .push_maybe(back)
-        .push_maybe(title)
-        .push(Space::with_width(Length::Fill))
-        .push_maybe(close)
+    row![back, title, Space::with_width(Length::Fill), close]
         .align_y(Vertical::Center)
         .into()
 }
@@ -153,9 +149,7 @@ where
 
     let msg = if !collapsed { collapse() } else { fold() };
 
-    let row = Row::new()
-        .push(b5_bold(&title))
-        .push(icon)
+    let row = row![b5_bold(&title), icon]
         .align_y(Vertical::Center)
         .spacing(H_SPACING);
 
@@ -213,28 +207,23 @@ where
 
     if collapsed {
         let icon = icon.map(|i| i.style(theme::text::primary));
-        let line = Row::new().push(form).push_maybe(paste).spacing(V_SPACING);
-        let col = Column::new()
-            .push(row![
+        let line = row![form, paste].spacing(H_SPACING);
+        let col = column![
+            row![
                 caption(label).style(theme::text::primary),
                 Space::with_width(Length::Fill)
-            ])
-            .push(line)
-            .width(Length::Fill);
-        let content = Row::new()
-            .push_maybe(icon)
-            .push(col)
+            ],
+            line
+        ]
+        .width(Length::Fill);
+        let content = row![icon, col]
             .align_y(Vertical::Center)
-            .spacing(V_SPACING)
+            .spacing(H_SPACING)
             .width(Length::Fill);
         button::device_with_height_clickable(content, None, None, false)
     } else {
-        let content = Row::new()
-            .push_maybe(icon.as_ref().map(|_| Space::with_width(H_SPACING)))
-            .push_maybe(icon)
-            .push(Space::with_width(H_SPACING))
-            .push(caption(label))
-            .spacing(V_SPACING)
+        let content = row![icon, caption(label)]
+            .spacing(H_SPACING)
             .align_y(Vertical::Center);
         button::device(content, Some(collapse_message()))
     }
@@ -274,7 +263,7 @@ where
     let paste = Button::new(icon::paste_icon().color(color::BLACK)).on_press(paste_message());
 
     let expanded = {
-        let line = row![form, paste].spacing(V_SPACING);
+        let line = row![form, paste].spacing(H_SPACING);
         let check_box = CheckBox::new(ack).label(disclaimer).on_toggle(ack_message);
         let label = row![caption(label).color(color::WHITE), Space::fill_width()];
         let content = if ack {
@@ -284,10 +273,10 @@ where
         };
         row![icon(), content]
             .align_y(Vertical::Center)
-            .spacing(V_SPACING)
+            .spacing(H_SPACING)
     };
     let closed = row![icon(), caption(label)]
-        .spacing(V_SPACING)
+        .spacing(H_SPACING)
         .align_y(Vertical::Center);
     collapsible_button(collapsed, closed, expanded, collapse_message)
 }
@@ -314,17 +303,16 @@ pub fn key_entry<'a, M: 'a + Clone>(
     ]
     .align_x(Horizontal::Left)
     .width(200);
-    let row = Row::new()
-        .push_maybe(icon.as_ref().map(|_| Space::with_width(H_SPACING)))
-        .push_maybe(icon)
-        .push(Space::with_width(H_SPACING))
-        .push(designation)
-        .push_maybe(message)
-        .push_maybe(error)
-        .push(Space::with_width(Length::Fill))
-        .push_maybe(tt)
-        .align_y(Vertical::Center)
-        .spacing(V_SPACING);
+    let row = row![
+        icon,
+        designation,
+        message,
+        error,
+        Space::with_width(Length::Fill),
+        tt
+    ]
+    .align_y(Vertical::Center)
+    .spacing(H_SPACING);
     button::device(row, on_press)
 }
 
@@ -555,32 +543,22 @@ where
 
     let tt = tooltip_str.map(|s| tooltip(s));
 
-    let row = Row::new()
-        .push_maybe(icon.as_ref().map(|_| Space::with_width(H_SPACING)))
-        .push_maybe(icon)
-        .push(Space::with_width(H_SPACING))
-        .push(caption(label))
-        .push(Space::fill_width())
-        .push_maybe(tt)
-        .spacing(V_SPACING)
+    let row = row![icon, caption(label), Space::fill_width(), tt]
+        .spacing(H_SPACING)
         .align_y(Vertical::Center);
 
-    let col = Column::new()
-        .push(row)
-        .push_maybe(error)
-        .width(Length::Fill);
+    let col = column![row, error].width(Length::Fill);
 
     let msg = on_press.map(|f| f());
     button::device(col, msg)
 }
 
 pub fn modal_no_devices_placeholder<'a, M: 'a>() -> Element<'a, M> {
-    Column::new()
-        .push(icon::usb_icon().size(100))
-        .push(caption(
-            "No hardware wallets detected. Connect a device and unlock it.",
-        ))
-        .align_x(Horizontal::Center)
-        .spacing(20)
-        .into()
+    column![
+        icon::usb_icon().size(100),
+        caption("No hardware device detected. Connect a device and unlock it."),
+    ]
+    .align_x(Horizontal::Center)
+    .spacing(20)
+    .into()
 }
