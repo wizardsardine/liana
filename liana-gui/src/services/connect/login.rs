@@ -176,12 +176,12 @@ impl LianaLiteLogin {
                     let client = AuthClient::new(
                         service_config.auth_api_url,
                         service_config.auth_api_public_key,
-                        auth_cfg.email,
+                        auth_cfg.email.clone(),
                         backend_type.user_agent(),
                     );
                     connect_with_credentials(
                         client,
-                        auth_cfg.wallet_id,
+                        auth_cfg,
                         service_config.backend_api_url,
                         network,
                         &datadir.network_directory(network),
@@ -496,6 +496,35 @@ pub async fn connect(
         BackendClient::connect(auth.clone(), backend_api_url, access.clone(), network).await?;
 
     update_connect_cache(&network_dir, &access, &auth, false).await?;
+    // Stamp user_id onto the freshly-written cache row so that the next session
+    // can locate it via the stable user_id key rather than the mutable email.
+    if let Err(e) = cache::stamp_account_identity(
+        &network_dir,
+        None,
+        &auth.email,
+        client.user_id(),
+        client.user_email(),
+    )
+    .await
+    {
+        tracing::warn!("Failed to stamp user_id on Liana-Connect cache: {}", e);
+    }
+
+    // If the user OTP'd in for a known local wallet (post email-change or
+    // refresh-token revocation), update its settings.json entry too so the
+    // next launch's user_id-keyed lookup succeeds.
+    if !connect_wallet_id.is_empty() {
+        if let Err(e) = backfill_settings_for_wallet(
+            &network_dir,
+            &connect_wallet_id,
+            client.user_id(),
+            client.user_email(),
+        )
+        .await
+        {
+            tracing::warn!("Failed to update settings.json after OTP: {}", e);
+        }
+    }
 
     let wallets = client.list_wallets().await?;
     if wallets.is_empty() {
@@ -532,18 +561,34 @@ pub async fn connect(
 
 pub async fn connect_with_credentials(
     auth: AuthClient,
-    wallet_id: String,
+    auth_cfg: settings::AuthConfig,
     backend_api_url: String,
     network: Network,
     network_dir: &NetworkDirectory,
 ) -> Result<BackendState, Error> {
-    let mut tokens = cache::Account::from_cache(network_dir, &auth.email)
+    let cached = {
+        let by_uid = match &auth_cfg.user_id {
+            Some(uid) => cache::Account::from_cache_by_user_id(network_dir, uid),
+            None => Ok(None),
+        }
         .map_err(|e| match e {
             ConnectCacheError::NotFound => Error::CredentialsMissing,
             _ => e.into(),
-        })?
-        .ok_or(Error::CredentialsMissing)?
-        .tokens;
+        })?;
+        // Email lookup is the migration fallback: covers caches written before
+        // the user_id stamp landed, plus the picker-by-email flow.
+        match by_uid {
+            Some(a) => a,
+            None => cache::Account::from_cache_by_email(network_dir, &auth.email)
+                .map_err(|e| match e {
+                    ConnectCacheError::NotFound => Error::CredentialsMissing,
+                    _ => e.into(),
+                })?
+                .ok_or(Error::CredentialsMissing)?,
+        }
+    };
+
+    let mut tokens = cached.tokens;
 
     if tokens.expires_at < chrono::Utc::now().timestamp() {
         tokens = cache::update_connect_cache(network_dir, &tokens, &auth, true).await?;
@@ -551,11 +596,13 @@ pub async fn connect_with_credentials(
 
     let client = BackendClient::connect(auth, backend_api_url, tokens, network).await?;
 
+    backfill_local_link(network_dir, &client, &auth_cfg).await?;
+
     if let Some(wallet) = client
         .list_wallets()
         .await?
         .into_iter()
-        .find(|w| w.id == wallet_id)
+        .find(|w| w.id == auth_cfg.wallet_id)
     {
         let (wallet_client, wallet) = client.connect_wallet(wallet);
         let coins = coins_to_cache(Arc::new(wallet_client.clone())).await?;
@@ -569,4 +616,64 @@ pub async fn connect_with_credentials(
     } else {
         Ok(BackendState::NoWallet(client))
     }
+}
+
+/// After a successful `BackendClient::connect`, ensure both the connect cache
+/// and the per-wallet settings carry the latest `user_id` (JWT `sub`) and email
+/// reported by the backend. Lazily migrates legacy entries that lack `user_id`
+/// and refreshes a stale email if it has been changed on Liana-Connect.
+pub async fn backfill_local_link(
+    network_dir: &NetworkDirectory,
+    client: &BackendClient,
+    auth_cfg: &settings::AuthConfig,
+) -> Result<(), Error> {
+    let server_user_id = client.user_id();
+    let server_email = client.user_email();
+
+    cache::stamp_account_identity(
+        network_dir,
+        auth_cfg.user_id.as_deref(),
+        &auth_cfg.email,
+        server_user_id,
+        server_email,
+    )
+    .await?;
+
+    if auth_cfg.user_id.as_deref() != Some(server_user_id) || auth_cfg.email != server_email {
+        backfill_settings_for_wallet(
+            network_dir,
+            &auth_cfg.wallet_id,
+            server_user_id,
+            server_email,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+/// Patch the `remote_backend_auth` of the wallet identified by `wallet_id` in
+/// settings.json so its `user_id` and `email` match the backend's. Idempotent.
+pub async fn backfill_settings_for_wallet(
+    network_dir: &NetworkDirectory,
+    wallet_id: &str,
+    user_id: &str,
+    email: &str,
+) -> Result<(), Error> {
+    let wallet_id = wallet_id.to_string();
+    let user_id = user_id.to_string();
+    let email = email.to_string();
+    settings::update_settings_file(network_dir, move |mut s: settings::LianaSettings| {
+        for w in s.wallets.iter_mut() {
+            if let Some(a) = w.remote_backend_auth.as_mut() {
+                if a.wallet_id == wallet_id {
+                    a.user_id = Some(user_id.clone());
+                    a.email = email.clone();
+                }
+            }
+        }
+        s
+    })
+    .await
+    .map_err(Error::Settings)
 }

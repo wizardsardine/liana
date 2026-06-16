@@ -121,6 +121,10 @@ impl BackendClient {
         &self.auth_client.email
     }
 
+    pub fn user_id(&self) -> &str {
+        &self.user_id
+    }
+
     pub async fn connect_first(self) -> Result<(BackendWalletClient, api::Wallet), DaemonError> {
         let wallets = self.list_wallets().await?;
         let first = wallets.first().cloned().ok_or(DaemonError::NoAnswer)?;

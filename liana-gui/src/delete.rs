@@ -66,27 +66,30 @@ pub async fn delete_failed_install(
         )?;
     }
 
-    let mut remaining_accounts = HashSet::<String>::new();
+    let mut remaining_user_ids = HashSet::<String>::new();
+    let mut legacy_emails = HashSet::<String>::new();
     settings::update_settings_file(network_dir, |mut settings: LianaSettings| {
         settings
             .wallets
             .retain(|settings| settings.wallet_id() != *wallet_id);
-        remaining_accounts = settings
-            .wallets
-            .iter()
-            .filter_map(|settings| {
-                settings
-                    .remote_backend_auth
-                    .as_ref()
-                    .map(|auth| auth.email.clone())
-            })
-            .collect();
+        for w in settings.wallets.iter() {
+            if let Some(auth) = w.remote_backend_auth.as_ref() {
+                match &auth.user_id {
+                    Some(uid) => {
+                        remaining_user_ids.insert(uid.clone());
+                    }
+                    None => {
+                        legacy_emails.insert(auth.email.clone());
+                    }
+                }
+            }
+        }
         settings
     })
     .await
     .map_err(DeleteError::Settings)?;
 
-    cache::filter_connect_cache(network_dir, &remaining_accounts)
+    cache::filter_connect_cache(network_dir, &remaining_user_ids, &legacy_emails)
         .await
         .map_err(DeleteError::ConnectCache)?;
 
@@ -137,7 +140,7 @@ pub async fn delete_wallet(
             );
             if let BackendState::WalletExists(client, _, _, _) = connect_with_credentials(
                 client,
-                auth.wallet_id.clone(),
+                auth.clone(),
                 service_config.backend_api_url,
                 network,
                 network_dir,
@@ -156,27 +159,30 @@ pub async fn delete_wallet(
         }
     }
 
-    let mut remaining_accounts = HashSet::<String>::new();
+    let mut remaining_user_ids = HashSet::<String>::new();
+    let mut legacy_emails = HashSet::<String>::new();
     settings::update_settings_file(network_dir, |mut settings: LianaSettings| {
         settings
             .wallets
             .retain(|settings| settings.wallet_id() != wallet_id);
-        remaining_accounts = settings
-            .wallets
-            .iter()
-            .filter_map(|settings| {
-                settings
-                    .remote_backend_auth
-                    .as_ref()
-                    .map(|auth| auth.email.clone())
-            })
-            .collect();
+        for w in settings.wallets.iter() {
+            if let Some(auth) = w.remote_backend_auth.as_ref() {
+                match &auth.user_id {
+                    Some(uid) => {
+                        remaining_user_ids.insert(uid.clone());
+                    }
+                    None => {
+                        legacy_emails.insert(auth.email.clone());
+                    }
+                }
+            }
+        }
         settings
     })
     .await
     .map_err(DeleteError::Settings)?;
 
-    cache::filter_connect_cache(network_dir, &remaining_accounts)
+    cache::filter_connect_cache(network_dir, &remaining_user_ids, &legacy_emails)
         .await
         .map_err(DeleteError::ConnectCache)?;
 

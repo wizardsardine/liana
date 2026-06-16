@@ -86,6 +86,9 @@ pub enum NextState {
         network: Network,
         /// The Connect wallet ID (UUID)
         wallet_id: String,
+        /// Stable Liana-Connect user identifier (JWT `sub`). `None` for legacy
+        /// installer paths; cache lookup falls back to email and backfills.
+        user_id: Option<String>,
         /// User's email for token lookup and re-auth
         email: String,
     },
@@ -818,6 +821,7 @@ pub async fn create_remote_wallet(
         keys: Vec::new(),
         hardware_wallets: Vec::new(),
         remote_backend_auth: Some(AuthConfig::new(
+            remote_backend.user_id().to_string(),
             remote_backend.user_email().to_string(),
             remote_backend.wallet_id(),
         )),
@@ -898,6 +902,7 @@ pub async fn import_remote_wallet(
         keys: Vec::new(),
         hardware_wallets: Vec::new(),
         remote_backend_auth: Some(AuthConfig::new(
+            backend.user_id().to_string(),
             backend.user_email().to_string(),
             backend.wallet_id(),
         )),

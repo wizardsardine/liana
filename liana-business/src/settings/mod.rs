@@ -161,6 +161,7 @@ impl SettingsTrait for BusinessSettings {
                 .collect();
 
             let auth_cfg = AuthConfig {
+                user_id: Some(remote_backend.user_id().to_string()),
                 email: remote_backend.user_email().to_string(),
                 wallet_id: remote_backend.wallet_id(),
                 refresh_token: None,
