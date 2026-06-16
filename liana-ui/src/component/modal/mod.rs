@@ -6,19 +6,25 @@ use iced::{
     alignment::{Horizontal, Vertical},
     widget::{
         button::{Status, Style},
-        column, row, Space,
+        column, row,
+        tooltip::Position,
+        Space,
     },
     Length, Padding,
 };
 
 use iced::widget::Container;
 
+use bitcoin::bip32::{ChildNumber, Fingerprint};
+
 use crate::{
     color,
     component::{
-        button,
+        badge, button,
         form::{self, Value},
-        text, tooltip,
+        pick_list, text,
+        text::new::{b4_medium, b5_medium},
+        tooltip,
     },
     icon,
     theme::{self, Theme},
@@ -324,6 +330,185 @@ pub fn key_entry<'a, M: 'a + Clone>(
         .push_maybe(tt)
         .align_y(Vertical::Center)
         .spacing(V_SPACING);
+    button::device(row, on_press)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Account {
+    pub index: ChildNumber,
+    pub fingerprint: Fingerprint,
+}
+
+impl Account {
+    pub fn new(index: ChildNumber, fingerprint: Fingerprint) -> Self {
+        Self { index, fingerprint }
+    }
+}
+
+impl Display for Account {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let index = self.index.to_string().replace('\'', "");
+        write!(f, "Account #{index}")
+    }
+}
+
+pub enum DeviceMark {
+    Processing,
+    NotInPath,
+    Unrelated,
+    WrongNetwork,
+    ConnectionError,
+    Locked(Option<String>),
+    OutdatedFirmware(String),
+    Signed,
+    Registered,
+    Selected,
+}
+
+impl Display for DeviceMark {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeviceMark::Processing => write!(f, "Processing, please check your device"),
+            DeviceMark::NotInPath => write!(f, "This signer is not part of this spending path."),
+            DeviceMark::Unrelated => {
+                write!(
+                    f,
+                    "This signing device is not related to this Liana wallet."
+                )
+            }
+            DeviceMark::WrongNetwork => write!(f, "Wrong network in the device settings"),
+            DeviceMark::ConnectionError => write!(f, "Connection error"),
+            DeviceMark::Locked(Some(code)) => write!(f, "Locked, check code: {code}"),
+            DeviceMark::Locked(None) => write!(f, "Locked"),
+            DeviceMark::OutdatedFirmware(version) => {
+                write!(f, "Install firmware version {version} or later")
+            }
+            DeviceMark::Signed => write!(f, "Signed"),
+            DeviceMark::Registered => write!(f, "Registered"),
+            DeviceMark::Selected => Ok(()),
+        }
+    }
+}
+
+impl DeviceMark {
+    pub fn element<'a, M: 'static>(&self) -> Element<'a, M> {
+        match self {
+            DeviceMark::Signed | DeviceMark::Registered => success_mark(Some(self.to_string())),
+            DeviceMark::Selected => success_mark(None),
+            _ => b5_medium(self.to_string()).into(),
+        }
+    }
+
+    pub fn warning(&self) -> Option<&'static str> {
+        match self {
+            DeviceMark::WrongNetwork => Some(
+                "The wrong bitcoin application is open or the device was initialized with the wrong network",
+            ),
+            DeviceMark::OutdatedFirmware(_) => Some("Please upgrade firmware"),
+            DeviceMark::ConnectionError => {
+                Some("Make sure your device is unlocked and a supported Bitcoin application is opened.")
+            }
+            _ => None,
+        }
+    }
+}
+
+fn device_icon(is_device: bool) -> Text<'static> {
+    if is_device {
+        icon::usb_drive_icon()
+    } else {
+        icon::round_key_icon()
+    }
+}
+
+fn device_designation<'a, M: 'a>(
+    kind: Option<impl Display + 'a>,
+    alias: Option<impl Display + 'a>,
+    fingerprint: Option<impl Display + 'a>,
+) -> Column<'a, M> {
+    let fg = b5_medium(
+        fingerprint
+            .map(|fg| fg.to_string())
+            .unwrap_or_else(|| " - ".to_string()),
+    );
+    let fg_row = if let Some(kind) = kind {
+        row![b5_medium(kind), fg].spacing(5)
+    } else {
+        row![fg]
+    };
+    if let Some(alias) = alias {
+        column![b4_medium(alias), fg_row]
+    } else {
+        column![fg_row]
+    }
+    .align_x(Horizontal::Left)
+}
+
+fn success_mark<'a, M: 'static>(label: Option<String>) -> Element<'a, M> {
+    row![label.map(b5_medium), badge::success()]
+        .align_y(Vertical::Center)
+        .spacing(H_SPACING)
+        .into()
+}
+
+pub fn device_entry<'a, M, F, K, A>(
+    fingerprint: Option<F>,
+    kind: Option<K>,
+    alias: Option<A>,
+    mark: Option<DeviceMark>,
+    warning: Option<&'static str>,
+    on_press: Option<M>,
+) -> Element<'a, M>
+where
+    M: 'static + Clone,
+    F: Display + 'a,
+    K: Display + 'a,
+    A: Display + 'a,
+{
+    let icon = device_icon(kind.is_some());
+    let warning = warning.or_else(|| mark.as_ref().and_then(DeviceMark::warning));
+    let mark: Option<Element<'a, M>> = mark.map(|m| m.element());
+    let warning =
+        warning.map(|w| tooltip::tooltip_custom(w, icon::warning_icon(), Position::Bottom));
+    let designation = device_designation(kind, alias, fingerprint);
+    let row = row![icon, designation, Space::fill_width(), mark, warning]
+        .align_y(Vertical::Center)
+        .spacing(H_SPACING);
+    button::device(row, on_press)
+}
+
+pub fn account_device_entry<'a, M, K, A>(
+    fingerprint: Fingerprint,
+    kind: Option<K>,
+    alias: Option<A>,
+    selected: Option<ChildNumber>,
+    on_press: Option<M>,
+) -> Element<'a, M>
+where
+    M: 'static + Clone + From<(Fingerprint, ChildNumber)>,
+    K: Display + 'a,
+    A: Display + 'a,
+{
+    let accounts: Vec<Account> = (0..10)
+        .map(|i| {
+            Account::new(
+                ChildNumber::from_hardened_idx(i).expect("hardcoded"),
+                fingerprint,
+            )
+        })
+        .collect();
+    let selected = Account::new(
+        selected.unwrap_or(ChildNumber::from_hardened_idx(0).expect("hardcoded")),
+        fingerprint,
+    );
+    let picker = pick_list::pick_list(accounts, Some(selected), |a: Account| {
+        (a.fingerprint, a.index).into()
+    });
+    let icon = device_icon(kind.is_some());
+    let designation = device_designation(kind, alias, Some(format!("#{fingerprint}")));
+    let row = row![icon, designation, Space::fill_width(), picker]
+        .align_y(Vertical::Center)
+        .spacing(H_SPACING);
     button::device(row, on_press)
 }
 
