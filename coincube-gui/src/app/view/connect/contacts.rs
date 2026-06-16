@@ -587,6 +587,7 @@ fn contact_detail_ux<'a>(
             .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
             .push(text::p2_regular(format!("Connected {}", connected_date)).color(color::GREY_3))
             .align_x(Alignment::Center)
+            .width(Length::Fill)
             .padding(20)
             .spacing(0),
     )
@@ -618,83 +619,71 @@ fn contact_detail_ux<'a>(
             .color(color::GREY_3)
             .into(),
         Some(cubes) => {
-            let mut cube_col = Column::new().spacing(6);
+            let mut cube_col = Column::new().spacing(12);
             for cube in cubes {
+                // Network rendered as a muted pill so it reads as
+                // metadata rather than crowding the cube name.
+                let network_pill = container(text::caption(cube.network.as_str()).color(color::GREY_3))
+                    .padding(iced::Padding {
+                        top: 2.0,
+                        bottom: 2.0,
+                        left: 8.0,
+                        right: 8.0,
+                    })
+                    .style(|_t| container::Style {
+                        border: iced::Border {
+                            color: color::GREY_5,
+                            width: 0.5,
+                            radius: 6.0.into(),
+                        },
+                        ..Default::default()
+                    });
+
                 let mut row = Row::new()
+                    .spacing(10)
+                    .align_y(Alignment::Center)
                     .push(text::p1_regular(cube.name.as_str()).style(theme::text::primary))
-                    .push(iced::widget::Space::new().width(Length::Fixed(12.0)))
-                    .push(text::p2_regular(cube.network.as_str()).color(color::GREY_3));
+                    .push(network_pill)
+                    // Push any trailing badge to the right edge so the
+                    // rows line up cleanly regardless of name length.
+                    .push(iced::widget::Space::new().width(Length::Fill));
                 if cube.has_recovery_kit {
-                    row = row
-                        .push(iced::widget::Space::new().width(Length::Fixed(12.0)))
-                        .push(
-                            container(text::caption("Recovery Kit").color(color::ORANGE))
-                                .padding(iced::Padding {
-                                    top: 2.0,
-                                    bottom: 2.0,
-                                    left: 6.0,
-                                    right: 6.0,
-                                })
-                                .style(|_t| container::Style {
-                                    border: iced::Border {
-                                        color: color::ORANGE,
-                                        width: 0.5,
-                                        radius: 6.0.into(),
-                                    },
-                                    ..Default::default()
-                                }),
-                        );
+                    row = row.push(
+                        container(text::caption("Recovery Kit").color(color::ORANGE))
+                            .padding(iced::Padding {
+                                top: 2.0,
+                                bottom: 2.0,
+                                left: 6.0,
+                                right: 6.0,
+                            })
+                            .style(|_t| container::Style {
+                                border: iced::Border {
+                                    color: color::ORANGE,
+                                    width: 0.5,
+                                    radius: 6.0.into(),
+                                },
+                                ..Default::default()
+                            }),
+                    );
                 }
-                row = row.align_y(Alignment::Center);
                 cube_col = cube_col.push(row);
             }
             cube_col.into()
         }
     };
 
-    // W14: entry points for "add this contact to a cube". Only rendered
+    // W14: entry point for adding this contact to a cube. Only rendered
     // when the contact has a linked user — an orphaned contact can't be
-    // added to a cube anyway.
+    // added to a cube anyway. The multi-select "Add to Cube(s)…" dialog
+    // is the single action: the one-click "Add to Current Cube" shortcut
+    // was removed as it's no longer a valid option.
     let can_add = contact.contact_user.is_some();
-    // Hide the "Add to Current Cube" button entirely when the contact
-    // is already a member of the loaded cube — the Associated Cubes
-    // list right above already communicates the state, and clicking
-    // would only 409 on duplicate. The multi-select "Add to Cube(s)…"
-    // stays available so the user can still attach them to *other*
-    // cubes they own.
-    let show_add_current = !cs.contact_is_in_active_cube(contact_id);
-    let current_cube_err = cs.add_to_current_cube_errors.get(&contact_id);
     let add_actions: Option<Element<ConnectAccountMessage>> = can_add.then(|| {
-        let mut row = Row::new().spacing(8).align_y(Alignment::Center);
-        if show_add_current {
-            row = row.push(
-                // One-click "Add to Current Cube" — primary action,
-                // gated on having the active cube's server-side id
-                // resolved (populated post `register_cube`). Works
-                // regardless of how many other cubes the user owns on
-                // the same network — the action targets the specific
-                // loaded cube, not a network-matching guess.
-                button::primary(None, "Add to Current Cube").on_press_maybe(
-                    (cs.active_cube_server_id.is_some()
-                        && !cs.add_to_current_cube_pending.contains(&contact_id))
-                    .then_some(ConnectAccountMessage::Contacts(
-                        ContactsMessage::AddContactToCurrentCube(contact_id),
-                    )),
-                ),
-            );
-        }
-        row = row.push(
-            // Multi-select — secondary action, always available.
-            button::secondary(None, "Add to Cube(s)…").on_press(ConnectAccountMessage::Contacts(
+        button::primary(None, "Add to Cube(s)…")
+            .on_press(ConnectAccountMessage::Contacts(
                 ContactsMessage::OpenAddToCubeDialog(contact_id),
-            )),
-        );
-        if let Some(err) = current_cube_err {
-            row = row
-                .push(iced::widget::Space::new().width(Length::Fixed(12.0)))
-                .push(text::p2_regular(err.clone()).color(color::RED));
-        }
-        row.into()
+            ))
+            .into()
     });
 
     let add_to_cube_dialog = cs
@@ -730,8 +719,7 @@ fn contact_detail_ux<'a>(
 
     // Cap the panel width so the profile/cubes cards read as a focused
     // detail column instead of stretching edge-to-edge on wide windows.
-    // Matches the `.max_width(500)` the Invite form uses below, bumped
-    // slightly to comfortably fit the two side-by-side action buttons.
+    // Matches the `.max_width(500)` the Invite form uses below.
     col.spacing(0).max_width(520).width(Length::Fill).into()
 }
 

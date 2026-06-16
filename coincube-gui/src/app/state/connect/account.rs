@@ -82,7 +82,12 @@ pub const PLAN_RENEWAL_BANNER_DAYS: i64 = 7;
 /// Highest pricing-schema version this build can fully render. A
 /// `/connect/features` payload advertising a higher version triggers the
 /// soft "update available" note in the plan picker (D4).
-pub const SUPPORTED_PRICING_SCHEMA_VERSION: u32 = 1;
+///
+/// v2 (cubes terminology, `estate` tier, `IncludedLinkedParticipants`
+/// dropped) is the current API schema and the model this build renders —
+/// bumped from 1 so the desktop stops flagging the live pricing as
+/// "newer than supported".
+pub const SUPPORTED_PRICING_SCHEMA_VERSION: u32 = 2;
 
 /// Where the user's plan sits in its lifecycle, derived from the
 /// `/connect/plan` response plus the current time. Drives the renewal
@@ -492,6 +497,12 @@ pub struct ConnectAccountPanel {
     pub plan: Option<ConnectPlan>,
     pub verified_devices: Option<Vec<VerifiedDevice>>,
     pub login_activity: Option<Vec<LoginActivity>>,
+    /// Account Overview summary counts, fetched on entering the Overview
+    /// tab (kept separate from `contacts_state` so the count doesn't
+    /// disturb the Contacts tab's own load/step state). `None` = not yet
+    /// loaded or the fetch failed; the row hides in either case.
+    pub overview_contact_count: Option<usize>,
+    pub overview_cube_count: Option<usize>,
     pub contacts_state: ContactsState,
     pub error: Option<String>,
     /// Incremented on each login/logout so stale async completions can be discarded.
@@ -535,6 +546,8 @@ impl ConnectAccountPanel {
             plan: None,
             verified_devices: None,
             login_activity: None,
+            overview_contact_count: None,
+            overview_cube_count: None,
             contacts_state: ContactsState::new(),
             error: None,
             session_generation: 0,
@@ -689,6 +702,17 @@ impl ConnectAccountPanel {
         self.contacts_state.error = None;
         self.contacts_state.loading = true;
         load_contacts_data(&self.client, self.session_generation)
+    }
+
+    /// Fetch the Account Overview summary counts (contacts + cubes) on
+    /// demand when the Overview tab is opened. Cheap and best-effort —
+    /// a failed fetch just leaves the count `None` and the row hidden.
+    pub fn reload_overview(&mut self) -> iced::Task<Message> {
+        load_overview_counts(
+            &self.client,
+            self.session_generation,
+            self.contacts_state.active_network.clone(),
+        )
     }
 
     fn load_session_from_keyring(&self) -> Option<StoredSession> {
@@ -881,6 +905,24 @@ impl ConnectAccountPanel {
                         self.selected_billing_cycle = cycle;
                     }
                     self.plan = plan;
+                }
+            }
+
+            ConnectAccountMessage::OverviewCountsLoaded {
+                contacts,
+                cubes,
+                generation,
+            } => {
+                if generation == self.session_generation {
+                    // Only overwrite a field when its fetch succeeded, so a
+                    // partial failure doesn't blank out a previously-loaded
+                    // count.
+                    if contacts.is_some() {
+                        self.overview_contact_count = contacts;
+                    }
+                    if cubes.is_some() {
+                        self.overview_cube_count = cubes;
+                    }
                 }
             }
 
@@ -1728,6 +1770,8 @@ impl ConnectAccountPanel {
         self.plan = None;
         self.verified_devices = None;
         self.login_activity = None;
+        self.overview_contact_count = None;
+        self.overview_cube_count = None;
         self.features = None;
         self.checkout = None;
         self.billing_history = None;
@@ -3021,6 +3065,48 @@ impl ConnectAccountPanel {
             .map(|v| v > SUPPORTED_PRICING_SCHEMA_VERSION)
             .unwrap_or(false)
     }
+}
+
+/// Fetch the Account Overview summary counts. Runs the contacts and
+/// cubes list calls back-to-back and reports their lengths; an error on
+/// either resolves to `None` for that count so the Overview row hides
+/// rather than surfacing a transient failure on a glanceable summary.
+///
+/// The cube count is scoped to `active_network` when set (same
+/// convention as `load_invite_cubes`: `None` counts cubes on every
+/// network, e.g. on a Connect-only surface with no active cube).
+fn load_overview_counts(
+    client: &CoincubeClient,
+    generation: u64,
+    active_network: Option<String>,
+) -> iced::Task<Message> {
+    let client = client.clone();
+    iced::Task::perform(
+        async move {
+            let contacts = client.get_contacts().await.ok().map(|c| c.len());
+            let cubes = client.list_cubes().await.ok().map(|cubes| {
+                cubes
+                    .into_iter()
+                    .filter(|c| {
+                        active_network
+                            .as_deref()
+                            .map(|net| c.network == net)
+                            .unwrap_or(true)
+                    })
+                    .count()
+            });
+            (contacts, cubes)
+        },
+        move |(contacts, cubes)| {
+            Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::OverviewCountsLoaded {
+                    contacts,
+                    cubes,
+                    generation,
+                },
+            ))
+        },
+    )
 }
 
 /// Load Contacts tab data (contacts + invites).

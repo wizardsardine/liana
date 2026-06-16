@@ -1372,6 +1372,14 @@ impl Launcher {
                         ),
                     );
                 }
+                // Load Overview summary counts on demand
+                if matches!(
+                    self.active_section,
+                    LauncherSection::Connect(app::menu::ConnectSubMenu::Overview)
+                ) && self.connect_account.is_authenticated()
+                {
+                    return map_connect_task(self.connect_account.reload_overview());
+                }
                 // Load Contacts data on demand
                 if matches!(
                     self.active_section,
