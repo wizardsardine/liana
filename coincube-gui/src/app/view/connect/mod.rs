@@ -454,8 +454,15 @@ fn overview_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
 
     // Renewal / access date — only meaningful on a paid plan with a
     // server-provided date (Free tier omits it). A canceled plan keeps
-    // access until the date, so the label reflects that.
-    if let Some(plan) = state.plan.as_ref() {
+    // access until the date, so the label reflects that. A past-due plan
+    // reads as Expired (the renewal banner above already states "Your
+    // plan expired on …"); a "Renews" row carrying the same lapsed date
+    // would contradict it, so skip the row entirely in that state.
+    if let Some(plan) = state
+        .plan
+        .as_ref()
+        .filter(|_| !matches!(state.plan_lifecycle(), PlanLifecycle::Expired))
+    {
         if let Some(date) = plan.renewal_at.as_deref().map(format_date) {
             let label = match plan.status {
                 crate::services::coincube::PlanStatus::Canceled => "Access until",

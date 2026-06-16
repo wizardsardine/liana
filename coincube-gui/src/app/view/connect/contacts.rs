@@ -623,21 +623,22 @@ fn contact_detail_ux<'a>(
             for cube in cubes {
                 // Network rendered as a muted pill so it reads as
                 // metadata rather than crowding the cube name.
-                let network_pill = container(text::caption(cube.network.as_str()).color(color::GREY_3))
-                    .padding(iced::Padding {
-                        top: 2.0,
-                        bottom: 2.0,
-                        left: 8.0,
-                        right: 8.0,
-                    })
-                    .style(|_t| container::Style {
-                        border: iced::Border {
-                            color: color::GREY_5,
-                            width: 0.5,
-                            radius: 6.0.into(),
-                        },
-                        ..Default::default()
-                    });
+                let network_pill =
+                    container(text::caption(cube.network.as_str()).color(color::GREY_3))
+                        .padding(iced::Padding {
+                            top: 2.0,
+                            bottom: 2.0,
+                            left: 8.0,
+                            right: 8.0,
+                        })
+                        .style(|_t| container::Style {
+                            border: iced::Border {
+                                color: color::GREY_5,
+                                width: 0.5,
+                                radius: 6.0.into(),
+                            },
+                            ..Default::default()
+                        });
 
                 let mut row = Row::new()
                     .spacing(10)

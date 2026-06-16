@@ -499,8 +499,12 @@ pub struct ConnectAccountPanel {
     pub login_activity: Option<Vec<LoginActivity>>,
     /// Account Overview summary counts, fetched on entering the Overview
     /// tab (kept separate from `contacts_state` so the count doesn't
-    /// disturb the Contacts tab's own load/step state). `None` = not yet
-    /// loaded or the fetch failed; the row hides in either case.
+    /// disturb the Contacts tab's own load/step state). `None` until the
+    /// first successful fetch (and again after logout) — the row stays
+    /// hidden until then. A *later* failed refresh deliberately keeps the
+    /// last successful value rather than reverting to `None`, so a
+    /// transient error doesn't blank the row (see the
+    /// `OverviewCountsLoaded` handler).
     pub overview_contact_count: Option<usize>,
     pub overview_cube_count: Option<usize>,
     pub contacts_state: ContactsState,
@@ -3069,8 +3073,9 @@ impl ConnectAccountPanel {
 
 /// Fetch the Account Overview summary counts. Runs the contacts and
 /// cubes list calls back-to-back and reports their lengths; an error on
-/// either resolves to `None` for that count so the Overview row hides
-/// rather than surfacing a transient failure on a glanceable summary.
+/// either resolves to `None` for that count, signalling "no fresh value"
+/// — the handler then keeps any prior value rather than surfacing a
+/// transient failure on a glanceable summary.
 ///
 /// The cube count is scoped to `active_network` when set (same
 /// convention as `load_invite_cubes`: `None` counts cubes on every
