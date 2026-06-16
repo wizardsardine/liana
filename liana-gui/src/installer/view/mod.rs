@@ -24,7 +24,7 @@ use liana::{
 use liana_ui::{
     component::{
         button, card, collapse, form,
-        modal::legacy,
+        modal::{self, DeviceMark},
         scrollable, separation,
         text::{h2, h3, h4_bold, p1_bold, p1_regular, text, Text},
     },
@@ -36,7 +36,7 @@ use crate::node::electrum::validate_domain_checkbox;
 use crate::{
     app::settings,
     help,
-    hw::{HardwareWallet, UnsupportedReason},
+    hw::HardwareWallet,
     installer::{
         descriptor::{PathSequence, PathWarning},
         message::{self, DefineBitcoind, DefineNode, Message},
@@ -437,58 +437,34 @@ pub fn hardware_wallet_xpubs<'a>(
     error: Option<&Error>,
     accounts: &HashMap<Fingerprint, ChildNumber>,
 ) -> Element<'a, Message> {
-    let select_msg = if !processing && hw.is_supported() {
-        Some(Message::Select(i))
-    } else {
-        None
-    };
+    let select_msg = (!processing && hw.is_supported()).then_some(Message::Select(i));
     let bttn: Element<'a, Message> = match hw {
         HardwareWallet::Supported {
             kind,
-            version,
             fingerprint,
             alias,
             ..
         } => {
             if processing {
-                legacy::processing_device(kind, version.as_ref(), fingerprint, alias.as_ref(), None)
+                modal::device_entry(
+                    Some(format!("#{fingerprint}")),
+                    Some(kind),
+                    alias.as_ref(),
+                    Some(DeviceMark::Processing),
+                    None,
+                    None,
+                )
             } else {
-                legacy::supported_device_with_account(
-                    kind,
-                    version.as_ref(),
+                modal::account_device_entry(
                     *fingerprint,
+                    Some(kind),
                     alias.as_ref(),
                     accounts.get(fingerprint).cloned(),
-                    true,
                     select_msg,
                 )
             }
         }
-        HardwareWallet::Unsupported {
-            version,
-            kind,
-            reason,
-            ..
-        } => match reason {
-            UnsupportedReason::NotPartOfWallet(fg) => {
-                legacy::unrelated_device(kind.to_string(), version.as_ref(), fg, None)
-            }
-            UnsupportedReason::WrongNetwork => {
-                legacy::wrong_network_device(kind.to_string(), version.as_ref(), None)
-            }
-            UnsupportedReason::Version {
-                minimal_supported_version,
-            } => legacy::unsupported_version_device(
-                kind.to_string(),
-                version.as_ref(),
-                minimal_supported_version,
-                None,
-            ),
-            _ => legacy::unsupported_device(kind.to_string(), version.as_ref(), None),
-        },
-        HardwareWallet::Locked {
-            kind, pairing_code, ..
-        } => legacy::locked_device(kind, pairing_code.as_ref(), None),
+        _ => crate::view::hw::unusable_device_entry(hw),
     };
     Container::new(
         Column::new()

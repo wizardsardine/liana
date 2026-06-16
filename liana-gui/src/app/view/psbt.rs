@@ -21,7 +21,7 @@ use liana_ui::{
         button, card,
         collapse::Collapse,
         form,
-        modal::{legacy, modal_view, ModalWidth},
+        modal::{self, modal_view, DeviceMark, ModalWidth},
         pill, scrollable,
         text::{self, *},
     },
@@ -957,10 +957,28 @@ pub fn sign_action<'a>(
     if let Some(hot_signer) = signer.map(|fingerprint| {
         let can_sign = descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);
         let select_msg = can_sign.then_some(Message::Spend(SpendTxMessage::SelectHotSigner));
+        let fp = Some(format!("#{fingerprint}"));
+        let alias = signer_alias;
         if signed.contains(&fingerprint) {
-            legacy::signed_hot_key(fingerprint, signer_alias, select_msg)
+            modal::device_entry(
+                fp,
+                None::<&str>,
+                alias,
+                Some(DeviceMark::Signed),
+                None,
+                None,
+            )
+        } else if !can_sign {
+            modal::device_entry(
+                fp,
+                None::<&str>,
+                alias,
+                Some(DeviceMark::NotInPath),
+                None,
+                None,
+            )
         } else {
-            legacy::hot_key(fingerprint, signer_alias, can_sign, select_msg)
+            modal::device_entry(fp, None::<&str>, alias, None, None, select_msg)
         }
     }) {
         signers.push(hot_signer);

@@ -1,6 +1,9 @@
 use async_hwi::{DeviceKind, Version};
 use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::bip32::Fingerprint};
-use liana_ui::{component::modal::legacy, widget::*};
+use liana_ui::{
+    component::modal::{self, DeviceMark},
+    widget::*,
+};
 
 use crate::hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason};
 
@@ -33,109 +36,113 @@ where
     M: Clone + 'static,
     F: FnOnce() -> M + 'a,
 {
-    let unrelated = match (&mode, hw) {
-        (
-            HwRowMode::Registration { descriptor, .. },
-            HardwareWallet::Supported { fingerprint, .. },
-        ) => descriptor
+    let HardwareWallet::Supported {
+        kind,
+        version,
+        fingerprint,
+        alias,
+        registered,
+        ..
+    } = hw
+    else {
+        return unusable_device_entry(hw);
+    };
+
+    let unrelated = match &mode {
+        HwRowMode::Registration { descriptor, .. } => descriptor
             .map(|d| !d.contains_fingerprint(*fingerprint))
             .unwrap_or(false),
-        _ => false,
+        HwRowMode::Signing { .. } => false,
     };
     let enabled = match &mode {
         HwRowMode::Signing {
             signing, can_sign, ..
-        } => {
-            *can_sign
-                && !*signing
-                && hw.is_supported()
-                && match hw {
-                    HardwareWallet::Supported { registered, .. } => *registered != Some(false),
-                    _ => true,
-                }
-        }
-        HwRowMode::Registration { processing, .. } => {
-            !*processing && hw.is_supported() && !unrelated
-        }
+        } => *can_sign && !*signing && *registered != Some(false),
+        HwRowMode::Registration { processing, .. } => !*processing && !unrelated,
     };
-    let select_msg = if enabled { Some(make_select()) } else { None };
+    let select_msg = enabled.then(make_select);
 
-    match hw {
-        HardwareWallet::Supported {
+    match mode {
+        HwRowMode::Signing {
+            signed,
+            signing,
+            can_sign,
+        } => signing_entry(
             kind,
-            version,
             fingerprint,
-            alias,
-            registered,
-            ..
-        } => match &mode {
-            HwRowMode::Signing {
-                signing,
-                signed,
-                can_sign,
-            } => signing_entry(
-                kind,
-                version.as_ref(),
-                fingerprint,
-                alias.as_ref(),
-                *registered,
-                *signing,
-                *signed,
-                *can_sign,
-                select_msg,
-            ),
-            HwRowMode::Registration {
-                chosen,
-                processing,
-                complete,
-                descriptor,
-                device_must_support_taproot,
-            } => registration_entry(
-                kind,
-                version.as_ref(),
-                fingerprint,
-                alias.as_ref(),
-                *chosen,
-                *processing,
-                *complete,
-                descriptor.is_some(),
-                *device_must_support_taproot,
-                unrelated,
-                select_msg,
-            ),
-        },
-        HardwareWallet::Unsupported {
-            version,
+            alias.as_ref(),
+            *registered,
+            signing,
+            signed,
+            can_sign,
+            select_msg,
+        ),
+        HwRowMode::Registration {
+            chosen,
+            processing,
+            complete,
+            descriptor,
+            device_must_support_taproot,
+        } => registration_entry(
             kind,
-            reason,
-            ..
-        } => match reason {
-            UnsupportedReason::NotPartOfWallet(fg) => {
-                legacy::unrelated_device(kind.to_string(), version.as_ref(), fg, None)
-            }
-            UnsupportedReason::WrongNetwork => {
-                legacy::wrong_network_device(kind.to_string(), version.as_ref(), None)
-            }
+            version.as_ref(),
+            fingerprint,
+            alias.as_ref(),
+            chosen,
+            processing,
+            complete,
+            descriptor.is_some(),
+            device_must_support_taproot,
+            unrelated,
+            select_msg,
+        ),
+    }
+}
+
+/// Render an entry for a device that cannot be used as-is (unsupported, locked).
+/// Callers must have ruled out `Supported` already.
+pub fn unusable_device_entry<M: 'static + Clone>(hw: &HardwareWallet) -> Element<'static, M> {
+    let (fingerprint, kind, mark) = match hw {
+        HardwareWallet::Supported { .. } => {
+            unreachable!("unusable_device_entry called with a Supported device")
+        }
+        HardwareWallet::Unsupported { kind, reason, .. } => match reason {
+            UnsupportedReason::NotPartOfWallet(fg) => (
+                Some(format!("#{fg}")),
+                kind.to_string(),
+                DeviceMark::Unrelated,
+            ),
+            UnsupportedReason::WrongNetwork => (None, kind.to_string(), DeviceMark::WrongNetwork),
             UnsupportedReason::Version {
                 minimal_supported_version,
-            } => legacy::unsupported_version_device(
-                kind.to_string(),
-                version.as_ref(),
-                minimal_supported_version,
+            } => (
                 None,
+                kind.to_string(),
+                DeviceMark::OutdatedFirmware(minimal_supported_version.to_string()),
             ),
-            _ => legacy::unsupported_device(kind.to_string(), version.as_ref(), None),
+            _ => (None, kind.to_string(), DeviceMark::ConnectionError),
         },
         HardwareWallet::Locked {
             kind, pairing_code, ..
-        } => legacy::locked_device(kind, pairing_code.as_ref(), None),
-    }
+        } => (
+            None,
+            kind.to_string(),
+            DeviceMark::Locked(pairing_code.clone()),
+        ),
+    };
+    modal::device_entry(
+        fingerprint,
+        Some(kind),
+        None::<&str>,
+        Some(mark),
+        None,
+        None,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn signing_entry<'a, M: Clone + 'static>(
     kind: &'a DeviceKind,
-    version: Option<&'a Version>,
     fingerprint: &'a Fingerprint,
     alias: Option<&'a String>,
     registered: Option<bool>,
@@ -144,30 +151,30 @@ fn signing_entry<'a, M: Clone + 'static>(
     can_sign: bool,
     select_msg: Option<M>,
 ) -> Element<'a, M> {
-    if signing {
-        legacy::processing_device(kind, version, fingerprint, alias, None)
+    let (alias, mark, warning, on_press) = if signing {
+        (alias, Some(DeviceMark::Processing), None, None)
     } else if signed {
-        legacy::signed_device(kind, version, fingerprint, alias, None)
+        (alias, Some(DeviceMark::Signed), None, None)
     } else if registered == Some(false) {
-        legacy::warning_device(
-            kind,
-            version,
-            fingerprint,
+        (
             alias,
-            "The wallet descriptor is not registered on the device.\n You can register it in the settings.",
+            None,
+            Some("The wallet descriptor is not registered on the device.\n You can register it in the settings."),
             None,
         )
     } else if !can_sign {
-        legacy::disabled_device(
-            kind,
-            version,
-            fingerprint,
-            "This signing device is not part of this spending path.",
-            None,
-        )
+        (None, Some(DeviceMark::NotInPath), None, None)
     } else {
-        legacy::supported_device(kind, version, fingerprint, alias, select_msg)
-    }
+        (alias, None, None, select_msg)
+    };
+    modal::device_entry(
+        Some(format!("#{fingerprint}")),
+        Some(kind),
+        alias,
+        mark,
+        warning,
+        on_press,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -186,39 +193,32 @@ fn registration_entry<'a, M: Clone + 'static>(
 ) -> Element<'a, M> {
     let not_tapminiscript =
         device_must_support_taproot && !is_compatible_with_tapminiscript(kind, version);
-    if unrelated {
-        legacy::unrelated_device(kind.to_string(), version, fingerprint, None)
+    let taproot_warning =
+        not_tapminiscript.then_some("Device firmware version does not support taproot miniscript");
+    let (alias, mark, warning, on_press) = if unrelated {
+        (None, Some(DeviceMark::Unrelated), None, None)
     } else if chosen && processing {
-        legacy::processing_device(kind, version, fingerprint, alias, None)
-    } else if complete {
-        if has_descriptor {
-            legacy::selected_device(
-                kind,
-                version,
-                fingerprint,
-                alias,
-                if not_tapminiscript {
-                    Some("Device firmware version does not support taproot miniscript")
-                } else {
-                    None
-                },
-                None,
-                false,
-                select_msg,
-            )
-        } else {
-            legacy::registered_device(kind, version, fingerprint, alias, select_msg)
-        }
-    } else if not_tapminiscript {
-        legacy::warning_device(
-            kind,
-            version,
-            fingerprint,
+        (alias, Some(DeviceMark::Processing), None, None)
+    } else if complete && has_descriptor {
+        (
             alias,
-            "Device firmware version does not support taproot miniscript",
+            Some(DeviceMark::Selected),
+            taproot_warning,
             select_msg,
         )
+    } else if complete {
+        (alias, Some(DeviceMark::Registered), None, select_msg)
+    } else if not_tapminiscript {
+        (alias, None, taproot_warning, select_msg)
     } else {
-        legacy::supported_device(kind, version, fingerprint, alias, select_msg)
-    }
+        (alias, None, None, select_msg)
+    };
+    modal::device_entry(
+        Some(format!("#{fingerprint}")),
+        Some(kind),
+        alias,
+        mark,
+        warning,
+        on_press,
+    )
 }
