@@ -935,24 +935,28 @@ pub fn sign_action<'a>(
     let title = "Select signing device to sign with:".to_string();
 
     let mut signers = vec![];
-    hws.iter().enumerate().for_each(|(i, hw)| {
-        let (signed, signing, can_sign) = hw.fingerprint().map_or((false, false, false), |f| {
-            (
-                signed.contains(&f),
-                signing.contains(&f),
-                descriptor.contains_fingerprint_in_path(f, recovery_timelock),
-            )
+    if hws.is_empty() {
+        signers.push(modal::modal_no_devices_placeholder());
+    } else {
+        hws.iter().enumerate().for_each(|(i, hw)| {
+            let (signed, signing, can_sign) = hw.fingerprint().map_or((false, false, false), |f| {
+                (
+                    signed.contains(&f),
+                    signing.contains(&f),
+                    descriptor.contains_fingerprint_in_path(f, recovery_timelock),
+                )
+            });
+            signers.push(device_list_entry(
+                hw,
+                HwRowMode::Signing {
+                    signed,
+                    signing,
+                    can_sign,
+                },
+                move || Message::SelectHardwareWallet(i),
+            ))
         });
-        signers.push(device_list_entry(
-            hw,
-            HwRowMode::Signing {
-                signed,
-                signing,
-                can_sign,
-            },
-            move || Message::SelectHardwareWallet(i),
-        ))
-    });
+    }
 
     if let Some(hot_signer) = signer.map(|fingerprint| {
         let can_sign = descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);

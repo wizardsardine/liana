@@ -248,19 +248,7 @@ fn hw_section(state: &State) -> Element<'_, Msg> {
     let devices = state.hw.list();
 
     let device_list: Element<'_, Msg> = if devices.is_empty() {
-        // No devices detected
-        Column::new()
-            .spacing(10)
-            .align_x(Alignment::Center)
-            .push(Space::with_height(20))
-            .push(icon::usb_icon().size(60))
-            .push(
-                text::p1_medium("No hardware wallets detected. Connect a device and unlock it.")
-                    .style(theme::text::primary),
-            )
-            .push(Space::with_height(20))
-            .width(Length::Fill)
-            .into()
+        modal::modal_no_devices_placeholder()
     } else {
         // Show device list - extract data to avoid lifetime issues with local BTreeMap
         let device_data: Vec<_> = devices.values().map(extract_device_data).collect();

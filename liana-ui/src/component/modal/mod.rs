@@ -577,7 +577,9 @@ where
 pub fn modal_no_devices_placeholder<'a, M: 'a>() -> Element<'a, M> {
     Column::new()
         .push(icon::usb_icon().size(100))
-        .push(caption("Plug in a hardware device ..."))
+        .push(caption(
+            "No hardware wallets detected. Connect a device and unlock it.",
+        ))
         .align_x(Horizontal::Center)
         .spacing(20)
         .into()

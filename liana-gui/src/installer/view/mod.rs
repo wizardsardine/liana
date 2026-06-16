@@ -524,19 +524,19 @@ pub fn share_xpubs<'a>(
         (0, 0),
         email,
         "Share your public keys (Xpubs)",
-        Column::new()
-            .push(title)
-            .push_maybe(if hws.is_empty() {
-                Some(p1_regular("No signing device connected").style(theme::text::secondary))
+        column![
+            title,
+            if hws.is_empty() {
+                modal::modal_no_devices_placeholder()
             } else {
-                None
-            })
-            .spacing(10)
-            .push(Column::with_children(hws).spacing(10))
-            .push(Container::new(text("Or create a new random key:").bold()).width(Length::Fill))
-            .push(signer)
-            .push(Space::with_height(10))
-            .width(Length::Fill),
+                Column::with_children(hws).spacing(10).into()
+            },
+            Container::new(text("Or create a new random key:").bold()).width(Length::Fill),
+            signer,
+            Space::with_height(10),
+        ]
+        .spacing(10)
+        .width(Length::Fill),
         true,
         Some(Message::Previous),
     )
@@ -594,11 +594,11 @@ pub fn register_descriptor<'a>(
         text("If necessary, please select the signing device to register descriptor on:").bold()
     })
     .width(Length::Fill);
-    let devices = hws
-        .iter()
-        .enumerate()
-        .fold(Column::new().spacing(10), |col, (i, hw)| {
-            col.push(crate::view::hw::device_list_entry(
+    let devices: Element<'a, Message> = if hws.is_empty() {
+        modal::modal_no_devices_placeholder()
+    } else {
+        Column::with_children(hws.iter().enumerate().map(|(i, hw)| {
+            crate::view::hw::device_list_entry(
                 hw,
                 crate::view::hw::HwRowMode::Registration {
                     chosen: Some(i) == chosen_hw,
@@ -611,8 +611,11 @@ pub fn register_descriptor<'a>(
                     device_must_support_taproot: false,
                 },
                 move || Message::Select(i),
-            ))
-        });
+            )
+        }))
+        .spacing(10)
+        .into()
+    };
     let signing_devices = column![devices_title, devices]
         .spacing(10)
         .width(Length::Fill);
