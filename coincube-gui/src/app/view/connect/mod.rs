@@ -20,7 +20,6 @@ use iced::{
 use crate::{
     app::{
         menu::ConnectSubMenu,
-        settings::global::AccountTier,
         state::connect::{
             AvatarFlowStep, CheckoutPhase, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep,
             ConnectPanel, DuressContactsStep, DuressGateStatus, PlanLifecycle,
@@ -538,14 +537,6 @@ fn plan_tier_color(tier: &PlanTier) -> iced::Color {
     }
 }
 
-fn cube_limit_for(tier: &PlanTier) -> usize {
-    match tier {
-        PlanTier::Free => AccountTier::Free.cube_limit(),
-        PlanTier::Pro => AccountTier::Pro.cube_limit(),
-        PlanTier::Estate => AccountTier::Estate.cube_limit(),
-    }
-}
-
 // ── Renewal reminder / expired prompt banner (D1 / D3) ──────────────────────
 
 /// Pre-expiry renewal reminder (D1) or, for a lapsed plan, an expired
@@ -911,12 +902,14 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                         },
                         None => "Free".to_string(),
                     };
-                    let mut features = vec![format!("{} cubes per network", cube_limit_for(&tier))];
-                    features.extend(info.features.iter().cloned());
+                    // Render the server's feature bullets verbatim — the
+                    // `/connect/features` list is the single source of truth
+                    // (including the per-network cube count), so the desktop
+                    // no longer prepends its own cube-count line.
                     Some(PlanCardData {
                         name: tier.to_string(),
                         tier,
-                        features,
+                        features: info.features.clone(),
                         price_label,
                     })
                 })
