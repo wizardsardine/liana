@@ -17,3 +17,12 @@ impl Catalog for Theme {
 pub fn default(_theme: &Theme, _status: Status) -> Style {
     Style { color: None }
 }
+
+/// Tint for monochrome SVG icons used in the nav rail. Matches the primary
+/// text color so the SVG tracks light/dark mode like the Bootstrap font glyphs
+/// rendered alongside it.
+pub fn nav_icon(theme: &Theme, _status: Status) -> Style {
+    Style {
+        color: Some(theme.colors.text.primary),
+    }
+}

@@ -12,7 +12,10 @@ use crate::app::{
 };
 use coincube_ui::{
     color,
-    icon::{cube_icon, droplet_fill_icon, lightning_icon, shield_plus_icon, shop_icon, vault_icon},
+    icon::{
+        cube_icon, droplet_outline_icon, lightning_outline_icon, shield_plus_icon, shop_icon,
+        vault_icon,
+    },
     theme,
     widget::{Button, Column, Element, Row, Text},
 };
@@ -70,8 +73,17 @@ fn item<'a>(t: TopLevel, active: bool) -> Element<'a, Message> {
 }
 
 fn item_with_route<'a>(t: TopLevel, active: bool, route: Menu) -> Element<'a, Message> {
+    // Marketplace uses a hand-authored outline SVG (Bootstrap only ships its
+    // `currency-exchange` glyph filled); every other rail item is a font glyph.
+    let icon_el: Element<'a, Message> = match t {
+        TopLevel::Marketplace => {
+            coincube_ui::image::currency_exchange_outline(ICON_SIZE).into()
+        }
+        _ => icon_for(t).size(ICON_SIZE).into(),
+    };
+
     let body: Column<Message> = column![
-        icon_for(t).size(ICON_SIZE),
+        icon_el,
         iced::widget::text(t.label())
             .size(LABEL_SIZE)
             .align_x(Alignment::Center),
@@ -134,8 +146,8 @@ fn marketplace_landing_menu(ctx: &NavContext<'_>) -> Menu {
 fn icon_for<'a>(t: TopLevel) -> Text<'a> {
     match t {
         TopLevel::Cube => cube_icon(),
-        TopLevel::Spark => lightning_icon(),
-        TopLevel::Liquid => droplet_fill_icon(),
+        TopLevel::Spark => lightning_outline_icon(),
+        TopLevel::Liquid => droplet_outline_icon(),
         TopLevel::Vault => vault_icon(),
         TopLevel::Marketplace => shop_icon(),
     }

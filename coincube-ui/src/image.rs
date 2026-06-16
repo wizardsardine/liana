@@ -107,6 +107,29 @@ pub fn key_mark_icon<'a>() -> Svg<'a, Theme> {
     Svg::new(h)
 }
 
+const CURRENCY_EXCHANGE_OUTLINE: &[u8] =
+    include_bytes!("../static/icons/currency-exchange-outline.svg");
+
+/// Outline rendering of the Bootstrap `currency-exchange` icon (two coins) for
+/// the Marketplace nav item. Hand-authored because Bootstrap only ships that
+/// icon filled; monochrome so it can be tinted to the nav text color via
+/// [`crate::theme::svg::nav_icon`] and track light/dark mode like the font glyphs.
+pub fn currency_exchange_outline<'a>(size: f32) -> Svg<'a, Theme> {
+    Svg::new(svg::Handle::from_memory(CURRENCY_EXCHANGE_OUTLINE))
+        .width(iced::Length::Fixed(size))
+        .height(iced::Length::Fixed(size))
+        .style(crate::theme::svg::nav_icon)
+}
+
+const WRENCH_OUTLINE: &[u8] = include_bytes!("../static/icons/wrench-outline.svg");
+
+pub fn wrench_outline_icon<'a>(size: f32) -> Svg<'a, Theme> {
+    Svg::new(svg::Handle::from_memory(WRENCH_OUTLINE))
+        .width(iced::Length::Fixed(size))
+        .height(iced::Length::Fixed(size))
+        .style(crate::theme::svg::nav_icon)
+}
+
 const INHERITANCE_TEMPLATE_DESC: &[u8] =
     include_bytes!("../static/images/inheritance_template_description.svg");
 

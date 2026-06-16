@@ -1,7 +1,8 @@
 use super::{NavContext, SubItem};
 use crate::app::menu::{Menu, VaultSubMenu};
 use coincube_ui::icon::{
-    coins_icon, home_icon, receipt_icon, receive_icon, recovery_icon, send_icon, settings_icon,
+    coins_outline_icon, home_icon, receipt_icon, receive_icon, recovery_icon, send_icon,
+    settings_icon,
 };
 
 /// Secondary-rail items for the Vault wallet section.
@@ -27,7 +28,7 @@ pub fn items(_ctx: &NavContext) -> Vec<SubItem> {
         },
         SubItem {
             label: "Coins",
-            icon: coins_icon,
+            icon: coins_outline_icon,
             route: Menu::Vault(VaultSubMenu::Coins(None)),
             matches: |m| matches!(m, Menu::Vault(VaultSubMenu::Coins(_))),
         },

@@ -232,6 +232,12 @@ pub fn coins_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F585}')
 }
 
+/// Outline stacked `layers` glyph — the outline counterpart used for the Coins
+/// sidebar item, since the filled [`coins_icon`] (`stack`) has no outline twin.
+pub fn coins_outline_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F45B}')
+}
+
 pub fn clock_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F293}')
 }
@@ -260,12 +266,24 @@ pub fn lightning_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F46E}')
 }
 
+/// Outline (non-filled) lightning bolt — the `lightning` twin of the filled
+/// [`lightning_icon`]. Used in the sidebar nav so all rail icons read as outline.
+pub fn lightning_outline_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F46F}')
+}
+
 pub fn droplet_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F30C}')
 }
 
 pub fn droplet_fill_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F30B}')
+}
+
+/// Outline (non-filled) droplet — the `droplet` twin of the filled
+/// [`droplet_fill_icon`]. Used in the sidebar nav so all rail icons read as outline.
+pub fn droplet_outline_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F30D}')
 }
 
 pub fn eye_icon<'a>() -> Text<'a> {
