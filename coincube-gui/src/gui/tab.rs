@@ -156,7 +156,18 @@ fn build_duress_drainer(
     if queue.is_empty().unwrap_or(true) {
         return None;
     }
-    let cipher = DeviceKey::load_or_create(root).ok()?;
+    // Load-only: never mint a fresh key here (see `build_duress_orchestrator`).
+    // No usable key → don't drain now; keep the queued entry for a later launch
+    // once the original key is readable, rather than minting a key that would
+    // drop the entry as undecryptable.
+    let cipher = match DeviceKey::load(root) {
+        Ok(Some(cipher)) => cipher,
+        Ok(None) => return None,
+        Err(e) => {
+            tracing::warn!("duress: device key unreadable; deferring activation drain: {e}");
+            return None;
+        }
+    };
     let client: std::sync::Arc<dyn DuressTrigger> =
         std::sync::Arc::new(crate::services::coincube::CoincubeClient::new());
     Some(DuressDrainer::new(queue, cipher, client))
@@ -232,9 +243,19 @@ fn build_duress_orchestrator(
     let journal = WipeJournal::new(root);
     let queue = DuressQueue::new(root);
     let wipe = CubeWiper::new(duress_wipe_targets(root), journal.clone());
-    // A genuine read error leaves the cipher absent (POST skipped); the wipe
-    // never depends on it.
-    let cipher = DeviceKey::load_or_create(root).ok();
+    // Load-only: NEVER mint a fresh key on the activation path. A fresh key
+    // can't decrypt a `duress_code` sealed under the original, and minting one
+    // would let the drainer drop the queued POST as undecryptable (and clobber
+    // the key slot, defeating recovery if the original key later returns).
+    // Absent or unreadable key → cipher = None → the POST is left for the
+    // launch-time drainer once the key is back; the wipe never depends on it.
+    let cipher = match DeviceKey::load(root) {
+        Ok(cipher) => cipher,
+        Err(e) => {
+            error!("duress: device key unreadable at activation; server POST deferred: {e}");
+            None
+        }
+    };
     let client: std::sync::Arc<dyn DuressTrigger> =
         std::sync::Arc::new(crate::services::coincube::CoincubeClient::new());
 
@@ -1368,6 +1389,25 @@ impl Tab {
                             // Update local state and exit into the normal flow.
                             if let Some(datadir) = screen.datadir().cloned() {
                                 let root = datadir.path();
+                                // A server clear must NEVER drop us into the normal
+                                // app with un-wiped Cube data. If the activation
+                                // wipe failed all its retries (or was interrupted),
+                                // the journal is still pending — finish it first,
+                                // and if it STILL can't complete, stay locked (the
+                                // launch-time reconcile retries on next start).
+                                // This is the same invariant `State::new` enforces.
+                                let journal =
+                                    crate::services::duress::journal::WipeJournal::new(root);
+                                if journal.is_pending() {
+                                    complete_pending_wipe(root, &journal);
+                                    if journal.is_pending() {
+                                        screen.checking = false;
+                                        screen.error = Some(
+                                            "Duress mode is active. Try again later.".to_string(),
+                                        );
+                                        return Task::none();
+                                    }
+                                }
                                 // Skip the write on a real read error rather than
                                 // clobbering valid state with a default; the next
                                 // poll re-clears once the file is readable again.

@@ -72,6 +72,13 @@ impl DuressTrigger for crate::services::coincube::CoincubeClient {
     }
 }
 
+/// How many times the wipe-journal marker write is retried on a transient IO
+/// error. The marker is the durability anchor that lets the launch-time
+/// reconcile finish an interrupted wipe, so a dropped write removes the
+/// crash-recovery safety net — worth a few retries. The write is idempotent (it
+/// re-creates the same marker), so retrying can never corrupt it.
+const JOURNAL_RETRIES: u32 = 3;
+
 /// How many times the durable enqueue is retried on a transient IO error. The
 /// queue entry is the only thing that drives the server-side lock, so a dropped
 /// commit means the account is never locked — worth a few retries. enqueue is
@@ -180,37 +187,66 @@ impl DuressOrchestrator {
         let enrolled = self.local_state.account_id.clone();
         if let (Some(passed), Some(enrolled)) = (account_id.as_ref(), enrolled.as_ref()) {
             if passed != enrolled {
+                // Don't log the raw account ids — keep identifiers out of
+                // warn-level logs (which surface in support bundles); the values
+                // live in duress-state.json if ever needed for debugging. This is
+                // a should-never-happen divergence (one Connect account per
+                // desktop); we proceed with the explicitly-threaded value.
                 log::warn!(
-                    "duress: activation account id {passed} differs from the enrolled id \
-                     {enrolled}; using the threaded value"
+                    "duress: activation account id differs from the enrolled id; \
+                     using the threaded value"
                 );
             }
         }
         let account_id = account_id.or(enrolled);
 
         // 1. Journal marker FIRST. Fast, local, durable. The recorded account id
-        //    lets the launch-time reconcile finish an interrupted wipe. A failure
-        //    here is logged, never fatal — the wipe (step 4) must still run.
-        if let Err(e) = self
-            .journal
-            .mark_pending_activation(account_id.as_deref().unwrap_or(""))
-        {
-            log::error!("duress: failed to write wipe journal: {e}");
+        //    lets the launch-time reconcile finish an interrupted wipe, so it's
+        //    the crash-recovery anchor — retry it on a transient error. A total
+        //    failure is logged distinctly but never fatal: the wipe (step 4)
+        //    still runs (showing Cube data after a duress trigger is worse than a
+        //    non-recoverable partial wipe), but operators must know that an
+        //    interrupted wipe will NOT be auto-completed on next launch.
+        let mut journaled = false;
+        for attempt in 1..=JOURNAL_RETRIES {
+            match self
+                .journal
+                .mark_pending_activation(account_id.as_deref().unwrap_or(""))
+            {
+                Ok(()) => {
+                    journaled = true;
+                    break;
+                }
+                Err(e) => log::error!(
+                    "duress: wipe-journal write attempt {attempt}/{JOURNAL_RETRIES} failed: {e}"
+                ),
+            }
+        }
+        if !journaled {
+            log::error!(
+                "duress: wipe journal could not be persisted; the wipe will still run, but an \
+                 interrupted wipe will NOT be auto-completed on next launch"
+            );
         }
 
-        // 2 + 3. Connect tiers only — a Some account, a stored code, AND a usable
-        //    device key. Durably enqueue the *encrypted* code (never plaintext)
-        //    BEFORE the wipe, then drive the POST from the background drainer IN
-        //    PARALLEL with the wipe. The drainer fires immediately and KEEPS
-        //    retrying with backoff until it lands, so a coerced account is locked
-        //    even if the first attempt is offline and the user never leaves the
-        //    cryptic screen. The wipe never waits on any of this. Sovereign
-        //    devices skip straight to the wipe with no server signal.
-        if let (Some(acct), Some(encrypted), Some(cipher)) = (
-            account_id.as_ref(),
-            self.local_state.duress_code.clone(),
-            self.cipher.clone(),
-        ) {
+        // 2 + 3. Connect tiers only — a Some account AND a stored code. Durably
+        //    enqueue the *encrypted* code (never plaintext) BEFORE the wipe, then
+        //    drive the POST from the background drainer IN PARALLEL with the
+        //    wipe. The drainer fires immediately and KEEPS retrying with backoff
+        //    until it lands, so a coerced account is locked even if the first
+        //    attempt is offline and the user never leaves the cryptic screen. The
+        //    wipe never waits on any of this. Sovereign devices skip straight to
+        //    the wipe with no server signal.
+        //
+        //    The enqueue stores the already-encrypted code, so it needs NO device
+        //    key — the durable queue entry (the only thing that drives the
+        //    server-side lock) is committed even when the key is missing or
+        //    transiently unreadable. Only the in-session drainer needs the key to
+        //    decrypt in-flight; without it, the launch-time drainer fires the
+        //    POST on a later launch once the key is readable again.
+        if let (Some(acct), Some(encrypted)) =
+            (account_id.as_ref(), self.local_state.duress_code.clone())
+        {
             let pending = PendingActivation {
                 account_id: acct.clone(),
                 duress_code: encrypted,
@@ -232,11 +268,35 @@ impl DuressOrchestrator {
             if !enqueued {
                 log::error!("duress: activation not durably queued; server-side lock may not fire");
             }
-            // Fire-and-forget background POST driver. Decrypts each queued entry
-            // in-flight, retries with backoff until the queue drains, and is
-            // never awaited here.
-            let drainer = DuressDrainer::new(self.queue.clone(), cipher, self.client.clone());
-            tokio::spawn(async move { drainer.run_until_empty().await });
+            // Fire-and-forget background POST driver — only when the device key
+            // is available to decrypt the queued code in-flight. It retries with
+            // backoff until the queue drains and is never awaited here. With no
+            // key, the durable entry above waits for the launch-time drainer.
+            match self.cipher.clone() {
+                Some(cipher) => {
+                    let drainer =
+                        DuressDrainer::new(self.queue.clone(), cipher, self.client.clone());
+                    // Guard the spawn: in some executor contexts there is no
+                    // current Tokio runtime, and a bare `tokio::spawn` would
+                    // PANIC — unwinding `activate` before the wipe (step 4)
+                    // runs. No runtime → skip the in-session drain; the durable
+                    // queue entry is already committed, so the launch-time
+                    // drainer fires the POST on next start.
+                    match tokio::runtime::Handle::try_current() {
+                        Ok(handle) => {
+                            handle.spawn(async move { drainer.run_until_empty().await });
+                        }
+                        Err(_) => log::warn!(
+                            "duress: no Tokio runtime to start the activation drainer now; \
+                             server POST left for the launch-time drainer"
+                        ),
+                    }
+                }
+                None => log::warn!(
+                    "duress: device key unavailable at activation; server POST left for the \
+                     launch-time drainer to fire once the key is readable"
+                ),
+            }
         }
 
         // 4. Wipe (anchor) — runs IN PARALLEL with the POST above; starts
@@ -490,6 +550,34 @@ mod tests {
             "no server POST enqueued without a code"
         );
         assert!(!h.orch.journal.is_pending());
+        let _ = std::fs::remove_dir_all(&h.dir);
+    }
+
+    #[tokio::test]
+    async fn activate_enqueues_even_without_device_key() {
+        // Regression: a missing/transiently-unreadable device key must NOT drop
+        // the durable server-lock entry. The encrypted code is already in local
+        // state, so the queue commit needs no cipher; the launch-time drainer
+        // fires the POST once the key is readable again.
+        let mut h = build(Behavior::Ok);
+        h.orch.cipher = None;
+        h.orch.activate(Some("acct_k".to_string())).await.unwrap();
+        assert!(
+            !h.dir.join("bitcoin").join("data").exists(),
+            "wipe still ran"
+        );
+        // Durable entry committed despite the absent key.
+        assert!(
+            !h.orch_queue_empty(),
+            "server lock queued without a device key"
+        );
+        // No in-session drainer could be spawned (no key to decrypt), so the
+        // POST was not attempted now — it waits for the launch-time drainer.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(
+            h.calls.lock().unwrap().is_empty(),
+            "no POST without the device key"
+        );
         let _ = std::fs::remove_dir_all(&h.dir);
     }
 
