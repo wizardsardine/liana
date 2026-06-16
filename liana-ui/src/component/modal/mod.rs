@@ -1,5 +1,3 @@
-pub mod legacy;
-
 use std::fmt::Display;
 
 use iced::{
