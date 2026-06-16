@@ -1,3 +1,4 @@
+mod copy_button;
 mod cursor;
 mod editor;
 mod menu;
@@ -15,6 +16,7 @@ pub type Container<'a, Message> = iced::widget::Container<'a, Message, Theme, Re
 pub type Column<'a, Message> = iced::widget::Column<'a, Message, Theme, Renderer>;
 pub type Row<'a, Message> = iced::widget::Row<'a, Message, Theme, Renderer>;
 pub type Button<'a, Message> = iced::widget::Button<'a, Message, Theme, Renderer>;
+pub type BistateButton<'a, Message> = copy_button::BistateButton<'a, Message, Theme, Renderer>;
 pub type MenuButton<'a, Message> = menu_button::MenuButton<'a, Message, Theme, Renderer>;
 pub type CheckBox<'a, Message> = iced::widget::Checkbox<'a, Message, Theme, Renderer>;
 pub type Text<'a> = iced::widget::Text<'a, Theme, Renderer>;

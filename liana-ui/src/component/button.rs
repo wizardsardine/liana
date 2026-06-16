@@ -552,8 +552,18 @@ pub fn btn_show_qr_section<'a, M: 'a + 'static>(
 
 const CLICKABLE_ICON_SIZE: u32 = 26;
 
-pub fn btn_copy<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    clickable_icon_with_size(icon::copy_icon(), msg, CLICKABLE_ICON_SIZE)
+pub fn btn_copy<'a, T: Clone + 'a>(msg: Option<T>) -> BistateButton<'a, T> {
+    let size = Length::Fixed(CLICKABLE_ICON_SIZE as f32);
+    BistateButton::new(
+        Container::new(icon::copy_icon().size(CLICKABLE_ICON_SIZE))
+            .center_x(size)
+            .center_y(size),
+        Container::new(icon::check_mark_icon().size(CLICKABLE_ICON_SIZE))
+            .center_x(size)
+            .center_y(size),
+    )
+    .on_press_maybe(msg)
+    .style(theme::button::transparent)
 }
 
 pub fn btn_edit<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
