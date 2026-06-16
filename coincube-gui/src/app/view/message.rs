@@ -1082,6 +1082,15 @@ pub enum ConnectAccountMessage {
         plan: Option<crate::services::coincube::ConnectPlan>,
     },
     PlanLoaded(Option<crate::services::coincube::ConnectPlan>, u64),
+    /// Lightweight Account Overview counts (contacts, cubes), fetched on
+    /// entering the Overview tab. Each is `None` when its fetch failed —
+    /// the row simply hides rather than surfacing an error. Carries
+    /// `session_generation` for stale-response guarding.
+    OverviewCountsLoaded {
+        contacts: Option<usize>,
+        cubes: Option<usize>,
+        generation: u64,
+    },
     RefreshFailed(String),
     LogOut,
     EmailChanged(String),

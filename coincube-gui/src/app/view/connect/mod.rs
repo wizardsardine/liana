@@ -20,7 +20,6 @@ use iced::{
 use crate::{
     app::{
         menu::ConnectSubMenu,
-        settings::global::AccountTier,
         state::connect::{
             AvatarFlowStep, CheckoutPhase, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep,
             ConnectPanel, DuressContactsStep, DuressGateStatus, PlanLifecycle,
@@ -421,22 +420,11 @@ fn otp_ux<'a>(
 
 fn overview_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
     let email = state.user.as_ref().map(|u| u.email.as_str()).unwrap_or("—");
-    let verified = state
-        .user
-        .as_ref()
-        .and_then(|u| u.email_verified)
-        .unwrap_or(false);
     let plan_label = state
         .plan
         .as_ref()
         .map(|p| p.tier().to_string())
         .unwrap_or_else(|| "Free".to_string());
-
-    let verification_badge: Element<ConnectAccountMessage> = if verified {
-        text::p2_regular("✓ Verified").color(color::ORANGE).into()
-    } else {
-        text::p2_regular("✗ Unverified").color(color::GREY_3).into()
-    };
 
     let mut col = Column::new()
         .push(text::h4_bold("Account Overview").style(theme::text::primary))
@@ -449,51 +437,103 @@ fn overview_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
             .push(iced::widget::Space::new().height(Length::Fixed(12.0)));
     }
 
+    // Build the rows incrementally so the optional renewal/usage lines
+    // only appear when their data is present. Each row is a label on the
+    // left, value pushed to the right edge.
+    let gap = || iced::widget::Space::new().height(Length::Fixed(8.0));
+    let mut card = Column::new()
+        .push(overview_info_row(
+            "Email",
+            text::p1_regular(email).style(theme::text::primary).into(),
+        ))
+        .push(gap())
+        .push(overview_info_row(
+            "Plan",
+            text::p1_bold(plan_label).color(color::ORANGE).into(),
+        ));
+
+    // Renewal / access date — only meaningful on a paid plan with a
+    // server-provided date (Free tier omits it). A canceled plan keeps
+    // access until the date, so the label reflects that. A past-due plan
+    // reads as Expired (the renewal banner above already states "Your
+    // plan expired on …"); a "Renews" row carrying the same lapsed date
+    // would contradict it, so skip the row entirely in that state.
+    if let Some(plan) = state
+        .plan
+        .as_ref()
+        .filter(|_| !matches!(state.plan_lifecycle(), PlanLifecycle::Expired))
+    {
+        if let Some(date) = plan.renewal_at.as_deref().map(format_date) {
+            let label = match plan.status {
+                crate::services::coincube::PlanStatus::Canceled => "Access until",
+                _ => "Renews",
+            };
+            let value = match plan.billing_cycle {
+                Some(cycle) => format!("{date} · {cycle}"),
+                None => date,
+            };
+            card = card.push(gap()).push(overview_info_row(
+                label,
+                text::p1_regular(value).style(theme::text::primary).into(),
+            ));
+        }
+    }
+
+    // Summary counts — fetched on entering the tab; each row hides until
+    // (and unless) its count lands.
+    if let Some(n) = state.overview_contact_count {
+        card = card.push(gap()).push(overview_info_row(
+            "Contacts",
+            text::p1_regular(n.to_string())
+                .style(theme::text::primary)
+                .into(),
+        ));
+    }
+    if let Some(n) = state.overview_cube_count {
+        card = card.push(gap()).push(overview_info_row(
+            "Cubes",
+            text::p1_regular(n.to_string())
+                .style(theme::text::primary)
+                .into(),
+        ));
+    }
+
+    let card = card
+        .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
+        .push(button::secondary(None, "Sign Out").on_press(ConnectAccountMessage::LogOut))
+        .padding(20)
+        .spacing(2);
+
     col.push(
-        container(
-            Column::new()
-                .push(
-                    Row::new()
-                        .push(text::p1_medium("Email").color(color::GREY_3))
-                        .push(iced::widget::Space::new().width(Length::Fill))
-                        .push(text::p1_regular(email).style(theme::text::primary))
-                        .align_y(Alignment::Center),
-                )
-                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                .push(
-                    Row::new()
-                        .push(text::p1_medium("Status").color(color::GREY_3))
-                        .push(iced::widget::Space::new().width(Length::Fill))
-                        .push(verification_badge)
-                        .align_y(Alignment::Center),
-                )
-                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                .push(
-                    Row::new()
-                        .push(text::p1_medium("Plan").color(color::GREY_3))
-                        .push(iced::widget::Space::new().width(Length::Fill))
-                        .push(text::p1_bold(plan_label).color(color::ORANGE))
-                        .align_y(Alignment::Center),
-                )
-                .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
-                .push(button::secondary(None, "Sign Out").on_press(ConnectAccountMessage::LogOut))
-                .padding(20)
-                .spacing(2),
-        )
-        .style(|t| container::Style {
-            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-            border: iced::Border {
-                color: color::ORANGE,
-                width: 0.2,
-                radius: 20.0.into(),
-            },
-            ..Default::default()
-        })
-        .width(Length::Fill),
+        container(card)
+            .style(|t| container::Style {
+                background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+                border: iced::Border {
+                    color: color::ORANGE,
+                    width: 0.2,
+                    radius: 20.0.into(),
+                },
+                ..Default::default()
+            })
+            .width(Length::Fill),
     )
     .spacing(0)
     .width(Length::Fill)
     .into()
+}
+
+/// One label/value line in the Account Overview card: muted label on the
+/// left, value pushed to the right edge.
+fn overview_info_row<'a>(
+    label: &'a str,
+    value: Element<'a, ConnectAccountMessage>,
+) -> Element<'a, ConnectAccountMessage> {
+    Row::new()
+        .push(text::p1_medium(label).color(color::GREY_3))
+        .push(iced::widget::Space::new().width(Length::Fill))
+        .push(value)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 fn plan_tier_color(tier: &PlanTier) -> iced::Color {
@@ -501,14 +541,6 @@ fn plan_tier_color(tier: &PlanTier) -> iced::Color {
         PlanTier::Free => color::GREY_3,
         PlanTier::Pro => color::ORANGE,
         PlanTier::Estate => color::LIGHT_BLUE,
-    }
-}
-
-fn cube_limit_for(tier: &PlanTier) -> usize {
-    match tier {
-        PlanTier::Free => AccountTier::Free.cube_limit(),
-        PlanTier::Pro => AccountTier::Pro.cube_limit(),
-        PlanTier::Estate => AccountTier::Estate.cube_limit(),
     }
 }
 
@@ -877,12 +909,14 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                         },
                         None => "Free".to_string(),
                     };
-                    let mut features = vec![format!("{} cubes per network", cube_limit_for(&tier))];
-                    features.extend(info.features.iter().cloned());
+                    // Render the server's feature bullets verbatim — the
+                    // `/connect/features` list is the single source of truth
+                    // (including the per-network cube count), so the desktop
+                    // no longer prepends its own cube-count line.
                     Some(PlanCardData {
                         name: tier.to_string(),
                         tier,
-                        features,
+                        features: info.features.clone(),
                         price_label,
                     })
                 })
@@ -1093,7 +1127,10 @@ fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectA
                 ..Default::default()
             })
             .width(Length::Fill),
-        );
+        )
+        // Breathing room beneath the final block so it doesn't sit flush
+        // against the bottom of the scroll area.
+        .push(iced::widget::Space::new().height(Length::Fixed(20.0)));
 
     col.spacing(0).width(Length::Fill).into()
 }
