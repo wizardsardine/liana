@@ -20,8 +20,8 @@ use crate::{
     component::{
         badge, button,
         form::{self, Value},
-        pick_list, text,
-        text::new::{b4_medium, b5_medium},
+        pick_list,
+        text::new::{b1_bold, b4_medium, b5_bold, b5_medium, caption},
         tooltip,
     },
     icon,
@@ -118,7 +118,7 @@ pub fn header<'a, M: 'a + Clone>(
 ) -> Element<'a, M> {
     let back = back_message
         .map(|m| button::transparent(Some(icon::arrow_back().size(25)), "").on_press(m));
-    let title = label.map(text::h3);
+    let title = label.map(b1_bold);
     let close = close_message.map(|m| {
         Button::new(icon::cross_icon().size(40))
             .padding(0)
@@ -154,7 +154,7 @@ where
     let msg = if !collapsed { collapse() } else { fold() };
 
     let row = Row::new()
-        .push(text::p1_bold(&title))
+        .push(b5_bold(&title))
         .push(icon)
         .align_y(Vertical::Center)
         .spacing(H_SPACING);
@@ -216,7 +216,7 @@ where
         let line = Row::new().push(form).push_maybe(paste).spacing(V_SPACING);
         let col = Column::new()
             .push(row![
-                text::p1_regular(label).style(theme::text::primary),
+                caption(label).style(theme::text::primary),
                 Space::with_width(Length::Fill)
             ])
             .push(line)
@@ -233,7 +233,7 @@ where
             .push_maybe(icon.as_ref().map(|_| Space::with_width(H_SPACING)))
             .push_maybe(icon)
             .push(Space::with_width(H_SPACING))
-            .push(text::p1_regular(label))
+            .push(caption(label))
             .spacing(V_SPACING)
             .align_y(Vertical::Center);
         button::device(content, Some(collapse_message()))
@@ -276,10 +276,7 @@ where
     let expanded = {
         let line = row![form, paste].spacing(V_SPACING);
         let check_box = CheckBox::new(ack).label(disclaimer).on_toggle(ack_message);
-        let label = row![
-            text::p1_regular(label).color(color::WHITE),
-            Space::fill_width()
-        ];
+        let label = row![caption(label).color(color::WHITE), Space::fill_width()];
         let content = if ack {
             Container::new(column![label, line])
         } else {
@@ -289,7 +286,7 @@ where
             .align_y(Vertical::Center)
             .spacing(V_SPACING)
     };
-    let closed = row![icon(), text::p1_regular(label)]
+    let closed = row![icon(), caption(label)]
         .spacing(V_SPACING)
         .align_y(Vertical::Center);
     collapsible_button(collapsed, closed, expanded, collapse_message)
@@ -307,13 +304,13 @@ pub fn key_entry<'a, M: 'a + Clone>(
     if error.is_some() {
         message = None;
     }
-    let message = message.map(text::p2_regular);
-    let error = error.map(|e| text::p1_regular(e).color(color::ORANGE));
+    let message = message.map(caption);
+    let error = error.map(|e| caption(e).color(color::ORANGE));
     let tt = tooltip_str.map(|s| tooltip(s));
 
     let designation = column![
-        text::p1_bold(name),
-        text::p1_regular(fingerprint.unwrap_or(" - ".to_string()))
+        b5_bold(name),
+        caption(fingerprint.unwrap_or(" - ".to_string()))
     ]
     .align_x(Horizontal::Left)
     .width(200);
@@ -430,7 +427,7 @@ fn device_designation<'a, M: 'a>(
             .unwrap_or_else(|| " - ".to_string()),
     );
     let fg_row = if let Some(kind) = kind {
-        row![b5_medium(kind), fg].spacing(5)
+        row![b5_bold(kind), fg].spacing(5)
     } else {
         row![fg]
     };
@@ -522,35 +519,18 @@ where
     M: 'static + Fn() -> Message,
     Message: Clone + 'static,
 {
-    let icon = if kind.is_some() {
-        icon::usb_drive_icon()
-    } else {
-        icon::round_key_icon()
-    };
-    let fg = text::p1_medium(fingerprint);
-    let fg_row = if let Some(k) = kind {
-        row![text::p1_bold(k), fg].spacing(5)
-    } else {
-        row![fg]
-    };
-    let designation = if let Some(alias) = alias {
-        column![text::h5_medium(alias), fg_row]
-    } else {
-        column![fg_row]
-    }
-    .align_x(Horizontal::Left);
-
-    let status = status.map(text::p1_medium);
-    let row = Row::new()
-        .push(Space::with_width(H_SPACING))
-        .push(icon)
-        .push(Space::with_width(H_SPACING))
-        .push(designation)
-        .push(Space::fill_width())
-        .push_maybe(status)
-        .push(Space::fill_width())
-        .align_y(Vertical::Center)
-        .spacing(V_SPACING);
+    let icon = device_icon(kind.is_some());
+    let status = status.map(b5_medium);
+    let designation = device_designation(kind, alias, Some(fingerprint));
+    let row = row![
+        icon,
+        designation,
+        Space::fill_width(),
+        status,
+        Space::fill_width()
+    ]
+    .align_y(Vertical::Center)
+    .spacing(H_SPACING);
     let msg = on_press.map(|f| f());
     button::device(row, msg)
 }
@@ -568,7 +548,7 @@ where
 {
     let error = error.map(|e| {
         row![
-            text::p1_regular(e).color(color::ORANGE),
+            caption(e).color(color::ORANGE),
             Space::with_width(Length::Fill)
         ]
     });
@@ -579,7 +559,7 @@ where
         .push_maybe(icon.as_ref().map(|_| Space::with_width(H_SPACING)))
         .push_maybe(icon)
         .push(Space::with_width(H_SPACING))
-        .push(text::p1_regular(label))
+        .push(caption(label))
         .push(Space::fill_width())
         .push_maybe(tt)
         .spacing(V_SPACING)
@@ -597,7 +577,7 @@ where
 pub fn modal_no_devices_placeholder<'a, M: 'a>() -> Element<'a, M> {
     Column::new()
         .push(icon::usb_icon().size(100))
-        .push(text::p1_regular("Plug in a hardware device ..."))
+        .push(caption("Plug in a hardware device ..."))
         .align_x(Horizontal::Center)
         .spacing(20)
         .into()
