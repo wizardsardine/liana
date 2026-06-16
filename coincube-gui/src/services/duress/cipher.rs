@@ -29,28 +29,46 @@ pub struct DeviceKey {
 }
 
 impl DeviceKey {
-    /// Loads the device key from `coincube_dir/duress.key`, generating and
-    /// persisting a fresh CSPRNG key on first use. The key file is created with
-    /// `0o600` permissions on Unix.
-    pub fn load_or_create(coincube_dir: &Path) -> io::Result<Self> {
+    /// Loads the device key from `coincube_dir/duress.key` **without** creating
+    /// one. Returns `Ok(None)` when the file is absent — the device never
+    /// enrolled, or the key was removed/not-yet-restored. `Err` only on a
+    /// present-but-unreadable or wrong-length file.
+    ///
+    /// This is the read-only accessor for the activation and drain paths, which
+    /// must NEVER mint a fresh key: a new key can't decrypt a `duress_code`
+    /// sealed under the original, so minting one would make the drainer drop the
+    /// queued activation as "undecryptable" and clobber the slot, defeating
+    /// recovery if the original key later returns. Key creation belongs to the
+    /// enrollment/registration paths via [`load_or_create`](Self::load_or_create).
+    pub fn load(coincube_dir: &Path) -> io::Result<Option<Self>> {
         let path = Self::path(coincube_dir);
         match std::fs::read(&path) {
             Ok(bytes) if bytes.len() == KEY_LEN => {
                 let mut key = [0u8; KEY_LEN];
                 key.copy_from_slice(&bytes);
-                Ok(Self { key })
+                Ok(Some(Self { key }))
             }
             Ok(_) => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "duress.key has unexpected length",
             )),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                let key: [u8; KEY_LEN] = rand::random();
-                write_key(&path, &key)?;
-                Ok(Self { key })
-            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    /// Loads the device key, generating and persisting a fresh CSPRNG key on
+    /// first use. The key file is created with `0o600` permissions on Unix.
+    ///
+    /// Only the enrollment / device-registration paths may create a key — see
+    /// [`load`](Self::load) for why activation and drain must not.
+    pub fn load_or_create(coincube_dir: &Path) -> io::Result<Self> {
+        if let Some(existing) = Self::load(coincube_dir)? {
+            return Ok(existing);
+        }
+        let key: [u8; KEY_LEN] = rand::random();
+        write_key(&Self::path(coincube_dir), &key)?;
+        Ok(Self { key })
     }
 
     /// Constructs a key from raw bytes (test helper / explicit injection).
@@ -148,6 +166,31 @@ mod tests {
         // Reload must read the same key and decrypt prior ciphertext.
         let k2 = DeviceKey::load_or_create(&dir).unwrap();
         assert_eq!(k2.decrypt(&ct).unwrap(), "x");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_returns_none_when_absent_and_never_creates() {
+        let dir = std::env::temp_dir().join(format!(
+            "coincube-duress-key-loadonly-{}-{:p}",
+            std::process::id(),
+            &0u8
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Absent → None, and the call must NOT mint a key file.
+        assert!(DeviceKey::load(&dir).unwrap().is_none());
+        assert!(
+            !DeviceKey::path(&dir).exists(),
+            "load() must not create duress.key"
+        );
+        // After a create, load() reads the same key (decrypts prior ciphertext).
+        let created = DeviceKey::load_or_create(&dir).unwrap();
+        let ct = created.encrypt("y").unwrap();
+        let loaded = DeviceKey::load(&dir)
+            .unwrap()
+            .expect("present after create");
+        assert_eq!(loaded.decrypt(&ct).unwrap(), "y");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
