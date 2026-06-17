@@ -357,6 +357,7 @@ mod tests {
             network: "bitcoin".to_string(),
             lightning_address: None,
             status: "active".to_string(),
+            has_recovery_kit: false,
             members,
             pending_invites,
             vault: None,

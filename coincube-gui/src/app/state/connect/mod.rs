@@ -83,8 +83,9 @@ pub(crate) fn delete_connect_secret(user_key: &str) {
 
 pub use account::{
     AddToCubeDialog, CheckoutPhase, CheckoutState, ConnectAccountPanel, ConnectFlowStep,
-    ContactsState, ContactsStep, DuressContactsState, DuressContactsStep, DuressEnrollState,
-    DuressEnrollStep, DuressGateStatus, EnrollTier, InviteCubeOption, PlanLifecycle,
+    ContactsState, ContactsStep, DuressContactsState, DuressContactsStep, DuressCube,
+    DuressEnrollState, DuressEnrollStep, DuressGateStatus, EnrollTier, InviteCubeOption,
+    PlanLifecycle,
 };
 pub use cube::ConnectCubePanel;
 pub use cube_members::ConnectCubeMembersState;

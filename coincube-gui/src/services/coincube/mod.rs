@@ -538,6 +538,12 @@ pub struct CubeResponse {
     pub network: String,
     pub lightning_address: Option<String>,
     pub status: String,
+    /// Whether the cube has a Cube Recovery Kit on the server. Sent by both
+    /// `list_cubes()` and `GET /connect/cubes/{id}` (Go `hasRecoveryKit`,
+    /// set from `RecoveryKit != nil`). `#[serde(default)]` keeps older
+    /// payloads parsing (treated as no kit).
+    #[serde(default)]
+    pub has_recovery_kit: bool,
     /// Populated by `GET /connect/cubes/{id}` (not by `list_cubes`). Defaults
     /// to empty so existing list-based code paths keep working.
     #[serde(default)]

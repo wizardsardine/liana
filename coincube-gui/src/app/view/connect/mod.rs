@@ -1618,13 +1618,8 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
             .into();
     }
 
-    let delays: String = DuressDelay::ALL
-        .iter()
-        .map(|d| d.label())
-        .collect::<Vec<_>>()
-        .join(" · ");
-
-    // What duress activation does — stated plainly, no fine print.
+    // What duress activation does — stated plainly, no fine print. Shown in
+    // both the enrolled and not-yet-enrolled states.
     col = col.push(
         container(
             Column::new()
@@ -1632,9 +1627,10 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
                 .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
                 .push(
                     text::p2_regular(
-                        "When you unlock a Cube with your duress PIN, this device erases every \
-                     Cube on it and signals Connect to lock your account. The device then \
-                     shows a dead-end screen until you clear duress from another trusted device.",
+                        "Unlocking any one Cube with your duress PIN wipes every Cube on this \
+                     device and signals Connect to lock your entire account — this locks all \
+                     of your Cubes, not just the one you opened. The device then shows a \
+                     dead-end screen until you clear duress from another trusted device.",
                     )
                     .color(color::GREY_3),
                 )
@@ -1647,84 +1643,178 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
 
     col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
 
-    // Credentials the user will set during enrollment.
-    col = col.push(
-        container(
-            Column::new()
-                .push(text::p1_bold("You'll set").style(theme::text::primary))
-                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                .push(
-                    text::p2_regular(
-                        "• A duress PIN — at least 2 character changes from your regular PIN.",
-                    )
-                    .color(color::GREY_3),
-                )
-                .push(
-                    text::p2_regular(format!(
-                        "• An all-clear passphrase — at least {} characters, used to unlock your \
-                     account from a trusted device.",
-                        MIN_ALL_CLEAR_LEN
-                    ))
-                    .color(color::GREY_3),
-                )
-                .push(
-                    text::p2_regular(
-                        "• A duress recovery-kit password (Tier 1) — covers all your Cubes.",
-                    )
-                    .color(color::GREY_3),
-                )
-                .push(
-                    text::p2_regular(format!("• An unlock delay: {}.", delays))
+    // Once duress is enrolled (server-authoritative), show the enabled state
+    // instead of the setup flow. `None` (state not yet loaded, or the account
+    // genuinely hasn't enrolled) falls through to the setup flow.
+    // Account-level state from the server vs. whether THIS device actually
+    // armed the duress PIN on its Cubes. They differ: the account can be
+    // enrolled (on another device, or after a local persist that failed) while
+    // this device wrote no Cube hashes — in which case entering the duress PIN
+    // here does nothing. Only `locally_armed` (from `DuressLocalState`) can
+    // honestly claim "armed on this device".
+    let server_enrolled = state
+        .duress_state
+        .as_ref()
+        .map(|s| s.enrolled)
+        .unwrap_or(false);
+    let locally_armed = state.duress_locally_armed;
+
+    if locally_armed {
+        col = col.push(
+            container(
+                Column::new()
+                    .push(text::p1_bold("Duress mode is enabled").color(color::GREEN))
+                    .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                    .push(
+                        text::p2_regular(
+                            "Your duress PIN is armed on every Cube on this device. Entering it \
+                         at any Cube's unlock screen triggers a duress wipe and locks your \
+                         account.",
+                        )
                         .color(color::GREY_3),
-                )
-                .padding(20)
-                .spacing(4),
-        )
-        .style(card_style)
-        .width(Length::Fill),
-    );
+                    )
+                    .padding(20)
+                    .spacing(2),
+            )
+            .style(card_style)
+            .width(Length::Fill),
+        );
 
-    col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+        col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
+        // Reset is intentionally inert for now: there is no un-enroll path yet
+        // (the backend has no disable endpoint), so we surface the action as a
+        // disabled button with a note rather than hide it.
+        col = col.push(
+            button::secondary(None, "Reset Duress Mode")
+                .width(Length::Fixed(240.0))
+                .on_press_maybe(None),
+        );
+        col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+        col = col.push(
+            text::p2_regular("Disabling duress mode isn't available yet.").color(color::GREY_3),
+        );
+    } else if server_enrolled {
+        // Enrolled on the account but not armed on THIS device (set up on
+        // another device, or a local persist that didn't complete). Be honest:
+        // the duress PIN does nothing here. No setup CTA — re-enrolling an
+        // already-enrolled account is rejected server-side, and this device
+        // can't arm without the duress PIN it never had.
+        col = col.push(
+            container(
+                Column::new()
+                    .push(
+                        text::p1_bold("Duress mode is enabled on your account")
+                            .style(theme::text::primary),
+                    )
+                    .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                    .push(
+                        text::p2_regular(
+                            "It was set up on another device, so it is not armed on this one — \
+                         entering your duress PIN here will not trigger a wipe. Manage duress \
+                         mode from the device where you enabled it.",
+                        )
+                        .color(color::GREY_3),
+                    )
+                    .padding(20)
+                    .spacing(2),
+            )
+            .style(card_style)
+            .width(Length::Fill),
+        );
+    } else {
+        let delays: String = DuressDelay::ALL
+            .iter()
+            .map(|d| d.label())
+            .collect::<Vec<_>>()
+            .join(" · ");
 
-    // Tier 2 BIG warning — shown whenever the account has no recovery kit yet.
-    // We can't see per-Cube CRK state from this panel, so we surface the
-    // warning unconditionally; the wizard refines it per tier.
-    col = col.push(
-        container(
-            Column::new()
+        // Credentials the user will set during enrollment.
+        col = col.push(
+            container(
+                Column::new()
+                    .push(text::p1_bold("You'll set").style(theme::text::primary))
+                    .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                    .push(
+                        text::p2_regular(
+                            "• A duress PIN — one you don't use to unlock any of your Cubes.",
+                        )
+                        .color(color::GREY_3),
+                    )
+                    .push(
+                        text::p2_regular(format!(
+                            "• An all-clear passphrase — at least {} characters, used to unlock \
+                         your account from a trusted device.",
+                            MIN_ALL_CLEAR_LEN
+                        ))
+                        .color(color::GREY_3),
+                    )
+                    .push(
+                        text::p2_regular(
+                            "• A duress recovery-kit password — covers all your Cubes.",
+                        )
+                        .color(color::GREY_3),
+                    )
+                    .push(
+                        text::p2_regular(format!("• An unlock delay: {}.", delays))
+                            .color(color::GREY_3),
+                    )
+                    .padding(20)
+                    .spacing(4),
+            )
+            .style(card_style)
+            .width(Length::Fill),
+        );
+
+        col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+
+        // Per-Cube recovery-kit checklist. A duress wipe is only reversible
+        // from Connect for Cubes that have a Recovery Kit, so we list the
+        // user's mainnet Cubes with their backup state and nudge them to back
+        // up each one first. The list is additive — when it hasn't loaded (or
+        // there are no mainnet Cubes) the card still shows its guidance copy.
+        col = col.push({
+            let mut card_col = Column::new()
                 .push(
-                    text::p1_bold("Set up a Cube Recovery Kit first")
+                    text::p1_bold("Set up a Cube Recovery Kit for each Cube")
                         .style(theme::text::warning),
                 )
                 .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                .push(text::p2_regular(
-                    "Without a Cube Recovery Kit, a duress wipe is irreversible from Connect — \
-                     you would need your seed-phrase backup to restore. We strongly recommend \
-                     setting up a Cube Recovery Kit before enabling duress mode.",
-                ).color(color::GREY_3))
-                .padding(20)
-                .spacing(2),
-        )
-        .style(card_style)
-        .width(Length::Fill),
-    );
+                .push(
+                    text::p2_regular(
+                        "Without a Cube Recovery Kit, a duress wipe is irreversible from Connect \
+                         — you would need that Cube's seed-phrase backup and the Vault wallet \
+                         descriptor backup to restore it. Set up a Recovery Kit for each of your \
+                         Cubes before enabling duress mode.",
+                    )
+                    .color(color::GREY_3),
+                );
+            if let Some(list) = duress_recovery_kit_list(state) {
+                card_col = card_col
+                    .push(iced::widget::Space::new().height(Length::Fixed(14.0)))
+                    .push(list);
+            }
+            container(card_col.padding(20).spacing(2))
+                .style(card_style)
+                .width(Length::Fill)
+        });
 
-    col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
-    col = col.push(
-        button::primary(None, "Set up Duress Mode")
-            .width(Length::Fixed(240.0))
-            .on_press(ConnectAccountMessage::Duress(
-                DuressMessage::StartEnrollment,
-            )),
-    );
-    // Tier 2 (Connect, no recovery kit) — the plan's Task 2.1 secondary path.
-    // The panel can't see per-Cube CRK state, so the user picks: this skips the
-    // duress recovery-kit password step.
-    col = col.push(
-        button::transparent(None, "Continue without a recovery kit (advanced)").on_press(
-            ConnectAccountMessage::Duress(DuressMessage::StartEnrollmentWithoutCrk),
-        ),
-    );
+        col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
+        col = col.push(
+            button::primary(None, "Set up Duress Mode")
+                .width(Length::Fixed(240.0))
+                .on_press(ConnectAccountMessage::Duress(
+                    DuressMessage::StartEnrollment,
+                )),
+        );
+        // Tier 2 (Connect, no recovery kit) — the plan's Task 2.1 secondary
+        // path. The panel can't see per-Cube CRK state, so the user picks:
+        // this skips the duress recovery-kit password step.
+        col = col.push(
+            button::transparent(None, "Continue without a recovery kit (advanced)").on_press(
+                ConnectAccountMessage::Duress(DuressMessage::StartEnrollmentWithoutCrk),
+            ),
+        );
+    }
 
     // Emergency contacts (Estate Notifications — PR 1). Rendered below the
     // enrollment surface as its own section; Estate-gated inside `section`.
@@ -1734,6 +1824,54 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
     col = col.push(duress_contacts::section(state));
 
     col.width(Length::Fill).into()
+}
+
+/// The per-Cube recovery-kit checklist rendered inside the duress intro's
+/// "Set up a Cube Recovery Kit for each Cube" card. `None` until the
+/// mainnet cube list has loaded, and when there are no mainnet Cubes — in
+/// either case the card shows only its guidance copy. Each row names the
+/// Cube and shows whether it currently has a Recovery Kit (backed up) or
+/// not. Informational for now (not clickable).
+fn duress_recovery_kit_list<'a>(
+    state: &'a ConnectAccountPanel,
+) -> Option<Element<'a, ConnectAccountMessage>> {
+    let cubes = state.duress_cubes.as_deref()?;
+    if cubes.is_empty() {
+        return None;
+    }
+
+    let mut col = Column::new().spacing(8);
+    for cube in cubes {
+        let (label, badge_color) = if cube.has_recovery_kit {
+            ("Backed up", color::GREEN)
+        } else {
+            ("No recovery kit", color::RED)
+        };
+        let badge = container(text::caption(label).color(badge_color))
+            .padding(iced::Padding {
+                top: 2.0,
+                bottom: 2.0,
+                left: 8.0,
+                right: 8.0,
+            })
+            .style(move |_t| container::Style {
+                border: iced::Border {
+                    color: badge_color,
+                    width: 0.5,
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            });
+        col = col.push(
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(text::p2_regular(cube.name.as_str()).style(theme::text::primary))
+                .push(iced::widget::Space::new().width(Length::Fill))
+                .push(badge),
+        );
+    }
+    Some(col.into())
 }
 
 /// A thin full-width horizontal rule used to separate panel sections.

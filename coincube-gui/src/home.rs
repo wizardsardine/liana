@@ -1405,7 +1405,15 @@ impl Home {
                     HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
                 ) && self.connect_account.is_authenticated()
                 {
-                    return map_connect_task(self.connect_account.reload_duress_contacts());
+                    // Load the Emergency-contacts list, the per-Cube
+                    // recovery-kit checklist, and the server-side duress state
+                    // (so the screen reflects the enabled state); each no-ops
+                    // for accounts that lack the relevant entitlement.
+                    return map_connect_task(iced::Task::batch([
+                        self.connect_account.reload_duress_contacts(),
+                        self.connect_account.reload_duress_cubes(),
+                        self.connect_account.reload_duress_state(),
+                    ]));
                 }
                 Task::none()
             }
@@ -1494,7 +1502,6 @@ impl Home {
                     return Task::none();
                 }
                 let app::message::DuressEnrollmentPayload {
-                    regular_pin,
                     duress_pin,
                     duress_code,
                     account_id,
@@ -1503,24 +1510,33 @@ impl Home {
                 Task::perform(
                     app::persist_duress_enrollment(
                         self.datadir_path.clone(),
-                        regular_pin,
                         duress_pin,
                         duress_code,
                         account_id,
                     ),
-                    |res| match res {
-                        Ok(()) => Message::View(ViewMessage::Check),
-                        Err(e) => {
-                            log::error!("duress: failed to persist enrollment: {e}");
-                            // Surface via the Connect panel's error display.
-                            Message::View(ViewMessage::ConnectAccount(
-                                ConnectAccountMessage::Error(format!(
-                                    "Couldn't finish enabling duress mode: {e}. Please try again."
-                                )),
-                            ))
-                        }
-                    },
+                    |res| res,
                 )
+                .then(|res| match res {
+                    Ok(()) => Task::batch([
+                        // Reflect the enabled state only now that the duress PIN
+                        // is actually armed on every Cube.
+                        Task::done(Message::View(ViewMessage::ConnectAccount(
+                            ConnectAccountMessage::Duress(
+                                app::view::DuressMessage::EnrollmentPersisted,
+                            ),
+                        ))),
+                        Task::done(Message::View(ViewMessage::Check)),
+                    ]),
+                    Err(e) => {
+                        log::error!("duress: failed to persist enrollment: {e}");
+                        // Surface via the Connect panel's error display.
+                        Task::done(Message::View(ViewMessage::ConnectAccount(
+                            ConnectAccountMessage::Error(format!(
+                                "Couldn't finish enabling duress mode: {e}. Please try again."
+                            )),
+                        )))
+                    }
+                })
             }
             Message::View(ViewMessage::ConnectAccount(msg)) => {
                 // The banner CTAs navigate the panel to Plan & Billing by
@@ -1904,7 +1920,14 @@ impl Home {
                                         .filter(|rc| rc.network == current_net_str)
                                         .collect();
 
-                                    let mut col = Column::new().spacing(20);
+                                    // Center the children: the create form below
+                                    // is a `center_x(Fill)` container, so without
+                                    // this the form spans/centers full width while
+                                    // the shrink-width remote-cube rows default to
+                                    // the left edge — leaving the list and form
+                                    // misaligned.
+                                    let mut col =
+                                        Column::new().spacing(20).align_x(Alignment::Center);
                                     for rc in &remote_for_net {
                                         col = col.push(remote_cube_list_item(rc));
                                     }
