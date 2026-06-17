@@ -22,7 +22,7 @@ use liana_ui::{
         collapse::Collapse,
         form,
         modal::{legacy, modal_view, ModalWidth},
-        pill, scrollable, separation,
+        pill, scrollable,
         text::{self, *},
     },
     icon, theme,
@@ -1030,52 +1030,6 @@ pub fn sign_action_toasts<'a>(
     }
 
     vec
-}
-
-pub fn update_spend_view<'a>(
-    psbt: String,
-    updated: &form::Value<String>,
-    error: Option<&Error>,
-    processing: bool,
-) -> Element<'a, Message> {
-    Column::new()
-        .push(warn(error))
-        .push(card::simple(
-            Column::new()
-                .spacing(20)
-                .push(
-                    Row::new()
-                        .push(text("PSBT:").bold().width(Length::Fill))
-                        .push(button::btn_copy(Some(Message::Clipboard(psbt))))
-                        .align_y(Alignment::Center),
-                )
-                .push(separation().width(Length::Fill))
-                .push(
-                    Column::new()
-                        .spacing(10)
-                        .push(text("Insert updated PSBT:").bold())
-                        .push(
-                            form::Form::new_trimmed("PSBT", updated, move |msg| {
-                                Message::ImportSpend(ImportSpendMessage::PsbtEdited(msg))
-                            })
-                            .warning("Please enter the correct base64 encoded PSBT")
-                            .size(P1_SIZE)
-                            .padding(10),
-                        )
-                        .push(Row::new().push(Space::with_width(Length::Fill)).push(
-                            if updated.valid && !updated.value.is_empty() && !processing {
-                                button::secondary(None, "Update")
-                                    .on_press(Message::ImportSpend(ImportSpendMessage::Confirm))
-                            } else if processing {
-                                button::secondary(None, "Processing...")
-                            } else {
-                                button::secondary(None, "Update")
-                            },
-                        )),
-                ),
-        ))
-        .max_width(400)
-        .into()
 }
 
 pub fn update_spend_success_view<'a>() -> Element<'a, Message> {
