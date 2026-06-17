@@ -248,6 +248,18 @@ pub enum SpendTxMessage {
     /// Retry a single signer whose session expired or was rejected.
     /// Carries the per-signer position in `KeychainSignModal::pending`.
     RetryKeychainSigner(usize),
+    /// From the "Keychain signing needs Connect" modal: dismiss it and
+    /// route the user to the Connect sign-in flow.
+    KeychainConnectSignIn,
+    /// From the modal when the user is already signed in to Connect but the
+    /// signing stream isn't ready: dismiss it and kick off the on-demand
+    /// Connect bootstrap (device registration + stream) via
+    /// `Message::EnsureConnectReady`.
+    KeychainEnsureConnect,
+    /// From the "Keychain signing needs Connect" modal: dismiss it and
+    /// jump to Vault → Settings → Pair so the user can pair a phone over
+    /// Wi-Fi and sign locally without Connect.
+    KeychainPairPhone,
     Broadcast,
     Save,
     Confirm,

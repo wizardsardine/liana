@@ -209,6 +209,14 @@ pub enum Message {
         email: String,
         cube_uuid: Option<String>,
     },
+    /// On-demand Connect signing bootstrap for an already-authenticated
+    /// session. Fired from the "Sign with Connect" action in the
+    /// keychain-unavailable modal when the user is signed in but the gRPC
+    /// stream/device hasn't been set up (the local-node launch doesn't
+    /// register a signer device). Loads tokens from `connect.json`,
+    /// registers a device via gRPC, and chains `TriggerConnectStreamReady`
+    /// so `cache.connect_*` populate without an app restart.
+    EnsureConnectReady,
     /// Persist a completed duress enrollment (Phases 2 & 8). Emitted by the
     /// Connect panel, which lacks Cube/datadir context; handled by the App,
     /// which writes the active Cube's duress PIN hash and this device's

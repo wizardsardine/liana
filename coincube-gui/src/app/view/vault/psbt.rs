@@ -310,6 +310,60 @@ pub fn delete_action<'a>(deleted: bool) -> Element<'a, Message> {
     }
 }
 
+/// Modal shown when the user presses "Sign via Keychain" but Connect
+/// isn't ready. Explains the requirement and offers the two ways forward:
+/// sign in to Connect (enables Keychain relay signing), or pair a phone
+/// over Wi-Fi (local signing, no Connect needed). `signed_in` tweaks the
+/// wording — once tokens exist, the blocker is device/stream readiness
+/// rather than a missing sign-in.
+pub fn keychain_unavailable_action<'a>(signed_in: bool) -> Element<'a, Message> {
+    let body = if signed_in {
+        "Connect hasn't finished setting up this device for Keychain \
+         signing. Set it up now, or pair a phone over Wi-Fi to sign \
+         locally without Connect."
+    } else {
+        "To sign with a Keychain phone through Connect, sign in to \
+         COINCUBE Connect. Or pair a phone over Wi-Fi to sign locally — \
+         no Connect required."
+    };
+    // When already signed in, the primary action bootstraps Connect
+    // signing on demand ("Sign with Connect"); otherwise it routes to
+    // sign-in. Fixed-width buttons keep their labels on one line.
+    let (primary_label, primary_msg) = if signed_in {
+        ("Sign with Connect", SpendTxMessage::KeychainEnsureConnect)
+    } else {
+        ("Sign in to Connect", SpendTxMessage::KeychainConnectSignIn)
+    };
+    card::simple(
+        Column::new()
+            .spacing(15)
+            .push(text("Keychain signing needs Connect").bold())
+            .push(text(body).style(theme::text::secondary))
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .push(Column::new().width(Length::Fill))
+                    .push(
+                        button::transparent(None, "Cancel")
+                            .on_press(Message::Spend(SpendTxMessage::Cancel)),
+                    )
+                    .push(
+                        button::secondary(None, "Pair a phone")
+                            .on_press(Message::Spend(SpendTxMessage::KeychainPairPhone))
+                            .width(Length::Fixed(140.0)),
+                    )
+                    .push(
+                        button::primary(None, primary_label)
+                            .on_press(Message::Spend(primary_msg))
+                            .width(Length::Fixed(190.0)),
+                    )
+                    .align_y(Alignment::Center),
+            ),
+    )
+    .width(Length::Fixed(600.0))
+    .into()
+}
+
 pub fn spend_header<'a>(
     tx: &'a SpendTx,
     labels_editing: &'a HashMap<String, form::Value<String>>,
