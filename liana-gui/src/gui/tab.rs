@@ -746,8 +746,14 @@ async fn connect_for_business(
 
     // Refresh if expired
     if tokens.expires_at < chrono::Utc::now().timestamp() {
-        tokens =
-            connect_cache::update_connect_cache(&network_dir, &tokens, &auth_client, true).await?;
+        tokens = connect_cache::update_connect_cache(
+            &network_dir,
+            &tokens,
+            &auth_client,
+            true,
+            user_id.as_deref(),
+        )
+        .await?;
     }
 
     // Connect to backend

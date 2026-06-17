@@ -17,16 +17,25 @@ pub struct ConnectCache {
 }
 
 impl ConnectCache {
-    /// Upsert tokens for the row matching `email`. Preserves the existing
-    /// `user_id` field — user_id stamping is handled separately by
-    /// `stamp_account_identity` (called from the login backfill path), so
-    /// this function does not need to know the user_id.
-    fn upsert_credential(&mut self, email: &str, tokens: AccessTokenResponse) {
+    /// Upsert tokens for the row matching `email`. When `user_id` is known
+    /// (the caller has just spoken to the backend), stamp it onto the row at
+    /// write time — both for fresh inserts and to promote legacy rows that
+    /// still lack a user_id. Refresh callers that don't know the user_id pass
+    /// `None`; in that case the existing user_id is preserved.
+    fn upsert_credential(
+        &mut self,
+        user_id: Option<&str>,
+        email: &str,
+        tokens: AccessTokenResponse,
+    ) {
         if let Some(c) = self.accounts.iter_mut().find(|c| c.email == email) {
             c.tokens = tokens;
+            if let Some(uid) = user_id {
+                c.user_id = Some(uid.to_string());
+            }
         } else {
             self.accounts.push(Account {
-                user_id: None,
+                user_id: user_id.map(|s| s.to_string()),
                 email: email.to_string(),
                 tokens,
             });
@@ -89,6 +98,7 @@ pub async fn update_connect_cache(
     current_tokens: &AccessTokenResponse,
     client: &AuthClient,
     refresh: bool,
+    user_id: Option<&str>,
 ) -> Result<AccessTokenResponse, ConnectCacheError> {
     let email = &client.email;
     let mut path = network_dir.path().to_path_buf();
@@ -149,7 +159,7 @@ pub async fn update_connect_cache(
         current_tokens.clone()
     };
 
-    cache.upsert_credential(email, tokens.clone());
+    cache.upsert_credential(user_id, email, tokens.clone());
 
     let content = serde_json::to_vec_pretty(&cache).map_err(|e| {
         ConnectCacheError::WritingFile(format!("Failed to serialize settings: {e}"))
@@ -427,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn upsert_replaces_tokens_for_existing_email() {
+    fn upsert_preserves_existing_user_id_when_caller_passes_none() {
         let mut cache = ConnectCache {
             accounts: vec![Account {
                 user_id: Some("uid-1".to_string()),
@@ -436,22 +446,48 @@ mod tests {
             }],
         };
 
-        cache.upsert_credential("a@x", tok(200));
+        cache.upsert_credential(None, "a@x", tok(200));
 
         assert_eq!(cache.accounts.len(), 1);
-        // Existing user_id is preserved — upsert no longer touches it.
         assert_eq!(cache.accounts[0].user_id.as_deref(), Some("uid-1"));
         assert_eq!(cache.accounts[0].tokens.expires_at, 200);
     }
 
     #[test]
-    fn upsert_inserts_with_no_user_id_for_new_email() {
-        let mut cache = ConnectCache { accounts: vec![] };
+    fn upsert_stamps_user_id_on_legacy_row() {
+        let mut cache = ConnectCache {
+            accounts: vec![Account {
+                user_id: None,
+                email: "a@x".to_string(),
+                tokens: tok(100),
+            }],
+        };
 
-        cache.upsert_credential("a@x", tok(200));
+        cache.upsert_credential(Some("uid-1"), "a@x", tok(200));
 
         assert_eq!(cache.accounts.len(), 1);
-        // user_id starts unset; backfill stamps it later via stamp_account_identity.
+        assert_eq!(cache.accounts[0].user_id.as_deref(), Some("uid-1"));
+        assert_eq!(cache.accounts[0].tokens.expires_at, 200);
+    }
+
+    #[test]
+    fn upsert_inserts_with_user_id_when_provided() {
+        let mut cache = ConnectCache { accounts: vec![] };
+
+        cache.upsert_credential(Some("uid-1"), "a@x", tok(200));
+
+        assert_eq!(cache.accounts.len(), 1);
+        assert_eq!(cache.accounts[0].user_id.as_deref(), Some("uid-1"));
+        assert_eq!(cache.accounts[0].email, "a@x");
+    }
+
+    #[test]
+    fn upsert_inserts_with_no_user_id_when_caller_lacks_it() {
+        let mut cache = ConnectCache { accounts: vec![] };
+
+        cache.upsert_credential(None, "a@x", tok(200));
+
+        assert_eq!(cache.accounts.len(), 1);
         assert!(cache.accounts[0].user_id.is_none());
         assert_eq!(cache.accounts[0].email, "a@x");
     }

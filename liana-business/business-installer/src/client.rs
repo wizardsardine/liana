@@ -281,6 +281,7 @@ impl Client {
                                 &new_tokens,
                                 &auth_client,
                                 false,
+                                None,
                             )
                             .await
                             {
@@ -421,6 +422,7 @@ impl Client {
                                 &new_tokens,
                                 &auth_client,
                                 false,
+                                None,
                             )
                             .await
                             {
@@ -654,6 +656,7 @@ fn try_get_cached_token(data: &TokenRetrievalData) -> Option<String> {
                                     &new_tokens,
                                     &client,
                                     false,
+                                    None,
                                 )
                                 .await
                                 {
@@ -1781,7 +1784,7 @@ impl Backend for Client {
             // Update cache if network_dir is available
             let access_token = if let Some(ref network_dir) = network_dir {
                 tracing::debug!("auth_code: updating token cache");
-                match update_connect_cache(network_dir, &tokens, &auth_client, false).await {
+                match update_connect_cache(network_dir, &tokens, &auth_client, false, None).await {
                     Ok(updated_tokens) => updated_tokens.access_token,
                     Err(e) => {
                         // Cache update failed, but we still have tokens

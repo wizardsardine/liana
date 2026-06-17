@@ -843,6 +843,7 @@ pub async fn create_remote_wallet(
         backend.auth.read().await.deref(),
         backend.auth_client(),
         false,
+        Some(remote_backend.user_id()),
     )
     .await
     {
@@ -939,6 +940,7 @@ pub async fn import_remote_wallet(
         backend.auth.read().await.deref(),
         backend.auth_client(),
         false,
+        Some(backend.user_id()),
     )
     .await
     {

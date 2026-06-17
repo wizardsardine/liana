@@ -441,7 +441,10 @@ pub async fn connect_with_existing_account(
         .tokens;
 
     if tokens.expires_at < chrono::Utc::now().timestamp() {
-        tokens = cache::update_connect_cache(&network_dir, &tokens, &client, true)
+        // BackendClient::connect runs right after this, so we don't yet know
+        // the user_id from the JWT. `upsert_credential` preserves whatever
+        // user_id the existing row already carries.
+        tokens = cache::update_connect_cache(&network_dir, &tokens, &client, true, None)
             .await
             .map_err(|e| Error::Unexpected(format!("Failed to update cache: {e}")))?;
     }

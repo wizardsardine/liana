@@ -573,6 +573,7 @@ impl Daemon for BackendWalletClient {
                         &old,
                         &self.inner.auth_client,
                         true, // refresh the token
+                        Some(self.inner.user_id()),
                     )
                     .await
                     .map_err(|e| {
