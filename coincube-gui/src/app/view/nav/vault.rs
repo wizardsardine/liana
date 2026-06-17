@@ -8,55 +8,52 @@ use coincube_ui::icon::{
 /// Secondary-rail items for the Vault wallet section.
 pub fn items(_ctx: &NavContext) -> Vec<SubItem> {
     vec![
-        SubItem {
-            label: "Overview",
-            icon: home_icon,
-            route: Menu::Vault(VaultSubMenu::Overview),
-            matches: |m| matches!(m, Menu::Vault(VaultSubMenu::Overview)),
-        },
-        SubItem {
-            label: "Send",
-            icon: send_icon,
-            route: Menu::Vault(VaultSubMenu::Send),
-            matches: |m| matches!(m, Menu::Vault(VaultSubMenu::Send)),
-        },
-        SubItem {
-            label: "Receive",
-            icon: receive_icon,
-            route: Menu::Vault(VaultSubMenu::Receive),
-            matches: |m| matches!(m, Menu::Vault(VaultSubMenu::Receive)),
-        },
-        SubItem {
-            label: "Coins",
-            icon: coins_outline_icon,
-            route: Menu::Vault(VaultSubMenu::Coins(None)),
-            matches: |m| matches!(m, Menu::Vault(VaultSubMenu::Coins(_))),
-        },
-        SubItem {
-            label: "Transactions",
-            icon: receipt_icon,
-            route: Menu::Vault(VaultSubMenu::Transactions(None)),
-            matches: |m| matches!(m, Menu::Vault(VaultSubMenu::Transactions(_))),
-        },
-        SubItem {
-            label: "PSBTs",
-            icon: receipt_icon,
-            route: Menu::Vault(VaultSubMenu::PSBTs(None)),
-            matches: |m| matches!(m, Menu::Vault(VaultSubMenu::PSBTs(_))),
-        },
-        SubItem {
-            label: "Recovery",
-            icon: recovery_icon,
-            route: Menu::Vault(VaultSubMenu::Recovery),
-            matches: |m| matches!(m, Menu::Vault(VaultSubMenu::Recovery)),
-        },
-        SubItem {
-            label: "Settings",
-            icon: settings_icon,
-            route: Menu::Vault(VaultSubMenu::Settings(Some(
+        SubItem::new(
+            "Overview",
+            home_icon,
+            Menu::Vault(VaultSubMenu::Overview),
+            |m| matches!(m, Menu::Vault(VaultSubMenu::Overview)),
+        ),
+        SubItem::new("Send", send_icon, Menu::Vault(VaultSubMenu::Send), |m| {
+            matches!(m, Menu::Vault(VaultSubMenu::Send))
+        }),
+        SubItem::new(
+            "Receive",
+            receive_icon,
+            Menu::Vault(VaultSubMenu::Receive),
+            |m| matches!(m, Menu::Vault(VaultSubMenu::Receive)),
+        ),
+        SubItem::new(
+            "Coins",
+            coins_outline_icon,
+            Menu::Vault(VaultSubMenu::Coins(None)),
+            |m| matches!(m, Menu::Vault(VaultSubMenu::Coins(_))),
+        ),
+        SubItem::new(
+            "Transactions",
+            receipt_icon,
+            Menu::Vault(VaultSubMenu::Transactions(None)),
+            |m| matches!(m, Menu::Vault(VaultSubMenu::Transactions(_))),
+        ),
+        SubItem::new(
+            "PSBTs",
+            receipt_icon,
+            Menu::Vault(VaultSubMenu::PSBTs(None)),
+            |m| matches!(m, Menu::Vault(VaultSubMenu::PSBTs(_))),
+        ),
+        SubItem::new(
+            "Recovery",
+            recovery_icon,
+            Menu::Vault(VaultSubMenu::Recovery),
+            |m| matches!(m, Menu::Vault(VaultSubMenu::Recovery)),
+        ),
+        SubItem::new(
+            "Settings",
+            settings_icon,
+            Menu::Vault(VaultSubMenu::Settings(Some(
                 crate::app::menu::SettingsOption::Node,
             ))),
-            matches: |m| matches!(m, Menu::Vault(VaultSubMenu::Settings(_))),
-        },
+            |m| matches!(m, Menu::Vault(VaultSubMenu::Settings(_))),
+        ),
     ]
 }

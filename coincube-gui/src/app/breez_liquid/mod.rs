@@ -42,20 +42,23 @@ impl std::fmt::Display for BreezError {
 impl std::error::Error for BreezError {}
 
 /// Load BreezClient from datadir using the master signer fingerprint.
-/// Returns `Err(BreezError::NetworkNotSupported)` for non-mainnet/retest networks so
-/// the caller can create a disconnected `BreezClient` instead of an error.
+/// Returns `Err(BreezError::NetworkNotSupported)` on networks without a
+/// real Liquid backend (Testnet4, Regtest) so the caller can create a
+/// disconnected `BreezClient` instead of an error.
 pub async fn load_breez_client(
     datadir: &Path,
     network: Network,
     master_signer_fingerprint: Fingerprint,
     password: &str,
 ) -> Result<Arc<BreezClient>, BreezError> {
-    // Breez SDK (Liquid) supports mainnet and regtest.  Testnet, Testnet4 and
-    // Signet are not supported — return NetworkNotSupported so the caller can
-    // create a disconnected client and keep the rest of the app running normally.
-    match network {
-        Network::Bitcoin | Network::Regtest => {}
-        _ => return Err(BreezError::NetworkNotSupported(network)),
+    // Liquid is only enabled where a real Liquid Esplora backend exists —
+    // mainnet, testnet and signet (see `crate::app::features::liquid`, the
+    // single source of truth for the network gate). Testnet4 and regtest
+    // would otherwise point Breez at a localhost Esplora normal users don't
+    // run, so skip SDK init and return NetworkNotSupported; the caller can
+    // create a disconnected client and keep the rest of the app running.
+    if !crate::app::features::liquid(network).is_available() {
+        return Err(BreezError::NetworkNotSupported(network));
     }
 
     // Load only the specific signer by fingerprint (more efficient and secure)

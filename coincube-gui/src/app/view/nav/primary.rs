@@ -7,6 +7,7 @@
 
 use super::NavContext;
 use crate::app::{
+    features,
     menu::{MarketplaceSubMenu, Menu, P2PSubMenu, TopLevel},
     view::Message,
 };
@@ -35,7 +36,14 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
 
     let mut top: Column<Message> = Column::new().width(Length::Fixed(RAIL_WIDTH)).spacing(0);
     for &t in &[TopLevel::Cube, TopLevel::Spark, TopLevel::Liquid] {
-        top = top.push(item(t, current == t));
+        // Spark and Liquid are network-gated: greyed out with a popover
+        // on networks where they have no backend. Cube is always enabled.
+        let disabled_reason = match t {
+            TopLevel::Spark => features::spark(ctx.network).reason().map(str::to_string),
+            TopLevel::Liquid => features::liquid(ctx.network).reason().map(str::to_string),
+            _ => None,
+        };
+        top = top.push(item(t, current == t, disabled_reason));
     }
 
     // Vault slot: regular nav item when a vault exists, otherwise a
@@ -43,7 +51,7 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
     // slot always occupied means the vault-aligned secondary/tertiary
     // offsets stay stable across cube configurations.
     if ctx.has_vault {
-        top = top.push(item(TopLevel::Vault, current == TopLevel::Vault));
+        top = top.push(item(TopLevel::Vault, current == TopLevel::Vault, None));
     } else {
         top = top.push(setup_vault_item());
     }
@@ -52,12 +60,15 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
     // vault — those are the only two surfaces it can link into, and
     // `TopLevel::Marketplace.default_menu()` would otherwise route the
     // user to a P2P Overview panel that isn't mounted (blank content).
+    // Marketplace itself is never network-gated — its *children*
+    // (Buy/Sell, P2P) carry the per-feature gate in the secondary rail.
     if ctx.has_p2p || ctx.has_vault {
         let landing = marketplace_landing_menu(ctx);
         top = top.push(item_with_route(
             TopLevel::Marketplace,
             current == TopLevel::Marketplace,
             landing,
+            None,
         ));
     }
 
@@ -68,11 +79,20 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
         .into()
 }
 
-fn item<'a>(t: TopLevel, active: bool) -> Element<'a, Message> {
-    item_with_route(t, active, t.default_menu())
+fn item<'a>(t: TopLevel, active: bool, disabled_reason: Option<String>) -> Element<'a, Message> {
+    item_with_route(t, active, t.default_menu(), disabled_reason)
 }
 
-fn item_with_route<'a>(t: TopLevel, active: bool, route: Menu) -> Element<'a, Message> {
+fn item_with_route<'a>(
+    t: TopLevel,
+    active: bool,
+    route: Menu,
+    disabled_reason: Option<String>,
+) -> Element<'a, Message> {
+    let disabled = disabled_reason.is_some();
+    // A disabled item is inert and never reads as the active section.
+    let active = active && !disabled;
+
     // Marketplace uses a hand-authored outline SVG (Bootstrap only ships its
     // `currency-exchange` glyph filled); every other rail item is a font glyph.
     let icon_el: Element<'a, Message> = match t {
@@ -90,20 +110,30 @@ fn item_with_route<'a>(t: TopLevel, active: bool, route: Menu) -> Element<'a, Me
     .align_x(Alignment::Center)
     .width(Length::Fill);
 
-    let button: Button<Message> = Button::new(
-        container(body)
-            .padding([8, 0])
+    let button_inner = container(body)
+        .padding([8, 0])
+        .width(Length::Fill)
+        .center_x(Length::Fill);
+
+    // A disabled item drops `on_press` (iced renders a press-less Button
+    // disabled) and uses the greyed rail style — kept visually consistent
+    // with the secondary rail's `render_item_row`.
+    let button: Button<Message> = if disabled {
+        Button::new(button_inner)
             .width(Length::Fill)
-            .center_x(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(ITEM_HEIGHT))
-    .style(if active {
-        theme::button::rail_active
+            .height(Length::Fixed(ITEM_HEIGHT))
+            .style(theme::button::rail_disabled)
     } else {
-        theme::button::rail
-    })
-    .on_press(Message::Menu(route));
+        Button::new(button_inner)
+            .width(Length::Fill)
+            .height(Length::Fixed(ITEM_HEIGHT))
+            .style(if active {
+                theme::button::rail_active
+            } else {
+                theme::button::rail
+            })
+            .on_press(Message::Menu(route))
+    };
 
     let highlight: Element<'a, Message> = if active {
         container(Space::new().width(Length::Fixed(HIGHLIGHT_WIDTH)))
@@ -120,24 +150,53 @@ fn item_with_route<'a>(t: TopLevel, active: bool, route: Menu) -> Element<'a, Me
     };
 
     let r: Row<Message> = row![highlight, button].width(Length::Fixed(RAIL_WIDTH));
-    r.into()
+
+    // Hover popover explaining the network gate — mirrors the secondary
+    // rail and the Connect status dot tooltip.
+    match disabled_reason {
+        Some(reason) => iced::widget::tooltip(
+            r,
+            // Padded, bordered popover so the text reads as a floating
+            // bubble instead of overlapping the adjacent rail icons.
+            container(coincube_ui::component::text::caption(reason))
+                .padding([6, 10])
+                .style(theme::container::border_grey),
+            iced::widget::tooltip::Position::Right,
+        )
+        .gap(6)
+        .into(),
+        None => r.into(),
+    }
 }
 
 /// Landing route for a Marketplace rail click.
 ///
 /// The secondary rail only surfaces P2P when `has_p2p` is set and
-/// Buy/Sell when `has_vault` is set. Picking the first available entry
-/// keeps the click consistent with what the user will actually see in
-/// the secondary rail. Callers must gate the Marketplace button
-/// themselves — this helper assumes at least one is available and
-/// falls back to P2P to match `TopLevel::default_menu`.
+/// Buy/Sell when `has_vault` is set. We prefer landing on a child that
+/// is both structurally present *and* available on the current network,
+/// so the click never drops the user onto a network-disabled panel when
+/// an enabled sibling exists. If every available child is also
+/// network-disabled we still pick a structurally-present one (its panel
+/// shows the section, the rail item stays greyed) and finally fall back
+/// to P2P to match `TopLevel::default_menu`.
 fn marketplace_landing_menu(ctx: &NavContext<'_>) -> Menu {
-    if ctx.has_p2p {
-        Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Overview))
+    let p2p = Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Overview));
+    let buy_sell = Menu::Marketplace(MarketplaceSubMenu::BuySell);
+
+    let p2p_enabled =
+        ctx.has_p2p && features::p2p(ctx.network, ctx.p2p_test_coordinator).is_available();
+    let buy_sell_enabled = ctx.has_vault && features::buy_sell(ctx.network).is_available();
+
+    if p2p_enabled {
+        p2p
+    } else if buy_sell_enabled {
+        buy_sell
+    } else if ctx.has_p2p {
+        p2p
     } else if ctx.has_vault {
-        Menu::Marketplace(MarketplaceSubMenu::BuySell)
+        buy_sell
     } else {
-        Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Overview))
+        p2p
     }
 }
 

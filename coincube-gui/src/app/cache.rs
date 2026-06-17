@@ -63,6 +63,13 @@ pub struct Cache {
     pub current_cube_is_passkey: bool,
     /// Whether the P2P panel is available (requires a valid mnemonic)
     pub has_p2p: bool,
+    /// Resolved P2P test-coordinator gate for [`Self::network`]: a
+    /// test-network Mostro coordinator is configured *and* the network has a
+    /// usable Lightning rail for escrow (effectively Regtest). Drives the
+    /// P2P nav-rail gate via [`crate::app::features::p2p`]. Mirrored from the
+    /// P2P panel's `MostroConfig` (`view::p2p::config`), since the stateless
+    /// sidebar view can't reach the panel.
+    pub p2p_test_coordinator: bool,
     /// Current theme mode (dark/light) — used for theme-aware widget rendering
     pub theme_mode: coincube_ui::theme::palette::ThemeMode,
     /// BTC price in USD, always fetched regardless of the user's selected fiat
@@ -149,6 +156,7 @@ impl std::default::Default for Cache {
             backup_warning_dismissed: false,
             current_cube_is_passkey: false,
             has_p2p: false,
+            p2p_test_coordinator: false,
             theme_mode: coincube_ui::theme::palette::ThemeMode::default(),
             btc_usd_price: None,
             show_direction_badges: true,

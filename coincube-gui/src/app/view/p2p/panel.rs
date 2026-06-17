@@ -31,7 +31,18 @@ use super::components::{
     trade_status_filter, BuySellFilter, OrderFilterState, OrderType, P2POrder, P2PTrade,
     PricingMode, TradeFilter, FIAT_CURRENCIES,
 };
-use super::config::{load_mostro_config, save_mostro_config, MostroConfig, MostroNode};
+use super::config::{
+    load_mostro_config, save_mostro_config, MostroConfig, MostroNode, NetworkKind,
+    ResolvedCoordinator,
+};
+use coincube_core::miniscript::bitcoin::Network;
+
+/// Shown (and returned from trade handlers) when the active Mostro
+/// coordinator's network doesn't match the wallet's. Trading is
+/// hard-blocked in that state (COIN-371 Q4).
+const COORDINATOR_MISMATCH_MSG: &str =
+    "Active Mostro coordinator doesn't match this wallet's network — select a matching \
+     coordinator in P2P → Settings.";
 
 /// Per-field validation warnings for the order creation form.
 /// Which chat view is currently active (mutually exclusive).
@@ -380,11 +391,18 @@ pub struct P2PPanel {
     // Dispute chat
     dispute_chat_input: form::Value<String>,
     pending_dispute_chat_message: Option<PendingChatMessage>,
+    // Bitcoin network this cube runs on. Drives network-aware coordinator
+    // selection (`MostroConfig::active_for`) — needed in `subscription`,
+    // which has no `Cache` access.
+    network: Network,
     // Mostro settings
     mostro_config: MostroConfig,
     new_relay_input: form::Value<String>,
     new_node_name_input: form::Value<String>,
     new_node_pubkey_input: form::Value<String>,
+    /// Whether the "Add Node" form will tag the new coordinator as a test
+    /// (vs. mainnet) coordinator.
+    new_node_is_test: bool,
     mostro_config_error: Option<&'static str>,
     /// Error surfaced from the subscription stream (relay failures, restore errors, etc.)
     pub stream_error: Option<String>,
@@ -406,6 +424,7 @@ impl P2PPanel {
         spark_backend: Option<Arc<SparkBackend>>,
         mnemonic: String,
         default_currency: Option<String>,
+        network: Network,
     ) -> Self {
         let default_currency = default_currency.unwrap_or_else(|| "USD".to_string());
         Self {
@@ -484,13 +503,21 @@ impl P2PPanel {
             chat_show_user_info: false,
             dispute_chat_input: Default::default(),
             pending_dispute_chat_message: None,
-            mostro_config: load_mostro_config().unwrap_or_else(|e| {
-                tracing::error!("Failed to load mostro config, using defaults: {e}");
-                MostroConfig::default()
-            }),
+            network,
+            mostro_config: {
+                let mut cfg = load_mostro_config().unwrap_or_else(|e| {
+                    tracing::error!("Failed to load mostro config, using defaults: {e}");
+                    MostroConfig::default()
+                });
+                // Never start with a cross-network coordinator selected
+                // (COIN-371 §3.4) — prefer a node tagged for this network.
+                cfg.select_default_for(network);
+                cfg
+            },
             new_relay_input: Default::default(),
             new_node_name_input: Default::default(),
             new_node_pubkey_input: Default::default(),
+            new_node_is_test: false,
             mostro_config_error: None,
             stream_error: None,
             cached_trade_messages: Vec::new(),
@@ -829,8 +856,8 @@ impl P2PPanel {
                 None
             },
             expiry_days: 1,
-            mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
-            relay_urls: self.mostro_config.relays.clone(),
+            mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
+            relay_urls: self.resolved_coordinator().relays,
         }
     }
 
@@ -1031,8 +1058,8 @@ impl P2PPanel {
                 cube_name: self.cube_name(),
                 mnemonic: self.mnemonic.clone(),
                 invoice,
-                mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
-                relay_urls: self.mostro_config.relays.clone(),
+                mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
+                relay_urls: self.resolved_coordinator().relays,
             };
             return Task::perform(action(data), |result| {
                 Message::View(view::Message::P2P(P2PMessage::TradeActionResult(result)))
@@ -3661,6 +3688,56 @@ impl P2PPanel {
         .into()
     }
 
+    /// Coordinator + relays to use on this cube's network, with a safe
+    /// fallback to the globally-active node/relays so mainnet keeps working
+    /// even if no network-tagged node resolves.
+    fn resolved_coordinator(&self) -> ResolvedCoordinator {
+        self.mostro_config
+            .active_for(self.network)
+            .unwrap_or_else(|| ResolvedCoordinator {
+                pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
+                relays: self.mostro_config.relays.clone(),
+            })
+    }
+
+    /// Whether the selected coordinator's network kind matches the wallet's
+    /// network. A mismatch (e.g. a mainnet coordinator selected while on a
+    /// test network) hard-blocks trading — escrow would otherwise move
+    /// funds against the wrong network.
+    fn coordinator_network_matches(&self) -> bool {
+        self.mostro_config.active_node().network == NetworkKind::of(self.network)
+    }
+
+    /// Resolved P2P test-coordinator gate for this cube's network, mirrored
+    /// into [`Cache`] so the nav rail can grey the P2P item.
+    pub fn has_test_coordinator(&self) -> bool {
+        self.mostro_config.has_test_coordinator(self.network)
+    }
+
+    /// Warning banner shown when the active coordinator's network doesn't
+    /// match the wallet's — trading is hard-blocked until corrected.
+    fn network_mismatch_banner<'a>(&self) -> Option<Element<'a, view::Message>> {
+        if self.coordinator_network_matches() {
+            return None;
+        }
+        let active = self.mostro_config.active_node();
+        let msg = format!(
+            "The active Mostro coordinator \"{}\" is a {} coordinator, but this wallet is on {}. \
+             Trading is disabled — select a {} coordinator in P2P → Settings.",
+            active.name,
+            active.network.label(),
+            NetworkKind::of(self.network).label(),
+            NetworkKind::of(self.network).label(),
+        );
+        Some(
+            container(p2_regular(msg).style(theme::text::error))
+                .padding([10, 16])
+                .width(Length::Fill)
+                .style(theme::container::border_grey)
+                .into(),
+        )
+    }
+
     fn mostro_settings_view<'a>(&'a self) -> Element<'a, view::Message> {
         let p2p = |msg: P2PMessage| view::Message::P2P(msg);
 
@@ -3694,6 +3771,15 @@ impl P2PPanel {
                 let remove_btn = button::secondary_compact(Some(icon::trash_icon()), "")
                     .on_press(p2p(P2PMessage::MostroRemoveNode(node.pubkey_hex.clone())));
 
+                // Network tag so it's obvious which coordinator serves
+                // which network (a mainnet vs test footgun for escrow).
+                let net_badge = container(text(node.network.label()).size(10))
+                    .padding([2, 8])
+                    .style(match node.network {
+                        NetworkKind::Mainnet => theme::pill::info,
+                        NetworkKind::Test => theme::pill::warning,
+                    });
+
                 row![
                     column![
                         p2_bold(node.name.as_str()),
@@ -3701,6 +3787,7 @@ impl P2PPanel {
                     ]
                     .spacing(4)
                     .width(Length::Fill),
+                    net_badge,
                     select_btn,
                     remove_btn,
                 ]
@@ -3730,6 +3817,25 @@ impl P2PPanel {
                         |v| { view::Message::P2P(P2PMessage::MostroNodePubkeyInputEdited(v)) }
                     )
                     .padding(10),
+                    // Which network this coordinator serves. Mainnet vs Test
+                    // is escrow-critical, so it's an explicit choice.
+                    row![
+                        p2_regular("Network:").style(theme::text::secondary),
+                        if self.new_node_is_test {
+                            button::secondary(None, "Mainnet")
+                                .on_press(p2p(P2PMessage::MostroNodeNetworkToggled(false)))
+                        } else {
+                            button::primary(None, "Mainnet")
+                        },
+                        if self.new_node_is_test {
+                            button::primary(None, "Test")
+                        } else {
+                            button::secondary(None, "Test")
+                                .on_press(p2p(P2PMessage::MostroNodeNetworkToggled(true)))
+                        },
+                    ]
+                    .spacing(8)
+                    .align_y(iced::alignment::Vertical::Center),
                     if self.new_node_name_input.value.trim().is_empty()
                         || self.new_node_pubkey_input.value.trim().is_empty()
                     {
@@ -3794,9 +3900,11 @@ impl P2PPanel {
         )
         .width(Length::Fill);
 
-        let mut settings_col = column![nodes_card, relays_card]
-            .spacing(16)
-            .width(Length::Fill);
+        let mut settings_col = column![].spacing(16).width(Length::Fill);
+        if let Some(banner) = self.network_mismatch_banner() {
+            settings_col = settings_col.push(banner);
+        }
+        settings_col = settings_col.push(nodes_card).push(relays_card);
         if let Some(err) = self.mostro_config_error {
             settings_col = settings_col.push(p2_regular(err).style(theme::text::error));
         }
@@ -4041,6 +4149,8 @@ impl State for P2PPanel {
                                     &view::nav::NavContext {
                                         has_vault,
                                         has_p2p: cache.has_p2p,
+                                        network: cache.network,
+                                        p2p_test_coordinator: cache.p2p_test_coordinator,
                                         cube_name: &cache.cube_name,
                                         lightning_address: None,
                                         avatar: None,
@@ -4202,6 +4312,8 @@ impl State for P2PPanel {
                                         &view::nav::NavContext {
                                             has_vault,
                                             has_p2p: cache.has_p2p,
+                                            network: cache.network,
+                                            p2p_test_coordinator: cache.p2p_test_coordinator,
                                             cube_name: &cache.cube_name,
                                             lightning_address: None,
                                             avatar: None,
@@ -4259,6 +4371,8 @@ impl State for P2PPanel {
                                         &view::nav::NavContext {
                                             has_vault,
                                             has_p2p: cache.has_p2p,
+                                            network: cache.network,
+                                            p2p_test_coordinator: cache.p2p_test_coordinator,
                                             cube_name: &cache.cube_name,
                                             lightning_address: None,
                                             avatar: None,
@@ -4388,6 +4502,8 @@ impl State for P2PPanel {
                                         &view::nav::NavContext {
                                             has_vault,
                                             has_p2p: cache.has_p2p,
+                                            network: cache.network,
+                                            p2p_test_coordinator: cache.p2p_test_coordinator,
                                             cube_name: &cache.cube_name,
                                             lightning_address: None,
                                             avatar: None,
@@ -4442,6 +4558,8 @@ impl State for P2PPanel {
                                         &view::nav::NavContext {
                                             has_vault,
                                             has_p2p: cache.has_p2p,
+                                            network: cache.network,
+                                            p2p_test_coordinator: cache.p2p_test_coordinator,
                                             cube_name: &cache.cube_name,
                                             lightning_address: None,
                                             avatar: None,
@@ -4552,10 +4670,13 @@ impl State for P2PPanel {
     fn subscription(&self) -> Subscription<Message> {
         let cube_name = self.cube_name();
         let mnemonic = self.mnemonic.clone();
-        let active_pubkey = self.mostro_config.active_pubkey_hex().to_string();
-        let relays = self.mostro_config.relays.clone();
-        let mostro_sub =
-            super::mostro::mostro_subscription(cube_name, mnemonic, active_pubkey, relays);
+        let coordinator = self.resolved_coordinator();
+        let mostro_sub = super::mostro::mostro_subscription(
+            cube_name,
+            mnemonic,
+            coordinator.pubkey_hex,
+            coordinator.relays,
+        );
 
         // Tick every second when viewing a trade detail (for action countdown timer)
         let selected_is_active = self.selected_trade.as_ref().is_some_and(|id| {
@@ -4656,6 +4777,12 @@ impl State for P2PPanel {
             }
             P2PMessage::SubmitOrder => {
                 self.submit_attempted = true;
+                // Hard-block: never escrow against a coordinator whose
+                // network doesn't match the wallet's (COIN-371 Q4).
+                if !self.coordinator_network_matches() {
+                    self.order_submit_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+                    return Task::none();
+                }
                 // Double-check validation before showing confirmation
                 if self.validate_order_form().has_errors() {
                     return Task::none();
@@ -4667,6 +4794,13 @@ impl State for P2PPanel {
                 self.confirming_order = false;
             }
             P2PMessage::ConfirmOrder => {
+                // Hard-block chokepoint: refuse to escrow on a
+                // coordinator/network mismatch (COIN-371 Q4).
+                if !self.coordinator_network_matches() {
+                    self.confirming_order = false;
+                    self.order_submit_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+                    return Task::none();
+                }
                 // Final validation gate before sending to network
                 if self.validate_order_form().has_errors() {
                     self.confirming_order = false;
@@ -4945,6 +5079,9 @@ impl State for P2PPanel {
                 self.new_node_pubkey_input.warning = None;
                 self.new_node_pubkey_input.valid = true;
             }
+            P2PMessage::MostroNodeNetworkToggled(is_test) => {
+                self.new_node_is_test = is_test;
+            }
             P2PMessage::MostroAddNode => {
                 let name = self.new_node_name_input.value.trim().to_string();
                 let pubkey = self.new_node_pubkey_input.value.trim().to_string();
@@ -4968,12 +5105,18 @@ impl State for P2PPanel {
                     trial.nodes.push(MostroNode {
                         name,
                         pubkey_hex: pubkey,
+                        network: if self.new_node_is_test {
+                            NetworkKind::Test
+                        } else {
+                            NetworkKind::Mainnet
+                        },
                     });
                     match save_mostro_config(&trial) {
                         Ok(()) => {
                             self.mostro_config = trial;
                             self.new_node_name_input = Default::default();
                             self.new_node_pubkey_input = Default::default();
+                            self.new_node_is_test = false;
                             self.mostro_config_error = None;
                         }
                         Err(_) => {
@@ -5012,6 +5155,12 @@ impl State for P2PPanel {
             }
             // Take order flow
             P2PMessage::TakeOrder => {
+                // Hard-block: don't open the take flow when the active
+                // coordinator's network doesn't match the wallet (COIN-371 Q4).
+                if !self.coordinator_network_matches() {
+                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+                    return Task::none();
+                }
                 // Check if this order needs user input before confirming.
                 // Non-range orders where user is selling don't need any input,
                 // so skip straight to confirmation to avoid an invisible intermediate state.
@@ -5053,6 +5202,12 @@ impl State for P2PPanel {
                 self.take_order_submitting = false;
             }
             P2PMessage::ConfirmTakeOrder => {
+                // Hard-block chokepoint: refuse to escrow on a
+                // coordinator/network mismatch (COIN-371 Q4).
+                if !self.coordinator_network_matches() {
+                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+                    return Task::none();
+                }
                 if let Some(ref selected_id) = self.selected_order {
                     if let Some(order) = self.orders.iter().find(|o| o.id == *selected_id) {
                         let amount = if order.is_range_order() {

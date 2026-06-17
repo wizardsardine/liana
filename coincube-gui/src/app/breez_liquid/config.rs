@@ -16,6 +16,13 @@ impl BreezConfig {
         network: bitcoin::Network,
         datadir: &std::path::Path,
     ) -> Result<Self, BreezError> {
+        // Defense in depth: only build a config for networks with a real
+        // Liquid Esplora backend (mainnet, testnet, signet). The loader
+        // guards this too, but rejecting here guarantees `sdk_config`
+        // never has to invent a localhost fallback URL.
+        if !crate::app::features::liquid(network).is_available() {
+            return Err(BreezError::NetworkNotSupported(network));
+        }
         Ok(Self {
             api_key: env!("BREEZ_API_KEY"),
             network,
@@ -28,26 +35,29 @@ impl BreezConfig {
         // runtime `.env` overrides apply consistently with the REST/SSE clients.
         let coincube_base = crate::services::coincube_api_base_url();
 
+        // `from_env` rejects every network without a real backend, so only
+        // Bitcoin / Testnet / Signet reach here. The Testnet4 + Regtest arms
+        // exist only to keep the match exhaustive — they route to the
+        // Coincube-hosted testnet Esplora rather than a localhost fallback,
+        // and are never hit in practice.
         let liquid_explorer_url = match self.network {
             bitcoin::Network::Bitcoin => format!("{}/api/v1/esplora/liquid/mainnet", coincube_base),
-            bitcoin::Network::Testnet => {
-                format!("{}/api/v1/esplora/liquid/testnet", coincube_base)
-            }
             bitcoin::Network::Signet => "https://blockstream.info/liquidtestnet/api".to_string(),
-            bitcoin::Network::Regtest | bitcoin::Network::Testnet4 => {
-                "http://localhost:4003/api".to_string()
+            bitcoin::Network::Testnet
+            | bitcoin::Network::Testnet4
+            | bitcoin::Network::Regtest => {
+                format!("{}/api/v1/esplora/liquid/testnet", coincube_base)
             }
         };
         let bitcoin_explorer_url = match self.network {
             bitcoin::Network::Bitcoin => {
                 format!("{}/api/v1/esplora/bitcoin/mainnet", coincube_base)
             }
-            bitcoin::Network::Testnet => {
-                format!("{}/api/v1/esplora/bitcoin/testnet", coincube_base)
-            }
             bitcoin::Network::Signet => "https://blockstream.info/signet/api".to_string(),
-            bitcoin::Network::Regtest | bitcoin::Network::Testnet4 => {
-                "http://localhost:4002/api".to_string()
+            bitcoin::Network::Testnet
+            | bitcoin::Network::Testnet4
+            | bitcoin::Network::Regtest => {
+                format!("{}/api/v1/esplora/bitcoin/testnet", coincube_base)
             }
         };
 
@@ -63,11 +73,12 @@ impl BreezConfig {
             working_dir: self.working_dir.to_string_lossy().to_string(),
             network: match self.network {
                 bitcoin::Network::Bitcoin => breez::LiquidNetwork::Mainnet,
-                bitcoin::Network::Testnet | bitcoin::Network::Signet => {
-                    breez::LiquidNetwork::Testnet
-                }
-                bitcoin::Network::Testnet4 => breez::LiquidNetwork::Testnet,
-                bitcoin::Network::Regtest => breez::LiquidNetwork::Regtest,
+                // Testnet + Signet (and the unreachable Testnet4/Regtest arms)
+                // all map to the Breez Testnet network.
+                bitcoin::Network::Testnet
+                | bitcoin::Network::Signet
+                | bitcoin::Network::Testnet4
+                | bitcoin::Network::Regtest => breez::LiquidNetwork::Testnet,
             },
             payment_timeout_sec: 60,
             sync_service_url: None,         // Use default

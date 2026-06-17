@@ -1922,6 +1922,8 @@ pub fn create_app_with_remote_backend(
         Cache {
             network,
             datadir_path: coincube_dir.clone(),
+            // Recomputed from the P2P panel's Mostro config once panels are built.
+            p2p_test_coordinator: false,
             // We ignore last poll fields for remote backend.
             last_poll_at_startup: None,
             daemon_cache: DaemonCache {

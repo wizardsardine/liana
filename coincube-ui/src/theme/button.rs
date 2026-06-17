@@ -181,6 +181,21 @@ pub fn rail_active(theme: &Theme, _status: Status) -> Style {
     style
 }
 
+/// Disabled rail item — network-gated features that are greyed out with
+/// a hover popover instead of being hidden. Forces the disabled
+/// styling (muted text + icon) regardless of hover so the item reads as
+/// inert. Used by both the primary and secondary rails.
+pub fn rail_disabled(theme: &Theme, _status: Status) -> Style {
+    let mut style = button(&theme.colors.buttons.menu, Status::Disabled);
+    style.border.radius = 0.0.into();
+    style.border.width = 0.0;
+    // The default disabled alpha (0.2) is nearly invisible on the dark
+    // rail. Lift it so the greyed icon + label stay legible while still
+    // reading clearly as inert next to the full-strength active items.
+    style.text_color.a = 0.55;
+    style
+}
+
 pub fn tab_liquid(theme: &Theme, _status: Status) -> Style {
     tab(theme, Status::Pressed)
 }

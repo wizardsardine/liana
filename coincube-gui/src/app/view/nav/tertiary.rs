@@ -66,66 +66,66 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Option<Element<'a, Message
 
 fn cube_settings_items() -> Vec<SubItem> {
     let mut items = vec![
-        SubItem {
-            label: "General",
-            icon: wrench_icon,
-            route: Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::General)),
-            matches: |m| {
+        SubItem::new(
+            "General",
+            wrench_icon,
+            Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::General)),
+            |m| {
                 matches!(
                     m,
                     Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::General))
                 )
             },
-        },
-        SubItem {
-            label: "About",
-            icon: tooltip_icon,
-            route: Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::About)),
-            matches: |m| {
+        ),
+        SubItem::new(
+            "About",
+            tooltip_icon,
+            Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::About)),
+            |m| {
                 matches!(
                     m,
                     Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::About))
                 )
             },
-        },
-        SubItem {
-            label: "Stats",
-            icon: graph_icon,
-            route: Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Stats)),
-            matches: |m| {
+        ),
+        SubItem::new(
+            "Stats",
+            graph_icon,
+            Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Stats)),
+            |m| {
                 matches!(
                     m,
                     Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Stats))
                 )
             },
-        },
-        SubItem {
-            label: "Avatar",
-            // Placeholder icon — the per-Cube Connect rail used a stacked-coins
-            // glyph; swap to a face icon when one exists.
-            icon: coins_outline_icon,
-            route: Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Avatar)),
-            matches: |m| {
+        ),
+        // Placeholder icon — the per-Cube Connect rail used a stacked-coins
+        // glyph; swap to a face icon when one exists.
+        SubItem::new(
+            "Avatar",
+            coins_outline_icon,
+            Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Avatar)),
+            |m| {
                 matches!(
                     m,
                     Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Avatar))
                 )
             },
-        },
+        ),
     ];
 
     if crate::feature_flags::CUBE_MEMBERS_UI_ENABLED {
-        items.push(SubItem {
-            label: "Members",
-            icon: person_icon,
-            route: Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Members)),
-            matches: |m| {
+        items.push(SubItem::new(
+            "Members",
+            person_icon,
+            Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Members)),
+            |m| {
                 matches!(
                     m,
                     Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Members))
                 )
             },
-        });
+        ));
     }
 
     items
@@ -133,13 +133,13 @@ fn cube_settings_items() -> Vec<SubItem> {
 
 fn spark_settings_items() -> Vec<SubItem> {
     vec![
-        SubItem {
-            label: "General",
-            icon: wrench_icon,
-            route: Menu::Spark(SparkSubMenu::Settings(Some(SparkSettingsOption::General))),
-            // `None` is treated as General by `set_current_panel`, so the
-            // landing route (Settings(None) from a deep link) highlights here.
-            matches: |m| {
+        // `None` is treated as General by `set_current_panel`, so the
+        // landing route (Settings(None) from a deep link) highlights here.
+        SubItem::new(
+            "General",
+            wrench_icon,
+            Menu::Spark(SparkSubMenu::Settings(Some(SparkSettingsOption::General))),
+            |m| {
                 matches!(
                     m,
                     Menu::Spark(SparkSubMenu::Settings(
@@ -147,14 +147,14 @@ fn spark_settings_items() -> Vec<SubItem> {
                     ))
                 )
             },
-        },
-        SubItem {
-            label: "Lightning Address",
-            icon: lightning_outline_icon,
-            route: Menu::Spark(SparkSubMenu::Settings(Some(
+        ),
+        SubItem::new(
+            "Lightning Address",
+            lightning_outline_icon,
+            Menu::Spark(SparkSubMenu::Settings(Some(
                 SparkSettingsOption::LightningAddress,
             ))),
-            matches: |m| {
+            |m| {
                 matches!(
                     m,
                     Menu::Spark(SparkSubMenu::Settings(Some(
@@ -162,116 +162,116 @@ fn spark_settings_items() -> Vec<SubItem> {
                     )))
                 )
             },
-        },
+        ),
     ]
 }
 
 fn p2p_items() -> Vec<SubItem> {
     vec![
-        SubItem {
-            label: "Book",
-            icon: home_icon,
-            route: Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Overview)),
-            matches: |m| {
+        SubItem::new(
+            "Book",
+            home_icon,
+            Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Overview)),
+            |m| {
                 matches!(
                     m,
                     Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Overview))
                 )
             },
-        },
-        SubItem {
-            label: "My Trades",
-            icon: receipt_icon,
-            route: Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::MyTrades)),
-            matches: |m| {
+        ),
+        SubItem::new(
+            "My Trades",
+            receipt_icon,
+            Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::MyTrades)),
+            |m| {
                 matches!(
                     m,
                     Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::MyTrades))
                 )
             },
-        },
-        SubItem {
-            label: "Chat",
-            icon: chat_icon,
-            route: Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Chat)),
-            matches: |m| {
+        ),
+        SubItem::new(
+            "Chat",
+            chat_icon,
+            Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Chat)),
+            |m| {
                 matches!(
                     m,
                     Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Chat))
                 )
             },
-        },
-        SubItem {
-            label: "Create",
-            icon: plus_icon,
-            route: Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::CreateOrder)),
-            matches: |m| {
+        ),
+        SubItem::new(
+            "Create",
+            plus_icon,
+            Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::CreateOrder)),
+            |m| {
                 matches!(
                     m,
                     Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::CreateOrder))
                 )
             },
-        },
-        SubItem {
-            label: "Settings",
-            icon: settings_icon,
-            route: Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Settings)),
-            matches: |m| {
+        ),
+        SubItem::new(
+            "Settings",
+            settings_icon,
+            Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Settings)),
+            |m| {
                 matches!(
                     m,
                     Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Settings))
                 )
             },
-        },
+        ),
     ]
 }
 
 fn vault_settings_items() -> Vec<SubItem> {
     vec![
-        SubItem {
-            label: "Node",
-            icon: bitcoin_icon,
-            route: Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::Node))),
-            matches: |m| {
+        SubItem::new(
+            "Node",
+            bitcoin_icon,
+            Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::Node))),
+            |m| {
                 matches!(
                     m,
                     Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::Node)))
                         | Menu::Vault(VaultSubMenu::Settings(None))
                 )
             },
-        },
-        SubItem {
-            label: "Wallet",
-            icon: wallet_icon,
-            route: Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::Wallet))),
-            matches: |m| {
+        ),
+        SubItem::new(
+            "Wallet",
+            wallet_icon,
+            Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::Wallet))),
+            |m| {
                 matches!(
                     m,
                     Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::Wallet)))
                 )
             },
-        },
-        SubItem {
-            label: "Import/Export",
-            icon: wallet_icon,
-            route: Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::ImportExport))),
-            matches: |m| {
+        ),
+        SubItem::new(
+            "Import/Export",
+            wallet_icon,
+            Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::ImportExport))),
+            |m| {
                 matches!(
                     m,
                     Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::ImportExport)))
                 )
             },
-        },
-        SubItem {
-            label: "Pair",
-            icon: phone_icon,
-            route: Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::LocalSigning))),
-            matches: |m| {
+        ),
+        SubItem::new(
+            "Pair",
+            phone_icon,
+            Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::LocalSigning))),
+            |m| {
                 matches!(
                     m,
                     Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::LocalSigning)))
                 )
             },
-        },
+        ),
     ]
 }
