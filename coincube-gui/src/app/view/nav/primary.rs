@@ -76,9 +76,7 @@ fn item_with_route<'a>(t: TopLevel, active: bool, route: Menu) -> Element<'a, Me
     // Marketplace uses a hand-authored outline SVG (Bootstrap only ships its
     // `currency-exchange` glyph filled); every other rail item is a font glyph.
     let icon_el: Element<'a, Message> = match t {
-        TopLevel::Marketplace => {
-            coincube_ui::image::currency_exchange_outline(ICON_SIZE).into()
-        }
+        TopLevel::Marketplace => coincube_ui::image::currency_exchange_outline(ICON_SIZE).into(),
         _ => icon_for(t).size(ICON_SIZE).into(),
     };
 
