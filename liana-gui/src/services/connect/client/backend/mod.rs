@@ -77,6 +77,10 @@ pub struct BackendClient {
     unauthenticated: Arc<AtomicBool>,
 
     user_id: String,
+    /// Email as reported by `/v1/me` — the authoritative server-side value,
+    /// which can differ from `auth_client.email` (the email the user typed
+    /// or that we read out of local settings) after a server-side change.
+    user_email: String,
 }
 
 impl BackendClient {
@@ -100,14 +104,14 @@ impl BackendClient {
             return Err(DaemonError::NoAnswer);
         }
         let res: api::Claims = response.json().await?;
-        let user_id = res.sub;
 
         Ok(Self {
             auth: Arc::new(RwLock::new(credentials)),
             auth_client,
             network,
             url,
-            user_id,
+            user_id: res.sub,
+            user_email: res.email,
             http,
             unauthenticated: Arc::new(AtomicBool::new(false)),
         })
@@ -118,7 +122,7 @@ impl BackendClient {
     }
 
     pub fn user_email(&self) -> &str {
-        &self.auth_client.email
+        &self.user_email
     }
 
     pub fn user_id(&self) -> &str {

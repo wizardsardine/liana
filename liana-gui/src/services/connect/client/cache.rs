@@ -142,44 +142,63 @@ pub async fn update_connect_cache(
         ConnectCache::default()
     };
 
-    if let Some(c) = cache.accounts.iter().find(|cred| cred.email == *email) {
-        // Another process updated the tokens
-        if current_tokens.expires_at < c.tokens.expires_at {
-            tracing::debug!("Liana-Connect authentication tokens are up to date, nothing to do");
-            return Ok(c.tokens.clone());
-        }
-    }
+    let existing = cache.accounts.iter().position(|cred| cred.email == *email);
 
-    let tokens = if refresh {
-        client
-            .refresh_token(&current_tokens.refresh_token)
-            .await
-            .map_err(ConnectCacheError::Updating)?
-    } else {
-        current_tokens.clone()
+    let (tokens_to_return, write_needed) = match existing {
+        Some(idx) if current_tokens.expires_at < cache.accounts[idx].tokens.expires_at => {
+            // Another process already wrote fresher tokens. Use those, but
+            // still stamp user_id in place if we just learned it and the row
+            // is still legacy — otherwise the freshness shortcut would leave
+            // an unstamped row and filter_connect_cache could drop it on a
+            // sibling wallet's deletion.
+            let needs_stamp = matches!(
+                (user_id, cache.accounts[idx].user_id.as_deref()),
+                (Some(_), None)
+            );
+            if let (true, Some(uid)) = (needs_stamp, user_id) {
+                cache.accounts[idx].user_id = Some(uid.to_string());
+            } else {
+                tracing::debug!(
+                    "Liana-Connect authentication tokens are up to date, nothing to do"
+                );
+            }
+            (cache.accounts[idx].tokens.clone(), needs_stamp)
+        }
+        _ => {
+            let tokens = if refresh {
+                client
+                    .refresh_token(&current_tokens.refresh_token)
+                    .await
+                    .map_err(ConnectCacheError::Updating)?
+            } else {
+                current_tokens.clone()
+            };
+            cache.upsert_credential(user_id, email, tokens.clone());
+            (tokens, true)
+        }
     };
 
-    cache.upsert_credential(user_id, email, tokens.clone());
+    if write_needed {
+        let content = serde_json::to_vec_pretty(&cache).map_err(|e| {
+            ConnectCacheError::WritingFile(format!("Failed to serialize settings: {e}"))
+        })?;
 
-    let content = serde_json::to_vec_pretty(&cache).map_err(|e| {
-        ConnectCacheError::WritingFile(format!("Failed to serialize settings: {e}"))
-    })?;
+        file.seek(SeekFrom::Start(0)).await.map_err(|e| {
+            ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {e}"))
+        })?;
 
-    file.seek(SeekFrom::Start(0)).await.map_err(|e| {
-        ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {e}"))
-    })?;
+        file.write_all(&content).await.map_err(|e| {
+            tracing::warn!("failed to write to file: {:?}", e);
+            ConnectCacheError::WritingFile(e.to_string())
+        })?;
 
-    file.write_all(&content).await.map_err(|e| {
-        tracing::warn!("failed to write to file: {:?}", e);
-        ConnectCacheError::WritingFile(e.to_string())
-    })?;
+        file.inner_mut()
+            .set_len(content.len() as u64)
+            .await
+            .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {e}")))?;
+    }
 
-    file.inner_mut()
-        .set_len(content.len() as u64)
-        .await
-        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {e}")))?;
-
-    Ok(tokens)
+    Ok(tokens_to_return)
 }
 
 pub async fn filter_connect_cache(

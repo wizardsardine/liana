@@ -762,7 +762,18 @@ async fn connect_for_business(
             .await
             .map_err(|e| login::Error::Unexpected(e.to_string()))?;
 
-    // Backfill connect.json + settings.json with the authoritative user_id and email.
+    // Find the wallet
+    let wallet = client
+        .list_wallets()
+        .await
+        .map_err(|e| login::Error::Unexpected(e.to_string()))?
+        .into_iter()
+        .find(|w| w.id == wallet_id)
+        .ok_or_else(|| login::Error::Unexpected(format!("Wallet {wallet_id} not found")))?;
+
+    // Wallet confirmed to belong to the connected user — safe to stamp the
+    // local cache and settings entry. The by_email fallback in the cache
+    // lookup above could otherwise have produced tokens for a different sub.
     let backfill_auth_cfg = crate::app::settings::AuthConfig {
         user_id: user_id.clone(),
         email: email.clone(),
@@ -773,15 +784,6 @@ async fn connect_for_business(
         // Non-fatal: the wallet still works for this session.
         tracing::warn!("Failed to backfill Liana-Connect link: {}", e);
     }
-
-    // Find the wallet
-    let wallet = client
-        .list_wallets()
-        .await
-        .map_err(|e| login::Error::Unexpected(e.to_string()))?
-        .into_iter()
-        .find(|w| w.id == wallet_id)
-        .ok_or_else(|| login::Error::Unexpected(format!("Wallet {wallet_id} not found")))?;
 
     // Create wallet client
     let (wallet_client, wallet) = client.connect_wallet(wallet);

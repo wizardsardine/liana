@@ -57,6 +57,7 @@ pub const DEFAULT_LABEL_ITEMS_LIMIT: usize = 50;
 #[derive(Deserialize)]
 pub struct Claims {
     pub sub: String,
+    pub email: String,
 }
 
 /// Fiat currency setting for a user's wallet.
