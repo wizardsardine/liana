@@ -939,7 +939,8 @@ pub fn wallet_settings<'a>(
     // ------------------------- Descriptor card -------------------------
     let title = text("Wallet descriptor:").bold();
     let descriptor_s =
-        scrollable::horizontal_thin(Column::new().push(text(descriptor.to_string()).small()));
+        scrollable::horizontal_thin(Column::new().push(text(descriptor.to_string()).small()))
+            .width(Length::Fill);
 
     let btn_backup = btn_secondary_with_tooltip(
         Some(icon::backup_icon()),
@@ -952,11 +953,15 @@ pub fn wallet_settings<'a>(
     let btn_register = button::secondary(Some(icon::chip_icon()), "Register on hardware device")
         .on_press(Message::Settings(SettingsMessage::RegisterWallet));
 
-    let btn_row = row![Space::fill_width(), btn_backup, btn_copy, btn_register]
+    let descriptor_row = row![descriptor_s, btn_copy]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+    let btn_row = row![Space::fill_width(), btn_backup, btn_register]
         .spacing(10)
         .width(Length::Fill);
     let descriptor_card = card::simple(
-        column![title, descriptor_s, btn_row]
+        column![title, descriptor_row, btn_row]
             .spacing(10)
             .width(Length::Fill),
     )
