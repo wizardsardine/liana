@@ -659,7 +659,7 @@ impl State {
             path_index: None, // None indicates a new path
             selected_key_ids: Vec::new(),
             threshold: String::new(),
-            timelock_value: Some("1".to_string()),
+            timelock_value: Some(String::new()),
             timelock_unit: TimelockUnit::Days,
         });
     }
