@@ -374,7 +374,7 @@ pub fn graph_icon<'a>() -> Text<'a> {
 }
 
 pub fn connect_icon<'a>() -> Text<'a> {
-    bootstrap_icon('\u{F2ED}')
+    bootstrap_icon('\u{F2EE}')
 }
 
 pub fn shop_icon<'a>() -> Text<'a> {

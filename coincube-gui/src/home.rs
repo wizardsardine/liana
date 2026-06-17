@@ -2159,7 +2159,7 @@ fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
             Row::new()
                 .spacing(10)
                 .align_y(iced::alignment::Vertical::Center)
-                .push(ic::coins_icon().style(coincube_ui::theme::text::secondary))
+                .push(ic::connect_icon().style(coincube_ui::theme::text::secondary))
                 .push(
                     coincube_ui::component::text::p1_regular("Connect")
                         .style(coincube_ui::theme::text::secondary),
