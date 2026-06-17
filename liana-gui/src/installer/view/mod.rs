@@ -724,18 +724,24 @@ pub fn backup_descriptor<'a>(
                 card::simple(
                     Column::new()
                         .push(text("The descriptor:").small().bold())
-                        .push(scrollable::horizontal_thin(
-                            Column::new().push(text(descriptor.to_string()).small()),
-                        ))
+                        .push(
+                            Row::new()
+                                .align_y(Alignment::Center)
+                                .spacing(10)
+                                .push(
+                                    scrollable::horizontal_thin(
+                                        Column::new().push(text(descriptor.to_string()).small()),
+                                    )
+                                    .width(Length::Fill),
+                                )
+                                .push(button::btn_copy(Some(Message::Clipboard(
+                                    descriptor.to_string(),
+                                )))),
+                        )
                         .push(
                             Row::new()
                                 .push(Space::with_width(Length::Fill))
-                                .push(backup_button)
-                                .push(Space::with_width(10))
-                                .push(
-                                    button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                        .on_press(Message::Clipboard(descriptor.to_string())),
-                                ),
+                                .push(backup_button),
                         )
                         .spacing(10),
                 )

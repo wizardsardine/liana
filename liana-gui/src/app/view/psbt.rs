@@ -22,7 +22,7 @@ use liana_ui::{
         collapse::Collapse,
         form,
         modal::{legacy, modal_view, ModalWidth},
-        pill, scrollable, separation,
+        pill, scrollable,
         text::{self, *},
     },
     icon, theme,
@@ -221,14 +221,9 @@ pub fn broadcast_action<'a>(
                                         .spacing(5)
                                         .align_y(Alignment::Center)
                                         .push(text(txid.to_string()))
-                                        .push(
-                                            Button::new(
-                                                icon::clipboard_icon()
-                                                    .style(theme::text::secondary),
-                                            )
-                                            .on_press(Message::Clipboard(txid.to_string()))
-                                            .style(theme::button::transparent_border),
-                                        ),
+                                        .push(button::btn_copy(Some(Message::Clipboard(
+                                            txid.to_string(),
+                                        )))),
                                 )
                             },
                         ),
@@ -399,13 +394,9 @@ pub fn spend_overview_view<'a>(
                                             .style(theme::text::secondary),
                                     )
                                     .push(
-                                        Button::new(
-                                            icon::clipboard_icon().style(theme::text::secondary),
-                                        )
-                                        .on_press(Message::Clipboard(
+                                        button::btn_copy(Some(Message::Clipboard(
                                             tx.psbt.unsigned_tx.compute_txid().to_string(),
-                                        ))
-                                        .style(theme::button::transparent_border),
+                                        ))),
                                     )
                                     .align_y(Alignment::Center),
                             ),
@@ -784,11 +775,7 @@ fn input_view<'a>(
                         .spacing(5)
                         .push(p1_bold("Outpoint:").style(theme::text::secondary))
                         .push(p2_regular(outpoint.clone()).style(theme::text::secondary))
-                        .push(
-                            Button::new(icon::clipboard_icon().style(theme::text::secondary))
-                                .on_press(Message::Clipboard(outpoint.clone()))
-                                .style(theme::button::transparent_border),
-                        ),
+                        .push(button::btn_copy(Some(Message::Clipboard(outpoint.clone())))),
                 )
                 .push_maybe(coin.map(|c| {
                     let addr = c.address.to_string();
@@ -802,13 +789,7 @@ fn input_view<'a>(
                                 .spacing(5)
                                 .push(p1_bold("Address:").style(theme::text::secondary))
                                 .push(address_view(addr.clone()))
-                                .push(
-                                    Button::new(
-                                        icon::clipboard_icon().style(theme::text::secondary),
-                                    )
-                                    .on_press(Message::Clipboard(addr))
-                                    .style(theme::button::transparent_border),
-                                ),
+                                .push(button::btn_copy(Some(Message::Clipboard(addr)))),
                         )
                 }))
                 .push_maybe(coin.and_then(|c| {
@@ -891,13 +872,7 @@ fn payment_view<'a>(
                                 .spacing(5)
                                 .push(p1_bold("Address:").style(theme::text::secondary))
                                 .push(address_view(addr.clone()))
-                                .push(
-                                    Button::new(
-                                        icon::clipboard_icon().style(theme::text::secondary),
-                                    )
-                                    .on_press(Message::Clipboard(addr.clone()))
-                                    .style(theme::button::transparent_border),
-                                ),
+                                .push(button::btn_copy(Some(Message::Clipboard(addr.clone())))),
                         ),
                 )
                 .push_maybe(labels.get(&addr).map(|label| {
@@ -940,11 +915,7 @@ fn change_view(output: &TxOut, network: Network) -> Element<'_, Message> {
                         .spacing(5)
                         .push(p1_bold("Address:").style(theme::text::secondary))
                         .push(address_view(addr.clone()))
-                        .push(
-                            Button::new(icon::clipboard_icon().style(theme::text::secondary))
-                                .on_press(Message::Clipboard(addr))
-                                .style(theme::button::transparent_border),
-                        ),
+                        .push(button::btn_copy(Some(Message::Clipboard(addr)))),
                 ),
         )
         .into()
@@ -1059,55 +1030,6 @@ pub fn sign_action_toasts<'a>(
     }
 
     vec
-}
-
-pub fn update_spend_view<'a>(
-    psbt: String,
-    updated: &form::Value<String>,
-    error: Option<&Error>,
-    processing: bool,
-) -> Element<'a, Message> {
-    Column::new()
-        .push(warn(error))
-        .push(card::simple(
-            Column::new()
-                .spacing(20)
-                .push(
-                    Row::new()
-                        .push(text("PSBT:").bold().width(Length::Fill))
-                        .push(
-                            button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                .on_press(Message::Clipboard(psbt)),
-                        )
-                        .align_y(Alignment::Center),
-                )
-                .push(separation().width(Length::Fill))
-                .push(
-                    Column::new()
-                        .spacing(10)
-                        .push(text("Insert updated PSBT:").bold())
-                        .push(
-                            form::Form::new_trimmed("PSBT", updated, move |msg| {
-                                Message::ImportSpend(ImportSpendMessage::PsbtEdited(msg))
-                            })
-                            .warning("Please enter the correct base64 encoded PSBT")
-                            .size(P1_SIZE)
-                            .padding(10),
-                        )
-                        .push(Row::new().push(Space::with_width(Length::Fill)).push(
-                            if updated.valid && !updated.value.is_empty() && !processing {
-                                button::secondary(None, "Update")
-                                    .on_press(Message::ImportSpend(ImportSpendMessage::Confirm))
-                            } else if processing {
-                                button::secondary(None, "Processing...")
-                            } else {
-                                button::secondary(None, "Update")
-                            },
-                        )),
-                ),
-        ))
-        .max_width(400)
-        .into()
 }
 
 pub fn update_spend_success_view<'a>() -> Element<'a, Message> {

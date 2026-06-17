@@ -239,13 +239,9 @@ pub fn create_rbf_modal<'a>(
                                     .spacing(5)
                                     .align_y(Alignment::Center)
                                     .push(text(txid.to_string()))
-                                    .push(
-                                        Button::new(
-                                            icon::clipboard_icon().style(theme::text::secondary),
-                                        )
-                                        .on_press(Message::Clipboard(txid.to_string()))
-                                        .style(theme::button::transparent_border),
-                                    ),
+                                    .push(button::btn_copy(Some(Message::Clipboard(
+                                        txid.to_string(),
+                                    )))),
                             )
                         },
                     ),
@@ -411,9 +407,7 @@ pub fn tx_view<'a>(
                                     .align_y(Alignment::Center)
                                     .push(Container::new(text(txid.clone()).small()))
                                     .push(
-                                        Button::new(icon::clipboard_icon())
-                                            .on_press(Message::Clipboard(txid.clone()))
-                                            .style(theme::button::transparent_border),
+                                        button::btn_copy(Some(Message::Clipboard(txid.clone()))),
                                     )
                                     .width(Length::Shrink),
                             ),

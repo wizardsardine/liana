@@ -200,13 +200,9 @@ fn coin_list_view<'a>(
                                             Row::new()
                                                 .align_y(Alignment::Center)
                                                 .push(address_view(address.clone()))
-                                                .push(
-                                                    Button::new(icon::clipboard_icon())
-                                                        .on_press(Message::Clipboard(
-                                                            address.clone(),
-                                                        ))
-                                                        .style(theme::button::transparent_border),
-                                                ),
+                                                .push(button::btn_copy(Some(Message::Clipboard(
+                                                    address.clone(),
+                                                )))),
                                         )
                                         .spacing(5),
                                 )
@@ -240,13 +236,9 @@ fn coin_list_view<'a>(
                                                     p2_regular(format!("{}", coin.outpoint))
                                                         .style(theme::text::secondary),
                                                 )
-                                                .push(
-                                                    Button::new(icon::clipboard_icon())
-                                                        .on_press(Message::Clipboard(
-                                                            coin.outpoint.to_string(),
-                                                        ))
-                                                        .style(theme::button::transparent_border),
-                                                ),
+                                                .push(button::btn_copy(Some(Message::Clipboard(
+                                                    coin.outpoint.to_string(),
+                                                )))),
                                         )
                                         .spacing(5),
                                 )

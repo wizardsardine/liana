@@ -529,11 +529,9 @@ pub fn bitcoind<'a>(
                     .width(Length::FillPortion(3)),
                 )
                 .push(Space::with_width(10))
-                .push(
-                    Button::new(icon::clipboard_icon())
-                        .style(theme::button::transparent_border)
-                        .on_press(SettingsEditMessage::Clipboard(v.to_string())),
-                )
+                .push(button::btn_copy(Some(SettingsEditMessage::Clipboard(
+                    v.to_string(),
+                ))))
                 .align_y(Alignment::Center)
         });
     }
@@ -719,11 +717,9 @@ pub fn electrum<'a>(
                 .push(Container::new(text(k).bold().small()).width(Length::Fill))
                 .push(text(v.clone()).small())
                 .push(Space::with_width(10))
-                .push(
-                    Button::new(icon::clipboard_icon())
-                        .style(theme::button::transparent_border)
-                        .on_press(SettingsEditMessage::Clipboard(v.to_string())),
-                )
+                .push(button::btn_copy(Some(SettingsEditMessage::Clipboard(
+                    v.to_string(),
+                ))))
                 .align_y(Alignment::Center),
         );
     }
@@ -943,7 +939,8 @@ pub fn wallet_settings<'a>(
     // ------------------------- Descriptor card -------------------------
     let title = text("Wallet descriptor:").bold();
     let descriptor_s =
-        scrollable::horizontal_thin(Column::new().push(text(descriptor.to_string()).small()));
+        scrollable::horizontal_thin(Column::new().push(text(descriptor.to_string()).small()))
+            .width(Length::Fill);
 
     let btn_backup = btn_secondary_with_tooltip(
         Some(icon::backup_icon()),
@@ -952,16 +949,19 @@ pub fn wallet_settings<'a>(
         BtnWidth::Auto,
         Some(backup_msg),
     );
-    let btn_copy = button::secondary(Some(icon::clipboard_icon()), "Copy")
-        .on_press(Message::Clipboard(descriptor.to_string()));
+    let btn_copy = button::btn_copy(Some(Message::Clipboard(descriptor.to_string())));
     let btn_register = button::secondary(Some(icon::chip_icon()), "Register on hardware device")
         .on_press(Message::Settings(SettingsMessage::RegisterWallet));
 
-    let btn_row = row![Space::fill_width(), btn_backup, btn_copy, btn_register]
+    let descriptor_row = row![descriptor_s, btn_copy]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+    let btn_row = row![Space::fill_width(), btn_backup, btn_register]
         .spacing(10)
         .width(Length::Fill);
     let descriptor_card = card::simple(
-        column![title, descriptor_s, btn_row]
+        column![title, descriptor_row, btn_row]
             .spacing(10)
             .width(Length::Fill),
     )
