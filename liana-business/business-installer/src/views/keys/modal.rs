@@ -81,8 +81,8 @@ pub fn edit_key_modal_view<'a>(
         .align_y(Alignment::Center)
         .push(text::p1_medium("Key Type").style(theme::text::primary))
         .push(tooltip::tooltip(
-            "Internal: keys held by your organization.\n \
-                External: keys held by third parties.\n \
+            "Internal: key held by your organization.\n \
+                External: key held by third parties.\n \
                 Cosigner: Professional third party co-signing key.\n \
                 SafetyNet: Professional third party recovery key.",
         ));
