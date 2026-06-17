@@ -823,6 +823,57 @@ fn duress_enroll_network_dirs(root: &std::path::Path) -> Vec<crate::dir::Network
     dirs
 }
 
+/// User-facing message when the candidate duress PIN equals a Cube's real
+/// unlock PIN. A shared constant so the pre-flight wizard check and
+/// `persist_duress_enrollment` can't drift apart.
+pub(crate) const DURESS_PIN_COLLIDES_MSG: &str =
+    "That duress PIN is already the unlock PIN of one of your Cubes. Choose a \
+     PIN you don't use to unlock any Cube.";
+
+/// User-facing message when there are no Cubes on the device to arm.
+pub(crate) const DURESS_NO_CUBES_MSG: &str =
+    "Couldn't find any Cubes on this device to protect with duress mode.";
+
+/// Verify the candidate duress PIN does not collide with any Cube's real unlock
+/// PIN across every network under `root`. `Err` on a collision, when there are
+/// no Cubes to arm, or when settings can't be read.
+///
+/// The same duress PIN hash is armed on every Cube, and at unlock a Cube checks
+/// its real PIN first and the duress PIN second — so a duress PIN equal to any
+/// Cube's unlock PIN either can't trip duress on that Cube or trips a wipe on a
+/// *different* one. Each Cube can have its own PIN, hence the per-Cube check.
+///
+/// Run this BEFORE any server enrollment: Connect tiers enroll server-side
+/// first, so checking the (deterministic, user-entered) collision only in the
+/// later local persist would let a bad PIN enroll on the server and then fail
+/// locally — leaving the account server-enrolled with no Cube armed.
+pub(crate) fn duress_pin_collision_check(
+    root: &std::path::Path,
+    duress_pin: &str,
+) -> Result<(), String> {
+    let network_dirs = duress_enroll_network_dirs(root);
+    if network_dirs.is_empty() {
+        return Err(DURESS_NO_CUBES_MSG.to_string());
+    }
+    let mut total_cubes = 0usize;
+    for network_dir in &network_dirs {
+        let settings = crate::app::settings::Settings::from_file(network_dir)
+            .map_err(|e| format!("Couldn't read your Cube settings to verify your PIN: {e}"))?;
+        for cube in &settings.cubes {
+            total_cubes += 1;
+            // `verify_pin` returns true for a Cube with no PIN, so gate on
+            // `has_pin()` first — a PIN-less Cube can't collide.
+            if cube.has_pin() && cube.verify_pin(duress_pin) {
+                return Err(DURESS_PIN_COLLIDES_MSG.to_string());
+            }
+        }
+    }
+    if total_cubes == 0 {
+        return Err(DURESS_NO_CUBES_MSG.to_string());
+    }
+    Ok(())
+}
+
 /// Best-effort restore of the first `count` networks' settings to their
 /// pre-enrollment snapshot, undoing the duress PIN hashes written in step 1.
 /// Used when a later step (another network, or the local-state save) fails, so
@@ -859,50 +910,27 @@ pub(crate) async fn persist_duress_enrollment(
     // data directory couldn't be read). Fail loud instead of marking duress
     // "enabled" with no duress PIN written anywhere.
     if network_dirs.is_empty() {
-        return Err(
-            "Couldn't find any Cubes on this device to protect with duress mode.".to_string(),
-        );
+        return Err(DURESS_NO_CUBES_MSG.to_string());
     }
 
-    // 0. Guard against a duress PIN that collides with a real unlock PIN,
-    //    across ALL networks, BEFORE writing anything. The same duress PIN
-    //    hash is armed on every Cube, and at unlock a Cube checks its real PIN
-    //    first and the duress PIN second — so if the duress PIN equals any
-    //    Cube's actual unlock PIN, either that Cube could never trip duress, or
-    //    (worse) that PIN would trip a wipe on a *different* Cube. Each Cube can
-    //    have its own PIN, so we verify the candidate duress PIN against every
-    //    Cube's stored PIN hash and refuse on any match.
+    // 0. Guard against a duress PIN that collides with a real unlock PIN, and
+    //    against having no Cubes to arm, BEFORE writing anything. This mirrors
+    //    the wizard's pre-flight check (which runs before any server enroll);
+    //    re-running it here is the authoritative guard against an on-disk Cube
+    //    set that changed since the pre-flight.
+    duress_pin_collision_check(&root, &duress_pin)?;
+
+    // Snapshot the pre-write state of every network so a later step can roll
+    // back. (The collision / no-Cubes guards above already validated the set.)
     let mut prior_settings: Vec<crate::app::settings::Settings> =
         Vec::with_capacity(network_dirs.len());
-    let mut total_cubes = 0usize;
     for network_dir in &network_dirs {
         // We enumerated this dir because it HAS a settings.json. If it now
         // can't be read (corrupt/parse/IO, or a race), fail loud rather than
-        // skip the safety check and arm an unverified duress PIN anyway.
+        // arm an unverified duress PIN anyway.
         let settings = crate::app::settings::Settings::from_file(network_dir)
             .map_err(|e| format!("Couldn't read your Cube settings to verify your PIN: {e}"))?;
-        for cube in &settings.cubes {
-            total_cubes += 1;
-            // `verify_pin` returns true for a Cube with no PIN, so gate on
-            // `has_pin()` first — a PIN-less Cube can't collide.
-            if cube.has_pin() && cube.verify_pin(&duress_pin) {
-                return Err(
-                    "That duress PIN is already the unlock PIN of one of your Cubes. Choose a \
-                     PIN you don't use to unlock any Cube."
-                        .to_string(),
-                );
-            }
-        }
-        // Snapshot the pre-write state so a later failure can roll back.
         prior_settings.push(settings);
-    }
-    // Settings files exist but hold no Cubes — the write below would set
-    // duress_pin_hash on nothing. Don't mark duress "enabled" when no Cube is
-    // actually armed and no PIN path can trip a wipe.
-    if total_cubes == 0 {
-        return Err(
-            "Couldn't find any Cubes on this device to protect with duress mode.".to_string(),
-        );
     }
 
     // 1. Duress PIN hash → every Cube on every network. Sequential file writes

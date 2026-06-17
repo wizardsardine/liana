@@ -2379,6 +2379,30 @@ impl ConnectAccountPanel {
                     e.error = Some(msg);
                     return iced::Task::none();
                 }
+                // Pre-flight: reject a duress PIN that collides with any Cube's
+                // real unlock PIN BEFORE anything irreversible. Connect tiers
+                // enroll on the server first, so catching the collision only in
+                // the later local persist would leave the account
+                // server-enrolled with no Cube armed. The collision is
+                // deterministic from the entered PIN, so we can check it up
+                // front against the local Cube set. (Persist re-checks as the
+                // authoritative guard.)
+                match crate::dir::CoincubeDirectory::active() {
+                    Ok(dir) => {
+                        if let Err(msg) =
+                            crate::app::duress_pin_collision_check(dir.path(), &e.duress_pin)
+                        {
+                            e.error = Some(msg);
+                            return iced::Task::none();
+                        }
+                    }
+                    Err(err) => {
+                        e.error = Some(format!(
+                            "Couldn't access your Cube data to verify the duress PIN: {err}"
+                        ));
+                        return iced::Task::none();
+                    }
+                }
                 e.submitting = true;
                 e.error = None;
                 let tier = e.tier;
@@ -2541,7 +2565,29 @@ impl ConnectAccountPanel {
                             .as_ref()
                             .is_some_and(|cur| cur.enrolled && !new.enrolled);
                         if !downgrades_enrollment {
+                            let active = new.active;
+                            let unlock_at = new.unlock_at;
                             self.duress_state = Some(new);
+                            // If the server reports the account is in ACTIVE
+                            // duress, route this (signed-in, trusted) device to
+                            // the all-clear recovery screen — same as the
+                            // post-sign-in `DuressStateChecked` gate. Covers
+                            // duress activated by another device after this
+                            // session passed the sign-in gate. Skip if already
+                            // in recovery so an in-flight all-clear entry isn't
+                            // wiped. Like the gate, this does NOT persist
+                            // `DuressLocalState.active` (that flag is owned by
+                            // the paths that actually lock this device).
+                            if active
+                                && !matches!(self.step, ConnectFlowStep::DuressRecovery { .. })
+                            {
+                                self.step = ConnectFlowStep::DuressRecovery {
+                                    unlock_at,
+                                    passphrase: String::new(),
+                                    submitting: false,
+                                    cleared: false,
+                                };
+                            }
                         }
                     }
                     // `None` = the fetch failed; keep the prior state rather than
