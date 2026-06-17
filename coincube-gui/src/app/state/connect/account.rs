@@ -2581,6 +2581,15 @@ impl ConnectAccountPanel {
                             if active
                                 && !matches!(self.step, ConnectFlowStep::DuressRecovery { .. })
                             {
+                                // Tear down any open enrollment wizard before
+                                // routing to recovery: recovery supersedes it,
+                                // and `duress_ux` prioritizes a `Some`
+                                // `duress_enroll` over the intro/enabled view —
+                                // so a leftover wizard would re-appear (possibly
+                                // mid-submit) when the user returns to the tab
+                                // after clearing. Also scrubs the wizard's
+                                // in-memory secrets (PINs / passphrases).
+                                self.clear_duress_enroll();
                                 self.step = ConnectFlowStep::DuressRecovery {
                                     unlock_at,
                                     passphrase: String::new(),
