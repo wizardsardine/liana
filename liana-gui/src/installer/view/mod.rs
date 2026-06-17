@@ -732,10 +732,9 @@ pub fn backup_descriptor<'a>(
                                 .push(Space::with_width(Length::Fill))
                                 .push(backup_button)
                                 .push(Space::with_width(10))
-                                .push(
-                                    button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                        .on_press(Message::Clipboard(descriptor.to_string())),
-                                ),
+                                .push(button::btn_copy(Some(Message::Clipboard(
+                                    descriptor.to_string(),
+                                )))),
                         )
                         .spacing(10),
                 )

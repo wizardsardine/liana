@@ -529,11 +529,9 @@ pub fn bitcoind<'a>(
                     .width(Length::FillPortion(3)),
                 )
                 .push(Space::with_width(10))
-                .push(
-                    Button::new(icon::clipboard_icon())
-                        .style(theme::button::transparent_border)
-                        .on_press(SettingsEditMessage::Clipboard(v.to_string())),
-                )
+                .push(button::btn_copy(Some(SettingsEditMessage::Clipboard(
+                    v.to_string(),
+                ))))
                 .align_y(Alignment::Center)
         });
     }
@@ -719,11 +717,9 @@ pub fn electrum<'a>(
                 .push(Container::new(text(k).bold().small()).width(Length::Fill))
                 .push(text(v.clone()).small())
                 .push(Space::with_width(10))
-                .push(
-                    Button::new(icon::clipboard_icon())
-                        .style(theme::button::transparent_border)
-                        .on_press(SettingsEditMessage::Clipboard(v.to_string())),
-                )
+                .push(button::btn_copy(Some(SettingsEditMessage::Clipboard(
+                    v.to_string(),
+                ))))
                 .align_y(Alignment::Center),
         );
     }
@@ -952,8 +948,7 @@ pub fn wallet_settings<'a>(
         BtnWidth::Auto,
         Some(backup_msg),
     );
-    let btn_copy = button::secondary(Some(icon::clipboard_icon()), "Copy")
-        .on_press(Message::Clipboard(descriptor.to_string()));
+    let btn_copy = button::btn_copy(Some(Message::Clipboard(descriptor.to_string())));
     let btn_register = button::secondary(Some(icon::chip_icon()), "Register on hardware device")
         .on_press(Message::Settings(SettingsMessage::RegisterWallet));
 

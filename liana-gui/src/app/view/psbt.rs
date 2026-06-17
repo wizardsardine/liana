@@ -221,14 +221,9 @@ pub fn broadcast_action<'a>(
                                         .spacing(5)
                                         .align_y(Alignment::Center)
                                         .push(text(txid.to_string()))
-                                        .push(
-                                            Button::new(
-                                                icon::clipboard_icon()
-                                                    .style(theme::text::secondary),
-                                            )
-                                            .on_press(Message::Clipboard(txid.to_string()))
-                                            .style(theme::button::transparent_border),
-                                        ),
+                                        .push(button::btn_copy(Some(Message::Clipboard(
+                                            txid.to_string(),
+                                        )))),
                                 )
                             },
                         ),
@@ -399,13 +394,9 @@ pub fn spend_overview_view<'a>(
                                             .style(theme::text::secondary),
                                     )
                                     .push(
-                                        Button::new(
-                                            icon::clipboard_icon().style(theme::text::secondary),
-                                        )
-                                        .on_press(Message::Clipboard(
+                                        button::btn_copy(Some(Message::Clipboard(
                                             tx.psbt.unsigned_tx.compute_txid().to_string(),
-                                        ))
-                                        .style(theme::button::transparent_border),
+                                        ))),
                                     )
                                     .align_y(Alignment::Center),
                             ),
@@ -784,11 +775,7 @@ fn input_view<'a>(
                         .spacing(5)
                         .push(p1_bold("Outpoint:").style(theme::text::secondary))
                         .push(p2_regular(outpoint.clone()).style(theme::text::secondary))
-                        .push(
-                            Button::new(icon::clipboard_icon().style(theme::text::secondary))
-                                .on_press(Message::Clipboard(outpoint.clone()))
-                                .style(theme::button::transparent_border),
-                        ),
+                        .push(button::btn_copy(Some(Message::Clipboard(outpoint.clone())))),
                 )
                 .push_maybe(coin.map(|c| {
                     let addr = c.address.to_string();
@@ -802,13 +789,7 @@ fn input_view<'a>(
                                 .spacing(5)
                                 .push(p1_bold("Address:").style(theme::text::secondary))
                                 .push(address_view(addr.clone()))
-                                .push(
-                                    Button::new(
-                                        icon::clipboard_icon().style(theme::text::secondary),
-                                    )
-                                    .on_press(Message::Clipboard(addr))
-                                    .style(theme::button::transparent_border),
-                                ),
+                                .push(button::btn_copy(Some(Message::Clipboard(addr)))),
                         )
                 }))
                 .push_maybe(coin.and_then(|c| {
@@ -891,13 +872,7 @@ fn payment_view<'a>(
                                 .spacing(5)
                                 .push(p1_bold("Address:").style(theme::text::secondary))
                                 .push(address_view(addr.clone()))
-                                .push(
-                                    Button::new(
-                                        icon::clipboard_icon().style(theme::text::secondary),
-                                    )
-                                    .on_press(Message::Clipboard(addr.clone()))
-                                    .style(theme::button::transparent_border),
-                                ),
+                                .push(button::btn_copy(Some(Message::Clipboard(addr.clone())))),
                         ),
                 )
                 .push_maybe(labels.get(&addr).map(|label| {
@@ -940,11 +915,7 @@ fn change_view(output: &TxOut, network: Network) -> Element<'_, Message> {
                         .spacing(5)
                         .push(p1_bold("Address:").style(theme::text::secondary))
                         .push(address_view(addr.clone()))
-                        .push(
-                            Button::new(icon::clipboard_icon().style(theme::text::secondary))
-                                .on_press(Message::Clipboard(addr))
-                                .style(theme::button::transparent_border),
-                        ),
+                        .push(button::btn_copy(Some(Message::Clipboard(addr)))),
                 ),
         )
         .into()
@@ -1075,10 +1046,7 @@ pub fn update_spend_view<'a>(
                 .push(
                     Row::new()
                         .push(text("PSBT:").bold().width(Length::Fill))
-                        .push(
-                            button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                .on_press(Message::Clipboard(psbt)),
-                        )
+                        .push(button::btn_copy(Some(Message::Clipboard(psbt))))
                         .align_y(Alignment::Center),
                 )
                 .push(separation().width(Length::Fill))

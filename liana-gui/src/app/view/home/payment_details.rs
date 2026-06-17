@@ -13,8 +13,8 @@ use liana_ui::{
         button, card, form,
         text::{legacy, Text},
     },
-    icon, theme,
-    widget::{Button, Column, ColumnExt, Element, SpaceExt},
+    theme,
+    widget::{Column, ColumnExt, Element, SpaceExt},
 };
 
 use crate::{
@@ -145,13 +145,9 @@ pub fn payment_details_view<'a>(
                                     .push(Container::new(
                                         legacy::text(format!("{}", tx.tx.compute_txid())).small(),
                                     ))
-                                    .push(
-                                        Button::new(icon::clipboard_icon())
-                                            .on_press(Message::Clipboard(
-                                                tx.tx.compute_txid().to_string(),
-                                            ))
-                                            .style(theme::button::transparent_border),
-                                    )
+                                    .push(button::btn_copy(Some(Message::Clipboard(
+                                        tx.tx.compute_txid().to_string(),
+                                    ))))
                                     .width(Length::Shrink),
                             ),
                     )
