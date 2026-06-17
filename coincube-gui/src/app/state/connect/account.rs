@@ -544,6 +544,13 @@ pub struct ConnectAccountPanel {
     /// Duress tab so the screen reflects the enabled state instead of the
     /// setup flow once duress is enrolled. `None` until the first fetch.
     pub duress_state: Option<crate::services::coincube::DuressState>,
+    /// Whether THIS device has actually armed the duress PIN on its Cubes
+    /// (mirrors `DuressLocalState.enrolled`). Distinct from the server's
+    /// account-level `enrolled`: only this can honestly say "armed on this
+    /// device", since the account can be enrolled elsewhere or after a failed
+    /// local persist. Refreshed on entering the Duress tab and set on a
+    /// successful local persist (`EnrollmentPersisted`).
+    pub duress_locally_armed: bool,
     /// Whether the user dismissed the pre-expiry renewal banner this
     /// session (D1). Not persisted — re-shows on next launch while the
     /// plan is still within its renewal window.
@@ -582,6 +589,7 @@ impl ConnectAccountPanel {
             duress_contacts: DuressContactsState::default(),
             duress_cubes: None,
             duress_state: None,
+            duress_locally_armed: false,
             renewal_banner_dismissed: false,
             campaign_redeem: CampaignRedeemState::default(),
             register_campaign_code: String::new(),
@@ -652,6 +660,17 @@ impl ConnectAccountPanel {
         if !entitled {
             return iced::Task::none();
         }
+        // Refresh the authoritative LOCAL arm signal (whether THIS device wrote
+        // Cube duress hashes) from `DuressLocalState`. Server `enrolled` is
+        // account-wide and can be true on a device that never armed, so the
+        // "armed on this device" view keys off this, not the server. A read
+        // failure resolves to `false` — the safe direction (never falsely
+        // claim "armed here").
+        self.duress_locally_armed = crate::dir::CoincubeDirectory::active()
+            .ok()
+            .and_then(|dir| crate::services::duress::DuressLocalState::load(dir.path()).ok())
+            .map(|st| st.enrolled)
+            .unwrap_or(false);
         load_duress_state(&self.client, self.session_generation)
     }
 
@@ -1879,6 +1898,7 @@ impl ConnectAccountPanel {
         self.duress_contacts.clear();
         self.duress_cubes = None;
         self.duress_state = None;
+        self.duress_locally_armed = false;
         // Scrub any in-flight enrollment wizard secrets (PINs, passphrases,
         // generated code) and the recovery all-clear passphrase before
         // dropping them, so they don't survive the session reset.
@@ -2531,6 +2551,19 @@ impl ConnectAccountPanel {
                             // actually armed.
                             return iced::Task::done(Message::CompleteDuressEnrollment(payload));
                         }
+                        // No wizard to build a payload from: it was torn down
+                        // mid-flight (same session — a cross-session teardown
+                        // bumps `session_generation` and is caught by the guard
+                        // above). All same-session teardowns now preserve a
+                        // submitting wizard (Cancel is blocked while submitting;
+                        // the active-duress routing skips a submitting wizard),
+                        // so this should be unreachable — log loudly if it ever
+                        // fires, since it means the account is server-enrolled
+                        // with no local arming.
+                        log::error!(
+                            "[CONNECT] duress EnrollResult(Ok) with no wizard to persist — \
+                             account may be server-enrolled but not armed locally"
+                        );
                     }
                     Err(msg) => {
                         // No local state was written — just surface the error
@@ -2589,7 +2622,16 @@ impl ConnectAccountPanel {
                                 // mid-submit) when the user returns to the tab
                                 // after clearing. Also scrubs the wizard's
                                 // in-memory secrets (PINs / passphrases).
-                                self.clear_duress_enroll();
+                                //
+                                // EXCEPT while a server enroll is in flight
+                                // (`submitting`): its `EnrollResult` reads the
+                                // wizard to run local persist, then clears it.
+                                // Dropping it here would orphan that enroll
+                                // (server enrolled, no local arm). Leave it; the
+                                // in-flight result tears it down.
+                                if self.duress_enroll.as_ref().is_none_or(|e| !e.submitting) {
+                                    self.clear_duress_enroll();
+                                }
                                 self.step = ConnectFlowStep::DuressRecovery {
                                     unlock_at,
                                     passphrase: String::new(),
@@ -2604,9 +2646,11 @@ impl ConnectAccountPanel {
                 }
             }
             DuressMessage::EnrollmentPersisted => {
-                // Local persistence succeeded (duress PIN armed on every Cube),
-                // so it's now safe to reflect the enabled state in the cached
-                // view. This is the only place that flips it on enrollment.
+                // Local persistence succeeded (duress PIN armed on every Cube on
+                // THIS device), so it's now safe to reflect the enabled state.
+                // `duress_locally_armed` drives the "armed on this device" view;
+                // `mark_duress_enrolled` mirrors the account-level server state.
+                self.duress_locally_armed = true;
                 self.mark_duress_enrolled();
             }
         }

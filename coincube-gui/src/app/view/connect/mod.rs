@@ -1646,13 +1646,20 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
     // Once duress is enrolled (server-authoritative), show the enabled state
     // instead of the setup flow. `None` (state not yet loaded, or the account
     // genuinely hasn't enrolled) falls through to the setup flow.
-    let enrolled = state
+    // Account-level state from the server vs. whether THIS device actually
+    // armed the duress PIN on its Cubes. They differ: the account can be
+    // enrolled (on another device, or after a local persist that failed) while
+    // this device wrote no Cube hashes — in which case entering the duress PIN
+    // here does nothing. Only `locally_armed` (from `DuressLocalState`) can
+    // honestly claim "armed on this device".
+    let server_enrolled = state
         .duress_state
         .as_ref()
         .map(|s| s.enrolled)
         .unwrap_or(false);
+    let locally_armed = state.duress_locally_armed;
 
-    if enrolled {
+    if locally_armed {
         col = col.push(
             container(
                 Column::new()
@@ -1685,6 +1692,34 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
         col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
         col = col.push(
             text::p2_regular("Disabling duress mode isn't available yet.").color(color::GREY_3),
+        );
+    } else if server_enrolled {
+        // Enrolled on the account but not armed on THIS device (set up on
+        // another device, or a local persist that didn't complete). Be honest:
+        // the duress PIN does nothing here. No setup CTA — re-enrolling an
+        // already-enrolled account is rejected server-side, and this device
+        // can't arm without the duress PIN it never had.
+        col = col.push(
+            container(
+                Column::new()
+                    .push(
+                        text::p1_bold("Duress mode is enabled on your account")
+                            .style(theme::text::primary),
+                    )
+                    .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                    .push(
+                        text::p2_regular(
+                            "It was set up on another device, so it is not armed on this one — \
+                         entering your duress PIN here will not trigger a wipe. Manage duress \
+                         mode from the device where you enabled it.",
+                        )
+                        .color(color::GREY_3),
+                    )
+                    .padding(20)
+                    .spacing(2),
+            )
+            .style(card_style)
+            .width(Length::Fill),
         );
     } else {
         let delays: String = DuressDelay::ALL
