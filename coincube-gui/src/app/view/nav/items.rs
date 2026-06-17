@@ -36,10 +36,17 @@ const LABEL_SIZE: f32 = 10.0;
 /// their rows stay visually identical.
 pub fn render_item_row<'a>(menu: &Menu, item: &SubItem, rail_width: f32) -> Element<'a, Message> {
     let active = (item.matches)(menu);
-    let icon = (item.icon)().size(ICON_SIZE);
+
+    // "General" items use a hand-authored stroke-only SVG because the Bootstrap
+    // `wrench` glyph is a solid silhouette with no outline twin in the font.
+    let icon_el: Element<'a, Message> = if item.label == "General" {
+        coincube_ui::image::wrench_outline_icon(ICON_SIZE).into()
+    } else {
+        (item.icon)().size(ICON_SIZE).into()
+    };
 
     let body: Column<Message> = column![
-        icon,
+        icon_el,
         iced::widget::text(item.label)
             .size(LABEL_SIZE)
             .align_x(Alignment::Center),

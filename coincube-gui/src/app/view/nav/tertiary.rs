@@ -19,8 +19,9 @@ use crate::app::{
 };
 use coincube_ui::{
     icon::{
-        bitcoin_icon, chat_icon, coins_icon, graph_icon, home_icon, lightning_icon, person_icon,
-        phone_icon, plus_icon, receipt_icon, settings_icon, tooltip_icon, wallet_icon, wrench_icon,
+        bitcoin_icon, chat_icon, coins_outline_icon, graph_icon, home_icon, lightning_outline_icon,
+        person_icon, phone_icon, plus_icon, receipt_icon, settings_icon, tooltip_icon, wallet_icon,
+        wrench_icon,
     },
     theme,
     widget::{Column, Element},
@@ -100,9 +101,9 @@ fn cube_settings_items() -> Vec<SubItem> {
         },
         SubItem {
             label: "Avatar",
-            // Placeholder icon — coins_icon is what the per-Cube Connect
-            // rail used; swap to a face icon when one exists.
-            icon: coins_icon,
+            // Placeholder icon — the per-Cube Connect rail used a stacked-coins
+            // glyph; swap to a face icon when one exists.
+            icon: coins_outline_icon,
             route: Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Avatar)),
             matches: |m| {
                 matches!(
@@ -149,7 +150,7 @@ fn spark_settings_items() -> Vec<SubItem> {
         },
         SubItem {
             label: "Lightning Address",
-            icon: lightning_icon,
+            icon: lightning_outline_icon,
             route: Menu::Spark(SparkSubMenu::Settings(Some(
                 SparkSettingsOption::LightningAddress,
             ))),
