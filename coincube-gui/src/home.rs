@@ -1514,19 +1514,29 @@ impl Home {
                         duress_code,
                         account_id,
                     ),
-                    |res| match res {
-                        Ok(()) => Message::View(ViewMessage::Check),
-                        Err(e) => {
-                            log::error!("duress: failed to persist enrollment: {e}");
-                            // Surface via the Connect panel's error display.
-                            Message::View(ViewMessage::ConnectAccount(
-                                ConnectAccountMessage::Error(format!(
-                                    "Couldn't finish enabling duress mode: {e}. Please try again."
-                                )),
-                            ))
-                        }
-                    },
+                    |res| res,
                 )
+                .then(|res| match res {
+                    Ok(()) => Task::batch([
+                        // Reflect the enabled state only now that the duress PIN
+                        // is actually armed on every Cube.
+                        Task::done(Message::View(ViewMessage::ConnectAccount(
+                            ConnectAccountMessage::Duress(
+                                app::view::DuressMessage::EnrollmentPersisted,
+                            ),
+                        ))),
+                        Task::done(Message::View(ViewMessage::Check)),
+                    ]),
+                    Err(e) => {
+                        log::error!("duress: failed to persist enrollment: {e}");
+                        // Surface via the Connect panel's error display.
+                        Task::done(Message::View(ViewMessage::ConnectAccount(
+                            ConnectAccountMessage::Error(format!(
+                                "Couldn't finish enabling duress mode: {e}. Please try again."
+                            )),
+                        )))
+                    }
+                })
             }
             Message::View(ViewMessage::ConnectAccount(msg)) => {
                 // The banner CTAs navigate the panel to Plan & Billing by

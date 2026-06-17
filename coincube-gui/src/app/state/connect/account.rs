@@ -655,13 +655,16 @@ impl ConnectAccountPanel {
         load_duress_state(&self.client, self.session_generation)
     }
 
-    /// Reflect a just-completed duress enrollment in the locally-cached
+    /// Reflect a just-*persisted* duress enrollment in the locally-cached
     /// `duress_state` so the Duress intro flips from the setup flow to the
-    /// enabled state immediately. Connect tiers would otherwise keep showing
-    /// setup until the next server fetch, and Sovereign tiers never fetch at
-    /// all — so without this the enabled view could stay hidden despite an
-    /// armed duress PIN. Preserves `active`/`unlock_at` if a prior fetch
-    /// populated them (e.g. another device already enrolled the account).
+    /// enabled state immediately. Called only from the `EnrollmentPersisted`
+    /// handler — i.e. after `persist_duress_enrollment` has actually armed the
+    /// duress PIN on every Cube — never on the optimistic pre-persist path,
+    /// where a later collision / disk failure would otherwise leave a false
+    /// "enabled" view with no Cube armed. Connect tiers would otherwise keep
+    /// showing setup until the next server fetch, and Sovereign tiers never
+    /// fetch at all. Preserves `active`/`unlock_at` if a prior fetch populated
+    /// them (e.g. another device already enrolled the account).
     fn mark_duress_enrolled(&mut self) {
         match &mut self.duress_state {
             Some(s) => {
@@ -2387,11 +2390,11 @@ impl ConnectAccountPanel {
 
                 if tier == EnrollTier::Sovereign {
                     // No Connect call — local wipe + cryptic only. Persist now.
+                    // The cached state is flipped to "enrolled" only once persist
+                    // succeeds (via `EnrollmentPersisted`), so a failed persist
+                    // doesn't leave a false "enabled" view with no Cube armed.
                     let duress_pin = e.duress_pin.clone();
                     self.clear_duress_enroll();
-                    // No server state to fetch here, so flip the cached state
-                    // ourselves or the intro never leaves the setup flow.
-                    self.mark_duress_enrolled();
                     return iced::Task::done(Message::CompleteDuressEnrollment(
                         crate::app::message::DuressEnrollmentPayload {
                             duress_pin: zeroize::Zeroizing::new(duress_pin),
@@ -2495,10 +2498,13 @@ impl ConnectAccountPanel {
                         });
                         if let Some(payload) = payload {
                             self.clear_duress_enroll();
-                            // Server confirmed enrollment; reflect it in the
-                            // cached state now so the intro shows the enabled
-                            // view without waiting for another fetch.
-                            self.mark_duress_enrolled();
+                            // The server accepted enrollment, but the duress PIN
+                            // still has to be armed locally on every Cube. Defer
+                            // marking the cached state "enrolled" to the persist
+                            // success path (`EnrollmentPersisted`) — otherwise a
+                            // local failure (PIN collision, no Cubes, disk error)
+                            // would leave a false "enabled" view while no Cube is
+                            // actually armed.
                             return iced::Task::done(Message::CompleteDuressEnrollment(payload));
                         }
                     }
@@ -2520,11 +2526,33 @@ impl ConnectAccountPanel {
                 }
             }
             DuressMessage::StateLoaded(st, gen) => {
-                // Only overwrite on a successful fetch (`Some`), so a transient
-                // failure doesn't blank a previously-loaded state.
-                if gen == self.session_generation && st.is_some() {
-                    self.duress_state = st;
+                if gen == self.session_generation {
+                    if let Some(new) = st {
+                        // Don't let a stale fetch downgrade a locally-confirmed
+                        // enrollment. `reload_duress_state` is fired on opening
+                        // the tab; a slow one issued *before* the user finished
+                        // enrolling could return pre-enrollment data after
+                        // `EnrollmentPersisted` and clobber the enabled view back
+                        // to the setup flow. Enrolled is monotonic within a
+                        // session (there is no un-enroll path), so a fetch that
+                        // flips it true→false can only be stale — drop it.
+                        let downgrades_enrollment = self
+                            .duress_state
+                            .as_ref()
+                            .is_some_and(|cur| cur.enrolled && !new.enrolled);
+                        if !downgrades_enrollment {
+                            self.duress_state = Some(new);
+                        }
+                    }
+                    // `None` = the fetch failed; keep the prior state rather than
+                    // blanking it.
                 }
+            }
+            DuressMessage::EnrollmentPersisted => {
+                // Local persistence succeeded (duress PIN armed on every Cube),
+                // so it's now safe to reflect the enabled state in the cached
+                // view. This is the only place that flips it on enrollment.
+                self.mark_duress_enrolled();
             }
         }
         iced::Task::none()

@@ -1264,6 +1264,12 @@ pub enum DuressMessage {
     /// Duress tab so the screen can show the enabled state instead of the
     /// setup flow. `None` when the fetch failed. Carries `session_generation`.
     StateLoaded(Option<crate::services::coincube::DuressState>, u64),
+    /// Local persistence of the enrollment succeeded (the duress PIN was armed
+    /// on every Cube and `DuressLocalState` written). Emitted by the persist
+    /// step's success path so the panel reflects the enabled state only once
+    /// it's actually true — never on the optimistic pre-persist path, where a
+    /// later collision / disk failure would leave a false "enabled" view.
+    EnrollmentPersisted,
 }
 
 impl std::fmt::Debug for DuressMessage {
@@ -1302,6 +1308,7 @@ impl std::fmt::Debug for DuressMessage {
                 gen
             ),
             StateLoaded(s, gen) => write!(f, "StateLoaded({:?}, {})", s, gen),
+            EnrollmentPersisted => write!(f, "EnrollmentPersisted"),
         }
     }
 }

@@ -2779,16 +2779,26 @@ impl App {
                 let datadir = self.datadir.clone();
                 return Task::perform(
                     persist_duress_enrollment(datadir, duress_pin, duress_code, account_id),
-                    |res| match res {
-                        Ok(()) => Message::CacheUpdated,
-                        Err(e) => {
-                            log::error!("duress: failed to persist enrollment: {e}");
-                            Message::View(view::Message::ShowError(format!(
-                                "Couldn't finish enabling duress mode: {e}. Please try again."
-                            )))
-                        }
-                    },
-                );
+                    |res| res,
+                )
+                .then(|res| match res {
+                    Ok(()) => Task::batch([
+                        // Reflect the enabled state only now that the duress PIN
+                        // is actually armed on every Cube.
+                        Task::done(Message::View(view::Message::ConnectAccount(
+                            view::ConnectAccountMessage::Duress(
+                                view::DuressMessage::EnrollmentPersisted,
+                            ),
+                        ))),
+                        Task::done(Message::CacheUpdated),
+                    ]),
+                    Err(e) => {
+                        log::error!("duress: failed to persist enrollment: {e}");
+                        Task::done(Message::View(view::Message::ShowError(format!(
+                            "Couldn't finish enabling duress mode: {e}. Please try again."
+                        ))))
+                    }
+                });
             }
             Message::RecoveryHeartbeatSent(res) => {
                 // Fire-and-forget: the heartbeat must never affect app state
