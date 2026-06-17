@@ -1245,8 +1245,8 @@ pub enum DuressMessage {
     CancelEnrollment,
     EnrollBack,
     EnrollNext,
-    RegularPinChanged(String),
     DuressPinChanged(String),
+    DuressPinConfirmChanged(String),
     AllClearChanged(String),
     CrkPasswordChanged(String),
     DelaySelected(crate::services::duress::enroll::DuressDelay),
@@ -1254,6 +1254,14 @@ pub enum DuressMessage {
     MemorizedToggled(bool),
     SubmitEnrollment,
     EnrollResult(Result<(), String>, u64),
+    /// Mainnet cubes + per-cube recovery-kit status, loaded for the duress
+    /// intro screen's "set up a Recovery Kit for each Cube" checklist.
+    /// Carries `session_generation` for stale-response guarding.
+    CubesLoaded(Vec<crate::app::state::connect::DuressCube>, u64),
+    /// Server-side duress state (enrolled / active), loaded on entering the
+    /// Duress tab so the screen can show the enabled state instead of the
+    /// setup flow. `None` when the fetch failed. Carries `session_generation`.
+    StateLoaded(Option<crate::services::coincube::DuressState>, u64),
 }
 
 impl std::fmt::Debug for DuressMessage {
@@ -1262,8 +1270,8 @@ impl std::fmt::Debug for DuressMessage {
         match self {
             // Sensitive — never print the typed secret.
             RecoveryPassphraseChanged(_) => write!(f, "RecoveryPassphraseChanged(<redacted>)"),
-            RegularPinChanged(_) => write!(f, "RegularPinChanged(<redacted>)"),
             DuressPinChanged(_) => write!(f, "DuressPinChanged(<redacted>)"),
+            DuressPinConfirmChanged(_) => write!(f, "DuressPinConfirmChanged(<redacted>)"),
             AllClearChanged(_) => write!(f, "AllClearChanged(<redacted>)"),
             CrkPasswordChanged(_) => write!(f, "CrkPasswordChanged(<redacted>)"),
             SovereignConfirmChanged(_) => write!(f, "SovereignConfirmChanged(<redacted>)"),
@@ -1283,6 +1291,8 @@ impl std::fmt::Debug for DuressMessage {
             MemorizedToggled(b) => write!(f, "MemorizedToggled({})", b),
             SubmitEnrollment => write!(f, "SubmitEnrollment"),
             EnrollResult(res, gen) => write!(f, "EnrollResult({:?}, {})", res, gen),
+            CubesLoaded(cubes, gen) => write!(f, "CubesLoaded({} cubes, {})", cubes.len(), gen),
+            StateLoaded(s, gen) => write!(f, "StateLoaded({:?}, {})", s, gen),
         }
     }
 }
@@ -1932,8 +1942,8 @@ mod duress_message_debug_tests {
     fn sensitive_variants_are_redacted() {
         let sensitive = [
             DuressMessage::RecoveryPassphraseChanged(CANARY.to_string()),
-            DuressMessage::RegularPinChanged(CANARY.to_string()),
             DuressMessage::DuressPinChanged(CANARY.to_string()),
+            DuressMessage::DuressPinConfirmChanged(CANARY.to_string()),
             DuressMessage::AllClearChanged(CANARY.to_string()),
             DuressMessage::CrkPasswordChanged(CANARY.to_string()),
             DuressMessage::SovereignConfirmChanged(CANARY.to_string()),

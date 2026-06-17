@@ -846,7 +846,6 @@ async fn rollback_duress_pin_writes(
 
 pub(crate) async fn persist_duress_enrollment(
     datadir: CoincubeDirectory,
-    regular_pin: zeroize::Zeroizing<String>,
     duress_pin: zeroize::Zeroizing<String>,
     duress_code: zeroize::Zeroizing<String>,
     account_id: Option<String>,
@@ -865,13 +864,14 @@ pub(crate) async fn persist_duress_enrollment(
         );
     }
 
-    // 0. Guard against arming a near-miss duress PIN, across ALL networks,
-    //    BEFORE writing anything. The wizard could only check the duress PIN
-    //    against the *re-typed* regular PIN; verify that re-typed value against
-    //    each Cube's ACTUAL stored PIN and re-check distinctness against the
-    //    real one. If the user mistyped their PIN (so the wizard's check was
-    //    meaningless) or the duress PIN is within one edit of a real unlock
-    //    PIN, refuse — otherwise a fat-fingered unlock could trip a wipe.
+    // 0. Guard against a duress PIN that collides with a real unlock PIN,
+    //    across ALL networks, BEFORE writing anything. The same duress PIN
+    //    hash is armed on every Cube, and at unlock a Cube checks its real PIN
+    //    first and the duress PIN second — so if the duress PIN equals any
+    //    Cube's actual unlock PIN, either that Cube could never trip duress, or
+    //    (worse) that PIN would trip a wipe on a *different* Cube. Each Cube can
+    //    have its own PIN, so we verify the candidate duress PIN against every
+    //    Cube's stored PIN hash and refuse on any match.
     let mut prior_settings: Vec<crate::app::settings::Settings> =
         Vec::with_capacity(network_dirs.len());
     let mut total_cubes = 0usize;
@@ -883,16 +883,14 @@ pub(crate) async fn persist_duress_enrollment(
             .map_err(|e| format!("Couldn't read your Cube settings to verify your PIN: {e}"))?;
         for cube in &settings.cubes {
             total_cubes += 1;
-            if cube.has_pin() {
-                if !cube.verify_pin(&regular_pin) {
-                    return Err(
-                        "That PIN doesn't match your Cube PIN. Enter your real PIN so the \
-                         duress PIN can be safely checked against it. (All your Cubes must \
-                         share the same PIN to enable duress.)"
-                            .to_string(),
-                    );
-                }
-                crate::services::duress::enroll::validate_duress_pin(&regular_pin, &duress_pin)?;
+            // `verify_pin` returns true for a Cube with no PIN, so gate on
+            // `has_pin()` first — a PIN-less Cube can't collide.
+            if cube.has_pin() && cube.verify_pin(&duress_pin) {
+                return Err(
+                    "That duress PIN is already the unlock PIN of one of your Cubes. Choose a \
+                     PIN you don't use to unlock any Cube."
+                        .to_string(),
+                );
             }
         }
         // Snapshot the pre-write state so a later failure can roll back.
@@ -2773,7 +2771,6 @@ impl App {
                 // and Launcher surfaces, which also host the Connect Duress
                 // panel (see `persist_duress_enrollment`).
                 let crate::app::message::DuressEnrollmentPayload {
-                    regular_pin,
                     duress_pin,
                     duress_code,
                     account_id,
@@ -2781,13 +2778,7 @@ impl App {
                 } = payload;
                 let datadir = self.datadir.clone();
                 return Task::perform(
-                    persist_duress_enrollment(
-                        datadir,
-                        regular_pin,
-                        duress_pin,
-                        duress_code,
-                        account_id,
-                    ),
+                    persist_duress_enrollment(datadir, duress_pin, duress_code, account_id),
                     |res| match res {
                         Ok(()) => Message::CacheUpdated,
                         Err(e) => {

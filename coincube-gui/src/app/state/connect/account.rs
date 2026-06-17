@@ -126,6 +126,15 @@ pub struct InviteCubeOption {
     pub network: String,
 }
 
+/// One mainnet cube shown in the Duress intro screen's "set up a Cube
+/// Recovery Kit for each Cube" checklist, with whether it currently has a
+/// recovery kit on the server. Lightweight — only what the row renders.
+#[derive(Debug, Clone)]
+pub struct DuressCube {
+    pub name: String,
+    pub has_recovery_kit: bool,
+}
+
 /// State for the Contacts section within ConnectAccountPanel.
 pub struct ContactsState {
     pub step: ContactsStep,
@@ -371,9 +380,9 @@ pub enum DuressEnrollStep {
 pub struct DuressEnrollState {
     pub tier: EnrollTier,
     pub step: DuressEnrollStep,
-    /// The user's regular PIN, re-entered so distinctness can be validated.
-    pub regular_pin: String,
     pub duress_pin: String,
+    /// Re-entry of `duress_pin` so a memorized typo is caught at enrollment.
+    pub duress_pin_confirm: String,
     pub all_clear: String,
     pub crk_password: String,
     pub delay: crate::services::duress::enroll::DuressDelay,
@@ -394,8 +403,8 @@ impl DuressEnrollState {
     /// down — e.g. on logout, where the rest of the session is reset.
     fn zeroize_secrets(&mut self) {
         use zeroize::Zeroize;
-        self.regular_pin.zeroize();
         self.duress_pin.zeroize();
+        self.duress_pin_confirm.zeroize();
         self.all_clear.zeroize();
         self.crk_password.zeroize();
         self.sovereign_confirm.zeroize();
@@ -526,6 +535,15 @@ pub struct ConnectAccountPanel {
     pub duress_enroll: Option<DuressEnrollState>,
     /// Duress "Emergency contacts" section (Estate Notifications — PR 1).
     pub duress_contacts: DuressContactsState,
+    /// Mainnet cubes + recovery-kit status for the Duress intro screen's
+    /// per-Cube recovery-kit checklist. `None` until the first fetch on
+    /// entering the Duress tab. Only mainnet cubes are tracked — testnet
+    /// cubes hold no value, so their backup state doesn't matter here.
+    pub duress_cubes: Option<Vec<DuressCube>>,
+    /// Server-side duress state (enrolled / active), loaded on entering the
+    /// Duress tab so the screen reflects the enabled state instead of the
+    /// setup flow once duress is enrolled. `None` until the first fetch.
+    pub duress_state: Option<crate::services::coincube::DuressState>,
     /// Whether the user dismissed the pre-expiry renewal banner this
     /// session (D1). Not persisted — re-shows on next launch while the
     /// plan is still within its renewal window.
@@ -562,6 +580,8 @@ impl ConnectAccountPanel {
             show_billing_history: false,
             duress_enroll: None,
             duress_contacts: DuressContactsState::default(),
+            duress_cubes: None,
+            duress_state: None,
             renewal_banner_dismissed: false,
             campaign_redeem: CampaignRedeemState::default(),
             register_campaign_code: String::new(),
@@ -600,6 +620,39 @@ impl ConnectAccountPanel {
         self.duress_contacts.error = None;
         self.duress_contacts.loading = true;
         load_duress_alert_contacts(&self.client, self.session_generation)
+    }
+
+    /// Reload the mainnet cube list + recovery-kit status for the Duress
+    /// intro screen's per-Cube recovery-kit checklist. No-op for accounts
+    /// without the duress entitlement (the checklist isn't rendered for
+    /// them, so the fetch would be wasted). Best-effort: a failed fetch
+    /// leaves the list empty and the screen falls back to generic copy.
+    pub fn reload_duress_cubes(&mut self) -> iced::Task<Message> {
+        let entitled = self
+            .plan
+            .as_ref()
+            .map(|p| p.entitlements.duress)
+            .unwrap_or(false);
+        if !entitled {
+            return iced::Task::none();
+        }
+        load_duress_cubes(&self.client, self.session_generation)
+    }
+
+    /// Reload server-side duress state (enrolled / active) for the Duress
+    /// intro screen, so it can show the enabled state instead of the setup
+    /// flow. No-op for accounts without the duress entitlement. Best-effort:
+    /// a failed fetch leaves the state `None` and the setup flow is shown.
+    pub fn reload_duress_state(&mut self) -> iced::Task<Message> {
+        let entitled = self
+            .plan
+            .as_ref()
+            .map(|p| p.entitlements.duress)
+            .unwrap_or(false);
+        if !entitled {
+            return iced::Task::none();
+        }
+        load_duress_state(&self.client, self.session_generation)
     }
 
     /// Returns a clone of the authenticated client (with JWT set).
@@ -1748,8 +1801,8 @@ impl ConnectAccountPanel {
         self.duress_enroll = Some(DuressEnrollState {
             tier,
             step,
-            regular_pin: String::new(),
             duress_pin: String::new(),
+            duress_pin_confirm: String::new(),
             all_clear: String::new(),
             crk_password: String::new(),
             delay: crate::services::duress::enroll::DuressDelay::default(),
@@ -1787,6 +1840,8 @@ impl ConnectAccountPanel {
         self.selected_billing_cycle = BillingCycle::Monthly;
         self.contacts_state.clear();
         self.duress_contacts.clear();
+        self.duress_cubes = None;
+        self.duress_state = None;
         // Scrub any in-flight enrollment wizard secrets (PINs, passphrases,
         // generated code) and the recovery all-clear passphrase before
         // dropping them, so they don't survive the session reset.
@@ -2213,14 +2268,14 @@ impl ConnectAccountPanel {
             DuressMessage::CancelEnrollment => {
                 self.clear_duress_enroll();
             }
-            DuressMessage::RegularPinChanged(v) => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.regular_pin = v;
-                }
-            }
             DuressMessage::DuressPinChanged(v) => {
                 if let Some(e) = &mut self.duress_enroll {
                     e.duress_pin = v;
+                }
+            }
+            DuressMessage::DuressPinConfirmChanged(v) => {
+                if let Some(e) = &mut self.duress_enroll {
+                    e.duress_pin_confirm = v;
                 }
             }
             DuressMessage::AllClearChanged(v) => {
@@ -2283,12 +2338,10 @@ impl ConnectAccountPanel {
 
                 if tier == EnrollTier::Sovereign {
                     // No Connect call — local wipe + cryptic only. Persist now.
-                    let regular_pin = e.regular_pin.clone();
                     let duress_pin = e.duress_pin.clone();
                     self.clear_duress_enroll();
                     return iced::Task::done(Message::CompleteDuressEnrollment(
                         crate::app::message::DuressEnrollmentPayload {
-                            regular_pin: zeroize::Zeroizing::new(regular_pin),
                             duress_pin: zeroize::Zeroizing::new(duress_pin),
                             duress_code: zeroize::Zeroizing::new(code),
                             account_id: None,
@@ -2380,7 +2433,6 @@ impl ConnectAccountPanel {
                         // password, sovereign_confirm) unzeroized.
                         let payload = self.duress_enroll.as_ref().map(|e| {
                             crate::app::message::DuressEnrollmentPayload {
-                                regular_pin: zeroize::Zeroizing::new(e.regular_pin.clone()),
                                 duress_pin: zeroize::Zeroizing::new(e.duress_pin.clone()),
                                 duress_code: zeroize::Zeroizing::new(
                                     e.pending_code.clone().unwrap_or_default(),
@@ -2402,6 +2454,18 @@ impl ConnectAccountPanel {
                             e.error = Some(msg);
                         }
                     }
+                }
+            }
+            DuressMessage::CubesLoaded(cubes, gen) => {
+                if gen == self.session_generation {
+                    self.duress_cubes = Some(cubes);
+                }
+            }
+            DuressMessage::StateLoaded(st, gen) => {
+                // Only overwrite on a successful fetch (`Some`), so a transient
+                // failure doesn't blank a previously-loaded state.
+                if gen == self.session_generation && st.is_some() {
+                    self.duress_state = st;
                 }
             }
         }
@@ -3188,6 +3252,54 @@ pub fn load_duress_alert_contacts(client: &CoincubeClient, generation: u64) -> i
     )
 }
 
+/// Fetch the user's mainnet cubes + recovery-kit status for the Duress
+/// intro screen's per-Cube checklist. Filters to mainnet — testnet cubes
+/// hold no value, so their backup state is irrelevant here. Best-effort:
+/// any error resolves to an empty list (indistinguishable from "no
+/// mainnet cubes"), and the screen keeps its generic recovery-kit copy.
+fn load_duress_cubes(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
+    let client = client.clone();
+    iced::Task::perform(
+        async move {
+            client
+                .list_cubes()
+                .await
+                .map(|cubes| {
+                    cubes
+                        .into_iter()
+                        .filter(|c| c.network == "mainnet")
+                        .map(|c| DuressCube {
+                            name: c.name,
+                            has_recovery_kit: c.has_recovery_kit,
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        },
+        move |cubes| {
+            Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::Duress(DuressMessage::CubesLoaded(cubes, generation)),
+            ))
+        },
+    )
+}
+
+/// Fetch server-side duress state (enrolled / active) for the Duress intro
+/// screen. Best-effort: any error resolves to `None`, which the handler
+/// leaves as the prior value, so a transient failure just shows the last
+/// known state (or the setup flow before the first successful fetch).
+fn load_duress_state(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
+    let client = client.clone();
+    iced::Task::perform(
+        async move { client.get_duress_state().await.ok() },
+        move |state| {
+            Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::Duress(DuressMessage::StateLoaded(state, generation)),
+            ))
+        },
+    )
+}
+
 /// Load the user's cubes for the W12 invite-form multi-select, mapping
 /// the raw `CubeResponse`s into lightweight `InviteCubeOption`s. Used by
 /// both the initial `ShowInviteForm` load and the `InviteCubeForbidden`
@@ -3555,17 +3667,12 @@ fn validate_enroll_step(e: &DuressEnrollState) -> Result<(), String> {
             }
         }
         DuressEnrollStep::SetDuressPin => {
-            enroll::validate_duress_pin(&e.regular_pin, &e.duress_pin)
+            enroll::validate_duress_pin(&e.duress_pin, &e.duress_pin_confirm)
         }
-        DuressEnrollStep::SetAllClear => {
-            enroll::validate_all_clear(&e.all_clear, &e.regular_pin, &e.duress_pin)
+        DuressEnrollStep::SetAllClear => enroll::validate_all_clear(&e.all_clear, &e.duress_pin),
+        DuressEnrollStep::SetCrkPassword => {
+            enroll::validate_duress_crk_password(&e.crk_password, &e.duress_pin, &e.all_clear)
         }
-        DuressEnrollStep::SetCrkPassword => enroll::validate_duress_crk_password(
-            &e.crk_password,
-            &e.regular_pin,
-            &e.duress_pin,
-            &e.all_clear,
-        ),
         DuressEnrollStep::PickDelay => Ok(()),
         DuressEnrollStep::Confirm => {
             if e.memorized {
@@ -3585,8 +3692,8 @@ mod duress_enroll_tests {
         DuressEnrollState {
             tier,
             step,
-            regular_pin: "1234".to_string(),
             duress_pin: String::new(),
+            duress_pin_confirm: String::new(),
             all_clear: String::new(),
             crk_password: String::new(),
             delay: crate::services::duress::enroll::DuressDelay::default(),
@@ -3601,7 +3708,6 @@ mod duress_enroll_tests {
     #[test]
     fn zeroize_secrets_clears_all_sensitive_fields() {
         let mut s = state(EnrollTier::Tier1, DuressEnrollStep::Confirm);
-        s.regular_pin = "1234".to_string();
         s.duress_pin = "8765".to_string();
         s.all_clear = "correct horse battery".to_string();
         s.crk_password = "a-long-crk-password".to_string();
@@ -3610,7 +3716,6 @@ mod duress_enroll_tests {
 
         s.zeroize_secrets();
 
-        assert!(s.regular_pin.is_empty());
         assert!(s.duress_pin.is_empty());
         assert!(s.all_clear.is_empty());
         assert!(s.crk_password.is_empty());
@@ -3660,11 +3765,17 @@ mod duress_enroll_tests {
     }
 
     #[test]
-    fn validate_rejects_close_duress_pin() {
+    fn validate_duress_pin_step_requires_non_empty_and_matching_confirm() {
+        // The "distance from your regular PIN" rule is gone — any non-empty
+        // PIN entered twice passes the step. Collision with a real Cube PIN is
+        // enforced at persist time (`persist_duress_enrollment`), where Cube
+        // PIN hashes are available.
         let mut s = state(EnrollTier::Tier1, DuressEnrollStep::SetDuressPin);
-        s.duress_pin = "1235".to_string(); // Levenshtein 1
         assert!(validate_enroll_step(&s).is_err());
-        s.duress_pin = "8765".to_string();
+        s.duress_pin = "1235".to_string();
+        // Confirmation still empty → mismatch.
+        assert!(validate_enroll_step(&s).is_err());
+        s.duress_pin_confirm = "1235".to_string();
         assert!(validate_enroll_step(&s).is_ok());
     }
 

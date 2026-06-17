@@ -241,22 +241,23 @@ fn duress_pin_step(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessa
             .push(text::p1_bold("Set your duress PIN").style(theme::text::primary))
             .push(
                 text::p2_regular(
-                    "Your duress PIN must be at least 2 character changes from your regular PIN. \
-                 This prevents accidental activation.",
+                    "Choose a PIN you don't use to unlock any of your Cubes. Entering it at any \
+                 Cube's unlock screen triggers a duress wipe, so it can't be one of your real \
+                 unlock PINs.",
                 )
                 .color(color::GREY_3),
             )
-            .push(text::p2_regular("Confirm your regular PIN").color(color::GREY_3))
-            .push(
-                TextInput::new("Regular PIN", &state.regular_pin)
-                    .on_input(|v| msg(DuressMessage::RegularPinChanged(v)))
-                    .secure(true)
-                    .padding(15),
-            )
-            .push(text::p2_regular("New duress PIN").color(color::GREY_3))
+            .push(text::p2_regular("Duress PIN").color(color::GREY_3))
             .push(
                 TextInput::new("Duress PIN", &state.duress_pin)
                     .on_input(|v| msg(DuressMessage::DuressPinChanged(v)))
+                    .secure(true)
+                    .padding(15),
+            )
+            .push(text::p2_regular("Confirm duress PIN").color(color::GREY_3))
+            .push(
+                TextInput::new("Confirm duress PIN", &state.duress_pin_confirm)
+                    .on_input(|v| msg(DuressMessage::DuressPinConfirmChanged(v)))
                     .secure(true)
                     .padding(15),
             ),
