@@ -168,8 +168,11 @@ pub fn enroll_ux(state: &DuressEnrollState) -> Element<'_, ConnectAccountMessage
                 )
                 .push(iced::widget::Space::new().width(Length::Fill))
                 .push(
-                    button::transparent(None, "Cancel")
-                        .on_press(msg(DuressMessage::CancelEnrollment)),
+                    // Disabled while submitting: cancelling mid-enroll would
+                    // zeroize the duress secrets before the server result lands.
+                    button::transparent(None, "Cancel").on_press_maybe(
+                        (!state.submitting).then(|| msg(DuressMessage::CancelEnrollment)),
+                    ),
                 )
                 .push(primary),
         );

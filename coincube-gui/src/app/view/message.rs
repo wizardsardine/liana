@@ -1256,8 +1256,10 @@ pub enum DuressMessage {
     EnrollResult(Result<(), String>, u64),
     /// Mainnet cubes + per-cube recovery-kit status, loaded for the duress
     /// intro screen's "set up a Recovery Kit for each Cube" checklist.
-    /// Carries `session_generation` for stale-response guarding.
-    CubesLoaded(Vec<crate::app::state::connect::DuressCube>, u64),
+    /// `None` when the fetch failed, so a transient error doesn't blank a
+    /// previously-loaded list. Carries `session_generation` for stale-response
+    /// guarding.
+    CubesLoaded(Option<Vec<crate::app::state::connect::DuressCube>>, u64),
     /// Server-side duress state (enrolled / active), loaded on entering the
     /// Duress tab so the screen can show the enabled state instead of the
     /// setup flow. `None` when the fetch failed. Carries `session_generation`.
@@ -1291,7 +1293,14 @@ impl std::fmt::Debug for DuressMessage {
             MemorizedToggled(b) => write!(f, "MemorizedToggled({})", b),
             SubmitEnrollment => write!(f, "SubmitEnrollment"),
             EnrollResult(res, gen) => write!(f, "EnrollResult({:?}, {})", res, gen),
-            CubesLoaded(cubes, gen) => write!(f, "CubesLoaded({} cubes, {})", cubes.len(), gen),
+            CubesLoaded(cubes, gen) => write!(
+                f,
+                "CubesLoaded({}, {})",
+                cubes
+                    .as_ref()
+                    .map_or_else(|| "<none>".to_string(), |c| format!("{} cubes", c.len())),
+                gen
+            ),
             StateLoaded(s, gen) => write!(f, "StateLoaded({:?}, {})", s, gen),
         }
     }

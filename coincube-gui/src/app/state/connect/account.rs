@@ -655,6 +655,30 @@ impl ConnectAccountPanel {
         load_duress_state(&self.client, self.session_generation)
     }
 
+    /// Reflect a just-completed duress enrollment in the locally-cached
+    /// `duress_state` so the Duress intro flips from the setup flow to the
+    /// enabled state immediately. Connect tiers would otherwise keep showing
+    /// setup until the next server fetch, and Sovereign tiers never fetch at
+    /// all — so without this the enabled view could stay hidden despite an
+    /// armed duress PIN. Preserves `active`/`unlock_at` if a prior fetch
+    /// populated them (e.g. another device already enrolled the account).
+    fn mark_duress_enrolled(&mut self) {
+        match &mut self.duress_state {
+            Some(s) => {
+                s.enrolled = true;
+                s.this_device_registered = true;
+            }
+            None => {
+                self.duress_state = Some(crate::services::coincube::DuressState {
+                    active: false,
+                    unlock_at: None,
+                    enrolled: true,
+                    this_device_registered: true,
+                });
+            }
+        }
+    }
+
     /// Returns a clone of the authenticated client (with JWT set).
     /// Used by ConnectCubePanel to make API calls.
     pub fn authenticated_client(&self) -> Option<CoincubeClient> {
@@ -1691,17 +1715,27 @@ impl ConnectAccountPanel {
                             submitting: false,
                             cleared: false,
                         };
+                        // Cache the authoritative state we just fetched so the
+                        // Duress tab paints from it immediately instead of
+                        // flashing the setup flow while a fresh fetch is in
+                        // flight (see `duress_ux`).
+                        self.duress_state = Some(s);
                     }
                     // Confirmed not in duress — NOW reveal the dashboard.
                     DuressCheckOutcome::Ok(s) => {
                         self.step = ConnectFlowStep::Dashboard;
+                        // Cache the fetched state before any early return, so the
+                        // Duress tab reflects the enabled state on its first paint
+                        // rather than briefly showing enrollment CTAs.
+                        let needs_device_register = s.enrolled && !s.this_device_registered;
+                        self.duress_state = Some(s);
                         // Phase 0: a signed-in device on an already-enrolled
                         // account that isn't yet registered server-side mints +
                         // registers its OWN duress code (per-device, never
                         // shared), so it can fire trigger-with-code on its own
                         // activation. Fire-and-forget; idempotent (skips if this
                         // device already holds a code).
-                        if s.enrolled && !s.this_device_registered {
+                        if needs_device_register {
                             if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
                                 return register_device_duress_task(
                                     self.client.clone(),
@@ -2266,7 +2300,15 @@ impl ConnectAccountPanel {
                 };
             }
             DuressMessage::CancelEnrollment => {
-                self.clear_duress_enroll();
+                // Ignore cancel while a server enroll_duress is in flight:
+                // clear_duress_enroll zeroizes the duress PIN/code, so the
+                // EnrollResult success handler would have nothing left to
+                // persist — leaving the server enrolled but this device
+                // un-armed. The Cancel button is disabled in this state too;
+                // this is the authoritative backstop.
+                if self.duress_enroll.as_ref().is_none_or(|e| !e.submitting) {
+                    self.clear_duress_enroll();
+                }
             }
             DuressMessage::DuressPinChanged(v) => {
                 if let Some(e) = &mut self.duress_enroll {
@@ -2323,6 +2365,13 @@ impl ConnectAccountPanel {
                 let Some(e) = &mut self.duress_enroll else {
                     return iced::Task::none();
                 };
+                // Reject re-entrant submits: a second enroll while one is in
+                // flight would fire a duplicate server call and replace the
+                // stashed pending_code out from under the first. The button is
+                // disabled while submitting; this is the backstop.
+                if e.submitting {
+                    return iced::Task::none();
+                }
                 if let Err(msg) = validate_enroll_step(e) {
                     e.error = Some(msg);
                     return iced::Task::none();
@@ -2340,6 +2389,9 @@ impl ConnectAccountPanel {
                     // No Connect call — local wipe + cryptic only. Persist now.
                     let duress_pin = e.duress_pin.clone();
                     self.clear_duress_enroll();
+                    // No server state to fetch here, so flip the cached state
+                    // ourselves or the intro never leaves the setup flow.
+                    self.mark_duress_enrolled();
                     return iced::Task::done(Message::CompleteDuressEnrollment(
                         crate::app::message::DuressEnrollmentPayload {
                             duress_pin: zeroize::Zeroizing::new(duress_pin),
@@ -2443,6 +2495,10 @@ impl ConnectAccountPanel {
                         });
                         if let Some(payload) = payload {
                             self.clear_duress_enroll();
+                            // Server confirmed enrollment; reflect it in the
+                            // cached state now so the intro shows the enabled
+                            // view without waiting for another fetch.
+                            self.mark_duress_enrolled();
                             return iced::Task::done(Message::CompleteDuressEnrollment(payload));
                         }
                     }
@@ -2457,8 +2513,10 @@ impl ConnectAccountPanel {
                 }
             }
             DuressMessage::CubesLoaded(cubes, gen) => {
-                if gen == self.session_generation {
-                    self.duress_cubes = Some(cubes);
+                // Only overwrite on a successful fetch (`Some`), so a transient
+                // failure doesn't blank a previously-loaded checklist.
+                if gen == self.session_generation && cubes.is_some() {
+                    self.duress_cubes = cubes;
                 }
             }
             DuressMessage::StateLoaded(st, gen) => {
@@ -3255,8 +3313,9 @@ pub fn load_duress_alert_contacts(client: &CoincubeClient, generation: u64) -> i
 /// Fetch the user's mainnet cubes + recovery-kit status for the Duress
 /// intro screen's per-Cube checklist. Filters to mainnet — testnet cubes
 /// hold no value, so their backup state is irrelevant here. Best-effort:
-/// any error resolves to an empty list (indistinguishable from "no
-/// mainnet cubes"), and the screen keeps its generic recovery-kit copy.
+/// any error resolves to `None` (the handler then keeps any previously
+/// loaded list rather than blanking it), and an absent list leaves the
+/// screen on its generic recovery-kit copy.
 fn load_duress_cubes(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
     let client = client.clone();
     iced::Task::perform(
@@ -3274,7 +3333,7 @@ fn load_duress_cubes(client: &CoincubeClient, generation: u64) -> iced::Task<Mes
                         })
                         .collect::<Vec<_>>()
                 })
-                .unwrap_or_default()
+                .ok()
         },
         move |cubes| {
             Message::View(view::Message::ConnectAccount(
