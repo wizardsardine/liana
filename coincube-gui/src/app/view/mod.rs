@@ -147,6 +147,8 @@ pub fn dashboard_with_info<'a, T: Into<Element<'a, Message>>>(
     let nav_ctx = nav::NavContext {
         has_vault,
         has_p2p,
+        network: cache.network,
+        p2p_test_coordinator: cache.p2p_test_coordinator,
         cube_name,
         lightning_address,
         avatar: avatar_handle,
@@ -250,6 +252,47 @@ pub fn placeholder<'a, T: Into<Element<'a, Message>>>(
         .push(text(title).style(theme::text::secondary).bold())
         .push(
             text(subtitle)
+                .size(P2_SIZE)
+                .style(theme::text::secondary)
+                .align_x(Alignment::Center),
+        )
+        .spacing(16)
+        .align_x(Alignment::Center);
+
+    Container::new(content)
+        .width(Length::Fill)
+        .padding(60)
+        .center_x(Length::Fill)
+        .style(|t| container::Style {
+            background: Some(iced::Background::Color(t.colors.cards.simple.background)),
+            border: iced::Border {
+                radius: 20.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+/// Full-panel placeholder for a route whose feature isn't available on the
+/// current network — e.g. a restored or deep-linked route onto a rail item
+/// that renders greyed out. Mirrors [`placeholder`] but owns its subtitle so
+/// it can be built from a transient reason string (see
+/// [`crate::app::features::route_availability`]).
+pub fn feature_unavailable_panel(reason: String) -> Element<'static, Message> {
+    let content = Column::new()
+        .push(
+            coincube_ui::icon::plug_icon()
+                .size(48)
+                .style(theme::text::secondary),
+        )
+        .push(
+            text("Not available on this network")
+                .style(theme::text::secondary)
+                .bold(),
+        )
+        .push(
+            text(reason)
                 .size(P2_SIZE)
                 .style(theme::text::secondary)
                 .align_x(Alignment::Center),

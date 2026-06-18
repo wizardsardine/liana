@@ -5,35 +5,32 @@ use coincube_ui::icon::{home_icon, receipt_icon, receive_icon, send_icon, settin
 /// Secondary-rail items for the Spark wallet section.
 pub fn items(_ctx: &NavContext) -> Vec<SubItem> {
     vec![
-        SubItem {
-            label: "Overview",
-            icon: home_icon,
-            route: Menu::Spark(SparkSubMenu::Overview),
-            matches: |m| matches!(m, Menu::Spark(SparkSubMenu::Overview)),
-        },
-        SubItem {
-            label: "Send",
-            icon: send_icon,
-            route: Menu::Spark(SparkSubMenu::Send),
-            matches: |m| matches!(m, Menu::Spark(SparkSubMenu::Send)),
-        },
-        SubItem {
-            label: "Receive",
-            icon: receive_icon,
-            route: Menu::Spark(SparkSubMenu::Receive),
-            matches: |m| matches!(m, Menu::Spark(SparkSubMenu::Receive)),
-        },
-        SubItem {
-            label: "Transactions",
-            icon: receipt_icon,
-            route: Menu::Spark(SparkSubMenu::Transactions(None)),
-            matches: |m| matches!(m, Menu::Spark(SparkSubMenu::Transactions(_))),
-        },
-        SubItem {
-            label: "Settings",
-            icon: settings_icon,
-            route: Menu::Spark(SparkSubMenu::Settings(Some(SparkSettingsOption::General))),
-            matches: |m| matches!(m, Menu::Spark(SparkSubMenu::Settings(_))),
-        },
+        SubItem::new(
+            "Overview",
+            home_icon,
+            Menu::Spark(SparkSubMenu::Overview),
+            |m| matches!(m, Menu::Spark(SparkSubMenu::Overview)),
+        ),
+        SubItem::new("Send", send_icon, Menu::Spark(SparkSubMenu::Send), |m| {
+            matches!(m, Menu::Spark(SparkSubMenu::Send))
+        }),
+        SubItem::new(
+            "Receive",
+            receive_icon,
+            Menu::Spark(SparkSubMenu::Receive),
+            |m| matches!(m, Menu::Spark(SparkSubMenu::Receive)),
+        ),
+        SubItem::new(
+            "Transactions",
+            receipt_icon,
+            Menu::Spark(SparkSubMenu::Transactions(None)),
+            |m| matches!(m, Menu::Spark(SparkSubMenu::Transactions(_))),
+        ),
+        SubItem::new(
+            "Settings",
+            settings_icon,
+            Menu::Spark(SparkSubMenu::Settings(Some(SparkSettingsOption::General))),
+            |m| matches!(m, Menu::Spark(SparkSubMenu::Settings(_))),
+        ),
     ]
 }

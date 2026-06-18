@@ -6,17 +6,17 @@ use coincube_ui::icon::{home_icon, settings_icon};
 /// Clicking Settings lands on General (first third-rail option).
 pub fn items(_ctx: &NavContext) -> Vec<SubItem> {
     vec![
-        SubItem {
-            label: "Overview",
-            icon: home_icon,
-            route: Menu::Cube(CubeSubMenu::Overview),
-            matches: |m| matches!(m, Menu::Cube(CubeSubMenu::Overview)),
-        },
-        SubItem {
-            label: "Settings",
-            icon: settings_icon,
-            route: Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::General)),
-            matches: |m| matches!(m, Menu::Cube(CubeSubMenu::Settings(_))),
-        },
+        SubItem::new(
+            "Overview",
+            home_icon,
+            Menu::Cube(CubeSubMenu::Overview),
+            |m| matches!(m, Menu::Cube(CubeSubMenu::Overview)),
+        ),
+        SubItem::new(
+            "Settings",
+            settings_icon,
+            Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::General)),
+            |m| matches!(m, Menu::Cube(CubeSubMenu::Settings(_))),
+        ),
     ]
 }

@@ -129,10 +129,13 @@ fn identity_block<'a>(ctx: &NavContext<'a>) -> Element<'a, Message> {
             .into()
     };
 
+    // The avatar is managed on Cube → Settings → Avatar, so clicking it
+    // jumps straight there (rather than Cube → Overview, where there's
+    // nothing to do with it).
     let avatar_button: Element<'a, Message> = Button::new(avatar)
         .style(theme::button::transparent)
         .on_press(Message::Menu(Menu::Cube(
-            crate::app::menu::CubeSubMenu::Overview,
+            crate::app::menu::CubeSubMenu::Settings(crate::app::menu::CubeSettingsOption::Avatar),
         )))
         .into();
 
@@ -242,6 +245,13 @@ fn connect_status_dot<'a>(status: &'a crate::app::ConnectionStatus) -> Element<'
 pub struct NavContext<'a> {
     pub has_vault: bool,
     pub has_p2p: bool,
+    /// Active Bitcoin network. Drives per-feature availability gating
+    /// (Spark/Liquid on the primary rail, Buy/Sell + P2P in Marketplace)
+    /// via [`crate::app::features`].
+    pub network: coincube_core::miniscript::bitcoin::Network,
+    /// Whether a non-mainnet Mostro coordinator is configured. Only
+    /// affects P2P on test networks (mainnet P2P is always available).
+    pub p2p_test_coordinator: bool,
     pub cube_name: &'a str,
     pub lightning_address: Option<&'a str>,
     pub avatar: Option<&'a iced::widget::image::Handle>,
