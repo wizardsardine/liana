@@ -409,3 +409,29 @@ def lianad_multipath(bitcoin_backend, directory):
         raise
 
     lianad.cleanup()
+
+
+@pytest.fixture(scope="session")
+def payjoin_services():
+    """Start local payjoin directory and OHTTP relay using payjoin-ffi test utils.
+
+    Yields a dict with directory_url, ohttp_relay_url, and cert_path.
+    """
+    try:
+        from payjoin import TestServices
+    except ImportError:
+        pytest.skip("payjoin-ffi not installed (pip install payjoin)")
+
+    services = TestServices.initialize()
+    services.wait_for_services_ready()
+
+    cert_dir = tempfile.mkdtemp(prefix="payjoin-test-cert-")
+    cert_path = os.path.join(cert_dir, "directory.der")
+    with open(cert_path, "wb") as f:
+        f.write(services.cert())
+
+    yield {
+        "directory_url": services.directory_url(),
+        "ohttp_relay_url": services.ohttp_relay_url(),
+        "cert_path": cert_path,
+    }
