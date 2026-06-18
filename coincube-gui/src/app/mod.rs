@@ -2563,7 +2563,14 @@ impl App {
                 } else {
                     Some(self.cache.cube_id.clone())
                 };
-                return Task::perform(
+                // The device/stream bootstrap below populates grpc_url /
+                // tokens / device_id but NOT the cube's server-side id. When
+                // that id is the missing Keychain prerequisite, this is the
+                // only thing that unblocks signing — so drive cube
+                // registration in parallel rather than dead-looping the user
+                // on a "Sign with Connect" that can never resolve it.
+                let cube_registration = self.panels.connect.ensure_cube_registered();
+                let bootstrap = Task::perform(
                     async move {
                         use crate::services::connect::client::cache::ConnectCache;
                         use crate::services::connect::grpc::bootstrap::ensure_device_registered_best_effort;
@@ -2651,6 +2658,7 @@ impl App {
                     },
                     |m| m,
                 );
+                return Task::batch([cube_registration, bootstrap]);
             }
             Message::InstallStats(_) => {
                 if let Some(panel) = self.panels.current_mut() {

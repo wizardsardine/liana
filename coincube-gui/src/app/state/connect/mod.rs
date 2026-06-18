@@ -177,6 +177,27 @@ impl ConnectPanel {
         iced::Task::none()
     }
 
+    /// Best-effort: make sure the active Cube is registered with Connect so
+    /// `server_cube_id` (mirrored to `cache.current_cube_server_id`) becomes
+    /// available. The stream/device bootstrap behind `EnsureConnectReady`
+    /// brings up grpc_url / tokens / device_id but never registers the cube,
+    /// so when that numeric id is the missing Keychain prerequisite this is
+    /// what unblocks "Sign with Connect". No-op once the id is known. With a
+    /// live session we register directly (covers a registration that errored
+    /// or is still in flight); otherwise we kick the session check, whose
+    /// Dashboard transition auto-registers (see `update`).
+    pub fn ensure_cube_registered(&mut self) -> iced::Task<Message> {
+        if self.cube.server_cube_id.is_some() {
+            return iced::Task::none();
+        }
+        if self.account.is_authenticated() {
+            self.sync_client();
+            self.cube.register_cube()
+        } else {
+            self.ensure_session_check()
+        }
+    }
+
     /// Check if avatar should be loaded and return task if so.
     pub fn check_and_load_avatar(&self) -> iced::Task<Message> {
         if let Some(task) = self.cube.load_avatar_if_needed() {
