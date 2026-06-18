@@ -316,6 +316,18 @@ pub fn load_mostro_config() -> Result<MostroConfig, String> {
         .map_err(|e| format!("Failed to read mostro config at {}: {e}", path.display()))?;
     let mut config: MostroConfig = serde_json::from_slice(&data)
         .map_err(|e| format!("Failed to parse mostro config at {}: {e}", path.display()))?;
+    // Refuse a config written by a newer app version. Stamping it down to
+    // CONFIG_VERSION (and a later write-back) would silently drop fields this
+    // build doesn't understand, so fail loudly instead of downgrading.
+    if config.version > CONFIG_VERSION {
+        return Err(format!(
+            "Mostro config at {} is version {}, newer than this app supports ({}). \
+             Update the app to load it.",
+            path.display(),
+            config.version,
+            CONFIG_VERSION
+        ));
+    }
     // Legacy files (version 0, nodes without a `network` tag) deserialize
     // with every node defaulting to Mainnet — the correct migration, since
     // the only pre-tagging coordinator was the mainnet official one. Stamp

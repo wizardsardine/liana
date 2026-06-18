@@ -35,11 +35,11 @@ impl BreezConfig {
         // runtime `.env` overrides apply consistently with the REST/SSE clients.
         let coincube_base = crate::services::coincube_api_base_url();
 
-        // `from_env` rejects every network without a real backend, so only
-        // Bitcoin / Testnet / Signet reach here. The Testnet4 + Regtest arms
-        // exist only to keep the match exhaustive — they route to the
-        // Coincube-hosted testnet Esplora rather than a localhost fallback,
-        // and are never hit in practice.
+        // `from_env` rejects every network without a real backend (see
+        // `features::liquid` — mainnet only), so only Bitcoin reaches here.
+        // The remaining arms exist solely to keep the match exhaustive: they
+        // route to the Coincube-hosted testnet Esplora rather than a localhost
+        // fallback, and are never hit in practice.
         let liquid_explorer_url = match self.network {
             bitcoin::Network::Bitcoin => format!("{}/api/v1/esplora/liquid/mainnet", coincube_base),
             bitcoin::Network::Signet => "https://blockstream.info/liquidtestnet/api".to_string(),

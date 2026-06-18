@@ -1051,6 +1051,14 @@ impl P2PPanel {
             + Send
             + 'static,
     {
+        // Hard-block: every in-trade escrow action (submit invoice, confirm
+        // fiat, cancel, dispute) routes through here, so a single guard keeps
+        // them all off a coordinator whose network doesn't match the wallet
+        // (COIN-371 Q4) — matching the create/take entry points.
+        if !self.coordinator_network_matches() {
+            self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+            return Task::none();
+        }
         self.trade_action_loading = true;
         if let Some(ref order_id) = self.selected_trade {
             let data = super::mostro::TradeActionData {
@@ -4956,13 +4964,19 @@ impl State for P2PPanel {
                 return Task::done(Message::View(view::Message::Clipboard(id)));
             }
             P2PMessage::CancelOrder(order_id) => {
+                // Hard-block: cancel is a coordinator RPC too, so keep it off
+                // a wrong-network coordinator (COIN-371 Q4).
+                if !self.coordinator_network_matches() {
+                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+                    return Task::none();
+                }
                 let data = super::mostro::TradeActionData {
                     order_id,
                     cube_name: self.cube_name(),
                     mnemonic: self.mnemonic.clone(),
                     invoice: None,
-                    mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
-                    relay_urls: self.mostro_config.relays.clone(),
+                    mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
+                    relay_urls: self.resolved_coordinator().relays,
                 };
                 return Task::perform(super::mostro::cancel_trade(data), |result| {
                     Message::View(view::Message::P2P(P2PMessage::CancelOrderResult(
@@ -5243,8 +5257,8 @@ impl State for P2PPanel {
                             mnemonic: self.mnemonic.clone(),
                             amount,
                             lightning_invoice: invoice,
-                            mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
-                            relay_urls: self.mostro_config.relays.clone(),
+                            mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
+                            relay_urls: self.resolved_coordinator().relays,
                             fiat_code: Some(order.fiat_currency.clone()),
                             fiat_amount: Some(amount.unwrap_or(order.fiat_amount as i64)),
                             payment_method: Some(order.payment_methods.join(",")),
@@ -5624,6 +5638,12 @@ impl State for P2PPanel {
                 self.invoice_copied = false;
             }
             P2PMessage::CancelPaymentInvoice(order_id) => {
+                // Hard-block: keep this cancel RPC off a wrong-network
+                // coordinator (COIN-371 Q4).
+                if !self.coordinator_network_matches() {
+                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+                    return Task::none();
+                }
                 // Block cancel while a Spark RPC is in flight. If the
                 // prepare/send completes after we fire `cancel_trade`,
                 // Mostro and Spark disagree on the order state and the
@@ -5641,8 +5661,8 @@ impl State for P2PPanel {
                     cube_name: self.cube_name(),
                     mnemonic: self.mnemonic.clone(),
                     invoice: None,
-                    mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
-                    relay_urls: self.mostro_config.relays.clone(),
+                    mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
+                    relay_urls: self.resolved_coordinator().relays,
                 };
                 return Task::perform(super::mostro::cancel_trade(data), |result| {
                     Message::View(view::Message::P2P(P2PMessage::CancelOrderResult(
@@ -5808,8 +5828,8 @@ impl State for P2PPanel {
                     cube_name: self.cube_name(),
                     mnemonic: self.mnemonic.clone(),
                     invoice: None,
-                    mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
-                    relay_urls: self.mostro_config.relays.clone(),
+                    mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
+                    relay_urls: self.resolved_coordinator().relays,
                 };
                 return Task::perform(super::mostro::rate_counterparty(data, rating), |result| {
                     Message::View(view::Message::P2P(P2PMessage::TradeActionResult(result)))
@@ -5966,8 +5986,8 @@ impl State for P2PPanel {
                         cube_name,
                         mnemonic: self.mnemonic.clone(),
                         invoice: Some(text),
-                        mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
-                        relay_urls: self.mostro_config.relays.clone(),
+                        mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
+                        relay_urls: self.resolved_coordinator().relays,
                     };
                     return Task::perform(super::mostro::send_admin_chat_message(data), |result| {
                         Message::View(view::Message::P2P(P2PMessage::DisputeChatMessageSent(
@@ -6035,8 +6055,8 @@ impl State for P2PPanel {
                         cube_name,
                         mnemonic: self.mnemonic.clone(),
                         invoice: Some(text),
-                        mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
-                        relay_urls: self.mostro_config.relays.clone(),
+                        mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
+                        relay_urls: self.resolved_coordinator().relays,
                     };
                     return Task::perform(super::mostro::send_chat_message(data), |result| {
                         Message::View(view::Message::P2P(P2PMessage::ChatMessageSent(result)))
@@ -6317,8 +6337,9 @@ impl State for P2PPanel {
                     let oid_for_result = order_id.clone();
                     let cube_name = self.cube_name();
                     let mnemonic = self.mnemonic.clone();
-                    let mostro_pubkey_hex = self.mostro_config.active_pubkey_hex().to_string();
-                    let relay_urls = self.mostro_config.relays.clone();
+                    let coordinator = self.resolved_coordinator();
+                    let mostro_pubkey_hex = coordinator.pubkey_hex;
+                    let relay_urls = coordinator.relays;
 
                     self.attachment_sending = true;
                     return Task::perform(

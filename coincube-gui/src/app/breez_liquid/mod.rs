@@ -45,11 +45,11 @@ impl std::error::Error for BreezError {}
 ///
 /// The master signer is always loaded — its mnemonic backs seed-derived
 /// features (Spark, and P2P/Mostro identity) that work on networks where the
-/// Liquid SDK doesn't. The Liquid SDK itself is only *connected* where a real
-/// Liquid Esplora backend exists (`crate::app::features::liquid` — mainnet,
-/// testnet, signet). On the rest (Testnet4, Regtest) it returns a
-/// disconnected client that still carries the signer, so the Liquid wallet UI
-/// stays gated (no localhost Esplora) without taking down P2P.
+/// Liquid SDK doesn't. The Liquid SDK itself is only *connected* where it has
+/// a usable backend (`crate::app::features::liquid` — mainnet only; the SDK
+/// rejects `LiquidNetwork::Testnet` and regtest needs a localhost Esplora).
+/// On every other network it returns a disconnected client that still carries
+/// the signer, so the Liquid wallet UI stays gated without taking down P2P.
 pub async fn load_breez_client(
     datadir: &Path,
     network: Network,
@@ -66,19 +66,8 @@ pub async fn load_breez_client(
         Some(password),
     ) {
         Ok(signer) => Arc::new(Mutex::new(signer)),
-        // On a network where Liquid isn't connected, a missing signer isn't
-        // fatal — return a plain disconnected client so a seed-less cube
-        // (e.g. watch-only) still loads. On a supported network the signer is
-        // required to connect, so the error propagates.
-        Err(e) if !liquid_supported => {
-            log::info!(
-                "No master signer for disconnected cube on {network}: {e}; \
-                 using a signer-less disconnected client"
-            );
-            return Ok(Arc::new(BreezClient::disconnected(network)));
-        }
         Err(e) => {
-            return Err(match e {
+            let mapped = match e {
                 coincube_core::signer::SignerError::MnemonicStorage(io_err)
                     if io_err.kind() == std::io::ErrorKind::NotFound =>
                 {
@@ -88,7 +77,20 @@ pub async fn load_breez_client(
                     BreezError::SignerNotFound(fingerprint)
                 }
                 _ => BreezError::SignerError(e.to_string()),
-            });
+            };
+            // A genuinely *absent* signer (seed-less / watch-only cube) is not
+            // fatal on a network where Liquid isn't connected — degrade to a
+            // signer-less disconnected client so the cube still loads. Every
+            // other failure (wrong PIN, decryption, IO errors) propagates so
+            // it surfaces as a real error rather than being silently masked.
+            if !liquid_supported && matches!(mapped, BreezError::SignerNotFound(_)) {
+                log::info!(
+                    "No master signer for disconnected cube on {network}: {mapped}; \
+                     using a signer-less disconnected client"
+                );
+                return Ok(Arc::new(BreezClient::disconnected(network)));
+            }
+            return Err(mapped);
         }
     };
 

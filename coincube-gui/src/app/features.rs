@@ -58,14 +58,16 @@ pub fn spark(net: Network) -> Availability {
     }
 }
 
-/// Liquid wallet. Enabled only where a real Liquid Esplora backend
-/// exists: mainnet + testnet (Coincube-hosted) and signet (Blockstream).
-/// Testnet4 and regtest would point Breez at a localhost Esplora normal
-/// users don't run, so they're disabled.
+/// Liquid wallet. Mainnet only. The Breez Liquid SDK (0.12.2) connects
+/// solely on `LiquidNetwork::Mainnet` and `Regtest` — it hard-rejects
+/// `LiquidNetwork::Testnet` at `connect_with_signer`, which is what
+/// testnet *and* signet map to. Regtest would point Breez at a localhost
+/// Esplora normal users don't run. So mainnet is the only network with a
+/// usable Liquid backend.
 pub fn liquid(net: Network) -> Availability {
     match net {
-        Network::Bitcoin | Network::Testnet | Network::Signet => Availability::Available,
-        other => unavailable("Liquid", other), // Testnet4, Regtest
+        Network::Bitcoin => Availability::Available,
+        other => unavailable("Liquid", other),
     }
 }
 
@@ -134,9 +136,9 @@ mod tests {
         // (network, spark, liquid, buy_sell, p2p_without_coordinator)
         let expected = [
             (Network::Bitcoin, true, true, true, true),
-            (Network::Testnet, false, true, false, false),
+            (Network::Testnet, false, false, false, false),
             (Network::Testnet4, false, false, false, false),
-            (Network::Signet, false, true, false, false),
+            (Network::Signet, false, false, false, false),
             (Network::Regtest, true, false, false, false),
         ];
 
