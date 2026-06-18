@@ -9,12 +9,15 @@ set -euo pipefail
 #   ./contrib/coverage.sh
 #   HTML=1 ./contrib/coverage.sh
 #   FAIL_UNDER_LINES=45 ./contrib/coverage.sh
+#   CARGO_TOOLCHAIN=nightly COVERAGE_DOCTESTS=1 ./contrib/coverage.sh
 
 OUTPUT_DIR="${OUTPUT_DIR:-target/coverage}"
 LCOV_PATH="${LCOV_PATH:-${OUTPUT_DIR}/lcov.info}"
 SUMMARY_PATH="${SUMMARY_PATH:-${OUTPUT_DIR}/summary.json}"
 HTML="${HTML:-0}"
 COVERAGE_CLEAN="${COVERAGE_CLEAN:-1}"
+CARGO_TOOLCHAIN="${CARGO_TOOLCHAIN:-}"
+COVERAGE_DOCTESTS="${COVERAGE_DOCTESTS:-0}"
 
 # The GUI embeds this value at compile time. Unit and integration tests do not
 # contact Breez unless explicitly configured, so mirror CI's harmless default.
@@ -32,6 +35,12 @@ fi
 
 mkdir -p "${OUTPUT_DIR}"
 
+cargo_llvm_cov=(cargo)
+if [[ -n "${CARGO_TOOLCHAIN}" ]]; then
+  cargo_llvm_cov+=("+${CARGO_TOOLCHAIN}")
+fi
+cargo_llvm_cov+=(llvm-cov)
+
 coverage_args=(
   --workspace
   --exclude coincube-fuzz
@@ -41,8 +50,17 @@ coverage_args=(
   --ignore-filename-regex '/(target|fuzz)/'
 )
 
+report_args=(
+  --ignore-filename-regex '/(target|fuzz)/'
+)
+
+if [[ "${COVERAGE_DOCTESTS}" == "1" ]]; then
+  coverage_args+=(--doctests)
+  report_args+=(--doctests)
+fi
+
 coverage_command=(
-  cargo llvm-cov
+  "${cargo_llvm_cov[@]}"
   "${coverage_args[@]}"
 )
 
@@ -61,7 +79,7 @@ if [[ -n "${FAIL_UNDER_REGIONS:-}" ]]; then
 fi
 
 if [[ "${COVERAGE_CLEAN}" == "1" ]]; then
-  cargo llvm-cov clean --workspace
+  "${cargo_llvm_cov[@]}" clean --workspace
 fi
 coverage_command+=(
   --lcov
@@ -70,20 +88,23 @@ coverage_command+=(
 set +e
 "${coverage_command[@]}" "$@"
 run_status=$?
-set -e
 
-cargo llvm-cov report \
-  --ignore-filename-regex '/(target|fuzz)/' \
+"${cargo_llvm_cov[@]}" report \
+  "${report_args[@]}" \
   --summary-only \
   --json \
   --output-path "${SUMMARY_PATH}"
+summary_status=$?
 
+html_status=0
 if [[ "${HTML}" == "1" ]]; then
-  cargo llvm-cov report \
-    --ignore-filename-regex '/(target|fuzz)/' \
+  "${cargo_llvm_cov[@]}" report \
+    "${report_args[@]}" \
     --html \
     --output-dir "${OUTPUT_DIR}/html"
+  html_status=$?
 fi
+set -e
 
 cat <<EOF
 Coverage artifacts written:
@@ -97,5 +118,13 @@ fi
 
 if [[ "${run_status}" -ne 0 ]]; then
   echo "Coverage test run failed with exit status ${run_status}." >&2
+  exit "${run_status}"
 fi
-exit "${run_status}"
+if [[ "${summary_status}" -ne 0 ]]; then
+  echo "Coverage summary generation failed with exit status ${summary_status}." >&2
+  exit "${summary_status}"
+fi
+if [[ "${html_status}" -ne 0 ]]; then
+  echo "Coverage HTML generation failed with exit status ${html_status}." >&2
+  exit "${html_status}"
+fi

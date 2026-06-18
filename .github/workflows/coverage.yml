@@ -16,13 +16,15 @@ jobs:
     timeout-minutes: 45
     env:
       BREEZ_API_KEY: DUMMY_BREEZ_API_KEY
+      CARGO_TOOLCHAIN: nightly-2026-06-17
+      COVERAGE_DOCTESTS: 1
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: 1.92.0
+          toolchain: nightly-2026-06-17
           components: llvm-tools-preview
 
       - name: Install system dependencies
