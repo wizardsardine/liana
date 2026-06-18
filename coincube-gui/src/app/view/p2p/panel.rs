@@ -427,6 +427,29 @@ impl P2PPanel {
         network: Network,
     ) -> Self {
         let default_currency = default_currency.unwrap_or_else(|| "USD".to_string());
+        // Load the saved Mostro config. On failure (unreadable, corrupt, or
+        // written by a newer app version) fall back to defaults but surface
+        // the failure in Settings — and `save_mostro_config` refuses to
+        // overwrite a newer on-disk config, so the user's coordinators/relays
+        // aren't silently discarded.
+        let (mostro_config, mostro_config_error) = match load_mostro_config() {
+            Ok(mut cfg) => {
+                // Never start with a cross-network coordinator selected
+                // (COIN-371 §3.4) — prefer a node tagged for this network.
+                cfg.select_default_for(network);
+                (cfg, None)
+            }
+            Err(e) => {
+                tracing::error!("Failed to load mostro config, using defaults: {e}");
+                (
+                    MostroConfig::default(),
+                    Some(
+                        "Saved P2P config couldn't be loaded (it may be from a newer app \
+                         version); showing defaults. Changes won't overwrite it.",
+                    ),
+                )
+            }
+        };
         Self {
             wallet,
             spark_backend,
@@ -504,21 +527,12 @@ impl P2PPanel {
             dispute_chat_input: Default::default(),
             pending_dispute_chat_message: None,
             network,
-            mostro_config: {
-                let mut cfg = load_mostro_config().unwrap_or_else(|e| {
-                    tracing::error!("Failed to load mostro config, using defaults: {e}");
-                    MostroConfig::default()
-                });
-                // Never start with a cross-network coordinator selected
-                // (COIN-371 §3.4) — prefer a node tagged for this network.
-                cfg.select_default_for(network);
-                cfg
-            },
+            mostro_config,
             new_relay_input: Default::default(),
             new_node_name_input: Default::default(),
             new_node_pubkey_input: Default::default(),
             new_node_is_test: false,
-            mostro_config_error: None,
+            mostro_config_error,
             stream_error: None,
             cached_trade_messages: Vec::new(),
             cached_chat_identity: None,
@@ -3717,9 +3731,13 @@ impl P2PPanel {
     }
 
     /// Resolved P2P test-coordinator gate for this cube's network, mirrored
-    /// into [`Cache`] so the nav rail can grey the P2P item.
+    /// into [`Cache`] so the nav rail can grey the P2P item. Requires both a
+    /// test coordinator configured for the network (`MostroConfig`) *and* a
+    /// connected Spark backend — escrow is paid via HODL invoices over Spark,
+    /// so without an actual backend (e.g. the bridge failed to start on
+    /// regtest) P2P can't function and must stay gated.
     pub fn has_test_coordinator(&self) -> bool {
-        self.mostro_config.has_test_coordinator(self.network)
+        self.mostro_config.has_test_coordinator(self.network) && self.spark_backend.is_some()
     }
 
     /// Warning banner shown when the active coordinator's network doesn't
@@ -3860,9 +3878,14 @@ impl P2PPanel {
         .width(Length::Fill);
 
         // ── Relays card ──
+        // Edit the relay set the *current* network actually uses: the
+        // dedicated test relays on a test network, the shared set on mainnet.
+        // Otherwise test-network connections (which prefer `test_relays`)
+        // would be invisible and uneditable here.
+        let on_test_network = NetworkKind::of(self.network) == NetworkKind::Test;
         let relay_rows: Vec<Element<'a, view::Message>> = self
             .mostro_config
-            .relays
+            .settings_relays(self.network)
             .iter()
             .map(|relay| {
                 let remove_btn = button::secondary_compact(Some(icon::trash_icon()), "")
@@ -3879,10 +3902,18 @@ impl P2PPanel {
             })
             .collect();
 
+        let (relays_title, relays_subtitle) = if on_test_network {
+            (
+                "Test Relays",
+                "Relays for test-network Mostro connections (falls back to the shared relays when empty)",
+            )
+        } else {
+            ("Relays", "Relays used to connect to Mostro nodes")
+        };
         let relays_card = card::simple(
             column![
-                p1_bold("Relays"),
-                p2_regular("Relays used to connect to Mostro nodes").style(theme::text::secondary),
+                p1_bold(relays_title),
+                p2_regular(relays_subtitle).style(theme::text::secondary),
             ]
             .spacing(4)
             .push(column(relay_rows).spacing(12))
@@ -5050,12 +5081,16 @@ impl State for P2PPanel {
                 } else if !has_host {
                     self.new_relay_input.valid = false;
                     self.new_relay_input.warning = Some("Invalid relay URL — missing host");
-                } else if self.mostro_config.relays.contains(&url) {
+                } else if self
+                    .mostro_config
+                    .settings_relays(self.network)
+                    .contains(&url)
+                {
                     self.new_relay_input.valid = false;
                     self.new_relay_input.warning = Some("Relay already exists");
                 } else {
                     let mut trial = self.mostro_config.clone();
-                    trial.relays.push(url);
+                    trial.settings_relays_mut(self.network).push(url);
                     match save_mostro_config(&trial) {
                         Ok(()) => {
                             self.mostro_config = trial;
@@ -5071,7 +5106,9 @@ impl State for P2PPanel {
             }
             P2PMessage::MostroRemoveRelay(url) => {
                 let mut trial = self.mostro_config.clone();
-                trial.relays.retain(|r| r != &url);
+                trial
+                    .settings_relays_mut(self.network)
+                    .retain(|r| r != &url);
                 trial.ensure_defaults();
                 match save_mostro_config(&trial) {
                     Ok(()) => {
@@ -5815,6 +5852,13 @@ impl State for P2PPanel {
                 self.trade_rating = rating;
             }
             P2PMessage::SubmitRating => {
+                // Hard-block: rating is a coordinator RPC too, so keep it off a
+                // wrong-network coordinator like the other trade actions
+                // (COIN-371 Q4).
+                if !self.coordinator_network_matches() {
+                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+                    return Task::none();
+                }
                 let rating = self.trade_rating;
                 if rating == 0 {
                     return Task::none();

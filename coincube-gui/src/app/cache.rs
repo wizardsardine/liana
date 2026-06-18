@@ -64,11 +64,12 @@ pub struct Cache {
     /// Whether the P2P panel is available (requires a valid mnemonic)
     pub has_p2p: bool,
     /// Resolved P2P test-coordinator gate for [`Self::network`]: a
-    /// test-network Mostro coordinator is configured *and* the network has a
-    /// usable Lightning rail for escrow (effectively Regtest). Drives the
-    /// P2P nav-rail gate via [`crate::app::features::p2p`]. Mirrored from the
-    /// P2P panel's `MostroConfig` (`view::p2p::config`), since the stateless
-    /// sidebar view can't reach the panel.
+    /// test-network Mostro coordinator is configured, the network has a usable
+    /// Lightning rail for escrow (effectively Regtest), *and* a Spark backend
+    /// is actually connected (escrow is paid over Spark). Drives the P2P
+    /// nav-rail gate via [`crate::app::features::p2p`]. Mirrored from the P2P
+    /// panel (`P2PPanel::has_test_coordinator`), since the stateless sidebar
+    /// view can't reach the panel.
     pub p2p_test_coordinator: bool,
     /// Current theme mode (dark/light) — used for theme-aware widget rendering
     pub theme_mode: coincube_ui::theme::palette::ThemeMode,

@@ -228,6 +228,26 @@ impl MostroConfig {
         }
     }
 
+    /// The relay set managed in Settings for `net`: the dedicated test set on
+    /// test networks, the shared set on mainnet. (Connections additionally
+    /// fall back to the shared set when the test set is empty — see
+    /// [`Self::relays_for`].) Paired with [`Self::settings_relays_mut`] so the
+    /// UI shows and edits exactly the set a given network uses.
+    pub fn settings_relays(&self, net: bitcoin::Network) -> &[String] {
+        match NetworkKind::of(net) {
+            NetworkKind::Mainnet => &self.relays,
+            NetworkKind::Test => &self.test_relays,
+        }
+    }
+
+    /// Mutable counterpart to [`Self::settings_relays`].
+    pub fn settings_relays_mut(&mut self, net: bitcoin::Network) -> &mut Vec<String> {
+        match NetworkKind::of(net) {
+            NetworkKind::Mainnet => &mut self.relays,
+            NetworkKind::Test => &mut self.test_relays,
+        }
+    }
+
     /// Resolve the coordinator + relays to use on `net`.
     ///
     /// Prefers the active node when it matches the network kind; otherwise
@@ -339,6 +359,20 @@ pub fn load_mostro_config() -> Result<MostroConfig, String> {
 
 pub fn save_mostro_config(config: &MostroConfig) -> Result<(), String> {
     let path = config_file_path()?;
+    // Never clobber a config written by a newer app version. This is the
+    // backstop for the load-time guard: if loading failed (too new) and the
+    // caller fell back to defaults, a later edit must not downgrade the
+    // on-disk file and drop fields this build doesn't understand.
+    if let Ok(existing) = std::fs::read(&path) {
+        if let Ok(on_disk) = serde_json::from_slice::<MostroConfig>(&existing) {
+            if on_disk.version > config.version {
+                return Err(format!(
+                    "Refusing to overwrite a newer Mostro config (v{} on disk, this app writes v{}).",
+                    on_disk.version, config.version
+                ));
+            }
+        }
+    }
     let dir = path
         .parent()
         .ok_or_else(|| "Config file has no parent directory".to_string())?;
