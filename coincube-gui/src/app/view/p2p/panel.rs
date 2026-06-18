@@ -6022,6 +6022,13 @@ impl State for P2PPanel {
                 self.dispute_chat_input.value = v;
             }
             P2PMessage::SendDisputeChatMessage => {
+                // Hard-block: don't send to a coordinator whose network doesn't
+                // match the wallet (the subscription is also paused in that
+                // state, so replies wouldn't arrive). COIN-371 Q4.
+                if !self.coordinator_network_matches() {
+                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+                    return Task::none();
+                }
                 let text = self.dispute_chat_input.value.trim().to_string();
                 if text.is_empty() || self.pending_dispute_chat_message.is_some() {
                     return Task::none();
@@ -6085,6 +6092,13 @@ impl State for P2PPanel {
                 }
             }
             P2PMessage::SendChatMessage => {
+                // Hard-block: don't send to a coordinator whose network doesn't
+                // match the wallet (the subscription is also paused in that
+                // state, so replies wouldn't arrive). COIN-371 Q4.
+                if !self.coordinator_network_matches() {
+                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+                    return Task::none();
+                }
                 let text = self.chat_input.value.trim().to_string();
                 if text.is_empty() || self.pending_chat_message.is_some() {
                     return Task::none();
@@ -6391,6 +6405,13 @@ impl State for P2PPanel {
                 );
             }
             P2PMessage::FileSelected(path) => {
+                // Hard-block: don't send to a coordinator whose network doesn't
+                // match the wallet (the subscription is also paused in that
+                // state, so replies wouldn't arrive). COIN-371 Q4.
+                if !self.coordinator_network_matches() {
+                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+                    return Task::none();
+                }
                 if let Some(ref order_id) = self.active_order_id() {
                     let order_id = order_id.clone();
                     let oid_for_result = order_id.clone();
