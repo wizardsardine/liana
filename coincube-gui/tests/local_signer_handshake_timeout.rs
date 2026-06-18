@@ -47,11 +47,12 @@ async fn connect_unpinned_returns_error_when_phone_stalls_handshake() {
     });
 
     let identity = fresh_desktop_identity();
-    // Outer cap: the production `CONNECT_TIMEOUT` is 750 ms, so 5 s
-    // is plenty of slack while still failing fast if the handshake
-    // hangs.
+    // Outer cap: the production `PAIRING_CONNECT_TIMEOUT` is 5 s.
+    // Instrumented builds can add substantial scheduling overhead, so
+    // leave enough headroom to distinguish the production timeout from
+    // a real hang.
     let res = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(15),
         PairedTransport::connect_unpinned(addr, &identity),
     )
     .await
