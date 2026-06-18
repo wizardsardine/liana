@@ -360,12 +360,7 @@ fn parse_method(raw: &str) -> SparkPaymentMethod {
 mod tests {
     use super::*;
 
-    fn payment(
-        direction: &str,
-        status: &str,
-        method: &str,
-        amount_sat: i64,
-    ) -> PaymentSummary {
+    fn payment(direction: &str, status: &str, method: &str, amount_sat: i64) -> PaymentSummary {
         PaymentSummary {
             id: "payment-1".to_string(),
             amount_sat,
@@ -383,8 +378,10 @@ mod tests {
 
     #[test]
     fn lightning_receive_maps_direction_status_amount_and_default_description() {
-        let row =
-            payment_summary_to_recent_tx(&payment("receive", "completed", "lightning", 42_000), None);
+        let row = payment_summary_to_recent_tx(
+            &payment("receive", "completed", "lightning", 42_000),
+            None,
+        );
 
         assert_eq!(row.id, "payment-1");
         assert!(row.is_incoming);
