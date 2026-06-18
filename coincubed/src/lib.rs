@@ -845,6 +845,34 @@ mod tests {
         stream.flush().unwrap();
     }
 
+    fn finish_daemon_shutdown(server: &net::TcpListener, daemon: thread::JoinHandle<()>) {
+        let sync_resp =
+            "HTTP/1.1 200\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"verificationprogress\":0.0,\"headers\":1,\"blocks\":0}}\n"
+                .as_bytes();
+        let deadline = time::Instant::now() + time::Duration::from_secs(10);
+
+        server.set_nonblocking(true).unwrap();
+        while !daemon.is_finished() {
+            assert!(
+                time::Instant::now() < deadline,
+                "daemon shutdown stalled while draining the optional poller RPC",
+            );
+            match server.accept() {
+                Ok((mut stream, _)) => {
+                    read_til_json_end(&mut stream);
+                    stream.write_all(sync_resp).unwrap();
+                    stream.flush().unwrap();
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("accepting optional poller RPC: {}", error),
+            }
+        }
+        server.set_nonblocking(false).unwrap();
+        daemon.join().unwrap();
+    }
+
     // TODO: we could move the dummy bitcoind thread stuff to the bitcoind module to test the
     // bitcoind interface, and use the DummyCoincube from testutils to sanity check the startup.
     // Note that startup as checked by this unit test is also tested in the functional test
@@ -883,7 +911,7 @@ mod tests {
         ]
         .iter()
         .collect();
-        let wo_path = wo_path.to_str().unwrap().to_string();
+        let wo_path_str = wo_path.to_str().unwrap().to_string();
 
         // Configure a dummy bitcoind
         let network = bitcoin::Network::Bitcoin;
@@ -943,14 +971,17 @@ mod tests {
         complete_network_check(&server);
         complete_wallet_creation(&server);
         complete_wallet_loading(&server);
-        complete_wallet_check(&server, &wo_path);
+        complete_wallet_check(&server, &wo_path_str);
         complete_desc_check(&server, &receive_desc.to_string(), &change_desc.to_string());
         complete_tip_init(&server);
-        // We don't have to complete the sync check as the poller checks whether it needs to stop
-        // before checking the bitcoind sync status.
-        t.join().unwrap();
+        finish_daemon_shutdown(&server, t);
 
-        // The datadir is created now, so if we restart, it won't create the wo wallet.
+        // Real bitcoind creates the wallet directory after `createwallet`. The
+        // scripted RPC server cannot do that for us, so mirror the side effect
+        // before exercising the restart path.
+        fs::create_dir_all(&wo_path).unwrap();
+
+        // The wallet path exists now, so a restart only loads the wallet.
         let t = thread::spawn({
             let config = config.clone();
             move || {
@@ -962,11 +993,9 @@ mod tests {
         complete_version_check(&server);
         complete_network_check(&server);
         complete_wallet_loading(&server);
-        complete_wallet_check(&server, &wo_path);
+        complete_wallet_check(&server, &wo_path_str);
         complete_desc_check(&server, &receive_desc.to_string(), &change_desc.to_string());
-        // We don't have to complete the sync check as the poller checks whether it needs to stop
-        // before checking the bitcoind sync status.
-        t.join().unwrap();
+        finish_daemon_shutdown(&server, t);
 
         fs::remove_dir_all(&tmp_dir).unwrap();
     }
