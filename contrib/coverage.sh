@@ -41,13 +41,13 @@ if [[ -n "${CARGO_TOOLCHAIN}" ]]; then
 fi
 cargo_llvm_cov+=(llvm-cov)
 
-coverage_args=(
+test_args=(
   --workspace
   --exclude coincube-fuzz
   --lib
   --bins
   --tests
-  --ignore-filename-regex '/(target|fuzz)/'
+  --no-report
 )
 
 report_args=(
@@ -55,39 +55,47 @@ report_args=(
 )
 
 if [[ "${COVERAGE_DOCTESTS}" == "1" ]]; then
-  coverage_args+=(--doctests)
   report_args+=(--doctests)
 fi
 
-coverage_command=(
+test_command=(
   "${cargo_llvm_cov[@]}"
-  "${coverage_args[@]}"
+  "${test_args[@]}"
 )
 
-if [[ "${COVERAGE_CLEAN}" != "1" ]]; then
-  coverage_command+=(--no-clean)
-fi
-
 if [[ -n "${FAIL_UNDER_LINES:-}" ]]; then
-  coverage_command+=(--fail-under-lines "${FAIL_UNDER_LINES}")
+  report_args+=(--fail-under-lines "${FAIL_UNDER_LINES}")
 fi
 if [[ -n "${FAIL_UNDER_FUNCTIONS:-}" ]]; then
-  coverage_command+=(--fail-under-functions "${FAIL_UNDER_FUNCTIONS}")
+  report_args+=(--fail-under-functions "${FAIL_UNDER_FUNCTIONS}")
 fi
 if [[ -n "${FAIL_UNDER_REGIONS:-}" ]]; then
-  coverage_command+=(--fail-under-regions "${FAIL_UNDER_REGIONS}")
+  report_args+=(--fail-under-regions "${FAIL_UNDER_REGIONS}")
 fi
 
 if [[ "${COVERAGE_CLEAN}" == "1" ]]; then
   "${cargo_llvm_cov[@]}" clean --workspace
 fi
-coverage_command+=(
-  --lcov
-  --output-path "${LCOV_PATH}"
-)
+
 set +e
-"${coverage_command[@]}" "$@"
+"${test_command[@]}" "$@"
 run_status=$?
+
+doctest_status=0
+if [[ "${COVERAGE_DOCTESTS}" == "1" ]]; then
+  "${cargo_llvm_cov[@]}" \
+    --workspace \
+    --exclude coincube-fuzz \
+    --doc \
+    --no-report
+  doctest_status=$?
+fi
+
+"${cargo_llvm_cov[@]}" report \
+  "${report_args[@]}" \
+  --lcov \
+  --output-path "${LCOV_PATH}"
+lcov_status=$?
 
 "${cargo_llvm_cov[@]}" report \
   "${report_args[@]}" \
@@ -119,6 +127,14 @@ fi
 if [[ "${run_status}" -ne 0 ]]; then
   echo "Coverage test run failed with exit status ${run_status}." >&2
   exit "${run_status}"
+fi
+if [[ "${doctest_status}" -ne 0 ]]; then
+  echo "Coverage doctest run failed with exit status ${doctest_status}." >&2
+  exit "${doctest_status}"
+fi
+if [[ "${lcov_status}" -ne 0 ]]; then
+  echo "LCOV generation failed with exit status ${lcov_status}." >&2
+  exit "${lcov_status}"
 fi
 if [[ "${summary_status}" -ne 0 ]]; then
   echo "Coverage summary generation failed with exit status ${summary_status}." >&2
