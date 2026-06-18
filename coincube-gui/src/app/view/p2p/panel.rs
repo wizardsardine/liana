@@ -4707,12 +4707,17 @@ impl State for P2PPanel {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        // When the active coordinator doesn't match the wallet's network,
-        // trading is hard-blocked and `resolved_coordinator` could fall back to
-        // a different coordinator than the one shown as active — so don't stream
-        // from it. The subscription resumes once a matching coordinator is
-        // selected (COIN-371 Q4).
-        let mostro_sub = if self.coordinator_network_matches() {
+        // Only stream from Mostro when P2P is actually usable, so the panel
+        // never holds a live relay subscription while the nav/content show P2P
+        // disabled. Two conditions, mirroring the rest of the gate:
+        //  - the feature is available on this network (test coordinator + a
+        //    connected Spark escrow backend — same as the nav gate), and
+        //  - the active coordinator matches the wallet's network (else
+        //    `resolved_coordinator` could stream from a different coordinator
+        //    than the one shown as active; COIN-371 Q4).
+        let p2p_available =
+            crate::app::features::p2p(self.network, self.has_test_coordinator()).is_available();
+        let mostro_sub = if p2p_available && self.coordinator_network_matches() {
             let cube_name = self.cube_name();
             let mnemonic = self.mnemonic.clone();
             let coordinator = self.resolved_coordinator();
