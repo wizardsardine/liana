@@ -181,6 +181,12 @@ fn item_with_route<'a>(
 /// to P2P to match `TopLevel::default_menu`.
 fn marketplace_landing_menu(ctx: &NavContext<'_>) -> Menu {
     let p2p = Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Overview));
+    // P2P Settings stays reachable even when trading is gated (see
+    // `features::route_availability`), so it's the landing for a gated-but-
+    // present P2P section — that's where the user adds a coordinator to lift
+    // the gate. The greyed secondary-rail P2P item is otherwise inert, so this
+    // is the path that avoids a configure catch-22.
+    let p2p_settings = Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Settings));
     let buy_sell = Menu::Marketplace(MarketplaceSubMenu::BuySell);
 
     let p2p_enabled =
@@ -192,11 +198,11 @@ fn marketplace_landing_menu(ctx: &NavContext<'_>) -> Menu {
     } else if buy_sell_enabled {
         buy_sell
     } else if ctx.has_p2p {
-        p2p
+        p2p_settings
     } else if ctx.has_vault {
         buy_sell
     } else {
-        p2p
+        p2p_settings
     }
 }
 

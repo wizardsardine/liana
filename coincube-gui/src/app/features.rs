@@ -10,7 +10,7 @@
 //! this module — the nav rails, the Liquid SDK loader, etc. — so the
 //! matrix lives in exactly one place. See `plans/PLAN-network-feature-gating.md`.
 
-use crate::app::menu::{MarketplaceSubMenu, Menu};
+use crate::app::menu::{MarketplaceSubMenu, Menu, P2PSubMenu};
 use coincube_core::miniscript::bitcoin::Network;
 
 /// Whether a feature is usable on the current network, plus the human
@@ -87,9 +87,13 @@ pub fn p2p(net: Network, has_test_coordinator: bool) -> Availability {
     match net {
         Network::Bitcoin => Availability::Available,
         _ if has_test_coordinator => Availability::Available,
+        // `has_test_coordinator` collapses two requirements (a configured test
+        // coordinator *and* a connected Spark escrow wallet), so state both
+        // rather than misattribute the block to a missing coordinator when the
+        // coordinator is present but Spark is down.
         other => Availability::Unavailable {
             reason: format!(
-                "P2P trading on {} needs a test Mostro coordinator.",
+                "P2P trading on {} needs a test Mostro coordinator and a connected Spark wallet.",
                 net_label(other)
             ),
         },
@@ -106,6 +110,11 @@ pub fn route_availability(menu: &Menu, net: Network, p2p_test_coordinator: bool)
         Menu::Spark(_) => spark(net),
         Menu::Liquid(_) => liquid(net),
         Menu::Marketplace(MarketplaceSubMenu::BuySell) => buy_sell(net),
+        // P2P Settings stays reachable even when trading is gated, so users
+        // can configure a coordinator to lift the gate — otherwise it's a
+        // catch-22 (you'd need a working coordinator to reach the page that
+        // adds one, and removing the last test node would lock you out).
+        Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Settings)) => Availability::Available,
         Menu::Marketplace(MarketplaceSubMenu::P2P(_)) => p2p(net, p2p_test_coordinator),
         _ => Availability::Available,
     }
@@ -188,7 +197,7 @@ mod tests {
         );
         assert_eq!(
             p2p(Network::Testnet, false).reason(),
-            Some("P2P trading on Testnet needs a test Mostro coordinator.")
+            Some("P2P trading on Testnet needs a test Mostro coordinator and a connected Spark wallet.")
         );
         assert_eq!(spark(Network::Bitcoin).reason(), None);
     }
