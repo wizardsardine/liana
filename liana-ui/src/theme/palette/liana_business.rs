@@ -71,6 +71,7 @@ impl Palette {
                 card_secondary: color::CARD_TEXT_SECONDARY,
                 address: color::DARK_TEXT_SECONDARY,
                 address_dimmed: color::BUSINESS_BLUE_DARK,
+                payjoin: color::PAYJOIN_PINK,
             },
             price: Price {
                 zeroes: color::BUSINESS_PRICE_ZEROES,

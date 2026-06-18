@@ -40,6 +40,7 @@ pub struct Text {
     pub address: iced::Color,
     /// Odd chunks of a chunked address display, dimmed so the eye can group them.
     pub address_dimmed: iced::Color,
+    pub payjoin: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

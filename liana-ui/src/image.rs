@@ -90,6 +90,14 @@ pub fn key_mark_icon() -> Svg<'static> {
     Svg::new(h)
 }
 
+const PAYJOIN_MONAD_ICON: &[u8] = include_bytes!("../static/icons/payjoin-monad.svg");
+
+/// The payjoin "monad" symbol, used as the distinctive icon for payjoin surfaces.
+pub fn payjoin_monad_icon() -> Svg<'static> {
+    let h = Handle::from_memory(PAYJOIN_MONAD_ICON.to_vec());
+    Svg::new(h)
+}
+
 const INHERITANCE_TEMPLATE_DESC: &[u8] =
     include_bytes!("../static/images/inheritance_template_description.svg");
 

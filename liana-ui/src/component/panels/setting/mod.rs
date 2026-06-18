@@ -41,6 +41,7 @@ pub enum SectionKind {
     Node,
     Backend,
     Wallet,
+    Payjoin,
     ImportExport,
     About,
 }
@@ -52,6 +53,7 @@ impl SectionKind {
             SectionKind::Node => "Node",
             SectionKind::Backend => "Backend",
             SectionKind::Wallet => "Wallet",
+            SectionKind::Payjoin => "Payjoin",
             SectionKind::ImportExport => "ImportExport",
             SectionKind::About => "About",
         }
@@ -62,6 +64,7 @@ impl SectionKind {
             SectionKind::General => badge::setting(),
             SectionKind::Node | SectionKind::Backend => badge::bitcoin(),
             SectionKind::Wallet | SectionKind::ImportExport => badge::wallet(),
+            SectionKind::Payjoin => badge::payjoin_symbol(),
             SectionKind::About => badge::tooltip(),
         }
     }

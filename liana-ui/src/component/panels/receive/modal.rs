@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use iced::{
     widget::{
         column,
@@ -56,7 +58,7 @@ pub fn qr_display<'a, M: 'a>(qr: &'a qr_code::Data, address: &'a str) -> Element
 }
 
 pub fn show_address_modal<'a, M: 'a + Clone>(
-    address: &bitcoin::Address,
+    address: impl Display,
     close: M,
     verify: M,
     show_qr: M,
