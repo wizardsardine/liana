@@ -1265,6 +1265,13 @@ impl App {
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
         cache_with_vault.has_p2p = panels.p2p.is_some();
+        // A restored on-disk session (or a threaded remote-backend one) means
+        // the user is signed in to Connect even though the Connect panel won't
+        // reach its `Dashboard` step — and so won't flip `connect_authenticated`
+        // — until its keyring session check completes. Mirror it now so the
+        // keychain-unavailable modal offers "Sign with Connect" rather than a
+        // "Sign in to Connect" that would no-op.
+        cache_with_vault.has_connect_session = connect_auth_arc.is_some();
         (
             Self {
                 panels,
@@ -2355,6 +2362,7 @@ impl App {
                 // PLAN comment near `mod.rs:2374`.
                 self.connect_email = Some(email.clone());
                 self.cache.connect_email = Some(email.clone());
+                self.cache.has_connect_session = true;
 
                 let network = self.cache.network;
                 let datadir = self.cache.datadir_path.clone();
@@ -3270,6 +3278,7 @@ impl App {
                     self.cache.connect_tokens = None;
                     self.cache.connect_device_id = None;
                     self.cache.connect_email = None;
+                    self.cache.has_connect_session = false;
                     self.cache.connect_stream_status = ConnectionStatus::Inactive;
                     // Drop the previous session's vault-monitoring config so
                     // it can't leak into the next account and so the

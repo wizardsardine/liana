@@ -1966,6 +1966,9 @@ pub fn create_app_with_remote_backend(
             node_bitcoind_ibd: None,
             node_bitcoind_last_log: None,
             connect_authenticated: false,
+            // Remote backend implies an authenticated Connect session from the
+            // start, even before the Connect panel reaches its Dashboard step.
+            has_connect_session: true,
             has_vault: true,
             cube_name: cube_settings.name.clone(),
             current_cube_backed_up: cube_settings.backed_up,

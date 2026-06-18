@@ -332,7 +332,14 @@ impl PsbtState {
                         // device is registered). When signed in, the modal
                         // offers "Sign with Connect" (on-demand bootstrap)
                         // rather than a sign-in that would no-op.
-                        signed_in: cache.connect_authenticated,
+                        //
+                        // `connect_authenticated` only tracks the Connect
+                        // panel's `Dashboard` step, which lags a session
+                        // restored from `connect.json` at launch (or never set
+                        // if the panel isn't visited). `has_connect_session`
+                        // covers that restored/remote session, so OR them to
+                        // avoid offering "Sign in" to an already-signed-in user.
+                        signed_in: cache.connect_authenticated || cache.has_connect_session,
                     }));
                     return Task::none();
                 }

@@ -42,6 +42,17 @@ pub struct Cache {
     pub display_mode: DisplayMode,
     /// Whether the Connect user is authenticated (Dashboard step reached)
     pub connect_authenticated: bool,
+    /// Whether a Connect account session exists for this install — a
+    /// launch-time restore from `connect.json`, or a live remote-backend
+    /// session — *independent of* whether the Connect panel has advanced to
+    /// its `Dashboard` UI step yet. Distinct from `connect_authenticated`,
+    /// which only tracks that panel step and therefore lags a session that
+    /// was restored at launch (or never visited). Surfaces that must treat a
+    /// valid-but-not-yet-active session as signed-in — e.g. the
+    /// keychain-unavailable modal choosing between "Sign in to Connect" and
+    /// "Sign with Connect" — read this, OR'd with `connect_authenticated`.
+    /// Cleared on logout.
+    pub has_connect_session: bool,
     /// Whether this cube has a vault wallet configured
     pub has_vault: bool,
     /// Display name of the current Cube
@@ -143,6 +154,7 @@ impl std::default::Default for Cache {
             bitcoin_unit: BitcoinDisplayUnit::default(),
             display_mode: DisplayMode::default(),
             connect_authenticated: false,
+            has_connect_session: false,
             has_vault: false,
             cube_name: String::new(),
             current_cube_backed_up: false,
