@@ -169,6 +169,41 @@ pub fn build_keychain_index(
             },
         );
     }
+    // Diagnostic summary of the join: when a descriptor signer ends up
+    // classified `local` despite being expected on a phone, this shows
+    // whether the key was absent from the cube key list, present but
+    // unreferenced by any vault member, or referenced by a member that
+    // carries no `key_id`. Built lazily so it costs nothing unless the
+    // `coincube_gui::signing` target is at DEBUG.
+    if tracing::enabled!(target: "coincube_gui::signing", tracing::Level::DEBUG) {
+        let cube_keys_summary = cube_keys
+            .iter()
+            .map(|k| format!("{}#{}", k.fingerprint, k.id))
+            .collect::<Vec<_>>()
+            .join(",");
+        let members_summary = members
+            .iter()
+            .map(|m| {
+                format!(
+                    "m{}(key_id={:?},contact_id={:?})",
+                    m.id, m.key_id, m.contact_id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let index_summary = index
+            .keys()
+            .map(|fp| fp.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        tracing::debug!(
+            target: "coincube_gui::signing",
+            cube_keys = %cube_keys_summary,
+            vault_members = %members_summary,
+            keychain_index = %index_summary,
+            "Built keychain signer index"
+        );
+    }
     index
 }
 
@@ -178,9 +213,11 @@ pub fn build_keychain_index(
 /// 1. Compute `PartialSpendInfo` on the PSBT. The primary path is always
 ///    available; recovery paths only show up when the input nSequence
 ///    matches their CSV timelock.
-/// 2. Pick the first path whose `sigs_count < threshold` (prefer primary,
-///    fall back to recovery in timelock-asc order — that's the same
-///    order `BTreeMap::iter` already gives).
+/// 2. Pick the path the transaction was built to spend through: an available
+///    recovery path (under threshold, timelock-asc order) wins, since its
+///    presence means the PSBT's nSequence was set for recovery; otherwise
+///    fall back to the primary path. Preferring the always-available primary
+///    path would misclassify every recovery spend.
 /// 3. Enumerate the descriptor's path-info fingerprints, subtract the
 ///    set that already signed, classify each survivor against the
 ///    `keychain_index`.
@@ -197,31 +234,39 @@ pub fn classify_signers(
     let policy: CoincubePolicy = descriptor.policy();
 
     // Pick the path the user is actively trying to spend through.
-    // Primary first, then recovery paths in ascending timelock order
-    // (which is the iteration order of the BTreeMap).
+    //
+    // A recovery path appears in `PartialSpendInfo` only when the PSBT's
+    // input nSequence satisfies its CSV timelock — i.e. the transaction was
+    // deliberately built as a recovery spend (see `partial_spend_info_txin`).
+    // When one is present it is the route the user is taking, so it wins over
+    // the primary path even though the primary is still under threshold: the
+    // primary path is *always* "available" (its branch carries no timelock),
+    // so a "prefer primary while under threshold" rule would misclassify
+    // every recovery spend against the primary signers and wrongly report
+    // "no Keychain signers required" for a recovery that needs a Keychain
+    // signer. Recovery paths are tried in ascending timelock order (BTreeMap
+    // iteration); fall back to the primary path for ordinary spends, where no
+    // recovery path is available.
+    let recovery_choice = info
+        .recovery_paths()
+        .iter()
+        .find(|(_, spend)| spend.sigs_count < spend.threshold);
     let primary_under_threshold = info.primary_path().sigs_count < info.primary_path().threshold;
-    let (path_info, path_spend_info) = if primary_under_threshold {
-        (policy.primary_path(), info.primary_path())
-    } else {
-        let recovery_choice = info
-            .recovery_paths()
-            .iter()
-            .find(|(_, spend)| spend.sigs_count < spend.threshold);
-        match recovery_choice {
-            Some((timelock, spend)) => {
-                let path = policy
-                    .recovery_paths()
-                    .get(timelock)
-                    .ok_or_else(|| {
-                        ClassifyError::PsbtAnalysis(format!(
-                            "Recovery path with timelock {} present in PSBT analysis but not in descriptor policy",
-                            timelock,
-                        ))
-                    })?;
-                (path, spend)
-            }
-            None => return Err(ClassifyError::NoSpendablePath),
+    let (path_info, path_spend_info) = match recovery_choice {
+        Some((timelock, spend)) => {
+            let path = policy
+                .recovery_paths()
+                .get(timelock)
+                .ok_or_else(|| {
+                    ClassifyError::PsbtAnalysis(format!(
+                        "Recovery path with timelock {} present in PSBT analysis but not in descriptor policy",
+                        timelock,
+                    ))
+                })?;
+            (path, spend)
         }
+        None if primary_under_threshold => (policy.primary_path(), info.primary_path()),
+        None => return Err(ClassifyError::NoSpendablePath),
     };
 
     let (threshold, origins) = path_info.thresh_origins();
@@ -399,5 +444,77 @@ mod tests {
         ];
         let index = build_keychain_index(&members, &cube_keys, 100);
         assert_eq!(index.len(), 1);
+    }
+
+    // `or_d(pk(primary), and_v(v:pkh(recovery), older(10)))`: primary path is
+    // the single key `f5acc2fd`; the recovery path is the single key
+    // `8a64f2a9` behind a 10-block CSV. Reused from
+    // `coincube_core::descriptors` analysis fixtures.
+    const RECOVERY_DESC: &str = "wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr";
+    // Unsigned single-input/single-output PSBT for the descriptor above, with
+    // a default (non-recovery) nSequence.
+    const UNSIGNED_PSBT_B64: &str = "cHNidP8BAHECAAAAAUSHuliRtuCX1S6JxRuDRqDCKkWfKmWL5sV9ukZ/wzvfAAAAAAD9////AogTAAAAAAAAFgAUIxe7UY6LJ6y5mFBoWTOoVispDmdwFwAAAAAAABYAFKqO83TK+t/KdpAt21z2HGC7/Z2FAAAAAAABASsQJwAAAAAAACIAIIIySQjGCTeyx/rKUQx8qobjhJeNCiVCliBJPdyRX6XKAQVBIQI2cqWpc9UAW2gZt2WkKjvi8KoMCui00pRlL6wG32uKDKxzZHapFNYASzIYkEdH9bJz6nnqUG3uBB8kiK1asmgiBgI2cqWpc9UAW2gZt2WkKjvi8KoMCui00pRlL6wG32uKDAz1rML9AAAAAG8AAAAiBgMLcbOxsfLe6+3r1UcjQo77HY0As8OKE4l37yj0/qhIyQyKZPKpAAAAAG8AAAAAAAA=";
+
+    fn primary_fg() -> Fingerprint {
+        "f5acc2fd".parse().unwrap()
+    }
+    fn recovery_fg() -> Fingerprint {
+        "8a64f2a9".parse().unwrap()
+    }
+
+    /// Index marking the recovery key `8a64f2a9` as a Keychain signer.
+    fn recovery_keychain_index() -> KeychainSignerIndex {
+        let mut index = KeychainSignerIndex::new();
+        index.insert(
+            recovery_fg(),
+            KeychainSignerInfo {
+                key_id: 7,
+                owner_user_id: 100,
+                name: "testnet4 keychain".to_string(),
+                owner_email: None,
+                contact_id: None,
+            },
+        );
+        index
+    }
+
+    #[test]
+    fn classify_targets_recovery_keychain_for_recovery_spend() {
+        use coincube_core::miniscript::bitcoin::Sequence;
+        use std::str::FromStr;
+
+        let desc = CoincubeDescriptor::from_str(RECOVERY_DESC).unwrap();
+        let mut psbt = Psbt::from_str(UNSIGNED_PSBT_B64).unwrap();
+        // Build it as a recovery spend: nSequence satisfies the older(10) CSV,
+        // so `partial_spend_info` surfaces the recovery path.
+        psbt.unsigned_tx.input[0].sequence = Sequence::from_height(10);
+
+        let required =
+            classify_signers(&psbt, &desc, &recovery_keychain_index(), &HashMap::new()).unwrap();
+
+        // Regression: the primary path is always "available", so the old
+        // "prefer primary while under threshold" rule classified this against
+        // `f5acc2fd` and reported no Keychain signers. The recovery keychain
+        // signer is the one actually required.
+        assert_eq!(required.len(), 1);
+        assert!(required[0].is_keychain());
+        assert_eq!(required[0].fingerprint(), recovery_fg());
+    }
+
+    #[test]
+    fn classify_targets_primary_for_ordinary_spend() {
+        use std::str::FromStr;
+
+        let desc = CoincubeDescriptor::from_str(RECOVERY_DESC).unwrap();
+        // Default nSequence — no recovery path is available, so the primary
+        // path is the spend route.
+        let psbt = Psbt::from_str(UNSIGNED_PSBT_B64).unwrap();
+
+        let required =
+            classify_signers(&psbt, &desc, &recovery_keychain_index(), &HashMap::new()).unwrap();
+
+        assert_eq!(required.len(), 1);
+        assert!(!required[0].is_keychain());
+        assert_eq!(required[0].fingerprint(), primary_fg());
     }
 }
