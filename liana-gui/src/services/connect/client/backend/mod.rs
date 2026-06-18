@@ -14,6 +14,8 @@ use liana::{
         address, bip32::ChildNumber, psbt::Psbt, Address, Network, OutPoint, Txid,
     },
 };
+#[cfg(feature = "payjoin")]
+use lianad::payjoin::types::PayjoinStatus;
 use lianad::{
     bip329::Labels,
     commands::{CoinStatus, GetInfoDescriptors, LCSpendInfo, LabelItem, UpdateDerivIndexesResult},
@@ -667,6 +669,31 @@ impl Daemon for BackendWalletClient {
         })
     }
 
+    #[cfg(feature = "payjoin")]
+    async fn receive_payjoin(&self) -> Result<GetAddressResult, DaemonError> {
+        unimplemented!()
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn get_payjoin_info(&self, _txid: &Txid) -> Result<PayjoinStatus, DaemonError> {
+        unimplemented!()
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn get_active_payjoin_receiver_sessions(&self) -> Result<Vec<u32>, DaemonError> {
+        unimplemented!()
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn send_payjoin_proposal(&self, _txid: &Txid) -> Result<(), DaemonError> {
+        unimplemented!()
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn broadcast_payjoin_fallback(&self, _txid: &Txid) -> Result<(), DaemonError> {
+        unimplemented!()
+    }
+
     async fn update_deriv_indexes(
         &self,
         _receive: Option<u32>,
@@ -1205,6 +1232,7 @@ fn history_tx_from_api(value: api::Transaction, network: Network) -> HistoryTran
         coins,
         changes_indexes,
         network,
+        None,
     );
     tx.load_labels(&labels);
     tx
@@ -1261,6 +1289,7 @@ fn spend_tx_from_api(
         desc,
         secp,
         network,
+        None,
     );
     tx.load_labels(&labels);
     tx

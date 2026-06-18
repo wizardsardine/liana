@@ -57,6 +57,7 @@ pub enum PsbtModal {
     Save(SaveModal),
     Sign(SignModal),
     Broadcast(BroadcastModal),
+    SendPayjoin(SendPayjoinModal),
     Delete(DeleteModal),
     Export(ExportModal),
 }
@@ -67,6 +68,7 @@ impl<'a> AsRef<dyn Modal + 'a> for PsbtModal {
             Self::Save(a) => a,
             Self::Sign(a) => a,
             Self::Broadcast(a) => a,
+            Self::SendPayjoin(a) => a,
             Self::Delete(a) => a,
             Self::Export(a) => a,
         }
@@ -79,6 +81,7 @@ impl<'a> AsMut<dyn Modal + 'a> for PsbtModal {
             Self::Save(a) => a,
             Self::Sign(a) => a,
             Self::Broadcast(a) => a,
+            Self::SendPayjoin(a) => a,
             Self::Delete(a) => a,
             Self::Export(a) => a,
         }
@@ -201,6 +204,17 @@ impl PsbtState {
                 self.modal = Some(PsbtModal::Sign(modal));
                 return cmd;
             }
+            Message::View(view::Message::Spend(view::SpendTxMessage::SendPayjoin)) => {
+                self.warning = None;
+                self.modal = Some(PsbtModal::SendPayjoin(SendPayjoinModal::default()));
+            }
+            #[cfg(feature = "payjoin")]
+            Message::View(view::Message::Spend(view::SpendTxMessage::BroadcastPjFallback)) => {
+                self.modal = Some(PsbtModal::Broadcast(BroadcastModal {
+                    is_payjoin_fallback: true,
+                    ..Default::default()
+                }));
+            }
             Message::View(view::Message::Spend(view::SpendTxMessage::Broadcast)) => {
                 let outpoints: Vec<_> = self.tx.coins.keys().cloned().collect();
                 return Task::perform(
@@ -264,9 +278,8 @@ impl PsbtState {
             Message::Export(ImportExportMessage::Progress(Progress::Psbt(psbt))) => {
                 merge_signatures(&mut self.tx.psbt, &psbt);
                 self.tx.sigs = self
-                    .wallet
-                    .main_descriptor
-                    .partial_spend_info(&self.tx.psbt)
+                    .tx
+                    .partial_spend_info(&self.wallet.main_descriptor)
                     .expect("already check in psbt import logic");
             }
             _ => {
@@ -351,12 +364,28 @@ impl Modal for SaveModal {
     }
 }
 
+#[cfg(feature = "payjoin")]
+fn set_payjoin_failed(tx: &mut SpendTx) {
+    tx.payjoin_status = Some(lianad::payjoin::types::PayjoinStatus::Failed);
+}
+
+#[cfg(feature = "payjoin")]
+fn set_payjoin_monitoring(tx: &mut SpendTx) {
+    tx.payjoin_status = Some(lianad::payjoin::types::PayjoinStatus::Monitoring);
+}
+#[cfg(not(feature = "payjoin"))]
+fn set_payjoin_monitoring(_tx: &mut SpendTx) {}
+
 #[derive(Default)]
 pub struct BroadcastModal {
     broadcast: bool,
     error: Option<Error>,
     /// IDs of any directly conflicting transactions.
     conflicting_txids: HashSet<Txid>,
+    /// If true, cancel the payjoin receiver session and broadcast its
+    /// fallback transaction instead of the stored PSBT.
+    #[cfg(feature = "payjoin")]
+    is_payjoin_fallback: bool,
 }
 
 impl Modal for BroadcastModal {
@@ -369,14 +398,20 @@ impl Modal for BroadcastModal {
         match message {
             Message::View(view::Message::Spend(view::SpendTxMessage::Confirm)) => {
                 let daemon = daemon.clone();
-                let psbt = tx.psbt.clone();
+                let txid = tx.psbt.unsigned_tx.compute_txid();
                 self.error = None;
+                #[cfg(feature = "payjoin")]
+                let is_payjoin_fallback = self.is_payjoin_fallback;
                 return Task::perform(
                     async move {
-                        daemon
-                            .broadcast_spend_tx(&psbt.unsigned_tx.compute_txid())
-                            .await
-                            .map_err(|e| e.into())
+                        #[cfg(feature = "payjoin")]
+                        if is_payjoin_fallback {
+                            return daemon
+                                .broadcast_payjoin_fallback(&txid)
+                                .await
+                                .map_err(|e| e.into());
+                        }
+                        daemon.broadcast_spend_tx(&txid).await.map_err(|e| e.into())
                     },
                     Message::Updated,
                 );
@@ -384,6 +419,10 @@ impl Modal for BroadcastModal {
             Message::Updated(res) => match res {
                 Ok(()) => {
                     tx.status = SpendStatus::Broadcast;
+                    #[cfg(feature = "payjoin")]
+                    if self.is_payjoin_fallback {
+                        set_payjoin_failed(tx);
+                    }
                     self.broadcast = true;
                 }
                 Err(e) => self.error = Some(e),
@@ -400,6 +439,64 @@ impl Modal for BroadcastModal {
                 self.error.as_ref(),
                 self.broadcast,
             ),
+        )
+        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+        .into()
+    }
+}
+
+#[derive(Default)]
+pub struct SendPayjoinModal {
+    sent: bool,
+    error: Option<Error>,
+}
+
+impl Modal for SendPayjoinModal {
+    fn update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        message: Message,
+        tx: &mut SpendTx,
+    ) -> Task<Message> {
+        match message {
+            Message::View(view::Message::Spend(view::SpendTxMessage::Confirm)) => {
+                self.error = None;
+                #[cfg(feature = "payjoin")]
+                {
+                    let daemon = daemon.clone();
+                    let txid = tx.psbt.unsigned_tx.compute_txid();
+                    return Task::perform(
+                        async move {
+                            daemon
+                                .send_payjoin_proposal(&txid)
+                                .await
+                                .map(|_| txid.to_string())
+                                .map_err(|e| e.into())
+                        },
+                        Message::PayjoinInitiated,
+                    );
+                }
+                #[cfg(not(feature = "payjoin"))]
+                {
+                    let _ = daemon;
+                    unreachable!()
+                }
+            }
+            Message::PayjoinInitiated(res) => match res {
+                Ok(_) => {
+                    set_payjoin_monitoring(tx);
+                    self.sent = true;
+                }
+                Err(e) => self.error = Some(e),
+            },
+            _ => {}
+        }
+        Task::none()
+    }
+    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
+        modal::Modal::new(
+            content,
+            view::psbt::send_payjoin_action(self.error.as_ref(), self.sent),
         )
         .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
         .into()
@@ -564,7 +661,7 @@ impl Modal for SignModal {
                 }
             }
             Message::Updated(res) => match res {
-                Ok(()) => match self.wallet.main_descriptor.partial_spend_info(&tx.psbt) {
+                Ok(()) => match tx.partial_spend_info(&self.wallet.main_descriptor) {
                     Ok(sigs) => tx.sigs = sigs,
                     Err(e) => self.error = Some(Error::Unexpected(e.to_string())),
                 },
@@ -748,6 +845,13 @@ mod tests {
                     "is_from_self": false,
 
                 }]})),
+            ),
+            #[cfg(feature = "payjoin")]
+            (
+                Some(
+                    json!({"method": "getpayjoininfo", "params": vec!["4bc07e8fe753f7314b69da02a7cfbedc3e4e0d5fbee316a048240ae87b8aaa58"]}),
+                ),
+                Ok(json!({ "Unknown": null})),
             ),
             (
                 Some(json!({"method": "getlabels", "params": vec![vec![

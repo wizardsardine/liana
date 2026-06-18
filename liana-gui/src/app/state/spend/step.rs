@@ -1149,6 +1149,7 @@ impl SaveSpend {
 impl Step for SaveSpend {
     fn load(&mut self, _coins: &[Coin], _tip_height: i32, draft: &TransactionDraft) {
         let (psbt, warnings) = draft.generated.clone().unwrap();
+
         let mut tx = SpendTx::new(
             None,
             psbt,
@@ -1156,6 +1157,7 @@ impl Step for SaveSpend {
             &self.wallet.main_descriptor,
             &self.curve,
             draft.network,
+            None,
         );
         tx.labels.clone_from(&draft.labels);
 

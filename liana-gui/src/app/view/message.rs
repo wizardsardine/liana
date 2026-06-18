@@ -28,6 +28,7 @@ pub enum Message {
     Label(Vec<String>, LabelMessage),
     NextReceiveAddress,
     NewAddress(NewAddressMessage),
+    ReceivePayjoin,
     ToggleShowPreviousAddresses,
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
@@ -39,11 +40,13 @@ pub enum Message {
     CreateRbf(CreateRbfMessage),
     ShowAddressQrCode(AddressQrSource),
     ShowQrOptSection(bool),
+    ShowQrCode(usize, Option<String>),
     ImportExport(ImportExportMessage),
     HideRescanWarning,
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
+    PayjoinInitiate,
 }
 
 impl Close for Message {
@@ -92,6 +95,7 @@ pub enum CreateSpendMessage {
     Generate,
     SendMaxToRecipient(usize),
     Clear,
+    Bip21Edited(usize, String),
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +110,7 @@ pub enum SpendTxMessage {
     Delete,
     Sign,
     Broadcast,
+    BroadcastPjFallback,
     Save,
     Confirm,
     Cancel,
@@ -113,6 +118,8 @@ pub enum SpendTxMessage {
     EditPsbt,
     PsbtEdited(String),
     Next,
+    SendPayjoin,
+    PayjoinInitiated,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -140,6 +147,8 @@ pub enum SettingsMessage {
     Save,
     GeneralSection,
     Fiat(FiatMessage),
+    EditPayjoinSettings,
+    PayjoinSettings(SettingsEditMessage),
 }
 
 impl From<SettingsMessage> for Message {
@@ -163,6 +172,15 @@ pub enum SettingsEditMessage {
     Cancel,
     Confirm,
     Clipboard(String),
+    PayjoinRelayEdited(usize, String),
+    PayjoinRelayAdded,
+    PayjoinRelayRemoved(usize),
+    #[cfg(feature = "payjoin")]
+    HealthCheck,
+    #[cfg(feature = "payjoin")]
+    HealthCheckRelayResult(usize, bool),
+    #[cfg(feature = "payjoin")]
+    HealthCheckDirectoryResult(bool),
 }
 
 #[derive(Debug, Clone)]

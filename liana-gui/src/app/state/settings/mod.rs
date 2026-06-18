@@ -1,5 +1,7 @@
 mod bitcoind;
 mod general;
+#[cfg(feature = "payjoin")]
+pub mod payjoin;
 pub mod wallet;
 
 use std::convert::From;
@@ -10,6 +12,8 @@ use iced::{Subscription, Task};
 use liana_ui::{component::form, widget::Element};
 
 use bitcoind::BitcoindSettingsState;
+#[cfg(feature = "payjoin")]
+use payjoin::PayjoinSettingsState;
 use wallet::{update_aliases, WalletSettingsState};
 
 use crate::{
@@ -160,6 +164,20 @@ impl SettingsUI<Message> for LianaSettingsUI {
                     .as_mut()
                     .map(|s| s.reload(daemon, wallet))
                     .unwrap_or_else(Task::none)
+            }
+            #[cfg(feature = "payjoin")]
+            Message::View(view::Message::Settings(view::SettingsMessage::EditPayjoinSettings)) => {
+                let (state, task) = PayjoinSettingsState::new(daemon.config().cloned());
+                self.setting = Some(state.into());
+                let wallet = self.wallet.clone();
+                let tasks = vec![
+                    task,
+                    self.setting
+                        .as_mut()
+                        .map(|s| s.reload(daemon, wallet))
+                        .unwrap_or_else(Task::none),
+                ];
+                Task::batch(tasks)
             }
             Message::WalletUpdated(Ok(wallet)) => {
                 self.wallet = wallet.clone();

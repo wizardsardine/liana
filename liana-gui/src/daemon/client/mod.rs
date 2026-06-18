@@ -5,6 +5,8 @@ use std::iter::FromIterator;
 use async_trait::async_trait;
 use lianad::bip329::Labels;
 use lianad::commands::{GetLabelsBip329Result, UpdateDerivIndexesResult};
+#[cfg(feature = "payjoin")]
+use lianad::payjoin::types::PayjoinStatus;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -105,6 +107,35 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
                 json!(start_index), // a `null` argument is parsed as `None` by the command
             ]),
         )
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn receive_payjoin(&self) -> Result<GetAddressResult, DaemonError> {
+        self.call("receivepayjoin", Option::<Request>::None)
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn get_payjoin_info(&self, txid: &Txid) -> Result<PayjoinStatus, DaemonError> {
+        self.call("getpayjoininfo", Some(vec![txid.to_string()]))
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn get_active_payjoin_receiver_sessions(&self) -> Result<Vec<u32>, DaemonError> {
+        self.call("getactivepayjoinreceiversessions", Option::<Request>::None)
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn send_payjoin_proposal(&self, txid: &Txid) -> Result<(), DaemonError> {
+        let _res: serde_json::value::Value =
+            self.call("sendpayjoinproposal", Some(vec![txid.to_string()]))?;
+        Ok(())
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn broadcast_payjoin_fallback(&self, txid: &Txid) -> Result<(), DaemonError> {
+        let _res: serde_json::value::Value =
+            self.call("broadcastpayjoinfallback", Some(vec![txid.to_string()]))?;
+        Ok(())
     }
 
     async fn update_deriv_indexes(

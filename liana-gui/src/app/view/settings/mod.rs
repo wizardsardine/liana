@@ -68,6 +68,12 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<'_, Message> {
         Message::Settings(SettingsMessage::EditWalletSettings),
     );
 
+    #[cfg(feature = "payjoin")]
+    let payjoin = settings_section(
+        SectionKind::Payjoin,
+        Message::Settings(SettingsMessage::EditPayjoinSettings),
+    );
+
     let import_export = settings_section(
         SectionKind::ImportExport,
         Message::Settings(SettingsMessage::ImportExportSection),
@@ -80,14 +86,13 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<'_, Message> {
 
     let backend = if !is_remote_backend { node } else { backend };
 
-    #[rustfmt::skip]
-    let entries = vec![
-        general,
-        backend,
-        wallet,
-        import_export,
-        about
-    ];
+    let entries = vec![general, backend, wallet, import_export, about];
+    #[cfg(feature = "payjoin")]
+    let entries = {
+        let mut entries = entries;
+        entries.insert(3, payjoin);
+        entries
+    };
 
     let content = component::panels::setting::section_list(entries);
     dashboard(&Menu::Settings, cache, None, content)
@@ -125,6 +130,231 @@ pub fn bitcoind_settings<'a>(
             .push(header)
             .push(Column::with_children(settings).spacing(20)),
     )
+}
+
+pub fn payjoin_settings<'a>(
+    cache: &'a Cache,
+    warning: Option<&'a Error>,
+    settings: Option<Element<'a, SettingsEditMessage>>,
+) -> Element<'a, Message> {
+    let header = header(
+        Some(SETTING_MSG),
+        Some(SectionKind::Payjoin.title()),
+        Some(SettingsMessage::EditPayjoinSettings.into()),
+    );
+
+    dashboard(
+        &Menu::Settings,
+        cache,
+        warning,
+        Column::new().spacing(20).push(header).push_maybe(
+            settings.map(|s| s.map(|msg| Message::Settings(SettingsMessage::PayjoinSettings(msg)))),
+        ),
+    )
+}
+
+fn health_dot<'a>(healthy: Option<bool>) -> Element<'a, SettingsEditMessage> {
+    match healthy {
+        Some(true) => icon::dot_icon().size(5).style(theme::text::success).into(),
+        Some(false) => icon::dot_icon().size(5).style(theme::text::error).into(),
+        None => icon::dot_icon()
+            .size(5)
+            .style(theme::text::secondary)
+            .into(),
+    }
+}
+
+pub fn payjoin_edit<'a>(
+    ohttp_relays: &[form::Value<String>],
+    relay_health: &[Option<bool>],
+    payjoin_directory: &form::Value<String>,
+    directory_health: Option<bool>,
+    processing: bool,
+) -> Element<'a, SettingsEditMessage> {
+    let mut col = Column::new().spacing(20);
+
+    let mut relays_col = Column::new()
+        .push(text("OHTTP Relays:").bold().small())
+        .spacing(5);
+    let relay_count = ohttp_relays.len();
+    for (idx, relay) in ohttp_relays.iter().enumerate() {
+        let mut row = Row::new()
+            .push(health_dot(relay_health.get(idx).copied().flatten()))
+            .push(
+                form::Form::new_trimmed("https://pj.example.com", relay, move |value| {
+                    SettingsEditMessage::PayjoinRelayEdited(idx, value)
+                })
+                .warning("Please enter a valid URL")
+                .size(P1_SIZE)
+                .padding(5),
+            )
+            .spacing(5)
+            .align_y(Alignment::Center);
+        if relay_count > 1 {
+            let mut remove_btn =
+                Button::new(icon::cross_icon()).style(theme::button::transparent_border);
+            if !processing {
+                remove_btn = remove_btn.on_press(SettingsEditMessage::PayjoinRelayRemoved(idx));
+            }
+            row = row.push(remove_btn);
+        }
+        relays_col = relays_col.push(row);
+    }
+    let mut add_btn = button::transparent(None, "+ Add relay").padding(5);
+    if !processing {
+        add_btn = add_btn.on_press(SettingsEditMessage::PayjoinRelayAdded);
+    }
+    relays_col = relays_col.push(add_btn);
+    col = col.push(relays_col);
+
+    col = col.push(
+        Column::new()
+            .push(text("Payjoin Directory:").bold().small())
+            .push(
+                Row::new()
+                    .push(health_dot(directory_health))
+                    .push(
+                        form::Form::new_trimmed("https://payjo.in", payjoin_directory, |value| {
+                            SettingsEditMessage::FieldEdited("payjoin_directory", value)
+                        })
+                        .warning("Please enter a valid URL")
+                        .size(P1_SIZE)
+                        .padding(5),
+                    )
+                    .spacing(5)
+                    .align_y(Alignment::Center),
+            )
+            .spacing(5),
+    );
+
+    let mut cancel_button = button::transparent(None, " Cancel ").padding(5);
+    let mut confirm_button = button::secondary(None, " Save ").padding(5);
+    if !processing {
+        cancel_button = cancel_button.on_press(SettingsEditMessage::Cancel);
+        confirm_button = confirm_button.on_press(SettingsEditMessage::Confirm);
+    }
+
+    card::simple(Container::new(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(badge::payjoin_symbol())
+                    .push(text("Payjoin").bold())
+                    .padding(10)
+                    .spacing(20)
+                    .align_y(Alignment::Center)
+                    .width(Length::Fill),
+            )
+            .push(separation().width(Length::Fill))
+            .push(col)
+            .push(
+                Container::new(
+                    Row::new()
+                        .push(cancel_button)
+                        .push(confirm_button)
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .align_x(alignment::Horizontal::Right),
+            )
+            .spacing(20),
+    ))
+    .width(Length::Fill)
+    .into()
+}
+
+pub fn payjoin<'a>(
+    ohttp_relays: &[String],
+    relay_health: &[Option<bool>],
+    payjoin_directory: &str,
+    directory_health: Option<bool>,
+) -> Element<'a, SettingsEditMessage> {
+    let mut col_fields = Column::new();
+    for (i, relay) in ohttp_relays.iter().enumerate() {
+        let label = if ohttp_relays.len() == 1 {
+            "OHTTP Relay:".to_string()
+        } else {
+            format!("OHTTP Relay #{}:", i + 1)
+        };
+        let v = relay.clone();
+        let health = relay_health.get(i).copied().flatten();
+        col_fields = col_fields.push(
+            Row::new()
+                .push(health_dot(health))
+                .push(Container::new(text(label).bold().small()).width(Length::FillPortion(1)))
+                .push(
+                    Container::new(scrollable::horizontal_thin(
+                        Column::new()
+                            .push(Space::with_height(Length::Fixed(10.0)))
+                            .push(text(&v).small()),
+                    ))
+                    .align_x(alignment::Horizontal::Right)
+                    .padding(10)
+                    .width(Length::FillPortion(3)),
+                )
+                .push(Space::with_width(10))
+                .push(
+                    Button::new(icon::clipboard_icon())
+                        .style(theme::button::transparent_border)
+                        .on_press(SettingsEditMessage::Clipboard(v)),
+                )
+                .align_y(Alignment::Center),
+        );
+    }
+    col_fields = col_fields.push(
+        Row::new()
+            .push(health_dot(directory_health))
+            .push(
+                Container::new(text("Payjoin Directory:").bold().small())
+                    .width(Length::FillPortion(1)),
+            )
+            .push(
+                Container::new(scrollable::horizontal_thin(
+                    Column::new()
+                        .push(Space::with_height(Length::Fixed(10.0)))
+                        .push(text(payjoin_directory).small()),
+                ))
+                .align_x(alignment::Horizontal::Right)
+                .padding(10)
+                .width(Length::FillPortion(3)),
+            )
+            .push(Space::with_width(10))
+            .push(
+                Button::new(icon::clipboard_icon())
+                    .style(theme::button::transparent_border)
+                    .on_press(SettingsEditMessage::Clipboard(
+                        payjoin_directory.to_string(),
+                    )),
+            )
+            .align_y(Alignment::Center),
+    );
+
+    card::simple(Container::new(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(
+                        Row::new()
+                            .push(badge::payjoin_symbol())
+                            .push(text("Payjoin").bold())
+                            .spacing(20)
+                            .align_y(Alignment::Center)
+                            .width(Length::Fill),
+                    )
+                    .push(
+                        Button::new(icon::pencil_icon())
+                            .style(theme::button::transparent_border)
+                            .on_press(SettingsEditMessage::Select),
+                    )
+                    .align_y(Alignment::Center),
+            )
+            .push(separation().width(Length::Fill))
+            .push(col_fields)
+            .spacing(20),
+    ))
+    .width(Length::Fill)
+    .into()
 }
 
 pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Element<'a, Message> {

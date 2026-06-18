@@ -44,11 +44,20 @@ pub struct Addresses {
     list: Vec<Address>,
     derivation_indexes: Vec<ChildNumber>,
     labels: HashMap<String, String>,
+    bip21: HashMap<ChildNumber, String>,
 }
 
 impl Addresses {
     pub fn is_empty(&self) -> bool {
         self.list.is_empty() && self.derivation_indexes.is_empty() && self.labels.is_empty()
+    }
+
+    pub fn push(&mut self, address: Address, derivation_index: ChildNumber, bip21: Option<String>) {
+        self.list.push(address);
+        self.derivation_indexes.push(derivation_index);
+        if let Some(b) = bip21 {
+            self.bip21.insert(derivation_index, b);
+        }
     }
 }
 
@@ -74,6 +83,7 @@ pub struct ReceivePanel {
     modal: Modal,
     warning: Option<Error>,
     processing: bool,
+    active_payjoin_sessions: HashSet<ChildNumber>,
 }
 
 impl ReceivePanel {
@@ -88,6 +98,7 @@ impl ReceivePanel {
             modal: Modal::None,
             warning: None,
             processing: false,
+            active_payjoin_sessions: HashSet::new(),
         }
     }
 
@@ -102,6 +113,17 @@ impl ReceivePanel {
 
 impl State for ReceivePanel {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        // A payjoin receiver must contribute at least one confirmed, mature coin as
+        // an input. The shared cache already holds all coins, so derive availability
+        // from it (refreshed every few seconds by the daemon cache update).
+        #[cfg(feature = "payjoin")]
+        let payjoin_enabled = cache
+            .coins()
+            .iter()
+            .any(|c| c.block_height.is_some() && !c.is_immature);
+        #[cfg(not(feature = "payjoin"))]
+        let payjoin_enabled = false;
+
         let content = view::dashboard(
             &Menu::Receive,
             cache,
@@ -113,6 +135,7 @@ impl State for ReceivePanel {
                 self.labels_edited.cache(),
                 self.prev_continue_from.is_none(),
                 self.processing,
+                payjoin_enabled,
             ),
         );
 
@@ -211,10 +234,37 @@ impl State for ReceivePanel {
                     Ok((address, index)) => {
                         self.warning = None;
                         if let Modal::NewAddress(m) = &mut self.modal {
-                            if let Some(label) = m.revealed(address.clone(), index) {
+                            if let Some(label) = m.revealed(address.clone(), index, None) {
                                 let key = LabelItem::Address(address.clone()).to_string();
                                 self.prev_addresses.list.insert(0, address);
                                 self.prev_addresses.derivation_indexes.insert(0, index);
+                                self.prev_addresses.labels.insert(key, label);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.warning = Some(e);
+                        self.modal = Modal::None;
+                    }
+                }
+                Task::none()
+            }
+            Message::ReceivePayjoin(res) => {
+                match res {
+                    Ok((address, derivation_index, bip21)) => {
+                        self.warning = None;
+                        // The bip21 is kept on the modal for display/QR but is not stored
+                        // in prev_addresses: the previously-generated list treats payjoin
+                        // addresses like any other address.
+                        if let Modal::NewAddress(m) = &mut self.modal {
+                            if let Some(label) =
+                                m.revealed(address.clone(), derivation_index, bip21)
+                            {
+                                let key = LabelItem::Address(address.clone()).to_string();
+                                self.prev_addresses.list.insert(0, address);
+                                self.prev_addresses
+                                    .derivation_indexes
+                                    .insert(0, derivation_index);
                                 self.prev_addresses.labels.insert(key, label);
                             }
                         }
@@ -242,8 +292,37 @@ impl State for ReceivePanel {
                     } else {
                         None
                     };
-                    if let Some(label) = label {
-                        let daemon = daemon.clone();
+                    let Some(label) = label else {
+                        return Task::none();
+                    };
+                    let is_payjoin = matches!(&self.modal, Modal::NewAddress(m) if m.is_payjoin());
+                    let daemon = daemon.clone();
+                    if is_payjoin {
+                        #[cfg(feature = "payjoin")]
+                        {
+                            Task::perform(
+                                async move {
+                                    let res = daemon.receive_payjoin().await?;
+                                    let updates = HashMap::from([(
+                                        LabelItem::Address(res.address.clone()),
+                                        Some(label),
+                                    )]);
+                                    if let Err(e) = daemon.update_labels(&updates).await {
+                                        tracing::warn!(
+                                            "failed to store label for {}: {e}",
+                                            res.address
+                                        );
+                                    }
+                                    Ok((res.address, res.derivation_index, res.bip21))
+                                },
+                                Message::ReceivePayjoin,
+                            )
+                        }
+                        #[cfg(not(feature = "payjoin"))]
+                        {
+                            Task::none()
+                        }
+                    } else {
                         Task::perform(
                             async move {
                                 let res = daemon.get_new_address().await?;
@@ -262,13 +341,11 @@ impl State for ReceivePanel {
                             },
                             Message::ReceiveAddress,
                         )
-                    } else {
-                        Task::none()
                     }
                 }
                 view::NewAddressMessage::Verify => {
                     let verify = if let Modal::NewAddress(m) = &self.modal {
-                        m.shown().map(|(address, index)| {
+                        m.shown().map(|(address, index, _)| {
                             VerifyAddressModal::new(
                                 self.data_dir.clone(),
                                 self.wallet.clone(),
@@ -287,8 +364,13 @@ impl State for ReceivePanel {
                 }
                 view::NewAddressMessage::ShowQr => {
                     let qr = if let Modal::NewAddress(m) = &self.modal {
-                        m.shown()
-                            .and_then(|(address, _)| ShowQrCodeModal::new(address, None))
+                        m.shown().and_then(|(address, _, bip21)| {
+                            if let Some(bip21) = bip21 {
+                                ShowQrCodeModal::from_bip21(bip21)
+                            } else {
+                                ShowQrCodeModal::new(address, None)
+                            }
+                        })
                     } else {
                         None
                     };
@@ -330,6 +412,11 @@ impl State for ReceivePanel {
                 self.modal = Modal::NewAddress(NewAddressModal::new());
                 Task::none()
             }
+            #[cfg(feature = "payjoin")]
+            Message::View(view::Message::ReceivePayjoin) => {
+                self.modal = Modal::NewAddress(NewAddressModal::new_payjoin());
+                Task::none()
+            }
             Message::View(view::Message::ToggleShowPreviousAddresses) => {
                 self.show_prev_addresses = !self.show_prev_addresses;
                 Task::none()
@@ -350,8 +437,8 @@ impl State for ReceivePanel {
                                 if entry.index == 0.into() {
                                     continue;
                                 }
-                                self.prev_addresses.list.push(entry.address.clone());
-                                self.prev_addresses.derivation_indexes.push(entry.index);
+                                self.prev_addresses
+                                    .push(entry.address.clone(), entry.index, None);
                                 if let Some(label) = &entry.label {
                                     self.prev_addresses.labels.insert(
                                         LabelItem::from(entry.address.clone()).to_string(),
@@ -366,6 +453,20 @@ impl State for ReceivePanel {
                         self.warning = Some(e);
                     }
                 };
+                Task::none()
+            }
+            Message::ActivePayjoinSessions(res) => {
+                match res {
+                    Ok(indexes) => {
+                        self.active_payjoin_sessions = indexes
+                            .into_iter()
+                            .map(|i| ChildNumber::from_normal_idx(i).unwrap())
+                            .collect();
+                    }
+                    Err(e) => {
+                        log::error!("Failed to load active payjoin sessions: {:?}", e);
+                    }
+                }
                 Task::none()
             }
             Message::View(view::Message::Next) => {
@@ -394,10 +495,15 @@ impl State for ReceivePanel {
                 }
             }
             Message::View(view::Message::ShowAddressQrCode(view::AddressQrSource::Row(i))) => {
-                // The address QR code does not encode the derivation index.
                 if let Some(address) = self.address(i) {
-                    if let Some(modal) = ShowQrCodeModal::new(address, None) {
-                        self.modal = Modal::ShowQrCode(modal);
+                    if let Some(index) = self.derivation_index(i) {
+                        if let Some(bip21) = self.prev_addresses.bip21.get(index) {
+                            if let Some(modal) = ShowQrCodeModal::from_bip21(bip21) {
+                                self.modal = Modal::ShowQrCode(modal);
+                            }
+                        } else if let Some(modal) = ShowQrCodeModal::new(address, None) {
+                            self.modal = Modal::ShowQrCode(modal);
+                        }
                     }
                 }
                 Task::none()
@@ -448,15 +554,32 @@ impl State for ReceivePanel {
     ) -> Task<Message> {
         let data_dir = self.data_dir.clone();
         *self = Self::new(data_dir, wallet);
-        Task::perform(
+        let daemon1 = daemon.clone();
+        let tasks = vec![Task::perform(
             async move {
-                daemon
+                daemon1
                     .list_revealed_addresses(false, true, PREV_ADDRESSES_PAGE_SIZE, None)
                     .await
                     .map_err(|e| e.into())
             },
             |res| Message::RevealedAddresses(res, None),
-        )
+        )];
+        #[cfg(feature = "payjoin")]
+        let tasks = {
+            let mut tasks = tasks;
+            let daemon2 = daemon.clone();
+            tasks.push(Task::perform(
+                async move {
+                    daemon2
+                        .get_active_payjoin_receiver_sessions()
+                        .await
+                        .map_err(|e| e.into())
+                },
+                Message::ActivePayjoinSessions,
+            ));
+            tasks
+        };
+        Task::batch(tasks)
     }
 }
 
@@ -571,6 +694,13 @@ impl ShowQrCodeModal {
             })
     }
 
+    pub fn from_bip21(bip21: &str) -> Option<Self> {
+        qr_code::Data::new(bip21).ok().map(|qr_code| Self {
+            qr_code,
+            address: bip21.to_string(),
+        })
+    }
+
     fn view(&self) -> Element<'_, view::Message> {
         view::receive::qr_modal(&self.qr_code, &self.address)
     }
@@ -596,6 +726,7 @@ impl NewAddressSubModal {
 /// is revealed and its label stored. The address is never shown before it is revealed.
 pub struct NewAddressModal {
     step: Step,
+    is_payjoin: bool,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -608,12 +739,23 @@ enum Step {
     Show {
         address: Address,
         index: ChildNumber,
+        /// Bip21 URI (with payjoin params) for a payjoin address; None for a plain address.
+        bip21: Option<String>,
         sub: Option<NewAddressSubModal>,
     },
 }
 
 impl NewAddressModal {
     fn new() -> Self {
+        Self::with_kind(false)
+    }
+
+    #[cfg(feature = "payjoin")]
+    fn new_payjoin() -> Self {
+        Self::with_kind(true)
+    }
+
+    fn with_kind(is_payjoin: bool) -> Self {
         Self {
             step: Step::Label {
                 label: form::Value {
@@ -622,7 +764,12 @@ impl NewAddressModal {
                     valid: true,
                 },
             },
+            is_payjoin,
         }
+    }
+
+    fn is_payjoin(&self) -> bool {
+        self.is_payjoin
     }
 
     fn edit_label(&mut self, value: String) {
@@ -652,12 +799,18 @@ impl NewAddressModal {
 
     /// Complete the reveal: switch to the show step, returning the stored label. None
     /// if not awaiting a reveal.
-    fn revealed(&mut self, address: Address, index: ChildNumber) -> Option<String> {
+    fn revealed(
+        &mut self,
+        address: Address,
+        index: ChildNumber,
+        bip21: Option<String>,
+    ) -> Option<String> {
         if let Step::Processing { label } = &mut self.step {
             let label = std::mem::take(label);
             self.step = Step::Show {
                 address,
                 index,
+                bip21,
                 sub: None,
             };
             Some(label)
@@ -666,10 +819,16 @@ impl NewAddressModal {
         }
     }
 
-    /// The revealed address and its index, if at the show step.
-    fn shown(&self) -> Option<(&Address, ChildNumber)> {
-        if let Step::Show { address, index, .. } = &self.step {
-            Some((address, *index))
+    /// The revealed address, its index, and its bip21 (if any), if at the show step.
+    fn shown(&self) -> Option<(&Address, ChildNumber, &Option<String>)> {
+        if let Step::Show {
+            address,
+            index,
+            bip21,
+            ..
+        } = &self.step
+        {
+            Some((address, *index, bip21))
         } else {
             None
         }
@@ -724,8 +883,13 @@ impl NewAddressModal {
         match &self.step {
             Step::Label { label, .. } => view::receive::new_address_label_modal(label),
             Step::Processing { .. } => view::receive::new_address_processing_modal(),
-            Step::Show { address, sub, .. } => {
-                let base = view::receive::new_address_show_modal(address);
+            Step::Show {
+                address,
+                bip21,
+                sub,
+                ..
+            } => {
+                let base = view::receive::new_address_show_modal(address, bip21.as_deref());
                 // A nested sub-modal stacks on top of the show-address modal: it becomes
                 // an overlay over the (full-screen) base, so the base stays rendered behind
                 // and reappears once the sub-modal is closed.
@@ -792,6 +956,13 @@ mod tests {
                     addresses: vec![],
                     continue_from: None,
                 })),
+            ),
+            #[cfg(feature = "payjoin")]
+            (
+                Some(
+                    json!({"method": "getactivepayjoinreceiversessions", "params": Option::<Request>::None}),
+                ),
+                Ok(json!(Vec::<u32>::new())),
             ),
             (
                 // getnewaddress: reveal first.

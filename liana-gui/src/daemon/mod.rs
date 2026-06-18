@@ -18,6 +18,8 @@ use liana::miniscript::bitcoin::{
 };
 use lianad::bip329::Labels;
 use lianad::commands::UpdateDerivIndexesResult;
+#[cfg(feature = "payjoin")]
+use lianad::payjoin::types::PayjoinStatus;
 use lianad::{
     commands::{CoinStatus, LabelItem, TransactionInfo},
     config::Config,
@@ -142,6 +144,16 @@ pub trait Daemon: Debug {
         limit: usize,
         start_index: Option<ChildNumber>,
     ) -> Result<model::ListRevealedAddressesResult, DaemonError>;
+    #[cfg(feature = "payjoin")]
+    async fn receive_payjoin(&self) -> Result<model::GetAddressResult, DaemonError>;
+    #[cfg(feature = "payjoin")]
+    async fn get_payjoin_info(&self, txid: &Txid) -> Result<PayjoinStatus, DaemonError>;
+    #[cfg(feature = "payjoin")]
+    async fn get_active_payjoin_receiver_sessions(&self) -> Result<Vec<u32>, DaemonError>;
+    #[cfg(feature = "payjoin")]
+    async fn send_payjoin_proposal(&self, txid: &Txid) -> Result<(), DaemonError>;
+    #[cfg(feature = "payjoin")]
+    async fn broadcast_payjoin_fallback(&self, txid: &Txid) -> Result<(), DaemonError>;
     async fn update_deriv_indexes(
         &self,
         receive: Option<u32>,
@@ -253,6 +265,11 @@ pub trait Daemon: Debug {
                 .cloned()
                 .collect();
 
+            #[cfg(feature = "payjoin")]
+            let payjoin_status = self
+                .get_payjoin_info(&tx.psbt.unsigned_tx.compute_txid())
+                .await?;
+
             spend_txs.push(model::SpendTx::new(
                 tx.updated_at,
                 tx.psbt,
@@ -260,6 +277,10 @@ pub trait Daemon: Debug {
                 &info.descriptors.main,
                 &curve,
                 info.network,
+                #[cfg(feature = "payjoin")]
+                Some(payjoin_status),
+                #[cfg(not(feature = "payjoin"))]
+                None,
             ));
         }
         load_labels(self, &mut spend_txs).await?;
@@ -323,6 +344,10 @@ pub trait Daemon: Debug {
                     tx_coins,
                     change_indexes,
                     info.network,
+                    #[cfg(feature = "payjoin")]
+                    tx.payjoin_role,
+                    #[cfg(not(feature = "payjoin"))]
+                    None,
                 )
             })
             .collect();
@@ -401,6 +426,10 @@ pub trait Daemon: Debug {
                     tx_coins,
                     change_indexes,
                     info.network,
+                    #[cfg(feature = "payjoin")]
+                    tx.payjoin_role,
+                    #[cfg(not(feature = "payjoin"))]
+                    None,
                 )
             })
             .collect();

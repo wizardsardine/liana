@@ -1,5 +1,7 @@
 use lianad::bip329::Labels;
 use lianad::commands::UpdateDerivIndexesResult;
+#[cfg(feature = "payjoin")]
+use lianad::payjoin::types::PayjoinStatus;
 use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
 
@@ -118,6 +120,70 @@ impl Daemon for EmbeddedDaemon {
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
         .await
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn receive_payjoin(&self) -> Result<GetAddressResult, DaemonError> {
+        self.command(|daemon| {
+            daemon
+                .receive_payjoin()
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
+        .await
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn get_payjoin_info(&self, txid: &Txid) -> Result<PayjoinStatus, DaemonError> {
+        self.command(|daemon| {
+            daemon
+                .get_payjoin_info(txid)
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
+        .await
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn get_active_payjoin_receiver_sessions(&self) -> Result<Vec<u32>, DaemonError> {
+        self.command(|daemon| {
+            daemon
+                .get_active_payjoin_receiver_sessions()
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
+        .await
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn send_payjoin_proposal(&self, txid: &Txid) -> Result<(), DaemonError> {
+        let control = match self.handle.lock().await.as_ref() {
+            Some(DaemonHandle::Controller { control, .. }) => control.clone(),
+            Some(_) => unreachable!("No lianad rpc server must be started"),
+            None => return Err(DaemonError::DaemonStopped),
+        };
+        let txid = *txid;
+        tokio::task::spawn_blocking(move || {
+            control
+                .send_payjoin_proposal(&txid)
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
+        .await
+        .map_err(|e| DaemonError::Unexpected(e.to_string()))?
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn broadcast_payjoin_fallback(&self, txid: &Txid) -> Result<(), DaemonError> {
+        let control = match self.handle.lock().await.as_ref() {
+            Some(DaemonHandle::Controller { control, .. }) => control.clone(),
+            Some(_) => unreachable!("No lianad rpc server must be started"),
+            None => return Err(DaemonError::DaemonStopped),
+        };
+        let txid = *txid;
+        tokio::task::spawn_blocking(move || {
+            control
+                .broadcast_payjoin_fallback(&txid)
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
+        .await
+        .map_err(|e| DaemonError::Unexpected(e.to_string()))?
     }
 
     async fn update_deriv_indexes(

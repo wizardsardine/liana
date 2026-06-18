@@ -136,13 +136,20 @@ pub fn new_address_label_modal<'a>(value: &'a form::Value<String>) -> Element<'a
     )
 }
 
-pub fn new_address_show_modal<'a>(address: &Address) -> Element<'a, Message> {
+pub fn new_address_show_modal<'a>(address: &Address, bip21: Option<&str>) -> Element<'a, Message> {
+    // For a payjoin address, display and copy the bip21 URI; otherwise the plain address.
+    let (display, clipboard): (String, String) = if let Some(bip21) = bip21 {
+        (bip21.to_string(), bip21.to_string())
+    } else {
+        let s = address.to_string();
+        (s.clone(), s)
+    };
     receive::modal::show_address_modal(
-        address,
+        display,
         Message::NewAddress(NewAddressMessage::Close),
         Message::NewAddress(NewAddressMessage::Verify),
         Message::NewAddress(NewAddressMessage::ShowQr),
-        Message::Clipboard(address.to_string()),
+        Message::Clipboard(clipboard),
     )
 }
 
