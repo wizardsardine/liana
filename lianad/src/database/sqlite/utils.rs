@@ -339,6 +339,33 @@ fn migrate_v6_to_v7(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError
     Ok(())
 }
 
+fn migrate_v8_to_v9(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError> {
+    db_exec(conn, |tx| {
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS payjoin_outpoints (
+                outpoint BLOB NOT NULL PRIMARY KEY,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS payjoin_ohttp_keys (
+                id INTEGER PRIMARY KEY NOT NULL,
+                directory_url TEXT UNIQUE NOT NULL,
+                timestamp INTEGER NOT NULL,
+                key BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS payjoin_receivers (
+                id INTEGER PRIMARY KEY NOT NULL,
+                derivation_index INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                events TEXT NOT NULL DEFAULT '[]'
+            );
+            UPDATE version SET version = 9;",
+        )?;
+        Ok(())
+    })?;
+    Ok(())
+}
+
 fn migrate_v7_to_v8(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError> {
     // This migration is done as several database transactions in order not to
     // have a very large database transaction containing all rows from the
@@ -543,6 +570,11 @@ pub fn maybe_apply_migration(
                 log::warn!("Upgrading database from version 7 to version 8.");
                 migrate_v7_to_v8(&mut conn)?;
                 log::warn!("Migration from database version 7 to version 8 successful.");
+            }
+            8 => {
+                log::warn!("Upgrading database from version 8 to version 9.");
+                migrate_v8_to_v9(&mut conn)?;
+                log::warn!("Migration from database version 8 to version 9 successful.");
             }
             _ => return Err(SqliteDbError::UnsupportedVersion(version)),
         }

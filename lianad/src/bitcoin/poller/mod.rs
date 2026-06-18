@@ -1,6 +1,6 @@
 mod looper;
 
-use crate::{bitcoin::BitcoinInterface, database::DatabaseInterface};
+use crate::{bitcoin::BitcoinInterface, config::PayjoinConfig, database::DatabaseInterface};
 use liana::descriptors;
 
 use std::{
@@ -23,8 +23,8 @@ pub struct Poller {
     bit: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
     db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-    // The receive and change descriptors (in this order).
-    descs: [descriptors::SinglePathLianaDesc; 2],
+    desc: descriptors::LianaDescriptor,
+    payjoin_config: Option<PayjoinConfig>,
 }
 
 impl Poller {
@@ -32,12 +32,9 @@ impl Poller {
         bit: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
         db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         desc: descriptors::LianaDescriptor,
+        payjoin_config: Option<PayjoinConfig>,
     ) -> Poller {
         let secp = secp256k1::Secp256k1::verification_only();
-        let descs = [
-            desc.receive_descriptor().clone(),
-            desc.change_descriptor().clone(),
-        ];
 
         // On first startup the tip may be NULL. Make sure it's set as the poller relies on it.
         looper::maybe_initialize_tip(&bit, &db);
@@ -46,7 +43,8 @@ impl Poller {
             bit,
             db,
             secp,
-            descs,
+            desc,
+            payjoin_config,
         }
     }
 
@@ -108,7 +106,13 @@ impl Poller {
                     // poll too soon.
                     last_poll = Some(time::Instant::now());
                     if synced {
-                        looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs);
+                        looper::poll(
+                            &mut self.bit,
+                            &self.db,
+                            &self.secp,
+                            &self.desc,
+                            &self.payjoin_config,
+                        );
                     } else {
                         log::warn!("Skipped poll as block chain is still synchronizing.");
                     }
@@ -142,7 +146,13 @@ impl Poller {
                 }
             }
 
-            looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs);
+            looper::poll(
+                &mut self.bit,
+                &self.db,
+                &self.secp,
+                &self.desc,
+                &self.payjoin_config,
+            );
         }
     }
 }

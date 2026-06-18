@@ -625,6 +625,7 @@ impl Daemon for BackendWalletClient {
         Ok(GetAddressResult {
             address: res.address,
             derivation_index: res.derivation_index,
+            bip21: None,
         })
     }
 
@@ -739,6 +740,8 @@ impl Daemon for BackendWalletClient {
                     tx: tx.raw,
                     height: tx.block_height,
                     time: tx.confirmed_at.map(|t| t as u32),
+                    #[cfg(feature = "payjoin")]
+                    payjoin_role: None,
                 })
                 .collect(),
         })
@@ -758,6 +761,8 @@ impl Daemon for BackendWalletClient {
                     tx: tx.raw,
                     height: tx.block_height,
                     time: tx.confirmed_at.map(|t| t as u32),
+                    #[cfg(feature = "payjoin")]
+                    payjoin_role: None,
                 })
                 .collect(),
         })

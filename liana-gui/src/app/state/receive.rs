@@ -796,7 +796,7 @@ mod tests {
             (
                 // getnewaddress: reveal first.
                 Some(json!({"method": "getnewaddress", "params": Option::<Request>::None})),
-                Ok(json!(GetAddressResult::new(addr.clone(), index))),
+                Ok(json!(GetAddressResult::new(addr.clone(), index, None))),
             ),
             // updatelabels: store the label on the revealed address.
             (None, Ok(json!(null))),

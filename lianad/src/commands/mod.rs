@@ -5,6 +5,17 @@
 
 mod utils;
 
+#[cfg(feature = "payjoin")]
+use crate::config::Config;
+#[cfg(feature = "payjoin")]
+use crate::payjoin::{
+    db::ReceiverPersister,
+    helpers::{fetch_ohttp_keys, FetchOhttpKeysError},
+    receiver::{
+        cancel_payjoin_for_session, find_receiver_session_by_txid, send_payjoin_for_session,
+    },
+    types::{PayjoinRole, PayjoinStatus},
+};
 use crate::{
     bitcoin::BitcoinInterface,
     database::{Coin, DatabaseConnection, DatabaseInterface},
@@ -28,6 +39,8 @@ use utils::{
     ser_hex, ser_to_string,
 };
 
+#[cfg(feature = "payjoin")]
+use std::sync::Arc;
 use std::{
     collections::{hash_map, HashMap, HashSet},
     convert::TryInto,
@@ -44,6 +57,8 @@ use miniscript::{
     },
     psbt::PsbtExt,
 };
+#[cfg(feature = "payjoin")]
+use payjoin::receive::v2::{replay_event_log as replay_receiver_event_log, ReceiverBuilder};
 use serde::{Deserialize, Serialize};
 
 #[allow(clippy::large_enum_variant)]
@@ -76,6 +91,16 @@ pub enum CommandError {
     InvalidDerivationIndex,
     RbfError(RbfErrorInfo),
     EmptyFilterList,
+    #[cfg(feature = "payjoin")]
+    FailedToFetchOhttpKeys(FetchOhttpKeysError),
+    // Same FIXME as `SpendFinalization`
+    FailedToPostOriginalPayjoinProposal(String),
+    ReplayError(String),
+    IntoUrlError(String),
+    NoPayjoinSessionForTxid(bitcoin::Txid),
+    SendPayjoinFailed(String),
+    CancelPayjoinFailed(String),
+    NoPayjoinFallback(bitcoin::Txid),
 }
 
 impl fmt::Display for CommandError {
@@ -129,6 +154,32 @@ impl fmt::Display for CommandError {
             }
             Self::RbfError(e) => write!(f, "RBF error: '{e}'."),
             Self::EmptyFilterList => write!(f, "Filter list is empty, should supply None instead."),
+            #[cfg(feature = "payjoin")]
+            Self::FailedToFetchOhttpKeys(e) => write!(f, "Failed to fetch OHTTP keys: '{e}'."),
+            Self::FailedToPostOriginalPayjoinProposal(e) => {
+                write!(f, "Failed to post original payjoin proposal: '{e}'.")
+            }
+            Self::ReplayError(e) => {
+                write!(f, "Payjoin replay failed: '{e}'.")
+            }
+            Self::IntoUrlError(e) => {
+                write!(f, "Payjoin into url failed: '{e}'.")
+            }
+            Self::NoPayjoinSessionForTxid(txid) => {
+                write!(f, "No payjoin receiver session found for txid '{txid}'.")
+            }
+            Self::SendPayjoinFailed(e) => {
+                write!(f, "Failed to send payjoin proposal: '{e}'.")
+            }
+            Self::CancelPayjoinFailed(e) => {
+                write!(f, "Failed to cancel payjoin session: '{e}'.")
+            }
+            Self::NoPayjoinFallback(txid) => {
+                write!(
+                    f,
+                    "No fallback transaction available for payjoin session '{txid}'."
+                )
+            }
         }
     }
 }
@@ -356,7 +407,135 @@ impl DaemonControl {
             .receive_descriptor()
             .derive(new_index, &self.secp)
             .address(self.config.bitcoin_config.network);
-        GetAddressResult::new(address, new_index)
+        GetAddressResult::new(address, new_index, None)
+    }
+
+    /// Begin receive payjoin flow
+    #[cfg(feature = "payjoin")]
+    pub fn receive_payjoin(&self) -> Result<GetAddressResult, CommandError> {
+        let mut db_conn = self.db.connection();
+
+        let payjoin_config = self
+            .config
+            .payjoin_config
+            .clone()
+            .unwrap_or_else(Config::default_payjoin_config);
+        let ohttp_relays = payjoin_config.ohttp_relays.clone();
+        let payjoin_dir_url = payjoin_config.payjoin_directory.clone();
+        let root_certificate = payjoin_config.root_certificate.clone();
+
+        let ohttp_keys = if let Some(entry) = db_conn.payjoin_get_ohttp_keys(&payjoin_dir_url) {
+            entry.1
+        } else {
+            let relays = ohttp_relays.clone();
+            let payjoin_dir = payjoin_dir_url.clone();
+            let cert = root_certificate.clone();
+            let ohttp_keys =
+                std::thread::spawn(move || fetch_ohttp_keys(&relays, payjoin_dir, cert.as_deref()))
+                    .join()
+                    .unwrap()
+                    .map_err(CommandError::FailedToFetchOhttpKeys)?;
+            db_conn.payjoin_save_ohttp_keys(&payjoin_dir_url, ohttp_keys.clone());
+            ohttp_keys
+        };
+
+        let index = db_conn.receive_index();
+        let new_index = index
+            .increment()
+            .expect("Can't get into hardened territory");
+        db_conn.set_receive_index(new_index, &self.secp);
+        let address = self
+            .config
+            .main_descriptor
+            .receive_descriptor()
+            .derive(new_index, &self.secp)
+            .address(self.config.bitcoin_config.network);
+
+        let persister = ReceiverPersister::new(Arc::new(self.db.clone()), new_index.into());
+        let session = ReceiverBuilder::new(address.clone(), payjoin_dir_url, ohttp_keys)
+            .map_err(|e| CommandError::IntoUrlError(e.to_string()))?
+            .build()
+            .save(&persister)
+            .unwrap();
+
+        let bip21 = session.pj_uri().to_string();
+
+        Ok(GetAddressResult::new(address, new_index, Some(bip21)))
+    }
+
+    /// Get receiver session and its sender/receiver status by txid
+    #[cfg(feature = "payjoin")]
+    pub fn get_payjoin_info(&self, txid: &bitcoin::Txid) -> Result<PayjoinStatus, CommandError> {
+        log::debug!("Getting payjoin info for txid: {:?}", txid);
+        if let Some((session_id, _)) = find_receiver_session_by_txid(&self.db, txid) {
+            let persister =
+                ReceiverPersister::from_id(Arc::new(self.db.clone()), session_id.clone());
+            match replay_receiver_event_log(&persister) {
+                Ok((state, _)) => return Ok(state.into()),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("expired") {
+                        log::info!("Payjoin session {:?} expired for tx {:?}", session_id, txid);
+                        return Ok(PayjoinStatus::Expired);
+                    }
+                    return Err(CommandError::ReplayError(format!(
+                        "Receiver replay failed: {e:?}"
+                    )));
+                }
+            }
+        }
+
+        Ok(PayjoinStatus::Unknown)
+    }
+
+    /// Send a finalized payjoin proposal for the receiver session associated with the given txid.
+    #[cfg(feature = "payjoin")]
+    pub fn send_payjoin_proposal(&self, txid: &bitcoin::Txid) -> Result<(), CommandError> {
+        let (session_id, _) = find_receiver_session_by_txid(&self.db, txid)
+            .ok_or(CommandError::NoPayjoinSessionForTxid(*txid))?;
+        let payjoin_config = self
+            .config
+            .payjoin_config
+            .clone()
+            .unwrap_or_else(Config::default_payjoin_config);
+        send_payjoin_for_session(
+            &self.db,
+            session_id,
+            &self.secp,
+            &payjoin_config.ohttp_relays,
+        )
+        .map_err(|e| CommandError::SendPayjoinFailed(e.to_string()))
+    }
+
+    /// Cancel the payjoin receiver session associated with the given txid and immediately
+    /// broadcast the sender's original (non-payjoin) fallback transaction.
+    #[cfg(feature = "payjoin")]
+    pub fn broadcast_payjoin_fallback(&self, txid: &bitcoin::Txid) -> Result<(), CommandError> {
+        let (session_id, _) = find_receiver_session_by_txid(&self.db, txid)
+            .ok_or(CommandError::NoPayjoinSessionForTxid(*txid))?;
+        let fallback = cancel_payjoin_for_session(&self.db, session_id)
+            .map_err(|e| CommandError::CancelPayjoinFailed(e.to_string()))?
+            .ok_or(CommandError::NoPayjoinFallback(*txid))?;
+        self.bitcoin
+            .broadcast_tx(&fallback)
+            .map_err(CommandError::TxBroadcast)?;
+
+        let (tx, rx) = mpsc::sync_channel(0);
+        if let Err(e) = self.poller_sender.send(PollerMessage::PollNow(tx)) {
+            log::error!("Error requesting update from poller: {}", e);
+        }
+        if let Err(e) = rx.recv() {
+            log::error!("Error receiving completion signal from poller: {}", e);
+        }
+        Ok(())
+    }
+
+    /// Get all active payjoin receiver sessions with their derivation indexes
+    #[cfg(feature = "payjoin")]
+    pub fn get_active_payjoin_receiver_sessions(&self) -> Result<Vec<u32>, CommandError> {
+        let mut db_conn = self.db.connection();
+        let sessions = db_conn.get_active_payjoin_receiver_sessions();
+        Ok(sessions.into_iter().map(|(_, idx)| idx).collect())
     }
 
     /// Update derivation indexes
@@ -898,14 +1077,25 @@ impl DaemonControl {
         let mut spend_psbt = db_conn
             .spend_tx(txid)
             .ok_or(CommandError::UnknownSpend(*txid))?;
-        spend_psbt.finalize_mut(&self.secp).map_err(|e| {
-            CommandError::SpendFinalization(
-                e.into_iter()
-                    .next()
-                    .map(|e| e.to_string())
-                    .unwrap_or_default(),
-            )
-        })?;
+        for index in 0..spend_psbt.inputs.len() {
+            match spend_psbt.finalize_inp_mut(&self.secp, index) {
+                Ok(_) => log::debug!("Finalizing input at: {}", index),
+                Err(e) => {
+                    // If the input is already finalized (e.g. a payjoin sender input that
+                    // arrived with final_script_witness already set), ignore the error.
+                    // Otherwise, the transaction can't be broadcast — return an error.
+                    let input = &spend_psbt.inputs[index];
+                    if input.final_script_witness.is_none() && input.final_script_sig.is_none() {
+                        return Err(CommandError::SpendFinalization(e.to_string()));
+                    }
+                    log::debug!(
+                        "Input at index {} already finalized, skipping: {}",
+                        index,
+                        e
+                    );
+                }
+            }
+        }
 
         // Then, broadcast it (or try to, we never know if we are not going to hit an
         // error at broadcast time).
@@ -1234,7 +1424,18 @@ impl DaemonControl {
             .connection()
             .list_wallet_transactions(txids)
             .into_iter()
-            .map(|(tx, height, time)| TransactionInfo { tx, height, time })
+            .map(|(tx, height, time)| {
+                #[cfg(feature = "payjoin")]
+                let payjoin_role = find_receiver_session_by_txid(&self.db, &tx.compute_txid())
+                    .map(|_| PayjoinRole::Receiver);
+                TransactionInfo {
+                    tx,
+                    height,
+                    time,
+                    #[cfg(feature = "payjoin")]
+                    payjoin_role,
+                }
+            })
             .collect();
         ListTransactionsResult { transactions }
     }
@@ -1369,13 +1570,19 @@ pub struct GetAddressResult {
     #[serde(deserialize_with = "deser_addr_assume_checked")]
     pub address: bitcoin::Address,
     pub derivation_index: bip32::ChildNumber,
+    pub bip21: Option<String>,
 }
 
 impl GetAddressResult {
-    pub fn new(address: bitcoin::Address, derivation_index: bip32::ChildNumber) -> Self {
+    pub fn new(
+        address: bitcoin::Address,
+        derivation_index: bip32::ChildNumber,
+        bip21: Option<String>,
+    ) -> Self {
         Self {
             address,
             derivation_index,
+            bip21,
         }
     }
 }
@@ -1517,6 +1724,9 @@ pub struct TransactionInfo {
     pub tx: bitcoin::Transaction,
     pub height: Option<i32>,
     pub time: Option<u32>,
+    #[cfg(feature = "payjoin")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payjoin_role: Option<PayjoinRole>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

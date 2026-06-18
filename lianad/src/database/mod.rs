@@ -4,6 +4,8 @@
 
 pub mod sqlite;
 
+#[cfg(feature = "payjoin")]
+use crate::payjoin::db::SessionId;
 use crate::{
     bitcoin::BlockChainTip,
     database::sqlite::{
@@ -22,6 +24,8 @@ use std::{
 
 use bip329::Labels;
 use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1, Address, Network, OutPoint, Txid};
+#[cfg(feature = "payjoin")]
+use payjoin::OhttpKeys;
 
 /// Information about the wallet.
 ///
@@ -194,6 +198,47 @@ pub trait DatabaseConnection {
 
     /// Dump all labels
     fn get_labels_bip329(&mut self, offset: u32, limit: u32) -> Labels;
+
+    /// Get OhttpKeys
+    #[cfg(feature = "payjoin")]
+    fn payjoin_get_ohttp_keys(&mut self, ohttp_directory: &str) -> Option<(u32, OhttpKeys)>;
+
+    /// Save OHttpKeys
+    #[cfg(feature = "payjoin")]
+    fn payjoin_save_ohttp_keys(&mut self, ohttp_directory: &str, ohttp_keys: OhttpKeys);
+
+    /// Save Receiver Session
+    #[cfg(feature = "payjoin")]
+    fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32) -> i64;
+
+    /// Get active payjoin sessions with their derivation indexes
+    #[cfg(feature = "payjoin")]
+    fn get_active_payjoin_receiver_sessions(&mut self) -> Vec<(SessionId, u32)>;
+
+    /// Get all Receiver Sessions
+    #[cfg(feature = "payjoin")]
+    fn get_all_active_receiver_session_ids(&mut self) -> Vec<SessionId>;
+
+    /// Get every Receiver Session (active and closed) with its derivation index
+    #[cfg(feature = "payjoin")]
+    fn get_all_receiver_sessions(&mut self) -> Vec<(SessionId, u32)>;
+
+    /// Save a Receiver Session Event
+    #[cfg(feature = "payjoin")]
+    fn save_receiver_session_event(&mut self, session_id: &SessionId, event: Vec<u8>);
+
+    /// Update completed at timestamp for a Receiver Session
+    /// Sets completed_at to current timestamp
+    #[cfg(feature = "payjoin")]
+    fn update_receiver_session_completed_at(&mut self, session_id: &SessionId);
+
+    /// Load all receiver session events for a particular session id
+    #[cfg(feature = "payjoin")]
+    fn load_receiver_session_events(&mut self, session_id: &SessionId) -> Vec<Vec<u8>>;
+
+    /// Check if input has been seen before and then add it to the input_seen table
+    #[cfg(feature = "payjoin")]
+    fn insert_input_seen_before(&mut self, outpoint: &bitcoin::OutPoint) -> bool;
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -415,6 +460,56 @@ impl DatabaseConnection for SqliteConn {
                 )
             })
             .collect()
+    }
+
+    #[cfg(feature = "payjoin")]
+    fn insert_input_seen_before(&mut self, outpoint: &bitcoin::OutPoint) -> bool {
+        self.insert_outpoint_seen_before(outpoint)
+    }
+
+    #[cfg(feature = "payjoin")]
+    fn payjoin_get_ohttp_keys(&mut self, ohttp_directory: &str) -> Option<(u32, OhttpKeys)> {
+        self.payjoin_get_ohttp_keys(ohttp_directory)
+    }
+
+    #[cfg(feature = "payjoin")]
+    fn payjoin_save_ohttp_keys(&mut self, ohttp_directory: &str, ohttp_keys: OhttpKeys) {
+        self.payjoin_save_ohttp_keys(ohttp_directory, ohttp_keys)
+    }
+
+    #[cfg(feature = "payjoin")]
+    fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32) -> i64 {
+        self.save_new_payjoin_receiver_session(derivation_index)
+    }
+
+    #[cfg(feature = "payjoin")]
+    fn get_active_payjoin_receiver_sessions(&mut self) -> Vec<(SessionId, u32)> {
+        self.get_active_payjoin_receiver_sessions()
+    }
+
+    #[cfg(feature = "payjoin")]
+    fn get_all_active_receiver_session_ids(&mut self) -> Vec<SessionId> {
+        self.get_all_active_receiver_session_ids()
+    }
+
+    #[cfg(feature = "payjoin")]
+    fn get_all_receiver_sessions(&mut self) -> Vec<(SessionId, u32)> {
+        self.get_all_receiver_sessions()
+    }
+
+    #[cfg(feature = "payjoin")]
+    fn save_receiver_session_event(&mut self, session_id: &SessionId, event: Vec<u8>) {
+        self.save_receiver_session_event(session_id, event)
+    }
+
+    #[cfg(feature = "payjoin")]
+    fn update_receiver_session_completed_at(&mut self, session_id: &SessionId) {
+        self.update_receiver_session_completed_at(session_id)
+    }
+
+    #[cfg(feature = "payjoin")]
+    fn load_receiver_session_events(&mut self, session_id: &SessionId) -> Vec<Vec<u8>> {
+        self.load_receiver_session_events(session_id)
     }
 }
 

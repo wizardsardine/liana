@@ -482,8 +482,108 @@ fn get_labels_bip329(control: &DaemonControl, params: Params) -> Result<serde_js
     Ok(serde_json::json!(control.get_labels_bip329(offset, limit)))
 }
 
+#[cfg(feature = "payjoin")]
+fn receive_payjoin(control: &DaemonControl) -> Result<serde_json::Value, Error> {
+    let res = control.receive_payjoin()?;
+    Ok(serde_json::json!(&res))
+}
+
+#[cfg(feature = "payjoin")]
+fn get_payjoin_info(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let txid = params
+        .get(0, "txid")
+        .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?
+        .as_str()
+        .ok_or_else(|| Error::invalid_params("Invalid 'txid' parameter."))?;
+    let txid = bitcoin::Txid::from_str(txid)
+        .map_err(|_| Error::invalid_params("Invalid 'txid' parameter."))?;
+    let res = control.get_payjoin_info(&txid)?;
+    Ok(serde_json::json!(&res))
+}
+
+#[cfg(feature = "payjoin")]
+fn get_active_payjoin_receiver_sessions(
+    control: &DaemonControl,
+) -> Result<serde_json::Value, Error> {
+    let res = control.get_active_payjoin_receiver_sessions()?;
+    Ok(serde_json::json!(&res))
+}
+
+#[cfg(feature = "payjoin")]
+fn send_payjoin_proposal(
+    control: &DaemonControl,
+    params: Params,
+) -> Result<serde_json::Value, Error> {
+    let txid = params
+        .get(0, "txid")
+        .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?
+        .as_str()
+        .ok_or_else(|| Error::invalid_params("Invalid 'txid' parameter."))?;
+    let txid = bitcoin::Txid::from_str(txid)
+        .map_err(|_| Error::invalid_params("Invalid 'txid' parameter."))?;
+    control.send_payjoin_proposal(&txid)?;
+    Ok(serde_json::json!({}))
+}
+
+#[cfg(feature = "payjoin")]
+fn broadcast_payjoin_fallback(
+    control: &DaemonControl,
+    params: Params,
+) -> Result<serde_json::Value, Error> {
+    let txid = params
+        .get(0, "txid")
+        .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?
+        .as_str()
+        .ok_or_else(|| Error::invalid_params("Invalid 'txid' parameter."))?;
+    let txid = bitcoin::Txid::from_str(txid)
+        .map_err(|_| Error::invalid_params("Invalid 'txid' parameter."))?;
+    control.broadcast_payjoin_fallback(&txid)?;
+    Ok(serde_json::json!({}))
+}
+
 /// Handle an incoming JSONRPC2 request.
 pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Response, Error> {
+    #[cfg(feature = "payjoin")]
+    match req.method.as_str() {
+        "receivepayjoin" => {
+            return Ok(Response::success(req.id, receive_payjoin(control)?));
+        }
+        "getpayjoininfo" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?;
+            return Ok(Response::success(
+                req.id,
+                get_payjoin_info(control, params)?,
+            ));
+        }
+        "getactivepayjoinreceiversessions" => {
+            return Ok(Response::success(
+                req.id,
+                get_active_payjoin_receiver_sessions(control)?,
+            ));
+        }
+        "sendpayjoinproposal" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?;
+            return Ok(Response::success(
+                req.id,
+                send_payjoin_proposal(control, params)?,
+            ));
+        }
+        "broadcastpayjoinfallback" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?;
+            return Ok(Response::success(
+                req.id,
+                broadcast_payjoin_fallback(control, params)?,
+            ));
+        }
+        _ => {}
+    }
+
     let result = match req.method.as_str() {
         "broadcastspend" => {
             let params = req
