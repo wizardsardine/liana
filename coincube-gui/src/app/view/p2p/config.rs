@@ -390,9 +390,7 @@ mod tests {
         assert!(!config.has_test_coordinator(bitcoin::Network::Regtest));
         assert!(!config.has_test_coordinator(bitcoin::Network::Testnet));
 
-        config
-            .nodes
-            .push(node("Local", "test1", NetworkKind::Test));
+        config.nodes.push(node("Local", "test1", NetworkKind::Test));
 
         // Mainnet is never a "test coordinator" network.
         assert!(!config.has_test_coordinator(bitcoin::Network::Bitcoin));
@@ -420,7 +418,9 @@ mod tests {
         };
 
         // On mainnet: the active mainnet node + mainnet relays.
-        let m = config.active_for(bitcoin::Network::Bitcoin).expect("mainnet");
+        let m = config
+            .active_for(bitcoin::Network::Bitcoin)
+            .expect("mainnet");
         assert_eq!(m.pubkey_hex, "main1");
         assert_eq!(m.relays, vec!["wss://main.relay".to_string()]);
 

@@ -3945,14 +3945,6 @@ impl App {
                 view::Message::DismissReceivedCelebration,
             );
             view::dashboard(&self.panels.current, &self.cache, celebration)
-        } else if let Some(content) = self.connect_settings_content() {
-            // Connect-dependent settings sub-pages (Spark → Settings →
-            // Lightning Address, Cube → Settings → Avatar / Members)
-            // need both the relevant panel state and the
-            // ConnectCubePanel. The State trait's `view` only sees the
-            // active panel + Cache, so the dispatch lives here — App
-            // owns every panel.
-            view::dashboard(&self.panels.current, &self.cache, content)
         } else if let Some(reason) = features::route_availability(
             &self.panels.current,
             self.cache.network,
@@ -3964,12 +3956,24 @@ impl App {
             // The active route targets a feature that isn't available on
             // this network (a restored or deep-linked route onto an item
             // that renders greyed in the rail). Show the shared
-            // "unavailable" placeholder rather than a live panel.
+            // "unavailable" placeholder rather than a live panel. Checked
+            // before `connect_settings_content` so a gated route that also
+            // happens to be a Connect-settings page (e.g. Spark → Settings →
+            // Lightning Address on a network where Spark is unavailable)
+            // shows the placeholder instead of the live Connect UI.
             view::dashboard(
                 &self.panels.current,
                 &self.cache,
                 view::feature_unavailable_panel(reason),
             )
+        } else if let Some(content) = self.connect_settings_content() {
+            // Connect-dependent settings sub-pages (Spark → Settings →
+            // Lightning Address, Cube → Settings → Avatar / Members)
+            // need both the relevant panel state and the
+            // ConnectCubePanel. The State trait's `view` only sees the
+            // active panel + Cache, so the dispatch lives here — App
+            // owns every panel.
+            view::dashboard(&self.panels.current, &self.cache, content)
         } else {
             self.panels
                 .current()

@@ -43,9 +43,7 @@ impl BreezConfig {
         let liquid_explorer_url = match self.network {
             bitcoin::Network::Bitcoin => format!("{}/api/v1/esplora/liquid/mainnet", coincube_base),
             bitcoin::Network::Signet => "https://blockstream.info/liquidtestnet/api".to_string(),
-            bitcoin::Network::Testnet
-            | bitcoin::Network::Testnet4
-            | bitcoin::Network::Regtest => {
+            bitcoin::Network::Testnet | bitcoin::Network::Testnet4 | bitcoin::Network::Regtest => {
                 format!("{}/api/v1/esplora/liquid/testnet", coincube_base)
             }
         };
@@ -54,9 +52,7 @@ impl BreezConfig {
                 format!("{}/api/v1/esplora/bitcoin/mainnet", coincube_base)
             }
             bitcoin::Network::Signet => "https://blockstream.info/signet/api".to_string(),
-            bitcoin::Network::Testnet
-            | bitcoin::Network::Testnet4
-            | bitcoin::Network::Regtest => {
+            bitcoin::Network::Testnet | bitcoin::Network::Testnet4 | bitcoin::Network::Regtest => {
                 format!("{}/api/v1/esplora/bitcoin/testnet", coincube_base)
             }
         };

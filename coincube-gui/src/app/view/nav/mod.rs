@@ -135,9 +135,7 @@ fn identity_block<'a>(ctx: &NavContext<'a>) -> Element<'a, Message> {
     let avatar_button: Element<'a, Message> = Button::new(avatar)
         .style(theme::button::transparent)
         .on_press(Message::Menu(Menu::Cube(
-            crate::app::menu::CubeSubMenu::Settings(
-                crate::app::menu::CubeSettingsOption::Avatar,
-            ),
+            crate::app::menu::CubeSubMenu::Settings(crate::app::menu::CubeSettingsOption::Avatar),
         )))
         .into();
 
