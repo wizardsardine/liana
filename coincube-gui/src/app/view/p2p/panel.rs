@@ -432,13 +432,8 @@ impl P2PPanel {
         // the failure in Settings — and `save_mostro_config` refuses to
         // overwrite a newer on-disk config, so the user's coordinators/relays
         // aren't silently discarded.
-        let (mostro_config, mostro_config_error) = match load_mostro_config() {
-            Ok(mut cfg) => {
-                // Never start with a cross-network coordinator selected
-                // (COIN-371 §3.4) — prefer a node tagged for this network.
-                cfg.select_default_for(network);
-                (cfg, None)
-            }
+        let (mut mostro_config, mostro_config_error) = match load_mostro_config() {
+            Ok(cfg) => (cfg, None),
             Err(e) => {
                 tracing::error!("Failed to load mostro config, using defaults: {e}");
                 (
@@ -450,6 +445,11 @@ impl P2PPanel {
                 )
             }
         };
+        // Never start with a cross-network coordinator selected (COIN-371
+        // §3.4) — prefer a node tagged for this network. Applied to both the
+        // loaded and the default-fallback config so a test-network cube never
+        // starts on a mainnet coordinator.
+        mostro_config.select_default_for(network);
         Self {
             wallet,
             spark_backend,
@@ -4707,15 +4707,24 @@ impl State for P2PPanel {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let cube_name = self.cube_name();
-        let mnemonic = self.mnemonic.clone();
-        let coordinator = self.resolved_coordinator();
-        let mostro_sub = super::mostro::mostro_subscription(
-            cube_name,
-            mnemonic,
-            coordinator.pubkey_hex,
-            coordinator.relays,
-        );
+        // When the active coordinator doesn't match the wallet's network,
+        // trading is hard-blocked and `resolved_coordinator` could fall back to
+        // a different coordinator than the one shown as active — so don't stream
+        // from it. The subscription resumes once a matching coordinator is
+        // selected (COIN-371 Q4).
+        let mostro_sub = if self.coordinator_network_matches() {
+            let cube_name = self.cube_name();
+            let mnemonic = self.mnemonic.clone();
+            let coordinator = self.resolved_coordinator();
+            super::mostro::mostro_subscription(
+                cube_name,
+                mnemonic,
+                coordinator.pubkey_hex,
+                coordinator.relays,
+            )
+        } else {
+            Subscription::none()
+        };
 
         // Tick every second when viewing a trade detail (for action countdown timer)
         let selected_is_active = self.selected_trade.as_ref().is_some_and(|id| {
@@ -5181,6 +5190,12 @@ impl State for P2PPanel {
                 let mut trial = self.mostro_config.clone();
                 trial.nodes.retain(|n| n.pubkey_hex != pubkey);
                 trial.ensure_defaults();
+                // `ensure_defaults` reselects `nodes[0]` network-blind (often
+                // the mainnet coordinator); re-pin to a node that matches this
+                // cube's network so removing the active test node doesn't leave
+                // a mainnet selection (mismatch hard-block) when another test
+                // node is still available.
+                trial.select_default_for(self.network);
                 match save_mostro_config(&trial) {
                     Ok(()) => {
                         self.mostro_config = trial;
