@@ -91,9 +91,12 @@ async fn coincube_grpc_url() -> Option<String> {
 /// used only when the service-config endpoint is unreachable. `None` when not
 /// baked in.
 fn buildtime_grpc_url_default() -> Option<String> {
-    option_env!("COINCUBE_CONNECT_GRPC_URL")
-        .map(|v| v.trim().trim_end_matches('/').to_string())
-        .filter(|v| !v.is_empty())
+    // Normalize like the service-config path so a baked bare `host:port`
+    // still enables TLS in `create_channel` (which keys on the `https://`
+    // prefix). A scheme-qualified value is passed through unchanged;
+    // default to TLS otherwise — plaintext dev endpoints must spell out
+    // `http://`.
+    option_env!("COINCUBE_CONNECT_GRPC_URL").and_then(|v| normalize_grpc_url(v, true))
 }
 
 /// Normalize a gRPC endpoint to a scheme-qualified URL tonic accepts. Returns
@@ -114,11 +117,15 @@ fn normalize_grpc_url(raw: &str, tls: bool) -> Option<String> {
 }
 
 fn runtime_grpc_url_override() -> Option<String> {
+    // Normalize like the service-config path so a bare `host:port` from the
+    // env override still enables TLS in `create_channel` (which keys on the
+    // `https://` prefix). Scheme-qualified values pass through unchanged;
+    // default to TLS otherwise — plaintext/local endpoints must spell out
+    // `http://`.
     std::env::var(CONNECT_GRPC_URL_ENV)
         .ok()
         .or_else(|| std::env::var(LEGACY_GRPC_URL_ENV).ok())
-        .map(|v| v.trim().trim_end_matches('/').to_string())
-        .filter(|v| !v.is_empty())
+        .and_then(|v| normalize_grpc_url(&v, true))
 }
 
 fn runtime_backend_api_url_override() -> Option<String> {
