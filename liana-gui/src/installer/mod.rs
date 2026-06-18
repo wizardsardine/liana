@@ -20,7 +20,6 @@ use liana_ui::{
 };
 use lianad::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Config};
 use std::{collections::HashMap, fmt::Debug, ops::Deref};
-use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
 use std::io::Write;
@@ -354,28 +353,39 @@ impl LianaInstaller {
                     .context
                     .liana_directory
                     .network_directory(self.context.bitcoin_config.network);
-                // In case of failure during install, block the thread to
-                // deleted the data_dir/network directory in order to start clean again.
+                let cleanup_network_directory = network_directory.clone();
+                let cleanup_wallet_id = wallet_id.clone();
+                let cleanup_path = network_directory.path().to_string_lossy().to_string();
+
                 warn!("Installation failed. Cleaning up the network directory.");
-                if let Err(e) = Handle::current().block_on(delete::delete_failed_install(
-                    &network_directory,
-                    &wallet_id,
-                )) {
-                    error!(
-                        "Failed to completely clean the network directory (path: '{}'): {}",
-                        network_directory.path().to_string_lossy(),
-                        e
-                    );
-                } else {
-                    warn!(
-                        "Successfully cleaned network directory at '{}'.",
-                        network_directory.path().to_string_lossy()
-                    );
-                };
-                self.steps
+                let step_task = self
+                    .steps
                     .get_mut(self.current)
                     .expect("There is always a step")
-                    .update(&mut self.hws, Message::Installed(wallet_id, Err(e)))
+                    .update(&mut self.hws, Message::Installed(wallet_id, Err(e)));
+                let cleanup_task = Task::perform(
+                    async move {
+                        delete::delete_failed_install(
+                            &cleanup_network_directory,
+                            &cleanup_wallet_id,
+                        )
+                        .await
+                        .map_err(|e| e.to_string())
+                    },
+                    move |result| Message::FailedInstallCleaned(cleanup_path.clone(), result),
+                );
+
+                Task::batch([step_task, cleanup_task])
+            }
+            Message::FailedInstallCleaned(path, result) => {
+                match result {
+                    Ok(()) => warn!("Successfully cleaned network directory at '{}'.", path),
+                    Err(e) => error!(
+                        "Failed to completely clean the network directory (path: '{}'): {}",
+                        path, e
+                    ),
+                }
+                Task::none()
             }
             _ => self
                 .steps

@@ -11,7 +11,6 @@ use liana_ui::{
     widget::{modal::Modal, Column, ColumnExt, Container, Element, Row, RowExt, SpaceExt},
 };
 use lianad::config::ConfigError;
-use tokio::runtime::Handle;
 
 use crate::{
     app::{
@@ -132,13 +131,15 @@ impl Launcher {
                     } else {
                         None
                     };
-                    self.delete_wallet_modal = Some(DeleteWalletModal::new(
+                    let (modal, task) = DeleteWalletModal::new(
                         self.network,
                         wallet_datadir,
                         wallets[i].clone(),
                         internal_bitcoind,
                         self.backend_type,
-                    ));
+                    );
+                    self.delete_wallet_modal = Some(modal);
+                    return task;
                 }
                 Task::none()
             }
@@ -443,6 +444,8 @@ pub enum Message {
     Install(LianaDirectory, Network, UserFlow),
     Checked(Result<State, String>),
     Run(LianaDirectory, app::config::Config, Network, WalletSettings),
+    DeleteWalletMembership(WalletId, Result<Option<DeleteWalletUserRole>, String>),
+    WalletDeleted(WalletId, Result<(), String>),
 }
 
 #[derive(Debug, Clone)]
@@ -467,14 +470,30 @@ pub enum DeleteWalletMessage {
     Deleted,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum DeleteWalletUserRole {
+    Owner,
+    Member,
+}
+
+impl From<UserRole> for DeleteWalletUserRole {
+    fn from(value: UserRole) -> Self {
+        match value {
+            UserRole::Owner => Self::Owner,
+            UserRole::Member => Self::Member,
+        }
+    }
+}
+
 struct DeleteWalletModal {
     network: Network,
     network_directory: NetworkDirectory,
     wallet_settings: WalletSettings,
-    warning: Option<DeleteError>,
+    warning: Option<String>,
     deleted: bool,
+    deleting: bool,
     delete_liana_connect: bool,
-    user_role: Option<UserRole>,
+    user_role: Option<DeleteWalletUserRole>,
     // `None` means we were not able to determine whether wallet uses internal bitcoind.
     internal_bitcoind: Option<bool>,
     backend_type: BackendType,
@@ -487,57 +506,92 @@ impl DeleteWalletModal {
         wallet_settings: WalletSettings,
         internal_bitcoind: Option<bool>,
         backend_type: BackendType,
-    ) -> Self {
-        let mut modal = Self {
+    ) -> (Self, Task<Message>) {
+        let modal = Self {
             network,
             wallet_settings,
             network_directory,
             warning: None,
             deleted: false,
+            deleting: false,
             delete_liana_connect: false,
             internal_bitcoind,
             user_role: None,
             backend_type,
         };
-        if let Some(auth) = &modal.wallet_settings.remote_backend_auth {
-            match Handle::current().block_on(check_membership(
-                modal.network,
-                &modal.network_directory,
-                auth,
-                modal.backend_type,
-            )) {
-                Err(e) => {
-                    modal.warning = Some(e);
-                }
-                Ok(user_role) => {
-                    modal.user_role = user_role;
-                }
-            }
-        }
-        modal
+        let task = if let Some(auth) = modal.wallet_settings.remote_backend_auth.clone() {
+            let network = modal.network;
+            let network_directory = modal.network_directory.clone();
+            let backend_type = modal.backend_type;
+            let wallet_id = modal.wallet_settings.wallet_id();
+            Task::perform(
+                async move {
+                    check_membership(network, &network_directory, &auth, backend_type)
+                        .await
+                        .map(|role| role.map(DeleteWalletUserRole::from))
+                        .map_err(|e| e.to_string())
+                },
+                move |res| Message::DeleteWalletMembership(wallet_id.clone(), res),
+            )
+        } else {
+            Task::none()
+        };
+
+        (modal, task)
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::DeleteWalletMembership(wallet_id, result) => {
+                if wallet_id == self.wallet_settings.wallet_id() {
+                    match result {
+                        Ok(user_role) => self.user_role = user_role,
+                        Err(e) => self.warning = Some(e),
+                    }
+                }
+            }
+            Message::WalletDeleted(wallet_id, result) => {
+                if wallet_id == self.wallet_settings.wallet_id() {
+                    self.deleting = false;
+                    match result {
+                        Ok(()) => {
+                            self.deleted = true;
+                            return Task::perform(async {}, |_| {
+                                Message::View(ViewMessage::DeleteWallet(
+                                    DeleteWalletMessage::Deleted,
+                                ))
+                            });
+                        }
+                        Err(e) => self.warning = Some(e),
+                    }
+                }
+            }
             Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Confirm(wallet_id))) => {
                 if wallet_id != self.wallet_settings.wallet_id() {
                     return Task::none();
                 }
                 self.warning = None;
-                if let Err(e) = Handle::current().block_on(delete_wallet(
-                    self.network,
-                    &self.network_directory,
-                    &self.wallet_settings,
-                    self.delete_liana_connect,
-                    self.backend_type,
-                )) {
-                    self.warning = Some(e);
-                } else {
-                    self.deleted = true;
-                    return Task::perform(async {}, |_| {
-                        Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Deleted))
-                    });
-                };
+                self.deleting = true;
+
+                let network = self.network;
+                let network_directory = self.network_directory.clone();
+                let wallet_settings = self.wallet_settings.clone();
+                let delete_liana_connect = self.delete_liana_connect;
+                let backend_type = self.backend_type;
+                return Task::perform(
+                    async move {
+                        delete_wallet(
+                            network,
+                            &network_directory,
+                            &wallet_settings,
+                            delete_liana_connect,
+                            backend_type,
+                        )
+                        .await
+                        .map_err(|e| e.to_string())
+                    },
+                    move |result| Message::WalletDeleted(wallet_id.clone(), result),
+                );
             }
             Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::DeleteLianaConnect(
                 delete,
@@ -553,7 +607,7 @@ impl DeleteWalletModal {
         let mut confirm_button = button::secondary(None, "Delete wallet")
             .width(Length::Fixed(200.0))
             .style(theme::button::destructive);
-        if self.warning.is_none() {
+        if self.warning.is_none() && !self.deleting {
             confirm_button = confirm_button.on_press(ViewMessage::DeleteWallet(
                 DeleteWalletMessage::Confirm(self.wallet_settings.wallet_id()),
             ));
@@ -610,8 +664,8 @@ impl DeleteWalletModal {
                     .push_maybe(self.wallet_settings.remote_backend_auth.as_ref().map(|a| {
                         checkbox(self.delete_liana_connect)
                         .label(match self.user_role {
-                                Some(UserRole::Owner) | None => "Also permanently delete this wallet from Liana Connect (for all members).".to_string(),
-                                Some(UserRole::Member) => format!("Also disassociate {} from this Liana Connect wallet.", a.email),
+                                Some(DeleteWalletUserRole::Owner) | None => "Also permanently delete this wallet from Liana Connect (for all members).".to_string(),
+                                Some(DeleteWalletUserRole::Member) => format!("Also disassociate {} from this Liana Connect wallet.", a.email),
                             })
                         .on_toggle_maybe(if !self.deleted {
                                 Some(|v| {

@@ -1,7 +1,9 @@
 use lianad::bip329::Labels;
 use lianad::commands::UpdateDerivIndexesResult;
-use std::collections::{HashMap, HashSet};
-use tokio::sync::Mutex;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex},
+};
 
 use super::{model::*, node, Daemon, DaemonBackend, DaemonError};
 use crate::dir::LianaDirectory;
@@ -17,7 +19,7 @@ use lianad::{
 
 pub struct EmbeddedDaemon {
     config: Config,
-    handle: Mutex<Option<DaemonHandle>>,
+    handle: Arc<Mutex<Option<DaemonHandle>>>,
 }
 
 impl EmbeddedDaemon {
@@ -25,20 +27,24 @@ impl EmbeddedDaemon {
         let handle =
             DaemonHandle::start_default(config.clone(), false).map_err(DaemonError::Start)?;
         Ok(Self {
-            handle: Mutex::new(Some(handle)),
+            handle: Arc::new(Mutex::new(Some(handle))),
             config,
         })
     }
 
     pub async fn command<T, F>(&self, method: F) -> Result<T, DaemonError>
     where
-        F: FnOnce(&mut DaemonControl) -> Result<T, DaemonError>,
+        T: Send + 'static,
+        F: FnOnce(&mut DaemonControl) -> Result<T, DaemonError> + Send + 'static,
     {
-        match self.handle.lock().await.as_mut() {
+        let handle = self.handle.clone();
+        tokio::task::spawn_blocking(move || match handle.lock()?.as_mut() {
             Some(DaemonHandle::Controller { control, .. }) => method(control),
             Some(_) => unreachable!("No lianad rpc server must be started"),
             None => Err(DaemonError::DaemonStopped),
-        }
+        })
+        .await
+        .map_err(|e| DaemonError::Unexpected(format!("Embedded daemon task failed: {e}")))?
     }
 }
 
@@ -74,27 +80,37 @@ impl Daemon for EmbeddedDaemon {
         _datadir: &LianaDirectory,
         _network: Network,
     ) -> Result<(), DaemonError> {
-        let mut handle = self.handle.lock().await;
-        if let Some(h) = handle.as_ref() {
-            if h.is_alive() {
-                return Ok(());
+        let handle = self.handle.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut handle = handle.lock()?;
+            if let Some(h) = handle.as_ref() {
+                if h.is_alive() {
+                    return Ok(());
+                }
             }
-        }
-        // if the daemon poller is not alive, we try to terminate it to fetch the error.
-        if let Some(h) = handle.take() {
-            h.stop()
-                .map_err(|e| DaemonError::Unexpected(e.to_string()))?;
-        }
-        Ok(())
+            // if the daemon poller is not alive, we try to terminate it to fetch the error.
+            if let Some(h) = handle.take() {
+                h.stop()
+                    .map_err(|e| DaemonError::Unexpected(e.to_string()))?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| DaemonError::Unexpected(format!("Embedded daemon task failed: {e}")))?
     }
 
     async fn stop(&self) -> Result<(), DaemonError> {
-        let mut handle = self.handle.lock().await;
-        if let Some(h) = handle.take() {
-            h.stop()
-                .map_err(|e| DaemonError::Unexpected(e.to_string()))?;
-        }
-        Ok(())
+        let handle = self.handle.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut handle = handle.lock()?;
+            if let Some(h) = handle.take() {
+                h.stop()
+                    .map_err(|e| DaemonError::Unexpected(e.to_string()))?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| DaemonError::Unexpected(format!("Embedded daemon task failed: {e}")))?
     }
 
     async fn get_info(&self) -> Result<GetInfoResult, DaemonError> {
@@ -112,7 +128,7 @@ impl Daemon for EmbeddedDaemon {
         limit: usize,
         start_index: Option<ChildNumber>,
     ) -> Result<ListRevealedAddressesResult, DaemonError> {
-        self.command(|daemon| {
+        self.command(move |daemon| {
             daemon
                 .list_revealed_addresses(is_change, exclude_used, limit, start_index)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
@@ -125,7 +141,7 @@ impl Daemon for EmbeddedDaemon {
         receive: Option<u32>,
         change: Option<u32>,
     ) -> Result<UpdateDerivIndexesResult, DaemonError> {
-        self.command(|daemon| {
+        self.command(move |daemon| {
             daemon
                 .update_deriv_indexes(receive, change)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
@@ -138,7 +154,9 @@ impl Daemon for EmbeddedDaemon {
         statuses: &[CoinStatus],
         outpoints: &[OutPoint],
     ) -> Result<ListCoinsResult, DaemonError> {
-        self.command(|daemon| Ok(daemon.list_coins(statuses, outpoints)))
+        let statuses = statuses.to_vec();
+        let outpoints = outpoints.to_vec();
+        self.command(move |daemon| Ok(daemon.list_coins(&statuses, &outpoints)))
             .await
     }
 
@@ -157,12 +175,13 @@ impl Daemon for EmbeddedDaemon {
         end: u32,
         limit: u64,
     ) -> Result<ListTransactionsResult, DaemonError> {
-        self.command(|daemon| Ok(daemon.list_confirmed_transactions(start, end, limit)))
+        self.command(move |daemon| Ok(daemon.list_confirmed_transactions(start, end, limit)))
             .await
     }
 
     async fn list_txs(&self, txids: &[Txid]) -> Result<ListTransactionsResult, DaemonError> {
-        self.command(|daemon| Ok(daemon.list_transactions(txids)))
+        let txids = txids.to_vec();
+        self.command(move |daemon| Ok(daemon.list_transactions(&txids)))
             .await
     }
 
@@ -173,9 +192,11 @@ impl Daemon for EmbeddedDaemon {
         feerate_vb: u64,
         change_address: Option<Address<address::NetworkUnchecked>>,
     ) -> Result<CreateSpendResult, DaemonError> {
-        self.command(|daemon| {
+        let coins_outpoints = coins_outpoints.to_vec();
+        let destinations = destinations.clone();
+        self.command(move |daemon| {
             daemon
-                .create_spend(destinations, coins_outpoints, feerate_vb, change_address)
+                .create_spend(&destinations, &coins_outpoints, feerate_vb, change_address)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
         .await
@@ -187,42 +208,46 @@ impl Daemon for EmbeddedDaemon {
         is_cancel: bool,
         feerate_vb: Option<u64>,
     ) -> Result<CreateSpendResult, DaemonError> {
-        self.command(|daemon| {
+        let txid = *txid;
+        self.command(move |daemon| {
             daemon
-                .rbf_psbt(txid, is_cancel, feerate_vb)
+                .rbf_psbt(&txid, is_cancel, feerate_vb)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
         .await
     }
 
     async fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
-        self.command(|daemon| {
+        let psbt = psbt.clone();
+        self.command(move |daemon| {
             daemon
-                .update_spend(psbt.clone())
+                .update_spend(psbt)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
         .await
     }
 
     async fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
-        self.command(|daemon| {
-            daemon.delete_spend(txid);
+        let txid = *txid;
+        self.command(move |daemon| {
+            daemon.delete_spend(&txid);
             Ok(())
         })
         .await
     }
 
     async fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
-        self.command(|daemon| {
+        let txid = *txid;
+        self.command(move |daemon| {
             daemon
-                .broadcast_spend(txid)
+                .broadcast_spend(&txid)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
         .await
     }
 
     async fn start_rescan(&self, t: u32) -> Result<(), DaemonError> {
-        self.command(|daemon| {
+        self.command(move |daemon| {
             daemon
                 .start_rescan(t)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
@@ -237,9 +262,10 @@ impl Daemon for EmbeddedDaemon {
         feerate_vb: u64,
         sequence: Option<u16>,
     ) -> Result<Psbt, DaemonError> {
-        self.command(|daemon| {
+        let coins_outpoints = coins_outpoints.to_vec();
+        self.command(move |daemon| {
             daemon
-                .create_recovery(address, coins_outpoints, feerate_vb, sequence)
+                .create_recovery(address, &coins_outpoints, feerate_vb, sequence)
                 .map(|res| res.psbt)
                 .map_err(|e| DaemonError::Unexpected(e.to_string()))
         })
@@ -250,7 +276,8 @@ impl Daemon for EmbeddedDaemon {
         &self,
         items: &HashSet<LabelItem>,
     ) -> Result<HashMap<String, String>, DaemonError> {
-        self.command(|daemon| Ok(daemon.get_labels(items).labels))
+        let items = items.clone();
+        self.command(move |daemon| Ok(daemon.get_labels(&items).labels))
             .await
     }
 
@@ -258,15 +285,16 @@ impl Daemon for EmbeddedDaemon {
         &self,
         items: &HashMap<LabelItem, Option<String>>,
     ) -> Result<(), DaemonError> {
-        self.command(|daemon| {
-            daemon.update_labels(items);
+        let items = items.clone();
+        self.command(move |daemon| {
+            daemon.update_labels(&items);
             Ok(())
         })
         .await
     }
 
     async fn get_labels_bip329(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError> {
-        self.command(|daemon| Ok(daemon.get_labels_bip329(offset, limit).labels))
+        self.command(move |daemon| Ok(daemon.get_labels_bip329(offset, limit).labels))
             .await
     }
 }

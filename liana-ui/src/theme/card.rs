@@ -56,7 +56,7 @@ fn card_with_shadow(palette: &ContainerPalette, btn: bool) -> Style {
 }
 
 pub fn simple(theme: &Theme) -> Style {
-    card_with_shadow(&theme.colors.cards.simple, false)
+    card(&theme.colors.cards.simple)
 }
 
 pub fn button_simple(theme: &Theme) -> Style {

@@ -27,7 +27,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
-        message::Message,
+        message::{Message, RedraftSpendResult},
         state::{fiat_converter_for_wallet, psbt},
         view::{self, fiat::FiatAmount},
         wallet::Wallet,
@@ -166,6 +166,7 @@ pub struct DefineSpend {
     /// Whether this is the first step of the spend creation.
     /// Required in order to know whether the user can navigate to a previous step.
     is_first_step: bool,
+    redraft_request_id: u64,
 }
 
 impl DefineSpend {
@@ -205,6 +206,7 @@ impl DefineSpend {
             amount_left_to_select: None,
             warning: None,
             is_first_step,
+            redraft_request_id: 0,
         }
     }
 
@@ -284,7 +286,10 @@ impl DefineSpend {
     }
     /// redraft calculates the amount left to select and auto selects coins
     /// if the user did not select a coin manually
-    fn redraft(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) {
+    fn redraft(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        self.redraft_request_id = self.redraft_request_id.wrapping_add(1);
+        let redraft_request_id = self.redraft_request_id;
+
         if !self.form_values_are_valid(true) || self.exists_duplicate() {
             // The current form details are not valid to draft a spend, so remove any previously
             // calculated amount as it will no longer be valid and could be misleading, e.g. if
@@ -304,7 +309,7 @@ impl DefineSpend {
                     );
             }
             self.fee_amount = None;
-            return;
+            return Task::none();
         }
         let is_self_transfer = self.recipients.is_empty();
         // Define the destinations for a primary path spend from all non-max recipients.
@@ -384,7 +389,7 @@ impl DefineSpend {
                 // Note that for a recovery, the amount left to select is ignored by the view.
                 self.amount_left_to_select = Some(Amount::from_sat(destinations.values().sum()));
                 self.fee_amount = None;
-                return;
+                return Task::none();
             }
             outpoints
         } else if !self.is_user_coin_selection && self.send_max_to_recipient.is_some() {
@@ -418,32 +423,77 @@ impl DefineSpend {
 
         let feerate_vb = self.feerate.value.parse::<u64>().expect("Checked before");
         let recovery_timelock = self.recovery_timelock;
-        match tokio::runtime::Handle::current().block_on(async {
+        let send_max_to_recipient = self.send_max_to_recipient;
+        let is_user_coin_selection = self.is_user_coin_selection;
+        let is_recovery = recovery_timelock.is_some();
+        let max_address_for_result = max_address.clone();
+
+        Task::perform(
+            async move {
+                let result = if let Some(reco_tl) = recovery_timelock {
+                    daemon
+                        .create_recovery(max_address.clone(), &outpoints, feerate_vb, Some(reco_tl))
+                        .await
+                        // Map the PSBT to `CreateSpendResult` result. We only need the PSBT below.
+                        .map(|psbt| CreateSpendResult::Success {
+                            psbt,
+                            warnings: vec![],
+                        })
+                        .map_err(|e| e.into())
+                } else {
+                    daemon
+                        .create_spend_tx(
+                            &outpoints,
+                            &destinations,
+                            feerate_vb,
+                            Some(max_address.clone()),
+                        )
+                        .await
+                        .map_err(|e| e.into())
+                };
+
+                RedraftSpendResult {
+                    send_max_to_recipient,
+                    total_recipients,
+                    max_address: max_address_for_result,
+                    is_user_coin_selection,
+                    is_recovery,
+                    result,
+                    amount_left_to_select: Some(Amount::from_sat(0)),
+                }
+            },
+            move |result| Message::RedraftSpend(redraft_request_id, result),
+        )
+    }
+
+    fn apply_redraft(&mut self, redraft: RedraftSpendResult) {
+        let RedraftSpendResult {
+            send_max_to_recipient,
+            total_recipients,
+            max_address,
+            is_user_coin_selection,
+            is_recovery,
+            result,
+            amount_left_to_select,
+        } = redraft;
+
+        let recipient_with_max = if let Some(i) = send_max_to_recipient {
+            Some((
+                i,
+                self.recipients
+                    .get_mut(i)
+                    .expect("max has been requested for this recipient so it must exist"),
+            ))
+        } else {
+            None
+        };
+
+        match result {
             // If recovery timelock is set, create a recovery transaction. Otherwise, a regular spend.
-            if let Some(reco_tl) = recovery_timelock {
-                daemon
-                    .create_recovery(max_address.clone(), &outpoints, feerate_vb, Some(reco_tl))
-                    .await
-                    // Map the PSBT to `CreateSpendResult` result. We only need the PSBT below.
-                    .map(|psbt| CreateSpendResult::Success {
-                        psbt,
-                        warnings: vec![],
-                    })
-            } else {
-                daemon
-                    .create_spend_tx(
-                        &outpoints,
-                        &destinations,
-                        feerate_vb,
-                        Some(max_address.clone()),
-                    )
-                    .await
-            }
-        }) {
             Ok(CreateSpendResult::Success { psbt, .. }) => {
                 self.fee_amount = Some(psbt.fee().expect("Valid fees"));
                 // Update selected coins for auto-selection (non-recovery case).
-                if !self.is_user_coin_selection && self.recovery_timelock.is_none() {
+                if !is_user_coin_selection && !is_recovery {
                     let selected_coins: Vec<OutPoint> = psbt
                         .unsigned_tx
                         .input
@@ -456,7 +506,7 @@ impl DefineSpend {
                     }
                 }
                 // As coin selection was successful, we can assume there is nothing left to select.
-                self.amount_left_to_select = Some(Amount::from_sat(0));
+                self.amount_left_to_select = amount_left_to_select;
                 if let Some((i, recipient)) = recipient_with_max {
                     // If there's no change output, any excess must be below the dust threshold
                     // and so the max available for this recipient is 0.
@@ -478,8 +528,8 @@ impl DefineSpend {
             }
             Ok(CreateSpendResult::InsufficientFunds { missing }) => handle_max_under_dust(
                 &mut self.fee_amount,
-                self.is_user_coin_selection,
-                self.recovery_timelock.is_none(),
+                is_user_coin_selection,
+                !is_recovery,
                 &mut self.coins,
                 recipient_with_max,
                 &mut self.amount_left_to_select,
@@ -489,7 +539,7 @@ impl DefineSpend {
                 self.network,
             ),
             Err(e) => {
-                self.warning = Some(e.into());
+                self.warning = Some(e);
                 self.fee_amount = None;
             }
         }
@@ -768,8 +818,15 @@ impl Step for DefineSpend {
                 // - all form values have been added and validated
                 // - not a self-send
                 // - user has not yet selected coins manually
-                self.redraft(daemon);
+                let redraft = self.redraft(daemon);
                 self.check_valid();
+                return redraft;
+            }
+            Message::RedraftSpend(redraft_request_id, redraft) => {
+                if redraft_request_id == self.redraft_request_id {
+                    self.apply_redraft(redraft);
+                    self.check_valid();
+                }
             }
             Message::Psbt(res) => match res {
                 Ok(psbt) => {
@@ -805,8 +862,9 @@ impl Step for DefineSpend {
                     // In case some selected coins are not spendable anymore and
                     // new coins make more sense to be selected. A redraft is triggered
                     // if all forms are valid (checked in the redraft method)
-                    self.redraft(daemon);
+                    let redraft = self.redraft(daemon);
                     self.check_valid();
+                    return redraft;
                 }
                 (Err(e), _) | (Ok(_), Err(e)) => self.warning = Some(e),
             },

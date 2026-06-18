@@ -586,24 +586,31 @@ pub fn create_app_with_remote_backend(
 
     // If someone modified the wallet_alias on Liana-Connect,
     // then the new alias is imported and stored in the settings file.
-    if wallet.metadata.wallet_alias != wallet_settings.alias {
-        if let Err(e) = tokio::runtime::Handle::current().block_on(async {
-            update_settings_file(&network_directory, |mut settings: LianaSettings| {
-                if let Some(w) = settings
-                    .wallets
-                    .iter_mut()
-                    .find(|w| w.wallet_id() == wallet_id)
-                {
-                    w.alias = wallet.metadata.wallet_alias.clone();
-                    tracing::info!("Wallet alias was changed. Settings updated.");
-                }
-                settings
-            })
-            .await
-        }) {
-            tracing::error!("Failed to update wallet settings with remote alias: {}", e);
-        }
-    }
+    let remote_alias = wallet.metadata.wallet_alias.clone();
+    let alias_update_task = if remote_alias != wallet_settings.alias {
+        let network_directory = network_directory.clone();
+        let wallet_id = wallet_id.clone();
+        Task::perform(
+            async move {
+                update_settings_file(&network_directory, |mut settings: LianaSettings| {
+                    if let Some(w) = settings
+                        .wallets
+                        .iter_mut()
+                        .find(|w| w.wallet_id() == wallet_id)
+                    {
+                        w.alias = remote_alias.clone();
+                        tracing::info!("Wallet alias was changed. Settings updated.");
+                    }
+                    settings
+                })
+                .await
+                .map_err(|e| e.to_string())
+            },
+            app::Message::RemoteBackendAliasUpdated,
+        )
+    } else {
+        Task::none()
+    };
 
     let hws: Vec<HardwareWalletConfig> = wallet
         .metadata
@@ -636,7 +643,7 @@ pub fn create_app_with_remote_backend(
         .map(|pk| (pk.fingerprint, pk.into()))
         .collect();
 
-    Ok(app::App::new(
+    let (app, task) = app::App::new(
         Cache {
             variant: liana_ui::Variant::Liana,
             network,
@@ -677,7 +684,9 @@ pub fn create_app_with_remote_backend(
         liana_dir,
         None,
         false,
-    ))
+    );
+
+    Ok((app, Task::batch([task, alias_update_task])))
 }
 
 /// Connect to backend for liana-business using cached tokens.

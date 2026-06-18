@@ -8,7 +8,6 @@ use std::time::Duration;
 use iced::futures::{SinkExt, Stream};
 use iced::stream::channel;
 use iced::{Alignment, Length, Subscription, Task};
-use tokio::runtime::Handle;
 use tracing::{debug, info, warn};
 
 use liana::miniscript::bitcoin;
@@ -290,21 +289,31 @@ impl Loader {
 
     pub fn stop(&mut self) {
         info!("Close requested");
-        if let Step::Syncing { daemon, .. } = &mut self.step {
-            if daemon.backend().is_embedded() {
-                info!("Stopping internal daemon...");
-                if let Err(e) = Handle::current().block_on(async { daemon.stop().await }) {
-                    warn!("Internal daemon failed to stop: {}", e);
-                } else {
-                    info!("Internal daemon stopped");
-                }
-            }
-        }
+        let daemon = match &self.step {
+            Step::Syncing { daemon, .. } if daemon.backend().is_embedded() => Some(daemon.clone()),
+            _ => None,
+        };
 
         // NOTE: we take() the internal_bitcoind here to make sure the debug.log reader
         // subscription is dropped.
-        if let Some(bitcoind) = self.internal_bitcoind.take() {
-            bitcoind.stop();
+        let bitcoind = self.internal_bitcoind.take();
+        if daemon.is_some() || bitcoind.is_some() {
+            tokio::spawn(async move {
+                if let Some(daemon) = daemon {
+                    info!("Stopping internal daemon...");
+                    if let Err(e) = daemon.stop().await {
+                        warn!("Internal daemon failed to stop: {}", e);
+                    } else {
+                        info!("Internal daemon stopped");
+                    }
+                }
+
+                if let Some(bitcoind) = bitcoind {
+                    if let Err(e) = tokio::task::spawn_blocking(move || bitcoind.stop()).await {
+                        warn!("Internal bitcoind shutdown task failed: {}", e);
+                    }
+                }
+            });
         }
     }
 
@@ -602,7 +611,7 @@ async fn sync(
     sleep: bool,
 ) -> Result<GetInfoResult, DaemonError> {
     if sleep {
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
     daemon.get_info().await
 }
