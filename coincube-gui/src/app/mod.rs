@@ -3001,8 +3001,10 @@ impl App {
                     );
                     let is_spend_current =
                         matches!(current, Menu::Vault(crate::app::menu::VaultSubMenu::Send));
-                    let is_recovery_current =
-                        matches!(current, Menu::Vault(crate::app::menu::VaultSubMenu::Recovery));
+                    let is_recovery_current = matches!(
+                        current,
+                        Menu::Vault(crate::app::menu::VaultSubMenu::Recovery)
+                    );
 
                     commands.push(vault_overview.update(
                         Some(daemon.clone()),

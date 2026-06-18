@@ -1647,7 +1647,12 @@ impl Modal for KeychainSignModal {
 /// registered cube keys are actually part of this wallet.
 fn descriptor_fingerprints(descriptor: &CoincubeDescriptor) -> HashSet<Fingerprint> {
     let policy = descriptor.policy();
-    let mut fps: HashSet<Fingerprint> = policy.primary_path().thresh_origins().1.into_keys().collect();
+    let mut fps: HashSet<Fingerprint> = policy
+        .primary_path()
+        .thresh_origins()
+        .1
+        .into_keys()
+        .collect();
     for path in policy.recovery_paths().values() {
         fps.extend(path.thresh_origins().1.into_keys());
     }
