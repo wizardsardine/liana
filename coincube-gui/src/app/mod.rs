@@ -3,6 +3,7 @@ pub mod breez_spark;
 pub mod cache;
 pub mod config;
 pub mod error;
+pub mod features;
 pub mod menu;
 pub mod message;
 pub mod settings;
@@ -233,6 +234,7 @@ impl Panels {
                         spark_backend.clone(),
                         mnemonic,
                         default_fiat_currency,
+                        network,
                     ))
                 }
                 _ => {
@@ -389,6 +391,7 @@ impl Panels {
                         spark_backend.clone(),
                         mnemonic,
                         default_fiat_currency,
+                        cache.network,
                     ))
                 }
                 _ => {
@@ -1272,6 +1275,10 @@ impl App {
         // keychain-unavailable modal offers "Sign with Connect" rather than a
         // "Sign in to Connect" that would no-op.
         cache_with_vault.has_connect_session = connect_auth_arc.is_some();
+        cache_with_vault.p2p_test_coordinator = panels
+            .p2p
+            .as_ref()
+            .is_some_and(|p| p.has_test_coordinator());
         (
             Self {
                 panels,
@@ -1369,6 +1376,10 @@ impl App {
         );
         let mut cache = cache;
         cache.has_p2p = panels.p2p.is_some();
+        cache.p2p_test_coordinator = panels
+            .p2p
+            .as_ref()
+            .is_some_and(|p| p.has_test_coordinator());
 
         let cmd = iced::Task::batch([
             panels.connect.ensure_session_check(),
@@ -3828,7 +3839,16 @@ impl App {
             // so real-time trade updates are processed even when viewing other panels.
             msg @ Message::View(view::Message::P2P(_)) => {
                 if let Some(p2p) = self.panels.p2p.as_mut() {
-                    return p2p.update(self.daemon.clone(), &self.cache, msg);
+                    let task = p2p.update(self.daemon.clone(), &self.cache, msg);
+                    // A P2P message may have changed the Mostro config (e.g.
+                    // adding/selecting a test coordinator in Settings), so
+                    // refresh the rail gate flag the sidebar reads.
+                    self.cache.p2p_test_coordinator = self
+                        .panels
+                        .p2p
+                        .as_ref()
+                        .is_some_and(|p| p.has_test_coordinator());
+                    return task;
                 }
             }
 
@@ -4115,6 +4135,27 @@ impl App {
                 view::Message::DismissReceivedCelebration,
             );
             view::dashboard(&self.panels.current, &self.cache, celebration)
+        } else if let Some(reason) = features::route_availability(
+            &self.panels.current,
+            self.cache.network,
+            self.cache.p2p_test_coordinator,
+        )
+        .reason()
+        .map(str::to_string)
+        {
+            // The active route targets a feature that isn't available on
+            // this network (a restored or deep-linked route onto an item
+            // that renders greyed in the rail). Show the shared
+            // "unavailable" placeholder rather than a live panel. Checked
+            // before `connect_settings_content` so a gated route that also
+            // happens to be a Connect-settings page (e.g. Spark → Settings →
+            // Lightning Address on a network where Spark is unavailable)
+            // shows the placeholder instead of the live Connect UI.
+            view::dashboard(
+                &self.panels.current,
+                &self.cache,
+                view::feature_unavailable_panel(reason),
+            )
         } else if let Some(content) = self.connect_settings_content() {
             // Connect-dependent settings sub-pages (Spark → Settings →
             // Lightning Address, Cube → Settings → Avatar / Members)

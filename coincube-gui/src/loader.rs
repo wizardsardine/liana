@@ -598,6 +598,8 @@ pub async fn load_application(
     let cache = Cache {
         datadir_path: config.datadir_path,
         network: config.info.network,
+        // Recomputed from the P2P panel's Mostro config once panels are built.
+        p2p_test_coordinator: false,
         last_poll_at_startup: config.info.last_poll_timestamp,
         daemon_cache: DaemonCache {
             blockheight: config.info.block_height,

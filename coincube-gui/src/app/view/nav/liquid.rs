@@ -7,29 +7,26 @@ use coincube_ui::icon::{home_icon, receipt_icon, receive_icon, send_icon};
 /// worth surfacing in the rail.
 pub fn items(_ctx: &NavContext) -> Vec<SubItem> {
     vec![
-        SubItem {
-            label: "Overview",
-            icon: home_icon,
-            route: Menu::Liquid(LiquidSubMenu::Overview),
-            matches: |m| matches!(m, Menu::Liquid(LiquidSubMenu::Overview)),
-        },
-        SubItem {
-            label: "Send",
-            icon: send_icon,
-            route: Menu::Liquid(LiquidSubMenu::Send),
-            matches: |m| matches!(m, Menu::Liquid(LiquidSubMenu::Send)),
-        },
-        SubItem {
-            label: "Receive",
-            icon: receive_icon,
-            route: Menu::Liquid(LiquidSubMenu::Receive),
-            matches: |m| matches!(m, Menu::Liquid(LiquidSubMenu::Receive)),
-        },
-        SubItem {
-            label: "Transactions",
-            icon: receipt_icon,
-            route: Menu::Liquid(LiquidSubMenu::Transactions(None)),
-            matches: |m| matches!(m, Menu::Liquid(LiquidSubMenu::Transactions(_))),
-        },
+        SubItem::new(
+            "Overview",
+            home_icon,
+            Menu::Liquid(LiquidSubMenu::Overview),
+            |m| matches!(m, Menu::Liquid(LiquidSubMenu::Overview)),
+        ),
+        SubItem::new("Send", send_icon, Menu::Liquid(LiquidSubMenu::Send), |m| {
+            matches!(m, Menu::Liquid(LiquidSubMenu::Send))
+        }),
+        SubItem::new(
+            "Receive",
+            receive_icon,
+            Menu::Liquid(LiquidSubMenu::Receive),
+            |m| matches!(m, Menu::Liquid(LiquidSubMenu::Receive)),
+        ),
+        SubItem::new(
+            "Transactions",
+            receipt_icon,
+            Menu::Liquid(LiquidSubMenu::Transactions(None)),
+            |m| matches!(m, Menu::Liquid(LiquidSubMenu::Transactions(_))),
+        ),
     ]
 }
