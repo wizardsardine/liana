@@ -2281,7 +2281,7 @@ fn create_cube_form<'a>(
         .push(h4_bold("Create a new Cube"))
         .push(
             p1_regular(
-                "A Cube is your account which can contain a Liquid wallet, a Vault wallet and other features.",
+                "A Cube is your account which can contain a Spark wallet, a Liquid wallet, a Vault wallet and other features.",
             )
             .style(theme::text::secondary),
         );

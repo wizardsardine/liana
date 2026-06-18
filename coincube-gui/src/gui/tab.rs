@@ -987,6 +987,31 @@ impl Tab {
                     restored_from_backup,
                     cube_settings,
                 } => {
+                    // Restore Connect auth cached at `<network>/connect.json`
+                    // by a prior sign-in, mirroring the remote-backend path
+                    // (which threads its live tokens in). Without this, every
+                    // local-node launch discards persisted Connect auth and
+                    // `connect_stream_ready_task` never runs, leaving
+                    // Connect-dependent features — Sign via Keychain in
+                    // particular — unavailable until the user re-signs in via
+                    // the Connect tab. We read the same file
+                    // `duress_state_check_task` already consults at launch.
+                    // (The stream bootstrap still no-ops until a `device_id`
+                    // is registered for the account; the Connect-tab sign-in
+                    // flow handles that registration.)
+                    let connect_auth =
+                        crate::services::connect::client::cache::ConnectCache::from_file(
+                            &datadir.network_directory(cache.network),
+                        )
+                        .ok()
+                        .and_then(|c| c.accounts.into_iter().next())
+                        .map(|account| {
+                            (
+                                Arc::new(tokio::sync::RwLock::new(account.tokens)),
+                                account.email,
+                            )
+                        });
+
                     let (app, command) = App::new(
                         cache,
                         wallet,
@@ -998,11 +1023,7 @@ impl Tab {
                         bitcoind,
                         restored_from_backup,
                         cube_settings,
-                        // Local daemon path has no Connect tokens at this
-                        // stage; the user may sign in to Connect later
-                        // via the Connect tab — that flow handles its own
-                        // gRPC bootstrap.
-                        None,
+                        connect_auth,
                     );
                     self.state = State::App(app);
                     command.map(Message::Run)
@@ -1947,6 +1968,9 @@ pub fn create_app_with_remote_backend(
             node_bitcoind_ibd: None,
             node_bitcoind_last_log: None,
             connect_authenticated: false,
+            // Remote backend implies an authenticated Connect session from the
+            // start, even before the Connect panel reaches its Dashboard step.
+            has_connect_session: true,
             has_vault: true,
             cube_name: cube_settings.name.clone(),
             current_cube_backed_up: cube_settings.backed_up,

@@ -24,6 +24,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
+        menu::{Menu, VaultSubMenu},
         message::Message,
         state::vault::label::{label_item_from_str, LabelsEdited},
         view,
@@ -71,6 +72,10 @@ pub enum PsbtModal {
     /// so the local-only "Sign" path can broadcast as today once every
     /// path threshold is met.
     KeychainSign(super::keychain_sign::KeychainSignModal),
+    /// Shown when "Sign via Keychain" is pressed but Connect isn't ready.
+    /// Offers Connect sign-in or local Wi-Fi pairing as ways forward,
+    /// instead of dead-ending on a technical "missing field" toast.
+    KeychainUnavailable(KeychainUnavailableModal),
     Broadcast(BroadcastModal),
     Delete(DeleteModal),
     Export(VaultExportModal),
@@ -82,6 +87,7 @@ impl<'a> AsRef<dyn Modal + 'a> for PsbtModal {
             Self::Save(a) => a,
             Self::Sign(a) => a,
             Self::KeychainSign(a) => a,
+            Self::KeychainUnavailable(a) => a,
             Self::Broadcast(a) => a,
             Self::Delete(a) => a,
             Self::Export(a) => a,
@@ -95,6 +101,7 @@ impl<'a> AsMut<dyn Modal + 'a> for PsbtModal {
             Self::Save(a) => a,
             Self::Sign(a) => a,
             Self::KeychainSign(a) => a,
+            Self::KeychainUnavailable(a) => a,
             Self::Broadcast(a) => a,
             Self::Delete(a) => a,
             Self::Export(a) => a,
@@ -235,6 +242,30 @@ impl PsbtState {
                 // Broadcast.
                 return cancel;
             }
+            Message::View(view::Message::Spend(view::SpendTxMessage::KeychainConnectSignIn)) => {
+                // From the "Keychain needs Connect" modal: close it and
+                // hand off to the Connect sign-in flow (handled at the
+                // tab level, which jumps to the Home tab when needed).
+                self.modal = None;
+                return Task::done(Message::View(view::Message::OpenConnectSignIn));
+            }
+            Message::View(view::Message::Spend(view::SpendTxMessage::KeychainEnsureConnect)) => {
+                // From the modal when already signed in: close it and run
+                // the on-demand Connect bootstrap so the signing stream
+                // comes up (device registration + stream), after which
+                // "Sign via Keychain" works on retry.
+                self.modal = None;
+                return Task::done(Message::EnsureConnectReady);
+            }
+            Message::View(view::Message::Spend(view::SpendTxMessage::KeychainPairPhone)) => {
+                // From the "Keychain needs Connect" modal: close it and
+                // navigate to Vault → Settings → Pair so the user can
+                // pair a phone over Wi-Fi and sign locally.
+                self.modal = None;
+                return Task::done(Message::View(view::Message::Menu(Menu::Vault(
+                    VaultSubMenu::Settings(Some(crate::app::menu::SettingsOption::LocalSigning)),
+                ))));
+            }
             Message::View(view::Message::Spend(view::SpendTxMessage::Delete)) => {
                 self.modal = Some(PsbtModal::Delete(DeleteModal::default()));
             }
@@ -285,12 +316,32 @@ impl PsbtState {
                 .filter_map(|(name, is_missing)| is_missing.then_some(*name))
                 .collect();
                 if !missing.is_empty() {
-                    let msg = format!(
-                        "Sign via Keychain is unavailable: Connect is not ready yet \
-                         (missing {}).",
+                    // Connect isn't ready. Rather than dead-end on a
+                    // technical "missing field" toast, open a modal that
+                    // explains the requirement and offers both ways
+                    // forward: sign in to Connect (relay signing) or pair
+                    // a phone over Wi-Fi (local signing, no Connect). The
+                    // technical detail still goes to the log for support.
+                    tracing::info!(
+                        "Sign via Keychain unavailable: Connect not ready (missing {})",
                         missing.join(", ")
                     );
-                    return Task::done(Message::View(view::Message::ShowError(msg)));
+                    self.modal = Some(PsbtModal::KeychainUnavailable(KeychainUnavailableModal {
+                        // Reflect the real Connect account session, not the
+                        // stream-bootstrap fields (which stay unset until a
+                        // device is registered). When signed in, the modal
+                        // offers "Sign with Connect" (on-demand bootstrap)
+                        // rather than a sign-in that would no-op.
+                        //
+                        // `connect_authenticated` only tracks the Connect
+                        // panel's `Dashboard` step, which lags a session
+                        // restored from `connect.json` at launch (or never set
+                        // if the panel isn't visited). `has_connect_session`
+                        // covers that restored/remote session, so OR them to
+                        // avoid offering "Sign in" to an already-signed-in user.
+                        signed_in: cache.connect_authenticated || cache.has_connect_session,
+                    }));
+                    return Task::none();
                 }
                 let grpc_url = cache.connect_grpc_url.clone().expect("checked above");
                 let tokens = cache.connect_tokens.clone().expect("checked above");
@@ -656,6 +707,27 @@ impl Modal for BroadcastModal {
             ),
         )
         .on_blur(on_blur)
+        .into()
+    }
+}
+
+/// "Keychain signing needs Connect" dialog. Pure UI — its two actions
+/// (sign in / pair a phone) are handled in `PsbtState::update`, which
+/// clears this modal and emits the matching navigation message.
+pub struct KeychainUnavailableModal {
+    /// Whether the user already has Connect tokens. When true the blocker
+    /// is device/stream readiness rather than a missing sign-in, which the
+    /// view uses to adjust its wording.
+    pub signed_in: bool,
+}
+
+impl Modal for KeychainUnavailableModal {
+    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
+        modal::Modal::new(
+            content,
+            view::vault::psbt::keychain_unavailable_action(self.signed_in),
+        )
+        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
         .into()
     }
 }

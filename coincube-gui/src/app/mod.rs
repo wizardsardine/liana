@@ -1268,6 +1268,13 @@ impl App {
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
         cache_with_vault.has_p2p = panels.p2p.is_some();
+        // A restored on-disk session (or a threaded remote-backend one) means
+        // the user is signed in to Connect even though the Connect panel won't
+        // reach its `Dashboard` step — and so won't flip `connect_authenticated`
+        // — until its keyring session check completes. Mirror it now so the
+        // keychain-unavailable modal offers "Sign with Connect" rather than a
+        // "Sign in to Connect" that would no-op.
+        cache_with_vault.has_connect_session = connect_auth_arc.is_some();
         cache_with_vault.p2p_test_coordinator = panels
             .p2p
             .as_ref()
@@ -2258,6 +2265,13 @@ impl App {
         // panel's id.
         self.cache.current_cube_server_id = self.panels.connect.cube.server_cube_id;
 
+        // Keep the Connect auth mirror fresh every tick (not just on
+        // ConnectAccount/ConnectCube messages) so surfaces that read it —
+        // e.g. the keychain-unavailable modal deciding between "Sign in to
+        // Connect" and "Sign with Connect" — never see a stale value after
+        // a launch-time session restore.
+        self.cache.connect_authenticated = self.panels.connect.account.is_authenticated();
+
         // W12 drift detection: SHA-256 over a JSON blob —
         // microseconds — so running it every tick is fine and
         // avoids a separate invalidation pathway tied to wallet
@@ -2359,6 +2373,7 @@ impl App {
                 // PLAN comment near `mod.rs:2374`.
                 self.connect_email = Some(email.clone());
                 self.cache.connect_email = Some(email.clone());
+                self.cache.has_connect_session = true;
 
                 let network = self.cache.network;
                 let datadir = self.cache.datadir_path.clone();
@@ -2541,6 +2556,165 @@ impl App {
                 cube_uuid,
             } => {
                 return connect_stream_ready_task(network, datadir, tokens, email, cube_uuid);
+            }
+            Message::EnsureConnectReady => {
+                // The user is signed in to Connect but the signing stream
+                // isn't ready. Run the same device-registration + stream
+                // bootstrap the in-app login flow does, sourcing tokens
+                // from `connect.json`. The async block decides the next
+                // message itself so we can give accurate feedback: some
+                // networks (e.g. testnet4) have no `grpc_url` in their
+                // ServiceConfig, meaning Connect/Keychain relay signing is
+                // unavailable there no matter how often the user retries —
+                // we say so and point them at local Wi-Fi pairing instead.
+                let network = self.cache.network;
+                let datadir = self.cache.datadir_path.clone();
+                let cube_uuid = if self.cache.cube_id.is_empty() {
+                    None
+                } else {
+                    Some(self.cache.cube_id.clone())
+                };
+                // The device/stream bootstrap below populates grpc_url /
+                // tokens / device_id but NOT the cube's server-side id. When
+                // that id is the missing Keychain prerequisite, register it
+                // here too — otherwise "Sign with Connect" can never resolve
+                // it. A live panel session registers through its authenticated
+                // client; a restored connect.json (or remote) session whose
+                // panel hasn't reached Dashboard has no panel client, so the
+                // panel path would no-op — register directly from the restored
+                // tokens (the same source the device bootstrap uses) and feed
+                // the result back through the normal `CubeRegistered` path so
+                // `current_cube_server_id` still populates.
+                let cube_registration = if self.cache.current_cube_server_id.is_some() {
+                    Task::none()
+                } else if self.panels.connect.account.is_authenticated() {
+                    self.panels.connect.ensure_cube_registered()
+                } else {
+                    let datadir = datadir.clone();
+                    let net_str = settings::network_to_api_string(network);
+                    let cube_name = self.cube_settings.name.clone();
+                    let cube_uuid = cube_uuid.clone();
+                    Task::perform(
+                        async move {
+                            use crate::services::coincube::{CoincubeClient, RegisterCubeRequest};
+                            use crate::services::connect::client::cache::ConnectCache;
+                            let uuid = cube_uuid.ok_or_else(|| "no cube uuid".to_string())?;
+                            let account =
+                                ConnectCache::from_file(&datadir.network_directory(network))
+                                    .ok()
+                                    .and_then(|c| c.accounts.into_iter().next())
+                                    .ok_or_else(|| {
+                                        "EnsureConnectReady: no cached Connect session to \
+                                         register the cube"
+                                            .to_string()
+                                    })?;
+                            let mut client = CoincubeClient::new();
+                            client.set_token(&account.tokens.access_token);
+                            client
+                                .register_cube(RegisterCubeRequest {
+                                    uuid,
+                                    name: cube_name,
+                                    network: net_str,
+                                })
+                                .await
+                                .map_err(|e| e.to_string())
+                        },
+                        |r| {
+                            Message::View(view::Message::ConnectCube(
+                                view::ConnectCubeMessage::CubeRegistered(r),
+                            ))
+                        },
+                    )
+                };
+                let bootstrap = Task::perform(
+                    async move {
+                        use crate::services::connect::client::cache::ConnectCache;
+                        use crate::services::connect::grpc::bootstrap::ensure_device_registered_best_effort;
+
+                        let info_toast = |msg: &str| {
+                            Message::View(view::Message::ShowToast(
+                                log::Level::Info,
+                                msg.to_string(),
+                            ))
+                        };
+
+                        let network_dir = datadir.network_directory(network);
+                        let Some(account) = ConnectCache::from_file(&network_dir)
+                            .ok()
+                            .and_then(|c| c.accounts.into_iter().next())
+                        else {
+                            tracing::warn!(
+                                "EnsureConnectReady: no cached Connect account in connect.json"
+                            );
+                            return info_toast(
+                                "Couldn't find a Connect session. Sign in to Connect, or pair \
+                                 a phone over Wi-Fi to sign locally.",
+                            );
+                        };
+                        let email = account.email.clone();
+                        let tokens_arc =
+                            std::sync::Arc::new(tokio::sync::RwLock::new(account.tokens));
+
+                        let service_config =
+                            match crate::services::connect::client::get_service_config(network)
+                                .await
+                            {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "EnsureConnectReady: get_service_config failed: {e}"
+                                    );
+                                    return info_toast(
+                                        "Couldn't reach Connect right now. Try again, or pair a \
+                                         phone over Wi-Fi to sign locally.",
+                                    );
+                                }
+                            };
+                        let Some(grpc_url) = service_config.grpc_url.as_deref() else {
+                            // No gRPC endpoint for this network — Connect
+                            // relay signing can't work here. Don't pretend
+                            // a retry will help.
+                            tracing::info!(
+                                "EnsureConnectReady: ServiceConfig for {network} has no grpc_url \
+                                 — Connect signing unavailable on this network"
+                            );
+                            return info_toast(
+                                "Keychain signing over Connect isn't available on this network. \
+                                 Pair a phone over Wi-Fi to sign locally instead.",
+                            );
+                        };
+
+                        let device_name = std::env::var("HOSTNAME")
+                            .ok()
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| {
+                                format!("Coincube Desktop ({})", std::env::consts::OS)
+                            });
+                        ensure_device_registered_best_effort(
+                            grpc_url,
+                            tokens_arc.clone(),
+                            &network_dir,
+                            &email,
+                            device_name,
+                            env!("CARGO_PKG_VERSION").to_string(),
+                            std::env::consts::OS.to_string(),
+                        )
+                        .await;
+
+                        // gRPC is available and the device is registered —
+                        // bring the stream up so the cache fields populate,
+                        // then the user can retry Sign via Keychain.
+                        Message::TriggerConnectStreamReady {
+                            network,
+                            datadir,
+                            tokens: tokens_arc,
+                            email,
+                            cube_uuid,
+                        }
+                    },
+                    |m| m,
+                );
+                return Task::batch([cube_registration, bootstrap]);
             }
             Message::InstallStats(_) => {
                 if let Some(panel) = self.panels.current_mut() {
@@ -2883,6 +3057,10 @@ impl App {
                     );
                     let is_spend_current =
                         matches!(current, Menu::Vault(crate::app::menu::VaultSubMenu::Send));
+                    let is_recovery_current = matches!(
+                        current,
+                        Menu::Vault(crate::app::menu::VaultSubMenu::Recovery)
+                    );
 
                     commands.push(vault_overview.update(
                         Some(daemon.clone()),
@@ -2903,6 +3081,17 @@ impl App {
                             Some(daemon.clone()),
                             &cache,
                             Message::UpdatePanelCache(is_spend_current),
+                        ));
+                    }
+
+                    // The recovery panel is a separate CreateSpendPanel and must
+                    // be refreshed too, otherwise its sync status and balance stay
+                    // frozen at the value captured when it was constructed.
+                    if let Some(recovery) = self.panels.recovery.as_mut() {
+                        commands.push(recovery.update(
+                            Some(daemon.clone()),
+                            &cache,
+                            Message::UpdatePanelCache(is_recovery_current),
                         ));
                     }
                 }
@@ -3155,6 +3344,7 @@ impl App {
                     self.cache.connect_tokens = None;
                     self.cache.connect_device_id = None;
                     self.cache.connect_email = None;
+                    self.cache.has_connect_session = false;
                     self.cache.connect_stream_status = ConnectionStatus::Inactive;
                     // Drop the previous session's vault-monitoring config so
                     // it can't leak into the next account and so the
