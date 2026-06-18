@@ -177,25 +177,26 @@ impl ConnectPanel {
         iced::Task::none()
     }
 
-    /// Best-effort: make sure the active Cube is registered with Connect so
-    /// `server_cube_id` (mirrored to `cache.current_cube_server_id`) becomes
-    /// available. The stream/device bootstrap behind `EnsureConnectReady`
-    /// brings up grpc_url / tokens / device_id but never registers the cube,
-    /// so when that numeric id is the missing Keychain prerequisite this is
-    /// what unblocks "Sign with Connect". No-op once the id is known. With a
-    /// live session we register directly (covers a registration that errored
-    /// or is still in flight); otherwise we kick the session check, whose
-    /// Dashboard transition auto-registers (see `update`).
+    /// Register the active Cube through the panel's **authenticated** client
+    /// so `server_cube_id` (mirrored to `cache.current_cube_server_id`)
+    /// becomes available — the stream/device bootstrap behind
+    /// `EnsureConnectReady` brings up grpc_url / tokens / device_id but never
+    /// registers the cube, so this is what unblocks "Sign with Connect" when
+    /// the numeric id is the missing Keychain prerequisite. Registering
+    /// directly (rather than waiting on the Dashboard auto-register) also
+    /// recovers a registration that errored or is still in flight.
+    ///
+    /// No-op when the id is already known or the panel has no live session.
+    /// The `EnsureConnectReady` caller handles the no-live-session case (a
+    /// restored connect.json session whose panel hasn't reached Dashboard, so
+    /// `is_authenticated()` is false and no panel client exists) by
+    /// registering from the restored tokens directly.
     pub fn ensure_cube_registered(&mut self) -> iced::Task<Message> {
-        if self.cube.server_cube_id.is_some() {
+        if self.cube.server_cube_id.is_some() || !self.account.is_authenticated() {
             return iced::Task::none();
         }
-        if self.account.is_authenticated() {
-            self.sync_client();
-            self.cube.register_cube()
-        } else {
-            self.ensure_session_check()
-        }
+        self.sync_client();
+        self.cube.register_cube()
     }
 
     /// Check if avatar should be loaded and return task if so.

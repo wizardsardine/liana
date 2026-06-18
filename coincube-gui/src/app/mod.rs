@@ -2565,11 +2565,56 @@ impl App {
                 };
                 // The device/stream bootstrap below populates grpc_url /
                 // tokens / device_id but NOT the cube's server-side id. When
-                // that id is the missing Keychain prerequisite, this is the
-                // only thing that unblocks signing — so drive cube
-                // registration in parallel rather than dead-looping the user
-                // on a "Sign with Connect" that can never resolve it.
-                let cube_registration = self.panels.connect.ensure_cube_registered();
+                // that id is the missing Keychain prerequisite, register it
+                // here too — otherwise "Sign with Connect" can never resolve
+                // it. A live panel session registers through its authenticated
+                // client; a restored connect.json (or remote) session whose
+                // panel hasn't reached Dashboard has no panel client, so the
+                // panel path would no-op — register directly from the restored
+                // tokens (the same source the device bootstrap uses) and feed
+                // the result back through the normal `CubeRegistered` path so
+                // `current_cube_server_id` still populates.
+                let cube_registration = if self.cache.current_cube_server_id.is_some() {
+                    Task::none()
+                } else if self.panels.connect.account.is_authenticated() {
+                    self.panels.connect.ensure_cube_registered()
+                } else {
+                    let datadir = datadir.clone();
+                    let net_str = settings::network_to_api_string(network);
+                    let cube_name = self.cube_settings.name.clone();
+                    let cube_uuid = cube_uuid.clone();
+                    Task::perform(
+                        async move {
+                            use crate::services::coincube::{CoincubeClient, RegisterCubeRequest};
+                            use crate::services::connect::client::cache::ConnectCache;
+                            let uuid = cube_uuid.ok_or_else(|| "no cube uuid".to_string())?;
+                            let account =
+                                ConnectCache::from_file(&datadir.network_directory(network))
+                                    .ok()
+                                    .and_then(|c| c.accounts.into_iter().next())
+                                    .ok_or_else(|| {
+                                        "EnsureConnectReady: no cached Connect session to \
+                                         register the cube"
+                                            .to_string()
+                                    })?;
+                            let mut client = CoincubeClient::new();
+                            client.set_token(&account.tokens.access_token);
+                            client
+                                .register_cube(RegisterCubeRequest {
+                                    uuid,
+                                    name: cube_name,
+                                    network: net_str,
+                                })
+                                .await
+                                .map_err(|e| e.to_string())
+                        },
+                        |r| {
+                            Message::View(view::Message::ConnectCube(
+                                view::ConnectCubeMessage::CubeRegistered(r),
+                            ))
+                        },
+                    )
+                };
                 let bootstrap = Task::perform(
                     async move {
                         use crate::services::connect::client::cache::ConnectCache;
