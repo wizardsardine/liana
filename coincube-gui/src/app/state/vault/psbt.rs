@@ -252,16 +252,11 @@ impl PsbtState {
             Message::View(view::Message::Spend(view::SpendTxMessage::KeychainEnsureConnect)) => {
                 // From the modal when already signed in: close it and run
                 // the on-demand Connect bootstrap so the signing stream
-                // comes up. If the active cube is not registered yet, kick
-                // that idempotent registration at the same time.
+                // comes up. `EnsureConnectReady` is the single owner of
+                // missing-cube registration, avoiding concurrent registration
+                // RPCs from this modal and the app bootstrap.
                 self.modal = None;
-                let mut tasks = vec![Task::done(Message::EnsureConnectReady)];
-                if needs_connect_cube_registration(cache) {
-                    tasks.push(Task::done(Message::View(view::Message::ConnectCube(
-                        view::ConnectCubeMessage::RetryRegistration,
-                    ))));
-                }
-                return Task::batch(tasks);
+                return Task::done(Message::EnsureConnectReady);
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::KeychainPairPhone)) => {
                 // From the "Keychain needs Connect" modal: close it and
@@ -724,10 +719,6 @@ fn connect_session_available(cache: &Cache) -> bool {
     cache.connect_authenticated
         || cache.has_connect_session
         || (cache.connect_tokens.is_some() && cache.connect_email.is_some())
-}
-
-fn needs_connect_cube_registration(cache: &Cache) -> bool {
-    cache.connect_authenticated && cache.current_cube_server_id.is_none()
 }
 
 impl Modal for KeychainUnavailableModal {
@@ -1337,20 +1328,6 @@ mod tests {
         };
 
         assert!(connect_session_available(&cache));
-    }
-
-    #[test]
-    fn cube_registration_is_only_requested_for_authenticated_missing_cube() {
-        assert!(!needs_connect_cube_registration(&Cache::default()));
-        assert!(needs_connect_cube_registration(&Cache {
-            connect_authenticated: true,
-            ..Cache::default()
-        }));
-        assert!(!needs_connect_cube_registration(&Cache {
-            connect_authenticated: true,
-            current_cube_server_id: Some(42),
-            ..Cache::default()
-        }));
     }
 
     #[tokio::test]
