@@ -218,6 +218,40 @@ class Bitcoind(BitcoinBackend):
         s.sendall(message)
         logging.debug(f"Sent message to bitcoind: {command}")
 
+    @staticmethod
+    def recv_exact(s, length):
+        chunks = []
+        remaining = length
+        while remaining:
+            chunk = s.recv(remaining)
+            if not chunk:
+                raise ConnectionError(
+                    f"Bitcoin P2P connection closed with {remaining} bytes left to read"
+                )
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
+    def recv_p2p_message(self, s):
+        header = self.recv_exact(s, 24)
+        assert header[:4] == b"\xfa\xbf\xb5\xda", header
+        command = header[4:16].rstrip(b"\x00").decode("ascii")
+        payload_length = int.from_bytes(header[16:20], "little")
+        expected_checksum = header[20:24]
+        payload = self.recv_exact(s, payload_length)
+        actual_checksum = hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]
+        assert actual_checksum == expected_checksum, (command, payload)
+        logging.debug(f"Received message from bitcoind: {command}")
+        return command, payload
+
+    def recv_p2p_until(self, s, expected_command):
+        while True:
+            command, payload = self.recv_p2p_message(s)
+            if command == "ping":
+                self.send_p2p_message(s, "pong", payload)
+            if command == expected_command:
+                return payload
+
     def connect_p2p(self, cur_height):
         version = int(70016).to_bytes(4, "little")
         services = int((1 << 0) | (1 << 3)).to_bytes(8, "little")
@@ -242,19 +276,12 @@ class Bitcoind(BitcoinBackend):
 
         logging.debug("Connecting to bitcoind p2p port")
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(TIMEOUT)
         s.connect(("127.0.0.1", self.p2pport))
         self.send_p2p_message(s, "version", ver_payload)
-        s.recv(102 + 24)  # Recv version
-        s.recv(0 + 24)  # Recv wtxidrelay
-        s.recv(0 + 24)  # Recv sendaddrv2
-        s.recv(0 + 24)  # Recv verack
+        self.recv_p2p_until(s, "version")
+        self.recv_p2p_until(s, "verack")
         self.send_p2p_message(s, "verack", b"")
-        s.recv(9 + 24)  # Recv sendcmpct
-        ping = s.recv(8 + 24)  # Recv ping, reply with pong
-        assert ping[4:8].decode("ascii") == "ping", ping
-        self.send_p2p_message(s, "pong", ping[-8:])
-        s.recv(613 + 24)  # Recv getheaders (ignore it)
-        s.recv(8 + 24)  # Recv feefilter
 
         logging.debug("Handshake to bitcoind complete")
         return s
@@ -264,11 +291,13 @@ class Bitcoind(BitcoinBackend):
         s = self.connect_p2p(cur_height)
         self.send_p2p_message(s, "block", bytes.fromhex(block_hex))
 
-        # Make sure the block was received by waiting for the inv.
-        inv = s.recv(37 + 24)
+        # Make sure the block was received by waiting for its inventory
+        # announcement. Other post-handshake messages may arrive first.
+        inv = self.recv_p2p_until(s, "inv")
         assert (
-            inv[4:7].decode("ascii") == "inv"
-            and int.from_bytes(inv[24 + 1 : 24 + 1 + 4], "little") == 2
+            len(inv) >= 37
+            and inv[0] == 1
+            and int.from_bytes(inv[1:5], "little") == 2
         ), inv
 
         s.close()
