@@ -166,7 +166,8 @@ pub fn format_u64_as_string(value: u64, sep: &str) -> String {
 //   1000 => 1 000
 //   100000 => 100 000
 fn format_amount_number_part(s: &str, sep: &str) -> String {
-    let mut part = s
+    let (sign, digits) = s.strip_prefix('-').map_or(("", s), |digits| ("-", digits));
+    let mut part = digits
         .chars()
         .collect::<Vec<_>>()
         .rchunks(3)
@@ -174,7 +175,7 @@ fn format_amount_number_part(s: &str, sep: &str) -> String {
         .collect::<Vec<_>>();
     part.reverse();
 
-    part.join(sep)
+    format!("{sign}{}", part.join(sep))
 }
 
 // Helper functions split a string at the first occurence of a non-zero integer (where
@@ -341,5 +342,42 @@ mod tests {
 
         assert_eq!(format_f64_as_string(0.0, ",", 0, false), "0");
         assert_eq!(format_f64_as_string(0.0, ",", 0, true), "0");
+    }
+
+    #[test]
+    fn format_u64_groups_boundaries_and_max_value() {
+        assert_eq!(format_u64_as_string(0, " "), "0");
+        assert_eq!(format_u64_as_string(999, " "), "999");
+        assert_eq!(format_u64_as_string(1_000, " "), "1 000");
+        assert_eq!(
+            format_u64_as_string(u64::MAX, ","),
+            "18,446,744,073,709,551,615"
+        );
+    }
+
+    #[test]
+    fn negative_values_keep_sign_attached_to_leading_digits() {
+        assert_eq!(format_f64_as_string(-123.5, " ", 2, false), "-123.50");
+        assert_eq!(
+            format_f64_as_string(-1_234_567.5, ",", 2, false),
+            "-1,234,567.50"
+        );
+    }
+
+    #[test]
+    fn display_unit_labels_and_amounts_are_stable() {
+        let amount = Amount::from_sat(123_456_789);
+
+        assert_eq!(BitcoinDisplayUnit::default(), BitcoinDisplayUnit::Sats);
+        assert_eq!(BitcoinDisplayUnit::BTC.to_string(), "BTC");
+        assert_eq!(BitcoinDisplayUnit::Sats.to_string(), "sats");
+        assert_eq!(
+            amount.to_formatted_string_with_unit(BitcoinDisplayUnit::BTC),
+            "1.23 456 789"
+        );
+        assert_eq!(
+            amount.to_formatted_string_with_unit(BitcoinDisplayUnit::Sats),
+            "123 456 789"
+        );
     }
 }
