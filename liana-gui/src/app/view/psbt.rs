@@ -591,44 +591,41 @@ pub fn inputs_view<'a>(
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
-    Container::new(
-        Collapse::new(
-            Row::new()
-                .align_y(Alignment::Center)
-                .push(
-                    h4_bold(format!(
-                        "{} coin{} spent",
-                        tx.input.len(),
-                        if tx.input.len() == 1 { "" } else { "s" }
-                    ))
-                    .width(Length::Fill),
-                )
-                .push(icon::collapse_icon()),
-            Row::new()
-                .align_y(Alignment::Center)
-                .push(
-                    h4_bold(format!(
-                        "{} coin{} spent",
-                        tx.input.len(),
-                        if tx.input.len() == 1 { "" } else { "s" }
-                    ))
-                    .width(Length::Fill),
-                )
-                .push(icon::collapsed_icon()),
-            tx.input.iter().fold(
-                Column::new().spacing(10).padding(20),
-                |col: Column<'a, Message>, input| {
-                    col.push(input_view(
-                        &input.previous_output,
-                        coins.get(&input.previous_output),
-                        labels,
-                        labels_editing,
-                    ))
-                },
-            ),
-        )
-        .padding(20),
-    )
+    Container::new(Collapse::new(
+        Row::new()
+            .align_y(Alignment::Center)
+            .push(
+                h4_bold(format!(
+                    "{} coin{} spent",
+                    tx.input.len(),
+                    if tx.input.len() == 1 { "" } else { "s" }
+                ))
+                .width(Length::Fill),
+            )
+            .push(icon::collapse_icon()),
+        Row::new()
+            .align_y(Alignment::Center)
+            .push(
+                h4_bold(format!(
+                    "{} coin{} spent",
+                    tx.input.len(),
+                    if tx.input.len() == 1 { "" } else { "s" }
+                ))
+                .width(Length::Fill),
+            )
+            .push(icon::collapsed_icon()),
+        tx.input.iter().fold(
+            Column::new().spacing(10),
+            |col: Column<'a, Message>, input| {
+                col.push(input_view(
+                    &input.previous_output,
+                    coins.get(&input.previous_output),
+                    labels,
+                    labels_editing,
+                ))
+            },
+        ),
+    ))
     .style(theme::card::button_simple)
     .into()
 }
@@ -652,52 +649,46 @@ pub fn outputs_view<'a>(
                 .filter(|(i, _)| is_external || !change_indexes.contains(i))
                 .count();
             if count > 0 {
-                Container::new(
-                    Collapse::new(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .push(
-                                h4_bold(format!(
-                                    "{} payment{}",
-                                    count,
-                                    if count == 1 { "" } else { "s" }
-                                ))
-                                .width(Length::Fill),
-                            )
-                            .push(icon::collapse_icon()),
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .push(
-                                h4_bold(format!(
-                                    "{} payment{}",
-                                    count,
-                                    if count == 1 { "" } else { "s" }
-                                ))
-                                .width(Length::Fill),
-                            )
-                            .push(icon::collapsed_icon()),
-                        tx.output
-                            .iter()
-                            .enumerate()
-                            .filter(|(i, _)| is_external || !change_indexes.contains(i))
-                            .fold(
-                                Column::new().padding(20),
-                                |col: Column<'a, Message>, (i, output)| {
-                                    col.spacing(10).push(payment_view(
-                                        i,
-                                        tx.compute_txid(),
-                                        output,
-                                        network,
-                                        labels,
-                                        labels_editing,
-                                        is_single_payment,
-                                        !is_external || change_indexes.contains(&i),
-                                    ))
-                                },
-                            ),
-                    )
-                    .padding(20),
-                )
+                Container::new(Collapse::new(
+                    Row::new()
+                        .align_y(Alignment::Center)
+                        .push(
+                            h4_bold(format!(
+                                "{} payment{}",
+                                count,
+                                if count == 1 { "" } else { "s" }
+                            ))
+                            .width(Length::Fill),
+                        )
+                        .push(icon::collapse_icon()),
+                    Row::new()
+                        .align_y(Alignment::Center)
+                        .push(
+                            h4_bold(format!(
+                                "{} payment{}",
+                                count,
+                                if count == 1 { "" } else { "s" }
+                            ))
+                            .width(Length::Fill),
+                        )
+                        .push(icon::collapsed_icon()),
+                    tx.output
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| is_external || !change_indexes.contains(i))
+                        .fold(Column::new(), |col: Column<'a, Message>, (i, output)| {
+                            col.spacing(10).push(payment_view(
+                                i,
+                                tx.compute_txid(),
+                                output,
+                                network,
+                                labels,
+                                labels_editing,
+                                is_single_payment,
+                                !is_external || change_indexes.contains(&i),
+                            ))
+                        }),
+                ))
             } else {
                 Container::new(h4_bold("0 payment").style(|t| {
                     theme::text::custom(t.colors.buttons.transparent_border.active.text)

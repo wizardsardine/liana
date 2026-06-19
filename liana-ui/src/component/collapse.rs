@@ -4,11 +4,11 @@ use iced::{
         widget::{tree, Operation, Tree, Widget},
         Clipboard, Layout, Shell,
     },
-    widget::button,
+    widget::{button, rule},
     Element, Event, Length, Padding, Rectangle, Size, Vector,
 };
 
-use crate::theme::Theme;
+use crate::theme::{self, Theme};
 
 type Renderer = iced::Renderer;
 
@@ -22,10 +22,13 @@ pub struct Collapse<'a, Message> {
     before: Element<'a, Message, Theme, Renderer>,
     after: Element<'a, Message, Theme, Renderer>,
     content: Element<'a, Message, Theme, Renderer>,
+    rule: Element<'a, Message, Theme, Renderer>,
+    rule_height: f32,
     init_expanded: bool,
     padding: Padding,
+    padding_content: Padding,
     width: Length,
-    header_style: Box<dyn Fn(&Theme, button::Status) -> button::Style + 'a>,
+    style: Box<dyn Fn(&Theme, button::Status) -> button::Style + 'a>,
 }
 
 impl<'a, Message: 'a> Collapse<'a, Message> {
@@ -38,10 +41,13 @@ impl<'a, Message: 'a> Collapse<'a, Message> {
             before: before.into(),
             after: after.into(),
             content: content.into(),
+            rule: rule::horizontal(3.).style(theme::rule::default).into(),
+            rule_height: 3.,
             init_expanded: false,
-            padding: Padding::ZERO,
+            padding: 24.into(),
+            padding_content: 24.into(),
             width: Length::Fill,
-            header_style: Box::new(crate::theme::button::transparent_border),
+            style: Box::new(crate::theme::button::clickable_card),
         }
     }
 
@@ -55,13 +61,18 @@ impl<'a, Message: 'a> Collapse<'a, Message> {
         self
     }
 
+    pub fn padding_content(mut self, padding: impl Into<Padding>) -> Self {
+        self.padding = padding.into();
+        self
+    }
+
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.width = width.into();
         self
     }
 
     pub fn style(mut self, style: impl Fn(&Theme, button::Status) -> button::Style + 'a) -> Self {
-        self.header_style = Box::new(style);
+        self.style = Box::new(style);
         self
     }
 }
@@ -81,12 +92,13 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for Collapse<'a, Message>
         vec![
             Tree::new(&self.before),
             Tree::new(&self.after),
+            Tree::new(&self.rule),
             Tree::new(&self.content),
         ]
     }
 
     fn diff(&self, tree: &mut Tree) {
-        tree.diff_children(&[&self.before, &self.after, &self.content]);
+        tree.diff_children(&[&self.before, &self.after, &self.rule, &self.content]);
     }
 
     fn size(&self) -> Size<Length> {
@@ -133,21 +145,37 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for Collapse<'a, Message>
         );
 
         if expanded {
-            // Layout content below header.
-            let content_node =
-                self.content
+            let rule_node =
+                self.rule
                     .as_widget_mut()
                     .layout(&mut tree.children[2], renderer, &limits);
-            let content_height = content_node.size().height;
-            let content_width = content_node.size().width;
-            let total_height = header_height + content_height;
+
+            // Layout content below header.
+            let padding_content = self.padding_content;
+            let content_limits = limits.shrink(padding_content);
+            let content_node = self.content.as_widget_mut().layout(
+                &mut tree.children[3],
+                renderer,
+                &content_limits,
+            );
+            let content_height = content_node.size().height + self.padding_content.y();
+            let content_width = content_node.size().width + self.padding_content.x();
+            let total_height = header_height + content_height + self.rule_height;
             let total_width = header_width.max(content_width).min(limits.max().width);
+            let content_y_start = header_height + self.padding_content.top;
+            let content_x_start = self.padding_content.left;
+
+            let rule_node = layout::Node::with_children(
+                Size::new(total_width, self.rule_height),
+                vec![rule_node],
+            );
 
             layout::Node::with_children(
                 Size::new(total_width, total_height),
                 vec![
                     header_node,
-                    content_node.move_to(iced::Point::new(0.0, header_height)),
+                    rule_node.move_to(iced::Point::new(0., header_height)),
+                    content_node.move_to(iced::Point::new(content_x_start, content_y_start)),
                 ],
             )
         } else {
@@ -184,9 +212,10 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for Collapse<'a, Message>
 
         // Forward events to content when expanded.
         if state.expanded {
+            let _rule_layout = children_layouts.next();
             if let Some(content_layout) = children_layouts.next() {
                 self.content.as_widget_mut().update(
-                    &mut tree.children[2],
+                    &mut tree.children[3],
                     event,
                     content_layout,
                     cursor,
@@ -220,13 +249,12 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for Collapse<'a, Message>
         } else {
             button::Status::Active
         };
-        let style = (self.header_style)(theme, status);
-
+        let style = (self.style)(theme, status);
         if let Some(background) = style.background {
             renderer::Renderer::fill_quad(
                 renderer,
                 renderer::Quad {
-                    bounds: header_bounds,
+                    bounds: layout.bounds(),
                     border: style.border,
                     shadow: style.shadow,
                     snap: style.snap,
@@ -248,10 +276,23 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for Collapse<'a, Message>
                 viewport,
             );
 
+            // Draw rule.
+            if let Some(rule_layout) = children_layouts.next() {
+                self.rule.as_widget().draw(
+                    &tree.children[2],
+                    renderer,
+                    theme,
+                    defaults,
+                    rule_layout,
+                    cursor,
+                    viewport,
+                );
+            }
+
             // Draw content.
             if let Some(content_layout) = children_layouts.next() {
                 self.content.as_widget().draw(
-                    &tree.children[2],
+                    &tree.children[3],
                     renderer,
                     theme,
                     defaults,
@@ -290,9 +331,10 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for Collapse<'a, Message>
         }
 
         if state.expanded {
+            let _rule_layout = children_layouts.next();
             if let Some(content_layout) = children_layouts.next() {
                 return self.content.as_widget().mouse_interaction(
-                    &tree.children[2],
+                    &tree.children[3],
                     content_layout,
                     cursor,
                     viewport,
@@ -316,9 +358,10 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for Collapse<'a, Message>
         if state.expanded {
             let mut children_layouts = layout.children();
             let _header_layout = children_layouts.next();
+            let _rule_layout = children_layouts.next();
             if let Some(content_layout) = children_layouts.next() {
                 self.content.as_widget_mut().operate(
-                    &mut tree.children[2],
+                    &mut tree.children[3],
                     content_layout,
                     renderer,
                     operation,
@@ -340,9 +383,10 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for Collapse<'a, Message>
         if state.expanded {
             let mut children_layouts = layout.children();
             let _header_layout = children_layouts.next();
+            let _rule_layout = children_layouts.next();
             if let Some(content_layout) = children_layouts.next() {
                 return self.content.as_widget_mut().overlay(
-                    &mut tree.children[2],
+                    &mut tree.children[3],
                     content_layout,
                     renderer,
                     viewport,
