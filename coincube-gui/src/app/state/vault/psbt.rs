@@ -252,10 +252,16 @@ impl PsbtState {
             Message::View(view::Message::Spend(view::SpendTxMessage::KeychainEnsureConnect)) => {
                 // From the modal when already signed in: close it and run
                 // the on-demand Connect bootstrap so the signing stream
-                // comes up (device registration + stream), after which
-                // "Sign via Keychain" works on retry.
+                // comes up. If the active cube is not registered yet, kick
+                // that idempotent registration at the same time.
                 self.modal = None;
-                return Task::done(Message::EnsureConnectReady);
+                let mut tasks = vec![Task::done(Message::EnsureConnectReady)];
+                if needs_connect_cube_registration(cache) {
+                    tasks.push(Task::done(Message::View(view::Message::ConnectCube(
+                        view::ConnectCubeMessage::RetryRegistration,
+                    ))));
+                }
+                return Task::batch(tasks);
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::KeychainPairPhone)) => {
                 // From the "Keychain needs Connect" modal: close it and
@@ -332,7 +338,7 @@ impl PsbtState {
                         // device is registered). When signed in, the modal
                         // offers "Sign with Connect" (on-demand bootstrap)
                         // rather than a sign-in that would no-op.
-                        signed_in: cache.connect_authenticated,
+                        signed_in: connect_session_available(cache),
                     }));
                     return Task::none();
                 }
@@ -712,6 +718,14 @@ pub struct KeychainUnavailableModal {
     /// is device/stream readiness rather than a missing sign-in, which the
     /// view uses to adjust its wording.
     pub signed_in: bool,
+}
+
+fn connect_session_available(cache: &Cache) -> bool {
+    cache.connect_authenticated || (cache.connect_tokens.is_some() && cache.connect_email.is_some())
+}
+
+fn needs_connect_cube_registration(cache: &Cache) -> bool {
+    cache.connect_authenticated && cache.current_cube_server_id.is_none()
 }
 
 impl Modal for KeychainUnavailableModal {
@@ -1305,6 +1319,37 @@ mod tests {
     use std::str::FromStr;
 
     const DESC: &str = "wsh(or_d(multi(2,[f714c228/48'/1'/0'/2']tpubDEwJnTwfKoMvu8AXXBPydBVWDpzNP5tatjjZ56q4TQioGL7iL9xzTbMoCCQ3tfGihtff7vtR4xsjcRuhZ7HWARVAkGZ1HZcpBhVdou76k7j/<0;1>/*,[2522f23c/48'/1'/0'/2']tpubDEoTU4bDW1EXN1rnLXnRfue1a7DeqjJcs39PkEeLcVXhVKzCnFo9yQX2EeeXJ6kh4hgbz5o9v7YAc1EE97AEJpJbKNmDxE3ZQo4msGPSp2J/<0;1>/*),and_v(v:thresh(1,pkh([f714c228/48'/1'/0'/2']tpubDEwJnTwfKoMvu8AXXBPydBVWDpzNP5tatjjZ56q4TQioGL7iL9xzTbMoCCQ3tfGihtff7vtR4xsjcRuhZ7HWARVAkGZ1HZcpBhVdou76k7j/<2;3>/*),a:pkh([2522f23c/48'/1'/0'/2']tpubDEoTU4bDW1EXN1rnLXnRfue1a7DeqjJcs39PkEeLcVXhVKzCnFo9yQX2EeeXJ6kh4hgbz5o9v7YAc1EE97AEJpJbKNmDxE3ZQo4msGPSp2J/<2;3>/*)),older(65535))))#9s8ekrce";
+
+    #[test]
+    fn persisted_connect_identity_counts_as_available_session() {
+        let cache = Cache {
+            connect_email: Some("alice@example.com".to_string()),
+            connect_tokens: Some(Arc::new(tokio::sync::RwLock::new(
+                crate::services::connect::client::auth::AccessTokenResponse {
+                    access_token: "access".to_string(),
+                    refresh_token: "refresh".to_string(),
+                    expires_at: i64::MAX,
+                },
+            ))),
+            ..Cache::default()
+        };
+
+        assert!(connect_session_available(&cache));
+    }
+
+    #[test]
+    fn cube_registration_is_only_requested_for_authenticated_missing_cube() {
+        assert!(!needs_connect_cube_registration(&Cache::default()));
+        assert!(needs_connect_cube_registration(&Cache {
+            connect_authenticated: true,
+            ..Cache::default()
+        }));
+        assert!(!needs_connect_cube_registration(&Cache {
+            connect_authenticated: true,
+            current_cube_server_id: Some(42),
+            ..Cache::default()
+        }));
+    }
 
     #[tokio::test]
     async fn test_update_psbt() {

@@ -104,7 +104,7 @@ pub struct Cache {
     /// Shared `Arc<RwLock<AccessTokenResponse>>` from the remote backend,
     /// mirrored into Cache so deep panels (PsbtState et al.) can spin up
     /// a `GrpcSessionClient` on demand without re-plumbing the auth
-    /// handle. `None` for local-daemon installs.
+    /// handle. `None` when no live or persisted Connect session is available.
     pub connect_tokens: Option<
         Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>>,
     >,
@@ -123,8 +123,8 @@ pub struct Cache {
     pub connect_device_id: Option<String>,
     /// Email of the authenticated Connect account. Surfaced alongside
     /// the device id for at-a-glance "which account is this device
-    /// registered to" troubleshooting. `None` for local-daemon
-    /// installs.
+    /// registered to" troubleshooting. `None` when no live or persisted
+    /// Connect session is available.
     pub connect_email: Option<String>,
 }
 

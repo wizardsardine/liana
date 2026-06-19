@@ -25,8 +25,12 @@ struct ServiceConfigResource {
 struct CoincubeServiceConfig {
     #[serde(rename = "grpcUrl")]
     grpc_url: Option<String>,
-    #[serde(default)]
+    #[serde(default = "default_connect_grpc_tls")]
     tls: bool,
+}
+
+fn default_connect_grpc_tls() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -58,13 +62,7 @@ pub async fn get_service_config(
     //   1. runtime env override (staging/local),
     //   2. COINCUBE service-config endpoint (env-specific, all networks),
     //   3. compile-time baked default (resilience if the endpoint is down).
-    let grpc_url = match runtime_grpc_url_override() {
-        Some(u) => Some(u),
-        None => match coincube_grpc_url().await {
-            Some(u) => Some(u),
-            None => buildtime_grpc_url_default(),
-        },
-    };
+    let grpc_url = resolve_connect_grpc_url().await;
     Ok(ServiceConfig {
         auth_api_url: res.auth_api_url,
         auth_api_public_key: res.auth_api_public_key,
@@ -72,6 +70,17 @@ pub async fn get_service_config(
             .unwrap_or_else(|| default_backend_api_url.to_string()),
         grpc_url,
     })
+}
+
+/// Resolve only the Connect signing gRPC endpoint, without fetching the
+/// legacy lianalite desktop config used for auth and remote-backend fields.
+pub async fn resolve_connect_grpc_url() -> Option<String> {
+    if let Some(url) = runtime_grpc_url_override() {
+        return Some(url);
+    }
+    coincube_grpc_url()
+        .await
+        .or_else(buildtime_grpc_url_default)
 }
 
 /// Fetch the Connect signing gRPC URL from coincube-api. Best-effort: any
@@ -91,9 +100,7 @@ async fn coincube_grpc_url() -> Option<String> {
 /// used only when the service-config endpoint is unreachable. `None` when not
 /// baked in.
 fn buildtime_grpc_url_default() -> Option<String> {
-    option_env!("COINCUBE_CONNECT_GRPC_URL")
-        .map(|v| v.trim().trim_end_matches('/').to_string())
-        .filter(|v| !v.is_empty())
+    option_env!("COINCUBE_CONNECT_GRPC_URL").and_then(|v| normalize_grpc_url(v, true))
 }
 
 /// Normalize a gRPC endpoint to a scheme-qualified URL tonic accepts. Returns
@@ -117,8 +124,7 @@ fn runtime_grpc_url_override() -> Option<String> {
     std::env::var(CONNECT_GRPC_URL_ENV)
         .ok()
         .or_else(|| std::env::var(LEGACY_GRPC_URL_ENV).ok())
-        .map(|v| v.trim().trim_end_matches('/').to_string())
-        .filter(|v| !v.is_empty())
+        .and_then(|v| normalize_grpc_url(&v, true))
 }
 
 fn runtime_backend_api_url_override() -> Option<String> {
@@ -130,7 +136,7 @@ fn runtime_backend_api_url_override() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_grpc_url;
+    use super::{default_connect_grpc_tls, normalize_grpc_url, CoincubeServiceConfig};
 
     #[test]
     fn normalize_adds_https_when_tls() {
@@ -164,5 +170,14 @@ mod tests {
     fn normalize_rejects_empty() {
         assert_eq!(normalize_grpc_url("   ", true), None);
         assert_eq!(normalize_grpc_url("", false), None);
+    }
+
+    #[test]
+    fn service_config_defaults_missing_tls_to_secure() {
+        let config: CoincubeServiceConfig =
+            serde_json::from_str(r#"{"grpcUrl":"grpc.coincube.io:443"}"#).unwrap();
+
+        assert!(config.tls);
+        assert!(default_connect_grpc_tls());
     }
 }
