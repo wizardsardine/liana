@@ -2438,6 +2438,7 @@ impl App {
                                     },
                                 );
                             }
+                            cache.active_email = Some(email_for_task.clone());
                             let serialized = serde_json::to_vec_pretty(&cache)
                                 .map_err(|e| format!("serialize: {e}"))?;
                             guard

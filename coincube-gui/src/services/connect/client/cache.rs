@@ -13,10 +13,22 @@ pub const CONNECT_CACHE_FILENAME: &str = "connect.json";
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct ConnectCache {
+    #[serde(default)]
+    pub active_email: Option<String>,
     pub accounts: Vec<Account>,
 }
 
 impl ConnectCache {
+    /// Returns the explicitly active account. Legacy single-account caches are
+    /// unambiguous and remain eligible for automatic restoration.
+    pub fn active_account(&self) -> Option<&Account> {
+        match self.active_email.as_deref() {
+            Some(email) => self.accounts.iter().find(|account| account.email == email),
+            None if self.accounts.len() == 1 => self.accounts.first(),
+            None => None,
+        }
+    }
+
     fn upsert_credential(&mut self, email: &str, tokens: AccessTokenResponse) {
         if let Some(c) = self.accounts.iter_mut().find(|c| c.email == email) {
             c.tokens = tokens;
@@ -28,6 +40,7 @@ impl ConnectCache {
                 last_seen_event_seq: None,
             })
         }
+        self.active_email = Some(email.to_string());
     }
 
     pub fn from_file(network_dir: &NetworkDirectory) -> Result<Self, ConnectCacheError> {
@@ -109,15 +122,17 @@ pub async fn update_connect_cache(
         ConnectCache::default()
     };
 
-    if let Some(c) = cache.accounts.iter().find(|cred| cred.email == *email) {
-        // An other process updated the tokens
-        if current_tokens.expires_at < c.tokens.expires_at {
-            tracing::debug!("Liana-Connect authentication tokens are up to date, nothing to do");
-            return Ok(c.tokens.clone());
-        }
-    }
+    let newer_cached_tokens = cache
+        .accounts
+        .iter()
+        .find(|cred| cred.email == *email)
+        .filter(|account| current_tokens.expires_at < account.tokens.expires_at)
+        .map(|account| account.tokens.clone());
 
-    let tokens = if refresh {
+    let tokens = if let Some(tokens) = newer_cached_tokens {
+        tracing::debug!("Liana-Connect authentication tokens are up to date");
+        tokens
+    } else if refresh {
         client
             .refresh_token(&current_tokens.refresh_token)
             .await
@@ -334,6 +349,13 @@ pub async fn filter_connect_cache(
     };
 
     cache.accounts.retain(|a| emails.contains(&a.email));
+    if cache
+        .active_email
+        .as_ref()
+        .is_some_and(|email| !emails.contains(email))
+    {
+        cache.active_email = None;
+    }
 
     let content = serde_json::to_vec_pretty(&cache).map_err(|e| {
         ConnectCacheError::WritingFile(format!("Failed to serialize settings: {}", e))
@@ -373,5 +395,114 @@ impl std::fmt::Display for ConnectCacheError {
             Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
             Self::Updating(e) => write!(f, "Error while updating cache file: {}", e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AccessTokenResponse, ConnectCache};
+
+    fn cache_from_json(json: &str) -> ConnectCache {
+        serde_json::from_str(json).expect("valid Connect cache")
+    }
+
+    #[test]
+    fn legacy_single_account_is_restored() {
+        let cache = cache_from_json(
+            r#"{
+                "accounts": [{
+                    "email": "alice@example.com",
+                    "tokens": {
+                        "access_token": "access",
+                        "refresh_token": "refresh",
+                        "expires_at": 123
+                    }
+                }]
+            }"#,
+        );
+
+        assert_eq!(
+            cache.active_account().map(|account| account.email.as_str()),
+            Some("alice@example.com")
+        );
+    }
+
+    #[test]
+    fn legacy_multi_account_cache_is_not_restored_arbitrarily() {
+        let cache = cache_from_json(
+            r#"{
+                "accounts": [
+                    {
+                        "email": "alice@example.com",
+                        "tokens": {
+                            "access_token": "alice-access",
+                            "refresh_token": "alice-refresh",
+                            "expires_at": 123
+                        }
+                    },
+                    {
+                        "email": "bob@example.com",
+                        "tokens": {
+                            "access_token": "bob-access",
+                            "refresh_token": "bob-refresh",
+                            "expires_at": 456
+                        }
+                    }
+                ]
+            }"#,
+        );
+
+        assert!(cache.active_account().is_none());
+    }
+
+    #[test]
+    fn explicit_active_email_selects_matching_account() {
+        let cache = cache_from_json(
+            r#"{
+                "active_email": "bob@example.com",
+                "accounts": [
+                    {
+                        "email": "alice@example.com",
+                        "tokens": {
+                            "access_token": "alice-access",
+                            "refresh_token": "alice-refresh",
+                            "expires_at": 123
+                        }
+                    },
+                    {
+                        "email": "bob@example.com",
+                        "tokens": {
+                            "access_token": "bob-access",
+                            "refresh_token": "bob-refresh",
+                            "expires_at": 456
+                        }
+                    }
+                ]
+            }"#,
+        );
+
+        assert_eq!(
+            cache.active_account().map(|account| account.email.as_str()),
+            Some("bob@example.com")
+        );
+    }
+
+    #[test]
+    fn credential_upsert_marks_account_active() {
+        let mut cache = ConnectCache::default();
+        cache.upsert_credential(
+            "alice@example.com",
+            AccessTokenResponse {
+                access_token: "access".to_string(),
+                refresh_token: "refresh".to_string(),
+                expires_at: 123,
+            },
+        );
+
+        assert_eq!(cache.active_email.as_deref(), Some("alice@example.com"));
+        assert_eq!(
+            cache.active_account().map(|account| account.email.as_str()),
+            Some("alice@example.com")
+        );
     }
 }
