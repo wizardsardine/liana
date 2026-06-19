@@ -355,3 +355,84 @@ fn parse_method(raw: &str) -> SparkPaymentMethod {
         _ => SparkPaymentMethod::Spark,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payment(direction: &str, status: &str, method: &str, amount_sat: i64) -> PaymentSummary {
+        PaymentSummary {
+            id: "payment-1".to_string(),
+            amount_sat,
+            fees_sat: 12,
+            token_amount: None,
+            token_decimals: None,
+            token_ticker: None,
+            timestamp: 1_700_000_000,
+            status: status.to_string(),
+            direction: direction.to_string(),
+            method: method.to_string(),
+            description: None,
+        }
+    }
+
+    #[test]
+    fn lightning_receive_maps_direction_status_amount_and_default_description() {
+        let row = payment_summary_to_recent_tx(
+            &payment("receive", "completed", "lightning", 42_000),
+            None,
+        );
+
+        assert_eq!(row.id, "payment-1");
+        assert!(row.is_incoming);
+        assert_eq!(row.status, DomainPaymentStatus::Complete);
+        assert_eq!(row.method, SparkPaymentMethod::Lightning);
+        assert_eq!(row.amount.to_sat(), 42_000);
+        assert_eq!(row.fees_sat.to_sat(), 12);
+        assert_eq!(row.description, "Lightning payment");
+        assert_eq!(row.token_display, None);
+    }
+
+    #[test]
+    fn onchain_withdraw_uses_outgoing_description_and_failed_status() {
+        let row =
+            payment_summary_to_recent_tx(&payment("Send", "Failed", "withdraw", -25_000), None);
+
+        assert!(!row.is_incoming);
+        assert_eq!(row.status, DomainPaymentStatus::Failed);
+        assert_eq!(row.method, SparkPaymentMethod::OnChainBitcoin);
+        assert_eq!(row.amount.to_sat(), 25_000);
+        assert_eq!(row.description, "On-chain withdrawal");
+    }
+
+    #[test]
+    fn unknown_wire_values_degrade_to_pending_spark_transfer() {
+        let row =
+            payment_summary_to_recent_tx(&payment("outbound", "future", "future", 1_000), None);
+
+        assert!(!row.is_incoming);
+        assert_eq!(row.status, DomainPaymentStatus::Pending);
+        assert_eq!(row.method, SparkPaymentMethod::Spark);
+        assert_eq!(row.description, "Spark transfer");
+    }
+
+    #[test]
+    fn token_payment_uses_token_units_instead_of_satoshis() {
+        let mut summary = payment("Receive", "Complete", "token", 999_999);
+        summary.fees_sat = 500;
+        summary.token_amount = Some(1_580_000);
+        summary.token_decimals = Some(6);
+        summary.token_ticker = Some("USDB".to_string());
+
+        let row = payment_summary_to_recent_tx(&summary, None);
+
+        assert!(row.is_incoming);
+        assert_eq!(row.status, DomainPaymentStatus::Complete);
+        assert_eq!(row.method, SparkPaymentMethod::StableBalance);
+        assert_eq!(row.amount, Amount::ZERO);
+        assert_eq!(row.fees_sat, Amount::ZERO);
+        assert_eq!(row.description, "Stable Balance");
+        assert_eq!(row.token_display.as_deref(), Some("1.58 USDB"));
+        assert!(row.fiat_amount.is_some());
+    }
+}
