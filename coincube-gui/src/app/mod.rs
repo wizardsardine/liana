@@ -2351,13 +2351,12 @@ impl App {
 
                 let network = self.cache.network;
                 let datadir = self.cache.datadir_path.clone();
-                // `cache.cube_id` is `String` (empty when no cube yet);
-                // the stream task takes `Option<String>` so the realtime
-                // subscription can scope events to that cube's vault.
-                let cube_uuid = if self.cache.cube_id.is_empty() {
+                // Use the authoritative Cube settings id. The cache mirror can
+                // still be empty during local-vault startup.
+                let cube_uuid = if self.cube_settings.id.is_empty() {
                     None
                 } else {
-                    Some(self.cache.cube_id.clone())
+                    Some(self.cube_settings.id.clone())
                 };
                 let email_for_task = email.clone();
 
@@ -2545,10 +2544,10 @@ impl App {
                     .connect_email
                     .clone()
                     .or_else(|| self.cache.connect_email.clone());
-                let cube_uuid = if self.cache.cube_id.is_empty() {
+                let cube_uuid = if self.cube_settings.id.is_empty() {
                     None
                 } else {
-                    Some(self.cache.cube_id.clone())
+                    Some(self.cube_settings.id.clone())
                 };
                 return Task::perform(
                     async move {
