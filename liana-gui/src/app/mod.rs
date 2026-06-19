@@ -442,7 +442,7 @@ impl<S: SettingsTrait> App<S> {
                             use crate::services::fiat::api::{GetPriceResult, PriceApiError};
                             let request = cache::FiatPriceRequest::new(source, currency);
                             match daemon.get_fiat_rates().await {
-                                Ok(rates) => {
+                                Ok((rates, feerate)) => {
                                     tracing::trace!("Fiat: got rates from backend: {:?}", rates);
                                     let key = format!("BTC{currency}");
                                     let res = rates
@@ -457,18 +457,23 @@ impl<S: SettingsTrait> App<S> {
                                             value,
                                             updated_at: None,
                                         });
-                                    cache::FiatPrice { res, request }
+                                    (cache::FiatPrice { res, request }, feerate)
                                 }
                                 Err(e) => {
                                     tracing::trace!("Fiat: backend error: {}", e);
-                                    cache::FiatPrice {
-                                        res: Err(PriceApiError::RequestFailed(e.to_string())),
-                                        request,
-                                    }
+                                    (
+                                        cache::FiatPrice {
+                                            res: Err(PriceApiError::RequestFailed(e.to_string())),
+                                            request,
+                                        },
+                                        None,
+                                    )
                                 }
                             }
                         },
-                        |fiat_price| Message::Fiat(FiatMessage::GetPriceResult(fiat_price)),
+                        |(fiat_price, feerate)| {
+                            Message::Fiat(FiatMessage::GetPriceResult(fiat_price, feerate))
+                        },
                     ));
                 }
             }
@@ -479,7 +484,9 @@ impl<S: SettingsTrait> App<S> {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
+            Message::Fiat(FiatMessage::GetPriceResult(fiat_price, feerate)) => {
+                let feerate_changed = self.cache.feerate_estimate != feerate;
+                self.cache.feerate_estimate = feerate;
                 let relevant = self.wallet.fiat_price_is_relevant(&fiat_price);
                 tracing::trace!(
                     "Fiat: GetPriceResult received, relevant={}, res={:?}",
@@ -496,6 +503,8 @@ impl<S: SettingsTrait> App<S> {
                 {
                     tracing::trace!("Fiat: caching price");
                     self.cache.fiat_price = Some(fiat_price);
+                    Task::perform(async {}, |_| Message::CacheUpdated)
+                } else if feerate_changed {
                     Task::perform(async {}, |_| Message::CacheUpdated)
                 } else {
                     Task::none()

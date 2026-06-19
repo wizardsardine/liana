@@ -41,7 +41,7 @@ use label::LabelsEdited;
 pub use psbts::PsbtsPanel;
 pub use receive::ReceivePanel;
 pub use settings::{LianaSettingsUI, SettingsState};
-pub use spend::CreateSpendPanel;
+pub use spend::{CreateSpendPanel, FeeMode, Recipient};
 pub use transactions::TransactionsPanel;
 
 pub trait State {

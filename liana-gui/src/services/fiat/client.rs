@@ -1,6 +1,6 @@
 use super::api::{GetPriceResult, ListCurrenciesResult, PriceApi, PriceApiError};
-use super::currency::Currency;
 use super::source::PriceSource;
+use super::Currency;
 
 use async_trait::async_trait;
 
@@ -26,6 +26,9 @@ impl<C: Default> PriceClient<C> {
 #[async_trait]
 impl PriceApi for PriceClient<reqwest::Client> {
     async fn get_price(&self, currency: Currency) -> Result<GetPriceResult, PriceApiError> {
+        if self.source == PriceSource::Wizardsardine {
+            return Err(PriceApiError::UnsupportedSource(self.source));
+        }
         let url = self.source.get_price_url(currency);
         let user_agent = self.source.user_agent();
         let data = get_data(&self.inner, &url, user_agent).await?;
@@ -33,6 +36,9 @@ impl PriceApi for PriceClient<reqwest::Client> {
     }
 
     async fn list_currencies(&self) -> Result<ListCurrenciesResult, PriceApiError> {
+        if self.source == PriceSource::Wizardsardine {
+            return Err(PriceApiError::UnsupportedSource(self.source));
+        }
         let url = self.source.list_currencies_url();
         let user_agent = self.source.user_agent();
         let data = get_data(&self.inner, &url, user_agent).await?;

@@ -33,3 +33,12 @@ pub fn accent(theme: &Theme) -> Style {
         snap: true,
     }
 }
+
+pub fn separator(theme: &Theme) -> Style {
+    Style {
+        color: theme.colors.cards.section.background,
+        radius: 2.0.into(),
+        fill_mode: FillMode::Full,
+        snap: true,
+    }
+}

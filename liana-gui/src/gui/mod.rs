@@ -672,7 +672,7 @@ where
                         tasks.push(
                             pane.update_tab_with_app_msg(
                                 tab_id,
-                                AppFiatMessage::GetPriceResult(global_price),
+                                AppFiatMessage::GetPriceResult(global_price, None),
                                 &self.config,
                             )
                             .map(move |msg| Message::Pane(pane_id, msg)),

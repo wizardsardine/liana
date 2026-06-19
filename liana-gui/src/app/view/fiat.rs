@@ -1,86 +1,19 @@
 use std::convert::TryFrom;
-use std::num::ParseFloatError;
 
 use iced::widget::Column;
 use liana::miniscript::bitcoin::Amount;
-use liana_ui::component::amount::{format_f64_as_string, DisplayAmount};
-use liana_ui::component::text::text;
-use liana_ui::theme;
-use liana_ui::widget::{Container, Text};
+use liana_ui::{
+    component::{
+        amount::{DisplayAmount, FiatAmount},
+        text::text,
+    },
+    theme,
+    widget::Container,
+};
 
 use crate::app::cache;
 use crate::services::fiat::{Currency, PriceSource};
 use crate::utils::now;
-
-/// A non-negative fiat amount with a specific currency.
-#[derive(Debug, Clone, Copy)]
-pub struct FiatAmount {
-    amount: f64,
-    currency: Currency,
-}
-
-#[derive(Debug, Clone)]
-pub enum AmountError {
-    Negative,
-    ParseError(String),
-}
-
-impl std::fmt::Display for AmountError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Negative => write!(f, "Amount must be non-negative"),
-            Self::ParseError(e) => write!(f, "Parse error: {e}"),
-        }
-    }
-}
-
-impl FiatAmount {
-    pub fn new(amount: f64, currency: Currency) -> Result<Self, AmountError> {
-        if amount < 0.0 {
-            return Err(AmountError::Negative);
-        }
-        Ok(Self { amount, currency })
-    }
-
-    /// Parse a fiat amount from a string in the given currency.
-    pub fn from_str_in(s: &str, currency: Currency) -> Result<Self, AmountError> {
-        let amount: f64 = s
-            .trim()
-            .parse()
-            .map_err(|e: ParseFloatError| AmountError::ParseError(e.to_string()))?;
-        Self::new(amount, currency)
-    }
-
-    pub fn amount(&self) -> f64 {
-        self.amount
-    }
-
-    pub fn currency(&self) -> Currency {
-        self.currency
-    }
-
-    /// Format a fiat amount as a string with required decimal places for currency and no thousands separator.
-    pub fn to_rounded_string(&self) -> String {
-        format_f64_as_string(self.amount, "", self.currency().decimals(), false)
-    }
-
-    /// Format a fiat amount as a string with a tilde (~) prefix to indicate approximation.
-    pub fn to_display_string(&self) -> String {
-        format!("~{} {}", self.to_formatted_string(), self.currency())
-    }
-
-    /// Format a fiat amount as a `Text` widget with a tilde (~) prefix to indicate approximation.
-    pub fn to_text(&self) -> Text<'static> {
-        text(self.to_display_string())
-    }
-}
-
-// Format a fiat amount as a string with required decimal places for currency and a comma as the thousands separator.
-impl DisplayAmount for FiatAmount {
-    fn to_formatted_string(&self) -> String {
-        format_f64_as_string(self.amount, ",", self.currency().decimals(), false)
-    }
-}
 
 #[derive(Debug)]
 pub enum AmountConverterError {
@@ -226,22 +159,6 @@ impl TryFrom<&cache::FiatPrice> for FiatAmountConverter {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_new_fiat_amount_() {
-        // Try with negative amounts.
-        for amt in &[-1000.0, -10.5, -0.1] {
-            let result = FiatAmount::new(*amt, Currency::USD);
-            assert!(result.is_err());
-            assert!(matches!(result.unwrap_err(), AmountError::Negative));
-        }
-
-        // Check non-negaitve amounts work.
-        for amt in &[-0.0, 0.0, 0.1, 27.12] {
-            let result = FiatAmount::new(*amt, Currency::USD);
-            assert!(result.is_ok());
-        }
-    }
 
     #[test]
     fn test_new_fiat_amount_converter() {

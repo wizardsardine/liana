@@ -170,12 +170,12 @@ impl SettingsTrait for BusinessSettings {
             let fiat_price_setting = match user_settings.fiat_currency {
                 api::FiatCurrency::None => None,
                 api::FiatCurrency::USD => Some(fiat::PriceSetting {
-                    source: liana_gui::services::fiat::PriceSource::default(),
+                    source: liana_gui::services::fiat::PriceSource::Wizardsardine,
                     currency: liana_gui::services::fiat::Currency::USD,
                     is_enabled: true,
                 }),
                 api::FiatCurrency::EUR => Some(fiat::PriceSetting {
-                    source: liana_gui::services::fiat::PriceSource::default(),
+                    source: liana_gui::services::fiat::PriceSource::Wizardsardine,
                     currency: liana_gui::services::fiat::Currency::EUR,
                     is_enabled: true,
                 }),
@@ -211,6 +211,7 @@ impl SettingsTrait for BusinessSettings {
                     last_tick: Instant::now(),
                 },
                 fiat_price: None,
+                feerate_estimate: None,
                 pane_size: Cell::new(iced::window::Settings::default().size),
             };
 

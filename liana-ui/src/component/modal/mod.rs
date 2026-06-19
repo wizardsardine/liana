@@ -1,30 +1,34 @@
-pub mod legacy;
-
 use std::fmt::Display;
 
 use iced::{
     alignment::{Horizontal, Vertical},
     widget::{
         button::{Status, Style},
-        column, row, Space,
+        column, row,
+        tooltip::Position,
+        Space,
     },
     Length, Padding,
 };
 
 use iced::widget::Container;
 
+use bitcoin::bip32::{ChildNumber, Fingerprint};
+
 use crate::{
     color,
     component::{
-        button,
+        badge, button,
         form::{self, Value},
-        text, tooltip,
+        pick_list,
+        text::new::{b1_bold, b4_medium, b5_bold, b5_medium, caption},
+        tooltip,
     },
     icon,
     theme::{self, Theme},
 };
 
-use crate::widget::{Button, CheckBox, Column, ColumnExt, Element, Row, RowExt, SpaceExt, Text};
+use crate::widget::{Button, CheckBox, Column, Element, SpaceExt, Text};
 
 pub const BTN_W: u32 = 500;
 pub const V_SPACING: u32 = 10;
@@ -114,18 +118,14 @@ pub fn header<'a, M: 'a + Clone>(
 ) -> Element<'a, M> {
     let back = back_message
         .map(|m| button::transparent(Some(icon::arrow_back().size(25)), "").on_press(m));
-    let title = label.map(text::h3);
+    let title = label.map(b1_bold);
     let close = close_message.map(|m| {
         Button::new(icon::cross_icon().size(40))
             .padding(0)
             .style(theme::button::transparent)
             .on_press(m)
     });
-    Row::new()
-        .push_maybe(back)
-        .push_maybe(title)
-        .push(Space::with_width(Length::Fill))
-        .push_maybe(close)
+    row![back, title, Space::with_width(Length::Fill), close]
         .align_y(Vertical::Center)
         .into()
 }
@@ -149,9 +149,7 @@ where
 
     let msg = if !collapsed { collapse() } else { fold() };
 
-    let row = Row::new()
-        .push(text::p1_bold(&title))
-        .push(icon)
+    let row = row![b5_bold(&title), icon]
         .align_y(Vertical::Center)
         .spacing(H_SPACING);
 
@@ -209,28 +207,23 @@ where
 
     if collapsed {
         let icon = icon.map(|i| i.style(theme::text::primary));
-        let line = Row::new().push(form).push_maybe(paste).spacing(V_SPACING);
-        let col = Column::new()
-            .push(row![
-                text::p1_regular(label).style(theme::text::primary),
+        let line = row![form, paste].spacing(H_SPACING);
+        let col = column![
+            row![
+                caption(label).style(theme::text::primary),
                 Space::with_width(Length::Fill)
-            ])
-            .push(line)
-            .width(Length::Fill);
-        let content = Row::new()
-            .push_maybe(icon)
-            .push(col)
+            ],
+            line
+        ]
+        .width(Length::Fill);
+        let content = row![icon, col]
             .align_y(Vertical::Center)
-            .spacing(V_SPACING)
+            .spacing(H_SPACING)
             .width(Length::Fill);
         button::device_with_height_clickable(content, None, None, false)
     } else {
-        let content = Row::new()
-            .push_maybe(icon.as_ref().map(|_| Space::with_width(H_SPACING)))
-            .push_maybe(icon)
-            .push(Space::with_width(H_SPACING))
-            .push(text::p1_regular(label))
-            .spacing(V_SPACING)
+        let content = row![icon, caption(label)]
+            .spacing(H_SPACING)
             .align_y(Vertical::Center);
         button::device(content, Some(collapse_message()))
     }
@@ -270,12 +263,9 @@ where
     let paste = Button::new(icon::paste_icon().color(color::BLACK)).on_press(paste_message());
 
     let expanded = {
-        let line = row![form, paste].spacing(V_SPACING);
+        let line = row![form, paste].spacing(H_SPACING);
         let check_box = CheckBox::new(ack).label(disclaimer).on_toggle(ack_message);
-        let label = row![
-            text::p1_regular(label).color(color::WHITE),
-            Space::fill_width()
-        ];
+        let label = row![caption(label).color(color::WHITE), Space::fill_width()];
         let content = if ack {
             Container::new(column![label, line])
         } else {
@@ -283,10 +273,10 @@ where
         };
         row![icon(), content]
             .align_y(Vertical::Center)
-            .spacing(V_SPACING)
+            .spacing(H_SPACING)
     };
-    let closed = row![icon(), text::p1_regular(label)]
-        .spacing(V_SPACING)
+    let closed = row![icon(), caption(label)]
+        .spacing(H_SPACING)
         .align_y(Vertical::Center);
     collapsible_button(collapsed, closed, expanded, collapse_message)
 }
@@ -303,27 +293,205 @@ pub fn key_entry<'a, M: 'a + Clone>(
     if error.is_some() {
         message = None;
     }
-    let message = message.map(text::p2_regular);
-    let error = error.map(|e| text::p1_regular(e).color(color::ORANGE));
+    let message = message.map(caption);
+    let error = error.map(|e| caption(e).color(color::ORANGE));
     let tt = tooltip_str.map(|s| tooltip(s));
 
     let designation = column![
-        text::p1_bold(name),
-        text::p1_regular(fingerprint.unwrap_or(" - ".to_string()))
+        b5_bold(name),
+        caption(fingerprint.unwrap_or(" - ".to_string()))
     ]
     .align_x(Horizontal::Left)
     .width(200);
-    let row = Row::new()
-        .push_maybe(icon.as_ref().map(|_| Space::with_width(H_SPACING)))
-        .push_maybe(icon)
-        .push(Space::with_width(H_SPACING))
-        .push(designation)
-        .push_maybe(message)
-        .push_maybe(error)
-        .push(Space::with_width(Length::Fill))
-        .push_maybe(tt)
+    let row = row![
+        icon,
+        designation,
+        message,
+        error,
+        Space::with_width(Length::Fill),
+        tt
+    ]
+    .align_y(Vertical::Center)
+    .spacing(H_SPACING);
+    button::device(row, on_press)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Account {
+    pub index: ChildNumber,
+    pub fingerprint: Fingerprint,
+}
+
+impl Account {
+    pub fn new(index: ChildNumber, fingerprint: Fingerprint) -> Self {
+        Self { index, fingerprint }
+    }
+}
+
+impl Display for Account {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let index = self.index.to_string().replace('\'', "");
+        write!(f, "Account #{index}")
+    }
+}
+
+pub enum DeviceMark {
+    Processing,
+    NotInPath,
+    Unrelated,
+    WrongNetwork,
+    ConnectionError,
+    Locked(Option<String>),
+    OutdatedFirmware(String),
+    Signed,
+    Registered,
+    Selected,
+}
+
+impl Display for DeviceMark {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeviceMark::Processing => write!(f, "Processing, please check your device"),
+            DeviceMark::NotInPath => write!(f, "This signer is not part of this spending path."),
+            DeviceMark::Unrelated => {
+                write!(
+                    f,
+                    "This signing device is not related to this Liana wallet."
+                )
+            }
+            DeviceMark::WrongNetwork => write!(f, "Wrong network in the device settings"),
+            DeviceMark::ConnectionError => write!(f, "Connection error"),
+            DeviceMark::Locked(Some(code)) => write!(f, "Locked, check code: {code}"),
+            DeviceMark::Locked(None) => write!(f, "Locked"),
+            DeviceMark::OutdatedFirmware(version) => {
+                write!(f, "Install firmware version {version} or later")
+            }
+            DeviceMark::Signed => write!(f, "Signed"),
+            DeviceMark::Registered => write!(f, "Registered"),
+            DeviceMark::Selected => Ok(()),
+        }
+    }
+}
+
+impl DeviceMark {
+    pub fn element<'a, M: 'static>(&self) -> Element<'a, M> {
+        match self {
+            DeviceMark::Signed | DeviceMark::Registered => success_mark(Some(self.to_string())),
+            DeviceMark::Selected => success_mark(None),
+            _ => b5_medium(self.to_string()).into(),
+        }
+    }
+
+    pub fn warning(&self) -> Option<&'static str> {
+        match self {
+            DeviceMark::WrongNetwork => Some(
+                "The wrong bitcoin application is open or the device was initialized with the wrong network",
+            ),
+            DeviceMark::OutdatedFirmware(_) => Some("Please upgrade firmware"),
+            DeviceMark::ConnectionError => {
+                Some("Make sure your device is unlocked and a supported Bitcoin application is opened.")
+            }
+            _ => None,
+        }
+    }
+}
+
+fn device_icon(is_device: bool) -> Text<'static> {
+    if is_device {
+        icon::usb_drive_icon()
+    } else {
+        icon::round_key_icon()
+    }
+}
+
+fn device_designation<'a, M: 'a>(
+    kind: Option<impl Display + 'a>,
+    alias: Option<impl Display + 'a>,
+    fingerprint: Option<impl Display + 'a>,
+) -> Column<'a, M> {
+    let fg = b5_medium(
+        fingerprint
+            .map(|fg| fg.to_string())
+            .unwrap_or_else(|| " - ".to_string()),
+    );
+    let fg_row = if let Some(kind) = kind {
+        row![b5_bold(kind), fg].spacing(5)
+    } else {
+        row![fg]
+    };
+    if let Some(alias) = alias {
+        column![b4_medium(alias), fg_row]
+    } else {
+        column![fg_row]
+    }
+    .align_x(Horizontal::Left)
+}
+
+fn success_mark<'a, M: 'static>(label: Option<String>) -> Element<'a, M> {
+    row![label.map(b5_medium), badge::success()]
         .align_y(Vertical::Center)
-        .spacing(V_SPACING);
+        .spacing(H_SPACING)
+        .into()
+}
+
+pub fn device_entry<'a, M, F, K, A>(
+    fingerprint: Option<F>,
+    kind: Option<K>,
+    alias: Option<A>,
+    mark: Option<DeviceMark>,
+    warning: Option<&'static str>,
+    on_press: Option<M>,
+) -> Element<'a, M>
+where
+    M: 'static + Clone,
+    F: Display + 'a,
+    K: Display + 'a,
+    A: Display + 'a,
+{
+    let icon = device_icon(kind.is_some());
+    let warning = warning.or_else(|| mark.as_ref().and_then(DeviceMark::warning));
+    let mark: Option<Element<'a, M>> = mark.map(|m| m.element());
+    let warning =
+        warning.map(|w| tooltip::tooltip_custom(w, icon::warning_icon(), Position::Bottom));
+    let designation = device_designation(kind, alias, fingerprint);
+    let row = row![icon, designation, Space::fill_width(), mark, warning]
+        .align_y(Vertical::Center)
+        .spacing(H_SPACING);
+    button::device(row, on_press)
+}
+
+pub fn account_device_entry<'a, M, K, A>(
+    fingerprint: Fingerprint,
+    kind: Option<K>,
+    alias: Option<A>,
+    selected: Option<ChildNumber>,
+    on_press: Option<M>,
+) -> Element<'a, M>
+where
+    M: 'static + Clone + From<(Fingerprint, ChildNumber)>,
+    K: Display + 'a,
+    A: Display + 'a,
+{
+    let accounts: Vec<Account> = (0..10)
+        .map(|i| {
+            Account::new(
+                ChildNumber::from_hardened_idx(i).expect("hardcoded"),
+                fingerprint,
+            )
+        })
+        .collect();
+    let selected = Account::new(
+        selected.unwrap_or(ChildNumber::from_hardened_idx(0).expect("hardcoded")),
+        fingerprint,
+    );
+    let picker = pick_list::pick_list(accounts, Some(selected), |a: Account| {
+        (a.fingerprint, a.index).into()
+    });
+    let icon = device_icon(kind.is_some());
+    let designation = device_designation(kind, alias, Some(format!("#{fingerprint}")));
+    let row = row![icon, designation, Space::fill_width(), picker]
+        .align_y(Vertical::Center)
+        .spacing(H_SPACING);
     button::device(row, on_press)
 }
 
@@ -339,35 +507,18 @@ where
     M: 'static + Fn() -> Message,
     Message: Clone + 'static,
 {
-    let icon = if kind.is_some() {
-        icon::usb_drive_icon()
-    } else {
-        icon::round_key_icon()
-    };
-    let fg = text::p1_medium(fingerprint);
-    let fg_row = if let Some(k) = kind {
-        row![text::p1_bold(k), fg].spacing(5)
-    } else {
-        row![fg]
-    };
-    let designation = if let Some(alias) = alias {
-        column![text::h5_medium(alias), fg_row]
-    } else {
-        column![fg_row]
-    }
-    .align_x(Horizontal::Left);
-
-    let status = status.map(text::p1_medium);
-    let row = Row::new()
-        .push(Space::with_width(H_SPACING))
-        .push(icon)
-        .push(Space::with_width(H_SPACING))
-        .push(designation)
-        .push(Space::fill_width())
-        .push_maybe(status)
-        .push(Space::fill_width())
-        .align_y(Vertical::Center)
-        .spacing(V_SPACING);
+    let icon = device_icon(kind.is_some());
+    let status = status.map(b5_medium);
+    let designation = device_designation(kind, alias, Some(fingerprint));
+    let row = row![
+        icon,
+        designation,
+        Space::fill_width(),
+        status,
+        Space::fill_width()
+    ]
+    .align_y(Vertical::Center)
+    .spacing(H_SPACING);
     let msg = on_press.map(|f| f());
     button::device(row, msg)
 }
@@ -385,37 +536,29 @@ where
 {
     let error = error.map(|e| {
         row![
-            text::p1_regular(e).color(color::ORANGE),
+            caption(e).color(color::ORANGE),
             Space::with_width(Length::Fill)
         ]
     });
 
     let tt = tooltip_str.map(|s| tooltip(s));
 
-    let row = Row::new()
-        .push_maybe(icon.as_ref().map(|_| Space::with_width(H_SPACING)))
-        .push_maybe(icon)
-        .push(Space::with_width(H_SPACING))
-        .push(text::p1_regular(label))
-        .push(Space::fill_width())
-        .push_maybe(tt)
-        .spacing(V_SPACING)
+    let row = row![icon, caption(label), Space::fill_width(), tt]
+        .spacing(H_SPACING)
         .align_y(Vertical::Center);
 
-    let col = Column::new()
-        .push(row)
-        .push_maybe(error)
-        .width(Length::Fill);
+    let col = column![row, error].width(Length::Fill);
 
     let msg = on_press.map(|f| f());
     button::device(col, msg)
 }
 
 pub fn modal_no_devices_placeholder<'a, M: 'a>() -> Element<'a, M> {
-    Column::new()
-        .push(icon::usb_icon().size(100))
-        .push(text::p1_regular("Plug in a hardware device ..."))
-        .align_x(Horizontal::Center)
-        .spacing(20)
-        .into()
+    column![
+        icon::usb_icon().size(100),
+        caption("No hardware device detected. Connect a device and unlock it."),
+    ]
+    .align_x(Horizontal::Center)
+    .spacing(20)
+    .into()
 }

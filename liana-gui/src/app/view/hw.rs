@@ -1,9 +1,9 @@
-use liana_ui::{component::modal::legacy, widget::*};
-
-use crate::{
-    app::view::message::*,
-    hw::{HardwareWallet, UnsupportedReason},
+use liana_ui::{
+    component::modal::{self, DeviceMark},
+    widget::*,
 };
+
+use crate::{app::view::message::*, hw::HardwareWallet, view::hw::unusable_device_entry};
 use async_hwi::DeviceKind;
 
 pub fn hw_list_view_verify_address(
@@ -11,68 +11,32 @@ pub fn hw_list_view_verify_address(
     hw: &HardwareWallet,
     chosen: bool,
 ) -> Element<'_, Message> {
-    match hw {
-        HardwareWallet::Supported {
-            kind,
-            version,
-            fingerprint,
-            alias,
-            ..
-        } => {
-            if chosen {
-                legacy::processing_device(kind, version.as_ref(), fingerprint, alias.as_ref(), None)
-            } else {
-                match kind {
-                    DeviceKind::Specter | DeviceKind::SpecterSimulator => {
-                        legacy::unimplemented_method_device(
-                            kind.to_string(),
-                            version.as_ref(),
-                            fingerprint,
-                            "Liana cannot request the device to display the address. \n The verification must be done manually with the device control.",
-                            None,
-                        )
-                    }
-                    _ => {
-                        let select_msg = if hw.is_supported() {
-                            Some(Message::SelectHardwareWallet(i))
-                        } else {
-                            None
-                        };
-                        legacy::supported_device(
-                            kind,
-                            version.as_ref(),
-                            fingerprint,
-                            alias.as_ref(),
-                            select_msg,
-                        )
-                    }
-                }
-            }
-        }
-        HardwareWallet::Unsupported {
-            version,
-            kind,
-            reason,
-            ..
-        } => match reason {
-            UnsupportedReason::NotPartOfWallet(fg) => {
-                legacy::unrelated_device(kind.to_string(), version.as_ref(), fg, None)
-            }
-            UnsupportedReason::WrongNetwork => {
-                legacy::wrong_network_device(kind.to_string(), version.as_ref(), None)
-            }
-            UnsupportedReason::Version {
-                minimal_supported_version,
-            } => legacy::unsupported_version_device(
-                kind.to_string(),
-                version.as_ref(),
-                minimal_supported_version,
-                None,
-            ),
-            _ => legacy::unsupported_device(kind.to_string(), version.as_ref(), None),
-        },
-        HardwareWallet::Locked {
-            kind, pairing_code, ..
-        } => legacy::locked_device(kind, pairing_code.as_ref(), None),
-    }
+    let HardwareWallet::Supported {
+        kind,
+        fingerprint,
+        alias,
+        ..
+    } = hw
+    else {
+        return unusable_device_entry(hw);
+    };
+    let (mark, warning, on_press) = if chosen {
+        (Some(DeviceMark::Processing), None, None)
+    } else if matches!(kind, DeviceKind::Specter | DeviceKind::SpecterSimulator) {
+        (
+            None,
+            Some("Liana cannot request the device to display the address. \n Verify it with the QR code in the options below."),
+            None,
+        )
+    } else {
+        (None, None, Some(Message::SelectHardwareWallet(i)))
+    };
+    modal::device_entry(
+        Some(format!("#{fingerprint}")),
+        Some(kind),
+        alias.as_ref(),
+        mark,
+        warning,
+        on_press,
+    )
 }

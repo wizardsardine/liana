@@ -305,6 +305,31 @@ pub fn btn_secondary<'a, T: Clone + 'a>(
     btn
 }
 
+fn btn_feerate<'a, T: Clone + 'a>(
+    label: impl Display,
+    selected: bool,
+    msg: Option<T>,
+) -> Button<'a, T> {
+    let btn = if selected {
+        button_compact(label, theme::button::feerate, msg)
+    } else {
+        button_compact(label, theme::button::feerate_unselected, msg)
+    };
+    btn.width(BtnWidth::S)
+}
+
+pub fn btn_low<'a, T: Clone + 'a>(selected: bool, msg: Option<T>) -> Button<'a, T> {
+    btn_feerate("Low", selected, msg)
+}
+
+pub fn btn_medium<'a, T: Clone + 'a>(selected: bool, msg: Option<T>) -> Button<'a, T> {
+    btn_feerate("Medium", selected, msg)
+}
+
+pub fn btn_high<'a, T: Clone + 'a>(selected: bool, msg: Option<T>) -> Button<'a, T> {
+    btn_feerate("High", selected, msg)
+}
+
 /// Secondary button with preset width.
 pub fn btn_secondary_with_tooltip<'a, T: Clone + 'a>(
     icon: Option<Text<'a>>,
@@ -568,4 +593,28 @@ pub fn btn_copy<'a, T: Clone + 'a>(msg: Option<T>) -> BistateButton<'a, T> {
 
 pub fn btn_edit<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     clickable_icon_with_size(icon::edit_icon(), msg, CLICKABLE_ICON_SIZE)
+}
+
+pub fn btn_remove<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    clickable_icon_with_size(icon::cross_icon(), msg, CLICKABLE_ICON_SIZE)
+}
+
+pub fn btn_delete<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Delete", BtnWidth::L, msg)
+}
+
+pub fn btn_previous<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "< Previous", BtnWidth::M, msg)
+}
+
+pub fn btn_next<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    if msg.is_some() {
+        btn_primary(None, "Next", BtnWidth::S, msg)
+    } else {
+        btn_secondary(None, "Next", BtnWidth::S, msg)
+    }
+}
+
+pub fn btn_add_payment<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(Some(icon::plus_icon()), "Add payment", BtnWidth::Auto, msg)
 }

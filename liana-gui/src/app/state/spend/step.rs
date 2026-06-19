@@ -21,7 +21,10 @@ use liana::{
 };
 use lianad::commands::ListCoinsEntry;
 
-use liana_ui::{component::form, widget::Element};
+use liana_ui::{
+    component::{form, panels::spend::FeeLevel},
+    widget::Element,
+};
 
 use crate::{
     app::{
@@ -29,7 +32,7 @@ use crate::{
         error::Error,
         message::Message,
         state::{fiat_converter_for_wallet, psbt},
-        view::{self, fiat::FiatAmount},
+        view,
         wallet::Wallet,
     },
     daemon::{
@@ -37,6 +40,7 @@ use crate::{
         Daemon,
     },
 };
+pub use liana_ui::component::amount::FiatAmount;
 
 #[derive(Clone)]
 pub struct TransactionDraft {
@@ -134,6 +138,12 @@ fn filter_coins(
         .collect()
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum FeeMode {
+    Manual,
+    Smart(FeeLevel),
+}
+
 pub struct DefineSpend {
     recipients: Vec<Recipient>,
     /// If set, this is the index of a recipient that should
@@ -160,6 +170,7 @@ pub struct DefineSpend {
     batch_label: form::Value<String>,
     amount_left_to_select: Option<Amount>,
     feerate: form::Value<String>,
+    fee_mode: FeeMode,
     fee_amount: Option<Amount>,
     generated: Option<(Psbt, Vec<String>)>,
     warning: Option<Error>,
@@ -201,6 +212,7 @@ impl DefineSpend {
             is_valid: false,
             is_duplicate: false,
             feerate: form::Value::default(),
+            fee_mode: FeeMode::Smart(FeeLevel::Low),
             fee_amount: None,
             amount_left_to_select: None,
             warning: None,
@@ -650,6 +662,12 @@ impl Step for DefineSpend {
                             }
                         }
                     }
+                    view::CreateSpendMessage::SelfTransfer => {
+                        self.recipients.clear();
+                        self.send_max_to_recipient = None;
+                        self.batch_label.valid = true;
+                        self.batch_label.value = String::new();
+                    }
                     view::CreateSpendMessage::RecipientEdited(i, _, _)
                     | view::CreateSpendMessage::RecipientFiatAmountEdited(i, _, _) => {
                         self.recipients
@@ -667,6 +685,18 @@ impl Step for DefineSpend {
                         } else {
                             self.feerate.valid = false;
                         }
+                        self.warning = None;
+                    }
+                    view::CreateSpendMessage::FeeModeManual => {
+                        self.fee_mode = FeeMode::Manual;
+                        self.warning = None;
+                    }
+                    view::CreateSpendMessage::FeeModeSmart => {
+                        self.fee_mode = FeeMode::Smart(FeeLevel::Low);
+                        self.warning = None;
+                    }
+                    view::CreateSpendMessage::SelectFeeLevel(level) => {
+                        self.fee_mode = FeeMode::Smart(level);
                         self.warning = None;
                     }
                     view::CreateSpendMessage::Generate => {
@@ -762,6 +792,17 @@ impl Step for DefineSpend {
                         }
                     }
                     _ => {}
+                }
+
+                if let (FeeMode::Smart(level), Some(est)) = (self.fee_mode, cache.feerate_estimate)
+                {
+                    let value = match level {
+                        FeeLevel::Low => est.low,
+                        FeeLevel::Medium => est.medium.unwrap_or(est.low),
+                        FeeLevel::High => est.high,
+                    };
+                    self.feerate.value = value.to_string();
+                    self.feerate.valid = value != 0 && value <= MAX_FEERATE;
                 }
 
                 // Attempt to select coins automatically if:
@@ -865,16 +906,8 @@ impl Step for DefineSpend {
         view::spend::create_spend_tx(
             cache,
             converter.as_ref(),
-            self.recipients
-                .iter()
-                .enumerate()
-                .map(|(i, recipient)| {
-                    recipient
-                        .view(i, self.send_max_to_recipient == Some(i), converter.as_ref())
-                        .map(view::Message::CreateSpend)
-                })
-                .collect(),
-            self.is_valid,
+            &self.recipients,
+            self.send_max_to_recipient,
             self.is_duplicate,
             self.timelock(),
             self.recovery_timelock,
@@ -883,6 +916,7 @@ impl Step for DefineSpend {
             &self.batch_label,
             self.amount_left_to_select.as_ref(),
             &self.feerate,
+            self.fee_mode,
             self.fee_amount.as_ref(),
             self.warning.as_ref(),
             self.is_first_step,
@@ -896,16 +930,16 @@ impl Step for DefineSpend {
 }
 
 #[derive(Debug, Default, Clone)]
-struct Recipient {
-    label: form::Value<String>,
-    address: form::Value<String>,
-    amount: form::Value<String>,
-    estimated_max: Option<Amount>,
+pub struct Recipient {
+    pub label: form::Value<String>,
+    pub address: form::Value<String>,
+    pub amount: form::Value<String>,
+    pub estimated_max: Option<Amount>,
     // This is only `Some` if the user has entered a fiat amount directly.
-    fiat_amount: Option<form::Value<String>>,
-    fiat_converter: Option<view::FiatAmountConverter>, // the converter at the time of entering the fiat amount
-    is_recovery: bool,
-    dust_warning: Option<String>,
+    pub fiat_amount: Option<form::Value<String>>,
+    pub fiat_converter: Option<view::FiatAmountConverter>,
+    pub is_recovery: bool,
+    pub dust_warning: Option<String>,
 }
 
 impl Recipient {
@@ -951,6 +985,7 @@ impl Recipient {
         self.address_valid()
             && !self.amount.value.is_empty()
             && self.amount.valid
+            && !self.label.value.is_empty()
             && self.label.valid
     }
 
@@ -1053,11 +1088,12 @@ impl Recipient {
         };
     }
 
-    fn view(
+    pub fn view(
         &self,
         i: usize,
         is_max_selected: bool,
         fiat_converter: Option<&view::FiatAmountConverter>,
+        can_delete: bool,
     ) -> Element<'_, view::CreateSpendMessage> {
         let mut fiat_form_value = self.fiat_amount.as_ref();
 
@@ -1087,6 +1123,7 @@ impl Recipient {
             &self.label,
             is_max_selected,
             self.is_recovery,
+            can_delete,
             &self.dust_warning,
             self.estimated_max,
         )

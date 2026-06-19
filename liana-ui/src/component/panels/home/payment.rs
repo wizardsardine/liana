@@ -5,9 +5,11 @@ use iced::{
 
 use crate::{
     component::{
-        self, pill,
+        self,
+        amount::{amount_with_fiat_tooltip, AmountSize, FiatAmount},
+        pill,
         text::{
-            new::{caption, h2, h3, H2_SEMI_SPEC},
+            new::{caption, h2},
             truncate,
         },
         tooltip::tooltip_with_style,
@@ -82,10 +84,9 @@ impl FiatSource {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct FiatPrice {
-    pub amount: String,
-    pub currency: String,
+    pub amount: FiatAmount,
     pub source: FiatSource,
 }
 
@@ -130,29 +131,16 @@ pub fn payment_card<'a, M: 'a + Clone>(payment: UIPayment<'a>, msg: Option<M>) -
     };
 
     let icon = kind.icon();
-    let btc_amount =
-        component::amount::amount_with_font(&amount, H2_SEMI_SPEC).align_y(Alignment::Center);
-    let btc_row = row![icon, btc_amount].spacing(5).align_y(Alignment::Center);
-    let fiat_price = fiat_price.map(
-        |FiatPrice {
-             amount,
-             currency,
-             source,
-         }| {
-            let tilde = if source == FiatSource::Timestamp {
-                "~"
-            } else {
-                ""
-            };
-            let fp_string = format!("{tilde}{amount} {currency}");
-            let fp = h3(fp_string).style(amount::fiat_price);
-            let infotip = source.infotip();
-            row![fp, infotip].spacing(5).align_y(Alignment::Center)
-        },
-    );
+    let to_fiat = fiat_price.map(|fp| move |_: bitcoin::Amount| fp.amount);
+    let approximate = fiat_price.is_none_or(|fp| fp.source == FiatSource::Timestamp);
+    let tooltip = fiat_price.map(|fp| fp.source.infotip());
+    let amount_fiat =
+        amount_with_fiat_tooltip(&amount, to_fiat, AmountSize::M, approximate, tooltip);
 
     let left = column![label, time].spacing(2);
-    let right = column![btc_row, fiat_price].align_x(Alignment::End);
+    let right = row![icon, amount_fiat]
+        .spacing(5)
+        .align_y(Alignment::Center);
     let content = row![left, Space::fill_width(), right].height(PAYMENT_HEIGHT);
     component::card::clickable_card_with_padding(content, msg, [5, 10])
 }

@@ -15,7 +15,7 @@ use crate::{
         view,
         wallet::Wallet,
     },
-    daemon::model::*,
+    daemon::{model::*, FeerateEstimate},
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
     services::fiat::{
@@ -77,7 +77,7 @@ impl From<ImportExportMessage> for Message {
 
 #[derive(Debug)]
 pub enum FiatMessage {
-    GetPriceResult(FiatPrice),
+    GetPriceResult(FiatPrice, Option<FeerateEstimate>),
     ListCurrencies(PriceSource),
     ListCurrenciesResult(PriceSource, Result<ListCurrenciesResult, PriceApiError>),
     SaveChanges,

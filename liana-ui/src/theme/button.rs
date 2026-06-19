@@ -31,6 +31,8 @@ macro_rules! button_styles {
 button_styles!(
     primary,
     secondary,
+    feerate,
+    feerate_unselected,
     tertiary,
     destructive,
     container,

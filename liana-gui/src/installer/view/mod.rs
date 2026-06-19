@@ -10,6 +10,7 @@ use iced::{
 };
 
 use liana::miniscript::bitcoin::bip32::ChildNumber;
+use liana_ui::component::button::BtnWidth;
 use liana_ui::component::text::{self, p2_regular};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -23,7 +24,7 @@ use liana::{
 use liana_ui::{
     component::{
         button, card, collapse, form,
-        modal::legacy,
+        modal::{self, DeviceMark},
         scrollable, separation,
         text::{h2, h3, h4_bold, p1_bold, p1_regular, text, Text},
     },
@@ -35,7 +36,7 @@ use crate::node::electrum::validate_domain_checkbox;
 use crate::{
     app::settings,
     help,
-    hw::{HardwareWallet, UnsupportedReason},
+    hw::HardwareWallet,
     installer::{
         descriptor::{PathSequence, PathWarning},
         message::{self, DefineBitcoind, DefineNode, Message},
@@ -436,58 +437,34 @@ pub fn hardware_wallet_xpubs<'a>(
     error: Option<&Error>,
     accounts: &HashMap<Fingerprint, ChildNumber>,
 ) -> Element<'a, Message> {
-    let select_msg = if !processing && hw.is_supported() {
-        Some(Message::Select(i))
-    } else {
-        None
-    };
+    let select_msg = (!processing && hw.is_supported()).then_some(Message::Select(i));
     let bttn: Element<'a, Message> = match hw {
         HardwareWallet::Supported {
             kind,
-            version,
             fingerprint,
             alias,
             ..
         } => {
             if processing {
-                legacy::processing_device(kind, version.as_ref(), fingerprint, alias.as_ref(), None)
+                modal::device_entry(
+                    Some(format!("#{fingerprint}")),
+                    Some(kind),
+                    alias.as_ref(),
+                    Some(DeviceMark::Processing),
+                    None,
+                    None,
+                )
             } else {
-                legacy::supported_device_with_account(
-                    kind,
-                    version.as_ref(),
+                modal::account_device_entry(
                     *fingerprint,
+                    Some(kind),
                     alias.as_ref(),
                     accounts.get(fingerprint).cloned(),
-                    true,
                     select_msg,
                 )
             }
         }
-        HardwareWallet::Unsupported {
-            version,
-            kind,
-            reason,
-            ..
-        } => match reason {
-            UnsupportedReason::NotPartOfWallet(fg) => {
-                legacy::unrelated_device(kind.to_string(), version.as_ref(), fg, None)
-            }
-            UnsupportedReason::WrongNetwork => {
-                legacy::wrong_network_device(kind.to_string(), version.as_ref(), None)
-            }
-            UnsupportedReason::Version {
-                minimal_supported_version,
-            } => legacy::unsupported_version_device(
-                kind.to_string(),
-                version.as_ref(),
-                minimal_supported_version,
-                None,
-            ),
-            _ => legacy::unsupported_device(kind.to_string(), version.as_ref(), None),
-        },
-        HardwareWallet::Locked {
-            kind, pairing_code, ..
-        } => legacy::locked_device(kind, pairing_code.as_ref(), None),
+        _ => crate::view::hw::unusable_device_entry(hw),
     };
     Container::new(
         Column::new()
@@ -547,19 +524,19 @@ pub fn share_xpubs<'a>(
         (0, 0),
         email,
         "Share your public keys (Xpubs)",
-        Column::new()
-            .push(title)
-            .push_maybe(if hws.is_empty() {
-                Some(p1_regular("No signing device connected").style(theme::text::secondary))
+        column![
+            title,
+            if hws.is_empty() {
+                modal::modal_no_devices_placeholder()
             } else {
-                None
-            })
-            .spacing(10)
-            .push(Column::with_children(hws).spacing(10))
-            .push(Container::new(text("Or create a new random key:").bold()).width(Length::Fill))
-            .push(signer)
-            .push(Space::with_height(10))
-            .width(Length::Fill),
+                Column::with_children(hws).spacing(10).into()
+            },
+            Container::new(text("Or create a new random key:").bold()).width(Length::Fill),
+            signer,
+            Space::with_height(10),
+        ]
+        .spacing(10)
+        .width(Length::Fill),
         true,
         Some(Message::Previous),
     )
@@ -617,11 +594,11 @@ pub fn register_descriptor<'a>(
         text("If necessary, please select the signing device to register descriptor on:").bold()
     })
     .width(Length::Fill);
-    let devices = hws
-        .iter()
-        .enumerate()
-        .fold(Column::new().spacing(10), |col, (i, hw)| {
-            col.push(crate::view::hw::device_list_entry(
+    let devices: Element<'a, Message> = if hws.is_empty() {
+        modal::modal_no_devices_placeholder()
+    } else {
+        Column::with_children(hws.iter().enumerate().map(|(i, hw)| {
+            crate::view::hw::device_list_entry(
                 hw,
                 crate::view::hw::HwRowMode::Registration {
                     chosen: Some(i) == chosen_hw,
@@ -634,8 +611,11 @@ pub fn register_descriptor<'a>(
                     device_must_support_taproot: false,
                 },
                 move || Message::Select(i),
-            ))
-        });
+            )
+        }))
+        .spacing(10)
+        .into()
+    };
     let signing_devices = column![devices_title, devices]
         .spacing(10)
         .width(Length::Fill);
@@ -1016,7 +996,7 @@ pub fn define_bitcoin_node<'a>(
                         } else {
                             None
                         })
-                        .width(Length::Fixed(200.0)),
+                        .width(BtnWidth::XL),
                 ))
                 .push(if is_running.map(|res| res.is_ok()).unwrap_or(false) {
                     button::secondary(None, "Next")

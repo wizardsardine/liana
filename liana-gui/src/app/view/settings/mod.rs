@@ -959,7 +959,8 @@ pub fn wallet_settings<'a>(
         .width(Length::Fill);
     let btn_row = row![Space::fill_width(), btn_backup, btn_register]
         .spacing(10)
-        .width(Length::Fill);
+        .width(Length::Fill)
+        .wrap();
     let descriptor_card = card::simple(
         column![title, descriptor_row, btn_row]
             .spacing(10)

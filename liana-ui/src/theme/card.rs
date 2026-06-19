@@ -87,5 +87,7 @@ styles!(
         legacy_warning,
         warning,
         error,
+        section,
+        flat,
     ]
 );

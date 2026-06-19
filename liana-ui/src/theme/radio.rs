@@ -14,12 +14,26 @@ impl Catalog for Theme {
     }
 }
 
-pub fn primary(theme: &Theme, _status: Status) -> Style {
-    Style {
-        dot_color: theme.colors.radio_buttons.dot,
-        text_color: theme.colors.radio_buttons.text.into(),
-        background: theme.colors.cards.simple.background.into(),
-        border_width: 1.0,
-        border_color: theme.colors.radio_buttons.border,
+pub fn primary(theme: &Theme, status: Status) -> Style {
+    let is_selected = match status {
+        Status::Active { is_selected } | Status::Hovered { is_selected } => is_selected,
+    };
+    let p = &theme.colors.radio_buttons;
+    if is_selected {
+        Style {
+            dot_color: crate::color::WHITE,
+            text_color: p.text.into(),
+            background: p.dot.into(),
+            border_width: 0.0,
+            border_color: crate::color::TRANSPARENT,
+        }
+    } else {
+        Style {
+            dot_color: p.dot,
+            text_color: p.text.into(),
+            background: crate::color::TRANSPARENT.into(),
+            border_width: 1.0,
+            border_color: p.border,
+        }
     }
 }

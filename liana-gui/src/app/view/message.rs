@@ -1,3 +1,5 @@
+use liana_ui::component::panels::spend::FeeLevel;
+
 use crate::{
     app::menu::Menu,
     app::view::FiatAmountConverter,
@@ -78,10 +80,14 @@ pub enum CreateSpendMessage {
     AddRecipient,
     BatchLabelEdited(String),
     DeleteRecipient(usize),
+    SelfTransfer,
     SelectCoin(usize),
     RecipientEdited(usize, &'static str, String),
     RecipientFiatAmountEdited(usize, String, FiatAmountConverter),
     FeerateEdited(String),
+    FeeModeManual,
+    FeeModeSmart,
+    SelectFeeLevel(FeeLevel),
     SelectPath(usize),
     Generate,
     SendMaxToRecipient(usize),

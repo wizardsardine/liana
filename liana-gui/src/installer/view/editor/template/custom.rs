@@ -7,7 +7,7 @@ use iced::{
 use liana_ui::{
     color,
     component::{
-        button::{self},
+        button::{self, BtnWidth},
         text::{h3, p1_regular, text},
     },
     icon, image, theme,
@@ -162,7 +162,7 @@ pub fn custom_template<'a>(
     let btn_row = Row::new()
         .push(
             button::secondary(Some(icon::plus_icon()), "Add recovery option")
-                .width(210)
+                .width(BtnWidth::XXL)
                 .on_press(Message::DefineDescriptor(
                     message::DefineDescriptor::AddRecoveryPath,
                 )),

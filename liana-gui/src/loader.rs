@@ -452,6 +452,7 @@ pub async fn load_application(
             ..Default::default()
         },
         fiat_price: None,
+        feerate_estimate: None,
         pane_size: std::cell::Cell::new(iced::window::Settings::default().size),
     };
 

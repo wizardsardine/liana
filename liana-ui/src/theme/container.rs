@@ -82,6 +82,20 @@ pub fn tab_menu_panel(theme: &Theme) -> Style {
     }
 }
 
+pub fn form_field(theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(
+            theme.colors.general.form_field_background,
+        )),
+        border: Border {
+            radius: 4.0.into(),
+            ..Default::default()
+        },
+        shadow: CARD_SHADOW,
+        ..Default::default()
+    }
+}
+
 pub fn custom(color: iced::Color) -> Box<dyn Fn(&Theme) -> Style> {
     Box::new(move |_theme: &Theme| Style {
         background: Some(Background::Color(color)),

@@ -74,6 +74,30 @@ pub enum DaemonBackend {
     RemoteBackend,
 }
 
+/// Low/medium/high feerate presets (sat/vb) the remote backend provides
+/// alongside the fiat price. Present only when the backend supplied both the low
+/// and high bounds. `medium` is optional: older backends omit it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FeerateEstimate {
+    pub low: u64,
+    pub medium: Option<u64>,
+    pub high: u64,
+}
+
+impl FeerateEstimate {
+    /// Build a sanitized estimate from the raw backend values. Each bound is
+    /// floored to 1 sat/vbyte so a preset is always broadcastable, then the
+    /// presets are forced into non-decreasing order (`low <= medium <= high`).
+    /// A noisy estimate near the mempool floor can report medium below low or
+    /// high below low; without this a preset would be cheaper than a lower one.
+    pub fn new(low: i32, medium: Option<i32>, high: i32) -> Self {
+        let low = low.max(1) as u64;
+        let high = (high.max(1) as u64).max(low);
+        let medium = medium.map(|m| (m.max(1) as u64).clamp(low, high));
+        Self { low, medium, high }
+    }
+}
+
 impl DaemonBackend {
     pub fn is_embedded(&self) -> bool {
         matches!(self, DaemonBackend::EmbeddedLianad(_))
@@ -173,9 +197,12 @@ pub trait Daemon: Debug {
         Ok(())
     }
 
-    /// Returns fiat exchange rates from the backend.
-    /// Keys are currency pair strings like "BTCEUR", values are the rates.
-    async fn get_fiat_rates(&self) -> Result<HashMap<String, f64>, DaemonError> {
+    /// Returns fiat exchange rates from the backend, together with the optional
+    /// high/low feerate presets. Keys are currency pair strings like "BTCEUR",
+    /// values are the rates.
+    async fn get_fiat_rates(
+        &self,
+    ) -> Result<(HashMap<String, f64>, Option<FeerateEstimate>), DaemonError> {
         Err(DaemonError::NotImplemented)
     }
 
@@ -447,4 +474,33 @@ async fn load_labels<T: model::Labelled + model::LabelsLoader, D: Daemon + ?Size
         target.load_labels(&labels);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FeerateEstimate;
+
+    #[test]
+    fn feerate_estimate_orders_presets() {
+        // Reported case: a noisy backend estimate with medium below low.
+        let est = FeerateEstimate::new(2, Some(1), 2);
+        assert_eq!(est.low, 2);
+        assert_eq!(est.medium, Some(2));
+        assert_eq!(est.high, 2);
+
+        // Well-ordered values pass through untouched.
+        let est = FeerateEstimate::new(1, Some(5), 10);
+        assert_eq!((est.low, est.medium, est.high), (1, Some(5), 10));
+
+        // Medium above high is clamped down to high; high below low is raised.
+        let est = FeerateEstimate::new(4, Some(9), 2);
+        assert_eq!((est.low, est.medium, est.high), (4, Some(4), 4));
+
+        // Zero/negative values are floored to 1.
+        let est = FeerateEstimate::new(0, Some(-3), 0);
+        assert_eq!((est.low, est.medium, est.high), (1, Some(1), 1));
+
+        // Absent medium stays absent.
+        assert_eq!(FeerateEstimate::new(1, None, 5).medium, None);
+    }
 }

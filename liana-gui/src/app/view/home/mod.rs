@@ -38,7 +38,6 @@ pub fn home_view<'a>(
     sync_status: &SyncStatus,
     show_rescan_warning: bool,
 ) -> Element<'a, Message> {
-    let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
     let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
     let sync = (!sync_status.is_synced()).then_some(match sync_status {
         SyncStatus::BlockchainSync(progress) => SyncProgress::Blockchain(*progress),
@@ -48,7 +47,7 @@ pub fn home_view<'a>(
     let balance = Column::new()
         .push(home::balance(
             balance,
-            fiat_balance.map(|fiat| fiat.to_display_string()),
+            fiat_converter.map(|c| move |a| c.convert(a)),
             sync.is_some(),
         ))
         .push_maybe(sync.map(home::syncing))
