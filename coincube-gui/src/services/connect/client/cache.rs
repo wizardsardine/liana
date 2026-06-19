@@ -29,7 +29,12 @@ impl ConnectCache {
         }
     }
 
-    fn upsert_credential(&mut self, email: &str, tokens: AccessTokenResponse) {
+    fn upsert_credential(
+        &mut self,
+        email: &str,
+        tokens: AccessTokenResponse,
+        activate_account: bool,
+    ) {
         if let Some(c) = self.accounts.iter_mut().find(|c| c.email == email) {
             c.tokens = tokens;
         } else {
@@ -40,7 +45,9 @@ impl ConnectCache {
                 last_seen_event_seq: None,
             })
         }
-        self.active_email = Some(email.to_string());
+        if activate_account {
+            self.active_email = Some(email.to_string());
+        }
     }
 
     pub fn from_file(network_dir: &NetworkDirectory) -> Result<Self, ConnectCacheError> {
@@ -85,6 +92,7 @@ pub async fn update_connect_cache(
     current_tokens: &AccessTokenResponse,
     client: &AuthClient,
     refresh: bool,
+    activate_account: bool,
 ) -> Result<AccessTokenResponse, ConnectCacheError> {
     let email = &client.email;
     let mut path = network_dir.path().to_path_buf();
@@ -141,7 +149,7 @@ pub async fn update_connect_cache(
         current_tokens.clone()
     };
 
-    cache.upsert_credential(email, tokens.clone());
+    cache.upsert_credential(email, tokens.clone(), activate_account);
 
     let content = serde_json::to_vec_pretty(&cache).map_err(|e| {
         ConnectCacheError::WritingFile(format!("Failed to serialize settings: {}", e))
@@ -497,9 +505,40 @@ mod tests {
                 refresh_token: "refresh".to_string(),
                 expires_at: 123,
             },
+            true,
         );
 
         assert_eq!(cache.active_email.as_deref(), Some("alice@example.com"));
+        assert_eq!(
+            cache.active_account().map(|account| account.email.as_str()),
+            Some("alice@example.com")
+        );
+    }
+
+    #[test]
+    fn background_credential_upsert_preserves_active_account() {
+        let mut cache = ConnectCache::default();
+        cache.upsert_credential(
+            "alice@example.com",
+            AccessTokenResponse {
+                access_token: "alice-access".to_string(),
+                refresh_token: "alice-refresh".to_string(),
+                expires_at: 123,
+            },
+            true,
+        );
+        cache.upsert_credential(
+            "bob@example.com",
+            AccessTokenResponse {
+                access_token: "bob-access".to_string(),
+                refresh_token: "bob-refresh".to_string(),
+                expires_at: 456,
+            },
+            false,
+        );
+
+        assert_eq!(cache.active_email.as_deref(), Some("alice@example.com"));
+        assert_eq!(cache.accounts.len(), 2);
         assert_eq!(
             cache.active_account().map(|account| account.email.as_str()),
             Some("alice@example.com")

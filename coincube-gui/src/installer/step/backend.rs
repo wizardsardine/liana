@@ -427,11 +427,10 @@ pub async fn connect_with_existing_account(
         .ok_or(Error::Unexpected("Account must be in cache".to_string()))?
         .tokens;
 
-    if tokens.expires_at < chrono::Utc::now().timestamp() {
-        tokens = cache::update_connect_cache(&network_dir, &tokens, &client, true)
-            .await
-            .map_err(|e| Error::Unexpected(format!("Failed to update cache: {}", e)))?;
-    }
+    let refresh = tokens.expires_at < chrono::Utc::now().timestamp();
+    tokens = cache::update_connect_cache(&network_dir, &tokens, &client, refresh, true)
+        .await
+        .map_err(|e| Error::Unexpected(format!("Failed to update cache: {}", e)))?;
 
     let client = BackendClient::connect(client, config.backend_api_url, tokens, network).await?;
     Ok(RemoteBackend::WithoutWallet(client))

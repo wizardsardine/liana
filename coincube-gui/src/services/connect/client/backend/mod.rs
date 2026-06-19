@@ -559,7 +559,8 @@ impl Daemon for BackendWalletClient {
                         &network_dir,
                         &old,
                         &self.inner.auth_client,
-                        true, // refresh the token
+                        true,  // refresh the token
+                        false, // preserve the foreground account selection
                     )
                     .await
                     .map_err(|e| {
