@@ -1,10 +1,10 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     error::Error,
     sync::{self, Arc},
 };
 
-use liana::{descriptors, spend::AddrInfo};
+use liana::descriptors;
 
 use payjoin::{
     bitcoin::{
@@ -20,7 +20,6 @@ use payjoin::{
         },
         InputPair,
     },
-    ImplementationError,
 };
 
 use crate::{
@@ -30,6 +29,12 @@ use crate::{
 };
 
 use super::db::{ReceiverPersister, SessionId};
+
+/// Maximum derivation index to check when verifying whether a script belongs to the wallet.
+/// Addresses derived beyond this index will not be recognized as owned, so this must be
+/// large enough to cover any address the sender could reasonably use.  1000 matches
+/// bitcoind's default gap limit and is cheap to derive (~2000 EC multiplications).
+const MAX_OWNED_INDEX: u32 = 1000;
 
 fn read_from_directory(
     receiver: Receiver<Initialized>,
@@ -99,17 +104,21 @@ fn check_inputs_not_owned(
     desc: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) -> Result<(), Box<dyn Error>> {
+    let mut owned_scripts = HashSet::new();
+    for i in 0..MAX_OWNED_INDEX {
+        owned_scripts.insert(
+            desc.receive_descriptor()
+                .derive(i.into(), secp)
+                .script_pubkey(),
+        );
+        owned_scripts.insert(
+            desc.change_descriptor()
+                .derive(i.into(), secp)
+                .script_pubkey(),
+        );
+    }
     let proposal = proposal
-        .check_inputs_not_owned(&mut |script| {
-            let address =
-                bitcoin::Address::from_script(script, db_conn.network()).map_err(|e| {
-                    ImplementationError::from(Box::new(e) as Box<dyn Error + Send + Sync>)
-                })?;
-            Ok(db_conn
-                .derivation_index_by_address(&address)
-                .map(|(index, is_change)| AddrInfo { index, is_change })
-                .is_some())
-        })
+        .check_inputs_not_owned(&mut |script| Ok(owned_scripts.contains(script)))
         .save(persister)?;
     check_no_inputs_seen_before(proposal, persister, db_conn, desc, secp)
 }
@@ -138,17 +147,21 @@ fn identify_receiver_outputs(
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) -> Result<(), Box<dyn Error>> {
     log::debug!("[Payjoin] receiver outputs");
+    let mut owned_scripts = HashSet::new();
+    for i in 0..MAX_OWNED_INDEX {
+        owned_scripts.insert(
+            desc.receive_descriptor()
+                .derive(i.into(), secp)
+                .script_pubkey(),
+        );
+        owned_scripts.insert(
+            desc.change_descriptor()
+                .derive(i.into(), secp)
+                .script_pubkey(),
+        );
+    }
     let proposal = proposal
-        .identify_receiver_outputs(&mut |script| {
-            let address =
-                bitcoin::Address::from_script(script, db_conn.network()).map_err(|e| {
-                    ImplementationError::from(Box::new(e) as Box<dyn Error + Send + Sync>)
-                })?;
-            Ok(db_conn
-                .derivation_index_by_address(&address)
-                .map(|(index, is_change)| AddrInfo { index, is_change })
-                .is_some())
-        })
+        .identify_receiver_outputs(&mut |script| Ok(owned_scripts.contains(script)))
         .save(persister)?;
     commit_outputs(proposal, persister, db_conn, desc, secp)
 }
