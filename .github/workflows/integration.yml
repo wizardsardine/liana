@@ -95,7 +95,13 @@ jobs:
             curl -O $KNOTS_DIR/SHA256SUMS
             curl -O $KNOTS_DIR/SHA256SUMS.asc
             gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys $KNOTS_KEY
-            gpg --verify SHA256SUMS.asc SHA256SUMS
+            # The detached signature file is a concatenation from several
+            # maintainers. GPG exits non-zero when any signer key is missing,
+            # even after the pinned signer verifies successfully, so require
+            # that signer's VALIDSIG status explicitly.
+            gpg --status-fd 1 --verify SHA256SUMS.asc SHA256SUMS \
+              >gpg-status.txt 2>&1 || true
+            grep -q "^\[GNUPG:\] VALIDSIG $KNOTS_KEY " gpg-status.txt
             sha256sum --ignore-missing -c SHA256SUMS
             tar -xzf $KNOTS_ARCHIVE
             export BITCOIND_PATH=bitcoin-$KNOTS_VERSION/bin/bitcoind
@@ -126,4 +132,19 @@ jobs:
           OLD_PATH=$(find $PWD -type f -name coincubed | head -n 1)
           export OLD_COINCUBED_PATH="$OLD_PATH"
           # Run the functional tests
-          pytest tests/ -vvv -n 8
+          if [ "$USE_KNOTS" = "TRUE" ]; then
+            # This leg exists to validate standard transaction relay under the
+            # managed Knots/RDTS policy. The generic daemon suite is covered by
+            # the six Core bitcoind/electrs legs above.
+            pytest tests/test_knots.py -vvv
+          elif [ "$BITCOIN_BACKEND_TYPE" = "electrs" ]; then
+            # Deep reorg indexing is I/O-heavy and can starve when eight
+            # bitcoind/electrs pairs run together. Keep the broad suite
+            # parallel, then exercise this reorg deterministically on its own.
+            pytest tests/ -vvv -n 8 \
+              --deselect tests/test_chain.py::test_reorg_exclusion
+            TIMEOUT=240 pytest \
+              tests/test_chain.py::test_reorg_exclusion -vvv
+          else
+            pytest tests/ -vvv -n 8
+          fi

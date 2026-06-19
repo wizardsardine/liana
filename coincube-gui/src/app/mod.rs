@@ -724,7 +724,8 @@ pub struct App {
     pending_switch_to_connect_after_login: bool,
     /// Shared `Arc<RwLock<AccessTokenResponse>>` from the remote backend,
     /// reused by the gRPC interceptor so token refreshes are observed by
-    /// both the REST and gRPC paths. `None` for local-daemon installs.
+    /// both the REST and gRPC paths. `None` when no live or persisted
+    /// Connect session is available.
     /// Stored on the App so PR B's `resolve_signers` /
     /// `create_signing_session` call sites can construct a
     /// `GrpcSessionClient` without re-plumbing.
@@ -733,8 +734,8 @@ pub struct App {
         Arc<tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>>,
     >,
     /// Email of the currently authenticated Connect account. Used to
-    /// scope cache writes (device_id, last_seen_event_seq). `None` for
-    /// local-daemon installs.
+    /// scope cache writes (device_id, last_seen_event_seq). `None` when no
+    /// live or persisted Connect session is available.
     connect_email: Option<String>,
     /// Live `ConnectStreamConfig` once it has been assembled from
     /// `ServiceConfig` + cache state. `None` until the bootstrap task
@@ -1122,23 +1123,13 @@ fn connect_stream_ready_task(
     cube_uuid: Option<String>,
 ) -> Task<Message> {
     use crate::services::connect::client::cache::Account;
-    use crate::services::connect::client::get_service_config;
+    use crate::services::connect::client::resolve_connect_grpc_url;
     use crate::services::connect::grpc::stream::ConnectStreamConfig;
 
     Task::perform(
         async move {
-            let service_config = match get_service_config(network).await {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::warn!(
-                        "Connect stream bootstrap: failed to fetch ServiceConfig: {}",
-                        e,
-                    );
-                    return None;
-                }
-            };
-            let Some(grpc_url) = service_config.grpc_url else {
-                tracing::info!("Connect stream bootstrap: ServiceConfig has no grpc_url");
+            let Some(grpc_url) = resolve_connect_grpc_url().await else {
+                tracing::info!("Connect stream bootstrap: no Connect gRPC URL available");
                 return None;
             };
             let network_dir = datadir.network_directory(network);
@@ -1268,6 +1259,8 @@ impl App {
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
         cache_with_vault.has_p2p = panels.p2p.is_some();
+        cache_with_vault.connect_tokens = connect_auth_arc.clone();
+        cache_with_vault.connect_email = connect_email.clone();
         // A restored on-disk session (or a threaded remote-backend one) means
         // the user is signed in to Connect even though the Connect panel won't
         // reach its `Dashboard` step — and so won't flip `connect_authenticated`
@@ -2377,13 +2370,12 @@ impl App {
 
                 let network = self.cache.network;
                 let datadir = self.cache.datadir_path.clone();
-                // `cache.cube_id` is `String` (empty when no cube yet);
-                // the stream task takes `Option<String>` so the realtime
-                // subscription can scope events to that cube's vault.
-                let cube_uuid = if self.cache.cube_id.is_empty() {
+                // Use the authoritative Cube settings id. The cache mirror can
+                // still be empty during local-vault startup.
+                let cube_uuid = if self.cube_settings.id.is_empty() {
                     None
                 } else {
-                    Some(self.cache.cube_id.clone())
+                    Some(self.cube_settings.id.clone())
                 };
                 let email_for_task = email.clone();
 
@@ -2465,6 +2457,7 @@ impl App {
                                     },
                                 );
                             }
+                            cache.active_email = Some(email_for_task.clone());
                             let serialized = serde_json::to_vec_pretty(&cache)
                                 .map_err(|e| format!("serialize: {e}"))?;
                             guard
@@ -2493,19 +2486,9 @@ impl App {
 
                         // Fetch grpc_url and register the device.
                         let tokens_arc = std::sync::Arc::new(tokio::sync::RwLock::new(tokens));
-                        let service_config =
-                            match crate::services::connect::client::get_service_config(network)
-                                .await
-                            {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    tracing::warn!(
-                                    "InAppConnectLoginCompleted: get_service_config failed: {e}"
-                                );
-                                    return (network, datadir, None, email_for_task, cube_uuid);
-                                }
-                            };
-                        if let Some(grpc_url) = service_config.grpc_url.as_deref() {
+                        if let Some(grpc_url) =
+                            crate::services::connect::client::resolve_connect_grpc_url().await
+                        {
                             let device_name = std::env::var("HOSTNAME")
                                 .ok()
                                 .filter(|s| !s.is_empty())
@@ -2513,7 +2496,7 @@ impl App {
                                     format!("Coincube Desktop ({})", std::env::consts::OS)
                                 });
                             ensure_device_registered_best_effort(
-                                grpc_url,
+                                &grpc_url,
                                 tokens_arc.clone(),
                                 &network_dir,
                                 &email_for_task,
@@ -2522,6 +2505,10 @@ impl App {
                                 std::env::consts::OS.to_string(),
                             )
                             .await;
+                        } else {
+                            tracing::warn!(
+                                "InAppConnectLoginCompleted: no Connect gRPC URL available"
+                            );
                         }
 
                         (
@@ -2555,6 +2542,11 @@ impl App {
                 email,
                 cube_uuid,
             } => {
+                self.connect_auth = Some(tokens.clone());
+                self.connect_email = Some(email.clone());
+                self.cache.connect_tokens = Some(tokens.clone());
+                self.cache.connect_email = Some(email.clone());
+                self.cache.has_connect_session = true;
                 return connect_stream_ready_task(network, datadir, tokens, email, cube_uuid);
             }
             Message::EnsureConnectReady => {
@@ -2569,10 +2561,14 @@ impl App {
                 // we say so and point them at local Wi-Fi pairing instead.
                 let network = self.cache.network;
                 let datadir = self.cache.datadir_path.clone();
-                let cube_uuid = if self.cache.cube_id.is_empty() {
+                let expected_email = self
+                    .connect_email
+                    .clone()
+                    .or_else(|| self.cache.connect_email.clone());
+                let cube_uuid = if self.cube_settings.id.is_empty() {
                     None
                 } else {
-                    Some(self.cache.cube_id.clone())
+                    Some(self.cube_settings.id.clone())
                 };
                 // The device/stream bootstrap below populates grpc_url /
                 // tokens / device_id but NOT the cube's server-side id. When
@@ -2594,15 +2590,20 @@ impl App {
                     let net_str = settings::network_to_api_string(network);
                     let cube_name = self.cube_settings.name.clone();
                     let cube_uuid = cube_uuid.clone();
+                    let registration_email = expected_email.clone();
                     Task::perform(
                         async move {
                             use crate::services::coincube::{CoincubeClient, RegisterCubeRequest};
-                            use crate::services::connect::client::cache::ConnectCache;
+                            use crate::services::connect::client::cache::Account;
                             let uuid = cube_uuid.ok_or_else(|| "no cube uuid".to_string())?;
+                            let email = registration_email.ok_or_else(|| {
+                                "EnsureConnectReady: no active Connect email to register the cube"
+                                    .to_string()
+                            })?;
                             let account =
-                                ConnectCache::from_file(&datadir.network_directory(network))
+                                Account::from_cache(&datadir.network_directory(network), &email)
                                     .ok()
-                                    .and_then(|c| c.accounts.into_iter().next())
+                                    .flatten()
                                     .ok_or_else(|| {
                                         "EnsureConnectReady: no cached Connect session to \
                                          register the cube"
@@ -2628,7 +2629,7 @@ impl App {
                 };
                 let bootstrap = Task::perform(
                     async move {
-                        use crate::services::connect::client::cache::ConnectCache;
+                        use crate::services::connect::client::cache::Account;
                         use crate::services::connect::grpc::bootstrap::ensure_device_registered_best_effort;
 
                         let info_toast = |msg: &str| {
@@ -2639,15 +2640,24 @@ impl App {
                         };
 
                         let network_dir = datadir.network_directory(network);
-                        let Some(account) = ConnectCache::from_file(&network_dir)
-                            .ok()
-                            .and_then(|c| c.accounts.into_iter().next())
-                        else {
+                        let Some(expected_email) = expected_email else {
                             tracing::warn!(
-                                "EnsureConnectReady: no cached Connect account in connect.json"
+                                "EnsureConnectReady: no active Connect email to match connect.json"
                             );
                             return info_toast(
                                 "Couldn't find a Connect session. Sign in to Connect, or pair \
+                                 a phone over Wi-Fi to sign locally.",
+                            );
+                        };
+                        let Some(account) = Account::from_cache(&network_dir, &expected_email)
+                            .ok()
+                            .flatten()
+                        else {
+                            tracing::warn!(
+                                "EnsureConnectReady: no cached Connect account for active email"
+                            );
+                            return info_toast(
+                                "Couldn't find this Connect session. Sign in to Connect, or pair \
                                  a phone over Wi-Fi to sign locally.",
                             );
                         };
@@ -2655,28 +2665,14 @@ impl App {
                         let tokens_arc =
                             std::sync::Arc::new(tokio::sync::RwLock::new(account.tokens));
 
-                        let service_config =
-                            match crate::services::connect::client::get_service_config(network)
-                                .await
-                            {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "EnsureConnectReady: get_service_config failed: {e}"
-                                    );
-                                    return info_toast(
-                                        "Couldn't reach Connect right now. Try again, or pair a \
-                                         phone over Wi-Fi to sign locally.",
-                                    );
-                                }
-                            };
-                        let Some(grpc_url) = service_config.grpc_url.as_deref() else {
+                        let Some(grpc_url) =
+                            crate::services::connect::client::resolve_connect_grpc_url().await
+                        else {
                             // No gRPC endpoint for this network — Connect
                             // relay signing can't work here. Don't pretend
                             // a retry will help.
                             tracing::info!(
-                                "EnsureConnectReady: ServiceConfig for {network} has no grpc_url \
-                                 — Connect signing unavailable on this network"
+                                "EnsureConnectReady: no Connect gRPC URL available for {network}"
                             );
                             return info_toast(
                                 "Keychain signing over Connect isn't available on this network. \
@@ -2690,8 +2686,8 @@ impl App {
                             .unwrap_or_else(|| {
                                 format!("Coincube Desktop ({})", std::env::consts::OS)
                             });
-                        ensure_device_registered_best_effort(
-                            grpc_url,
+                        let Some(_device_id) = ensure_device_registered_best_effort(
+                            &grpc_url,
                             tokens_arc.clone(),
                             &network_dir,
                             &email,
@@ -2699,7 +2695,13 @@ impl App {
                             env!("CARGO_PKG_VERSION").to_string(),
                             std::env::consts::OS.to_string(),
                         )
-                        .await;
+                        .await
+                        else {
+                            return info_toast(
+                                "Couldn't register this device with Connect. Try again, or pair a \
+                                 phone over Wi-Fi to sign locally.",
+                            );
+                        };
 
                         // gRPC is available and the device is registered —
                         // bring the stream up so the cache fields populate,

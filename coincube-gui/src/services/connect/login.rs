@@ -530,7 +530,7 @@ pub async fn connect(
     let client =
         BackendClient::connect(auth.clone(), backend_api_url, access.clone(), network).await?;
 
-    update_connect_cache(&network_dir, &access, &auth, false).await?;
+    update_connect_cache(&network_dir, &access, &auth, false, true).await?;
 
     register_signer_device_best_effort(grpc_url.as_deref(), &client, &network_dir, &auth.email)
         .await;
@@ -572,9 +572,8 @@ pub async fn connect_with_credentials(
         .ok_or(Error::CredentialsMissing)?
         .tokens;
 
-    if tokens.expires_at < chrono::Utc::now().timestamp() {
-        tokens = cache::update_connect_cache(network_dir, &tokens, &auth, true).await?;
-    }
+    let refresh = tokens.expires_at < chrono::Utc::now().timestamp();
+    tokens = cache::update_connect_cache(network_dir, &tokens, &auth, refresh, true).await?;
 
     let client = BackendClient::connect(auth.clone(), backend_api_url, tokens, network).await?;
 

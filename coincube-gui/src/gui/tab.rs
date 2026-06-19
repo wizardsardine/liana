@@ -198,7 +198,7 @@ fn duress_state_check_task(datadir: CoincubeDirectory, network: bitcoin::Network
             let cache =
                 crate::services::connect::client::cache::ConnectCache::from_file(&network_dir)
                     .ok()?;
-            let account = cache.accounts.into_iter().next()?;
+            let account = cache.active_account()?;
             let mut client = crate::services::coincube::CoincubeClient::new();
             client.set_token(&account.tokens.access_token);
             client.get_duress_state().await.ok().map(|s| s.active)
@@ -1004,7 +1004,7 @@ impl Tab {
                             &datadir.network_directory(cache.network),
                         )
                         .ok()
-                        .and_then(|c| c.accounts.into_iter().next())
+                        .and_then(|c| c.active_account().cloned())
                         .map(|account| {
                             (
                                 Arc::new(tokio::sync::RwLock::new(account.tokens)),
