@@ -136,3 +136,87 @@ jobs:
 
           # Run the functional tests
           LIANAD_PATH=$PWD/target/release/lianad pytest tests/ -vvv -n 8
+
+  payjoin-functional-test:
+    runs-on: self-hosted
+    timeout-minutes: 30
+
+    env:
+      VERBOSE: 0
+      LOG_LEVEL: debug
+      TIMEOUT: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: cleanup /tmp
+        run: |
+          find /tmp -maxdepth 1 -type d -name 'lianad*' -mtime +0 -exec rm -rf {} +
+
+      - name: Setup Python dependencies
+        run: |
+          pip install --break-system-packages -r tests/requirements.txt
+
+      - name: Add local bin to PATH
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-payjoin
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo git
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-payjoin
+          restore-keys: |
+            ${{ runner.os }}-cargo-git-
+
+      - name: Cache Cargo target (lianad)
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-${{ hashFiles('Cargo.lock') }}-payjoin
+          restore-keys: |
+            ${{ runner.os }}-target-
+
+      - name: Build lianad
+        run: |
+          cd lianad
+          cargo build --release
+
+      - name: Install payjoin-cli
+        run: |
+          rm -rf /tmp/rust-payjoin
+          git clone https://github.com/payjoin/rust-payjoin.git /tmp/rust-payjoin
+          cd /tmp/rust-payjoin
+          cargo build --release -p payjoin-cli --features _manual-tls
+          cp target/release/payjoin-cli "$HOME/.local/bin/"
+
+      - name: Install payjoin-ffi Python package
+        run: |
+          cd /tmp/rust-payjoin
+          LIBNAME=libpayjoin_ffi.so
+          LINUX_TARGET=x86_64-unknown-linux-gnu
+          cargo build --features _test-utils --release -p payjoin-ffi
+          cargo run --features _test-utils --release -p payjoin-ffi --bin uniffi-bindgen \
+            generate --library target/release/$LIBNAME \
+            --language python --out-dir payjoin-ffi/python/src/payjoin/
+          pip install --break-system-packages ./payjoin-ffi/python/
+
+      - name: Install bitcoind
+        run: |
+          curl -O https://bitcoincore.org/bin/bitcoin-core-29.0/bitcoin-29.0-x86_64-linux-gnu.tar.gz
+          echo "a681e4f6ce524c338a105f214613605bac6c33d58c31dc5135bbc02bc458bb6c bitcoin-29.0-x86_64-linux-gnu.tar.gz" | sha256sum -c
+          tar -xzf bitcoin-29.0-x86_64-linux-gnu.tar.gz
+
+      - name: Run payjoin integration test
+        run: |
+          BITCOIND_PATH=$PWD/bitcoin-29.0/bin/bitcoind \
+          PAYJOIN_CLI_PATH=$(which payjoin-cli) \
+          LIANAD_PATH=$PWD/target/release/lianad \
+          pytest tests/test_payjoin.py -vvv -x

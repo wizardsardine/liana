@@ -1,5 +1,7 @@
-use iced::widget::container::Style;
+use iced::widget::{container::Style, tooltip as iced_tooltip};
+use iced::Length;
 
+use crate::component::text::{p1_regular, p2_regular};
 use crate::{icon, image, theme, widget::*};
 
 const BADGE_SIZE: u32 = 40;
@@ -46,4 +48,30 @@ pub fn coin<T>() -> Container<'static, T> {
     .style(theme::badge::simple)
     .center_x(BADGE_SIZE)
     .center_y(BADGE_SIZE)
+}
+
+/// Payjoin "monad" symbol badge, used for payjoin settings/sections to distinguish
+/// them from the Bitcoin node icon.
+pub fn payjoin_symbol<T>() -> Container<'static, T> {
+    Container::new(
+        image::payjoin_monad_icon()
+            .height(ICON_SIZE)
+            .width(ICON_SIZE),
+    )
+    .style(theme::badge::simple)
+    .center_x(BADGE_SIZE)
+    .center_y(BADGE_SIZE)
+}
+
+pub fn payjoin<'a, T: 'a>() -> Container<'a, T> {
+    Container::new(iced_tooltip::Tooltip::new(
+        Container::new(p2_regular("  Payjoin  "))
+            .padding(10)
+            .center_x(Length::Shrink)
+            .style(theme::pill::simple),
+        Container::new(p1_regular("This is a Payjoin address"))
+            .padding(10)
+            .style(theme::card::simple),
+        iced_tooltip::Position::Top,
+    ))
 }

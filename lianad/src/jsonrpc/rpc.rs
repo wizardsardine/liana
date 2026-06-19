@@ -50,6 +50,8 @@ pub struct Request {
 
 /// A failure to broadcast a transaction to the P2P network.
 const BROADCAST_ERROR: i64 = 1_000;
+const REPLAY_ERROR: i64 = 1_001;
+const INTO_URL_ERROR: i64 = 1_002;
 
 /// JSONRPC2 error codes. See https://www.jsonrpc.org/specification#error_object.
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -172,6 +174,31 @@ impl From<commands::CommandError> for Error {
             }
             commands::CommandError::TxBroadcast(_) => {
                 Error::new(ErrorCode::ServerError(BROADCAST_ERROR), e.to_string())
+            }
+            commands::CommandError::FailedToPostOriginalPayjoinProposal(_) => {
+                Error::new(ErrorCode::ServerError(BROADCAST_ERROR), e.to_string())
+            }
+            commands::CommandError::ReplayError(_) => {
+                Error::new(ErrorCode::ServerError(REPLAY_ERROR), e.to_string())
+            }
+            commands::CommandError::IntoUrlError(_) => {
+                Error::new(ErrorCode::ServerError(INTO_URL_ERROR), e.to_string())
+            }
+            commands::CommandError::NoPayjoinSessionForTxid(_) => {
+                Error::new(ErrorCode::InvalidParams, e.to_string())
+            }
+            commands::CommandError::SendPayjoinFailed(_) => {
+                Error::new(ErrorCode::ServerError(BROADCAST_ERROR), e.to_string())
+            }
+            commands::CommandError::CancelPayjoinFailed(_) => {
+                Error::new(ErrorCode::ServerError(BROADCAST_ERROR), e.to_string())
+            }
+            commands::CommandError::NoPayjoinFallback(_) => {
+                Error::new(ErrorCode::InvalidParams, e.to_string())
+            }
+            #[cfg(feature = "payjoin")]
+            commands::CommandError::FailedToFetchOhttpKeys(..) => {
+                Error::new(ErrorCode::InvalidParams, e.to_string())
             }
         }
     }

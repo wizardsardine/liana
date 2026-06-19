@@ -138,6 +138,65 @@ fn default_validate_domain() -> bool {
     true
 }
 
+#[cfg(feature = "payjoin")]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct PayjoinConfig {
+    #[serde(
+        alias = "ohttp_relay",
+        deserialize_with = "deserialize_ohttp_relays",
+        serialize_with = "serialize_ohttp_relays"
+    )]
+    pub ohttp_relays: Vec<String>,
+    pub payjoin_directory: String,
+    /// Optional path to a DER-encoded TLS certificate to trust as a root CA.
+    /// Used for connecting to a payjoin directory that uses a self-signed certificate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_certificate: Option<PathBuf>,
+}
+
+#[cfg(feature = "payjoin")]
+impl PayjoinConfig {
+    pub fn new(ohttp_relays: Vec<String>, payjoin_directory: String) -> Self {
+        Self {
+            ohttp_relays,
+            payjoin_directory,
+            root_certificate: None,
+        }
+    }
+}
+
+#[cfg(not(feature = "payjoin"))]
+#[derive(Debug, Clone)]
+pub struct PayjoinConfig;
+
+#[cfg(feature = "payjoin")]
+/// Accept either a single string (legacy) or a list of strings for `ohttp_relays`.
+fn deserialize_ohttp_relays<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+    match OneOrMany::deserialize(deserializer)? {
+        OneOrMany::One(s) => Ok(vec![s]),
+        OneOrMany::Many(v) => Ok(v),
+    }
+}
+
+#[cfg(feature = "payjoin")]
+fn serialize_ohttp_relays<S: Serializer>(relays: &[String], s: S) -> Result<S::Ok, S::Error> {
+    use serde::ser::SerializeSeq;
+    let mut seq = s.serialize_seq(Some(relays.len()))?;
+    for r in relays {
+        seq.serialize_element(r)?;
+    }
+    seq.end()
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BitcoinConfig {
     /// The network we are operating on, one of "bitcoin", "testnet", "testnet4", "regtest", "signet"
@@ -176,6 +235,10 @@ pub struct Config {
     /// Settings specific to the Bitcoin backend.
     #[serde(flatten)]
     pub bitcoin_backend: Option<BitcoinBackend>,
+    /// Settings for Payjoin.
+    #[cfg_attr(not(feature = "payjoin"), serde(skip))]
+    #[serde(default)]
+    pub payjoin_config: Option<PayjoinConfig>,
 }
 
 impl Config {
@@ -193,6 +256,16 @@ impl Config {
             main_descriptor,
             data_directory: Some(data_directory.path().to_path_buf()),
             data_dir: None,
+            payjoin_config: None,
+        }
+    }
+
+    #[cfg(feature = "payjoin")]
+    pub fn default_payjoin_config() -> PayjoinConfig {
+        PayjoinConfig {
+            ohttp_relays: vec!["https://pj.bobspacebkk.com".to_string()],
+            payjoin_directory: "https://payjo.in".to_string(),
+            root_certificate: None,
         }
     }
 

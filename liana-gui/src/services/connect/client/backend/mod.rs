@@ -14,6 +14,8 @@ use liana::{
         address, bip32::ChildNumber, psbt::Psbt, Address, Network, OutPoint, Txid,
     },
 };
+#[cfg(feature = "payjoin")]
+use lianad::payjoin::types::PayjoinStatus;
 use lianad::{
     bip329::Labels,
     commands::{CoinStatus, GetInfoDescriptors, LCSpendInfo, LabelItem, UpdateDerivIndexesResult},
@@ -625,6 +627,7 @@ impl Daemon for BackendWalletClient {
         Ok(GetAddressResult {
             address: res.address,
             derivation_index: res.derivation_index,
+            bip21: None,
         })
     }
 
@@ -664,6 +667,31 @@ impl Daemon for BackendWalletClient {
                 .collect(),
             continue_from: res.continue_from,
         })
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn receive_payjoin(&self) -> Result<GetAddressResult, DaemonError> {
+        unimplemented!()
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn get_payjoin_info(&self, _txid: &Txid) -> Result<PayjoinStatus, DaemonError> {
+        unimplemented!()
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn get_active_payjoin_receiver_sessions(&self) -> Result<Vec<u32>, DaemonError> {
+        unimplemented!()
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn send_payjoin_proposal(&self, _txid: &Txid) -> Result<(), DaemonError> {
+        unimplemented!()
+    }
+
+    #[cfg(feature = "payjoin")]
+    async fn broadcast_payjoin_fallback(&self, _txid: &Txid) -> Result<(), DaemonError> {
+        unimplemented!()
     }
 
     async fn update_deriv_indexes(
@@ -739,6 +767,8 @@ impl Daemon for BackendWalletClient {
                     tx: tx.raw,
                     height: tx.block_height,
                     time: tx.confirmed_at.map(|t| t as u32),
+                    #[cfg(feature = "payjoin")]
+                    payjoin_role: None,
                 })
                 .collect(),
         })
@@ -758,6 +788,8 @@ impl Daemon for BackendWalletClient {
                     tx: tx.raw,
                     height: tx.block_height,
                     time: tx.confirmed_at.map(|t| t as u32),
+                    #[cfg(feature = "payjoin")]
+                    payjoin_role: None,
                 })
                 .collect(),
         })
@@ -1200,6 +1232,7 @@ fn history_tx_from_api(value: api::Transaction, network: Network) -> HistoryTran
         coins,
         changes_indexes,
         network,
+        None,
     );
     tx.load_labels(&labels);
     tx
@@ -1256,6 +1289,7 @@ fn spend_tx_from_api(
         desc,
         secp,
         network,
+        None,
     );
     tx.load_labels(&labels);
     tx

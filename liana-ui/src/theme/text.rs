@@ -81,3 +81,9 @@ pub fn address_dimmed(theme: &Theme) -> Style {
 pub fn custom(color: iced::Color) -> Style {
     Style { color: Some(color) }
 }
+
+pub fn payjoin(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.text.payjoin),
+    }
+}

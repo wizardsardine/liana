@@ -19,6 +19,7 @@ path = "src/bin/cli.rs"
 
 [features]
 nonblocking_shutdown = []
+payjoin = ["dep:payjoin"]
 
 [dependencies]
 liana = { path = "../liana" }
@@ -52,3 +53,8 @@ jsonrpc = { workspace = true, features = ["minreq_http"], default-features = fal
 
 # import/export labels
 bip329 = { workspace = true, default-features = false }
+
+payjoin = { workspace = true, optional = true }
+reqwest = { workspace = true, default-features = false, features = ["rustls-tls", "stream", "blocking"] }
+
+getrandom = { workspace = true }

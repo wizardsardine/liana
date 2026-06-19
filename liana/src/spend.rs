@@ -57,6 +57,7 @@ pub enum InsaneFeeInfo {
 pub enum SpendCreationError {
     InvalidFeerate(/* sats/vb */ u64),
     InvalidOutputValue(bitcoin::Amount),
+    InvalidBip21,
     InsaneFees(InsaneFeeInfo),
     SanityCheckFailure(Psbt),
     FetchingTransaction(bitcoin::OutPoint),
@@ -89,6 +90,7 @@ impl fmt::Display for SpendCreationError {
                 f,
                 "BUG! Please report this. Failed sanity checks for PSBT '{psbt}'.",
             ),
+            Self::InvalidBip21 => write!(f, "Invalid BIP21"),
         }
     }
 }

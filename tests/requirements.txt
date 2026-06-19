@@ -5,3 +5,7 @@ ephemeral_port_reserve>=1.1.4
 
 bip32~=3.0
 https://github.com/darosior/python-bip380/archive/fb61971d9128e663f110ea2734c1d023e7e0266b.zip
+
+# payjoin-ffi must be installed separately (built from rust-payjoin with _test-utils feature).
+# See CI workflow for build instructions. The payjoin_services fixture in conftest.py will
+# skip tests if payjoin is not installed.

@@ -81,56 +81,90 @@ fn render_modes<'a, Message: 'a>(
     addr: &str,
     size: Option<u32>,
 ) -> Vec<Element<'a, Message, theme::Theme, iced::Renderer>> {
+    let (prefix, body, suffix) = split_bip21(addr);
     CHUNK_SIZES
         .iter()
         .map(|&chunk| match chunk {
-            Some(n) => chunked_address(addr, size, n),
-            None => plain_address(addr, size),
+            Some(n) => chunked_address(prefix, body, suffix, size, n),
+            None => plain_address(prefix, body, suffix, size),
         })
         .collect()
 }
 
-fn plain_address<'a, Message: 'a>(
-    addr: &str,
+/// Split a bip21 URI ("bitcoin:ADDR?params") into its "bitcoin:" prefix, the address
+/// body, and the "?param=value&..." suffix, so that only the address body is chunked
+/// for display. A plain address returns ("", address, "").
+fn split_bip21(s: &str) -> (&str, &str, &str) {
+    let Some(rest) = s.strip_prefix("bitcoin:") else {
+        return ("", s, "");
+    };
+    match rest.find('?') {
+        Some(i) => ("bitcoin:", &rest[..i], &rest[i..]),
+        None => ("bitcoin:", rest, ""),
+    }
+}
+
+fn styled_caption<'a, Message: 'a>(
+    content: String,
     size: Option<u32>,
+    style: fn(&theme::Theme) -> iced::widget::text::Style,
 ) -> Element<'a, Message, theme::Theme, iced::Renderer> {
-    let mut text = new::caption(addr.to_owned()).style(theme::text::address);
+    let mut text = new::caption(content).style(style);
     if let Some(size) = size {
         text = text.size(size);
     }
     text.into()
 }
 
+fn plain_address<'a, Message: 'a>(
+    prefix: &str,
+    body: &str,
+    suffix: &str,
+    size: Option<u32>,
+) -> Element<'a, Message, theme::Theme, iced::Renderer> {
+    styled_caption(
+        format!("{prefix}{body}{suffix}"),
+        size,
+        theme::text::address,
+    )
+}
+
 fn chunked_address<'a, Message: 'a>(
-    addr: &str,
+    prefix: &str,
+    body: &str,
+    suffix: &str,
     size: Option<u32>,
     chunk_size: usize,
 ) -> Element<'a, Message, theme::Theme, iced::Renderer> {
-    addr.chars()
+    let mut row = Row::new().align_y(Alignment::Center).spacing(5);
+    if !prefix.is_empty() {
+        row = row.push(styled_caption(
+            prefix.to_owned(),
+            size,
+            theme::text::address,
+        ));
+    }
+    for (i, chunk) in body
+        .chars()
         .collect::<Vec<_>>()
         .chunks(chunk_size)
         .enumerate()
-        .fold(
-            Row::new().align_y(Alignment::Center).spacing(5),
-            |row, (i, chunk)| {
-                let text = chunk.iter().collect::<String>();
-                let style = if i % 2 == 0 {
-                    theme::text::address
-                } else {
-                    theme::text::address_dimmed
-                };
-
-                let mut text = new::caption(text).style(style);
-                if let Some(size) = size {
-                    text = text.size(size);
-                }
-
-                row.push(text)
-            },
-        )
-        .width(Length::Shrink)
-        .wrap()
-        .into()
+    {
+        let style = if i % 2 == 0 {
+            theme::text::address
+        } else {
+            theme::text::address_dimmed
+        };
+        row = row.push(styled_caption(chunk.iter().collect(), size, style));
+    }
+    if !suffix.is_empty() {
+        row = row.push(styled_caption(
+            suffix.to_owned(),
+            size,
+            theme::text::address,
+        ));
+    }
+    row.width(Length::Shrink).wrap().into()
 }
 
 impl<'a, Message: 'a> Widget<Message, theme::Theme, iced::Renderer> for Address<'a, Message> {

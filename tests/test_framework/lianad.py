@@ -26,7 +26,13 @@ from test_framework.serializations import (
 
 class Lianad(TailableProc):
     def __init__(
-        self, datadir, signer, multi_desc, bitcoin_backend, legacy_datadir=False
+        self,
+        datadir,
+        signer,
+        multi_desc,
+        bitcoin_backend,
+        legacy_datadir=False,
+        payjoin_config=None,
     ):
         TailableProc.__init__(self, datadir, verbose=VERBOSE)
 
@@ -58,6 +64,21 @@ class Lianad(TailableProc):
             f.write("[bitcoin_config]\n")
             f.write('network = "regtest"\n')
             f.write(f"poll_interval_secs = {self._poll_interval_secs}\n")
+
+            if payjoin_config is not None:
+                f.write("\n[payjoin_config]\n")
+                relays = payjoin_config["ohttp_relays"]
+                if len(relays) == 1:
+                    f.write(f'ohttp_relay = "{relays[0]}"\n')
+                else:
+                    f.write("ohttp_relays = [\n")
+                    for relay in relays:
+                        f.write(f'  "{relay}",\n')
+                    f.write("]\n")
+                f.write(f'payjoin_directory = "{payjoin_config["payjoin_directory"]}"\n')
+                if "root_certificate" in payjoin_config:
+                    f.write(f'root_certificate = "{payjoin_config["root_certificate"]}"\n')
+
         bitcoin_backend.append_to_lianad_conf(self.conf_file)
 
     @property

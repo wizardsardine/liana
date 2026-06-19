@@ -4,6 +4,8 @@ use std::{
 };
 
 use liana::miniscript::bitcoin::{self, bip32::DerivationPath, Network};
+#[cfg(feature = "payjoin")]
+use lianad::config::PayjoinConfig;
 
 pub mod serde;
 pub mod subscription;
@@ -41,4 +43,13 @@ pub fn default_derivation_path(network: Network) -> DerivationPath {
         }
     })
     .unwrap()
+}
+
+#[cfg(feature = "payjoin")]
+pub fn default_payjoin_config() -> PayjoinConfig {
+    PayjoinConfig {
+        ohttp_relays: vec!["https://bobspacebkk.com".to_string()],
+        payjoin_directory: "https://payjo.in".to_string(),
+        root_certificate: None,
+    }
 }

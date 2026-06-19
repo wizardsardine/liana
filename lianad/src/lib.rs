@@ -4,6 +4,8 @@ pub mod config;
 mod database;
 pub mod datadir;
 mod jsonrpc;
+#[cfg(feature = "payjoin")]
+pub mod payjoin;
 #[cfg(test)]
 mod testutils;
 
@@ -442,9 +444,13 @@ impl DaemonHandle {
 
         // Start the poller thread. Keep the thread handle to be able to check if it crashed. Store
         // an atomic to be able to stop it.
-        let mut bitcoin_poller =
-            poller::Poller::new(bit.clone(), db.clone(), config.main_descriptor.clone());
-        let (poller_sender, poller_receiver) = mpsc::sync_channel(1);
+        let mut bitcoin_poller = poller::Poller::new(
+            bit.clone(),
+            db.clone(),
+            config.main_descriptor.clone(),
+            config.payjoin_config.clone(),
+        );
+        let (poller_sender, poller_receiver) = mpsc::sync_channel(0);
         let poller_handle = thread::Builder::new()
             .name("Bitcoin Network poller".to_string())
             .spawn({

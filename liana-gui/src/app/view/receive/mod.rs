@@ -10,6 +10,8 @@ use iced::{widget::row, Alignment, Length};
 
 use liana::miniscript::bitcoin;
 
+#[cfg(feature = "payjoin")]
+use liana_ui::icon;
 use liana_ui::{
     component::{button, form, list, panels::receive, text::new},
     widget::*,
@@ -49,10 +51,27 @@ pub fn receive<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
     is_last_page: bool,
     processing: bool,
+    payjoin_enabled: bool,
 ) -> Element<'a, Message> {
     let title = Container::new(new::d2(Menu::Receive.title())).width(Length::Fill);
     let generate = button::btn_generate_address(Some(Message::NextReceiveAddress));
-    let header = row![title, generate].align_y(Alignment::Center);
+    let header = row![title].align_y(Alignment::Center).spacing(12);
+
+    #[cfg(feature = "payjoin")]
+    let header = header.push(button::btn_secondary(
+        Some(icon::plus_icon()),
+        "Receive payjoin",
+        button::BtnWidth::Auto,
+        // The receiver must contribute at least one confirmed, mature coin as an
+        // input. Disable until one is available.
+        payjoin_enabled.then_some(Message::ReceivePayjoin),
+    ));
+
+    // Without the payjoin feature the flag has no use.
+    #[cfg(not(feature = "payjoin"))]
+    let _ = payjoin_enabled;
+
+    let header = header.push(generate);
 
     let description = new::b1("Always generate a new address for each deposit.");
 

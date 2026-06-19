@@ -375,6 +375,13 @@ impl BitcoindSettings {
                 }
             }
             view::SettingsEditMessage::Clipboard(text) => return clipboard::write(text),
+            view::SettingsEditMessage::PayjoinRelayEdited(_, _)
+            | view::SettingsEditMessage::PayjoinRelayAdded
+            | view::SettingsEditMessage::PayjoinRelayRemoved(_) => {}
+            #[cfg(feature = "payjoin")]
+            view::SettingsEditMessage::HealthCheck
+            | view::SettingsEditMessage::HealthCheckRelayResult(_, _)
+            | view::SettingsEditMessage::HealthCheckDirectoryResult(_) => {}
         };
         Task::none()
     }
