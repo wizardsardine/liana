@@ -194,6 +194,21 @@ impl BreezClient {
         }
     }
 
+    /// Disconnected client that still carries the master signer.
+    ///
+    /// Used on networks where the Liquid SDK isn't connected but the seed is
+    /// still needed by other features — e.g. P2P/Mostro identity derives its
+    /// Nostr key from the same mnemonic, and the P2P panel only mounts when a
+    /// signer is present ([`Self::liquid_signer`]). SDK methods still return
+    /// `NetworkNotSupported`, so the Liquid wallet UI stays gated.
+    pub fn disconnected_with_signer(network: Network, signer: Arc<Mutex<MasterSigner>>) -> Self {
+        Self {
+            sdk: None,
+            signer: Some(signer),
+            network,
+        }
+    }
+
     /// Returns a reference to the inner SDK, or `NetworkNotSupported` if disconnected.
     fn get_sdk(&self) -> Result<&Arc<breez::LiquidSdk>, BreezError> {
         self.sdk

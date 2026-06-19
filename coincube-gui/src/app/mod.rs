@@ -3,6 +3,7 @@ pub mod breez_spark;
 pub mod cache;
 pub mod config;
 pub mod error;
+pub mod features;
 pub mod menu;
 pub mod message;
 pub mod settings;
@@ -233,6 +234,7 @@ impl Panels {
                         spark_backend.clone(),
                         mnemonic,
                         default_fiat_currency,
+                        network,
                     ))
                 }
                 _ => {
@@ -389,6 +391,7 @@ impl Panels {
                         spark_backend.clone(),
                         mnemonic,
                         default_fiat_currency,
+                        cache.network,
                     ))
                 }
                 _ => {
@@ -1258,6 +1261,17 @@ impl App {
         cache_with_vault.has_p2p = panels.p2p.is_some();
         cache_with_vault.connect_tokens = connect_auth_arc.clone();
         cache_with_vault.connect_email = connect_email.clone();
+        // A restored on-disk session (or a threaded remote-backend one) means
+        // the user is signed in to Connect even though the Connect panel won't
+        // reach its `Dashboard` step — and so won't flip `connect_authenticated`
+        // — until its keyring session check completes. Mirror it now so the
+        // keychain-unavailable modal offers "Sign with Connect" rather than a
+        // "Sign in to Connect" that would no-op.
+        cache_with_vault.has_connect_session = connect_auth_arc.is_some();
+        cache_with_vault.p2p_test_coordinator = panels
+            .p2p
+            .as_ref()
+            .is_some_and(|p| p.has_test_coordinator());
         (
             Self {
                 panels,
@@ -1355,6 +1369,10 @@ impl App {
         );
         let mut cache = cache;
         cache.has_p2p = panels.p2p.is_some();
+        cache.p2p_test_coordinator = panels
+            .p2p
+            .as_ref()
+            .is_some_and(|p| p.has_test_coordinator());
 
         let cmd = iced::Task::batch([
             panels.connect.ensure_session_check(),
@@ -2348,6 +2366,7 @@ impl App {
                 // PLAN comment near `mod.rs:2374`.
                 self.connect_email = Some(email.clone());
                 self.cache.connect_email = Some(email.clone());
+                self.cache.has_connect_session = true;
 
                 let network = self.cache.network;
                 let datadir = self.cache.datadir_path.clone();
@@ -2527,6 +2546,7 @@ impl App {
                 self.connect_email = Some(email.clone());
                 self.cache.connect_tokens = Some(tokens.clone());
                 self.cache.connect_email = Some(email.clone());
+                self.cache.has_connect_session = true;
                 return connect_stream_ready_task(network, datadir, tokens, email, cube_uuid);
             }
             Message::EnsureConnectReady => {
@@ -2550,7 +2570,64 @@ impl App {
                 } else {
                     Some(self.cube_settings.id.clone())
                 };
-                return Task::perform(
+                // The device/stream bootstrap below populates grpc_url /
+                // tokens / device_id but NOT the cube's server-side id. When
+                // that id is the missing Keychain prerequisite, register it
+                // here too — otherwise "Sign with Connect" can never resolve
+                // it. A live panel session registers through its authenticated
+                // client; a restored connect.json (or remote) session whose
+                // panel hasn't reached Dashboard has no panel client, so the
+                // panel path would no-op — register directly from the restored
+                // tokens (the same source the device bootstrap uses) and feed
+                // the result back through the normal `CubeRegistered` path so
+                // `current_cube_server_id` still populates.
+                let cube_registration = if self.cache.current_cube_server_id.is_some() {
+                    Task::none()
+                } else if self.panels.connect.account.is_authenticated() {
+                    self.panels.connect.ensure_cube_registered()
+                } else {
+                    let datadir = datadir.clone();
+                    let net_str = settings::network_to_api_string(network);
+                    let cube_name = self.cube_settings.name.clone();
+                    let cube_uuid = cube_uuid.clone();
+                    let registration_email = expected_email.clone();
+                    Task::perform(
+                        async move {
+                            use crate::services::coincube::{CoincubeClient, RegisterCubeRequest};
+                            use crate::services::connect::client::cache::Account;
+                            let uuid = cube_uuid.ok_or_else(|| "no cube uuid".to_string())?;
+                            let email = registration_email.ok_or_else(|| {
+                                "EnsureConnectReady: no active Connect email to register the cube"
+                                    .to_string()
+                            })?;
+                            let account =
+                                Account::from_cache(&datadir.network_directory(network), &email)
+                                    .ok()
+                                    .flatten()
+                                    .ok_or_else(|| {
+                                        "EnsureConnectReady: no cached Connect session to \
+                                         register the cube"
+                                            .to_string()
+                                    })?;
+                            let mut client = CoincubeClient::new();
+                            client.set_token(&account.tokens.access_token);
+                            client
+                                .register_cube(RegisterCubeRequest {
+                                    uuid,
+                                    name: cube_name,
+                                    network: net_str,
+                                })
+                                .await
+                                .map_err(|e| e.to_string())
+                        },
+                        |r| {
+                            Message::View(view::Message::ConnectCube(
+                                view::ConnectCubeMessage::CubeRegistered(r),
+                            ))
+                        },
+                    )
+                };
+                let bootstrap = Task::perform(
                     async move {
                         use crate::services::connect::client::cache::Account;
                         use crate::services::connect::grpc::bootstrap::ensure_device_registered_best_effort;
@@ -2640,6 +2717,7 @@ impl App {
                     },
                     |m| m,
                 );
+                return Task::batch([cube_registration, bootstrap]);
             }
             Message::InstallStats(_) => {
                 if let Some(panel) = self.panels.current_mut() {
@@ -3269,6 +3347,7 @@ impl App {
                     self.cache.connect_tokens = None;
                     self.cache.connect_device_id = None;
                     self.cache.connect_email = None;
+                    self.cache.has_connect_session = false;
                     self.cache.connect_stream_status = ConnectionStatus::Inactive;
                     // Drop the previous session's vault-monitoring config so
                     // it can't leak into the next account and so the
@@ -3763,7 +3842,16 @@ impl App {
             // so real-time trade updates are processed even when viewing other panels.
             msg @ Message::View(view::Message::P2P(_)) => {
                 if let Some(p2p) = self.panels.p2p.as_mut() {
-                    return p2p.update(self.daemon.clone(), &self.cache, msg);
+                    let task = p2p.update(self.daemon.clone(), &self.cache, msg);
+                    // A P2P message may have changed the Mostro config (e.g.
+                    // adding/selecting a test coordinator in Settings), so
+                    // refresh the rail gate flag the sidebar reads.
+                    self.cache.p2p_test_coordinator = self
+                        .panels
+                        .p2p
+                        .as_ref()
+                        .is_some_and(|p| p.has_test_coordinator());
+                    return task;
                 }
             }
 
@@ -4050,6 +4138,27 @@ impl App {
                 view::Message::DismissReceivedCelebration,
             );
             view::dashboard(&self.panels.current, &self.cache, celebration)
+        } else if let Some(reason) = features::route_availability(
+            &self.panels.current,
+            self.cache.network,
+            self.cache.p2p_test_coordinator,
+        )
+        .reason()
+        .map(str::to_string)
+        {
+            // The active route targets a feature that isn't available on
+            // this network (a restored or deep-linked route onto an item
+            // that renders greyed in the rail). Show the shared
+            // "unavailable" placeholder rather than a live panel. Checked
+            // before `connect_settings_content` so a gated route that also
+            // happens to be a Connect-settings page (e.g. Spark → Settings →
+            // Lightning Address on a network where Spark is unavailable)
+            // shows the placeholder instead of the live Connect UI.
+            view::dashboard(
+                &self.panels.current,
+                &self.cache,
+                view::feature_unavailable_panel(reason),
+            )
         } else if let Some(content) = self.connect_settings_content() {
             // Connect-dependent settings sub-pages (Spark → Settings →
             // Lightning Address, Cube → Settings → Avatar / Members)

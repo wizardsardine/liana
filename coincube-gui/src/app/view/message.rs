@@ -1751,6 +1751,9 @@ pub enum P2PMessage {
     MostroRemoveRelay(String),
     MostroNodeNameInputEdited(String),
     MostroNodePubkeyInputEdited(String),
+    /// Toggle whether the node being added is a test-network coordinator
+    /// (`true`) or a mainnet coordinator (`false`).
+    MostroNodeNetworkToggled(bool),
     MostroAddNode,
     MostroRemoveNode(String),
     MostroSelectActiveNode(String),

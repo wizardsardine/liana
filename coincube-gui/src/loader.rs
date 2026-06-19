@@ -598,6 +598,8 @@ pub async fn load_application(
     let cache = Cache {
         datadir_path: config.datadir_path,
         network: config.info.network,
+        // Recomputed from the P2P panel's Mostro config once panels are built.
+        p2p_test_coordinator: false,
         last_poll_at_startup: config.info.last_poll_timestamp,
         daemon_cache: DaemonCache {
             blockheight: config.info.block_height,
@@ -613,6 +615,9 @@ pub async fn load_application(
         node_bitcoind_ibd: None,
         node_bitcoind_last_log: None,
         connect_authenticated: false,
+        // Local-daemon launch has no Connect session until the user signs in
+        // via the Connect tab; `App::new` flips this on if it restores one.
+        has_connect_session: false,
         has_vault: true,
         cube_name: config.cube_settings.name.clone(),
         current_cube_backed_up: config.cube_settings.backed_up,

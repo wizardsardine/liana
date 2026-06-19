@@ -1943,6 +1943,8 @@ pub fn create_app_with_remote_backend(
         Cache {
             network,
             datadir_path: coincube_dir.clone(),
+            // Recomputed from the P2P panel's Mostro config once panels are built.
+            p2p_test_coordinator: false,
             // We ignore last poll fields for remote backend.
             last_poll_at_startup: None,
             daemon_cache: DaemonCache {
@@ -1966,6 +1968,9 @@ pub fn create_app_with_remote_backend(
             node_bitcoind_ibd: None,
             node_bitcoind_last_log: None,
             connect_authenticated: false,
+            // Remote backend implies an authenticated Connect session from the
+            // start, even before the Connect panel reaches its Dashboard step.
+            has_connect_session: true,
             has_vault: true,
             cube_name: cube_settings.name.clone(),
             current_cube_backed_up: cube_settings.backed_up,

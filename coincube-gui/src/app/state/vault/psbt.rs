@@ -721,7 +721,9 @@ pub struct KeychainUnavailableModal {
 }
 
 fn connect_session_available(cache: &Cache) -> bool {
-    cache.connect_authenticated || (cache.connect_tokens.is_some() && cache.connect_email.is_some())
+    cache.connect_authenticated
+        || cache.has_connect_session
+        || (cache.connect_tokens.is_some() && cache.connect_email.is_some())
 }
 
 fn needs_connect_cube_registration(cache: &Cache) -> bool {
