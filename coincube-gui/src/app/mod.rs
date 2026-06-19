@@ -2654,8 +2654,7 @@ impl App {
                             .flatten()
                         else {
                             tracing::warn!(
-                                "EnsureConnectReady: no cached Connect account for {}",
-                                expected_email
+                                "EnsureConnectReady: no cached Connect account for active email"
                             );
                             return info_toast(
                                 "Couldn't find this Connect session. Sign in to Connect, or pair \

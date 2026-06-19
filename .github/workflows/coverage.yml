@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - "**/*.rs"
-      - "Cargo.toml"
+      - "**/Cargo.toml"
       - "Cargo.lock"
       - "contrib/coverage.sh"
       - ".github/workflows/coverage.yml"
@@ -19,10 +19,12 @@ jobs:
       CARGO_TOOLCHAIN: nightly-2026-06-17
       COVERAGE_DOCTESTS: 1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
         with:
           toolchain: nightly-2026-06-17
           components: llvm-tools-preview
@@ -33,14 +35,14 @@ jobs:
           sudo apt-get install -y libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler libwebkit2gtk-4.1-dev
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@528e28158500e8adf409c61ac0eaa6bdd47f49ca # cargo-llvm-cov
 
       - name: Generate coverage
         run: ./contrib/coverage.sh
 
       - name: Upload coverage artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage
           path: |

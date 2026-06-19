@@ -5,8 +5,11 @@ import socket
 import time
 
 from decimal import Decimal
+from io import BytesIO
+
 from ephemeral_port_reserve import reserve
 from test_framework.authproxy import AuthServiceProxy
+from test_framework.serializations import deser_compact_size
 from test_framework.utils import (
     BitcoinBackend,
     TailableProc,
@@ -252,6 +255,17 @@ class Bitcoind(BitcoinBackend):
             if command == expected_command:
                 return payload
 
+    @staticmethod
+    def inv_contains_type(payload, expected_type):
+        entries = BytesIO(payload)
+        entry_count = deser_compact_size(entries)
+        for _ in range(entry_count):
+            entry = entries.read(36)
+            assert len(entry) == 36, payload
+            if int.from_bytes(entry[:4], "little") == expected_type:
+                return True
+        return False
+
     def connect_p2p(self, cur_height):
         version = int(70016).to_bytes(4, "little")
         services = int((1 << 0) | (1 << 3)).to_bytes(8, "little")
@@ -293,12 +307,10 @@ class Bitcoind(BitcoinBackend):
 
         # Make sure the block was received by waiting for its inventory
         # announcement. Other post-handshake messages may arrive first.
-        inv = self.recv_p2p_until(s, "inv")
-        assert (
-            len(inv) >= 37
-            and inv[0] == 1
-            and int.from_bytes(inv[1:5], "little") == 2
-        ), inv
+        while True:
+            inv = self.recv_p2p_until(s, "inv")
+            if self.inv_contains_type(inv, 2):
+                break
 
         s.close()
 
