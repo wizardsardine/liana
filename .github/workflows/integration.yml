@@ -95,7 +95,13 @@ jobs:
             curl -O $KNOTS_DIR/SHA256SUMS
             curl -O $KNOTS_DIR/SHA256SUMS.asc
             gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys $KNOTS_KEY
-            gpg --verify SHA256SUMS.asc SHA256SUMS
+            # The detached signature file is a concatenation from several
+            # maintainers. GPG exits non-zero when any signer key is missing,
+            # even after the pinned signer verifies successfully, so require
+            # that signer's VALIDSIG status explicitly.
+            gpg --status-fd 1 --verify SHA256SUMS.asc SHA256SUMS \
+              >gpg-status.txt 2>&1 || true
+            grep -q "^\[GNUPG:\] VALIDSIG $KNOTS_KEY " gpg-status.txt
             sha256sum --ignore-missing -c SHA256SUMS
             tar -xzf $KNOTS_ARCHIVE
             export BITCOIND_PATH=bitcoin-$KNOTS_VERSION/bin/bitcoind
