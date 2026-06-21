@@ -1,7 +1,7 @@
 use std::convert::From;
 use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,7 +24,7 @@ use coincube_ui::{
     widget::{Column, Container, Element, Row},
 };
 use coincubed::{
-    config::{BitcoinBackend, BitcoindRpcAuth, Config, ConfigError},
+    config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Config, ConfigError},
     StartupError,
 };
 
@@ -225,7 +225,36 @@ impl Loader {
         is_esplora && !data_dir.sqlite_db_file_path().exists()
     }
 
+    /// Whether this vault's configured RPC backend is the app-managed
+    /// (internal) bitcoind — i.e. it authenticates with a cookie file located
+    /// inside the managed bitcoind datadir. A genuinely external node (a
+    /// user-run bitcoind, `auth = "user:pass"`, or a cookie outside the managed
+    /// datadir) returns false, so the `start_internal_bitcoind` flag keeps
+    /// governing those.
+    fn vault_uses_internal_bitcoind(&self) -> bool {
+        let Some(wallet) = &self.wallet_settings else {
+            return false;
+        };
+        let config_path = self
+            .datadir_path
+            .network_directory(self.network)
+            .coincubed_data_directory(&wallet.wallet_id())
+            .path()
+            .join("daemon.toml");
+        backend_is_internal_bitcoind(&config_path, &internal_bitcoind_datadir(&self.datadir_path))
+    }
+
     fn start_bitcoind(&self) -> bool {
+        // If the vault's active RPC backend is the app-managed internal
+        // bitcoind, always ensure it's running when the cube is opened. This is
+        // independent of the `start_internal_bitcoind` flag (which only governs
+        // genuinely external nodes) and of any node handle already held for a
+        // *different* network: `maybe_start` is network-aware, reusing a node
+        // already live on this network's RPC endpoint and otherwise starting a
+        // separate one, so this never disturbs another network's cube.
+        if self.vault_uses_internal_bitcoind() {
+            return true;
+        }
         if self.internal_bitcoind.is_some() {
             false
         } else if let Some(wallet) = &self.wallet_settings {
@@ -816,6 +845,25 @@ async fn connect(
 }
 
 // Daemon can start only if a config path is given.
+/// Whether the `daemon.toml` at `config_path` selects the app-managed internal
+/// bitcoind as its RPC backend — that is, a cookie file located inside
+/// `internal_datadir` (the managed bitcoind datadir). External nodes return
+/// false: `auth = "user:pass"`, a cookie outside the managed datadir, or any
+/// non-bitcoind backend. A missing or unparseable config also returns false.
+/// See [`Loader::start_bitcoind`].
+fn backend_is_internal_bitcoind(config_path: &Path, internal_datadir: &Path) -> bool {
+    match Config::from_file(Some(config_path.to_path_buf())) {
+        Ok(config) => matches!(
+            config.bitcoin_backend,
+            Some(BitcoinBackend::Bitcoind(BitcoindConfig {
+                rpc_auth: BitcoindRpcAuth::CookieFile(path),
+                ..
+            })) if path.starts_with(internal_datadir)
+        ),
+        Err(_) => false,
+    }
+}
+
 pub async fn start_bitcoind_and_daemon(
     coincube_datadir_path: CoincubeDirectory,
     start_internal_bitcoind: bool,
@@ -943,5 +991,114 @@ impl From<ConfigError> for Error {
 impl From<DaemonError> for Error {
     fn from(error: DaemonError) -> Self {
         Error::Daemon(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    // A mainnet descriptor (so `Config::check()`'s xpub-network validation
+    // passes against `network = "bitcoin"`), borrowed from coincubed's own
+    // config tests.
+    const MAINNET_DESC: &str = "tr([abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*,and_v(v:pk([abcdef01]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560)))#0mt7e93c";
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    /// Minimal RAII temp directory — avoids pulling in `tempfile` just for this
+    /// test. Removed on drop.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join(format!("coincube-loader-test-{}-{}", std::process::id(), n));
+            fs::create_dir_all(&path).unwrap();
+            TempDir(path)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Write a `daemon.toml` whose backend section is `backend`, returning its
+    /// path. `backend` is a full TOML table, e.g. `"[bitcoind_config]\n..."`.
+    fn write_daemon_toml(dir: &Path, backend: &str) -> PathBuf {
+        let path = dir.join("daemon.toml");
+        fs::write(
+            &path,
+            format!(
+                "main_descriptor = \"{MAINNET_DESC}\"\n\n\
+                 [bitcoin_config]\nnetwork = \"bitcoin\"\n\n\
+                 {backend}\n"
+            ),
+        )
+        .unwrap();
+        path
+    }
+
+    #[test]
+    fn cookie_inside_managed_datadir_is_internal() {
+        let tmp = TempDir::new();
+        let internal_datadir = tmp.path().join("bitcoind/datadir");
+        let cookie = internal_datadir.join(".cookie");
+        let backend = format!(
+            "[bitcoind_config]\ncookie_path = \"{}\"\naddr = \"127.0.0.1:8332\"",
+            cookie.display()
+        );
+        let config_path = write_daemon_toml(tmp.path(), &backend);
+        assert!(backend_is_internal_bitcoind(&config_path, &internal_datadir));
+    }
+
+    #[test]
+    fn cookie_outside_managed_datadir_is_external() {
+        let tmp = TempDir::new();
+        let internal_datadir = tmp.path().join("bitcoind/datadir");
+        // A user-run node whose cookie lives elsewhere on disk: the flag, not
+        // this check, should govern whether we manage it.
+        let backend =
+            "[bitcoind_config]\ncookie_path = \"/home/user/.bitcoin/.cookie\"\naddr = \"127.0.0.1:8332\"";
+        let config_path = write_daemon_toml(tmp.path(), backend);
+        assert!(!backend_is_internal_bitcoind(&config_path, &internal_datadir));
+    }
+
+    #[test]
+    fn userpass_auth_is_external() {
+        let tmp = TempDir::new();
+        let internal_datadir = tmp.path().join("bitcoind/datadir");
+        let backend = "[bitcoind_config]\nauth = \"user:password\"\naddr = \"127.0.0.1:8332\"";
+        let config_path = write_daemon_toml(tmp.path(), backend);
+        assert!(!backend_is_internal_bitcoind(&config_path, &internal_datadir));
+    }
+
+    #[test]
+    fn esplora_backend_is_not_internal_bitcoind() {
+        let tmp = TempDir::new();
+        let internal_datadir = tmp.path().join("bitcoind/datadir");
+        let backend = "[esplora_config]\naddr = \"https://mempool.space/api\"";
+        let config_path = write_daemon_toml(tmp.path(), backend);
+        assert!(!backend_is_internal_bitcoind(&config_path, &internal_datadir));
+    }
+
+    #[test]
+    fn missing_or_unparseable_config_is_not_internal() {
+        let tmp = TempDir::new();
+        let internal_datadir = tmp.path().join("bitcoind/datadir");
+        // Missing file.
+        let missing = tmp.path().join("nope/daemon.toml");
+        assert!(!backend_is_internal_bitcoind(&missing, &internal_datadir));
+        // Present but not valid TOML.
+        let garbage = tmp.path().join("daemon.toml");
+        fs::write(&garbage, "not valid toml : : :").unwrap();
+        assert!(!backend_is_internal_bitcoind(&garbage, &internal_datadir));
     }
 }
