@@ -158,6 +158,7 @@ pub fn create_spend_tx<'a>(
     coins_labels: &'a HashMap<String, String>,
     batch_label: &form::Value<String>,
     amount_left: Option<&Amount>,
+    draft_warning: Option<String>,
     feerate: &form::Value<String>,
     fee_amount: Option<&Amount>,
     sync_status: &SyncStatus,
@@ -176,20 +177,27 @@ pub fn create_spend_tx<'a>(
             || recovery_timelock.is_some()
             || Some(&Amount::from_sat(0)) == amount_left);
 
-    let disabled_hint = if can_proceed {
+    let disabled_hint: Option<String> = if can_proceed {
         None
     } else if feerate.value.is_empty() {
-        Some("Please set a feerate.")
+        Some("Please set a feerate.".to_string())
     } else if !feerate.valid {
-        Some("Invalid feerate.")
+        Some("Invalid feerate.".to_string())
     } else if duplicate {
-        Some("Duplicate recipient address.")
+        Some("Duplicate recipient address.".to_string())
     } else if coins.iter().all(|(_, selected)| !selected) {
-        Some("Please select at least one coin.")
+        Some("Please select at least one coin.".to_string())
     } else if !is_self_send && recovery_timelock.is_none() {
         match amount_left {
-            None => Some("Enter recipient address and amount."),
-            Some(amount) if amount.to_sat() != 0 => Some("Insufficient funds."),
+            // `amount_left` is only `None` once the recipient and amount are
+            // filled in but the background draft could not produce a result.
+            // If that draft failed with an error, show it rather than the
+            // generic "enter recipient/amount" hint, which is misleading once
+            // the fields are actually populated.
+            None => Some(
+                draft_warning.unwrap_or_else(|| "Enter recipient address and amount.".to_string()),
+            ),
+            Some(amount) if amount.to_sat() != 0 => Some("Insufficient funds.".to_string()),
             _ => None,
         }
     } else {
