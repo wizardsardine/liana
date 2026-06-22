@@ -37,9 +37,13 @@ use crate::services::recovery::fetch_recovery_descriptor;
 /// the deferred-path copy rather than a broken "Recover" button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
-    /// Window open **and** Full-tier (password-free) → the "Recover" button is
-    /// live.
+    /// Window open **and** Full-tier (password-free) **and** the caller is a
+    /// keyholder → the "Recover" button is live.
     Actionable,
+    /// Window open, but the caller is a beneficiary, not a keyholder → the
+    /// descriptor pull-down is keyholder-only (the release endpoint 403s
+    /// non-keyholders), so show "a keyholder completes this", never a button.
+    KeyholderOnly,
     /// Window not open yet (Full-tier) → visible but not actionable; show the
     /// expected-open date and "we'll email you".
     NotYetOpen,
@@ -51,12 +55,18 @@ pub enum RowKind {
 
 /// Classifies a recoverable-vault row. Pure — the unit tests below pin the
 /// invariants. Heartbeat/password-required is checked first so an open
-/// (`available`/`reminding`) Heartbeat vault still routes to the deferred copy.
+/// (`available`/`reminding`) Heartbeat vault still routes to the deferred copy;
+/// then the keyholder gate, so an open vault the caller can't pull down (they're
+/// a beneficiary) shows the keyholder-only copy rather than a 403'ing button.
 pub fn classify(v: &RecoverableVault) -> RowKind {
     if v.requires_recovery_password {
         RowKind::PasswordDeferred
     } else if v.recovery_state().is_open() {
-        RowKind::Actionable
+        if v.is_keyholder() {
+            RowKind::Actionable
+        } else {
+            RowKind::KeyholderOnly
+        }
     } else {
         RowKind::NotYetOpen
     }
@@ -67,6 +77,9 @@ pub fn classify(v: &RecoverableVault) -> RowKind {
 pub fn status_copy(v: &RecoverableVault) -> Option<String> {
     match classify(v) {
         RowKind::Actionable => None,
+        RowKind::KeyholderOnly => {
+            Some("Recovery is open — a keyholder of this vault can complete it.".to_string())
+        }
         RowKind::PasswordDeferred => {
             Some("Recovery password required — coming in a later update.".to_string())
         }
@@ -137,8 +150,10 @@ pub struct RecoverVaultPanel {
 pub enum RecoverVaultMessage {
     /// (Re)fetch the recoverable-vault list.
     Load,
-    /// List fetch resolved.
-    Loaded(Result<Vec<RecoverableVault>, String>),
+    /// List fetch resolved. The `u64` is the Connect session generation the
+    /// fetch was fired in — a stale value (logout / account switch landed
+    /// first) is dropped rather than painting the prior account's vaults.
+    Loaded(Result<Vec<RecoverableVault>, String>, u64),
     /// Heir clicked "Recover" on the given cube — pull its descriptor.
     Recover(u64),
     /// Descriptor fetch resolved (cube id, plaintext descriptor | display copy).
@@ -150,18 +165,28 @@ impl RecoverVaultPanel {
         Self::default()
     }
 
-    /// True once the list has been requested at least once — lets Home avoid
-    /// re-firing `Load` every time the section is reopened.
+    /// Whether Home should skip re-firing `Load` when the section is reopened.
+    /// True only while a fetch is in flight (`Loading`) or has succeeded
+    /// (`Loaded`) — so a successful list isn't re-fetched on every reopen, and
+    /// an in-flight fetch isn't duplicated. `Idle` (never requested) and
+    /// `Error` (a transient failure) both return false so the next reopen
+    /// retries instead of leaving the heir stuck on a stale error.
     pub fn is_loaded(&self) -> bool {
-        !matches!(self.list, ListState::Idle)
+        matches!(self.list, ListState::Loading | ListState::Loaded(_))
     }
 
     /// Drives the surface. `client` is the heir's authenticated Connect client
     /// (`None` when signed out — every action degrades to a sign-in prompt).
+    /// `session_generation` is the Connect account's current session counter
+    /// (bumped on login / logout / reset); it is stamped into the spawned list
+    /// fetch so a response that lands after the session changed is dropped
+    /// instead of painting a prior account's vaults — the same guard the
+    /// duress-contacts / recovery-alerts handlers use.
     pub fn update(
         &mut self,
         message: RecoverVaultMessage,
         client: Option<CoincubeClient>,
+        session_generation: u64,
     ) -> Task<RecoverVaultMessage> {
         match message {
             RecoverVaultMessage::Load => {
@@ -179,10 +204,15 @@ impl RecoverVaultPanel {
                             .await
                             .map_err(|e| e.to_string())
                     },
-                    RecoverVaultMessage::Loaded,
+                    move |res| RecoverVaultMessage::Loaded(res, session_generation),
                 )
             }
-            RecoverVaultMessage::Loaded(res) => {
+            RecoverVaultMessage::Loaded(res, gen) => {
+                // Drop a list that resolved after the session changed (logout /
+                // account switch) so we never paint the prior account's vaults.
+                if gen != session_generation {
+                    return Task::none();
+                }
                 self.list = match res {
                     Ok(rows) => ListState::Loaded(rows),
                     Err(e) => ListState::Error(e),
@@ -212,6 +242,13 @@ impl RecoverVaultPanel {
                 )
             }
             RecoverVaultMessage::Fetched(cube_id, res) => {
+                // Drop a descriptor fetch the user has moved on from: starting
+                // recovery on another vault replaces `active` (and a logout
+                // clears it), so an older request must not paint its
+                // "Recovery ready"/error onto whatever row is now in flight.
+                if self.active.as_ref().map(|(id, _)| *id) != Some(cube_id) {
+                    return Task::none();
+                }
                 let status = match res {
                     Ok(_descriptor) => {
                         // TODO(PR 2): hand the plaintext `_descriptor` to the
@@ -251,12 +288,12 @@ pub fn view(panel: &RecoverVaultPanel) -> Element<'_, RecoverVaultMessage> {
                 .center_x(Length::Fill)
                 .into()
         }
-        ListState::Error(msg) => Container::new(
-            p1_regular(msg.clone()).style(theme::text::secondary),
-        )
-        .padding(20)
-        .center_x(Length::Fill)
-        .into(),
+        ListState::Error(msg) => {
+            Container::new(p1_regular(msg.clone()).style(theme::text::secondary))
+                .padding(20)
+                .center_x(Length::Fill)
+                .into()
+        }
         ListState::Loaded(rows) if rows.is_empty() => Container::new(
             p1_regular("No vaults are available for you to recover right now.")
                 .style(theme::text::secondary),
@@ -349,12 +386,18 @@ fn recover_status_view(status: &RecoverStatus) -> Element<'_, RecoverVaultMessag
 mod tests {
     use super::*;
 
-    fn vault(level: VaultMonitoringLevel, state: &str, pw: bool) -> RecoverableVault {
+    fn vault_role(
+        level: VaultMonitoringLevel,
+        state: &str,
+        pw: bool,
+        role: &str,
+    ) -> RecoverableVault {
         RecoverableVault {
             cube_id: 1,
             owner_label: None,
             monitoring_level: level,
             state: state.to_string(),
+            role: role.to_string(),
             requires_recovery_password: pw,
             owner_last_active: None,
             expected_open_at: None,
@@ -362,11 +405,34 @@ mod tests {
         }
     }
 
+    /// The common case: the caller is a keyholder (the only role that can pull
+    /// the descriptor down). Beneficiary cases construct via `vault_role`.
+    fn vault(level: VaultMonitoringLevel, state: &str, pw: bool) -> RecoverableVault {
+        vault_role(level, state, pw, "keyholder")
+    }
+
     #[test]
     fn full_open_is_actionable() {
         let v = vault(VaultMonitoringLevel::Full, "available", false);
         assert_eq!(classify(&v), RowKind::Actionable);
         assert!(status_copy(&v).is_none());
+    }
+
+    #[test]
+    fn beneficiary_open_full_is_keyholder_only_not_actionable() {
+        // Same open + Full-tier state as `full_open_is_actionable`, but the
+        // caller is a beneficiary: the descriptor pull-down is keyholder-only
+        // (the release endpoint 403s non-keyholders), so this must NOT be a live
+        // button — it shows the keyholder-only copy instead.
+        let v = vault_role(
+            VaultMonitoringLevel::Full,
+            "available",
+            false,
+            "beneficiary",
+        );
+        assert_eq!(classify(&v), RowKind::KeyholderOnly);
+        assert!(!v.is_recoverable_now());
+        assert!(status_copy(&v).unwrap().contains("keyholder"));
     }
 
     #[test]
@@ -417,11 +483,29 @@ mod tests {
     #[test]
     fn load_without_client_surfaces_signin_prompt() {
         let mut panel = RecoverVaultPanel::new();
-        let _ = panel.update(RecoverVaultMessage::Load, None);
+        let _ = panel.update(RecoverVaultMessage::Load, None, 0);
         match &panel.list {
             ListState::Error(msg) => assert!(msg.contains("Sign in")),
             other => panic!("expected sign-in error, got {:?}", other),
         }
+        // An error is retryable: `is_loaded()` stays false so reopening the
+        // section (e.g. after the heir signs in) re-fires `Load`.
+        assert!(!panel.is_loaded());
+    }
+
+    #[test]
+    fn is_loaded_suppresses_refetch_only_for_loading_and_loaded() {
+        let mut panel = RecoverVaultPanel::new();
+        // Idle: never requested → fetch.
+        assert!(!panel.is_loaded());
+        // Error: transient failure → retry on reopen.
+        panel.list = ListState::Error("boom".to_string());
+        assert!(!panel.is_loaded());
+        // Loading: in flight → don't duplicate the request.
+        panel.list = ListState::Loading;
+        assert!(panel.is_loaded());
+        // Loaded: already have the list → don't refetch on reopen.
+        panel.list = ListState::Loaded(vec![]);
         assert!(panel.is_loaded());
     }
 
@@ -429,16 +513,45 @@ mod tests {
     fn loaded_stores_rows() {
         let mut panel = RecoverVaultPanel::new();
         let rows = vec![vault(VaultMonitoringLevel::Full, "available", false)];
-        let _ = panel.update(RecoverVaultMessage::Loaded(Ok(rows)), None);
+        let _ = panel.update(RecoverVaultMessage::Loaded(Ok(rows), 0), None, 0);
+        assert!(matches!(panel.list, ListState::Loaded(ref r) if r.len() == 1));
+    }
+
+    #[test]
+    fn loaded_from_a_stale_session_is_dropped() {
+        // A list fetch fired in generation 1 that lands after the session
+        // advanced (logout / account switch → generation 2) must not paint the
+        // prior account's vaults: the panel's `list` is left untouched.
+        let mut panel = RecoverVaultPanel::new();
+        let rows = vec![vault(VaultMonitoringLevel::Full, "available", false)];
+        let _ = panel.update(RecoverVaultMessage::Loaded(Ok(rows), 1), None, 2);
+        assert!(
+            matches!(panel.list, ListState::Idle),
+            "stale-session list must not be stored, got {:?}",
+            panel.list
+        );
+    }
+
+    #[test]
+    fn loaded_for_the_current_session_is_stored() {
+        // The matching-generation path still stores rows (regression guard for
+        // the stale-session check above).
+        let mut panel = RecoverVaultPanel::new();
+        let rows = vec![vault(VaultMonitoringLevel::Full, "available", false)];
+        let _ = panel.update(RecoverVaultMessage::Loaded(Ok(rows), 5), None, 5);
         assert!(matches!(panel.list, ListState::Loaded(ref r) if r.len() == 1));
     }
 
     #[test]
     fn fetched_error_copy_is_shown_verbatim() {
         let mut panel = RecoverVaultPanel::new();
+        // Simulate the in-flight recover `Recover` sets before the async fetch
+        // resolves, so the matching `Fetched` is applied to the active row.
+        panel.active = Some((7, RecoverStatus::Fetching));
         let _ = panel.update(
             RecoverVaultMessage::Fetched(7, Err("Recovery is unavailable right now.".to_string())),
             None,
+            0,
         );
         match panel.active {
             Some((7, RecoverStatus::Failed(copy))) => {
@@ -446,5 +559,24 @@ mod tests {
             }
             other => panic!("expected failed status, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn stale_fetch_does_not_overwrite_a_newer_active_row() {
+        // The heir starts recovery on cube 7, then on cube 8 (which replaces
+        // `active`). Cube 7's older descriptor fetch resolving afterwards must
+        // not paint its result onto cube 8's in-flight row.
+        let mut panel = RecoverVaultPanel::new();
+        panel.active = Some((8, RecoverStatus::Fetching));
+        let _ = panel.update(
+            RecoverVaultMessage::Fetched(7, Ok("wsh(...)".to_string())),
+            None,
+            0,
+        );
+        assert!(
+            matches!(panel.active, Some((8, RecoverStatus::Fetching))),
+            "stale cube-7 fetch must leave cube-8's row untouched, got {:?}",
+            panel.active
+        );
     }
 }

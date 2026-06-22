@@ -1429,9 +1429,10 @@ impl Home {
                     && !self.recover_vault.is_loaded()
                 {
                     let client = self.connect_account.authenticated_client();
+                    let gen = self.connect_account.session_generation();
                     return self
                         .recover_vault
-                        .update(RecoverVaultMessage::Load, client)
+                        .update(RecoverVaultMessage::Load, client, gen)
                         .map(|m| Message::View(ViewMessage::RecoverVault(m)));
                 }
                 Task::none()
@@ -1440,9 +1441,12 @@ impl Home {
             Message::View(ViewMessage::RecoverVault(msg)) => {
                 // Forward to the discovery panel with the heir's authenticated
                 // Connect client; map the panel's task back into home messages.
+                // The session generation lets the panel drop a list fetch that
+                // resolves after a logout / account switch.
                 let client = self.connect_account.authenticated_client();
+                let gen = self.connect_account.session_generation();
                 self.recover_vault
-                    .update(msg, client)
+                    .update(msg, client, gen)
                     .map(|m| Message::View(ViewMessage::RecoverVault(m)))
             }
 
@@ -1590,6 +1594,11 @@ impl Home {
                     if !now_authenticated {
                         self.server_cube_limit = None;
                         self.remote_cubes.clear();
+                        // Reset the heir discovery surface back to Idle so the
+                        // next sign-in re-fetches: otherwise its `Loaded` state
+                        // (and `is_loaded()` re-fetch guard) would persist and a
+                        // later account would see the prior account's vault rows.
+                        self.recover_vault = RecoverVaultPanel::new();
                     }
                 }
                 // Auto-expand Connect submenu and navigate to Cubes after login
@@ -2275,7 +2284,9 @@ fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
         let is_active = matches!(home.active_section, HomeSection::RecoverVault);
         let recover_button = if is_active {
             Row::new()
-                .push(btn::menu_active(Some(ic::cube_icon()), "Recover a Vault").width(Length::Fill))
+                .push(
+                    btn::menu_active(Some(ic::cube_icon()), "Recover a Vault").width(Length::Fill),
+                )
                 .width(Length::Fill)
         } else {
             Row::new()

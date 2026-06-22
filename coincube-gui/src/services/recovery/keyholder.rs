@@ -50,30 +50,22 @@ pub enum KeyholderRecoveryError {
 impl std::fmt::Display for KeyholderRecoveryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotKeyholder => write!(
-                f,
-                "You don't have permission to recover this vault."
-            ),
-            Self::NotOpen => write!(
-                f,
-                "This vault's recovery window isn't open yet."
-            ),
+            Self::NotKeyholder => write!(f, "You don't have permission to recover this vault."),
+            Self::NotOpen => write!(f, "This vault's recovery window isn't open yet."),
             // Neutral, duress-safe copy — matches the recovery-kit download
             // flow's wording so the two paths are indistinguishable.
             Self::Unavailable { .. } => write!(
                 f,
                 "Recovery is unavailable right now. Please try again later."
             ),
-            Self::NotMonitored => write!(
-                f,
-                "This vault isn't set up for assisted recovery."
-            ),
-            Self::Unsupported => write!(
-                f,
-                "Assisted recovery isn't available on this server."
-            ),
+            Self::NotMonitored => write!(f, "This vault isn't set up for assisted recovery."),
+            Self::Unsupported => write!(f, "Assisted recovery isn't available on this server."),
             Self::RateLimited { retry_after } => {
-                write!(f, "Too many attempts — try again in {}s.", retry_after.as_secs())
+                write!(
+                    f,
+                    "Too many attempts — try again in {}s.",
+                    retry_after.as_secs()
+                )
             }
             Self::Api(msg) => write!(f, "Recovery error: {}", msg),
         }
@@ -168,7 +160,10 @@ mod unit_tests {
     }
 
     fn err_body(code: &str) -> String {
-        format!(r#"{{"success":false,"error":{{"code":"{}","message":"x"}}}}"#, code)
+        format!(
+            r#"{{"success":false,"error":{{"code":"{}","message":"x"}}}}"#,
+            code
+        )
     }
 
     #[test]
@@ -199,10 +194,7 @@ mod unit_tests {
         let err: KeyholderRecoveryError = unsuccessful(423, body).into();
         match err {
             KeyholderRecoveryError::Unavailable { retry_at } => {
-                assert_eq!(
-                    retry_at.unwrap().to_rfc3339(),
-                    "2026-07-01T00:00:00+00:00"
-                );
+                assert_eq!(retry_at.unwrap().to_rfc3339(), "2026-07-01T00:00:00+00:00");
             }
             other => panic!("expected Unavailable, got {:?}", other),
         }
@@ -380,6 +372,7 @@ mod integration_tests {
                         {
                             "cubeId": 7,
                             "ownerLabel": "Dad's Vault",
+                            "role": "keyholder",
                             "monitoringLevel": "full",
                             "state": "available",
                             "requiresRecoveryPassword": false
@@ -387,6 +380,7 @@ mod integration_tests {
                         {
                             "cubeId": 8,
                             "ownerLabel": "Mum's Vault",
+                            "role": "keyholder",
                             "monitoringLevel": "heartbeat",
                             "state": "approaching",
                             "requiresRecoveryPassword": true
@@ -394,9 +388,18 @@ mod integration_tests {
                         {
                             "cubeId": 9,
                             "ownerLabel": "Open but pw-gated",
+                            "role": "keyholder",
                             "monitoringLevel": "heartbeat",
                             "state": "reminding",
                             "requiresRecoveryPassword": true
+                        },
+                        {
+                            "cubeId": 10,
+                            "ownerLabel": "Open but beneficiary",
+                            "role": "beneficiary",
+                            "monitoringLevel": "full",
+                            "state": "available",
+                            "requiresRecoveryPassword": false
                         }
                     ],
                     "error": null
@@ -409,12 +412,13 @@ mod integration_tests {
             .await
             .expect("list should parse");
         mock.assert();
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 4);
 
-        // Row 0: Full + available → open + actionable now.
+        // Row 0: Full + available + keyholder → open + actionable now.
         assert_eq!(rows[0].cube_id, 7);
         assert_eq!(rows[0].monitoring_level, VaultMonitoringLevel::Full);
         assert_eq!(rows[0].recovery_state(), RecoveryState::Open);
+        assert!(rows[0].is_keyholder());
         assert!(rows[0].is_recoverable_now());
 
         // Row 1: Heartbeat + approaching → not open, not actionable.
@@ -426,5 +430,76 @@ mod integration_tests {
         // v1 (deferred to COIN-375), even though the window is open.
         assert_eq!(rows[2].recovery_state(), RecoveryState::Open);
         assert!(!rows[2].is_recoverable_now());
+
+        // Row 3: Full + available but the caller is a beneficiary → open, yet
+        // NOT actionable: the descriptor pull-down is keyholder-only (the
+        // release endpoint 403s non-keyholders).
+        assert_eq!(rows[3].recovery_state(), RecoveryState::Open);
+        assert!(!rows[3].is_keyholder());
+        assert!(!rows[3].is_recoverable_now());
+    }
+
+    #[tokio::test]
+    async fn list_recoverable_503_disabled_reads_as_empty() {
+        // Recovery disabled server-side (`ALERTS_RECOVERY_ENABLED=false`) →
+        // 503. The heir must see the "nothing to show" empty state, not a
+        // generic error, so this maps to an empty list rather than `Err`.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/recoverable");
+            then.status(503);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let rows = client
+            .list_recoverable_vaults()
+            .await
+            .expect("503 should read as an empty list, not an error");
+        mock.assert();
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_recoverable_404_not_deployed_reads_as_empty() {
+        // The endpoint is net-new; an older server that hasn't deployed it
+        // returns 404. Treat that as "feature unavailable / nothing to show".
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/recoverable");
+            then.status(404);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let rows = client
+            .list_recoverable_vaults()
+            .await
+            .expect("404 should read as an empty list, not an error");
+        mock.assert();
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_recoverable_500_still_surfaces_error() {
+        // Genuine server breakage must NOT be swallowed into an empty state —
+        // only the feature-unavailable statuses (404/503) soft-fail.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/connect/cubes/recoverable");
+            then.status(500);
+        });
+
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .list_recoverable_vaults()
+            .await
+            .expect_err("500 should surface as an error, not an empty list");
+        mock.assert();
+        assert!(matches!(
+            err,
+            CoincubeError::Unsuccessful(info) if info.status_code == 500
+        ));
     }
 }

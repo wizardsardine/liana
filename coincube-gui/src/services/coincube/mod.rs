@@ -2113,6 +2113,13 @@ pub struct RecoverableVault {
     /// `Heartbeat` → recovery password required (deferred to COIN-375).
     #[serde(default)]
     pub monitoring_level: VaultMonitoringLevel,
+    /// The caller's own membership role on this vault (`keyholder` /
+    /// `beneficiary`). Only keyholders can perform the password-free pull-down —
+    /// the descriptor-release endpoint 403s everyone else — so a non-keyholder
+    /// row is never a live "Recover" button. Defaults to non-keyholder (fails
+    /// closed) if an older server omits it.
+    #[serde(default)]
+    pub role: String,
     /// Raw server recovery-window state (`none`/`approaching`/`available`/
     /// `reminding`). Use [`RecoverableVault::recovery_state`] for the
     /// heir-facing collapse.
@@ -2120,8 +2127,10 @@ pub struct RecoverableVault {
     pub state: String,
     /// True when recovering this vault needs the owner's recovery password
     /// (Heartbeat tier). v1 shows the deferred-path copy for these rows; the
-    /// Alerts-only heir path is COIN-375.
-    #[serde(default)]
+    /// Alerts-only heir path is COIN-375. Defaults to `true` (fails closed) if
+    /// an older/partial server omits it: an absent field must never downgrade a
+    /// password-required row into a live, password-free "Recover" button.
+    #[serde(default = "default_requires_recovery_password")]
     pub requires_recovery_password: bool,
     /// "Owner last active" hint, when the server exposes it (display only).
     #[serde(default)]
@@ -2143,11 +2152,25 @@ impl RecoverableVault {
         RecoveryState::from_wire(&self.state)
     }
 
-    /// Whether the heir can act on this row now: the window is open AND it
-    /// isn't a password-required (Heartbeat) row deferred to COIN-375.
-    pub fn is_recoverable_now(&self) -> bool {
-        self.recovery_state().is_open() && !self.requires_recovery_password
+    /// Whether the caller is a keyholder (the only role that may pull the
+    /// descriptor down — beneficiaries are 403'd by the release endpoint).
+    pub fn is_keyholder(&self) -> bool {
+        self.role == "keyholder"
     }
+
+    /// Whether the heir can act on this row now: the caller is a keyholder AND
+    /// the window is open AND it isn't a password-required (Heartbeat) row
+    /// deferred to COIN-375.
+    pub fn is_recoverable_now(&self) -> bool {
+        self.is_keyholder() && self.recovery_state().is_open() && !self.requires_recovery_password
+    }
+}
+
+/// Serde default for [`RecoverableVault::requires_recovery_password`]: a missing
+/// field fails closed (assume a recovery password is required) so an
+/// older/partial payload never makes a Heartbeat row look password-free.
+fn default_requires_recovery_password() -> bool {
+    true
 }
 
 /// Body of `GET /api/v1/connect/cubes/{cubeId}/vault/recovery-descriptor` on
@@ -2195,6 +2218,21 @@ mod vault_monitoring_tests {
             KeyholderDownloadPolicy::default(),
             KeyholderDownloadPolicy::AtApproaching
         );
+    }
+
+    #[test]
+    fn recoverable_vault_requires_password_fails_closed_when_absent() {
+        // A payload that omits `requiresRecoveryPassword` must default to `true`
+        // (fail closed) so the row is never treated as a password-free, live
+        // "Recover" button. Even open + keyholder, it stays non-actionable.
+        let v = serde_json::json!({
+            "cubeId": 7,
+            "role": "keyholder",
+            "state": "available"
+        });
+        let row: RecoverableVault = serde_json::from_value(v).unwrap();
+        assert!(row.requires_recovery_password);
+        assert!(!row.is_recoverable_now());
     }
 
     #[test]

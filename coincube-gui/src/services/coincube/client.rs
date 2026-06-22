@@ -1442,6 +1442,16 @@ impl CoincubeClient {
     ) -> Result<Vec<super::RecoverableVault>, CoincubeError> {
         let url = format!("{}/api/v1/connect/cubes/recoverable", self.base_url);
         let res = self.client.get(&url).send().await?;
+        // The endpoint is net-new and capability-gated: a `503` (recovery
+        // disabled via `ALERTS_RECOVERY_ENABLED=false`) or a `404` (not yet
+        // deployed) means the feature simply isn't there. Per the contract
+        // above, surface that as an empty list — the panel renders its
+        // "nothing to show" copy — rather than a generic error in the heir's
+        // face. Other non-success statuses (auth, 5xx) still flow to the panel
+        // as an error so genuine breakage stays visible.
+        if matches!(res.status().as_u16(), 404 | 503) {
+            return Ok(Vec::new());
+        }
         let res = res.check_success().await?;
         let resp: ApiResponse<Vec<super::RecoverableVault>> = res.json().await?;
         Ok(resp.data)
