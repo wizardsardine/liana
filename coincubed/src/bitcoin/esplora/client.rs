@@ -325,7 +325,11 @@ impl Client {
                         "Esplora {} unreachable at startup: {}{}",
                         provider.name,
                         e,
-                        if transport { " — pre-seeded cooldown" } else { "" },
+                        if transport {
+                            " — pre-seeded cooldown"
+                        } else {
+                            ""
+                        },
                     );
                 }
             }
