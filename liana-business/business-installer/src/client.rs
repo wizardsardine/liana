@@ -247,7 +247,7 @@ impl Client {
 
                 // Check and refresh token
                 let result = futures::executor::block_on(async {
-                    let account = match Account::from_cache(&network_dir, &email) {
+                    let account = match Account::from_cache_by_email(&network_dir, &email) {
                         Ok(Some(acc)) => acc,
                         _ => return false,
                     };
@@ -281,6 +281,7 @@ impl Client {
                                 &new_tokens,
                                 &auth_client,
                                 false,
+                                None,
                             )
                             .await
                             {
@@ -421,6 +422,7 @@ impl Client {
                                 &new_tokens,
                                 &auth_client,
                                 false,
+                                None,
                             )
                             .await
                             {
@@ -473,30 +475,47 @@ impl Client {
             }
         };
 
-        // Get current valid accounts and compute emails to keep
-        let valid_emails: std::collections::HashSet<String> = {
-            match ConnectCache::from_file(&network_dir) {
-                Ok(cache) => cache
-                    .accounts
-                    .into_iter()
-                    .map(|a| a.email)
-                    .filter(|e| !emails_to_remove.contains(e))
-                    .collect(),
+        // Compute the two retain sets from the current cache, excluding the
+        // emails marked for removal. Accounts with `user_id` are keyed by it;
+        // legacy accounts (no user_id) keep using email.
+        let (valid_user_ids, valid_legacy_emails): (
+            std::collections::HashSet<String>,
+            std::collections::HashSet<String>,
+        ) = {
+            let cache = match ConnectCache::from_file(&network_dir) {
+                Ok(cache) => cache,
                 Err(e) => {
                     tracing::debug!("clear_invalid_tokens: failed to read cache: {:?}", e);
                     return;
                 }
+            };
+            let mut user_ids = std::collections::HashSet::new();
+            let mut legacy = std::collections::HashSet::new();
+            for a in cache.accounts {
+                if emails_to_remove.contains(&a.email) {
+                    continue;
+                }
+                match a.user_id {
+                    Some(uid) => {
+                        user_ids.insert(uid);
+                    }
+                    None => {
+                        legacy.insert(a.email);
+                    }
+                }
             }
+            (user_ids, legacy)
         };
 
         tracing::debug!(
-            "clear_invalid_tokens: keeping {} valid accounts",
-            valid_emails.len()
+            "clear_invalid_tokens: keeping {} migrated and {} legacy accounts",
+            valid_user_ids.len(),
+            valid_legacy_emails.len()
         );
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let _ = filter_connect_cache(&network_dir, &valid_emails).await;
+            let _ = filter_connect_cache(&network_dir, &valid_user_ids, &valid_legacy_emails).await;
         });
 
         tracing::debug!("clear_invalid_tokens: cache updated");
@@ -606,7 +625,7 @@ fn try_get_cached_token(data: &TokenRetrievalData) -> Option<String> {
 
     let result = futures::executor::block_on(async {
         // Try to get cached account
-        match Account::from_cache(&network_dir, &email) {
+        match Account::from_cache_by_email(&network_dir, &email) {
             Ok(Some(account)) => {
                 let tokens = &account.tokens;
                 let now = chrono::Utc::now().timestamp();
@@ -637,6 +656,7 @@ fn try_get_cached_token(data: &TokenRetrievalData) -> Option<String> {
                                     &new_tokens,
                                     &client,
                                     false,
+                                    None,
                                 )
                                 .await
                                 {
@@ -1764,7 +1784,7 @@ impl Backend for Client {
             // Update cache if network_dir is available
             let access_token = if let Some(ref network_dir) = network_dir {
                 tracing::debug!("auth_code: updating token cache");
-                match update_connect_cache(network_dir, &tokens, &auth_client, false).await {
+                match update_connect_cache(network_dir, &tokens, &auth_client, false, None).await {
                     Ok(updated_tokens) => updated_tokens.access_token,
                     Err(e) => {
                         // Cache update failed, but we still have tokens

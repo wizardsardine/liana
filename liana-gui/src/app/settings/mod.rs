@@ -244,6 +244,10 @@ where
 pub struct AuthConfig {
     pub email: String,
     pub wallet_id: String,
+    // Stable Liana-Connect user identifier (JWT `sub`). Optional only to allow
+    // legacy settings files (pre user_id) to deserialize; populated on next login.
+    #[serde(default)]
+    pub user_id: Option<String>,
     // legacy field, refresh_token is now stored in the connect cache file
     // Keep it in case, user want to open the wallet with a previous Liana-GUI version.
     // Field cannot be ignored as the settings file is override during settings update.
@@ -252,10 +256,11 @@ pub struct AuthConfig {
 }
 
 impl AuthConfig {
-    pub fn new(email: String, wallet_id: String) -> Self {
+    pub fn new(user_id: String, email: String, wallet_id: String) -> Self {
         Self {
             email,
             wallet_id,
+            user_id: Some(user_id),
             refresh_token: None,
         }
     }
