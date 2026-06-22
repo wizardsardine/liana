@@ -15,6 +15,7 @@ use tokio::runtime::Handle;
 
 use crate::feature_flags;
 use crate::pin_input;
+use crate::recover_vault::{self, RecoverVaultMessage, RecoverVaultPanel};
 use crate::services::coincube::{
     CoincubeClient, CubeLimitsResponse, CubeResponse, RegisterCubeRequest, UpdateCubeRequest,
 };
@@ -89,6 +90,9 @@ pub enum HomeSection {
     Cubes,
     /// Connect account-level sub-page
     Connect(app::menu::ConnectSubMenu),
+    /// Heir "Recover a Vault" discovery surface (COIN-377 / PR 1). Global —
+    /// reachable even when the heir owns no Vault of their own.
+    RecoverVault,
 }
 
 /// Context stashed for firing a remote cube update after local rename succeeds.
@@ -119,6 +123,8 @@ pub struct Home {
     account_tier: AccountTier,
     /// Account-level Connect panel (login, plan, security, etc.)
     pub connect_account: ConnectAccountPanel,
+    /// Heir "Recover a Vault" discovery surface state (COIN-377 / PR 1).
+    pub recover_vault: RecoverVaultPanel,
     /// Whether the Connect sidebar section is expanded
     pub connect_expanded: bool,
     /// Which section is currently displayed in the main content area
@@ -190,6 +196,7 @@ impl Home {
                     &datadir_path,
                 )),
                 connect_account: ConnectAccountPanel::new(),
+                recover_vault: RecoverVaultPanel::new(),
                 connect_expanded: false,
                 active_section: HomeSection::Cubes,
                 theme_mode: GlobalSettings::load_theme_mode(&GlobalSettings::path(&datadir_path)),
@@ -1415,7 +1422,28 @@ impl Home {
                         self.connect_account.reload_duress_state(),
                     ]));
                 }
+                // Load the recoverable-vault list on demand when opening the
+                // heir discovery surface (once per session — `is_loaded()`
+                // guards re-fetch on every reopen).
+                if matches!(self.active_section, HomeSection::RecoverVault)
+                    && !self.recover_vault.is_loaded()
+                {
+                    let client = self.connect_account.authenticated_client();
+                    return self
+                        .recover_vault
+                        .update(RecoverVaultMessage::Load, client)
+                        .map(|m| Message::View(ViewMessage::RecoverVault(m)));
+                }
                 Task::none()
+            }
+
+            Message::View(ViewMessage::RecoverVault(msg)) => {
+                // Forward to the discovery panel with the heir's authenticated
+                // Connect client; map the panel's task back into home messages.
+                let client = self.connect_account.authenticated_client();
+                self.recover_vault
+                    .update(msg, client)
+                    .map(|m| Message::View(ViewMessage::RecoverVault(m)))
             }
 
             Message::View(ViewMessage::RenameCube(index)) => {
@@ -1976,6 +2004,10 @@ impl Home {
             let connect_view: Element<ConnectAccountMessage> =
                 crate::app::view::connect::connect_account_panel(&self.connect_account);
             connect_view.map(|msg| Message::View(ViewMessage::ConnectAccount(msg)))
+        } else if matches!(self.active_section, HomeSection::RecoverVault) {
+            // Heir "Recover a Vault" discovery surface (COIN-377 / PR 1).
+            recover_vault::view(&self.recover_vault)
+                .map(|msg| Message::View(ViewMessage::RecoverVault(msg)))
         } else {
             content
         };
@@ -2234,6 +2266,27 @@ fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
             };
             col = col.push(item);
         }
+    }
+
+    // Heir "Recover a Vault" — global discovery surface (COIN-377 / PR 1).
+    // Gated behind the capability flag (dark until the API's `recoverable`
+    // endpoint + COIN-376 sweep ship) and only shown to a signed-in account.
+    if is_authenticated && feature_flags::RECOVER_VAULT_ENABLED {
+        let is_active = matches!(home.active_section, HomeSection::RecoverVault);
+        let recover_button = if is_active {
+            Row::new()
+                .push(btn::menu_active(Some(ic::cube_icon()), "Recover a Vault").width(Length::Fill))
+                .width(Length::Fill)
+        } else {
+            Row::new()
+                .push(
+                    btn::menu(Some(ic::cube_icon()), "Recover a Vault")
+                        .on_press(msg(ViewMessage::GoToSection(HomeSection::RecoverVault)))
+                        .width(Length::Fill),
+                )
+                .width(Length::Fill)
+        };
+        col = col.push(recover_button);
     }
 
     // Bottom-pinned section: Sign In / email + theme toggle
@@ -2935,6 +2988,8 @@ pub enum ViewMessage {
     ToggleConnect,
     /// Account-level Connect messages (login, plan, security, etc.)
     ConnectAccount(ConnectAccountMessage),
+    /// Heir "Recover a Vault" discovery-surface messages (COIN-377 / PR 1).
+    RecoverVault(RecoverVaultMessage),
     /// Toggle light/dark theme
     ToggleTheme,
     /// Toggle passkey mode for Cube creation (no PIN when enabled).

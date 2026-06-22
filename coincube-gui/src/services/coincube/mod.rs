@@ -2046,6 +2046,119 @@ pub struct VaultHeartbeatRequest {
     pub computed_at: chrono::DateTime<chrono::Utc>,
 }
 
+// =============================================================================
+// Inheritance recovery — heir/keyholder discovery + descriptor release (COIN-377)
+// =============================================================================
+//
+// The heir signs in to their OWN account and discovers Vaults they are a
+// keyholder/beneficiary of (but do not own); once the recovery window is open
+// on-chain they pull the owner's descriptor — server-decrypted, NO password —
+// to drive the existing recovery-sweep screen as a watch-only vault. Two
+// endpoints back this:
+//
+//   GET /api/v1/connect/cubes/recoverable                         (PR 1 list; NET-NEW)
+//   GET /api/v1/connect/cubes/{cubeId}/vault/recovery-descriptor  (PR 2 fetch; built)
+//
+// The second endpoint already exists and is gated server-side
+// (`coincube-api/services/connect/vault/monitoring/handler.go::GetRecoveryDescriptor`);
+// the first is net-new on both sides and owned by the API counterpart plan.
+
+/// Heir-facing recovery-window state for a vault. Collapses the API's
+/// `RecoveryMonitoringState` machine (`none`/`approaching`/`available`/
+/// `reminding`) to the two states the discovery UI acts on. Any unknown wire
+/// value maps to `Approaching` — fail-closed, so we never render a "Recover"
+/// button for a state this client doesn't understand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryState {
+    /// `none`/`approaching` (and unknown) — visible but not actionable; show
+    /// the expected-open date and "we'll email you", no descriptor access.
+    Approaching,
+    /// `available`/`reminding` — the recovery path is open on-chain; the
+    /// descriptor can be released. The heir gets a "Recover" button.
+    Open,
+}
+
+impl RecoveryState {
+    /// Maps a raw server `state` / `last_notified_state` string to the
+    /// heir-facing state. `available`/`reminding` → `Open`; everything else
+    /// (`none`, `approaching`, unknown, empty) → `Approaching` (fail-closed).
+    pub fn from_wire(s: &str) -> Self {
+        match s {
+            "available" | "reminding" => Self::Open,
+            _ => Self::Approaching,
+        }
+    }
+
+    pub fn is_open(self) -> bool {
+        matches!(self, Self::Open)
+    }
+}
+
+/// One row from `GET /api/v1/connect/cubes/recoverable` — a vault the
+/// signed-in account is a keyholder/beneficiary of (but does not own) and may
+/// be able to recover. **Net-new endpoint** (COIN-377 / API counterpart plan);
+/// until it ships the desktop drives PR 1 off this documented shape behind the
+/// capability flag, with fixtures for tests. Tolerant `#[serde(default)]` on
+/// the optional/forward-compat fields so a slightly older/newer server shape
+/// still deserialises.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoverableVault {
+    /// The owner's numeric cube id — the path segment for the descriptor fetch.
+    pub cube_id: u64,
+    /// Owner-chosen label for the vault (display only).
+    #[serde(default)]
+    pub owner_label: Option<String>,
+    /// Owner's monitoring tier. `Full` → password-free recovery (v1);
+    /// `Heartbeat` → recovery password required (deferred to COIN-375).
+    #[serde(default)]
+    pub monitoring_level: VaultMonitoringLevel,
+    /// Raw server recovery-window state (`none`/`approaching`/`available`/
+    /// `reminding`). Use [`RecoverableVault::recovery_state`] for the
+    /// heir-facing collapse.
+    #[serde(default)]
+    pub state: String,
+    /// True when recovering this vault needs the owner's recovery password
+    /// (Heartbeat tier). v1 shows the deferred-path copy for these rows; the
+    /// Alerts-only heir path is COIN-375.
+    #[serde(default)]
+    pub requires_recovery_password: bool,
+    /// "Owner last active" hint, when the server exposes it (display only).
+    #[serde(default)]
+    pub owner_last_active: Option<chrono::DateTime<chrono::Utc>>,
+    /// Expected/known date the recovery window opens, for `approaching` rows.
+    #[serde(default)]
+    pub expected_open_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Optional address gap-limit hint for the recovered watch-only sync. The
+    /// descriptor-release endpoint returns no gap hint (it's owner-only), so if
+    /// the API surfaces one it rides on this list row; otherwise the recovered
+    /// vault syncs with a generous default gap.
+    #[serde(default)]
+    pub gap_limit: Option<u32>,
+}
+
+impl RecoverableVault {
+    /// Collapses the raw wire `state` into the heir-facing two-state view.
+    pub fn recovery_state(&self) -> RecoveryState {
+        RecoveryState::from_wire(&self.state)
+    }
+
+    /// Whether the heir can act on this row now: the window is open AND it
+    /// isn't a password-required (Heartbeat) row deferred to COIN-375.
+    pub fn is_recoverable_now(&self) -> bool {
+        self.recovery_state().is_open() && !self.requires_recovery_password
+    }
+}
+
+/// Body of `GET /api/v1/connect/cubes/{cubeId}/vault/recovery-descriptor` on
+/// 200 — the **plaintext** descriptor. The server decrypts the escrowed copy
+/// under its KEK and returns it directly; the keyholder path carries no
+/// password and does no client-side decryption.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RecoveryDescriptorResponse {
+    pub descriptor: String,
+}
+
 #[cfg(test)]
 mod vault_monitoring_tests {
     use super::*;

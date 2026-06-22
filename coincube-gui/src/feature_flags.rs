@@ -31,6 +31,16 @@ pub const PASSKEY_ENABLED: bool = is_truthy(option_env!("COINCUBE_ENABLE_PASSKEY
 /// rest of the panel code still compiles but is unreachable via UI.
 pub const CUBE_MEMBERS_UI_ENABLED: bool = is_truthy(option_env!("COINCUBE_CUBE_MEMBERS_UI"));
 
+/// Whether the heir "Recover a Vault" discovery surface (COIN-377 / PR 1) is
+/// shown on the launcher.
+///
+/// Controlled by the `COINCUBE_ENABLE_RECOVER_VAULT` env var at build time.
+/// Defaults to `false`: the surface depends on the API's net-new
+/// `/connect/cubes/recoverable` endpoint and the COIN-376 recovery sweep, so it
+/// stays dark until both ship. When `false`, the "Recover a Vault" sidebar entry
+/// is hidden; the panel code still compiles but is unreachable via UI.
+pub const RECOVER_VAULT_ENABLED: bool = is_truthy(option_env!("COINCUBE_ENABLE_RECOVER_VAULT"));
+
 /// `const`-compatible truthy check: accepts `"1"`, `"true"`, `"yes"`
 /// (case-insensitive for the latter two). Anything else, including `None`,
 /// is `false`.
