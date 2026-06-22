@@ -346,6 +346,10 @@ impl DefineSpend {
             // as soon as the form is valid or the user has selected these specific coins and
             // so we should not touch them.
             self.amount_left_to_select = None;
+            // Clear any error from a previous draft: the form is no longer in a
+            // state we'd draft from, so a stale error must not be shown as the
+            // disabled hint in place of "Enter recipient address and amount.".
+            self.warning = None;
             // Remove any max amount from a recipient as it could be misleading.
             if let Some(i) = self.send_max_to_recipient {
                 self.recipients
@@ -1062,6 +1066,7 @@ impl Step for DefineSpend {
             &self.coins_labels,
             &self.batch_label,
             self.amount_left_to_select.as_ref(),
+            self.warning.as_ref().map(|e| e.to_string()),
             &self.feerate,
             self.fee_amount.as_ref(),
             &self.sync_status,

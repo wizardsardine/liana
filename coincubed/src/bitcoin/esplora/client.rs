@@ -10,7 +10,15 @@ use bdk_esplora::{esplora_client, EsploraExt};
 
 use crate::bitcoin::BlockChainTip;
 
-const REQUEST_TIMEOUT_SECS: u64 = 30;
+/// Per-request timeout. Kept well below the old 30s so that when a primary
+/// is unreachable (DNS/region block, outage) the *first* call that re-tests
+/// it fails over in a tolerable window rather than freezing the UI. The
+/// repeated-stall problem is handled by [`TRANSPORT_FAILURE_COOLDOWN`] (a
+/// dead provider is skipped entirely after the first timeout), so this value
+/// only bounds that single re-test; it's set high enough not to false-trip a
+/// legitimately slow provider (the authenticated Connect backstop's startup
+/// handshake was observed at 5–11s in the wild).
+const REQUEST_TIMEOUT_SECS: u64 = 15;
 
 /// How long we skip a provider after it explicitly told us to back off
 /// (HTTP 402/429). Picked generously so a free-tier provider's per-minute
@@ -18,6 +26,17 @@ const REQUEST_TIMEOUT_SECS: u64 = 30;
 /// every poll tick (~10s) and burning a request to re-discover the same
 /// 429. Cleared on the next successful call from that provider.
 const RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(600);
+
+/// How long we skip a provider after a *transport* failure (connection
+/// refused, DNS failure, or — the case that motivated this — a request
+/// timeout). Without this, an unreachable primary is re-dialled on every
+/// single call and the caller eats the full [`REQUEST_TIMEOUT_SECS`] each
+/// time (the 30s-per-action stalls users reported). Cooling it down means
+/// one timeout per window, then the chain skips straight to a working
+/// fallback. Shorter than [`RATE_LIMIT_COOLDOWN`] because a transport blip
+/// often clears quickly (transient network), and the provider rejoins the
+/// rotation immediately on its next successful call regardless.
+const TRANSPORT_FAILURE_COOLDOWN: Duration = Duration::from_secs(120);
 
 /// An error from the Esplora client.
 #[derive(Debug)]
@@ -128,9 +147,9 @@ impl Provider {
         }
     }
 
-    fn enter_cooldown(&self) {
+    fn enter_cooldown(&self, dur: Duration) {
         let mut guard = self.cooldown_until.lock().expect("cooldown mutex poisoned");
-        *guard = Some(Instant::now() + RATE_LIMIT_COOLDOWN);
+        *guard = Some(Instant::now() + dur);
     }
 
     fn clear_cooldown(&self) {
@@ -181,12 +200,33 @@ fn should_fall_back<T>(result: &Result<T, esplora_client::Error>) -> bool {
 }
 
 /// Whether a result is an explicit "throttled by provider" signal that
-/// warrants entering the cooldown.
+/// warrants entering the rate-limit cooldown.
 fn is_throttled<T>(result: &Result<T, esplora_client::Error>) -> bool {
     matches!(
         result,
         Err(esplora_client::Error::HttpResponse { status, .. }) if matches!(*status, 402 | 429)
     )
+}
+
+/// Whether an error is a *transport*-layer failure — a timeout, connection
+/// refused, or DNS failure surfaced by the blocking client's `minreq`
+/// backend (the reported stalls were `Minreq(IoError(TimedOut))`). These
+/// warrant the shorter [`TRANSPORT_FAILURE_COOLDOWN`] so an unreachable
+/// provider is skipped on subsequent calls instead of being re-dialled (and
+/// timing out) every time.
+///
+/// Deliberately narrow: it must NOT match errors that came back from a
+/// *responding* server — `HttpResponse` (any status), `Parsing`,
+/// `BitcoinEncoding`, `TransactionNotFound`, etc. Those indicate the provider
+/// is reachable, so cooling it down would needlessly sideline a healthy
+/// endpoint. Such errors still fall through to the next provider via
+/// [`should_fall_back`]; they just don't trigger a cooldown.
+fn is_transport_err(e: &esplora_client::Error) -> bool {
+    matches!(e, esplora_client::Error::Minreq(_))
+}
+
+fn is_transport_failure<T>(result: &Result<T, esplora_client::Error>) -> bool {
+    matches!(result, Err(e) if is_transport_err(e))
 }
 
 impl Client {
@@ -263,7 +303,7 @@ impl Client {
                 Err(esplora_client::Error::HttpResponse { status, message })
                     if matches!(status, 402 | 429) =>
                 {
-                    provider.enter_cooldown();
+                    provider.enter_cooldown(RATE_LIMIT_COOLDOWN);
                     log::warn!(
                         "Esplora {} throttled at startup (status {}): {} — pre-seeded cooldown",
                         provider.name,
@@ -272,7 +312,21 @@ impl Client {
                     );
                 }
                 Err(e) => {
-                    log::warn!("Esplora {} unreachable at startup: {}", provider.name, e);
+                    // Pre-seed the transport cooldown for an unreachable
+                    // provider so the first real sync tick skips it instead of
+                    // re-paying the request timeout. Only genuine transport
+                    // failures cool down — a reachable-but-erroring server
+                    // (5xx, decode error) is left to be re-tested next tick.
+                    let transport = is_transport_err(&e);
+                    if transport {
+                        provider.enter_cooldown(TRANSPORT_FAILURE_COOLDOWN);
+                    }
+                    log::warn!(
+                        "Esplora {} unreachable at startup: {}{}",
+                        provider.name,
+                        e,
+                        if transport { " — pre-seeded cooldown" } else { "" },
+                    );
                 }
             }
         }
@@ -319,13 +373,28 @@ impl Client {
                 return result.map_err(|e| Error::Client(Box::new(e)));
             }
             if is_throttled(&result) {
-                provider.enter_cooldown();
+                provider.enter_cooldown(RATE_LIMIT_COOLDOWN);
                 if let Err(ref e) = result {
                     log::warn!(
                         "Esplora {} throttled ({}); cooling for {:?} and trying next provider",
                         provider.name,
                         e,
                         RATE_LIMIT_COOLDOWN,
+                    );
+                }
+            } else if is_transport_failure(&result) {
+                // Unreachable provider (timeout/connection error). Cool it down
+                // so subsequent calls skip it instead of re-paying the request
+                // timeout every time — the repeated-stall bug. 5xx falls to the
+                // branch below and is NOT cooled (it usually clears within a
+                // tick).
+                provider.enter_cooldown(TRANSPORT_FAILURE_COOLDOWN);
+                if let Err(ref e) = result {
+                    log::warn!(
+                        "Esplora {} unreachable ({}); cooling for {:?} and trying next provider",
+                        provider.name,
+                        e,
+                        TRANSPORT_FAILURE_COOLDOWN,
                     );
                 }
             } else if let Err(ref e) = result {
@@ -574,7 +643,7 @@ mod tests {
     fn cooled_provider_is_skipped_on_next_call() {
         let client = client_with(vec![fake_provider("p1"), fake_provider("p2")]);
         // Hand-set p1's cooldown.
-        client.providers[0].enter_cooldown();
+        client.providers[0].enter_cooldown(RATE_LIMIT_COOLDOWN);
 
         let mut which: Option<&str> = None;
         let mut p1_called = false;
@@ -624,13 +693,110 @@ mod tests {
         );
     }
 
+    /// Construct the exact error shape the reported stalls produced:
+    /// `Minreq(IoError(TimedOut))`. Used to drive the transport-failure path.
+    fn minreq_timeout() -> esplora_client::Error {
+        esplora_client::Error::Minreq(minreq::Error::IoError(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "the timeout of the request was reached",
+        )))
+    }
+
+    /// `is_transport_failure` must match ONLY genuine transport errors
+    /// (`Minreq`), not responses from a reachable server. A 5xx, a 404, or a
+    /// decode/not-found error means the provider answered — cooling it down
+    /// would needlessly sideline a healthy endpoint.
+    #[test]
+    fn is_transport_failure_matches_only_minreq_errors() {
+        let ok: Result<u32, _> = Ok(1);
+        assert!(!is_transport_failure(&ok));
+
+        for status in [400u16, 404, 429, 500, 503] {
+            let r: Result<u32, _> = Err(esplora_client::Error::HttpResponse {
+                status,
+                message: "x".into(),
+            });
+            assert!(
+                !is_transport_failure(&r),
+                "HTTP {} is a server answer, not a transport failure",
+                status
+            );
+        }
+
+        // Errors from a *responding* server must NOT count as transport
+        // failures (regression: an earlier version matched all non-HTTP errors
+        // and would wrongly cool a healthy provider on a decode/not-found).
+        let not_found: Result<u32, _> = Err(esplora_client::Error::HeaderHeightNotFound(0));
+        assert!(
+            !is_transport_failure(&not_found),
+            "a not-found error is a server answer, not a transport failure",
+        );
+
+        let timeout: Result<u32, _> = Err(minreq_timeout());
+        assert!(
+            is_transport_failure(&timeout),
+            "Minreq(IoError(TimedOut)) is the transport-failure signal",
+        );
+    }
+
+    /// Regression for the reported 30s-per-action stalls: a transport
+    /// failure (timeout/unreachable) must cool the provider down so the
+    /// next call skips it instead of re-dialling and timing out again.
+    #[test]
+    fn transport_failure_enters_cooldown_and_chain_continues() {
+        let client = client_with(vec![fake_provider("p1"), fake_provider("p2")]);
+
+        let mut call_count: u32 = 0;
+        let result: Result<u32, Error> = client.try_in_order(|_| {
+            call_count += 1;
+            if call_count == 1 {
+                Err(minreq_timeout())
+            } else {
+                Ok(42)
+            }
+        });
+
+        assert_eq!(result.unwrap(), 42);
+        assert!(
+            client.providers[0].is_cooling(),
+            "an unreachable provider must enter cooldown so it's skipped next call",
+        );
+        assert!(
+            !client.providers[1].is_cooling(),
+            "the provider that served the request must NOT be cooled",
+        );
+    }
+
+    /// A 5xx (reachable-but-erroring server) must still fall through WITHOUT a
+    /// cooldown — only `Minreq` transport failures cool a provider down.
+    #[test]
+    fn server_error_does_not_enter_transport_cooldown() {
+        let client = client_with(vec![fake_provider("p1"), fake_provider("p2")]);
+        let mut n = 0u32;
+        let _: Result<u32, Error> = client.try_in_order(|_| {
+            n += 1;
+            if n == 1 {
+                Err(esplora_client::Error::HttpResponse {
+                    status: 503,
+                    message: "busy".into(),
+                })
+            } else {
+                Ok(1)
+            }
+        });
+        assert!(
+            !client.providers[0].is_cooling(),
+            "a 503 must not trigger the transport cooldown",
+        );
+    }
+
     /// A successful call from a previously-throttled provider must
     /// clear its cooldown so it rejoins the rotation immediately,
     /// rather than waiting out the rest of the lockout window.
     #[test]
     fn successful_call_clears_cooldown() {
         let p = fake_provider("p1");
-        p.enter_cooldown();
+        p.enter_cooldown(RATE_LIMIT_COOLDOWN);
         assert!(p.is_cooling());
         let client = client_with(vec![p]);
 
@@ -641,7 +807,7 @@ mod tests {
         // naturally expired, then verify success clears it.
         client.providers[0].clear_cooldown();
         // Re-enter a fresh cooldown to test the clear-on-success path.
-        client.providers[0].enter_cooldown();
+        client.providers[0].enter_cooldown(RATE_LIMIT_COOLDOWN);
         // Manually expire it so the call proceeds.
         *client.providers[0].cooldown_until.lock().unwrap() = None;
 
@@ -684,7 +850,7 @@ mod tests {
     fn all_cooling_returns_typed_variant() {
         let client = client_with(vec![fake_provider("p1"), fake_provider("p2")]);
         for p in &client.providers {
-            p.enter_cooldown();
+            p.enter_cooldown(RATE_LIMIT_COOLDOWN);
         }
         let result: Result<u32, Error> = client.try_in_order(|_| Ok(1));
         match result {

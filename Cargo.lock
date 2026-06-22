@@ -1974,6 +1974,7 @@ dependencies = [
  "jsonrpc",
  "log",
  "miniscript",
+ "minreq",
  "rusqlite",
  "serde",
  "serde_json",

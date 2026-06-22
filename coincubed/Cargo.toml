@@ -75,6 +75,12 @@ jsonrpc = { version = "0.18", features = [
 # import/export labels
 bip329 = { version = "0.4", default-features = false }
 
+[dev-dependencies]
+# Lets tests construct a real `esplora_client::Error::Minreq(IoError(..))` to
+# exercise the transport-failure cooldown path. Pinned to the version
+# esplora-client resolves so the wrapped error type unifies.
+minreq = "2.14"
+
 [lints.clippy]
 uninlined_format_args = "allow"
 large_enum_variant = "allow"
