@@ -30,11 +30,7 @@ pub fn setup_logger(
     log_path.push("logs");
     std::fs::create_dir_all(&log_path)?;
 
-    log_path.push(
-        chrono::Local::now()
-            .format("%Y-%b-%d+%H:%M.log")
-            .to_string(),
-    );
+    log_path.push(chrono::Local::now().format("%v+%H:%M-%S.log").to_string());
 
     let file = File::create(log_path)?;
     let writer = BoxMakeWriter::new(Arc::new(file));
