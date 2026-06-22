@@ -1014,8 +1014,11 @@ mod tests {
     impl TempDir {
         fn new() -> Self {
             let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir()
-                .join(format!("coincube-loader-test-{}-{}", std::process::id(), n));
+            let path = std::env::temp_dir().join(format!(
+                "coincube-loader-test-{}-{}",
+                std::process::id(),
+                n
+            ));
             fs::create_dir_all(&path).unwrap();
             TempDir(path)
         }
@@ -1056,7 +1059,10 @@ mod tests {
             cookie.display()
         );
         let config_path = write_daemon_toml(tmp.path(), &backend);
-        assert!(backend_is_internal_bitcoind(&config_path, &internal_datadir));
+        assert!(backend_is_internal_bitcoind(
+            &config_path,
+            &internal_datadir
+        ));
     }
 
     #[test]
@@ -1068,7 +1074,10 @@ mod tests {
         let backend =
             "[bitcoind_config]\ncookie_path = \"/home/user/.bitcoin/.cookie\"\naddr = \"127.0.0.1:8332\"";
         let config_path = write_daemon_toml(tmp.path(), backend);
-        assert!(!backend_is_internal_bitcoind(&config_path, &internal_datadir));
+        assert!(!backend_is_internal_bitcoind(
+            &config_path,
+            &internal_datadir
+        ));
     }
 
     #[test]
@@ -1077,7 +1086,10 @@ mod tests {
         let internal_datadir = tmp.path().join("bitcoind/datadir");
         let backend = "[bitcoind_config]\nauth = \"user:password\"\naddr = \"127.0.0.1:8332\"";
         let config_path = write_daemon_toml(tmp.path(), backend);
-        assert!(!backend_is_internal_bitcoind(&config_path, &internal_datadir));
+        assert!(!backend_is_internal_bitcoind(
+            &config_path,
+            &internal_datadir
+        ));
     }
 
     #[test]
@@ -1086,7 +1098,10 @@ mod tests {
         let internal_datadir = tmp.path().join("bitcoind/datadir");
         let backend = "[esplora_config]\naddr = \"https://mempool.space/api\"";
         let config_path = write_daemon_toml(tmp.path(), backend);
-        assert!(!backend_is_internal_bitcoind(&config_path, &internal_datadir));
+        assert!(!backend_is_internal_bitcoind(
+            &config_path,
+            &internal_datadir
+        ));
     }
 
     #[test]
