@@ -3,8 +3,6 @@ use tracing_subscriber::{filter, fmt::writer::BoxMakeWriter, prelude::*, reload}
 
 use crate::dir::CoincubeDirectory;
 
-const GUI_LOG_FILE_NAME: &str = "coincube.log";
-
 #[derive(Debug)]
 pub enum LoggerError {
     Io(std::io::Error),
@@ -25,16 +23,25 @@ impl From<reload::Error> for LoggerError {
 
 pub fn setup_logger(
     log_level: filter::LevelFilter,
-    datadir: CoincubeDirectory,
+    datadir: &CoincubeDirectory,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut log_path = datadir.path().to_path_buf();
-    log_path.push(GUI_LOG_FILE_NAME);
+
+    log_path.push("logs");
+    std::fs::create_dir_all(&log_path)?;
+
+    log_path.push(
+        chrono::Local::now()
+            .format("%Y-%b-%d+%H:%M.log")
+            .to_string(),
+    );
 
     let file = File::create(log_path)?;
     let writer = BoxMakeWriter::new(Arc::new(file));
 
     let file_log = tracing_subscriber::fmt::layer()
         .with_writer(writer)
+        .with_line_number(false)
         .with_file(false);
 
     let stdout_log = tracing_subscriber::fmt::layer().pretty().with_file(false);
@@ -63,6 +70,8 @@ pub fn setup_logger(
                 })),
         )
         .init();
+
+    tracing_log::LogTracer::init()?;
 
     Ok(())
 }

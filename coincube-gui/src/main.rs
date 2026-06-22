@@ -139,7 +139,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     if let Err(e) = iced::application(
-        move || GUI::new((config.clone(), log_level)),
+        move || GUI::new(config.clone(), log_level),
         GUI::update,
         GUI::view,
     )
