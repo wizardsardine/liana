@@ -74,8 +74,17 @@ impl DefineEsplora {
         let network = self
             .network
             .ok_or_else(|| Error::Esplora("Bitcoin network is not selected".to_string()))?;
+        // Match the daemon's Esplora client (see `coincubed`'s
+        // `build_blocking_client`): a 3s timeout is too aggressive — real-world
+        // TLS handshakes to Cloudflare-fronted providers were observed at 5–11s,
+        // and this ping makes two sequential round-trips — and the blocking
+        // client's `minreq` backend can't decompress gzip/brotli, so request an
+        // identity encoding to avoid `InvalidUtf8InResponse` on compressed
+        // bodies. Without these, a perfectly valid endpoint (e.g.
+        // mempool.space/testnet4/api) fails the check.
         let client = esplora_client::Builder::new(&addr)
-            .timeout(3)
+            .timeout(15)
+            .header("Accept-Encoding", "identity")
             .build_blocking();
         let height = client
             .get_height()

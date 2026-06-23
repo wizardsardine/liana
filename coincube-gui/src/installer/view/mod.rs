@@ -864,12 +864,19 @@ pub fn define_bitcoin_node<'a>(
                             .push(text("Connection checked").style(theme::text::success)),
                     )
                 } else {
+                    let detail = match res {
+                        Ok(_) => String::new(),
+                        Err(e) => e.to_string(),
+                    };
                     Container::new(
                         Row::new()
                             .spacing(10)
                             .align_y(Alignment::Center)
                             .push(icon::square_cross_icon().style(theme::text::error))
-                            .push(text("Connection failed").style(theme::text::error)),
+                            .push(
+                                text(format!("Connection failed: {detail}"))
+                                    .style(theme::text::error),
+                            ),
                     )
                 }
             })
