@@ -31,6 +31,12 @@ use crate::services::coincube::{
 };
 use crate::services::recovery::fetch_recovery_descriptor;
 
+/// Shown when the heir isn't signed in: both for a `Load` attempted without a
+/// Connect client and for the reset (`Idle`) state the panel returns to after
+/// logout — Home may still be parked on this section, and `Idle` must read as a
+/// sign-in prompt rather than a perpetual "Loading…" with no request in flight.
+const SIGNED_OUT_PROMPT: &str = "Sign in to your account to see vaults you can recover.";
+
 /// How a discovery row should present, encoding invariants I1 (state gating)
 /// and I7 (tier honesty). Password-required (Heartbeat) rows take precedence:
 /// they are never actionable in v1 regardless of window state, and must show
@@ -191,9 +197,7 @@ impl RecoverVaultPanel {
         match message {
             RecoverVaultMessage::Load => {
                 let Some(client) = client else {
-                    self.list = ListState::Error(
-                        "Sign in to your account to see vaults you can recover.".to_string(),
-                    );
+                    self.list = ListState::Error(SIGNED_OUT_PROMPT.to_string());
                     return Task::none();
                 };
                 self.list = ListState::Loading;
@@ -211,6 +215,14 @@ impl RecoverVaultPanel {
                 // Drop a list that resolved after the session changed (logout /
                 // account switch) so we never paint the prior account's vaults.
                 if gen != session_generation {
+                    // If that dead fetch was still showing `Loading`, fall back
+                    // to `Idle` so `is_loaded()` is false and reopening refetches
+                    // — otherwise the pane is stranded on "Loading…" with no
+                    // request in flight. Leave `Loaded`/`Error`/`Idle` as-is so
+                    // a current-session result or a live retry isn't clobbered.
+                    if matches!(self.list, ListState::Loading) {
+                        self.list = ListState::Idle;
+                    }
                     return Task::none();
                 }
                 self.list = match res {
@@ -282,7 +294,17 @@ pub fn view(panel: &RecoverVaultPanel) -> Element<'_, RecoverVaultMessage> {
         );
 
     let body: Element<RecoverVaultMessage> = match &panel.list {
-        ListState::Idle | ListState::Loading => {
+        // Reset / never-requested. Opening the section while signed in fires
+        // `Load` immediately (→ `Loading`), so the pane only lands on `Idle`
+        // when Home is still parked here after a logout reset — show the
+        // sign-in prompt, not a "Loading…" that will never resolve.
+        ListState::Idle => {
+            Container::new(p1_regular(SIGNED_OUT_PROMPT).style(theme::text::secondary))
+                .padding(20)
+                .center_x(Length::Fill)
+                .into()
+        }
+        ListState::Loading => {
             Container::new(p1_regular("Loading recoverable vaults…").style(theme::text::secondary))
                 .padding(20)
                 .center_x(Length::Fill)
@@ -530,6 +552,34 @@ mod tests {
             "stale-session list must not be stored, got {:?}",
             panel.list
         );
+    }
+
+    #[test]
+    fn stale_loaded_while_loading_falls_back_to_idle() {
+        // A stale-session list resolving while the pane still shows `Loading`
+        // must drop back to `Idle` — not strand it on "Loading…" forever (which
+        // `is_loaded()` would treat as loaded, blocking refetch on reopen).
+        let mut panel = RecoverVaultPanel::new();
+        panel.list = ListState::Loading;
+        let rows = vec![vault(VaultMonitoringLevel::Full, "available", false)];
+        let _ = panel.update(RecoverVaultMessage::Loaded(Ok(rows), 1), None, 2);
+        assert!(
+            matches!(panel.list, ListState::Idle),
+            "stranded Loading must reset to Idle, got {:?}",
+            panel.list
+        );
+        assert!(!panel.is_loaded());
+    }
+
+    #[test]
+    fn stale_loaded_does_not_clobber_current_loaded_list() {
+        // A stale drop must leave an already-populated current-session list
+        // intact (don't reset a good `Loaded` back to `Idle`).
+        let mut panel = RecoverVaultPanel::new();
+        panel.list = ListState::Loaded(vec![vault(VaultMonitoringLevel::Full, "available", false)]);
+        let rows = vec![vault(VaultMonitoringLevel::Heartbeat, "approaching", true)];
+        let _ = panel.update(RecoverVaultMessage::Loaded(Ok(rows), 1), None, 2);
+        assert!(matches!(panel.list, ListState::Loaded(ref r) if r.len() == 1));
     }
 
     #[test]
