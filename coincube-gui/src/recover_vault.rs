@@ -134,8 +134,10 @@ pub enum ListState {
     /// Not yet requested (e.g. before the section is opened).
     #[default]
     Idle,
-    /// Fetch in flight.
-    Loading,
+    /// Fetch in flight. Carries the Connect session generation it was fired in
+    /// so a stale `Loaded` only clears *its own* dead load, never a newer
+    /// in-flight one from a later session.
+    Loading(u64),
     /// Fetched rows (possibly empty).
     Loaded(Vec<RecoverableVault>),
     /// Fetch failed — message is display-safe.
@@ -162,8 +164,11 @@ pub enum RecoverVaultMessage {
     Loaded(Result<Vec<RecoverableVault>, String>, u64),
     /// Heir clicked "Recover" on the given cube — pull its descriptor.
     Recover(u64),
-    /// Descriptor fetch resolved (cube id, plaintext descriptor | display copy).
-    Fetched(u64, Result<String, String>),
+    /// Descriptor fetch resolved (cube id, plaintext descriptor | display copy,
+    /// session generation the fetch was fired in). The `u64` lets a fetch from a
+    /// prior session (account switch, same cube) be dropped instead of painting
+    /// its result onto the new session's row.
+    Fetched(u64, Result<String, String>, u64),
 }
 
 impl RecoverVaultPanel {
@@ -178,7 +183,7 @@ impl RecoverVaultPanel {
     /// `Error` (a transient failure) both return false so the next reopen
     /// retries instead of leaving the heir stuck on a stale error.
     pub fn is_loaded(&self) -> bool {
-        matches!(self.list, ListState::Loading | ListState::Loaded(_))
+        matches!(self.list, ListState::Loading(_) | ListState::Loaded(_))
     }
 
     /// Drives the surface. `client` is the heir's authenticated Connect client
@@ -200,7 +205,7 @@ impl RecoverVaultPanel {
                     self.list = ListState::Error(SIGNED_OUT_PROMPT.to_string());
                     return Task::none();
                 };
-                self.list = ListState::Loading;
+                self.list = ListState::Loading(session_generation);
                 Task::perform(
                     async move {
                         client
@@ -215,12 +220,14 @@ impl RecoverVaultPanel {
                 // Drop a list that resolved after the session changed (logout /
                 // account switch) so we never paint the prior account's vaults.
                 if gen != session_generation {
-                    // If that dead fetch was still showing `Loading`, fall back
-                    // to `Idle` so `is_loaded()` is false and reopening refetches
-                    // — otherwise the pane is stranded on "Loading…" with no
-                    // request in flight. Leave `Loaded`/`Error`/`Idle` as-is so
-                    // a current-session result or a live retry isn't clobbered.
-                    if matches!(self.list, ListState::Loading) {
+                    // If the pane is still showing the `Loading` for *this* dead
+                    // fetch, fall back to `Idle` so `is_loaded()` is false and
+                    // reopening refetches — otherwise it's stranded on "Loading…"
+                    // with no request in flight. Match on the stored generation
+                    // so a newer in-flight load (later session) keeps its
+                    // `Loading`; and leave `Loaded`/`Error`/`Idle` untouched so a
+                    // current result or a live retry isn't clobbered.
+                    if matches!(self.list, ListState::Loading(g) if g == gen) {
                         self.list = ListState::Idle;
                     }
                     return Task::none();
@@ -250,15 +257,20 @@ impl RecoverVaultPanel {
                             .map_err(|e| e.to_string());
                         (cube_id, res)
                     },
-                    |(cube_id, res)| RecoverVaultMessage::Fetched(cube_id, res),
+                    move |(cube_id, res)| {
+                        RecoverVaultMessage::Fetched(cube_id, res, session_generation)
+                    },
                 )
             }
-            RecoverVaultMessage::Fetched(cube_id, res) => {
-                // Drop a descriptor fetch the user has moved on from: starting
-                // recovery on another vault replaces `active` (and a logout
-                // clears it), so an older request must not paint its
-                // "Recovery ready"/error onto whatever row is now in flight.
-                if self.active.as_ref().map(|(id, _)| *id) != Some(cube_id) {
+            RecoverVaultMessage::Fetched(cube_id, res, gen) => {
+                // Drop a descriptor fetch the user (or session) has moved on
+                // from: a stale generation means a prior session fired it (an
+                // account switch — even the same cube id), and a non-matching
+                // `active` id means recovery started on another row. Either way
+                // its "Recovery ready"/error must not paint onto the live row.
+                if gen != session_generation
+                    || self.active.as_ref().map(|(id, _)| *id) != Some(cube_id)
+                {
                     return Task::none();
                 }
                 let status = match res {
@@ -304,7 +316,7 @@ pub fn view(panel: &RecoverVaultPanel) -> Element<'_, RecoverVaultMessage> {
                 .center_x(Length::Fill)
                 .into()
         }
-        ListState::Loading => {
+        ListState::Loading(_) => {
             Container::new(p1_regular("Loading recoverable vaults…").style(theme::text::secondary))
                 .padding(20)
                 .center_x(Length::Fill)
@@ -524,7 +536,7 @@ mod tests {
         panel.list = ListState::Error("boom".to_string());
         assert!(!panel.is_loaded());
         // Loading: in flight → don't duplicate the request.
-        panel.list = ListState::Loading;
+        panel.list = ListState::Loading(0);
         assert!(panel.is_loaded());
         // Loaded: already have the list → don't refetch on reopen.
         panel.list = ListState::Loaded(vec![]);
@@ -556,11 +568,12 @@ mod tests {
 
     #[test]
     fn stale_loaded_while_loading_falls_back_to_idle() {
-        // A stale-session list resolving while the pane still shows `Loading`
-        // must drop back to `Idle` — not strand it on "Loading…" forever (which
-        // `is_loaded()` would treat as loaded, blocking refetch on reopen).
+        // A stale-session list (gen 1) resolving while the pane still shows the
+        // `Loading` for *that same* dead fetch must drop back to `Idle` — not
+        // strand it on "Loading…" forever (which `is_loaded()` would treat as
+        // loaded, blocking refetch on reopen).
         let mut panel = RecoverVaultPanel::new();
-        panel.list = ListState::Loading;
+        panel.list = ListState::Loading(1);
         let rows = vec![vault(VaultMonitoringLevel::Full, "available", false)];
         let _ = panel.update(RecoverVaultMessage::Loaded(Ok(rows), 1), None, 2);
         assert!(
@@ -569,6 +582,22 @@ mod tests {
             panel.list
         );
         assert!(!panel.is_loaded());
+    }
+
+    #[test]
+    fn stale_loaded_does_not_clobber_a_newer_loading() {
+        // A newer in-flight load (gen 2 `Loading`) must survive a stale (gen 1)
+        // result resolving — the reset only clears the dead generation's own
+        // `Loading`, never a later session's request.
+        let mut panel = RecoverVaultPanel::new();
+        panel.list = ListState::Loading(2);
+        let rows = vec![vault(VaultMonitoringLevel::Full, "available", false)];
+        let _ = panel.update(RecoverVaultMessage::Loaded(Ok(rows), 1), None, 2);
+        assert!(
+            matches!(panel.list, ListState::Loading(2)),
+            "newer in-flight Loading must be preserved, got {:?}",
+            panel.list
+        );
     }
 
     #[test]
@@ -599,7 +628,11 @@ mod tests {
         // resolves, so the matching `Fetched` is applied to the active row.
         panel.active = Some((7, RecoverStatus::Fetching));
         let _ = panel.update(
-            RecoverVaultMessage::Fetched(7, Err("Recovery is unavailable right now.".to_string())),
+            RecoverVaultMessage::Fetched(
+                7,
+                Err("Recovery is unavailable right now.".to_string()),
+                0,
+            ),
             None,
             0,
         );
@@ -619,13 +652,33 @@ mod tests {
         let mut panel = RecoverVaultPanel::new();
         panel.active = Some((8, RecoverStatus::Fetching));
         let _ = panel.update(
-            RecoverVaultMessage::Fetched(7, Ok("wsh(...)".to_string())),
+            RecoverVaultMessage::Fetched(7, Ok("wsh(...)".to_string()), 0),
             None,
             0,
         );
         assert!(
             matches!(panel.active, Some((8, RecoverStatus::Fetching))),
             "stale cube-7 fetch must leave cube-8's row untouched, got {:?}",
+            panel.active
+        );
+    }
+
+    #[test]
+    fn stale_session_fetch_for_same_cube_is_dropped() {
+        // Account A's descriptor fetch for cube 7 (gen 1) resolving in account
+        // B's session (gen 2) — same cube id, since both are keyholders — must
+        // be dropped, not painted onto B's in-flight row. The cube-id-only guard
+        // would miss this; the generation check catches it.
+        let mut panel = RecoverVaultPanel::new();
+        panel.active = Some((7, RecoverStatus::Fetching));
+        let _ = panel.update(
+            RecoverVaultMessage::Fetched(7, Ok("wsh(...)".to_string()), 1),
+            None,
+            2,
+        );
+        assert!(
+            matches!(panel.active, Some((7, RecoverStatus::Fetching))),
+            "stale-session fetch must not overwrite the new session's row, got {:?}",
             panel.active
         );
     }
