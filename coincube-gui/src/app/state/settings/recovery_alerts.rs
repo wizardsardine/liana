@@ -17,13 +17,16 @@
 use std::sync::Arc;
 
 use iced::Task;
+use zeroize::Zeroizing;
 
 use crate::{
-    app::{message::Message, view, wallet::Wallet},
+    app::{cache::Cache, message::Message, settings, view, wallet::Wallet},
     services::coincube::{
-        CoincubeClient, CubeMember, KeyholderDownloadPolicy, SetVaultMonitoringRequest,
-        VaultMonitoringLevel, VaultMonitoringStatus,
+        CoincubeClient, CubeMember, KeyholderDownloadPolicy, VaultMonitoringLevel,
+        VaultMonitoringStatus,
     },
+    services::inheritance::{disable_escrow, enroll_escrow, EscrowTier},
+    services::recovery::{SeedBlob, SeedBlobCube, SeedBlobMnemonic, BLOB_VERSION},
 };
 
 use view::{RecoveryAlertsMessage, SettingsMessage};
@@ -50,6 +53,19 @@ pub struct RecoveryAlerts {
     /// True once at least one load has been attempted — lets the card pick
     /// the right loading vs. empty copy.
     pub loaded_once: bool,
+    /// The escrow tier currently applied (best-effort: the monitoring status
+    /// reports on/off, not which tier, so this tracks the last applied/loaded
+    /// tier). `Off` when escrow is off.
+    pub tier: EscrowTier,
+    /// True while the card is collecting the owner's PIN to unlock the seed for
+    /// a Full-Cube enrolment (the only tier that escrows the seed).
+    pub awaiting_pin: bool,
+    /// PIN digits being entered for a Full-Cube enrolment. Cleared as soon as
+    /// it's consumed (or the flow is cancelled).
+    pub pin: String,
+    /// The tier a change is in flight for, applied to `tier` only once the
+    /// server confirms (so a failed change doesn't mislabel the selector).
+    pub pending_tier: Option<EscrowTier>,
 }
 
 impl Default for RecoveryAlerts {
@@ -70,6 +86,21 @@ impl RecoveryAlerts {
             entitled: false,
             no_vault: false,
             loaded_once: false,
+            tier: EscrowTier::Off,
+            awaiting_pin: false,
+            pin: String::new(),
+            pending_tier: None,
+        }
+    }
+
+    /// Best-effort current tier for the view. `Off` when monitoring is off;
+    /// otherwise the last tier we applied/loaded (escrow status doesn't report
+    /// which tier, so a freshly-loaded "on" vault shows the tracked tier).
+    pub fn tier(&self) -> EscrowTier {
+        if matches!(self.level(), VaultMonitoringLevel::Off) {
+            EscrowTier::Off
+        } else {
+            self.tier
         }
     }
 
@@ -114,6 +145,8 @@ pub fn update(
     entitled: bool,
     members: &[CubeMember],
     session_generation: u64,
+    cache: &Cache,
+    local_cube_id: &str,
 ) -> Task<Message> {
     ra.entitled = entitled;
     match msg {
@@ -182,10 +215,21 @@ pub fn update(
             ra.loaded_once = true;
             match res {
                 Ok((vid, status)) => {
+                    let level_off = matches!(status.level, VaultMonitoringLevel::Off);
                     ra.vault_id = Some(vid);
                     ra.status = Some(status);
                     ra.no_vault = false;
                     ra.error = None;
+                    // The monitoring status reports on/off, not which escrow
+                    // tier. Reconcile our tracked tier: Off when monitoring is
+                    // off; otherwise keep the tracked tier, defaulting an
+                    // unknown "on" vault to Vault-only (the safe minimum — we
+                    // never imply the seed is escrowed unless we set it).
+                    if level_off {
+                        ra.tier = EscrowTier::Off;
+                    } else if ra.tier == EscrowTier::Off {
+                        ra.tier = EscrowTier::VaultOnly;
+                    }
                 }
                 Err(e) => {
                     // A missing Connect vault (the cube has no vault yet, or a
@@ -208,50 +252,32 @@ pub fn update(
             }
             Task::none()
         }
-        RecoveryAlertsMessage::SelectLevel(level) => {
+        RecoveryAlertsMessage::SelectTier(tier) => {
+            ra.awaiting_pin = false;
+            ra.pin.clear();
             if !entitled {
                 ra.error = Some("Recovery alerts require an Estate plan.".to_string());
                 return Task::none();
             }
-            if ra.level() == level {
+            if ra.tier() == tier {
                 return Task::none();
             }
-            let (Some(client), Some(vault_id)) = (client, ra.vault_id) else {
+            let (Some(client), Some(vault_id), Some(server_cube_id)) =
+                (client, ra.vault_id, server_cube_id)
+            else {
                 ra.error = Some(
                     "Couldn't find this Vault on Connect yet — try again in a moment.".to_string(),
                 );
                 return Task::none();
             };
-            let current_policy = ra.status.as_ref().map(|s| s.crk_keyholder_download);
-            ra.submitting = true;
-            ra.error = None;
-            match level {
-                VaultMonitoringLevel::Off => Task::perform(
-                    async move {
-                        client
-                            .delete_vault_monitoring(vault_id)
-                            .await
-                            .map(|_| VaultMonitoringStatus {
-                                level: VaultMonitoringLevel::Off,
-                                crk_keyholder_download: current_policy.unwrap_or_default(),
-                                last_notified_state: None,
-                                updated_at: None,
-                            })
-                            .map_err(|e| e.to_string())
-                    },
-                    move |res| ra_msg(RecoveryAlertsMessage::ChangeResult(res, session_generation)),
-                ),
-                VaultMonitoringLevel::Heartbeat => {
-                    let req = SetVaultMonitoringRequest {
-                        level,
-                        descriptor: None,
-                        gap_limit: None,
-                        crk_keyholder_download: current_policy,
-                    };
+            match tier {
+                EscrowTier::Off => {
+                    ra.submitting = true;
+                    ra.error = None;
+                    ra.pending_tier = Some(EscrowTier::Off);
                     Task::perform(
                         async move {
-                            client
-                                .set_vault_monitoring(vault_id, req)
+                            disable_escrow(&client, server_cube_id, vault_id)
                                 .await
                                 .map_err(|e| e.to_string())
                         },
@@ -260,29 +286,25 @@ pub fn update(
                         },
                     )
                 }
-                VaultMonitoringLevel::Full => {
-                    // Full needs the descriptor to escrow. It only exists on
-                    // a device holding the live wallet.
-                    let Some(descriptor) = wallet.as_ref().map(|w| w.main_descriptor.to_string())
+                EscrowTier::VaultOnly => {
+                    // Descriptor-only escrow needs no seed (no PIN). Build the
+                    // descriptor blob from the live wallet and enrol.
+                    let Some(descriptor_json) =
+                        descriptor_blob_json(wallet.as_deref(), local_cube_id, cache.network)
                     else {
-                        ra.submitting = false;
                         ra.error = Some(
-                            "This Vault's descriptor isn't available on this device, so full \
-                             monitoring can't be enabled here."
+                            "This Vault's descriptor isn't available on this device, so recovery \
+                             escrow can't be set up here."
                                 .to_string(),
                         );
                         return Task::none();
                     };
-                    let req = SetVaultMonitoringRequest {
-                        level,
-                        descriptor: Some(descriptor),
-                        gap_limit: None,
-                        crk_keyholder_download: current_policy,
-                    };
+                    ra.submitting = true;
+                    ra.error = None;
+                    ra.pending_tier = Some(EscrowTier::VaultOnly);
                     Task::perform(
                         async move {
-                            client
-                                .set_vault_monitoring(vault_id, req)
+                            enroll_escrow(&client, server_cube_id, vault_id, descriptor_json, None)
                                 .await
                                 .map_err(|e| e.to_string())
                         },
@@ -291,7 +313,91 @@ pub fn update(
                         },
                     )
                 }
+                EscrowTier::FullCube => {
+                    // Full-Cube escrows the seed too — re-confirm the PIN before
+                    // exporting it. Collect the PIN; `ConfirmFullCube` enrols.
+                    if wallet.is_none() {
+                        ra.error = Some(
+                            "This Vault isn't available on this device, so full-Cube escrow can't \
+                             be set up here."
+                                .to_string(),
+                        );
+                        return Task::none();
+                    }
+                    ra.error = None;
+                    ra.awaiting_pin = true;
+                    ra.pin.clear();
+                    Task::none()
+                }
             }
+        }
+        RecoveryAlertsMessage::EscrowPinChanged(pin) => {
+            ra.pin = pin;
+            Task::none()
+        }
+        RecoveryAlertsMessage::CancelFullCube => {
+            ra.awaiting_pin = false;
+            ra.pin.clear();
+            ra.error = None;
+            Task::none()
+        }
+        RecoveryAlertsMessage::ConfirmFullCube => {
+            if !entitled || !ra.awaiting_pin {
+                return Task::none();
+            }
+            let (Some(client), Some(vault_id), Some(server_cube_id)) =
+                (client, ra.vault_id, server_cube_id)
+            else {
+                ra.error = Some(
+                    "Couldn't find this Vault on Connect yet — try again in a moment.".to_string(),
+                );
+                return Task::none();
+            };
+            let Some(descriptor_json) =
+                descriptor_blob_json(wallet.as_deref(), local_cube_id, cache.network)
+            else {
+                ra.error =
+                    Some("This Vault's descriptor isn't available on this device.".to_string());
+                return Task::none();
+            };
+            // Unlock the seed with the entered PIN, build the seed blob, then
+            // enrol descriptor + seed. The mnemonic is wrapped in `Zeroizing`
+            // at the async boundary and never rides a message.
+            let pin = Zeroizing::new(std::mem::take(&mut ra.pin));
+            let seed_cube = match seed_blob_cube(cache, local_cube_id) {
+                Ok(c) => c,
+                Err(e) => {
+                    ra.error = Some(e);
+                    return Task::none();
+                }
+            };
+            let network_dir = cache.datadir_path.network_directory(cache.network);
+            let datadir = cache.datadir_path.path().to_path_buf();
+            let network = cache.network;
+            let local_cube_id = local_cube_id.to_string();
+            ra.submitting = true;
+            ra.awaiting_pin = false;
+            ra.error = None;
+            ra.pending_tier = Some(EscrowTier::FullCube);
+            Task::perform(
+                async move {
+                    let seed_json = tokio::task::spawn_blocking(move || {
+                        build_seed_blob_json(&network_dir, &datadir, network, &local_cube_id, &pin, seed_cube)
+                    })
+                    .await
+                    .map_err(|e| format!("PIN task failed: {}", e))??;
+                    enroll_escrow(
+                        &client,
+                        server_cube_id,
+                        vault_id,
+                        descriptor_json,
+                        Some(seed_json),
+                    )
+                    .await
+                    .map_err(|e| e.to_string())
+                },
+                move |res| ra_msg(RecoveryAlertsMessage::ChangeResult(res, session_generation)),
+            )
         }
         RecoveryAlertsMessage::SetDownloadPolicy(policy) => {
             if !entitled {
@@ -327,12 +433,96 @@ pub fn update(
             ra.submitting = false;
             match res {
                 Ok(status) => {
+                    // Apply the tier we just enrolled/disabled (tracked in
+                    // `pending_tier`) now that the server confirmed it.
+                    if let Some(t) = ra.pending_tier.take() {
+                        ra.tier = t;
+                    }
                     ra.status = Some(status);
                     ra.error = None;
                 }
-                Err(e) => ra.error = Some(e),
+                Err(e) => {
+                    ra.pending_tier = None;
+                    ra.error = Some(e);
+                }
             }
             Task::none()
         }
     }
+}
+
+/// Serialises the descriptor blob JSON for escrow from the live wallet (the
+/// same `DescriptorBlob` the Cube Recovery Kit uses, so the heir restore reuses
+/// its parsing). `None` when no wallet is loaded on this device.
+fn descriptor_blob_json(
+    wallet: Option<&Wallet>,
+    cube_uuid: &str,
+    network: coincube_core::miniscript::bitcoin::Network,
+) -> Option<Vec<u8>> {
+    let wallet = wallet?;
+    let net = settings::network_to_api_string(network);
+    let blob = super::recovery_kit::descriptor_blob_from_wallet(wallet, cube_uuid, &net);
+    serde_json::to_vec(&blob).ok()
+}
+
+/// Builds the cube-metadata half of the seed blob from on-disk settings + the
+/// live cache. Read on the main thread before the PIN task so a settings/cube
+/// lookup failure surfaces synchronously.
+fn seed_blob_cube(cache: &Cache, local_cube_id: &str) -> Result<SeedBlobCube, String> {
+    let network_dir = cache.datadir_path.network_directory(cache.network);
+    let s = settings::Settings::from_file(&network_dir)
+        .map_err(|_| "Failed to read settings file.".to_string())?;
+    let cube = s
+        .cubes
+        .iter()
+        .find(|c| c.id == local_cube_id)
+        .ok_or_else(|| "Cube not found in settings.".to_string())?;
+    let created_at = chrono::DateTime::<chrono::Utc>::from_timestamp(cube.created_at, 0)
+        .map(|t| t.to_rfc3339())
+        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
+    Ok(SeedBlobCube {
+        uuid: local_cube_id.to_string(),
+        name: cube.name.clone(),
+        network: settings::network_to_api_string(cache.network),
+        created_at,
+        lightning_address: cache.lightning_address.clone(),
+    })
+}
+
+/// Verifies the PIN, unlocks the mnemonic, and serialises the full seed blob
+/// JSON for Full-Cube escrow. Runs on a blocking thread (Argon2 PIN verify +
+/// disk read). The mnemonic is wiped (`Zeroizing`) as soon as the phrase string
+/// is built.
+fn build_seed_blob_json(
+    network_dir: &crate::dir::NetworkDirectory,
+    datadir: &std::path::Path,
+    network: coincube_core::miniscript::bitcoin::Network,
+    local_cube_id: &str,
+    pin: &str,
+    cube: SeedBlobCube,
+) -> Result<Vec<u8>, String> {
+    let s =
+        settings::Settings::from_file(network_dir).map_err(|_| "Failed to read settings file.")?;
+    let cube_settings = s
+        .cubes
+        .iter()
+        .find(|c| c.id == local_cube_id)
+        .ok_or("Cube not found in settings.")?;
+    if !cube_settings.verify_pin(pin) {
+        return Err("Incorrect PIN. Please try again.".to_string());
+    }
+    let fingerprint = cube_settings
+        .master_signer_fingerprint
+        .ok_or("This Cube has no master signer.")?;
+    let words = super::general::load_mnemonic_words(datadir, network, fingerprint, pin)?;
+    let phrase = Zeroizing::new(words.join(" "));
+    let blob = SeedBlob {
+        version: BLOB_VERSION,
+        cube,
+        mnemonic: SeedBlobMnemonic {
+            phrase: phrase.to_string(),
+            language: "en".to_string(),
+        },
+    };
+    serde_json::to_vec(&blob).map_err(|e| format!("seed blob: {}", e))
 }

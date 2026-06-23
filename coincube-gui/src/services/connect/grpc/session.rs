@@ -2,10 +2,16 @@ use tonic::transport::Channel;
 
 use super::connect_v1::{
     session_service_client::SessionServiceClient, CancelSigningSessionRequest,
-    CreateSigningSessionRequest, GetSigningSessionRequest, GetSigningSessionResponse,
-    ListPendingSessionsResponse, ResolveSignersRequest, ResolveSignersResponse, SigningSession,
+    CreateSigningSessionRequest, DecryptInheritanceEnvelopeRequest, GetSigningSessionRequest,
+    GetSigningSessionResponse, ListPendingSessionsResponse, ResolveSignersRequest,
+    ResolveSignersResponse, SigningSession,
 };
 use super::interceptor::AuthInterceptor;
+
+/// secp256k1 ECDH + HKDF-SHA256 yield a 32-byte symmetric key; the desktop
+/// rejects anything else from the relayed Keychain response (a malformed key
+/// would otherwise surface as an opaque AES-GCM open failure).
+const INHERITANCE_SHARED_KEY_LEN: usize = 32;
 
 type InterceptedSessionClient =
     SessionServiceClient<tonic::service::interceptor::InterceptedService<Channel, AuthInterceptor>>;
@@ -87,5 +93,39 @@ impl GrpcSessionClient {
             .resolve_signers(request)
             .await
             .map(|r| r.into_inner())
+    }
+
+    /// Heir-side inheritance recovery: ask the heir's Keychain (via the API
+    /// relay) to ECDH-decrypt one ECIES envelope and return the derived
+    /// symmetric key `K`. Keychain approves with biometric/PIN and never
+    /// returns the recovery private key or the seed/descriptor plaintext — the
+    /// desktop completes the AES-256-GCM open with `K`. `purpose` pins the
+    /// scheme so a Keychain that doesn't implement it can refuse.
+    ///
+    /// `ephemeral_pubkey` is the 33-byte compressed point and `derivation` the
+    /// non-hardened child path, both taken verbatim from the envelope.
+    pub async fn decrypt_inheritance_envelope(
+        &mut self,
+        cube_id: String,
+        ephemeral_pubkey: Vec<u8>,
+        derivation: String,
+    ) -> Result<Vec<u8>, tonic::Status> {
+        let request = DecryptInheritanceEnvelopeRequest {
+            cube_id,
+            ephemeral_pubkey,
+            derivation,
+            purpose: crate::services::inheritance::SCHEME.to_string(),
+        };
+        let resp = self
+            .inner
+            .decrypt_inheritance_envelope(request)
+            .await?
+            .into_inner();
+        if resp.shared_key.len() != INHERITANCE_SHARED_KEY_LEN {
+            return Err(tonic::Status::internal(
+                "DecryptInheritanceEnvelope returned a shared key of the wrong length",
+            ));
+        }
+        Ok(resp.shared_key)
     }
 }

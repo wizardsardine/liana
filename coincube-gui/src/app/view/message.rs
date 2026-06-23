@@ -383,8 +383,16 @@ pub enum RecoveryAlertsMessage {
         Result<(u64, crate::services::coincube::VaultMonitoringStatus), String>,
         u64,
     ),
-    /// User picked a monitoring level (Off / Alerts-only / Full).
-    SelectLevel(crate::services::coincube::VaultMonitoringLevel),
+    /// User picked an inheritance escrow tier (Off / Vault-only / Full-Cube).
+    /// Vault-only and Off apply immediately; Full-Cube first collects the PIN
+    /// (to unlock the seed) and applies on `ConfirmFullCube`.
+    SelectTier(crate::services::inheritance::EscrowTier),
+    /// PIN digit input while enrolling the Full-Cube tier (escrows the seed).
+    EscrowPinChanged(String),
+    /// Confirm Full-Cube enrolment with the entered PIN (unlock seed + escrow).
+    ConfirmFullCube,
+    /// Abandon the in-progress Full-Cube PIN entry.
+    CancelFullCube,
     /// User changed the keyholder recovery-kit download policy.
     SetDownloadPolicy(crate::services::coincube::KeyholderDownloadPolicy),
     /// Async result of a level / policy change — the updated status. The

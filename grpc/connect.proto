@@ -97,6 +97,10 @@ message SigningSession {
   string created_by_device_id = 13;
   string note = 14;
   repeated SubmittedSignature submitted_signatures = 15;
+  // is_recovery_spend records that this session spends the vault's recovery
+  // branch (inheritance recovery). Server-recorded at creation after the
+  // recovery gate passes; lets clients render recovery sessions distinctly.
+  bool is_recovery_spend = 16;
 }
 
 message CreateSigningSessionRequest {
@@ -108,6 +112,12 @@ message CreateSigningSessionRequest {
   string note = 6;
   google.protobuf.Duration ttl = 7;
   bool require_user_presence = 8;
+  // is_recovery_spend declares that this PSBT spends the vault's recovery
+  // branch. The server cannot infer the spent branch from the PSBT, so the
+  // client must declare it; the server then gates creation on the recovery
+  // path being open (keyholder caller + monitoring state available/reminding +
+  // owner not under duress). Ignored (false) for ordinary owner-branch spends.
+  bool is_recovery_spend = 9;
 }
 
 message CreateSigningSessionResponse {
@@ -275,6 +285,38 @@ message Pong {
   int64 ts_unix_ms = 1;
 }
 
+// Inheritance heir-escrow ECIES decrypt (COIN-377, rev 3). The heir's
+// Keychain holds the recovery private key; on recovery it derives the
+// dedicated encryption child, performs the secp256k1 ECDH against the
+// envelope's ephemeral pubkey, HKDFs the shared secret, and returns only the
+// derived symmetric key. The desktop completes the AES-256-GCM open and the
+// restore locally, so the seed/descriptor plaintext never leaves the heir's
+// machine and Keychain never sees it. Requires biometric/PIN approval and is
+// refused while the heir's own account is under duress. The API relays the
+// request to the heir's Keychain and returns its response; it never reads the
+// shared key. See keychain-app/plans/PLAN-inheritance-recovery.md.
+message DecryptInheritanceEnvelopeRequest {
+  // The cube being recovered — selects which recovery key/account the heir's
+  // Keychain derives from.
+  string cube_id = 1;
+  // Compressed 33-byte secp256k1 ephemeral public key from the ECIES envelope.
+  bytes ephemeral_pubkey = 2;
+  // Non-hardened child path (relative to the heir's registered xpub) of the
+  // dedicated encryption key (invariant I5). Keychain derives this child
+  // private key, ECDHs against ephemeral_pubkey, then HKDFs → shared_key.
+  string derivation = 3;
+  // Scheme tag; must equal "ecies-secp256k1-hkdf-aes256gcm-v1" so Keychain can
+  // refuse a scheme it does not implement.
+  string purpose = 4;
+}
+
+message DecryptInheritanceEnvelopeResponse {
+  // 32-byte HKDF-derived symmetric key K. Keychain NEVER returns the recovery
+  // private key or the seed/descriptor plaintext — the desktop opens the
+  // AES-256-GCM ciphertext with this key.
+  bytes shared_key = 1;
+}
+
 service SessionService {
   rpc CreateSigningSession(CreateSigningSessionRequest) returns (CreateSigningSessionResponse);
   rpc GetSigningSession(GetSigningSessionRequest) returns (GetSigningSessionResponse);
@@ -286,6 +328,9 @@ service SessionService {
   rpc RejectSession(RejectSessionRequest) returns (RejectSessionResponse);
   rpc SubmitPartialSignature(SubmitPartialSignatureRequest) returns (SubmitPartialSignatureResponse);
   rpc ResolveSigners(ResolveSignersRequest) returns (ResolveSignersResponse);
+  // Heir-escrow ECIES decrypt — relayed to the heir's Keychain, which approves
+  // (biometric/PIN) and returns the HKDF-derived key. Never returns plaintext.
+  rpc DecryptInheritanceEnvelope(DecryptInheritanceEnvelopeRequest) returns (DecryptInheritanceEnvelopeResponse);
 }
 
 service DeviceService {

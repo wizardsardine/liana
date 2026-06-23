@@ -15,8 +15,9 @@ use crate::app::state::settings::recovery_alerts::RecoveryAlerts;
 use crate::app::state::settings::recovery_kit::RecoveryKit;
 use crate::app::view::dashboard;
 use crate::app::view::message::*;
-use crate::services::coincube::{KeyholderDownloadPolicy, RecoveryKitStatus, VaultMonitoringLevel};
+use crate::services::coincube::{KeyholderDownloadPolicy, RecoveryKitStatus};
 use crate::services::fiat::{Currency, ALL_PRICE_SOURCES};
+use crate::services::inheritance::EscrowTier;
 
 #[allow(clippy::too_many_arguments)]
 pub fn general_section<'a>(
@@ -140,32 +141,77 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
         return card::simple(body).width(Length::Fill).into();
     }
 
-    let level = ra.level();
+    let tier = ra.tier();
     let busy = ra.submitting;
 
-    // Three-tier selector row.
-    let level_row = Row::new()
+    // Inheritance escrow tier selector (ECIES pivot). Picking a tier turns the
+    // server-blind heartbeat gate on and uploads the per-keyholder ciphertext;
+    // Off tears the escrow down. The old plaintext-descriptor "Full" tier is
+    // gone — COINCUBE never sees the descriptor or seed.
+    let tier_row = Row::new()
         .spacing(8)
-        .push(level_button("Off", VaultMonitoringLevel::Off, level, busy))
-        .push(level_button(
-            "Alerts only",
-            VaultMonitoringLevel::Heartbeat,
-            level,
+        .push(tier_button("Off", EscrowTier::Off, tier, busy, ra.awaiting_pin))
+        .push(tier_button(
+            "Vault only",
+            EscrowTier::VaultOnly,
+            tier,
             busy,
+            ra.awaiting_pin,
         ))
-        .push(level_button(
-            "Full",
-            VaultMonitoringLevel::Full,
-            level,
+        .push(tier_button(
+            "Full Cube",
+            EscrowTier::FullCube,
+            tier,
             busy,
+            ra.awaiting_pin,
         ));
-    body = body.push(level_row);
+    body = body.push(tier_row);
 
     // The honest trade-off copy for the selected tier.
-    body = body.push(text(level_copy(level)).size(13));
+    body = body.push(text(tier_copy(tier)).size(13));
 
-    // Keyholder list + download policy only make sense when monitoring is on.
-    if !matches!(level, VaultMonitoringLevel::Off) {
+    // Full-Cube re-confirms the PIN before exporting the seed into escrow.
+    if ra.awaiting_pin {
+        body = body.push(Space::new().height(Length::Fixed(6.0)));
+        body = body.push(
+            text("Enter your PIN to include this Cube's seed in the encrypted escrow.").size(13),
+        );
+        body = body.push(
+            iced::widget::text_input("PIN", &ra.pin)
+                .secure(true)
+                .padding(8)
+                .on_input(|s| {
+                    SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::EscrowPinChanged(s))
+                        .into()
+                })
+                .on_submit(
+                    SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::ConfirmFullCube).into(),
+                ),
+        );
+        body = body.push(
+            Row::new()
+                .spacing(8)
+                .push(
+                    button::primary(None, "Confirm").padding([8, 14]).on_press_maybe(
+                        (!busy).then_some(
+                            SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::ConfirmFullCube)
+                                .into(),
+                        ),
+                    ),
+                )
+                .push(
+                    button::secondary(None, "Cancel")
+                        .padding([8, 14])
+                        .on_press_maybe(Some(
+                            SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::CancelFullCube)
+                                .into(),
+                        )),
+                ),
+        );
+    }
+
+    // Keyholder list + download policy only make sense when escrow is on.
+    if tier.is_on() {
         // Who would be notified.
         body = body.push(Space::new().height(Length::Fixed(4.0)));
         body = body.push(text("Keyholders who'd be notified").bold().size(14));
@@ -216,18 +262,21 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts) -> Element<'a, Message> {
     card::simple(body).width(Length::Fill).into()
 }
 
-/// A monitoring-level option button. Highlighted (primary) when it's the
-/// active level; disabled while a change is in flight.
-fn level_button<'a>(
+/// An escrow-tier option button. Highlighted (primary) when it's the active
+/// tier (or while collecting the PIN for a Full-Cube enrolment); disabled while
+/// a change is in flight.
+fn tier_button<'a>(
     label: &'static str,
-    this: VaultMonitoringLevel,
-    active: VaultMonitoringLevel,
+    this: EscrowTier,
+    active: EscrowTier,
     busy: bool,
+    awaiting_pin: bool,
 ) -> Element<'a, Message> {
-    let on_press = (!busy && this != active).then_some(
-        SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::SelectLevel(this)).into(),
+    let is_active = this == active || (awaiting_pin && this == EscrowTier::FullCube);
+    let on_press = (!busy && !is_active).then_some(
+        SettingsMessage::RecoveryAlerts(RecoveryAlertsMessage::SelectTier(this)).into(),
     );
-    if this == active {
+    if is_active {
         button::primary(None, label)
             .padding([8, 14])
             .on_press_maybe(None)
@@ -263,25 +312,27 @@ fn policy_button<'a>(
     }
 }
 
-/// Plain-language trade-off for each monitoring tier (no euphemisms — the
-/// self-custody trust model demands it; see `PLAN-estate-notifications.md`).
-fn level_copy(level: VaultMonitoringLevel) -> &'static str {
-    match level {
-        VaultMonitoringLevel::Off => {
-            "Off: COINCUBE doesn't watch this Vault. No keyholder alerts, and no copy of your \
-             descriptor is kept."
+/// Plain-language trade-off for each escrow tier (no euphemisms — the
+/// self-custody trust model demands it; see the ECIES decision record).
+/// Everything is encrypted to the keyholders' own keys: COINCUBE can read
+/// neither the descriptor nor the seed.
+fn tier_copy(tier: EscrowTier) -> &'static str {
+    match tier {
+        EscrowTier::Off => {
+            "Off: heirs can't recover this Vault. No encrypted copy is kept and COINCUBE watches \
+             nothing."
         }
-        VaultMonitoringLevel::Heartbeat => {
-            "Alerts only: your device tells COINCUBE just the date this Vault's recovery window \
-             opens — never its addresses or balances. Keyholders get an email when that date \
-             nears, and will still need the recovery password you shared with them."
+        EscrowTier::VaultOnly => {
+            "Vault only: an encrypted copy of this Vault's descriptor is sealed to each \
+             keyholder's own key — only they can open it, never COINCUBE. When the recovery \
+             window opens, a keyholder recovers the watch-only Vault and sweeps the funds. The \
+             seed is never escrowed."
         }
-        VaultMonitoringLevel::Full => {
-            "Full: COINCUBE keeps an encrypted copy of this Vault's descriptor to watch the chain \
-             for you — it can see this Vault's addresses and balances, never spend. Keyholders \
-             get an email when a recovery path opens and can recover this Vault WITHOUT your \
-             password. Your Cube master-seed backup still needs your recovery password — that's \
-             the one to share carefully."
+        EscrowTier::FullCube => {
+            "Full Cube: seals this Cube's seed AND descriptor to each keyholder's own key. A \
+             keyholder can restore the entire Cube — Liquid, Spark and Vault. COINCUBE can never \
+             read either; only the keyholder's key can. You'll re-confirm your PIN to include the \
+             seed."
         }
     }
 }
