@@ -34,6 +34,9 @@ pub fn liquid_overview_view<'a>(
     btc_usd_price: Option<f64>,
     show_direction_badges: bool,
     display_mode: DisplayMode,
+    // Whether cross-asset swaps (SideSwap) are available on this network.
+    // Drives the Swap button — hidden off-mainnet where SideSwap can't run.
+    swap_supported: bool,
 ) -> Element<'a, LiquidOverviewMessage> {
     let mut content = Column::new().spacing(20);
 
@@ -162,24 +165,38 @@ pub fn liquid_overview_view<'a>(
                 .width(Length::Fixed(90.0)),
         );
 
-    let portfolio_card = Container::new(
-        Column::new()
-            .spacing(16)
-            .push(total_col)
-            .push(lbtc_row)
-            .push(usdt_row),
-    )
-    .padding(20)
-    .width(Length::Fill)
-    .style(|t| container::Style {
-        background: Some(Background::Color(t.colors.cards.simple.background)),
-        border: iced::Border {
-            color: color::ORANGE,
-            width: 0.2,
-            radius: 25.0.into(),
-        },
-        ..Default::default()
-    });
+    // Cross-asset swap entry point. SideSwap is mainnet-only, so the
+    // button is only shown where `swap_supported` (the Overview's mirror
+    // of `cross_asset_supported`) holds.
+    let mut portfolio_col = Column::new()
+        .spacing(16)
+        .push(total_col)
+        .push(lbtc_row)
+        .push(usdt_row);
+    if swap_supported {
+        portfolio_col = portfolio_col.push(
+            Container::new(
+                button::secondary(Some(icon::arrow_down_up_icon()), "Swap")
+                    .on_press(LiquidOverviewMessage::Swap)
+                    .width(Length::Fixed(200.0)),
+            )
+            .width(Length::Fill)
+            .center_x(Length::Fill),
+        );
+    }
+
+    let portfolio_card = Container::new(portfolio_col)
+        .padding(20)
+        .width(Length::Fill)
+        .style(|t| container::Style {
+            background: Some(Background::Color(t.colors.cards.simple.background)),
+            border: iced::Border {
+                color: color::ORANGE,
+                width: 0.2,
+                radius: 25.0.into(),
+            },
+            ..Default::default()
+        });
 
     content = content.push(portfolio_card);
 

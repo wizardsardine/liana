@@ -127,6 +127,7 @@ impl State for LiquidOverview {
                 cache.btc_usd_price,
                 cache.show_direction_badges,
                 cache.display_mode,
+                crate::app::state::liquid::swap::swap_supported(self.breez_client.network()),
             )
             .map(view::Message::LiquidOverview);
 
@@ -181,6 +182,9 @@ impl State for LiquidOverview {
                             ),
                         ))),
                     ]);
+                }
+                view::LiquidOverviewMessage::Swap => {
+                    return redirect(Menu::Liquid(LiquidSubMenu::Swap));
                 }
                 view::LiquidOverviewMessage::History => {
                     return redirect(Menu::Liquid(LiquidSubMenu::Transactions(None)));

@@ -153,6 +153,7 @@ pub enum Message {
     LiquidReceive(LiquidReceiveMessage),
     VaultReceive(VaultReceiveMessage),
     LiquidSend(LiquidSendMessage),
+    LiquidSwap(LiquidSwapMessage),
     LiquidSettings(LiquidSettingsMessage),
     PreselectPayment(DomainPayment),
     SetAssetFilter(crate::app::state::liquid::transactions::AssetFilter),
@@ -635,6 +636,9 @@ pub enum LiquidOverviewMessage {
     ReceiveLbtc,
     SendUsdt,
     ReceiveUsdt,
+    /// Navigate to the Liquid Swap screen. Only emitted on mainnet (the
+    /// button is hidden off-mainnet, where SideSwap is unavailable).
+    Swap,
     History,
     SelectTransaction(usize),
     /// Forwarded to the top-level handler to flip the global
@@ -696,6 +700,22 @@ pub enum LiquidSendMessage {
         crate::app::state::liquid::send::SendAsset,
         crate::app::state::liquid::send::ReceiveNetwork,
     ),
+}
+
+/// Messages for the Liquid cross-asset Swap panel (PR 1: routing +
+/// entry points only — the quote engine and review/confirm flow land in
+/// later PRs and will extend this enum).
+#[derive(Debug, Clone)]
+pub enum LiquidSwapMessage {
+    /// Balances loaded for the Swap screen.
+    DataLoaded {
+        btc_balance: Amount,
+        usdt_balance: u64,
+    },
+    /// Balance/transaction load failed.
+    Error(String),
+    /// Re-fetch balances (e.g. after an SDK sync).
+    RefreshRequested,
 }
 
 #[derive(Debug, Clone)]

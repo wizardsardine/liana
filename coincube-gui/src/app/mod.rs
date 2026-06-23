@@ -34,7 +34,7 @@ pub use message::Message;
 
 use state::{
     CoinsPanel, ConnectPanel, CreateSpendPanel, GlobalHome, LiquidOverview, LiquidReceive,
-    LiquidSend, LiquidSettings, LiquidTransactions, PsbtsPanel, State, VaultOverview,
+    LiquidSend, LiquidSettings, LiquidSwap, LiquidTransactions, PsbtsPanel, State, VaultOverview,
     VaultReceivePanel, VaultTransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
@@ -68,6 +68,7 @@ struct Panels {
     global_home: GlobalHome,
     liquid_overview: LiquidOverview,
     liquid_send: LiquidSend,
+    liquid_swap: LiquidSwap,
     liquid_receive: LiquidReceive,
     liquid_transactions: LiquidTransactions,
     liquid_settings: LiquidSettings,
@@ -184,6 +185,7 @@ impl Panels {
             },
             liquid_overview: LiquidOverview::new(liquid_backend.clone()),
             liquid_send: LiquidSend::new(liquid_backend.clone()),
+            liquid_swap: LiquidSwap::new(liquid_backend.clone()),
             liquid_receive: LiquidReceive::new(liquid_backend.clone()),
             liquid_transactions: LiquidTransactions::new(liquid_backend.clone()),
             liquid_settings: LiquidSettings::new(liquid_backend.clone()),
@@ -299,6 +301,7 @@ impl Panels {
             )),
             liquid_overview: LiquidOverview::new(liquid_backend.clone()),
             liquid_send: LiquidSend::new(liquid_backend.clone()),
+            liquid_swap: LiquidSwap::new(liquid_backend.clone()),
             liquid_receive: LiquidReceive::new(liquid_backend.clone()),
             liquid_transactions: LiquidTransactions::new(liquid_backend.clone()),
             liquid_settings: LiquidSettings::new(liquid_backend.clone()),
@@ -493,6 +496,7 @@ impl Panels {
             Menu::Liquid(submenu) => match submenu {
                 crate::app::menu::LiquidSubMenu::Overview => Some(&self.liquid_overview),
                 crate::app::menu::LiquidSubMenu::Send => Some(&self.liquid_send),
+                crate::app::menu::LiquidSubMenu::Swap => Some(&self.liquid_swap),
                 crate::app::menu::LiquidSubMenu::Receive => Some(&self.liquid_receive),
                 crate::app::menu::LiquidSubMenu::Transactions(_) => Some(&self.liquid_transactions),
                 crate::app::menu::LiquidSubMenu::Settings(_) => Some(&self.liquid_settings),
@@ -557,6 +561,7 @@ impl Panels {
             Menu::Liquid(submenu) => match submenu {
                 crate::app::menu::LiquidSubMenu::Overview => Some(&mut self.liquid_overview),
                 crate::app::menu::LiquidSubMenu::Send => Some(&mut self.liquid_send),
+                crate::app::menu::LiquidSubMenu::Swap => Some(&mut self.liquid_swap),
                 crate::app::menu::LiquidSubMenu::Receive => Some(&mut self.liquid_receive),
                 crate::app::menu::LiquidSubMenu::Transactions(_) => {
                     Some(&mut self.liquid_transactions)
@@ -630,6 +635,9 @@ impl Panels {
                 )),
                 crate::app::menu::LiquidSubMenu::Send => Some(Message::View(
                     view::Message::LiquidSend(view::LiquidSendMessage::RefreshRequested),
+                )),
+                crate::app::menu::LiquidSubMenu::Swap => Some(Message::View(
+                    view::Message::LiquidSwap(view::LiquidSwapMessage::RefreshRequested),
                 )),
                 crate::app::menu::LiquidSubMenu::Receive => Some(Message::View(
                     view::Message::LiquidReceive(view::LiquidReceiveMessage::RefreshRequested),

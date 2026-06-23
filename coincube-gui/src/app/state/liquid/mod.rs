@@ -4,4 +4,5 @@ pub mod send;
 pub mod settings;
 pub mod sideshift_receive;
 pub mod sideshift_send;
+pub mod swap;
 pub mod transactions;
