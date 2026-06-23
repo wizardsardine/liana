@@ -28,14 +28,14 @@ pub struct ServiceConfig {
 #[derive(Debug, Clone, Copy)]
 pub enum BackendType {
     LianaConnect,
-    LianaBusiness,
+    LianaBusiness(&'static str),
 }
 
 impl BackendType {
     pub fn user_agent(&self) -> String {
         match self {
             BackendType::LianaConnect => format!("liana-gui/{}", crate::VERSION),
-            BackendType::LianaBusiness => format!("liana-business/{}", crate::VERSION),
+            BackendType::LianaBusiness(version) => format!("liana-business/{version}"),
         }
     }
 }
@@ -46,10 +46,10 @@ pub async fn get_service_config(
 ) -> Result<ServiceConfig, reqwest::Error> {
     let backend_api_url = match (network, backend) {
         (Network::Bitcoin, BackendType::LianaConnect) => DEFAULT_CONNECT_MAINNET_URL.to_string(),
-        (Network::Bitcoin, BackendType::LianaBusiness) => BUSINESS_MAINNET_API_URL.to_string(),
+        (Network::Bitcoin, BackendType::LianaBusiness(_)) => BUSINESS_MAINNET_API_URL.to_string(),
         (_, BackendType::LianaConnect) => std::env::var("LIANALITE_SIGNET_API_URL")
             .unwrap_or_else(|_| DEFAULT_CONNECT_SIGNET_URL.to_string()),
-        (_, BackendType::LianaBusiness) => std::env::var("LIANA_BUSINESS_SIGNET_API_URL")
+        (_, BackendType::LianaBusiness(_)) => std::env::var("LIANA_BUSINESS_SIGNET_API_URL")
             .unwrap_or_else(|_| BUSINESS_SIGNET_API_URL.to_string()),
     };
     let client = reqwest::Client::new();
