@@ -1420,6 +1420,68 @@ impl CoincubeClient {
 }
 
 // =============================================================================
+// Inheritance recovery — heir/keyholder (COIN-377)
+// =============================================================================
+//
+// The discovery list (PR 1) and the keyholder descriptor release (PR 2). See
+// the DTO block in `mod.rs` for the wire shapes and the
+// `services/recovery/keyholder.rs` helper for the typed gate-error mapping.
+
+impl CoincubeClient {
+    /// `GET /api/v1/connect/cubes/recoverable` (authenticated). Lists the
+    /// vaults the signed-in account is a keyholder/beneficiary of and may be
+    /// able to recover (PR 1 discovery surface).
+    ///
+    /// **Net-new endpoint** — owned by the API counterpart plan; not live yet.
+    /// The desktop drives the surface off this behind the capability flag, and
+    /// the UI should treat a non-success response (incl. `503` when
+    /// `ALERTS_RECOVERY_ENABLED=false`) as "feature unavailable / nothing to
+    /// show" rather than an error to the heir.
+    pub async fn list_recoverable_vaults(
+        &self,
+    ) -> Result<Vec<super::RecoverableVault>, CoincubeError> {
+        let url = format!("{}/api/v1/connect/cubes/recoverable", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        // The endpoint is net-new and capability-gated: a `503` (recovery
+        // disabled via `ALERTS_RECOVERY_ENABLED=false`) or a `404` (not yet
+        // deployed) means the feature simply isn't there. Per the contract
+        // above, surface that as an empty list — the panel renders its
+        // "nothing to show" copy — rather than a generic error in the heir's
+        // face. Other non-success statuses (auth, 5xx) still flow to the panel
+        // as an error so genuine breakage stays visible.
+        if matches!(res.status().as_u16(), 404 | 503) {
+            return Ok(Vec::new());
+        }
+        let res = res.check_success().await?;
+        let resp: ApiResponse<Vec<super::RecoverableVault>> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// `GET /api/v1/connect/cubes/{cubeId}/vault/recovery-descriptor`
+    /// (authenticated, keyholder-gated). Returns the **plaintext** descriptor
+    /// the server decrypts from escrow under its KEK — the keyholder path has
+    /// no password and does no client-side decryption.
+    ///
+    /// `404` (`RECOVERY_NOT_MONITORED`) → `NotFound` and `429` →
+    /// `RateLimited` short-circuit via `parse_recovery_response`. The gate
+    /// failures `403` (`RECOVERY_ACCESS_DENIED` / `RECOVERY_NOT_AVAILABLE`),
+    /// `423` (`DURESS_LOCKED`), and `503` come back as
+    /// `Unsuccessful { status_code, text }` with the body preserved, so
+    /// `services::recovery::keyholder::KeyholderRecoveryError::from` can map
+    /// `error.code` to the right UI state. A side effect of a 200 is a
+    /// server-side owner notification (invariant I4).
+    pub async fn get_recovery_descriptor(&self, cube_id: u64) -> Result<String, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/cubes/{}/vault/recovery-descriptor",
+            self.base_url, cube_id
+        );
+        let res = self.client.get(&url).send().await?;
+        let resp: super::RecoveryDescriptorResponse = Self::parse_recovery_response(res).await?;
+        Ok(resp.descriptor)
+    }
+}
+
+// =============================================================================
 // Duress alert contacts (Estate Notifications — PR 1)
 // =============================================================================
 //

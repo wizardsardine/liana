@@ -18,6 +18,7 @@ pub mod node;
 pub mod phone_signer;
 pub mod pin_entry;
 pub mod pin_input;
+pub mod recover_vault;
 pub mod services;
 pub mod signer;
 pub mod utils;
