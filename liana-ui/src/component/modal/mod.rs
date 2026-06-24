@@ -519,10 +519,14 @@ where
 {
     let msg = on_press.map(|f| f());
     let title = alias.unwrap_or_else(|| kind.unwrap_or_else(|| fingerprint.clone()));
-    let subtitle = Some(fingerprint);
-    let status = status.map(|status| b5_medium(status).into());
+    let status: Option<Element<'a, Message>> = status.map(|status| b5_medium(status).into());
+    let title = b5_medium(title);
+    let fingerprint = caption(fingerprint).style(theme::text::secondary);
+    let body = column![title, fingerprint, status]
+        .spacing(2)
+        .width(Length::Fill);
 
-    list::entry_register(entry_status, title, subtitle, status, msg)
+    list::entry_register(entry_status, body, None, msg.is_some(), msg)
 }
 
 pub fn button_entry<'a, Message, M>(
