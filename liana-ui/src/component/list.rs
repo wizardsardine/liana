@@ -164,6 +164,14 @@ pub fn account_entry<'a, M: Clone + 'a>(
         on_select,
     );
 
+    with_delete_button(entry, on_delete)
+}
+
+/// Append a delete (cross) button after a [`EntryWidth::Deletable`] entry, in the reserved slot.
+fn with_delete_button<'a, M: Clone + 'a>(
+    entry: Element<'a, M>,
+    on_delete: Option<M>,
+) -> Element<'a, M> {
     row![
         entry,
         Container::new(button::btn_remove(on_delete)).center_x(button::ENTRY_DELETE_SLOT)
@@ -213,15 +221,27 @@ pub fn entry_key<'a, M: Clone + 'a>(
     signer: impl Display,
     trailing: Option<Element<'a, M>>,
     msg: Option<M>,
+    on_delete: Option<M>,
 ) -> Element<'a, M> {
-    list_entry_row(
+    let width = if on_delete.is_some() {
+        EntryWidth::Deletable
+    } else {
+        EntryWidth::Standard
+    };
+    let entry = list_entry_row(
         Some(badge::tile(kind.into()).into()),
         key_body(title, kind_pill, signer),
         trailing,
         Some(key_accent(kind)),
-        EntryWidth::Standard,
+        width,
         msg,
-    )
+    );
+
+    if on_delete.is_some() {
+        with_delete_button(entry, on_delete)
+    } else {
+        entry
+    }
 }
 
 pub fn entry_path<'a, M: Clone + 'a>(
