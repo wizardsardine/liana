@@ -556,16 +556,16 @@ impl Palette {
                     text: color::AMBER.into(),
                     border: color::AMBER.into(),
                 },
-                role_manager: Some(ContainerPalette {
+                role_manager: ContainerPalette {
                     background: BLUE_TINT_LIGHT,
                     text: ROLE_MANAGER_TEXT.into(),
                     border: BLUE_TINT_LIGHT.into(),
-                }),
-                role_participant: Some(ContainerPalette {
+                },
+                role_participant: ContainerPalette {
                     background: INPUT_BG,
                     text: color::DARK_TEXT_TERTIARY.into(),
                     border: INPUT_BG.into(),
-                }),
+                },
                 success: ContainerPalette {
                     background: color::SUCCESS_GREEN,
                     text: color::WHITE.into(),

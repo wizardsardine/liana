@@ -25,6 +25,8 @@ styles!(
         success,
         warning,
         soft_warning,
+        role_manager,
+        role_participant,
         internal,
         external,
         safety_net,

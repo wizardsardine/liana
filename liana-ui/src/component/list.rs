@@ -30,3 +30,17 @@ pub fn see_more<'a, M: Clone + 'a>(processing: bool, next: M) -> Element<'a, M> 
         .style(theme::card::simple)
         .into()
 }
+
+/// "(1 key)" / "({n} keys)" caption shown beside a wallet title; `None` for no keys.
+pub fn key_count<'a, M: 'a>(count: usize) -> Option<Element<'a, M>> {
+    let label = match count {
+        0 => return None,
+        1 => "(1 key)".to_string(),
+        n => format!("({n} keys)"),
+    };
+    Some(
+        text::new::caption(label)
+            .style(theme::text::secondary)
+            .into(),
+    )
+}
