@@ -1,14 +1,17 @@
 use crate::{
     backend::Backend,
     state::{message::Msg, State},
-    views::{delete_btn, format_last_edit_info_string as format_last_edit_info},
+    views::format_last_edit_info_string as format_last_edit_info,
 };
 use iced::{widget::Space, Length};
 use liana_connect::ws_business::{
     self, UserRole, WalletStatus, BLOCKS_PER_DAY, BLOCKS_PER_HOUR, BLOCKS_PER_MONTH,
 };
 use liana_ui::{
-    component::list::{self, EntryPathRole},
+    component::{
+        button::btn_remove,
+        list::{self, EntryPathRole},
+    },
     widget::*,
 };
 use std::collections::BTreeMap;
@@ -107,7 +110,7 @@ fn path_card(
         EntryPathRole::Recovery
     };
     let trailing = if is_editable && !is_primary {
-        path_index.map(|index| delete_btn(Some(Msg::TemplateDeleteSecondaryPath(index))).into())
+        path_index.map(|index| btn_remove(Some(Msg::TemplateDeleteSecondaryPath(index))).into())
     } else {
         None
     };

@@ -1914,7 +1914,6 @@ impl Backend for Client {
         }
     }
 
-    #[cfg(test)]
     fn fetch_user(&mut self, id: Uuid) {
         check_connection!(self);
 

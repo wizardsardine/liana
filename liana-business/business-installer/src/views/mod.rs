@@ -27,7 +27,7 @@ use iced::{
 };
 use liana_ui::{
     component::{
-        button::{self, icon_btn, EntryWidth},
+        button::{self, EntryWidth},
         form, list, scrollable,
         text::{self, short_email, truncate},
     },
@@ -394,10 +394,6 @@ pub fn menu_entry(content: Row<'_, Msg>, message: Option<Msg>) -> Container<'_, 
     container(card)
         .width(MENU_ENTRY_WIDTH)
         .height(MENU_ENTRY_HEIGHT)
-}
-
-fn delete_btn(message: Option<Msg>) -> Button<'static, Msg> {
-    icon_btn(icon::trash_icon(), message)
 }
 
 pub fn menu_key_entry(

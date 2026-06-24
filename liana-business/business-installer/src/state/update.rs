@@ -1,4 +1,7 @@
-use super::{app::AppState, message::Msg, views, State, View};
+use super::{
+    app::AppState, fetch_key_modal_signer_users, message::Msg, refresh_key_modal_signers,
+    signer_options_for_key_modal, views, State, View,
+};
 use crate::{
     backend::{Backend, Error, Notification},
     client::{ws_url, PROTOCOL_VERSION},
@@ -56,8 +59,12 @@ impl State {
             Msg::KeyUpdateAlias(value) => self.views.keys.on_key_update_alias(value),
             Msg::KeyUpdateDescr(value) => self.views.keys.on_key_update_descr(value),
             Msg::KeyUpdateEmail(value) => self.views.keys.on_key_update_email(value),
+            Msg::KeySelectSigner(email) => self.on_key_select_signer(email),
             Msg::KeyUpdateToken(value) => self.views.keys.on_key_update_token(value, &self.app.keys),
-            Msg::KeyUpdateType(key_type) => self.views.keys.on_key_update_type(key_type),
+            Msg::KeyUpdateType(key_type) => {
+                self.views.keys.on_key_update_type(key_type);
+                refresh_key_modal_signers(&self.app, &self.backend, &mut self.views.keys);
+            }
             Msg::KeyAdd => self.on_key_add(),
             Msg::KeyEdit(key_id) => self.on_key_edit(key_id),
             Msg::KeyDelete(key_id) => self.on_key_delete(key_id),
@@ -158,6 +165,7 @@ impl State {
             Notification::Org(_) => { /* Cache already updated, no action needed */ }
             Notification::Wallet(wallet_id) => return self.on_backend_wallet(wallet_id),
             Notification::User(user_id) => {
+                self.pending_user_fetches.remove(&user_id);
                 // Check if this user matches the logged-in user's email
                 // If so, set their global role
                 let logged_in_email = self.views.login.email.form.value.to_lowercase();
@@ -166,6 +174,7 @@ impl State {
                         self.app.global_user_role = Some(user.role);
                     }
                 }
+                refresh_key_modal_signers(&self.app, &self.backend, &mut self.views.keys);
             }
             Notification::Update => { /* Update view */ }
         }
@@ -385,36 +394,87 @@ impl State {
     fn on_key_add(&mut self) {
         // Open modal for creating a new key
         let key_id = self.app.next_key_id;
-        self.views.keys.edit_key_modal = Some(views::EditKeyModalState {
+        self.pending_user_fetches.clear();
+        fetch_key_modal_signer_users(&self.app, &mut self.backend, &mut self.pending_user_fetches);
+        let signer_options = signer_options_for_key_modal(
+            &self.app,
+            &self.backend,
+            None,
+            ws_business::KeyType::Internal,
+        );
+        self.views.keys.edit_key_modal = Some(views::EditKeyModalState::new(
             key_id,
-            alias: String::new(),
-            description: String::new(),
-            key_type: ws_business::KeyType::Internal,
-            is_new: true,
-            email: String::new(),
-            token: String::new(),
-            token_warning: None,
-        });
+            String::new(),
+            String::new(),
+            ws_business::KeyType::Internal,
+            true,
+            String::new(),
+            String::new(),
+            None,
+            signer_options,
+        ));
     }
 
     fn on_key_edit(&mut self, key_id: u8) {
-        if let Some(key) = self.app.keys.get(&key_id) {
-            let (email, token) = match &key.identity {
-                KeyIdentity::Email(e) => (e.clone(), String::new()),
-                KeyIdentity::TokenWithProvider { token: t, .. } => (String::new(), t.clone()),
-                KeyIdentity::Token(t) => (String::new(), t.clone()),
-                KeyIdentity::Other(o) => (o.clone(), String::new()),
+        if let Some(key) = self.app.keys.get(&key_id).cloned() {
+            let (email, token, provider) = match &key.identity {
+                KeyIdentity::Email(e) => (e.clone(), String::new(), None),
+                KeyIdentity::TokenWithProvider { token: t, provider } => {
+                    (String::new(), t.clone(), provider.clone())
+                }
+                KeyIdentity::Token(t) => (String::new(), t.clone(), None),
+                KeyIdentity::Other(o) => (o.clone(), String::new(), None),
             };
-            self.views.keys.edit_key_modal = Some(views::EditKeyModalState {
+            self.pending_user_fetches.clear();
+            fetch_key_modal_signer_users(
+                &self.app,
+                &mut self.backend,
+                &mut self.pending_user_fetches,
+            );
+            let signer_options =
+                signer_options_for_key_modal(&self.app, &self.backend, Some(key_id), key.key_type);
+            self.views.keys.edit_key_modal = Some(views::EditKeyModalState::new(
                 key_id,
-                alias: key.alias.clone(),
-                description: key.description.clone(),
-                key_type: key.key_type,
-                is_new: false,
+                key.alias.clone(),
+                key.description.clone(),
+                key.key_type,
+                false,
                 email,
                 token,
-                token_warning: None,
-            });
+                provider,
+                signer_options,
+            ));
+        }
+    }
+
+    fn on_key_select_signer(&mut self, email: String) {
+        let previous_alias_blank = self
+            .views
+            .keys
+            .edit_key_modal
+            .as_ref()
+            .is_some_and(|modal| modal.alias.trim().is_empty());
+        self.views.keys.on_key_update_email(email.clone());
+
+        if !previous_alias_blank {
+            return;
+        }
+
+        let Some(org_id) = self.app.selected_org else {
+            return;
+        };
+        let Some(org) = self.backend.get_org(org_id) else {
+            return;
+        };
+        let lower_email = email.to_lowercase();
+        for user_id in org.users {
+            let Some(user) = self.backend.get_user(user_id) else {
+                continue;
+            };
+            if user.email.to_lowercase() == lower_email {
+                self.views.keys.on_key_update_alias(user.name);
+                break;
+            }
         }
     }
 
@@ -452,7 +512,7 @@ impl State {
             ) {
                 KeyIdentity::TokenWithProvider {
                     token: modal_state.token.clone(),
-                    provider: None,
+                    provider: modal_state.provider.clone(),
                 }
             } else {
                 KeyIdentity::Email(modal_state.email.clone())

@@ -1,7 +1,7 @@
 pub mod modal;
 
 use liana_connect::ws_business::{self, Key, KeyIdentity};
-pub use modal::EditKeyModalState;
+pub use modal::{EditKeyModalState, SignerOption};
 use std::{collections::BTreeMap, str::FromStr};
 
 /// Keys view state
@@ -26,7 +26,7 @@ impl KeysViewState {
     pub fn on_key_update_email(&mut self, value: String) {
         let value = value.trim().to_string();
         if let Some(modal) = &mut self.edit_key_modal {
-            modal.email = value;
+            modal.set_email(value);
         }
     }
 
@@ -34,6 +34,7 @@ impl KeysViewState {
         let value = value.trim().to_string();
         if let Some(modal) = &mut self.edit_key_modal {
             modal.token = value.clone();
+            modal.provider = None;
 
             if value.trim().is_empty() {
                 modal.token_warning = None;
@@ -70,6 +71,12 @@ impl KeysViewState {
 
     pub fn on_key_cancel_modal(&mut self) {
         self.edit_key_modal = None;
+    }
+
+    pub fn refresh_signer_options(&mut self, signer_options: Vec<SignerOption>) {
+        if let Some(modal) = &mut self.edit_key_modal {
+            modal.refresh_signer_options(signer_options);
+        }
     }
 
     /// Whether the current key type uses token identity (Cosigner/SafetyNet)
@@ -128,5 +135,117 @@ impl KeysViewState {
         } else {
             self.is_email_valid()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liana_connect::{keys::api::Provider, ws_business::KeyType};
+
+    fn modal_state() -> EditKeyModalState {
+        EditKeyModalState::new(
+            1,
+            "Treasury".into(),
+            String::new(),
+            KeyType::Internal,
+            true,
+            "alice@example.com".into(),
+            String::new(),
+            None,
+            vec![SignerOption {
+                name: "Alice".into(),
+                email: "alice@example.com".into(),
+                already_used: false,
+            }],
+        )
+    }
+
+    #[test]
+    fn can_save_requires_valid_email_for_signer_keys() {
+        let mut state = KeysViewState {
+            edit_key_modal: Some(modal_state()),
+        };
+        assert!(state.can_save());
+
+        state.on_key_update_email("invalid".into());
+        assert!(!state.can_save());
+
+        state.on_key_update_alias(String::new());
+        state.on_key_update_email("alice@example.com".into());
+        assert!(!state.can_save());
+    }
+
+    #[test]
+    fn refresh_signer_options_keeps_typed_email() {
+        let mut state = KeysViewState {
+            edit_key_modal: Some(EditKeyModalState::new(
+                1,
+                "Treasury".into(),
+                String::new(),
+                KeyType::Internal,
+                true,
+                "new-signer@example.com".into(),
+                String::new(),
+                None,
+                Vec::new(),
+            )),
+        };
+
+        state.refresh_signer_options(vec![SignerOption {
+            name: "Alice".into(),
+            email: "alice@example.com".into(),
+            already_used: false,
+        }]);
+
+        let modal = state.edit_key_modal.as_ref().expect("modal");
+        assert_eq!(modal.email, "new-signer@example.com");
+        assert_eq!(
+            modal.fallback_signer().as_deref(),
+            Some("new-signer@example.com")
+        );
+    }
+
+    #[test]
+    fn token_update_clears_cached_provider() {
+        let mut state = KeysViewState {
+            edit_key_modal: Some(EditKeyModalState::new(
+                1,
+                "Cosigner".into(),
+                String::new(),
+                KeyType::Cosigner,
+                false,
+                String::new(),
+                "42-absent-cake-eagle".into(),
+                Some(Provider {
+                    uuid: "provider".into(),
+                    name: "Provider".into(),
+                }),
+                Vec::new(),
+            )),
+        };
+
+        state.on_key_update_token("43-absent-cake-eagle".into(), &BTreeMap::new());
+
+        assert!(state
+            .edit_key_modal
+            .as_ref()
+            .expect("modal")
+            .provider
+            .is_none());
+    }
+
+    #[test]
+    fn clone_keeps_modal_runtime_state() {
+        let mut modal = modal_state();
+        modal.token_warning = Some("Duplicate token");
+
+        let state = KeysViewState {
+            edit_key_modal: Some(modal),
+        };
+        let cloned = state.clone();
+
+        let modal = cloned.edit_key_modal.as_ref().expect("modal");
+        assert_eq!(modal.token_warning, Some("Duplicate token"));
     }
 }
