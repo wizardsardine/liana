@@ -18,7 +18,8 @@ use liana_ui::{
         self,
         new::{
             B1_SPEC, B2_MEDIUM_SPEC, B2_SPEC, B3_SPEC, B4_BOLD_SPEC, B4_MEDIUM_SPEC,
-            B5_MEDIUM_SPEC, D2_SPEC, D3_SPEC, D4_SPEC, H2_SEMI_SPEC,
+            B5_MEDIUM_SPEC, D2_SPEC, D3_SPEC, D4_SPEC, H2_SEMI_SPEC, H3_SEMI_SPEC,
+            SMALL_CAPTION_SPEC,
         },
         TextSpec, BUTTON_TEXT_SPEC, CAPTION_SPEC, H1_SPEC, H2_SPEC, H3_SPEC, H4_BOLD_SPEC,
         H4_REGULAR_SPEC, H5_MEDIUM_SPEC, H5_REGULAR_SPEC, P1_BOLD_SPEC, P1_MEDIUM_SPEC,
@@ -148,6 +149,7 @@ fn new_view() -> Element<'static, DebugMessage> {
         ("text::new::h2",            text::new::H2_SPEC),
         ("text::new::h2_semi",       H2_SEMI_SPEC),
         ("text::new::h3",            text::new::H3_SPEC),
+        ("text::new::h3_semi",       H3_SEMI_SPEC),
         ("text::new::b1",            B1_SPEC),
         ("text::new::b2",            B2_SPEC),
         ("text::new::b2_medium",     B2_MEDIUM_SPEC),
@@ -156,6 +158,7 @@ fn new_view() -> Element<'static, DebugMessage> {
         ("text::new::b4_bold",       B4_BOLD_SPEC),
         ("text::new::b5_medium",     B5_MEDIUM_SPEC),
         ("text::new::caption",       text::new::CAPTION_SPEC),
+        ("text::new::small_caption", SMALL_CAPTION_SPEC),
     ];
 
     render("Texts - new design system", make_rows(entries))
