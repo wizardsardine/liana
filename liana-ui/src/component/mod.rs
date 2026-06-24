@@ -16,6 +16,7 @@ pub mod pick_list;
 pub mod pill;
 pub mod scrollable;
 pub mod spinner;
+pub mod tab;
 pub mod text;
 pub mod toast;
 pub mod tooltip;
