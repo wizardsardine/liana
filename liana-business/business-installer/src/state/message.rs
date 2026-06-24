@@ -33,6 +33,7 @@ pub enum Msg {
     KeyEdit(u8),                         // Open modal to edit key by index
     KeyDelete(u8),                       // Delete key by index
     KeySave,                             // Save key changes
+    MarkKeysReady(bool),                 // Toggle keys_ready for the current wallet
     KeyCancelModal,                      // Close key modal
     KeyUpdateAlias(String),              // Update key alias field
     KeyUpdateDescr(String),              // Update key description field

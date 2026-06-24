@@ -563,6 +563,14 @@ pub fn btn_manage_keys<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Butt
     }
 }
 
+pub fn btn_mark_keys_ready<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "Mark keys as ready", BtnWidth::XL, msg)
+}
+
+pub fn btn_edit_keys<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(Some(icon::edit_icon()), "Edit keys", BtnWidth::L, msg)
+}
+
 /// Generate-address button: a plus icon and "Generate address" label.
 pub fn btn_generate_address<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     let icon = Some(icon::plus_icon());

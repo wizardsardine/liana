@@ -199,14 +199,14 @@ pub fn key_count<'a, M: 'a>(count: usize) -> Option<Element<'a, M>> {
 pub fn entry_key<'a, M: Clone + 'a>(
     kind: EntryKeyKind,
     title: impl Display,
-    subtitle: Option<impl Display>,
+    kind_pill: Element<'a, M>,
+    signer: impl Display,
     trailing: Option<Element<'a, M>>,
     msg: Option<M>,
 ) -> Element<'a, M> {
-    leaf_entry(
-        kind.into(),
-        title,
-        subtitle,
+    list_entry_row(
+        Some(badge::tile(kind.into()).into()),
+        key_body(title, kind_pill, signer),
         trailing,
         Some(key_accent(kind)),
         EntryWidth::Standard,
@@ -385,6 +385,28 @@ fn wallet_body<'a, M: 'a>(
             .into()
     });
     let content = column![title, subtitle].width(Length::Fill);
+
+    Container::new(content).width(Length::Fill).into()
+}
+
+fn key_body<'a, M: 'a>(
+    title: impl Display,
+    kind_pill: Element<'a, M>,
+    signer: impl Display,
+) -> Element<'a, M> {
+    let title = row![
+        text::new::b5_medium(title).style(theme::text::primary),
+        kind_pill
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+    let signer = Container::new(text::new::caption(signer).style(theme::text::tertiary))
+        .padding(iced::Padding {
+            top: 3.0,
+            ..iced::Padding::ZERO
+        })
+        .width(Length::Fill);
+    let content = column![title, signer].width(Length::Fill);
 
     Container::new(content).width(Length::Fill).into()
 }

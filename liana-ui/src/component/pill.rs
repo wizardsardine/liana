@@ -342,6 +342,17 @@ pub fn ws_admin<'a, T: 'a>() -> Container<'a, T> {
     compact_metric("WS Admin", theme::pill::simple)
 }
 
+pub fn signer_assigned<'a, T: 'a>() -> Container<'a, T> {
+    pill_with_icon(
+        Some(crate::icon::check_icon()),
+        "Signer assigned",
+        "",
+        PillWidth::Shrink,
+        theme::pill::fingerprint,
+        true,
+    )
+}
+
 pub fn xpub_set<'a, T: 'a>() -> Container<'a, T> {
     compact_pill("✓ Set", PillWidth::S, theme::pill::success)
 }
@@ -372,23 +383,12 @@ pub fn rescan<'a, T: 'a>(progress: f64, compact: bool) -> Container<'a, T> {
         PILL_FONT
     };
     let width = if compact { PillWidth::M } else { PillWidth::L };
-    let mut pill = pill_body_with_text_size_and_font(
-        format!("Rescan… {:.2}%", progress * 100.0),
-        width,
-        theme::pill::simple,
-        font,
-        size,
-    );
+    let label = format!("Rescan… {:.2}%", progress * 100.0);
     if compact {
-        pill = compact_pill_body_with_text_size_and_font(
-            format!("Rescan… {:.2}%", progress * 100.0),
-            width,
-            theme::pill::simple,
-            font,
-            size,
-        );
+        compact_pill_body_with_text_size_and_font(label, width, theme::pill::simple, font, size)
+    } else {
+        pill_body_with_text_size_and_font(label, width, theme::pill::simple, font, size)
     }
-    pill
 }
 
 pub fn fingerprint<'a, T: 'a>(fg: impl Into<String>, alias: Option<&str>) -> Container<'a, T> {
