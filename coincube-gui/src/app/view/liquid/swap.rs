@@ -223,12 +223,27 @@ fn input_screen<'a>(config: &LiquidSwapConfig<'a>) -> Element<'a, LiquidSwapMess
         .push(Space::new().width(Length::Fill));
 
     // ── You receive (to) — the editable amount ───────────────────────────
-    let amount_field = form::Form::new_amount_numeric("0.00", config.entered_amount, |v| {
-        LiquidSwapMessage::AmountEdited(v)
-    })
-    .maybe_warning(config.entered_amount.warning)
-    .padding(10)
-    .into_container();
+    // Match the input mode to the asset/unit: whole sats for L-BTC in SATS
+    // mode, decimal BTC for L-BTC in BTC mode, decimal for USDt.
+    let amount_form = match (config.to_asset, config.bitcoin_unit) {
+        (SendAsset::Lbtc, BitcoinDisplayUnit::Sats) => {
+            form::Form::new_amount_sats("0", config.entered_amount, LiquidSwapMessage::AmountEdited)
+        }
+        (SendAsset::Lbtc, BitcoinDisplayUnit::BTC) => form::Form::new_amount_btc(
+            "0.00000000",
+            config.entered_amount,
+            LiquidSwapMessage::AmountEdited,
+        ),
+        (SendAsset::Usdt, _) => form::Form::new_amount_numeric(
+            "0.00",
+            config.entered_amount,
+            LiquidSwapMessage::AmountEdited,
+        ),
+    };
+    let amount_field = amount_form
+        .maybe_warning(config.entered_amount.warning)
+        .padding(10)
+        .into_container();
 
     let to_card = card(
         Column::new()

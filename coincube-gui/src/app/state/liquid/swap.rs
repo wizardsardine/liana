@@ -116,6 +116,32 @@ fn is_quote_actionable(has_quote: bool, quote_remaining: u32, is_sending: bool) 
     has_quote && quote_remaining > 0 && !is_sending
 }
 
+/// Parse the receive-amount input into `to`-asset base units, honouring
+/// the display unit. For L-BTC the base unit *is* the sat, so in SATS
+/// mode the input is whole integers; otherwise (USDt, or L-BTC in BTC
+/// mode) it's an 8-dp decimal. Returns `Some(0)` for a literal zero and
+/// `None` for empty/malformed input — callers filter zero where needed.
+fn parse_receiver_amount(
+    value: &str,
+    to_asset: SendAsset,
+    unit: BitcoinDisplayUnit,
+) -> Option<u64> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match (to_asset, unit) {
+        (SendAsset::Lbtc, BitcoinDisplayUnit::Sats) => {
+            // Whole sats only — reject decimals.
+            if trimmed.contains('.') {
+                return None;
+            }
+            trimmed.parse::<u64>().ok()
+        }
+        _ => parse_asset_to_minor_units(trimmed, AssetKind::Usdt.precision()),
+    }
+}
+
 /// Phase of the single-screen swap flow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwapPhase {
@@ -136,8 +162,12 @@ pub struct LiquidSwap {
     to_asset: SendAsset,
     btc_balance: Amount,
     usdt_balance: u64,
-    /// Receive-amount input (decimal `to`-asset string, 8-dp).
+    /// Receive-amount input. Interpreted per `bitcoin_unit` when the
+    /// `to` asset is L-BTC (whole sats in SATS mode), else an 8-dp decimal.
     entered_amount: form::Value<String>,
+    /// User's BTC/SATS display preference, synced from the cache on each
+    /// update. Drives both amount rendering and input parsing for L-BTC.
+    bitcoin_unit: BitcoinDisplayUnit,
     /// Self-targeted Liquid address every prepare/send is pointed at.
     self_address: Option<String>,
     /// True while a quote should be issued as soon as `self_address`
@@ -173,6 +203,7 @@ impl LiquidSwap {
             btc_balance: Amount::from_sat(0),
             usdt_balance: 0,
             entered_amount: form::Value::default(),
+            bitcoin_unit: BitcoinDisplayUnit::BTC,
             self_address: None,
             pending_quote: false,
             quote: None,
@@ -273,11 +304,8 @@ impl LiquidSwap {
     /// Parse the entered receive amount into `to`-asset base units.
     /// Returns `None` for empty/zero/malformed input.
     fn entered_receiver_base(&self) -> Option<u64> {
-        let trimmed = self.entered_amount.value.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-        parse_asset_to_minor_units(trimmed, AssetKind::Usdt.precision()).filter(|&v| v > 0)
+        parse_receiver_amount(&self.entered_amount.value, self.to_asset, self.bitcoin_unit)
+            .filter(|&v| v > 0)
     }
 
     /// Bump the sequence, clear the stale quote, and schedule a debounced
@@ -417,10 +445,19 @@ impl LiquidSwap {
         if est_receiver == 0 {
             return Err("Balance too low to swap.".to_string());
         }
-        self.entered_amount.value = format_asset_amount(est_receiver, AssetKind::Usdt.precision());
+        self.entered_amount.value = self.format_entered(est_receiver);
         self.entered_amount.valid = true;
         self.entered_amount.warning = None;
         Ok(())
+    }
+
+    /// Format a `to`-asset base amount as the input string would hold it:
+    /// whole sats for L-BTC in SATS mode, else an 8-dp decimal.
+    fn format_entered(&self, base: u64) -> String {
+        match (self.to_asset, self.bitcoin_unit) {
+            (SendAsset::Lbtc, BitcoinDisplayUnit::Sats) => base.to_string(),
+            _ => format_asset_amount(base, AssetKind::Usdt.precision()),
+        }
     }
 }
 
@@ -455,6 +492,9 @@ impl State for LiquidSwap {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        // Keep the unit preference current so amount parsing/formatting and
+        // the input widget choice all agree with the global setting.
+        self.bitcoin_unit = cache.bitcoin_unit;
         if let Message::View(view::Message::LiquidSwap(ref msg)) = message {
             match msg {
                 view::LiquidSwapMessage::DataLoaded {
@@ -489,23 +529,25 @@ impl State for LiquidSwap {
                 view::LiquidSwapMessage::AmountEdited(value) => {
                     self.entered_amount.value = value.clone();
                     self.error = None;
-                    let trimmed = value.trim();
-                    if trimmed.is_empty() {
+                    if value.trim().is_empty() {
                         self.entered_amount.valid = true;
                         self.entered_amount.warning = None;
-                    } else if let Some(base) =
-                        parse_asset_to_minor_units(trimmed, AssetKind::Usdt.precision())
-                    {
-                        if base == 0 {
-                            self.entered_amount.valid = false;
-                            self.entered_amount.warning = Some("Amount must be greater than zero");
-                        } else {
-                            self.entered_amount.valid = true;
-                            self.entered_amount.warning = None;
-                        }
                     } else {
-                        self.entered_amount.valid = false;
-                        self.entered_amount.warning = Some("Invalid amount");
+                        match parse_receiver_amount(value, self.to_asset, self.bitcoin_unit) {
+                            Some(0) => {
+                                self.entered_amount.valid = false;
+                                self.entered_amount.warning =
+                                    Some("Amount must be greater than zero");
+                            }
+                            Some(_) => {
+                                self.entered_amount.valid = true;
+                                self.entered_amount.warning = None;
+                            }
+                            None => {
+                                self.entered_amount.valid = false;
+                                self.entered_amount.warning = Some("Invalid amount");
+                            }
+                        }
                     }
                     return self.schedule_quote();
                 }
@@ -809,6 +851,43 @@ mod tests {
         let err = s.swap_all_amount().unwrap_err();
         assert!(err.contains("rate"));
         assert!(s.entered_amount.value.is_empty());
+    }
+
+    #[test]
+    fn parse_receiver_amount_is_unit_aware() {
+        use BitcoinDisplayUnit::{Sats, BTC};
+        // USDt: always 8-dp decimal.
+        assert_eq!(
+            parse_receiver_amount("1.50000000", SendAsset::Usdt, BTC),
+            Some(150_000_000)
+        );
+        // L-BTC in BTC mode: 8-dp decimal BTC → sats base units.
+        assert_eq!(
+            parse_receiver_amount("0.08066584", SendAsset::Lbtc, BTC),
+            Some(8_066_584)
+        );
+        // L-BTC in SATS mode: whole sats (== base units), decimals rejected.
+        assert_eq!(
+            parse_receiver_amount("8066584", SendAsset::Lbtc, Sats),
+            Some(8_066_584)
+        );
+        assert_eq!(parse_receiver_amount("1.5", SendAsset::Lbtc, Sats), None);
+        // Zero parses to Some(0) (callers reject it); empty → None.
+        assert_eq!(parse_receiver_amount("0", SendAsset::Lbtc, Sats), Some(0));
+        assert_eq!(parse_receiver_amount("", SendAsset::Lbtc, Sats), None);
+    }
+
+    #[test]
+    fn format_entered_round_trips_per_unit() {
+        let mut s = panel();
+        s.to_asset = SendAsset::Lbtc;
+        s.bitcoin_unit = BitcoinDisplayUnit::Sats;
+        // L-BTC SATS → whole-sats string the sats input expects.
+        assert_eq!(s.format_entered(8_066_584), "8066584");
+        s.bitcoin_unit = BitcoinDisplayUnit::BTC;
+        assert_eq!(s.format_entered(8_066_584), "0.08066584");
+        s.to_asset = SendAsset::Usdt;
+        assert_eq!(s.format_entered(150_000_000), "1.50000000");
     }
 
     #[test]
