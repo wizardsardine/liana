@@ -68,7 +68,8 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
         &["Login".to_string()],
         header_content,
         list_content,
-        None, // no footer
+        None,
+        None,
         true,
         None,
     )

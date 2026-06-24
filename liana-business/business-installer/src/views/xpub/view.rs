@@ -208,7 +208,8 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         &breadcrumb,
         header_content,
         list_content,
-        None, // No footer needed
+        None,
+        None,
         true,
         Some(Msg::NavigateBack),
     )
