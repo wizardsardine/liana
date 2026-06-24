@@ -1,112 +1,17 @@
 use crate::{
     backend::Backend,
     state::{message::Msg, State},
-    views::{delete_btn, format_last_edit_info, menu_entry},
+    views::{delete_btn, format_last_edit_info},
 };
-use iced::{
-    widget::{row, Space},
-    Alignment, Length,
-};
+use iced::{widget::Space, Length};
 use liana_connect::ws_business::{
     self, UserRole, WalletStatus, BLOCKS_PER_DAY, BLOCKS_PER_HOUR, BLOCKS_PER_MONTH,
 };
 use liana_ui::{
-    component::{self, text},
-    theme,
+    component::list::{self, EntryPathRole},
     widget::*,
 };
 use std::collections::BTreeMap;
-
-// Colors for paths
-const PRIMARY_COLOR: &str = "#00BFFF"; // Business Blue
-
-// r_shape icon width that precedes path cards (adds visual offset for "Add recovery" button alignment)
-const R_SHAPE_WIDTH: f32 = 60.0;
-
-// Generate color from blue to purple gradient based on index and total count
-// Recovery path 1 should be between blue and purple (not the same as primary blue)
-fn get_secondary_color(index: usize, total_count: usize) -> String {
-    if total_count == 0 {
-        return "#00BFFF".to_string(); // Default to business blue
-    }
-
-    // Calculate interpolation factor (0.0 = mid-blue-purple, 1.0 = purple)
-    // First recovery path (index 0) should be between blue and purple
-    // Last recovery path should be purple
-    let factor = if total_count == 1 {
-        0.5 // Single recovery path: midpoint between blue and purple
-    } else {
-        // Distribute from 0.0 (first) to 1.0 (last)
-        // This ensures first path is between blue and purple, not pure blue
-        index as f32 / (total_count - 1) as f32
-    };
-
-    // Start color (mid-blue-purple): RGB(64, 96, 255) - halfway between blue and purple
-    // End color (purple): RGB(128, 0, 255) = #8000FF
-    // Primary blue: RGB(0, 191, 255) = #00BFFF
-    // Midpoint: RGB(64, 96, 255) = #4060FF
-
-    let start_r = 64.0;
-    let start_g = 96.0;
-    let start_b = 255.0;
-
-    let end_r = 128.0;
-    let end_g = 0.0;
-    let end_b = 255.0;
-
-    // Interpolate from mid-blue-purple to purple
-    let r = (start_r + (end_r - start_r) * factor) as u8;
-    let g = (start_g + (end_g - start_g) * factor) as u8;
-    let b = (start_b + (end_b - start_b) * factor) as u8;
-
-    format!("#{r:02x}{g:02x}{b:02x}")
-}
-
-/// Generate a single "r" shape SVG as an iced Element.
-/// index=0 is primary (green), index>=1 are secondary paths (gradient).
-/// count is the total number of paths (including primary).
-pub fn r_shape(index: usize, count: usize) -> Element<'static, Msg> {
-    let color = if index == 0 {
-        PRIMARY_COLOR.to_string()
-    } else {
-        // Secondary paths: index-1 because get_secondary_color expects 0-based for secondaries
-        let secondary_count = count.saturating_sub(1);
-        get_secondary_color(index - 1, secondary_count)
-    };
-
-    // SVG dimensions - centered "r" shape
-    let width = 60.0;
-    let height = 60.0;
-    let center_x = 30.0;
-    let center_y = 30.0;
-
-    // Create the "r" shape SVG
-    let thickness = 10.0;
-    let stem_top = center_y - 20.0;
-    let stem_bottom = center_y + 25.0;
-    let radius = 25.0;
-    let arc_start_y = center_y + 25.0;
-    let arc_end_x = center_x + 25.0;
-    let arc_end_y = center_y;
-
-    let svg_content = format!(
-        r#"<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">
-            <line x1="{center_x}" y1="{stem_top}" x2="{center_x}" y2="{stem_bottom}" stroke="{color}" stroke-width="{thickness}" stroke-linecap="round" />
-            <path d="M {center_x} {arc_start_y} A {radius} {radius} 0 0 1 {arc_end_x} {arc_end_y}" stroke="{color}" stroke-width="{thickness}" fill="none" stroke-linecap="round" />
-        </svg>"#
-    );
-
-    let svg_handle = iced::widget::svg::Handle::from_memory(svg_content.as_bytes().to_vec());
-    let svg_widget = liana_ui::widget::Svg::new(svg_handle)
-        .width(Length::Fixed(R_SHAPE_WIDTH))
-        .height(Length::Fixed(R_SHAPE_WIDTH))
-        .content_fit(iced::ContentFit::Contain);
-
-    Container::new(svg_widget)
-        .width(Length::Fixed(R_SHAPE_WIDTH))
-        .height(Length::Fixed(R_SHAPE_WIDTH))
-        .into()
-}
 
 /// Convert a timelock (in blocks) to a human-readable format.
 /// Shows "After x hours/days/months" (whichever is most appropriate).
@@ -155,7 +60,7 @@ fn path_card(
     path_index: Option<usize>,
     is_editable: bool,
     last_edit_info: Option<String>,
-) -> Container<'static, Msg> {
+) -> Element<'static, Msg> {
     // Get key aliases
     let key_aliases: Vec<String> = path
         .key_ids
@@ -186,27 +91,28 @@ fn path_card(
         Some(tl) => format_timelock_human(tl),
     };
 
-    let last_edit_info =
-        last_edit_info.map(|info| text::caption(info).style(liana_ui::theme::text::secondary));
+    let subtitle = match last_edit_info {
+        Some(info) => format!("{timelock_text} - {info}"),
+        None => timelock_text,
+    };
 
-    let content = row![Column::new()
-        .push(component::scrollable::horizontal_thin(
-            text::h3(keys_text).style(theme::text::primary)
-        ))
-        .push(text::p2_medium(timelock_text).style(theme::text::primary))
-        .push_maybe(last_edit_info)
-        .spacing(5)]
-    .width(Length::Fill)
-    .height(Length::Fill);
-
-    // Use card_entry with optional message for editable vs read-only
     let message = if is_editable {
         Some(Msg::TemplateEditPath(is_primary, path_index))
     } else {
         None
     };
+    let role = if is_primary {
+        EntryPathRole::Primary
+    } else {
+        EntryPathRole::Recovery
+    };
+    let trailing = if is_editable && !is_primary {
+        path_index.map(|index| delete_btn(Some(Msg::TemplateDeleteSecondaryPath(index))).into())
+    } else {
+        None
+    };
 
-    menu_entry(content, message)
+    list::entry_path(role, keys_text, Some(subtitle), trailing, message)
 }
 
 pub fn template_visualization(state: &State) -> Element<'static, Msg> {
@@ -232,38 +138,27 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
         Some(UserRole::WizardSardineAdmin)
     ) && is_draft;
 
-    // Total count includes primary + all secondary paths
-    let total_count = 1 + secondary_paths.len();
-
     let mut column = Column::new()
         .spacing(10)
         .padding(20.0)
         .push(Space::with_height(50));
 
-    // Primary path row: [r_shape] [path_card]
     let primary_last_edit = format_last_edit_info(
         primary_path.last_edited,
         primary_path.last_editor,
         state,
         &current_user_email_lower,
     );
-    let primary_row = Row::new()
-        .spacing(15)
-        .align_y(Alignment::Center)
-        .push(r_shape(0, total_count))
-        .push(path_card(
-            primary_path,
-            keys,
-            None,
-            true,
-            None,
-            is_editable,
-            primary_last_edit,
-        ));
+    column = column.push(path_card(
+        primary_path,
+        keys,
+        None,
+        true,
+        None,
+        is_editable,
+        primary_last_edit,
+    ));
 
-    column = column.push(primary_row);
-
-    // Secondary path rows (with delete button if editable)
     for (index, secondary) in secondary_paths.iter().enumerate() {
         let secondary_last_edit = format_last_edit_info(
             secondary.path.last_edited,
@@ -271,46 +166,26 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
             state,
             &current_user_email_lower,
         );
-        let mut secondary_row = Row::new()
-            .spacing(15)
-            .align_y(Alignment::Center)
-            .push(r_shape(index + 1, total_count))
-            .push(path_card(
-                &secondary.path,
-                keys,
-                Some(&secondary.timelock),
-                false,
-                Some(index),
-                is_editable,
-                secondary_last_edit,
-            ));
-
-        // Only show delete button if editable (WS Admin)
-        if is_editable {
-            let delete_button = delete_btn(Some(Msg::TemplateDeleteSecondaryPath(index)));
-            secondary_row = secondary_row.push(delete_button);
-        }
-
-        column = column.push(secondary_row);
+        column = column.push(path_card(
+            &secondary.path,
+            keys,
+            Some(&secondary.timelock),
+            false,
+            Some(index),
+            is_editable,
+            secondary_last_edit,
+        ));
     }
 
     // "Add a recovery path" card - only show if editable (WS Admin)
     if is_editable {
-        let add_path_content =
-            row![text::p1_medium("+ Add a recovery path").style(liana_ui::theme::text::secondary)]
-                .width(Length::Fill)
-                .height(Length::Fill);
-
-        let add_path_card = menu_entry(add_path_content, Some(Msg::TemplateNewPathModal));
-
-        // Spacer aligns with r_shape icons above (R_SHAPE_WIDTH) + row spacing (15)
-        let add_path_row = Row::new()
-            .spacing(15)
-            .align_y(Alignment::Center)
-            .push(Space::with_width(Length::Fixed(R_SHAPE_WIDTH)))
-            .push(add_path_card);
-
-        column = column.push(add_path_row);
+        column = column.push(list::entry_path(
+            EntryPathRole::Recovery,
+            "+ Add a recovery path",
+            None::<String>,
+            None,
+            Some(Msg::TemplateNewPathModal),
+        ));
     }
 
     Container::new(column)

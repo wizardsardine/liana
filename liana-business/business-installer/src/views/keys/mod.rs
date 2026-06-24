@@ -14,7 +14,7 @@ use liana_ui::{
         pill,
         text::{self},
     },
-    icon, theme,
+    theme,
     widget::*,
 };
 
@@ -36,12 +36,11 @@ fn key_card(
     key_id: u8,
     key: &ws_business::Key,
     last_edit_info: Option<String>,
-) -> Container<'static, Msg> {
+) -> Element<'static, Msg> {
     let msg = Some(Msg::KeyEdit(key_id));
-    let icon = icon::key_icon();
     let pill = pill(&key.key_type).into();
 
-    menu_key_entry(key, last_edit_info, icon, pill, msg)
+    menu_key_entry(key, last_edit_info, pill, msg)
 }
 
 pub fn keys_view(state: &State) -> Element<'_, Msg> {

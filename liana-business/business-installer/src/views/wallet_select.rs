@@ -2,14 +2,12 @@ use crate::{
     backend::Backend,
     state::{Msg, State},
 };
-use iced::{
-    widget::{column, row, Space},
-    Alignment, Length,
-};
+use iced::{widget::row, Alignment};
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
 use liana_ui::{
     component::{
-        list, pill,
+        list::{self, EntryStatus},
+        pill,
         text::{self, truncate},
     },
     icon, theme,
@@ -17,8 +15,7 @@ use liana_ui::{
 };
 
 use super::{
-    format_last_edit_info, menu_entry, select_list_view, SelectListView, SelectSearch,
-    INSTALLER_STEPS,
+    format_last_edit_info, select_list_view, SelectListView, SelectSearch, INSTALLER_STEPS,
 };
 
 /// Derive the user's role for a specific wallet based on wallet data and global role
@@ -92,35 +89,39 @@ pub fn wallet_card<'a>(
     role: &UserRole,
     last_edit_info: Option<String>,
     user_email: &str,
-) -> Container<'a, Msg> {
+) -> Element<'a, Msg> {
     let alias = truncate(&wallet.alias, 25);
     let key_count = list::key_count(wallet.template.as_ref().map(|t| t.keys.len()).unwrap_or(0));
-    let alias_row = row![text::h3(alias), key_count, role_badge(role)]
-        .spacing(10)
-        .align_y(Alignment::Center);
-
-    let mut left_col = column![alias_row].spacing(5);
-
-    if let Some(info) = last_edit_info {
-        left_col = left_col.push(text::caption(info).style(liana_ui::theme::text::secondary));
-    }
-
     let trailing = row![
+        key_count,
+        role_badge(role),
         status_badge(wallet, user_email),
         icon::chevron_right()
             .size(18)
             .color(liana_ui::color::LIGHT_BORDER)
     ]
-    .spacing(12)
+    .spacing(10)
     .align_y(Alignment::Center);
-
-    let content = row![left_col, Space::fill_width(), trailing]
-        .align_y(Alignment::Center)
-        .height(Length::Fill);
 
     let message = Some(Msg::OrgWalletSelected(wallet.id));
 
-    menu_entry(content, message)
+    list::entry_wallet(
+        wallet_entry_status(wallet, user_email),
+        alias,
+        last_edit_info,
+        Some(trailing.into()),
+        message,
+    )
+}
+
+fn wallet_entry_status(wallet: &Wallet, user_email: &str) -> EntryStatus {
+    match wallet.effective_status(user_email) {
+        WalletStatus::Registration | WalletStatus::Locked | WalletStatus::Validated => {
+            EntryStatus::Warning
+        }
+        WalletStatus::Created | WalletStatus::Drafted => EntryStatus::Simple,
+        WalletStatus::Finalized => EntryStatus::Success,
+    }
 }
 
 pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {

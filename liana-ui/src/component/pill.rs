@@ -259,6 +259,26 @@ pub fn active<'a, T: 'a>() -> Container<'a, T> {
     compact_pill("Active", PillWidth::M, theme::pill::success)
 }
 
+/// Compact key pill styled by key kind (the key-type and path key-alias pills).
+pub fn key_kind<'a, T: 'a, L: Display>(
+    kind: crate::component::list::EntryKeyKind,
+    label: L,
+) -> Container<'a, T> {
+    use crate::component::list::EntryKeyKind;
+    let style = match kind {
+        EntryKeyKind::Internal => theme::pill::internal,
+        EntryKeyKind::External => theme::pill::external,
+        EntryKeyKind::SafetyNet => theme::pill::safety_net,
+    };
+    compact_pill_body_with_text_size_and_font(
+        label,
+        PillWidth::Shrink,
+        style,
+        PILL_FONT_COMPACT,
+        PILL_FONT_SIZE_COMPACT,
+    )
+}
+
 /// Spending-path availability pill: a recovery timelock with a clock.
 pub fn path_timelock<'a, T: 'a, L: Display>(label: L) -> Container<'a, T> {
     pill_with_icon(
