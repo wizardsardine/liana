@@ -216,6 +216,7 @@ impl State {
             keys: self.app.keys.clone(),
             primary_path: self.app.primary_path.clone(),
             secondary_paths: self.app.secondary_paths.clone(),
+            keys_ready: self.app.keys_ready,
         };
         template.is_valid()
     }
